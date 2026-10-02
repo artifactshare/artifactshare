@@ -39,6 +39,63 @@ afterEach(async () => {
 })
 
 describe('SandboxFrame recovery', () => {
+  test('retries a lost ready-check and stops probing after the frame replies', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    const host = await renderFrame()
+    const frame = host.querySelector('iframe')!
+    // Settle native navigation before counting checks from the explicit load
+    // below. Otherwise its late load event legitimately starts another check.
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        const onLoad = () => {
+          if (frame.contentDocument?.title !== 'Readiness fixture') return
+          frame.removeEventListener('load', onLoad)
+          resolve()
+        }
+        frame.addEventListener('load', onLoad)
+        frame.srcdoc = '<!doctype html><title>Readiness fixture</title>'
+      })
+    })
+    const postMessage = vi
+      .spyOn(frame.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+    const readyChecks = () =>
+      postMessage.mock.calls.filter(
+        ([message]) => message.kind === 'ready-check',
+      )
+
+    // Drive the component's load handler; the first check gets no reply.
+    await act(async () => frame.dispatchEvent(new Event('load')))
+    expect(readyChecks()).toHaveLength(1)
+    expect(stateOf(host)).toBe('loading')
+    await act(async () => vi.advanceTimersByTimeAsync(249))
+    expect(readyChecks()).toHaveLength(1)
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(readyChecks()).toHaveLength(2)
+    const challenge = readyChecks()[1][0].challenge
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          source: frame.contentWindow,
+          data: {
+            source: 'artifactshare',
+            kind: 'ready',
+            challenge,
+            token: 'a'.repeat(64),
+          },
+        }),
+      )
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(stateOf(host)).toBe('ready')
+    expect(readyChecks()).toHaveLength(2)
+    expect(fetchMock).not.toHaveBeenCalled()
+    postMessage.mockRestore()
+  })
+
   test('remounts once, then stops automatic recovery at the manual retry state', async () => {
     vi.useFakeTimers()
     const tokenRequests: Array<Deferred<Response>> = []

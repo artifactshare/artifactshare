@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   READY_CHECK_MESSAGE_KIND,
   READY_CHECK_MESSAGE_SOURCE,
@@ -23,6 +23,65 @@ describe('VIOLATION_REPORTER_SHA256', () => {
     const base64 = btoa(String.fromCharCode(...new Uint8Array(digest)))
     expect(base64).toBe(VIOLATION_REPORTER_SHA256)
   })
+})
+
+describe('text highlight hit testing', () => {
+  test.each([
+    { type: 'click', isTrusted: true, detail: 1, hit: true },
+    { type: 'click', isTrusted: true, detail: 0, hit: false },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      pointerType: '',
+      hit: false,
+    },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      mozInputSource: 6,
+      hit: false,
+    },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      pointerType: 'mouse',
+      mozInputSource: 1,
+      hit: true,
+    },
+    { type: 'click', isTrusted: false, detail: 1, hit: false },
+    { type: 'click', isTrusted: false, detail: 0, hit: false },
+    { type: 'pointerdown', isTrusted: true, detail: 0, hit: true },
+  ])(
+    '$type trusted=$isTrusted detail=$detail hit=$hit',
+    ({ hit, ...event }) => {
+      const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        '  function hitComment(event) {',
+      )
+      const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        "  document.addEventListener('click'",
+        start,
+      )
+      const badge = {}
+      const measure = vi.fn(() => [{ left: 0, top: 0, right: 100, bottom: 20 }])
+      const hitComment = new Function(
+        'trusted',
+        'badges',
+        'measureBadgeEntry',
+        `${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}; return hitComment`,
+      )(
+        (candidate: { isTrusted: boolean }) => candidate.isTrusted,
+        [{ badge }],
+        measure,
+      )
+      expect(hitComment({ ...event, clientX: 0, clientY: 0 })).toBe(
+        hit ? badge : null,
+      )
+      expect(measure).toHaveBeenCalledTimes(hit ? 1 : 0)
+    },
+  )
 })
 
 describe('isSandboxMessage', () => {
@@ -182,7 +241,7 @@ describe('injected security primitives', () => {
 describe('SVG and fallback highlight contracts', () => {
   test('keeps generated reporter measurement and accessibility contracts', () => {
     const body = VIOLATION_REPORTER_SCRIPT_BODY
-    expect(body).toContain('entry.mark.getClientRects()')
+    expect(body).toContain('range.getClientRects()')
     expect(body).toContain('getExtentOfChar')
     expect(body).toContain('first.getBoundingClientRect')
     expect(body).toContain('svg.getBoundingClientRect')
@@ -197,11 +256,15 @@ describe('SVG and fallback highlight contracts', () => {
     expect(body).toContain("status === 'resolved'")
     expect(body).toContain('M20 6 9 17')
     expect(body).toContain('M21 15a4 4')
-    expect(body).toContain('badges.length > 0')
+    expect(body).toContain('CSS.highlights.set')
+    expect(body).not.toContain('surroundContents')
+    expect(body).not.toContain('splitText')
+    expect(body).not.toContain('body.normalize()')
+    expect(body).not.toContain("createElement('mark')")
     expect(body).toContain('scroll-to-comment')
     expect(body).toContain('clearMarks')
-    expect(body).toContain('acceptsAnchorText')
-    expect(body).toContain('quotedText: quotedText')
+    expect(body).toContain('createTextAnchorEngine')
+    expect(body).toContain('quotedText: selector.quotedText')
   })
 })
 
@@ -291,5 +354,139 @@ describe('generated reporter link-click exclusion contract', () => {
     expect(VIOLATION_REPORTER_SCRIPT_BODY).toContain(
       "closest(element, '.ash-comment-highlight, .ash-comment-highlight-badge')",
     )
+  })
+})
+
+test('ancestor attributes schedule geometry only and ignore reporter-owned attributes', () => {
+  const ancestor = { nodeType: 1, closest: () => null }
+  const overlay = { nodeType: 1, closest: () => ({}) }
+  const root = { contains: () => false }
+  const schedule = vi.fn()
+  const rebuild = vi.fn()
+  let callback: (records: object[]) => void = () => {}
+  const script = VIOLATION_REPORTER_SCRIPT_BODY.slice(
+    VIOLATION_REPORTER_SCRIPT_BODY.indexOf('  var observedAnchorRoot ='),
+    VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+      '  function rebuildAfterMutations()',
+    ),
+  )
+  new Function(
+    'anchorRoot',
+    'MutationObserver',
+    'document',
+    'pendingHighlights',
+    'pendingAnchors',
+    'schedulePositionBadges',
+    'rebuildAfterMutations',
+    script,
+  )(
+    () => root,
+    class {
+      constructor(handler: typeof callback) {
+        callback = handler
+      }
+    },
+    { body: {} },
+    [{}],
+    [],
+    schedule,
+    rebuild,
+  )
+  callback([{ type: 'attributes', target: ancestor }])
+  expect(schedule).toHaveBeenCalledTimes(1)
+  expect(rebuild).not.toHaveBeenCalled()
+  callback([{ type: 'attributes', target: overlay }])
+  expect(schedule).toHaveBeenCalledTimes(1)
+  callback([{ type: 'characterData', target: ancestor }])
+  expect(schedule).toHaveBeenCalledTimes(1)
+  expect(rebuild).not.toHaveBeenCalled()
+})
+
+describe('SVG source-to-glyph mapping in the injected reporter', () => {
+  // Exercise the actual serialized function with explicit browser character
+  // counts; the three-engine suite checks real glyph geometry separately.
+  function mapSvgRange(
+    value: string,
+    quote: string,
+    count: number,
+    inTspan = true,
+  ) {
+    const text = { getNumberOfChars: () => 12 }
+    const container = inTspan ? { getNumberOfChars: () => count } : text
+    if (!inTspan) text.getNumberOfChars = () => count
+    const node = {
+      nodeValue: value,
+      parentElement: {
+        closest: (selector: string) =>
+          selector === 'svg text' ? text : container,
+      },
+    }
+    const indentation = { nodeValue: '\n  ' }
+    const first = { nodeValue: 'First' }
+    const document = {
+      createTreeWalker: (root: object) => {
+        const nodes =
+          root === container
+            ? [node]
+            : [indentation, first, indentation, node, indentation]
+        let index = 0
+        return { nextNode: () => nodes[index++] ?? null }
+      },
+    }
+    const start = value.indexOf(quote)
+    const engine = {
+      ranges: () => [
+        {
+          startContainer: node,
+          startOffset: start,
+          endOffset: start + quote.length,
+        },
+      ],
+    }
+    const script = VIOLATION_REPORTER_SCRIPT_BODY.slice(
+      VIOLATION_REPORTER_SCRIPT_BODY.indexOf('  function svgTextRange('),
+      VIOLATION_REPORTER_SCRIPT_BODY.indexOf('  function wrapSvgRange('),
+    )
+    const groups = new Function(
+      'document',
+      'NodeFilter',
+      'createTextAnchorEngine',
+      'anchorRoot',
+      `${script}; return svgTextRange({ textStart: 0, textEnd: 6 })`,
+    )(
+      document,
+      { SHOW_TEXT: 4 },
+      () => engine,
+      () => ({}),
+    )
+    return { groups, container }
+  }
+
+  test('uses tspan-local glyph indexes despite indentation and sibling text', () => {
+    const { groups, container } = mapSvgRange('Second', 'Second', 6)
+    expect(groups).toEqual([{ text: container, start: 0, end: 6 }])
+  })
+
+  test('maps collapsed whitespace within a text content element', () => {
+    const { groups, container } = mapSvgRange(
+      'First    Second',
+      'Second',
+      12,
+      false,
+    )
+    expect(groups).toEqual([{ text: container, start: 6, end: 12 }])
+  })
+
+  test('keeps preserved whitespace indexes when SVG reports every character', () => {
+    const { groups, container } = mapSvgRange('First    Second', 'Second', 15)
+    expect(groups).toEqual([{ text: container, start: 9, end: 15 }])
+  })
+
+  test('does not invent indexes when neither source map agrees with the browser', () => {
+    expect(mapSvgRange('Second', 'Second', 99).groups).toEqual([])
+  })
+
+  test('the complete injected script remains valid JavaScript', () => {
+    expect(() => new Function(VIOLATION_REPORTER_SCRIPT_BODY)).not.toThrow()
   })
 })

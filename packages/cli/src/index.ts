@@ -863,8 +863,7 @@ const commentsPostDefinition = define({
     quote: {
       type: 'string',
       toKebab: true,
-      description:
-        'Anchor the comment to this exact text from the artifact (new threads only)',
+      description: 'Quote text for strict viewer resolution (new threads only)',
     },
     quoteBefore: {
       type: 'string',
@@ -887,14 +886,15 @@ const commentsPostDefinition = define({
 npm exec --yes --package=@artifactshare/cli -- artifactshare comments post abc123def4 --body "Done" --reply-to <thread-id> --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare comments post abc123def4 --body "Fix this" --quote "exact text" --json
 
-Copy quote text from artifacts get so it matches the artifact exactly.
+The viewer resolves quoted comments using unique exact quote and context.
+Resolution is deferred until the version is viewed; anchor.position_state is
+attached, needs-check, or unchecked. Context supports 400 characters per side.
 
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before comments post
   target_not_found   Retry with an artifact ID, share URL, or sandbox URL
   thread_not_found   Run comments list and retry with a listed thread id
   thread_resolved    Reopen the thread in the viewer, or start a new thread
-  quote_not_found    Copy the exact text from artifacts get
   validation_failed  Pass --body, and do not combine --quote with --reply-to`,
 })
 

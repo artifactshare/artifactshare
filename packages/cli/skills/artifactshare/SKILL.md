@@ -246,6 +246,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <arti
 npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
 ```
 
+Quoted comments are resolved in the viewer using the exact quote and surrounding context, never the nearest repeated words. `--quote-before` and `--quote-after` accept up to 400 characters per side; preserve spaces next to the quote. Creation does not search the artifact. Optional `anchor.position_state` is `unchecked` until that version is viewed, then `attached` or `needs-check`. Only `attached` maps to `anchor.state: attached`; both other states map to `orphaned`. Older responses may omit `position_state`. Local preview uses the same strict resolution on every reload and preserves the original quote when its position needs checking.
+
 - `--reply-to <thread-id>` replies to an existing thread from `comments list`.
 - `--quote <text>` anchors a new thread to the quoted text. Copy the text from
   `artifacts get` so it matches exactly. When the same text appears more than

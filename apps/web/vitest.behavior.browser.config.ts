@@ -1,3 +1,4 @@
+import { selectAnchorText } from './app/test/anchor-browser-command'
 import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
@@ -25,8 +26,25 @@ export default defineConfig({
     browser: {
       enabled: true,
       provider: playwright(),
+      commands: { selectAnchorText },
       headless: true,
-      instances: [{ browser: 'chromium' }],
+      instances: [
+        { browser: 'chromium' },
+        {
+          browser: 'firefox',
+          include: [
+            'app/lib/*anchor*.behavior.browser.test.tsx',
+            'app/lib/csp-reporter.behavior.browser.test.tsx',
+          ],
+        },
+        {
+          browser: 'webkit',
+          include: [
+            'app/lib/*anchor*.behavior.browser.test.tsx',
+            'app/lib/csp-reporter.behavior.browser.test.tsx',
+          ],
+        },
+      ],
       fileParallelism: false,
     },
   },

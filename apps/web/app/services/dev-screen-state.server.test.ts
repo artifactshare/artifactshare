@@ -569,7 +569,12 @@ describe('recent content-rich dev screen state', () => {
     })
     expect(counts.map((rows) => rows)).toEqual([
       [{ id: `${workspaceId}-commenter` }],
-      [{ id: `${shareableId}-thread` }, { id: `${shareableId}-thread-latest` }],
+      [
+        { id: `${shareableId}-text-attached` },
+        { id: `${shareableId}-text-needs-check` },
+        { id: `${shareableId}-thread` },
+        { id: `${shareableId}-thread-latest` },
+      ],
       [
         { id: `${shareableId}-message` },
         { id: `${shareableId}-message-latest` },

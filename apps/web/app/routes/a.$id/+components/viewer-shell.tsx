@@ -1,3 +1,4 @@
+import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import {
   useCallback,
@@ -666,6 +667,34 @@ export function useViewerComments({
       dispatchComment({ type: 'threads-replaced', threads })
     },
     [threadsRef],
+  )
+
+  const applyAnchorResolutions = useCallback(
+    (results: AnchorResolutionMessage['results']) => {
+      const next = threadsRef.current.map((thread) => {
+        const verdict = results.find(
+          (candidate) => candidate.threadId === thread.id,
+        )
+        if (!verdict || thread.subject.kind !== 'text') return thread
+        return {
+          ...thread,
+          subject: {
+            ...thread.subject,
+            state:
+              verdict.state === 'attached'
+                ? ('attached' as const)
+                : ('orphaned' as const),
+            positionState:
+              verdict.state === 'checking'
+                ? ('unchecked' as const)
+                : verdict.state,
+            checking: verdict.state === 'checking',
+          },
+        }
+      })
+      replaceThreadsIfChanged(next)
+    },
+    [threadsRef, replaceThreadsIfChanged],
   )
 
   const abortLatestThreadFetch = useEffectEvent(() => {
@@ -1506,6 +1535,7 @@ export function useViewerComments({
     isCurrentArtifactId,
     openPanel,
     replaceThreads,
+    applyAnchorResolutions,
     changePanelOpen,
     targetThread,
     startTextSelection,
@@ -2443,6 +2473,7 @@ function ViewerShellView({
           bundlePaths={bundlePaths}
           fallbackToIndex={fallbackToIndex}
           commentThreads={comments.state.threads}
+          onAnchorResolutions={comments.applyAnchorResolutions}
           targetThreadId={comments.state.targetThreadId}
           highlightThreadId={
             comments.state.inlineThreadId ?? comments.state.targetThreadId

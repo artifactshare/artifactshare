@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
 import type { CommentThreadView } from '~/lib/comments'
@@ -14,6 +15,10 @@ export type CommentMutationPayload =
       intent: 'create-thread'
       body: string
       anchor?: {
+        selectorFormat?: 'normalized-v1'
+        textHash?: string
+        ambiguousAtCreation?: boolean
+        versionId?: string | null
         quotedText: string
         prefixText: string
         suffixText: string
@@ -65,6 +70,7 @@ export function useCommentMutations({
   onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
 }) {
   const { t } = useT()
+  const revalidator = useRevalidator()
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -83,6 +89,7 @@ export function useCommentMutations({
     try {
       const result = await fetchJsonWithViewerTimeout<{
         threads?: ReadonlyArray<CommentThreadView>
+        error?: { code?: string }
       }>(
         `/api/shareables/${encodeURIComponent(requestShareableId)}/comments`,
         {
@@ -97,6 +104,20 @@ export function useCommentMutations({
       )
       const response = result.response
       if (!response.ok) {
+        if (result.body?.error?.code === 'version_conflict') {
+          if (!isCurrentShareableId(requestShareableId)) return false
+          toast.error(t('comments.versionConflict'), {
+            action: {
+              label: t('home.reload'),
+              onClick: () => {
+                if (isCurrentShareableId(requestShareableId)) {
+                  void revalidator.revalidate()
+                }
+              },
+            },
+          })
+          return false
+        }
         logViewerNetworkEvent({
           channel: 'fetch',
           purpose: 'comment-mutation',

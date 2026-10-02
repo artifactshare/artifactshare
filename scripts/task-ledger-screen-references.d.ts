@@ -93,6 +93,8 @@ export type TaskLedgerScreenReference =
   | 'viewer/bridge-attribution-email-fallback'
   | 'viewer/bridge-attribution-email-hidden-anonymous'
   | 'viewer/comments-open'
+  | 'viewer/comments-position-check'
+  | 'viewer/comments-position-checking'
   | 'viewer/default'
   | 'viewer/free-owner-visibility-dialog'
   | 'viewer/history-open'

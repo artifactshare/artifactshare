@@ -2894,3 +2894,98 @@ describe('database migrations', () => {
     ).toThrow()
   })
 })
+
+test('0109 preserves legacy selectors, constrains per-version results and cascades deletion', () => {
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec('PRAGMA foreign_keys = ON')
+    const migrations = loadMigrations()
+    for (const migration of migrations) {
+      if (migration.name === '0109_comment_anchor_results.sql') break
+      db.exec(migration.sql)
+    }
+    db.exec(`
+      INSERT INTO workspaces (id, name, created_at) VALUES ('anchor-ws', 'Anchor fixture', '2026-01-01');
+      INSERT INTO users (id, email, email_verified, name, workspace_id, google_sub, created_at, updated_at) VALUES ('anchor-user', 'anchor@example.com', 1, 'Anchor user', 'anchor-ws', 'anchor-sub', '2026-01-01', '2026-01-01');
+      INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, name, created_at, updated_at) VALUES ('anchor-inbox', 'anchor-ws', 'inbox', 'anchor-user', 'Inbox', '2026-01-01', '2026-01-01');
+      INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, container_id, created_at, updated_at) VALUES ('anchor-artifact', 'anchor-ws', 'anchor-user', 'Anchor', 'html_page', 'private', 'anchor-inbox', '2026-01-01', '2026-01-01');
+      INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at) VALUES ('anchor-version', 'anchor-artifact', 'html_page', 'published', '/index.html', 'synthetic/index.html', 1, 'synthetic', 'anchor-user', '2026-01-01');
+      INSERT INTO comment_threads (id, shareable_id, status, created_by_id, created_at, updated_at) VALUES ('anchor-thread', 'anchor-artifact', 'open', 'anchor-user', '2026-01-01', '2026-01-01');
+      INSERT INTO comment_anchors (id, thread_id, version_id, target_path, quoted_text, prefix_text, suffix_text, text_start, text_end, created_at) VALUES ('anchor-row', 'anchor-thread', 'anchor-version', '/index.html', 'word', 'before ', ' after', 999, 1003, '2026-01-01');
+    `)
+    const before = db.prepare('SELECT * FROM comment_anchors').get()
+    db.exec(
+      migrations.find((m) => m.name === '0109_comment_anchor_results.sql')!.sql,
+    )
+    expect(db.prepare('SELECT * FROM comment_anchors').get()).toEqual({
+      ...before,
+      selector_format: null,
+      text_hash: null,
+      ambiguous_at_creation: null,
+    })
+    expect(
+      db
+        .prepare(
+          'EXPLAIN QUERY PLAN SELECT * FROM comment_anchor_results WHERE version_id = ?',
+        )
+        .all('anchor-version'),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.stringContaining(
+            'USING INDEX idx_comment_anchor_results_version_id',
+          ),
+        }),
+      ]),
+    )
+    const insert = db.prepare(
+      'INSERT INTO comment_anchor_results (anchor_id, version_id, target_path, state, hint_start, hint_end, text_hash, frame_token, generation, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    const values = [
+      'anchor-row',
+      'anchor-version',
+      '/index.html',
+      'attached',
+      1,
+      5,
+      'a'.repeat(64),
+      'b'.repeat(64),
+      1,
+      '2026-01-01',
+    ]
+    insert.run(...values)
+    expect(() => insert.run(...values)).toThrow()
+    expect(() =>
+      insert.run(
+        'anchor-row',
+        'anchor-version',
+        '/other.html',
+        'attached',
+        null,
+        null,
+        null,
+        'frame',
+        1,
+        '2026-01-01',
+      ),
+    ).toThrow()
+    expect(() =>
+      insert.run(
+        'anchor-row',
+        'missing',
+        '/index.html',
+        'needs-check',
+        null,
+        null,
+        null,
+        'frame',
+        1,
+        '2026-01-01',
+      ),
+    ).toThrow()
+    db.exec("DELETE FROM comment_threads WHERE id = 'anchor-thread'")
+    expect(db.prepare('SELECT * FROM comment_anchor_results').all()).toEqual([])
+  } finally {
+    db.close()
+  }
+})

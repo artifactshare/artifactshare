@@ -19,6 +19,7 @@ import {
   CLI_MOVE_RESPONSE_SCHEMA,
   CLI_WHOAMI_RESPONSE_SCHEMA,
   COMMENT_REQUEST_SCHEMA,
+  CommentAnchorSchema,
   COMMENT_POST_RESPONSE_SCHEMA,
   COMMENT_ACTION_RESPONSE_SCHEMA,
   COMMENT_DELETE_RESPONSE_SCHEMA,
@@ -1020,5 +1021,46 @@ describe('version labels', () => {
     '\u2028',
   ])('rejects invalid label %j', (label) => {
     expect(VersionLabelInputSchema.safeParse(label).success).toBe(false)
+  })
+})
+
+describe('comment position compatibility', () => {
+  it('parses older text anchors and retains optional position states', () => {
+    const old = {
+      kind: 'text',
+      quoted_text: 'original quote',
+      state: 'orphaned',
+    }
+    expect(CommentAnchorSchema.parse(old)).toEqual(old)
+    for (const position_state of ['attached', 'needs-check', 'unchecked']) {
+      const anchor = {
+        ...old,
+        state: position_state === 'attached' ? 'attached' : 'orphaned',
+        position_state,
+      }
+      expect(CommentAnchorSchema.parse(anchor)).toEqual(anchor)
+    }
+    expect(
+      CommentAnchorSchema.safeParse({ ...old, position_state: 'checking' })
+        .success,
+    ).toBe(false)
+  })
+  it('accepts exact context boundary spaces up to 400 characters and empty context', () => {
+    for (const context of ['', 'a'.repeat(399) + ' ']) {
+      const input = {
+        body: 'Check',
+        quote: 'text',
+        quote_before: context,
+        quote_after: ' after',
+      }
+      expect(COMMENT_REQUEST_SCHEMA.parse(input)).toEqual(input)
+    }
+    expect(
+      COMMENT_REQUEST_SCHEMA.safeParse({
+        body: 'Check',
+        quote: 'text',
+        quote_before: 'a'.repeat(401),
+      }).success,
+    ).toBe(false)
   })
 })

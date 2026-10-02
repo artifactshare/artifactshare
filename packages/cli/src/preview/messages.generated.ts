@@ -75,6 +75,8 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanNoticeOther':
       'The page changed a lot; {n} annotations lost their targets',
     'preview.orphanDiscard': 'Discard them',
+    'preview.positionChecking': 'Checking comment position…',
+    'preview.positionNeedsCheck': 'Quoted text not found in this version',
     'preview.orphanKeep': 'Keep',
     'preview.you': 'You',
     'preview.agentName': 'Agent',
@@ -200,6 +202,8 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanNoticeOther':
       'ページが大きく変わったため {n} 件のコメントが対象を見失いました',
     'preview.orphanDiscard': 'まとめて破棄',
+    'preview.positionChecking': 'コメントの位置を確認しています…',
+    'preview.positionNeedsCheck': '引用した文がこの版に見つかりません',
     'preview.orphanKeep': '残す',
     'preview.you': 'あなた',
     'preview.agentName': 'エージェント',

@@ -147,6 +147,10 @@ function popoverStyle(
 
 export function withoutRect(anchor: PendingTextAnchor) {
   return {
+    selectorFormat: anchor.selectorFormat,
+    textHash: anchor.textHash,
+    ambiguousAtCreation: anchor.ambiguousAtCreation,
+    versionId: anchor.versionId,
     quotedText: anchor.quotedText,
     prefixText: anchor.prefixText,
     suffixText: anchor.suffixText,

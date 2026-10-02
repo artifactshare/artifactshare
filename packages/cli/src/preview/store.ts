@@ -173,9 +173,10 @@ export interface PreviewStore {
 
 export function createPreviewStore(annotationsPath: string): PreviewStore {
   let annotations: PreviewAnnotation[] = []
+  const skippedAnnotations: unknown[] = []
   let batches: PreviewAnnotationBatch[] = []
   let quarantined: string | null = null
-  let migrated = false
+  let needsSave = false
 
   if (existsSync(annotationsPath)) {
     let parsed: unknown = null
@@ -183,6 +184,93 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       parsed = JSON.parse(readFileSync(annotationsPath, 'utf8'))
     } catch {
       parsed = null
+    }
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'schema_version' in parsed &&
+      [1, 2].includes(Number(parsed.schema_version)) &&
+      'annotations' in parsed &&
+      Array.isArray(parsed.annotations)
+    ) {
+      const record = parsed
+      const retainedAnnotations = parsed.annotations.filter(
+        (annotation, index): annotation is PreviewAnnotation => {
+          const storedBatches = 'batches' in record ? record.batches : undefined
+          const validBatch =
+            record.schema_version !== 2 ||
+            !isPreviewAnnotation(annotation) ||
+            !['requested', 'in_progress'].includes(annotation.status) ||
+            (Array.isArray(storedBatches) &&
+              storedBatches.some(
+                (batch) =>
+                  isBatch(batch) &&
+                  batch.id === annotation.batch_id &&
+                  batch.members.some(
+                    (member) =>
+                      member.thread === annotation.thread &&
+                      member.generation === annotation.generation &&
+                      member.terminal_result === null,
+                  ),
+              ))
+          if (isPreviewAnnotation(annotation) && validBatch) return true
+          skippedAnnotations.push(annotation)
+          needsSave = true
+          console.warn(`Skipping invalid stored annotation at index ${index}`)
+          return false
+        },
+      )
+      parsed.annotations = retainedAnnotations
+      if (
+        record.schema_version === 2 &&
+        'batches' in record &&
+        Array.isArray(record.batches)
+      ) {
+        const retained = new Map(
+          retainedAnnotations.map((annotation) => [
+            `${annotation.thread}:${annotation.generation}`,
+            annotation,
+          ]),
+        )
+        for (const batch of record.batches) {
+          if (!isBatch(batch)) continue
+          const members = batch.members.flatMap((member) => {
+            // Completed generations remain useful history after a reopen.
+            if (member.terminal_result !== null) return [member]
+            const annotation = retained.get(
+              `${member.thread}:${member.generation}`,
+            )
+            if (
+              !annotation ||
+              annotation.batch_id !== batch.id ||
+              annotation.status === 'draft'
+            )
+              return []
+            if (
+              annotation.status === 'resolved' ||
+              annotation.status === 'dismissed'
+            )
+              return [{ ...member, terminal_result: annotation.status }]
+            return [member]
+          })
+          const changed =
+            members.length !== batch.members.length ||
+            members.some((member, index) => member !== batch.members[index])
+          const completed = members.every(
+            (member) => member.terminal_result !== null,
+          )
+          if (changed || (completed && batch.state !== 'completed')) {
+            batch.members = members
+            if (completed) {
+              batch.state = 'completed'
+              batch.failure_code = null
+              batch.retryable = null
+            }
+            batch.updated_at = nowIso()
+            needsSave = true
+          }
+        }
+      }
     }
     if (isAnnotationsFile(parsed)) {
       annotations = parsed.annotations
@@ -262,17 +350,22 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       } else {
         batches = migratedBatches
       }
-      migrated = true
+      needsSave = true
     } else {
       const stamp = nowIso().replaceAll(':', '')
       const target = `${annotationsPath}.corrupt-${stamp}`
       renameSync(annotationsPath, target)
       quarantined = target
+      needsSave = false
     }
   }
 
   function save(): void {
-    const payload: AnnotationsFile = { schema_version: 2, annotations, batches }
+    const payload = {
+      schema_version: 2,
+      annotations: [...annotations, ...skippedAnnotations],
+      batches,
+    }
     const dir = dirname(annotationsPath)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     const temp = join(dir, `.annotations-${randomUUID()}.tmp`)
@@ -281,7 +374,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     chmodSync(annotationsPath, 0o600)
   }
 
-  if (migrated) save()
+  if (needsSave) save()
 
   function find(thread: string): PreviewAnnotation | undefined {
     return annotations.find((annotation) => annotation.thread === thread)
@@ -607,7 +700,18 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       const annotation = find(thread)
       if (!annotation) return { ok: false, reason: 'unknown_thread' }
       if (annotation.anchor.kind !== 'artifact') {
-        annotation.anchor = { ...annotation.anchor, state }
+        annotation.anchor = {
+          ...annotation.anchor,
+          state,
+          ...(annotation.anchor.kind === 'text'
+            ? {
+                position_state:
+                  state === 'attached'
+                    ? ('attached' as const)
+                    : ('needs-check' as const),
+              }
+            : {}),
+        }
         touch(annotation)
         save()
       }

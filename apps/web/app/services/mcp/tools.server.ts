@@ -251,12 +251,15 @@ const COMMENT_THREAD_SCHEMA = mcpOutputField(
     created_at: z.string(),
     updated_at: z.string(),
     // What the thread is attached to. 'artifact' = the whole document;
-    // 'text' = a quoted span (quoted_text). state 'orphaned' means a later
-    // version removed that span, so the quote no longer matches the source.
+    // Text positions are resolved by the viewer. Unchecked and needs-check
+    // positions retain the original quote and map to the legacy orphaned state.
     anchor: z.object({
       kind: z.enum(['artifact', 'text']),
       quoted_text: z.string().nullable(),
       state: z.enum(['attached', 'orphaned']).nullable(),
+      position_state: z
+        .enum(['attached', 'needs-check', 'unchecked'])
+        .optional(),
     }),
     messages: z.array(
       z.object({
@@ -1255,7 +1258,7 @@ export function registerArtifactTools(
     {
       title: 'Post comment',
       description: toolDescription(
-        'Post a comment on an artifact you can view in your workspace, as the connected user. Start a new thread, reply to one, or anchor a comment to a quoted span of the text. Pass reply_to (a thread id from list_comments) to reply. To anchor the comment to a span, pass quote with the exact text to highlight (copy it from get_artifact); add quote_before / quote_after if the same text appears more than once. Omit reply_to and quote to comment on the whole artifact. Everyone who can view the artifact will see it.',
+        'Post a comment on an artifact you can view in your workspace, as the connected user. Start a new thread, reply to one, or anchor a comment to a quoted span of the text. Pass reply_to (a thread id from list_comments) to reply. To anchor the comment to a span, pass quote with the exact text to highlight (copy it from get_artifact); add quote_before / quote_after if the same text appears more than once (up to 400 characters per side, preserving boundary spaces). The viewer attaches only a unique exact complete context. Until a viewer opens the version, anchor.position_state is unchecked; ambiguous or missing positions become needs-check. Omit reply_to and quote to comment on the whole artifact. Everyone who can view the artifact will see it.',
       ),
       outputSchema: POST_COMMENT_OUTPUT_SCHEMA,
       annotations: WRITE_ANNOTATIONS,
@@ -2235,8 +2238,14 @@ function commentMutationError(
         recoverable_by: 'agent',
         hint: 'Omit thread_id to start a new thread instead.',
       })
-    case 'commit-failed':
     case 'invalid-anchor':
+      return toolError({
+        code: 'invalid-comment',
+        message: 'Invalid quote selector.',
+        recoverable_by: 'agent',
+        hint: 'Use a non-empty quote of at most 1000 characters and context of at most 400 characters on each side.',
+      })
+    case 'commit-failed':
     case 'invalid-message':
     case 'forbidden':
     case 'not-found':

@@ -7,6 +7,10 @@ export type PreviewAnchor =
   | { kind: 'artifact' }
   | {
       kind: 'text'
+      position_state?: 'attached' | 'needs-check' | 'unchecked'
+      selectorFormat?: 'normalized-v1'
+      textHash?: string
+      ambiguousAtCreation?: boolean
       state: 'attached' | 'orphaned'
       quotedText: string
       prefixText: string
@@ -220,7 +224,7 @@ export function isPreviewAnnotation(
     Number.isInteger(record.generation) &&
     typeof record.status === 'string' &&
     ANNOTATION_STATUSES.has(record.status) &&
-    isPreviewAnchor(record.anchor) &&
+    isPreviewAnchor(record.anchor, { stored: true }) &&
     typeof record.comment === 'string' &&
     Array.isArray(record.messages) &&
     record.messages.every(isThreadMessage) &&
@@ -231,7 +235,10 @@ export function isPreviewAnnotation(
   )
 }
 
-export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
+export function isPreviewAnchor(
+  value: unknown,
+  options: { stored?: boolean } = {},
+): value is PreviewAnchor {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   if (record.kind === 'artifact') return true
@@ -250,10 +257,35 @@ export function isPreviewAnchor(value: unknown): value is PreviewAnchor {
     )
   }
   if (record.kind === 'text') {
+    if (
+      record.position_state !== undefined &&
+      !['attached', 'needs-check', 'unchecked'].includes(
+        record.position_state as string,
+      )
+    )
+      return false
+    if (
+      record.selectorFormat !== undefined &&
+      (record.selectorFormat !== 'normalized-v1' ||
+        typeof record.textHash !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(record.textHash) ||
+        typeof record.ambiguousAtCreation !== 'boolean' ||
+        !Number.isSafeInteger(record.textStart) ||
+        !Number.isSafeInteger(record.textEnd) ||
+        (record.textStart as number) < 0 ||
+        typeof record.quotedText !== 'string' ||
+        (record.textEnd as number) - (record.textStart as number) !==
+          record.quotedText.length)
+    )
+      return false
     return (
       typeof record.quotedText === 'string' &&
+      (options.stored ||
+        (record.quotedText.length > 0 && record.quotedText.length <= 1000)) &&
       typeof record.prefixText === 'string' &&
+      (options.stored || record.prefixText.length <= 400) &&
       typeof record.suffixText === 'string' &&
+      (options.stored || record.suffixText.length <= 400) &&
       (record.textStart === null || Number.isInteger(record.textStart)) &&
       (record.textEnd === null || Number.isInteger(record.textEnd)) &&
       (record.cssPath === null || typeof record.cssPath === 'string')

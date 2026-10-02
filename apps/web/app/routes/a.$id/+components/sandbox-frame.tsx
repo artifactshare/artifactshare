@@ -1,3 +1,5 @@
+import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
+import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import { IconCheck, IconFile, IconPlugConnected } from '@tabler/icons-react'
 import {
@@ -123,6 +125,7 @@ type SandboxFrameProps = {
   highlightThreadId: string | null
   followsAppTheme: boolean
   lowTrust?: boolean
+  onAnchorResolutions?: (results: AnchorResolutionMessage['results']) => void
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
@@ -348,6 +351,7 @@ function useSandboxFrameController({
   targetThreadId,
   highlightThreadId,
   onTextSelection,
+  onAnchorResolutions,
   onTextSelectionClear,
   onThreadSelect,
   onOutsidePointerDown,
@@ -407,38 +411,51 @@ function useSandboxFrameController({
   const highlights = useMemo(() => {
     const textHighlights = commentThreads.flatMap((thread) => {
       const subject = thread.subject
-      if (
-        subject.kind !== 'text' ||
-        subject.state !== 'attached' ||
-        subject.textStart === null ||
-        subject.textEnd === null
-      ) {
-        return []
-      }
+      if (subject.kind !== 'text') return []
       return {
+        ...subject,
         threadId: thread.id,
         status: thread.status,
-        textStart: subject.textStart,
-        textEnd: subject.textEnd,
-        quotedText: subject.quotedText,
         target: thread.id === highlightThreadId,
         count: thread.messages.length,
       }
     })
-    const openHighlights = textHighlights.filter(
-      (highlight) => highlight.status === 'open',
-    )
-    return textHighlights.filter(
-      (highlight) =>
-        highlight.status === 'open' ||
-        !openHighlights.some(
-          (openHighlight) =>
-            openHighlight.threadId !== highlight.threadId &&
-            openHighlight.textStart < highlight.textEnd &&
-            openHighlight.textEnd > highlight.textStart,
-        ),
-    )
+    return textHighlights
   }, [commentThreads, highlightThreadId])
+  const resolutionSyncRef = useRef<ReturnType<
+    typeof createAnchorResolutionSync
+  > | null>(null)
+  const applyResolutions = useEffectEvent(
+    (results: AnchorResolutionMessage['results']) => {
+      onAnchorResolutions?.(results)
+    },
+  )
+  useEffect(() => {
+    const sync = createAnchorResolutionSync(
+      `/api/shareables/${encodeURIComponent(shareableId)}/comments`,
+      (results) => applyResolutions(results),
+    )
+    resolutionSyncRef.current = sync
+    return () => {
+      sync.dispose()
+      resolutionSyncRef.current = null
+    }
+  }, [shareableId, versionId, frameUrl, frameInstance])
+  useEffect(() => {
+    resolutionSyncRef.current?.reapply()
+  }, [commentThreads])
+  const handleAnchorResolutions = useEffectEvent(
+    (message: AnchorResolutionMessage) => {
+      if (
+        message.token !== securityTokenRef.current ||
+        message.versionId !== versionId ||
+        message.targetPath !==
+          normalizeStaticSiteFramePath(new URL(frameUrl).pathname)
+      )
+        return
+      resolutionSyncRef.current?.accept(message)
+    },
+  )
 
   const clearReadyFallback = useCallback(() => {
     if (readyFallbackTimeoutRef.current !== null) {
@@ -579,8 +596,18 @@ function useSandboxFrameController({
   })
   const handleTextSelectionMessage = useEffectEvent(
     (message: TextSelectionMessage) => {
+      if (
+        message.selectorFormat &&
+        (message.token !== securityTokenRef.current ||
+          message.versionId !== versionId)
+      )
+        return
       const frameRect = frameRef.current?.getBoundingClientRect()
       onTextSelection({
+        selectorFormat: message.selectorFormat,
+        textHash: message.textHash,
+        ambiguousAtCreation: message.ambiguousAtCreation,
+        versionId: message.versionId,
         quotedText: message.quotedText,
         prefixText: message.prefixText,
         suffixText: message.suffixText,
@@ -691,25 +718,36 @@ function useSandboxFrameController({
       {
         ...SANDBOX_READY_CHECK_MESSAGE,
         challenge,
+        versionId,
+        targetPath: normalizeStaticSiteFramePath(new URL(frameUrl).pathname),
         textAnchorsEnabled,
         commentLabels,
       },
       '*',
     )
-  }, [commentLabels, textAnchorsEnabled])
+  }, [commentLabels, textAnchorsEnabled, versionId, frameUrl])
 
   const sendHighlights = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
       {
         source: 'artifactshare-parent',
         kind: 'comment-highlights',
+        versionId,
+        targetPath: normalizeStaticSiteFramePath(new URL(frameUrl).pathname),
         textAnchorsEnabled,
         commentLabels,
         highlights,
       },
       trustedMessageOrigin,
     )
-  }, [commentLabels, highlights, textAnchorsEnabled, trustedMessageOrigin])
+  }, [
+    commentLabels,
+    highlights,
+    textAnchorsEnabled,
+    trustedMessageOrigin,
+    versionId,
+    frameUrl,
+  ])
 
   const focusFrame = useCallback(() => {
     requestAnimationFrame(() => {
@@ -756,6 +794,8 @@ function useSandboxFrameController({
         )
         markFrameReadyFromMessage()
         clearReadyFallback()
+      } else if (message.kind === 'anchor-resolutions') {
+        handleAnchorResolutions(message)
       } else if (message.kind === 'text-selection') {
         handleTextSelectionMessage(message)
       } else if (message.kind === 'text-selection-cleared') {

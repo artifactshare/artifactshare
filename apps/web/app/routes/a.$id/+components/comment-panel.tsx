@@ -704,8 +704,15 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
           'text-warning border-[color-mix(in_srgb,var(--warning)_36%,var(--divider))] bg-[color-mix(in_srgb,var(--warning)_10%,var(--background))]',
       )}
     >
-      <strong className="hidden">
-        {t(attached ? 'comments.subjectText' : 'comments.subjectOrphaned')}
+      <strong className={attached ? 'hidden' : ''}>
+        {t(
+          attached
+            ? 'comments.subjectText'
+            : thread.subject.checking ||
+                thread.subject.positionState === 'unchecked'
+              ? 'comments.positionChecking'
+              : 'comments.subjectOrphaned',
+        )}
       </strong>
       <span className="[overflow-wrap:anywhere]">
         {quoteCommentText(thread.subject.quotedText)}
@@ -719,7 +726,14 @@ function compareCommentThreads(
   right: CommentThreadView,
 ): number {
   const rank = (thread: CommentThreadView) => {
-    if (thread.subject.kind === 'text' && thread.subject.state === 'attached') {
+    // A comment still being checked keeps the attached position, so the
+    // list does not jump when the check finishes.
+    if (
+      thread.subject.kind === 'text' &&
+      (thread.subject.state === 'attached' ||
+        thread.subject.checking ||
+        thread.subject.positionState === 'unchecked')
+    ) {
       return 0
     }
     if (thread.subject.kind === 'artifact') return 1

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 import { createPreviewStore } from './store.js'
 import type { PreviewAnchor } from './contract.js'
 
@@ -39,7 +39,7 @@ test('an invalid schema is quarantined too', () => {
   assert.ok(store.quarantinedPath)
 })
 
-test('a partial schema-2 submission is quarantined instead of stranded', () => {
+test('a partial schema-2 submission is skipped instead of quarantining peers', () => {
   const path = storePath()
   const created = new Date().toISOString()
   writeFileSync(
@@ -64,7 +64,7 @@ test('a partial schema-2 submission is quarantined instead of stranded', () => {
     }),
   )
   const store = createPreviewStore(path)
-  assert.ok(store.quarantinedPath)
+  assert.equal(store.quarantinedPath, null)
   assert.equal(store.all().length, 0)
 })
 
@@ -347,4 +347,164 @@ test('setAnchorState flips attached/orphaned and no-ops on artifact anchors', ()
   const noop = store.setAnchorState(artifactDraft.thread, 'orphaned')
   assert.ok(noop.ok)
   assert.deepEqual(store.all()[1]?.anchor, { kind: 'artifact' })
+})
+
+test('preserves modern selector metadata on reload and exposes position state without changing the quote', () => {
+  const path = storePath()
+  const store = createPreviewStore(path)
+  const modern: PreviewAnchor = {
+    ...anchor,
+    selectorFormat: 'normalized-v1',
+    textHash: 'a'.repeat(64),
+    ambiguousAtCreation: true,
+    position_state: 'attached',
+  }
+  const result = store.createDraft(modern, 'Check this')
+  store.setAnchorState(result.thread, 'orphaned')
+  const reloaded = createPreviewStore(path).all()[0]!
+  assert.deepEqual(reloaded.anchor, {
+    ...modern,
+    state: 'orphaned',
+    position_state: 'needs-check',
+  })
+})
+
+for (const schema_version of [1, 2]) {
+  test(`schema-${schema_version} keeps oversized legacy quotes and skips only malformed records`, () => {
+    const path = storePath()
+    const seed = createPreviewStore(path)
+    const long = seed.createDraft(
+      { ...anchor, quotedText: 'x'.repeat(1500), textEnd: 1500 },
+      'old long selection',
+    )
+    const other = seed.createDraft(anchor, 'other')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schema_version,
+        annotations: [long, { ...other, anchor: null }, other],
+        batches: [],
+      }),
+    )
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const loaded = createPreviewStore(path)
+      assert.equal(loaded.quarantinedPath, null)
+      assert.deepEqual(
+        loaded.all().map((record) => record.thread),
+        [long.thread, other.thread],
+      )
+      assert.equal(warning.mock.calls.length, 1)
+    } finally {
+      warning.mockRestore()
+    }
+  })
+}
+
+for (const remaining of ['pending', 'resolved', 'none'] as const) {
+  test(`recovers submitted batches after skipping a malformed member (${remaining} remains)`, () => {
+    const path = storePath()
+    const seed = createPreviewStore(path)
+    const broken = seed.createDraft(anchor, 'will be corrupted')
+    const kept =
+      remaining === 'none' ? null : seed.createDraft(anchor, 'keep working')
+    seed.submitDrafts()
+    seed.deliver()
+    if (remaining === 'resolved' && kept)
+      seed.applyDone([{ thread: kept.thread, generation: 1, outcome: 'fixed' }])
+    const saved = JSON.parse(readFileSync(path, 'utf8'))
+    saved.annotations.find(
+      (item: { thread: string }) => item.thread === broken.thread,
+    ).anchor = null
+    writeFileSync(path, JSON.stringify(saved))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const recovered = createPreviewStore(path)
+      assert.equal(recovered.quarantinedPath, null)
+      assert.equal(warn.mock.calls.length, 1)
+      assert.deepEqual(
+        recovered.latestBatch()?.members.map((member) => member.thread),
+        kept ? [kept.thread] : [],
+      )
+      // Recovery is persisted even before another command mutates the store.
+      const reloaded = createPreviewStore(path)
+      // The skipped record is retained and reported again, never erased.
+      assert.equal(warn.mock.calls.length, 2)
+      assert.deepEqual(reloaded.batches(), recovered.batches())
+      if (remaining === 'pending' && kept) {
+        assert.deepEqual(
+          reloaded.deliver().map((item) => item.thread),
+          [kept.thread],
+        )
+        assert.deepEqual(
+          reloaded.applyDone([
+            { thread: kept.thread, generation: 1, outcome: 'fixed' },
+          ]),
+          ['accepted'],
+        )
+      } else {
+        assert.deepEqual(reloaded.deliver(), [])
+      }
+      assert.equal(reloaded.latestBatch()?.state, 'completed')
+      assert.equal(reloaded.activeBatch(), null)
+      reloaded.createDraft(anchor, 'next request')
+      assert.equal(reloaded.submitDrafts().ok, true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+}
+
+test('skipped annotations survive repeated load and save cycles unchanged', () => {
+  const path = storePath()
+  const seed = createPreviewStore(path)
+  const draft = seed.createDraft(anchor, 'original')
+  const skipped = [
+    {
+      ...draft,
+      thread: 'missing-batch',
+      status: 'requested',
+      batch_id: 'missing',
+    },
+    {
+      ...draft,
+      thread: 'future-format',
+      anchor: {
+        ...anchor,
+        selectorFormat: 'normalized-v99',
+        futureData: ['preserve', 42],
+      },
+    },
+    { thread: 'invalid', comment: 'preserve even incomplete records' },
+  ]
+  writeFileSync(
+    path,
+    JSON.stringify({
+      schema_version: 2,
+      annotations: [draft, ...skipped],
+      batches: [],
+    }),
+  )
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const store = createPreviewStore(path)
+      assert.equal(
+        store.all().some((item) => item.thread === 'future-format'),
+        false,
+      )
+      store.createDraft(anchor, 'new draft')
+      const saved = JSON.parse(readFileSync(path, 'utf8'))
+      for (const original of skipped) {
+        assert.deepEqual(
+          saved.annotations.find(
+            (item: { thread: string }) => item.thread === original.thread,
+          ),
+          original,
+        )
+      }
+    }
+  } finally {
+    warn.mockRestore()
+  }
 })

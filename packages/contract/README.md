@@ -90,3 +90,7 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+### Quoted comment positions
+
+Quoted comments are resolved in the viewer using the exact quote and surrounding context, never the nearest repeated words. `--quote-before` and `--quote-after` accept up to 400 characters per side; preserve spaces next to the quote. Creation does not search the artifact. Optional `anchor.position_state` is `unchecked` until that version is viewed, then `attached` or `needs-check`. Only `attached` maps to `anchor.state: attached`; both other states map to `orphaned`. Older responses may omit `position_state`. Local preview uses the same strict resolution on every reload and preserves the original quote when its position needs checking.

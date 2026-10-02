@@ -239,7 +239,7 @@ jobs:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
       - run: pnpm test:behavior-browser
       - name: Verify scenario routes and in-app navigation
         run: pnpm check:browser-local-state

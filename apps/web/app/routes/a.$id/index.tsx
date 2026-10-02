@@ -51,6 +51,43 @@ export const screen = {
       },
     },
     {
+      id: 'comments-position-checking',
+      description: 'テキストコメントの位置を確認している間（最大 3 秒）の表示',
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Comments"]',
+          },
+          {
+            action: 'hover',
+            selector: 'text=前年比20%減',
+          },
+        ],
+      },
+    },
+    {
+      id: 'comments-position-check',
+      description:
+        '引用した文がファイルから消えたテキストコメントが「引用した文がこの版に見つかりません」と表示された状態',
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Comments"]',
+          },
+          {
+            action: 'hover',
+            selector: 'text=Quoted text not found in this version',
+          },
+        ],
+      },
+    },
+    {
       id: 'anonymous',
       description: '未認証の共有リンク受け手が Viewer を開いた状態',
       setup: {

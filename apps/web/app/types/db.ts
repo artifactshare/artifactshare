@@ -53,6 +53,7 @@ export interface DB {
   version_files: VersionFilesTable
   comment_threads: CommentThreadsTable
   comment_messages: CommentMessagesTable
+  comment_anchor_results: CommentAnchorResultsTable
   comment_anchors: CommentAnchorsTable
   shareable_viewer_recency: ShareableViewerRecencyTable
   sandbox_token_uses: SandboxTokenUsesTable
@@ -599,7 +600,23 @@ interface CommentMessagesTable {
   updated_at: string
 }
 
+interface CommentAnchorResultsTable {
+  anchor_id: string
+  version_id: string
+  target_path: string
+  state: 'attached' | 'needs-check'
+  hint_start: number | null
+  hint_end: number | null
+  text_hash: string | null
+  frame_token: string
+  generation: number
+  updated_at: string
+}
+
 interface CommentAnchorsTable {
+  selector_format: Generated<'normalized-v1' | 'quote-v1' | null>
+  text_hash: Generated<string | null>
+  ambiguous_at_creation: Generated<number | null>
   id: string
   thread_id: string
   version_id: string | null
