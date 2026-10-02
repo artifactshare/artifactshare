@@ -121,12 +121,12 @@ describe('strict normalized selectors', () => {
     ['before', 'after', 'beforequoteafter', 'before quote after'],
     ['before ', ' after', 'before quote after', 'beforequoteafter'],
   ])(
-    'quote-v1 context %j + quote + %j never invents or removes boundary spaces',
+    'normalized-v1 context %j + quote + %j never invents or removes boundary spaces',
     (prefixText, suffixText, original, changed) => {
       const before = engine(original)
       const start = original.indexOf('quote')
       const selector = {
-        selectorFormat: 'quote-v1',
+        selectorFormat: 'normalized-v1',
         quotedText: 'quote',
         prefixText,
         suffixText,
@@ -147,6 +147,50 @@ describe('strict normalized selectors', () => {
       expect(engine(original + ' ' + original).resolve(selector)).toBeNull()
     },
   )
+  test('agent quote contexts tolerate one join space and need one distinct position', () => {
+    const selector = {
+      selectorFormat: 'quote-v1',
+      quotedText: 'brown fox',
+      prefixText: 'The quick',
+      suffixText: '',
+    }
+    expect(engine('The quick brown fox').resolve(selector)).toEqual({
+      textStart: 10,
+      textEnd: 19,
+    })
+    expect(
+      engine('The quick brown fox The quickbrown fox').resolve(selector),
+    ).toBeNull()
+    expect(
+      engine('The quick brown fox The quick brown fox').resolve(selector),
+    ).toBeNull()
+    expect(
+      engine('The quick brown fox').resolve({
+        ...selector,
+        prefixText: 'The quick ',
+      }),
+    ).toEqual({ textStart: 10, textEnd: 19 })
+    expect(
+      engine('The quickbrown fox').resolve({
+        ...selector,
+        prefixText: 'The quick ',
+      }),
+    ).toBeNull()
+    expect(
+      engine('brown fox here').resolve({
+        ...selector,
+        prefixText: '',
+        suffixText: 'here',
+      }),
+    ).toEqual({ textStart: 0, textEnd: 9 })
+    expect(
+      engine('brown fox here').resolve({
+        ...selector,
+        prefixText: '',
+        suffixText: ' here',
+      }),
+    ).toEqual({ textStart: 0, textEnd: 9 })
+  })
   test('legacy joins restore old trimmed context without guessing internal separators', () => {
     const selector = {
       quotedText: ' brown ',
@@ -177,7 +221,7 @@ describe('strict normalized selectors', () => {
         ...selector,
         selectorFormat: 'quote-v1',
       }),
-    ).toBeNull()
+    ).toEqual({ textStart: 10, textEnd: 15 })
   })
   test('hidden duplicates contribute to the whole-text hash and selector uniqueness', () => {
     const measured = engine('before quote after', 'before quote after')

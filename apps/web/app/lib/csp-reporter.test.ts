@@ -25,6 +25,65 @@ describe('VIOLATION_REPORTER_SHA256', () => {
   })
 })
 
+describe('text highlight hit testing', () => {
+  test.each([
+    { type: 'click', isTrusted: true, detail: 1, hit: true },
+    { type: 'click', isTrusted: true, detail: 0, hit: false },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      pointerType: '',
+      hit: false,
+    },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      mozInputSource: 6,
+      hit: false,
+    },
+    {
+      type: 'click',
+      isTrusted: true,
+      detail: 1,
+      pointerType: 'mouse',
+      mozInputSource: 1,
+      hit: true,
+    },
+    { type: 'click', isTrusted: false, detail: 1, hit: false },
+    { type: 'click', isTrusted: false, detail: 0, hit: false },
+    { type: 'pointerdown', isTrusted: true, detail: 0, hit: true },
+  ])(
+    '$type trusted=$isTrusted detail=$detail hit=$hit',
+    ({ hit, ...event }) => {
+      const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        '  function hitComment(event) {',
+      )
+      const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+        "  document.addEventListener('click'",
+        start,
+      )
+      const badge = {}
+      const measure = vi.fn(() => [{ left: 0, top: 0, right: 100, bottom: 20 }])
+      const hitComment = new Function(
+        'trusted',
+        'badges',
+        'measureBadgeEntry',
+        `${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}; return hitComment`,
+      )(
+        (candidate: { isTrusted: boolean }) => candidate.isTrusted,
+        [{ badge }],
+        measure,
+      )
+      expect(hitComment({ ...event, clientX: 0, clientY: 0 })).toBe(
+        hit ? badge : null,
+      )
+      expect(measure).toHaveBeenCalledTimes(hit ? 1 : 0)
+    },
+  )
+})
+
 describe('isSandboxMessage', () => {
   test('rejects untrusted frame control messages', () => {
     expect(

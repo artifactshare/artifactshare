@@ -1422,3 +1422,5 @@ CREATE TABLE comment_anchor_results (
   CHECK ((hint_start IS NOT NULL AND hint_end IS NOT NULL AND hint_start >= 0 AND hint_end > hint_start AND text_hash IS NOT NULL) OR
     (state = 'needs-check' AND hint_start IS NULL AND hint_end IS NULL AND text_hash IS NULL))
 );
+
+CREATE INDEX idx_comment_anchor_results_version_id ON comment_anchor_results(version_id);

@@ -2923,6 +2923,21 @@ test('0109 preserves legacy selectors, constrains per-version results and cascad
       text_hash: null,
       ambiguous_at_creation: null,
     })
+    expect(
+      db
+        .prepare(
+          'EXPLAIN QUERY PLAN SELECT * FROM comment_anchor_results WHERE version_id = ?',
+        )
+        .all('anchor-version'),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.stringContaining(
+            'USING INDEX idx_comment_anchor_results_version_id',
+          ),
+        }),
+      ]),
+    )
     const insert = db.prepare(
       'INSERT INTO comment_anchor_results (anchor_id, version_id, target_path, state, hint_start, hint_end, text_hash, frame_token, generation, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )

@@ -339,6 +339,127 @@ describe('CSP reporter runtime behavior', () => {
     expect(print.querySelector('pre')?.hidden).toBe(true)
   })
 
+  test('keyboard link activation and script clicks ignore highlight geometry at the origin', async () => {
+    const doc = await fixture(
+      '<p style="position:fixed;left:0;top:0;margin:0">Highlighted text</p><a id="link" href="https://example.com/keyboard-target">Go</a><form><button id="submit">Submit</button></form>',
+    )
+    await applyHighlights([{ threadId: 'thread-1' }])
+    // Make the source range cover (0,0), including browsers with font ascenders.
+    const rangePrototype = Object.getPrototypeOf(doc.createRange())
+    const getRects = rangePrototype.getClientRects
+    rangePrototype.getClientRects = () => [
+      { left: 0, top: 0, right: 200, bottom: 30, width: 200, height: 30 },
+    ]
+    try {
+      let submitted = false
+      doc.querySelector('form')!.addEventListener('submit', (event) => {
+        event.preventDefault()
+        submitted = true
+      })
+      // Establish browser focus inside the iframe before sending real keys.
+      // Programmatic element focus alone can leave Firefox's keyboard input
+      // directed at the enclosing tester frame.
+      const reporter = page.frameLocator(page.elementLocator(frame!))
+      await reporter.getByRole('button', { name: 'Submit' }).click()
+      submitted = false
+      doc.querySelector<HTMLButtonElement>('#submit')!.click()
+      expect(submitted).toBe(true)
+      const link = doc.querySelector<HTMLAnchorElement>('#link')!
+      link.focus()
+      expect(doc.activeElement).toBe(link)
+      expect(document.activeElement).toBe(frame)
+      await userEvent.keyboard('{Enter}')
+      // A srcdoc fragment link inherits the runner URL and would load a second
+      // Vitest tester. Exercise the normal parent-link gate without navigation.
+      await waitForMessage(
+        'link-clicked',
+        (message) => message.href === 'https://example.com/keyboard-target',
+      )
+      expect(frame!.contentDocument).toBe(doc)
+      await probeReporter()
+      expect(selected()).toBeUndefined()
+    } finally {
+      rangePrototype.getClientRects = getRects
+    }
+  })
+
+  test('a focused badge survives live counter changes and equal-value node replacement', async () => {
+    const doc = await fixture(
+      '<p id="target">Highlighted text</p><p id="counter">0</p>',
+    )
+    await applyHighlights([{ threadId: 'thread-1' }])
+    const badge = doc.querySelector<HTMLButtonElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    badge.focus()
+    doc.querySelector('#counter')!.textContent = '1'
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+    expect(doc.activeElement).toBe(badge)
+    doc.querySelector('#target')!.textContent = 'Highlighted text'
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+    expect(doc.activeElement).toBe(badge)
+  })
+
+  test('reattachment renews the checking grace for hosted and preview anchors', async () => {
+    const doc = await fixture('<p id="target">Missing</p>')
+    const post = (kind: string, data: object) =>
+      frame!.contentWindow!.postMessage(
+        { source: 'artifactshare-parent', kind, ...data },
+        '*',
+      )
+    post('comment-highlights', {
+      textAnchorsEnabled: true,
+      highlights: [
+        {
+          threadId: 'hosted',
+          quotedText: 'Highlighted text',
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    post('verify-anchors', {
+      anchors: [
+        {
+          kind: 'text',
+          thread: 'preview',
+          quotedText: 'Highlighted text',
+          prefixText: '',
+          suffixText: '',
+        },
+      ],
+    })
+    const hasState = (kind: string, state: string, from = 0) =>
+      vi.waitFor(
+        () => {
+          expect(
+            messages
+              .slice(from)
+              .some(
+                (message) =>
+                  message.kind === kind &&
+                  JSON.stringify(message).includes('"' + state + '"'),
+              ),
+          ).toBe(true)
+        },
+        { timeout: 4200 },
+      )
+    await hasState('anchor-resolutions', 'needs-check')
+    await hasState('anchor-verdicts', 'needs-check')
+    let from = messages.length
+    doc.querySelector('#target')!.textContent = 'Highlighted text'
+    await hasState('anchor-resolutions', 'attached', from)
+    await hasState('anchor-verdicts', 'attached', from)
+    from = messages.length
+    doc.querySelector('#target')!.textContent = 'Missing again'
+    await hasState('anchor-resolutions', 'checking', from)
+    await hasState('anchor-verdicts', 'checking', from)
+    await hasState('anchor-resolutions', 'needs-check', from)
+    await hasState('anchor-verdicts', 'needs-check', from)
+  }, 12000)
+
   test('keyboard operation on a comment badge sends selection to the parent', async () => {
     const doc = await fixture(
       '<button id=before>Before comments</button><p>Highlighted text</p>',
@@ -446,20 +567,13 @@ describe('CSP reporter runtime behavior', () => {
   })
 
   test('highlight and badge pointerdown are excluded while outside pointerdown is reported', async () => {
-    const doc = await fixture()
+    await fixture()
     await applyHighlights([
       { threadId: 'thread-3', textStart: 11, textEnd: 27, count: 1 },
     ])
-    doc.querySelector<HTMLElement>('#target')!.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        bubbles: true,
-        clientX: doc.querySelector('#target')!.getBoundingClientRect().left + 1,
-        clientY: doc.querySelector('#target')!.getBoundingClientRect().top + 1,
-      }),
-    )
-    doc
-      .querySelector<HTMLElement>('.ash-comment-highlight-badge')!
-      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    const reporter = page.frameLocator(page.elementLocator(frame!))
+    await reporter.getByText('Highlighted text', { exact: true }).click()
+    await reporter.getByLabelText('Open 1 unresolved comment on').click()
     await probeReporter()
     expect(
       messages.filter(
@@ -467,9 +581,7 @@ describe('CSP reporter runtime behavior', () => {
       ),
     ).toHaveLength(0)
 
-    doc
-      .querySelector('#content')!
-      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await reporter.getByText('Normal link', { exact: true }).click()
     await waitForMessage('comment-outside-pointer-down')
     expect(
       messages.filter(
@@ -554,25 +666,52 @@ describe('CSP reporter runtime behavior', () => {
       await vi.waitFor(() => expect(badge.style.display).toBe('none'))
       expect([...registry.values()][0]).toBe(originalHighlights[0])
 
+      // Re-resolution must reuse the badge and still refresh its geometry.
+      await applyHighlights([{ threadId: 'visibility', count: 1 }])
+      expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+      expect(badge.style.display).toBe('none')
+      const refreshedHighlight = [...registry.values()][0]
+
       ancestor.classList.remove('concealed')
       await vi.waitFor(() => expect(badge.style.display).toBe('inline-flex'))
       expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
-      expect([...registry.values()][0]).toBe(originalHighlights[0])
+      expect([...registry.values()][0]).toBe(refreshedHighlight)
       expect(
         messages.filter((message) => message.kind === 'anchor-resolutions'),
       ).toHaveLength(messageCount)
 
-      const range = [...originalHighlights[0]][0]
+      const range = [...refreshedHighlight][0]
       const rect = range.getBoundingClientRect()
       expect(rect.width).toBeGreaterThan(0)
       range.startContainer.parentElement!.dispatchEvent(
         new MouseEvent('click', {
           bubbles: true,
           cancelable: true,
+          detail: 1,
           clientX: rect.left + rect.width / 2,
           clientY: rect.top + rect.height / 2,
         }),
       )
+      await probeReporter()
+      expect(selected()).toBeUndefined()
+      // Only trusted pointer input may select text highlights. Keep the
+      // synthetic click above as a negative control even with detail > 0.
+      const reporter = page.frameLocator(page.elementLocator(frame!))
+      // display:contents spans have no actionable box. The paragraph owns
+      // the text's layout box; clicking it still exercises range hit testing.
+      const paragraphRect = doc.querySelector('p')!.getBoundingClientRect()
+      await reporter.getByRole('paragraph').click({
+        position: {
+          x: rect.left + rect.width / 2 - paragraphRect.left,
+          y: rect.top + rect.height / 2 - paragraphRect.top,
+        },
+      })
+      await waitForMessage(
+        'comment-thread-selected',
+        (message) => message.threadId === 'visibility',
+      )
+      messages = []
+      await reporter.getByRole('button').click()
       await waitForMessage(
         'comment-thread-selected',
         (message) => message.threadId === 'visibility',

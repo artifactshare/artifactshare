@@ -1155,8 +1155,20 @@ function normalizeCommentAnchor(
   )
     return null
   if (
+    rawAnchor.selectorFormat !== undefined &&
     rawAnchor.selectorFormat !== 'normalized-v1' &&
     rawAnchor.selectorFormat !== 'quote-v1'
+  )
+    return null
+  if (
+    rawAnchor.selectorFormat === undefined &&
+    (!Number.isSafeInteger(rawAnchor.textStart) ||
+      !Number.isSafeInteger(rawAnchor.textEnd) ||
+      rawAnchor.textStart! < 0 ||
+      rawAnchor.textEnd! <= rawAnchor.textStart! ||
+      rawAnchor.textHash !== undefined ||
+      rawAnchor.ambiguousAtCreation !== undefined ||
+      rawAnchor.versionId !== undefined)
   )
     return null
   if (rawAnchor.selectorFormat === 'normalized-v1') {
@@ -1269,7 +1281,13 @@ async function resolveCommentSubjects(
         result.version_id === access.currentVersionId &&
         result.target_path === (access.entrypointPath ?? '/index.html'),
     )
-    const latest = results.find((result) => result.text_hash !== null)
+    const latest =
+      current ??
+      results.find(
+        (result) =>
+          result.target_path === (access.entrypointPath ?? '/index.html') &&
+          result.text_hash !== null,
+      )
     const positionState = current?.state ?? 'unchecked'
     subjects.set(anchor.thread_id, {
       kind: 'text',

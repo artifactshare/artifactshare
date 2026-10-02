@@ -119,3 +119,24 @@ test('a stale selection uses the existing version_conflict response', async () =
     error: { code: 'version_conflict' },
   })
 })
+
+test('accepts the pre-deploy text selection payload as a legacy selector', async () => {
+  mocks.create.mockResolvedValue({ kind: 'invalid-body' })
+  const anchor = {
+    quotedText: 'word',
+    prefixText: 'before',
+    suffixText: 'after',
+    textStart: 999,
+    textEnd: 1003,
+    cssPath: null,
+  }
+  await post({ intent: 'create-thread', body: 'Check', anchor })
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    'Check',
+    expect.objectContaining({ ...anchor, selectorFormat: undefined }),
+    expect.anything(),
+  )
+})

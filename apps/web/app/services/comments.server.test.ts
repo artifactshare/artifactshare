@@ -1,3 +1,4 @@
+import { TEXT_ANCHOR_ENGINE_SCRIPT } from '../../../../packages/viewer-kit/src/text-anchor'
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
@@ -374,7 +375,7 @@ describe('comments server', () => {
     }
   })
 
-  test('new selectors require an explicit format while legacy rows remain readable', async () => {
+  test('modern metadata cannot bypass validation by omitting the format', async () => {
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
     expect(
       await createCommentThread(fixture.db, access, viewerUser, 'Check', {
@@ -385,6 +386,75 @@ describe('comments server', () => {
     expect(
       await fixture.db.selectFrom('comment_threads').selectAll().execute(),
     ).toEqual([])
+  })
+
+  test('old viewer payloads create legacy selectors whose offsets remain untrusted', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const anchor = {
+      quotedText: 'selected words',
+      prefixText: 'the',
+      suffixText: 'here',
+      textStart: 999,
+      textEnd: 1000,
+      cssPath: null,
+    }
+    expect(
+      (
+        await createCommentThread(
+          fixture.db,
+          access,
+          viewerUser,
+          'Check',
+          anchor,
+        )
+      ).kind,
+    ).toBe('ok')
+    const subject = (
+      await loadCommentThreads(fixture.db, access, viewerUser)
+    )[0].subject
+    expect(subject).toMatchObject({
+      selectorFormat: null,
+      positionState: 'unchecked',
+      textStart: null,
+      textEnd: null,
+    })
+    const row = await fixture.db
+      .selectFrom('comment_anchors')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(row).toMatchObject({
+      selector_format: null,
+      quoted_text: anchor.quotedText,
+      prefix_text: 'the',
+      suffix_text: 'here',
+    })
+    function resolve(text: string) {
+      const root = { localName: 'p', closest: () => null }
+      let next = true
+      const document = {
+        createTreeWalker: () => ({
+          nextNode: () => {
+            if (!next) return null
+            next = false
+            return { parentElement: root, nodeValue: text }
+          },
+        }),
+      }
+      return new Function(
+        'document',
+        'NodeFilter',
+        'root',
+        'selector',
+        `${TEXT_ANCHOR_ENGINE_SCRIPT}; return createTextAnchorEngine(root).resolve(selector)`,
+      )(document, { SHOW_TEXT: 4 }, root, subject)
+    }
+    expect(resolve('the selected words here')).toEqual({
+      textStart: 4,
+      textEnd: 18,
+    })
+    expect(
+      resolve('the selected words here the selected words here'),
+    ).toBeNull()
   })
 
   test('quote creation is hintless and preserves context boundary spaces without R2 reads', async () => {
@@ -521,6 +591,23 @@ describe('comments server', () => {
     expect(
       (await loadCommentThreads(fixture.db, v2, viewerUser))[0].subject,
     ).toMatchObject({ positionState: 'attached', textStart: 100 })
+    // A later write on an older version must not replace this version's hints.
+    expect(
+      await write('v1', 4, { ...attached(24), textHash: 'd'.repeat(64) }),
+    ).toBe(true)
+    await fixture.db
+      .updateTable('comment_anchor_results')
+      .set({ updated_at: '2099-01-01' })
+      .where('version_id', '=', 'v1')
+      .execute()
+    expect(
+      (await loadCommentThreads(fixture.db, v2, viewerUser))[0].subject,
+    ).toMatchObject({ textStart: 100, textHash: 'c'.repeat(64) })
+    await fixture.db
+      .updateTable('comment_anchor_results')
+      .set({ updated_at: '2000-01-01' })
+      .where('version_id', '=', 'v1')
+      .execute()
     expect(
       await write('v2', 3, {
         threadId: created.threadId,

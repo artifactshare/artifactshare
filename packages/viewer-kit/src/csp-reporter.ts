@@ -449,9 +449,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     });
   }
 
-  function clearMarks() {
+  var reusableBadges = new Map();
+  function clearMarks(preserveBadges) {
     for (var i = 0; i < badges.length; i++) {
-      badges[i].badge.remove();
+      if (preserveBadges) reusableBadges.set(badges[i].badge.dataset.threadId, badges[i].badge);
+      else badges[i].badge.remove();
     }
     badges = [];
     paintedAnchors = [];
@@ -462,7 +464,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     textPaints = [];
     var svgOverlays = document.querySelectorAll('.ash-comment-highlight-svg');
     for (var s = 0; s < svgOverlays.length; s++) svgOverlays[s].remove();
-    svgActiveThreads = {};
+    if (!preserveBadges) svgActiveThreads = {};
     appliedHighlightKey = '';
     var style = document.getElementById('ash-comment-highlight-style');
     if (style) style.textContent = '.ash-comment-highlight-badge::after{content:attr(data-count);}';
@@ -1054,7 +1056,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       return fallback ? [fallback] : [];
     }
 
-    var badge = document.createElement('button');
+    var badge = takeBadge(highlight);
     badge.setAttribute('data-anchor-ignore', '');
     badge.type = 'button';
     badge.className = 'ash-comment-highlight-badge';
@@ -1066,8 +1068,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         ? '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
         : '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
     badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackgroundForSvgText(first));
-    bindBadgePointer(badge);
-    document.documentElement.appendChild(badge);
     badges.push({ badge: badge, measure: measureSvgRange });
     measureSvgRange();
     return true;
@@ -1089,7 +1089,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       refreshTextPaints();
     }
     if (svgWrapped) return;
-    var badge = document.createElement('button');
+    var badge = takeBadge(highlight);
     badge.setAttribute('data-anchor-ignore', '');
     badge.type = 'button';
     badge.className = 'ash-comment-highlight-badge';
@@ -1097,8 +1097,6 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     badge.dataset.threadId = highlight.threadId;
     badge.dataset.count = String(highlight.count || 1);
     badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackground(ranges[0].startContainer.parentElement));
-    bindBadgePointer(badge);
-    document.documentElement.appendChild(badge);
     badges.push({ badge: badge, highlight: highlight, measure: function () {
       var rects = [];
       var lastElement = null;
@@ -1111,6 +1109,17 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       });
       return isBadgeAnchorVisible(lastElement) ? rects : [];
     }});
+  }
+
+  function takeBadge(highlight) {
+    var badge = reusableBadges.get(highlight.threadId);
+    if (badge) reusableBadges.delete(highlight.threadId);
+    else {
+      badge = document.createElement('button');
+      bindBadgePointer(badge);
+      document.documentElement.appendChild(badge);
+    }
+    return badge;
   }
 
   function missingState(id) {
@@ -1131,7 +1140,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!pendingHighlights.length) { lastResolutionSignature = ''; clearMarks(); return; }
     engine = engine || createTextAnchorEngine(anchorRoot());
     measuredText = engine.text;
-    clearMarks();
+    clearMarks(true);
     var results = [];
     var resolvedHighlights = pendingHighlights.map(function (highlight) {
       return { highlight: highlight, resolved: engine.resolve(highlight) };
@@ -1142,13 +1151,18 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         return other.highlight.status !== 'resolved' && other.resolved &&
           resolved.textStart < other.resolved.textEnd && other.resolved.textStart < resolved.textEnd;
       });
-      if (resolved) wrapRange({ ...highlight, ...resolved }, engine, covered);
+      if (resolved) {
+        delete checkingDeadlines[highlight.threadId];
+        wrapRange({ ...highlight, ...resolved }, engine, covered);
+      }
       results.push({ threadId: highlight.threadId,
         state: resolved ? 'attached' : missingState(highlight.threadId),
         textStart: resolved ? resolved.textStart : null,
         textEnd: resolved ? resolved.textEnd : null,
         textHash: resolved ? engine.hash : null });
     });
+    reusableBadges.forEach(function (badge) { badge.remove(); });
+    reusableBadges.clear();
     positionBadges();
     var signature = JSON.stringify([documentToken, displayedVersionId, displayedPath, results.map(function (result) {
       return [result.threadId, result.state, result.textStart, result.textEnd];
@@ -1284,6 +1298,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   function hitComment(event) {
+    // Firefox can give keyboard link activation a positive click count.
+    // PointerEvent uses an empty pointerType for non-pointer activation;
+    // older Firefox MouseEvents identify keyboard input with source 6.
+    if (!trusted(event) || (event.type === 'click' && (
+      event.detail <= 0 || event.pointerType === '' || event.mozInputSource === 6
+    ))) return null;
     for (var index = 0; index < badges.length; index++) {
       var rects = measureBadgeEntry(badges[index]);
       if (Array.from(rects).some(function (rect) {
@@ -1528,6 +1548,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       } else if (anchor.kind === 'text') {
         attached = engine.resolve(anchor) !== null;
       }
+      if (attached) delete checkingDeadlines[anchor.thread];
       verdicts.push({ thread: anchor.thread, attached: attached, position_state: attached ? 'attached' : missingState(anchor.thread) });
     }
     send({ kind: 'anchor-verdicts', verificationId: pendingVerificationId, generation: ++resolutionGeneration, verdicts: verdicts });
@@ -1768,7 +1789,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'nXOErqxat38tb538Z+xgcqC6mebAGBRe7t2EAYjYygI='
+  't/WdkMukxpBjDdA/xULtF7OZafx9kr+u2QThY2545Go='
 
 export interface CspViolationMessage {
   source: 'artifactshare'

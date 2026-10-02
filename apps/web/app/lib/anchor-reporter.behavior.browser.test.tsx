@@ -345,14 +345,30 @@ test.each([
     selectorFormat: 'quote-v1',
     exact: false,
     duplicate: false,
+    attached: true,
+  },
+  {
+    selectorFormat: 'quote-v1',
+    exact: false,
+    duplicate: true,
+    attached: false,
+  },
+  {
+    selectorFormat: 'quote-v1',
+    exact: true,
+    duplicate: true,
     attached: false,
   },
 ])(
-  'preview join tolerance is legacy-only and requires a unique position: %j',
+  'preview join tolerance applies to legacy and agent quotes and requires a unique position: %j',
   async ({ selectorFormat, exact, duplicate, attached }) => {
     await fixture(
       '<p>Hello the</p><p>selected words</p><p>here</p>' +
-        (duplicate ? '<p>Hello theselected wordshere</p>' : ''),
+        (duplicate
+          ? exact
+            ? '<p>Hello the</p><p>selected words</p><p>here</p>'
+            : '<p>Hello theselected wordshere</p>'
+          : ''),
     )
     send('verify-anchors', {
       verificationId: 1,

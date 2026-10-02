@@ -146,6 +146,7 @@ test('covered resolved text is retained for jump without invoking painting', () 
     var paintedAnchors = [], pendingHighlights = [], measuredText;
     var highlightNames = [], documentToken = '', displayedVersionId = 'v1', displayedPath = null;
     var lastResolutionSignature = '', resolutionGeneration = 0;
+    var checkingDeadlines = { open: 1, resolved: 1 }, reusableBadges = new Map();
     function clearMarks() { paintedAnchors = []; }
     function ensureCommentStyles() {}
     function highlightPalette() {}
@@ -158,10 +159,10 @@ test('covered resolved text is retained for jump without invoking painting', () 
       { threadId: 'open', status: 'open' },
       { threadId: 'resolved', status: 'resolved' }
     ], engine);
-    return paintedAnchors;
+    return { paintedAnchors, checkingDeadlines };
   `,
   )
-  const retained = run(
+  const result = run(
     {
       text: 'quote',
       hash: 'hash',
@@ -171,6 +172,8 @@ test('covered resolved text is retained for jump without invoking painting', () 
     paint,
     send,
   )
+  const retained = result.paintedAnchors
+  expect(result.checkingDeadlines).toEqual({})
   expect(paint).toHaveBeenCalledTimes(1)
   expect(
     retained.map(

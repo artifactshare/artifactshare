@@ -139,12 +139,13 @@ function createTextAnchorEngine(root) {
     const prefix = normalize(selector.prefixText || '')
     const suffix = normalize(selector.suffixText || '')
     if (!quote.trim()) return null
-    if (legacy) {
-      // Old writers trimmed context edges. Restore only those joins, never
+    if (legacy || selector.selectorFormat === 'quote-v1') {
+      // Old writers trimmed context edges, and agents pass context as the
+      // text just before/after the quote. Restore only those joins, never
       // guess at missing separators inside context (e.g. old block text 'ab').
       const positions = new Set()
-      for (const before of prefix ? ['', ' '] : [''])
-        for (const after of suffix ? ['', ' '] : [''])
+      for (const before of prefix && !prefix.endsWith(' ') ? ['', ' '] : [''])
+        for (const after of suffix && !suffix.startsWith(' ') ? ['', ' '] : [''])
           for (const at of hits(text, prefix + before + quote + after + suffix))
             positions.add(at + prefix.length + before.length)
       if (positions.size !== 1) return null

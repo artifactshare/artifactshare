@@ -307,8 +307,10 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   if (
-    raw.selectorFormat !== 'normalized-v1' ||
-    typeof raw.versionId !== 'string' ||
+    (raw.selectorFormat !== undefined &&
+      raw.selectorFormat !== 'normalized-v1') ||
+    (raw.selectorFormat === 'normalized-v1' &&
+      typeof raw.versionId !== 'string') ||
     typeof raw.quotedText !== 'string' ||
     typeof raw.prefixText !== 'string' ||
     typeof raw.suffixText !== 'string' ||
