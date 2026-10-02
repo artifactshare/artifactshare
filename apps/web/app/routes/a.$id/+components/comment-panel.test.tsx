@@ -31,9 +31,15 @@ vi.mock('~/components/app/app-side-panel', async () => {
 })
 import { CommentPanel } from './comment-panel'
 
-function render(positionState: 'attached' | 'needs-check' | 'unchecked') {
-  const thread: CommentThreadView = {
-    id: 'thread-1',
+type PositionState = 'attached' | 'needs-check' | 'unchecked'
+
+function textThread(
+  positionState: PositionState,
+  id = 'thread-1',
+  quotedText = 'Original words',
+): CommentThreadView {
+  return {
+    id,
     status: 'open',
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
@@ -44,7 +50,7 @@ function render(positionState: 'attached' | 'needs-check' | 'unchecked') {
       kind: 'text',
       state: positionState === 'attached' ? 'attached' : 'orphaned',
       positionState,
-      quotedText: 'Original words',
+      quotedText,
       prefixText: '',
       suffixText: '',
       targetPath: '/index.html',
@@ -54,11 +60,18 @@ function render(positionState: 'attached' | 'needs-check' | 'unchecked') {
       cssPath: null,
     },
   }
+}
+
+function render(positionState: PositionState) {
+  return renderThreads([textThread(positionState)])
+}
+
+function renderThreads(threads: CommentThreadView[]) {
   return renderToStaticMarkup(
     <CommentPanel
       shareableId="artifact"
       viewerUserId="viewer"
-      threads={[thread]}
+      threads={threads}
       onThreadsChange={() => {}}
       isCurrentShareableId={() => true}
       open
@@ -90,3 +103,23 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+test('a text comment keeps its list position while its check finishes', () => {
+  const artifactThread: CommentThreadView = {
+    ...textThread('attached', 'thread-artifact'),
+    subject: { kind: 'artifact' },
+  } as CommentThreadView
+  locale.value = 'en'
+  const order = (state: PositionState) => {
+    const html = renderThreads([
+      artifactThread,
+      textThread(state, 'thread-text', 'Checked words'),
+    ])
+    const artifactAt = html.indexOf(en['comments.subjectArtifact'])
+    expect(artifactAt).toBeGreaterThan(-1)
+    return html.indexOf('Checked words') < artifactAt
+  }
+  expect(order('unchecked')).toBe(order('attached'))
+  expect(order('attached')).toBe(true)
+  expect(order('needs-check')).toBe(false)
+})
