@@ -24,7 +24,10 @@ const codexLayer = {
 
 function usage() {
   return `Usage:
-  pnpm critique:tasks -- --walkthrough-root <path> --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--copy-only] [--dispositions-file <path>] [--dry-run]`
+  pnpm critique:tasks -- [--walkthrough-root <path>] [--scope-judgment <text>] --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--copy-only] [--dispositions-file <path>] [--dry-run]
+
+Without --walkthrough-root, --screen-root and nonblank --scope-judgment are required; --task is not allowed.
+--scope-judgment is only allowed without --walkthrough-root and must be nonblank.`
 }
 
 function parseArgs(argv) {
@@ -52,6 +55,7 @@ function parseArgs(argv) {
     if (
       ![
         '--walkthrough-root',
+        '--scope-judgment',
         '--source',
         '--task',
         '--screen-root',
@@ -64,14 +68,29 @@ function parseArgs(argv) {
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--walkthrough-root') options.walkthroughRoot = value
+    if (arg === '--scope-judgment') {
+      options.scopeJudgment = value.trim()
+      if (!options.scopeJudgment)
+        throw new Error('--scope-judgment must be nonblank.')
+    }
     if (arg === '--source') options.sources.push(value)
     if (arg === '--task') options.taskIds.push(value)
     if (arg === '--screen-root') options.screenRoots.push(value)
     if (arg === '--provider') options.provider = value
     if (arg === '--dispositions-file') options.dispositionsFile = value
   }
-  if (!options.walkthroughRoot)
-    throw new Error('--walkthrough-root is required.')
+  if (options.walkthroughRoot && options.scopeJudgment !== undefined)
+    throw new Error('--scope-judgment cannot be used with --walkthrough-root.')
+  if (!options.walkthroughRoot) {
+    if (options.taskIds.length)
+      throw new Error('--task requires --walkthrough-root.')
+    if (!options.screenRoots.length)
+      throw new Error('--screen-root is required without --walkthrough-root.')
+    if (!options.scopeJudgment)
+      throw new Error(
+        '--scope-judgment must be nonblank without --walkthrough-root.',
+      )
+  }
   if (options.sources.length === 0)
     throw new Error('At least one --source is required.')
   if (new Set(options.taskIds).size !== options.taskIds.length)
@@ -139,40 +158,45 @@ function validateInputs(
   { repo = process.cwd(), head, captureRoot } = {},
 ) {
   const canonicalRepo = realpathSync(repo)
-  const rootCandidate = resolve(canonicalRepo, options.walkthroughRoot)
-  const root = existsSync(rootCandidate)
-    ? realpathSync(rootCandidate)
-    : rootCandidate
   const captureRootCandidate = captureRoot
     ? resolve(captureRoot)
     : screenCaptureOutputRoot()
   const allowedCaptureRoot = existsSync(captureRootCandidate)
     ? realpathSync(captureRootCandidate)
     : captureRootCandidate
-  if (
-    (!insideRepo(canonicalRepo, root) &&
-      !insideRepo(allowedCaptureRoot, root) &&
-      !insideExternalCaptureRoot(root)) ||
-    !existsSync(root) ||
-    !statSync(root).isDirectory()
-  )
-    throw new Error(
-      'Walkthrough root must be an existing directory inside the repository or screen capture output root.',
+  let root
+  let selected = []
+  let entries = []
+  if (options.walkthroughRoot) {
+    const rootCandidate = resolve(canonicalRepo, options.walkthroughRoot)
+    root = existsSync(rootCandidate)
+      ? realpathSync(rootCandidate)
+      : rootCandidate
+    if (
+      (!insideRepo(canonicalRepo, root) &&
+        !insideRepo(allowedCaptureRoot, root) &&
+        !insideExternalCaptureRoot(root)) ||
+      !existsSync(root) ||
+      !statSync(root).isDirectory()
     )
-  const manifestPath = validatedFilePath(
-    root,
-    resolve(root, 'manifest.json'),
-    'Walkthrough manifest.json is required inside the capture root.',
-  )
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-  if (!head || manifest.head !== head)
-    throw new Error('Walkthrough capture HEAD must match the reviewed HEAD.')
-  const entries = Array.isArray(manifest.tasks) ? manifest.tasks : []
-  const selected = options.taskIds.length
-    ? options.taskIds
-    : entries.map((item) => item.taskId)
-  if (selected.length === 0)
-    throw new Error('At least one walkthrough task is required.')
+      throw new Error(
+        'Walkthrough root must be an existing directory inside the repository or screen capture output root.',
+      )
+    const manifestPath = validatedFilePath(
+      root,
+      resolve(root, 'manifest.json'),
+      'Walkthrough manifest.json is required inside the capture root.',
+    )
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    if (!head || manifest.head !== head)
+      throw new Error('Walkthrough capture HEAD must match the reviewed HEAD.')
+    entries = Array.isArray(manifest.tasks) ? manifest.tasks : []
+    selected = options.taskIds.length
+      ? options.taskIds
+      : entries.map((item) => item.taskId)
+    if (selected.length === 0)
+      throw new Error('At least one walkthrough task is required.')
+  }
   const sourcePaths = options.sources.map((item) => {
     const candidate = resolve(canonicalRepo, item)
     return existsSync(candidate) ? realpathSync(candidate) : candidate
@@ -272,7 +296,7 @@ function validateInputs(
       const label = `${entry.screen ?? '<screen>'}/${entry.state ?? '<state>'}/${entry.viewport ?? '<viewport>'}`
       if (entry.status !== 'success')
         throw new Error(`${label}: successful screen capture required.`)
-      if (entry.head !== head)
+      if (!head || entry.head !== head)
         throw new Error(
           `${label}: screen capture HEAD must match reviewed HEAD.`,
         )
@@ -281,6 +305,8 @@ function validateInputs(
   }
   return {
     root,
+    screenOnly: !options.walkthroughRoot,
+    scopeJudgment: options.scopeJudgment,
     selected,
     acceptedBehavior,
     sourcePaths,
@@ -321,15 +347,32 @@ function commonPrompt(input) {
     'Use measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.',
     'If a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.',
     'Use do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.',
-    'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.',
-    'Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.',
+    ...(!input.screenOnly
+      ? [
+          'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.',
+        ]
+      : []),
+    `Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the ${input.screenOnly ? 'user' : 'task'} decision.`,
     'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
-    'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
+    ...(!input.screenOnly
+      ? [
+          'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
+        ]
+      : []),
     'Return NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.',
-    `Tasks: ${input.selected.join(', ')}`,
-    `Accepted behavior: ${(input.acceptedBehavior ?? []).join(' | ') || 'none recorded'}`,
-    `Evidence JSON: ${input.evidencePaths.join(', ')}`,
-    `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
+    ...(input.screenOnly
+      ? [
+          'Screen-only critique: no registered task is affected. Review visual responsibility only; do not infer task evidence or completion claims.',
+        ]
+      : [
+          `Tasks: ${input.selected.join(', ')}`,
+          `Accepted behavior: ${(input.acceptedBehavior ?? []).join(' | ') || 'none recorded'}`,
+          `Evidence JSON: ${input.evidencePaths.join(', ')}`,
+          `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
+        ]),
+    ...(input.screenOnly && input.scopeJudgment
+      ? [`Scope judgment: ${input.scopeJudgment}`]
+      : []),
     `Relevant source: ${input.sourcePaths.join(', ')}`,
     ...(input.dispositions
       ? [
@@ -337,14 +380,14 @@ function commonPrompt(input) {
           `Dispositions:\n${input.dispositions}`,
         ]
       : []),
-    'Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.',
+    `Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes ${input.screenOnly ? 'screen, state, viewport' : 'task, viewport, phase'}, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.`,
   ].join('\n')
 }
 
 function promptFor(layer, input) {
   const common = commonPrompt(input)
-  if (layer.id === 'visual')
-    return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
+  if (layer.id === 'visual' || input.screenOnly)
+    return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nVisual layer: inspect every ${input.screenOnly ? 'standalone screen' : 'walkthrough and standalone screen'} PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
   if (layer.id === 'combined')
     return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
@@ -489,7 +532,7 @@ async function main({
   const selectedLayers =
     options.provider === 'codex'
       ? [codexLayer]
-      : options.copyOnly
+      : options.copyOnly || !options.walkthroughRoot
         ? claudeLayers.filter((layer) => layer.id === 'visual')
         : claudeLayers
   if (options.dryRun) {

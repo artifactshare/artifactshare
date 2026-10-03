@@ -451,7 +451,98 @@ export async function cleanupCliArtifacts({
     throw new AggregateError(errors, 'Multiple CLI artifact deletions failed')
 }
 
-async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
+// One deadline covers all current sheet content and overlay animations.
+export async function waitForSheetAnimations(
+  page,
+  {
+    now = () => performance.now(),
+    sleep = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms)),
+  } = {},
+) {
+  const timeoutMs = 2_000
+  const start = now()
+  while (true) {
+    let timer
+    let settled
+    const remainingMs = timeoutMs - (now() - start)
+    if (remainingMs <= 0)
+      return { status: 'timed-out', elapsedMs: now() - start, timeoutMs }
+    try {
+      settled = await Promise.race([
+        page.evaluate(() =>
+          [
+            ...document.querySelectorAll(
+              '[data-slot="sheet-content"], [data-slot="sheet-overlay"]',
+            ),
+          ]
+            .flatMap((element) => element.getAnimations({ subtree: true }))
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .every((animation) => animation.playState === 'finished'),
+        ),
+        new Promise((resolveDeadline) => {
+          timer = setTimeout(() => resolveDeadline(false), remainingMs)
+        }),
+      ])
+    } catch (error) {
+      if (/execution context.*destroyed/i.test(error.message))
+        return {
+          status: 'context-replaced',
+          elapsedMs: now() - start,
+          timeoutMs,
+        }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+    const elapsedMs = now() - start
+    if (settled || elapsedMs >= timeoutMs)
+      return {
+        status: settled && elapsedMs < timeoutMs ? 'completed' : 'timed-out',
+        elapsedMs,
+        timeoutMs,
+      }
+    await sleep(Math.min(50, timeoutMs - elapsedMs))
+  }
+}
+
+export async function captureStep({
+  page,
+  action,
+  screenshot,
+  animationTiming,
+  ...context
+}) {
+  const evidence = await applyAction({
+    page,
+    action,
+    animationTiming,
+    ...context,
+  })
+  if (
+    !action.captureDuringNavigation &&
+    !new URL(page.url()).pathname.startsWith('/a/')
+  )
+    await page.waitForLoadState('networkidle').catch(() => {})
+  evidence.sheetAnimationWait = await waitForSheetAnimations(
+    page,
+    animationTiming,
+  )
+  await page.screenshot(screenshot)
+  return evidence
+}
+
+async function applyAction({
+  action,
+  page,
+  baseUrl,
+  session,
+  state,
+  tempDir,
+  animationTiming,
+}) {
   let cliEvidence = null
   if (
     [
@@ -529,10 +620,15 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
       const locator = page.locator(action.selector)
       await locator.waitFor({ state: 'visible' })
       await locator.click()
+      const sheetAnimationWait = await waitForSheetAnimations(
+        page,
+        animationTiming,
+      )
       return {
         clicked: {
           selector: action.selector,
           sheetVisible: await isSheetVisible(page),
+          sheetAnimationWait,
         },
       }
     }
@@ -554,7 +650,17 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
         .locator(`${action.selector}[aria-expanded="true"]`)
         .first()
         .waitFor({ state: 'visible' })
-      return { clicked: { selector: action.selector, expanded: true } }
+      const sheetAnimationWait = await waitForSheetAnimations(
+        page,
+        animationTiming,
+      )
+      return {
+        clicked: {
+          selector: action.selector,
+          expanded: true,
+          sheetAnimationWait,
+        },
+      }
     }
   } else if (action.kind === 'gotoUnreadArtifact') {
     const artifactId = artifactIdFor(session, state.artifactIndex)
@@ -611,12 +717,17 @@ async function applyAction({ action, page, baseUrl, session, state, tempDir }) {
     const locator = page.locator(action.selector)
     await locator.waitFor({ state: 'visible' })
     await locator.click()
+    const sheetAnimationWait = await waitForSheetAnimations(
+      page,
+      animationTiming,
+    )
     const settleMilliseconds = clickSettleMilliseconds(action)
     if (settleMilliseconds > 0) await page.waitForTimeout(settleMilliseconds)
     return {
       clicked: {
         selector: action.selector,
         sheetVisible: await isSheetVisible(page),
+        sheetAnimationWait,
       },
     }
   } else if (action.kind === 'inspect') {
@@ -776,21 +887,16 @@ async function captureRun({
             tempDir,
           })
       }
-      const actionEvidence = await applyAction({
+      const file = `${String(index + 1).padStart(2, '0')}-${step.phase}-${viewport}.png`
+      const actionEvidence = await captureStep({
         action: step.action,
         page: branch.page,
         baseUrl,
         session: activeSession,
         state: runState,
         tempDir,
+        screenshot: { path: join(outDir, file), fullPage: true },
       })
-      if (
-        !step.action.captureDuringNavigation &&
-        !new URL(branch.page.url()).pathname.startsWith('/a/')
-      )
-        await branch.page.waitForLoadState('networkidle').catch(() => {})
-      const file = `${String(index + 1).padStart(2, '0')}-${step.phase}-${viewport}.png`
-      await branch.page.screenshot({ path: join(outDir, file), fullPage: true })
       steps.push({
         phase: step.phase,
         description: step.description,

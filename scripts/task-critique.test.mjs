@@ -20,6 +20,7 @@ import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import {
   cleanHead,
   invocation,
+  main,
   parseArgs,
   promptFor,
   readDispositions,
@@ -627,4 +628,404 @@ test('copy-only runs the Claude visual layer and needs crops', () => {
       ]),
     /Claude visual layer only/u,
   )
+})
+
+function screenOnlyFixture(t) {
+  const repo = mkdtempSync(join(tmpdir(), 'screen-only-critique-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const root = join(repo, 'screens')
+  const head = 'a'.repeat(40)
+  mkdirSync(root)
+  writeFileSync(join(repo, 'source.tsx'), 'export const screen = true\n')
+  const entries = ['viewer.png', 'viewer-mobile.png'].map((file) => {
+    writeFileSync(join(root, file), 'png')
+    return {
+      screen: 'viewer',
+      state: 'ready',
+      viewport: file,
+      status: 'success',
+      head,
+      file,
+    }
+  })
+  const save = () =>
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify(entries))
+  save()
+  const argv = [
+    '--screen-root',
+    'screens',
+    '--scope-judgment',
+    '  Only the review report changes; no registered task is affected.  ',
+    '--source',
+    'source.tsx',
+  ]
+  return { repo, root, head, entries, save, argv }
+}
+
+test('screen-only parser requires captures, scope judgment and source and rejects tasks', () => {
+  const valid = [
+    '--screen-root',
+    'screens',
+    '--scope-judgment',
+    ' none affected ',
+    '--source',
+    'source.tsx',
+  ]
+  for (const provider of ['claude', 'codex']) {
+    const parsed = parseArgs([...valid, '--provider', provider])
+    assert.equal(parsed.scopeJudgment, 'none affected')
+    assert.equal(parsed.walkthroughRoot, undefined)
+  }
+  for (const [flag, value] of [
+    ['--screen-root', 'screens'],
+    ['--scope-judgment', ' none affected '],
+    ['--source', 'source.tsx'],
+  ]) {
+    assert.throws(
+      () => parseArgs(valid.filter((arg) => arg !== flag && arg !== value)),
+      new RegExp(flag),
+    )
+  }
+  assert.throws(
+    () => parseArgs([...valid, '--scope-judgment', ' \t ']),
+    /--scope-judgment/,
+  )
+  assert.throws(
+    () => parseArgs([...valid, '--task', 'share-file-link']),
+    /--task requires --walkthrough-root/,
+  )
+  assert.throws(
+    () => parseArgs([...valid, '--provider', 'codex', '--copy-only']),
+    /--copy-only/,
+  )
+})
+
+test('screen-only main launches one visual reviewer with validated source and all PNGs', async (t) => {
+  const f = screenOnlyFixture(t)
+  const input = validateInputs(parseArgs(f.argv), {
+    repo: f.repo,
+    head: f.head,
+  })
+  assert.equal(input.root, undefined)
+  for (const key of [
+    'selected',
+    'acceptedBehavior',
+    'evidencePaths',
+    'imagePaths',
+  ])
+    assert.deepEqual(input[key], [])
+  assert.equal(input.screenImagePaths.length, 2)
+  for (const provider of ['claude', 'codex']) {
+    for (const dryRun of [false, true]) {
+      const calls = []
+      let output = ''
+      let checks = 0
+      await main({
+        argv: [
+          ...f.argv,
+          '--provider',
+          provider,
+          ...(dryRun ? ['--dry-run'] : []),
+        ],
+        repo: f.repo,
+        exec: (_command, args) => {
+          checks++
+          return args[0] === 'status' ? '' : f.head
+        },
+        stdout: {
+          write: (value) => {
+            output += value
+          },
+        },
+        run: (command, args, options) => {
+          calls.push({ command, args, input: options.input })
+          return {
+            status: 0,
+            stdout:
+              provider === 'codex'
+                ? 'Complete'
+                : JSON.stringify({
+                    is_error: false,
+                    subtype: 'success',
+                    result: 'Complete',
+                    permission_denials: [],
+                  }),
+          }
+        },
+      })
+      assert.equal(checks, 4)
+      const invocations = dryRun ? JSON.parse(output) : calls
+      assert.equal(calls.length, dryRun ? 0 : 1)
+      assert.equal(invocations.length, 1)
+      const call = invocations[0]
+      assert.equal(call.command, provider)
+      if (dryRun)
+        assert.equal(call.layer, provider === 'codex' ? 'combined' : 'visual')
+      const prompt =
+        provider === 'codex'
+          ? call.input
+          : call.args[call.args.indexOf('-p') + 1]
+      assert.match(prompt, /Only the review report changes/)
+      assert.match(prompt, /no registered task is affected/)
+      assert.match(prompt, /screen, state, viewport/)
+      assert.match(prompt, /source.tsx/)
+      assert.match(prompt, /viewer-mobile.png/)
+      assert.doesNotMatch(
+        prompt,
+        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding/,
+      )
+      if (provider === 'codex')
+        assert.deepEqual(
+          call.args.flatMap((arg, i) =>
+            arg === '--image' ? [call.args[i + 1]] : [],
+          ),
+          input.screenImagePaths,
+        )
+    }
+  }
+})
+
+test('walkthrough main retains two Claude layers and copy-only visual selection', async (t) => {
+  const f = fixture()
+  t.after(() => rmSync(f.repo, { recursive: true, force: true }))
+  const screens = screenOnlyFixture(t)
+  // Copy the independent screen manifest into this repository.
+  mkdirSync(join(f.repo, 'screens'))
+  for (const file of ['manifest.json', 'viewer.png', 'viewer-mobile.png'])
+    writeFileSync(
+      join(f.repo, 'screens', file),
+      readFileSync(join(screens.root, file)),
+    )
+  for (const copyOnly of [false, true]) {
+    let output = ''
+    await main({
+      argv: [
+        '--walkthrough-root',
+        'captures',
+        '--source',
+        'source.tsx',
+        '--dry-run',
+        ...(copyOnly ? ['--copy-only', '--screen-root', 'screens'] : []),
+      ],
+      repo: f.repo,
+      exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+      stdout: {
+        write: (value) => {
+          output += value
+        },
+      },
+      run: () => {
+        assert.fail('dry run launched a provider')
+      },
+    })
+    assert.deepEqual(
+      JSON.parse(output).map((call) => call.layer),
+      copyOnly ? ['visual'] : ['visual', 'task'],
+    )
+
+    const prompts = []
+    await main({
+      argv: [
+        '--walkthrough-root',
+        'captures',
+        '--source',
+        'source.tsx',
+        ...(copyOnly ? ['--copy-only', '--screen-root', 'screens'] : []),
+      ],
+      repo: f.repo,
+      exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+      stdout: { write: () => {} },
+      run: (_command, args) => {
+        prompts.push(args[args.indexOf('-p') + 1])
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            is_error: false,
+            subtype: 'success',
+            result: 'Complete',
+            permission_denials: [],
+          }),
+        }
+      },
+    })
+    assert.equal(prompts.length, copyOnly ? 1 : 2)
+    assert.match(prompts[0], /Visual layer:/)
+    if (!copyOnly) assert.match(prompts[1], /Task layer:/)
+  }
+})
+
+test('invalid screen-only captures never launch providers, including dry runs', async (t) => {
+  const cases = [
+    [
+      'stale HEAD',
+      (f) => {
+        f.entries[0].head = 'b'.repeat(40)
+        f.save()
+      },
+      /HEAD/,
+    ],
+    [
+      'failed entry',
+      (f) => {
+        f.entries[0].status = 'failed'
+        f.save()
+      },
+      /successful screen/,
+    ],
+    [
+      'empty manifest',
+      (f) => {
+        f.entries.length = 0
+        f.save()
+      },
+      /entries are required/,
+    ],
+    [
+      'missing manifest',
+      (f) => unlinkSync(join(f.root, 'manifest.json')),
+      /manifest.json/,
+    ],
+    [
+      'missing PNG',
+      (f) => unlinkSync(join(f.root, 'viewer.png')),
+      /PNG required/,
+    ],
+    [
+      'missing source',
+      (f) => unlinkSync(join(f.repo, 'source.tsx')),
+      /Source must/,
+    ],
+    [
+      'invalid root',
+      (f) => {
+        f.argv[1] = 'missing'
+      },
+      /Screen capture root/,
+    ],
+    [
+      'escaping PNG',
+      (f) => {
+        unlinkSync(join(f.root, 'viewer.png'))
+        symlinkSync(join(f.repo, 'source.tsx'), join(f.root, 'viewer.png'))
+      },
+      /PNG required/,
+    ],
+    [
+      'escaping manifest',
+      (f) => {
+        const file = join(f.root, 'manifest.json')
+        renameSync(file, join(f.repo, 'manifest.json'))
+        symlinkSync(join(f.repo, 'manifest.json'), file)
+      },
+      /manifest.json/,
+    ],
+    [
+      'escaping source',
+      (f) => {
+        unlinkSync(join(f.repo, 'source.tsx'))
+        symlinkSync(import.meta.filename, join(f.repo, 'source.tsx'))
+      },
+      /Source must/,
+    ],
+  ]
+  for (const [name, mutate, expected] of cases) {
+    await t.test(name, async (subtest) => {
+      const f = screenOnlyFixture(subtest)
+      mutate(f)
+      for (const dryRun of [false, true])
+        await assert.rejects(
+          main({
+            argv: [...f.argv, ...(dryRun ? ['--dry-run'] : [])],
+            repo: f.repo,
+            exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+            run: () => {
+              assert.fail('invalid input launched provider')
+            },
+            stdout: { write: () => {} },
+          }),
+          expected,
+        )
+    })
+  }
+})
+
+test('screen-only main preserves clean HEAD checks before and after providers', async (t) => {
+  const f = screenOnlyFixture(t)
+  let calls = 0
+  await assert.rejects(
+    main({
+      argv: f.argv,
+      repo: f.repo,
+      exec: () => ' M source.tsx',
+      run: () => {
+        calls++
+      },
+    }),
+    /clean committed/,
+  )
+  assert.equal(calls, 0)
+  let headReads = 0
+  await assert.rejects(
+    main({
+      argv: [...f.argv, '--provider', 'codex'],
+      repo: f.repo,
+      exec: (_command, args) =>
+        args[0] === 'status' ? '' : ++headReads === 1 ? f.head : 'b'.repeat(40),
+      run: () => {
+        calls++
+        return { status: 0, stdout: 'Complete' }
+      },
+      stdout: { write: () => {} },
+    }),
+    /HEAD or worktree changed/,
+  )
+  assert.equal(calls, 1)
+})
+
+// Frozen output from origin/main (23bf001dfd10182cae358db54f5d70f591915887).
+test('walkthrough prompts retain the base wording and ordering for every reviewer', () => {
+  const input = {
+    selected: ['review-new-reactions'],
+    acceptedBehavior: ['Accepted behavior fixture.'],
+    evidencePaths: ['captures/evidence.json'],
+    imagePaths: ['captures/phase.png'],
+    sourcePaths: ['source.tsx'],
+    screenImagePaths: ['screens/viewer.png'],
+    dispositions: 'fix-now: repaired the visible label.',
+  }
+  const expected = {
+    visual:
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\nStandalone screen PNG files: screens/viewer.png\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.',
+    task: 'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.',
+    combined:
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\nStandalone screen PNG files: screens/viewer.png\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.',
+  }
+  for (const [id, prompt] of Object.entries(expected)) {
+    assert.equal(promptFor({ id }, input), prompt)
+  }
+})
+
+test('scope judgment is nonblank and exclusive to screen-only review', () => {
+  for (const provider of ['claude', 'codex']) {
+    const base = ['--source', 'source.tsx', '--provider', provider]
+    const walkthrough = ['--walkthrough-root', 'captures']
+    for (const judgment of ['', ' ', '\t\n']) {
+      for (const mode of [walkthrough, ['--screen-root', 'screens']]) {
+        assert.throws(
+          () => parseArgs([...base, ...mode, '--scope-judgment', judgment]),
+          /(?:Missing value for --scope-judgment|--scope-judgment must be nonblank)/,
+        )
+      }
+    }
+    const judgment = ['--scope-judgment', 'No registered task is affected.']
+    for (const flags of [
+      [...walkthrough, ...judgment],
+      [...judgment, ...walkthrough],
+    ]) {
+      assert.throws(
+        () => parseArgs([...base, ...flags]),
+        /--scope-judgment cannot be used with --walkthrough-root/,
+      )
+    }
+  }
 })

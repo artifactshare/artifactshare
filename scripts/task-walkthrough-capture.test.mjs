@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
 import {
+  captureStep,
   clickSettleMilliseconds,
   cleanupCliArtifacts,
   combineWalkthroughAndCleanupErrors,
@@ -204,4 +206,315 @@ test('walkthrough CLI runs as a fresh user inside the capture directory', () => 
     ARTIFACTSHARE_TOKEN: 'session',
     NODE_TLS_REJECT_UNAUTHORIZED: '0',
   })
+})
+
+function animatedPage(states) {
+  let time = 0
+  const events = []
+  const document = {
+    querySelectorAll(selector) {
+      assert.equal(
+        selector,
+        '[data-slot="sheet-content"], [data-slot="sheet-overlay"]',
+      )
+      return states(time).map((animations) => ({
+        getAnimations(options) {
+          assert.equal(options.subtree, true)
+          return animations.map((animation) =>
+            typeof animation === 'string'
+              ? { playState: animation }
+              : animation,
+          )
+        },
+      }))
+    },
+  }
+  const locator = {
+    waitFor: () => Promise.resolve(),
+    click: () => {
+      events.push('click')
+    },
+    count: () => Promise.resolve(1),
+    isVisible: () => Promise.resolve(true),
+    first() {
+      return this
+    },
+  }
+  const page = {
+    evaluate: (fn) => {
+      events.push('inspect')
+      return runInNewContext(`(${fn.toString()})()`, {
+        document,
+        navigator: {},
+      })
+    },
+    locator: () => locator,
+    url: () => 'https://localhost/a/example',
+    goto: () => Promise.resolve({ ok: () => true }),
+    route: () => Promise.resolve(),
+    waitForTimeout: () => {
+      events.push('action-delay')
+    },
+    waitForLoadState: () => {
+      events.push('load')
+      return Promise.resolve()
+    },
+    screenshot: () => {
+      events.push(`screenshot:${time}`)
+    },
+  }
+  return {
+    page,
+    events,
+    animationTiming: {
+      now: () => time,
+      sleep: (ms) => {
+        time += ms
+        events.push('poll')
+      },
+    },
+  }
+}
+
+test('phase capture waits for content and overlay subtree animations before PNG', async () => {
+  for (const states of [
+    (time) => [[time < 100 ? 'running' : 'finished'], []],
+    (time) => [['finished'], [time < 150 ? 'running' : 'finished']],
+    (time) => (time < 100 ? [['paused']] : []),
+    (time) => [time < 100 ? ['running'] : []],
+  ]) {
+    const fake = animatedPage(states)
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    })
+    assert.equal(evidence.sheetAnimationWait.status, 'completed')
+    assert.ok(evidence.sheetAnimationWait.elapsedMs >= 100)
+    assert.equal(fake.events.at(-2), 'inspect')
+    assert.match(fake.events.at(-1), /^screenshot:/)
+  }
+})
+
+test('absent, empty, and finished animations capture immediately', async () => {
+  for (const states of [[], [[], []], [['finished'], ['finished']]]) {
+    const fake = animatedPage(() => states)
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    })
+    assert.deepEqual(evidence.sheetAnimationWait, {
+      status: 'completed',
+      elapsedMs: 0,
+      timeoutMs: 2000,
+    })
+    assert.deepEqual(fake.events, ['inspect', 'screenshot:0'])
+  }
+})
+
+test('content and overlay share one bound and timeout still permits PNG', async () => {
+  const fake = animatedPage(() => [['running'], ['paused']])
+  const evidence = await captureStep({
+    ...fake,
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  assert.deepEqual(evidence.sheetAnimationWait, {
+    status: 'timed-out',
+    elapsedMs: 2000,
+    timeoutMs: 2000,
+  })
+  assert.equal(fake.events.at(-1), 'screenshot:2000')
+})
+
+test('sheet opening clicks settle immediately and retain separate phase diagnostics', async () => {
+  for (const kind of [
+    'gotoArtifactAndClick',
+    'gotoCliArtifactAndClick',
+    'click',
+    'clickWithClipboardFailure',
+  ]) {
+    const fake = animatedPage((time) => [
+      [time <= 2000 ? 'running' : 'finished'],
+      [],
+    ])
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind, selector: 'button', captureDuringNavigation: true },
+      screenshot: {},
+      baseUrl: 'https://localhost',
+      state: { artifactIndex: 0, cliArtifactId: 'example' },
+      session: { workspaceId: 'workspace', userId: 'user' },
+    })
+    const click = fake.events.indexOf('click')
+    assert.equal(fake.events[click + 1], 'inspect')
+    assert.equal(evidence.clicked.sheetAnimationWait.status, 'timed-out')
+    assert.equal(evidence.sheetAnimationWait.status, 'completed')
+    assert.equal(evidence.sheetAnimationWait.elapsedMs, 50)
+    assert.equal(fake.events.at(-1), 'screenshot:2050')
+    assert.ok(!fake.events.includes('action-delay'))
+    assert.ok(!fake.events.includes('load'))
+  }
+})
+
+test('unexpected browser inspection errors prevent screenshots', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.evaluate = () => Promise.reject(new Error('browser disconnected'))
+  await assert.rejects(
+    captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    }),
+    /browser disconnected/,
+  )
+  assert.deepEqual(fake.events, [])
+})
+
+test('pre-screenshot wait follows existing load settling on a phase without clicks', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.url = () => 'https://localhost/recent'
+  await captureStep({
+    ...fake,
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  assert.deepEqual(fake.events, ['load', 'inspect', 'screenshot:0'])
+})
+
+test('a stalled browser evaluation reaches the deadline before the PNG', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fake = animatedPage(() => [])
+  let inspected
+  const inspection = new Promise((resolve) => {
+    inspected = resolve
+  })
+  fake.page.evaluate = () => {
+    inspected()
+    return new Promise(() => {})
+  }
+  const capture = captureStep({
+    ...fake,
+    animationTiming: { now: () => Date.now() },
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  await inspection
+  assert.deepEqual(fake.events, [])
+  t.mock.timers.tick(2000)
+  const evidence = await capture
+  assert.deepEqual(evidence.sheetAnimationWait, {
+    status: 'timed-out',
+    elapsedMs: 2000,
+    timeoutMs: 2000,
+  })
+  assert.deepEqual(fake.events, ['screenshot:0'])
+})
+
+test('a settled evaluation returned after the deadline records a timeout', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.evaluate = () => {
+    fake.animationTiming.sleep(2050)
+    return true
+  }
+  const evidence = await captureStep({
+    ...fake,
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  assert.deepEqual(evidence.sheetAnimationWait, {
+    status: 'timed-out',
+    elapsedMs: 2050,
+    timeoutMs: 2000,
+  })
+  assert.equal(fake.events.at(-1), 'screenshot:2050')
+})
+
+test('CLI sheet click waits for expansion before inspecting opening animations', async () => {
+  let expanded = false
+  const fake = animatedPage((time) => [
+    [expanded && time < 100 ? 'running' : 'finished'],
+  ])
+  const originalLocator = fake.page.locator
+  fake.page.locator = (selector) => {
+    if (!selector.includes('aria-expanded')) return originalLocator(selector)
+    return {
+      first() {
+        return this
+      },
+      waitFor() {
+        expanded = true
+        fake.events.push('expanded')
+      },
+    }
+  }
+  const evidence = await captureStep({
+    ...fake,
+    action: { kind: 'gotoCliArtifactAndClick', selector: 'button' },
+    screenshot: {},
+    baseUrl: 'https://localhost',
+    state: { cliArtifactId: 'example' },
+  })
+  assert.deepEqual(fake.events.slice(0, 3), ['click', 'expanded', 'inspect'])
+  assert.equal(evidence.clicked.sheetAnimationWait.elapsedMs, 100)
+  assert.equal(evidence.sheetAnimationWait.elapsedMs, 0)
+})
+
+test('infinite sheet animations do not delay capture but finite animations still do', async () => {
+  const infinite = {
+    playState: 'running',
+    effect: { getComputedTiming: () => ({ iterations: Infinity }) },
+  }
+  for (const finiteDuration of [0, 100]) {
+    const fake = animatedPage((time) => [
+      [infinite],
+      [
+        {
+          playState: time < finiteDuration ? 'running' : 'finished',
+          effect: { getComputedTiming: () => ({ iterations: 1 }) },
+        },
+      ],
+    ])
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    })
+    assert.deepEqual(evidence.sheetAnimationWait, {
+      status: 'completed',
+      elapsedMs: finiteDuration,
+      timeoutMs: 2000,
+    })
+    assert.equal(fake.events.at(-1), `screenshot:${finiteDuration}`)
+    if (finiteDuration === 0)
+      assert.deepEqual(fake.events, ['inspect', 'screenshot:0'])
+  }
+})
+
+test('navigation context replacement is diagnostic and still permits the PNG', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.evaluate = () => {
+    fake.animationTiming.sleep(50)
+    return Promise.reject(
+      new Error(
+        'page.evaluate: Execution context was destroyed, most likely because of a navigation.',
+      ),
+    )
+  }
+  const evidence = await captureStep({
+    ...fake,
+    action: {
+      kind: 'inspect',
+      selector: 'main',
+      captureDuringNavigation: true,
+    },
+    screenshot: {},
+  })
+  assert.deepEqual(evidence.sheetAnimationWait, {
+    status: 'context-replaced',
+    elapsedMs: 50,
+    timeoutMs: 2000,
+  })
+  assert.equal(fake.events.at(-1), 'screenshot:50')
 })

@@ -537,6 +537,11 @@ task 層は walkthrough と証拠を読み、次の 8 観点をタスクごと�
 
 標準入口は `pnpm critique:tasks -- --walkthrough-root <path> --source <path>...` とする。visual 層と task 層を分け、どちらも triage 後に分類済み所見を返す。
 
+登録済みタスクに影響しない場合は `pnpm critique:tasks -- --screen-root <path> --scope-judgment "登録済みタスクに影響しない理由" --source <path>` で画面だけを批評する。
+この形式では `--task` は指定できず、Claude の visual 層を 1 回だけ実行する。
+`--provider codex` を指定した場合は既存の combined reviewer を 1 回実行し、責務を visual のみに限定する。
+キャプチャとソースの検証要件は [画面キャプチャのリファレンス](./screen-capture.md) に従う。
+
 ---
 
 ## 15. レビュー指摘の機械検査への昇格
