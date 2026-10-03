@@ -531,6 +531,7 @@ export function useViewerComments({
   onVersionReconcile,
   onLiveConnectionChanged,
   onPanelOpened,
+  anchorFrameKey = null,
 }: {
   artifactId: string
   currentUserId: string | null
@@ -543,6 +544,7 @@ export function useViewerComments({
   onVersionReconcile?: () => void
   onLiveConnectionChanged?: (connected: boolean) => void
   onPanelOpened?: () => void
+  anchorFrameKey?: string | null
 }) {
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const requestedFilterRef = useRef<'all' | undefined>(undefined)
@@ -669,22 +671,76 @@ export function useViewerComments({
     [threadsRef],
   )
 
-  const [anchorCheckingAvailable, setAnchorCheckingAvailable] = useState(true)
+  const [checkingCycle, setCheckingCycle] = useState(() => ({
+    frameKey: anchorFrameKey,
+    available: anchorFrameKey !== null,
+    verdicts: new Set<string>(),
+  }))
+  if (checkingCycle.frameKey !== anchorFrameKey) {
+    setCheckingCycle({
+      frameKey: anchorFrameKey,
+      available: anchorFrameKey !== null,
+      verdicts: new Set<string>(),
+    })
+  }
+  // Callbacks belong to the keyed frame. Its late unmount cleanup must not
+  // change the replacement frame's checking cycle.
+  const setAnchorCheckingAvailable = useCallback(
+    (available: boolean) => {
+      setCheckingCycle((cycle) =>
+        cycle.frameKey === anchorFrameKey && cycle.available !== available
+          ? { ...cycle, available }
+          : cycle,
+      )
+    },
+    [anchorFrameKey],
+  )
+  const startAnchorCheckingCycle = useCallback(() => {
+    setCheckingCycle((cycle) =>
+      cycle.frameKey === anchorFrameKey
+        ? { ...cycle, available: true, verdicts: new Set<string>() }
+        : cycle,
+    )
+  }, [anchorFrameKey])
   const panelThreads = useMemo(
     () =>
-      state.threads.map((thread) =>
-        !anchorCheckingAvailable &&
-        thread.subject.kind === 'text' &&
-        (thread.subject.checking ||
-          thread.subject.positionState === 'unchecked')
-          ? { ...thread, subject: { ...thread.subject, checking: false } }
-          : thread,
-      ),
-    [state.threads, anchorCheckingAvailable],
+      state.threads.map((thread) => {
+        if (thread.subject.kind !== 'text') return thread
+        if (!checkingCycle.available) {
+          return { ...thread, subject: { ...thread.subject, checking: false } }
+        }
+        if (
+          thread.subject.positionState === 'needs-check' &&
+          !checkingCycle.verdicts.has(thread.id)
+        ) {
+          return { ...thread, subject: { ...thread.subject, checking: true } }
+        }
+        return thread
+      }),
+    [state.threads, checkingCycle],
   )
 
   const applyAnchorResolutions = useCallback(
     (results: AnchorResolutionMessage['results']) => {
+      const terminalIds = results.flatMap((result) =>
+        result.state !== 'checking' &&
+        threadsRef.current.some(
+          (thread) =>
+            thread.id === result.threadId && thread.subject.kind === 'text',
+        )
+          ? [result.threadId]
+          : [],
+      )
+      if (terminalIds.length) {
+        setCheckingCycle((cycle) =>
+          cycle.frameKey === anchorFrameKey
+            ? {
+                ...cycle,
+                verdicts: new Set([...cycle.verdicts, ...terminalIds]),
+              }
+            : cycle,
+        )
+      }
       const next = threadsRef.current.map((thread) => {
         const verdict = results.find(
           (candidate) => candidate.threadId === thread.id,
@@ -708,7 +764,7 @@ export function useViewerComments({
       })
       replaceThreadsIfChanged(next)
     },
-    [threadsRef, replaceThreadsIfChanged],
+    [threadsRef, replaceThreadsIfChanged, anchorFrameKey],
   )
 
   const abortLatestThreadFetch = useEffectEvent(() => {
@@ -1552,6 +1608,8 @@ export function useViewerComments({
     applyAnchorResolutions,
     panelThreads,
     setAnchorCheckingAvailable,
+    startAnchorCheckingCycle,
+    anchorFrameKey,
     changePanelOpen,
     targetThread,
     startTextSelection,
@@ -2002,6 +2060,9 @@ function useViewerShellController({
     artifactId: artifact.id,
     currentUserId: user?.id ?? null,
     currentVersionId: artifact.currentVersionId ?? null,
+    anchorFrameKey: sandboxUrl
+      ? `${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`
+      : null,
     initialThreads: initialCommentThreads,
     targetCommentId,
     liveEnabled: commentsEnabled,
@@ -2474,7 +2535,7 @@ function ViewerShellView({
       ) : null}
       {sandboxUrl ? (
         <SandboxFrame
-          key={`${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
+          key={comments.anchorFrameKey}
           shareableId={artifact.id}
           versionId={
             artifact.displayedVersionId ?? artifact.currentVersionId ?? ''
@@ -2491,6 +2552,7 @@ function ViewerShellView({
           commentThreads={comments.state.threads}
           onAnchorResolutions={comments.applyAnchorResolutions}
           onAnchorCheckingChange={comments.setAnchorCheckingAvailable}
+          onAnchorReady={comments.startAnchorCheckingCycle}
           targetThreadId={comments.state.targetThreadId}
           highlightThreadId={
             comments.state.inlineThreadId ?? comments.state.targetThreadId

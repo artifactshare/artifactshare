@@ -1,7 +1,10 @@
 import { schedulePositionBadges } from './badges.js'
 import type { ReporterState } from './state.js'
 import { verifyAnchors } from './annotate.js'
-import { createTextAnchorEngine } from './anchor-engine.js'
+import {
+  anchorExclusionDependencies,
+  createTextAnchorEngine,
+} from './anchor-engine.js'
 import { anchorRoot } from './selection.js'
 import { applyHighlights, invalidateChangedPaint } from './highlights.js'
 
@@ -50,9 +53,9 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     records.some(function (record) {
       return (
         record.type === 'attributes' &&
-        (record.attributeName === 'data-anchor-ignore' ||
-          record.attributeName === 'data-comment-ui' ||
-          record.attributeName === 'class')
+        anchorExclusionDependencies().attributes.includes(
+          record.attributeName ?? '',
+        )
       )
     })
   )

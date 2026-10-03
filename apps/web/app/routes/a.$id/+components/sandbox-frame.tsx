@@ -126,6 +126,7 @@ type SandboxFrameProps = {
   followsAppTheme: boolean
   lowTrust?: boolean
   onAnchorCheckingChange?: (available: boolean) => void
+  onAnchorReady?: () => void
   onAnchorResolutions?: (results: AnchorResolutionMessage['results']) => void
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
@@ -354,6 +355,7 @@ function useSandboxFrameController({
   onTextSelection,
   onAnchorResolutions,
   onAnchorCheckingChange,
+  onAnchorReady,
   onTextSelectionClear,
   onThreadSelect,
   onOutsidePointerDown,
@@ -397,6 +399,7 @@ function useSandboxFrameController({
   const focusRetryFailureRef = useRef(false)
   const securityChallengeRef = useRef<string | null>(null)
   const securityTokenRef = useRef<string | null>(null)
+  const anchorDocumentTokenRef = useRef<string | null>(null)
   const mermaidRenderChallengeRef = useRef<string | null>(null)
   const trustedMessageOrigin = new URL(url).origin
   const commentLabels = useMemo(
@@ -581,6 +584,13 @@ function useSandboxFrameController({
   )
 
   const markFrameReadyFromMessage = useEffectEvent(() => {
+    // Liveness checks and queued ready replies reuse the reporter's token.
+    // Only a new authenticated document starts another verdict cycle.
+    const token = securityTokenRef.current
+    if (token !== null && token !== anchorDocumentTokenRef.current) {
+      anchorDocumentTokenRef.current = token
+      onAnchorReady?.()
+    }
     clearReadyFallback()
     if (reportTimerRef.current !== null) {
       window.clearTimeout(reportTimerRef.current)
@@ -846,6 +856,7 @@ function useSandboxFrameController({
   const reportAnchorChecking = useEffectEvent((available: boolean) => {
     onAnchorCheckingChange?.(available)
   })
+  useEffect(() => () => reportAnchorChecking(false), [])
   const anchorCheckingWindow = useRef<{ url: string; deadline: number } | null>(
     null,
   )

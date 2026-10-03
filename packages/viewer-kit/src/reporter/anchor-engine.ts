@@ -15,13 +15,34 @@ interface TextUnit {
 }
 export type TextAnchorEngine = ReturnType<typeof createTextAnchorEngine>
 
+export function anchorExclusions() {
+  return {
+    tags: ['script', 'style', 'noscript', 'template', 'textarea', 'select'],
+    attributes: ['data-anchor-ignore', 'data-comment-ui'],
+    classes: ['ash-comment-highlight-badge', 'mermaid-diagram'],
+  }
+}
+
+export function anchorExclusionDependencies(exclusions = anchorExclusions()) {
+  return {
+    selector: exclusions.tags
+      .concat(
+        exclusions.attributes.map((name) => '[' + name + ']'),
+        exclusions.classes.map((name) => '.' + name),
+      )
+      .join(','),
+    attributes: exclusions.attributes.concat(
+      exclusions.classes.length ? ['class'] : [],
+    ),
+  }
+}
+
 export function createTextAnchorEngine(root: Element) {
   const document = root.ownerDocument
   const units: TextUnit[][] = []
   let text = ''
   let previousBlock: Element | null = null
-  const excluded =
-    'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
+  const excluded = anchorExclusionDependencies().selector
   const blockTags = new Set(
     'p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(
       ' ',

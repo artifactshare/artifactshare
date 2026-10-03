@@ -4,6 +4,9 @@ import { mkdtemp, readFile, writeFile, rm, cp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { test } from 'node:test'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { rolldown } from 'rolldown'
 import { parseSync } from 'oxc-parser'
 import {
   entryPath,
@@ -376,5 +379,81 @@ test('whole private messages can only use captured messaging primitives', () => 
         /uncaptured (?:constructor )?call with private message/,
       )
     }
+  }
+})
+
+test('one exclusion definition drives engine text and mutation snapshot invalidation', async (t) => {
+  const directory = await temporary(t)
+  await cp(dirname(entryPath), join(directory, 'reporter'), { recursive: true })
+  await cp(
+    join(dirname(entryPath), '../reporter-constants.ts'),
+    join(directory, 'reporter-constants.ts'),
+  )
+  const enginePath = join(directory, 'reporter/anchor-engine.ts')
+  const engineSource = await readFile(enginePath, 'utf8')
+  const mutationSource = await readFile(
+    join(directory, 'reporter/mutations.ts'),
+    'utf8',
+  )
+  // Remove existing class exclusions first: this makes a hard-coded `class`
+  // dependency fail, even though it already invalidates on the base revision.
+  assert.match(engineSource, /export function anchorExclusions/)
+  assert.match(mutationSource, /anchorExclusionDependencies/)
+  const webRequire = createRequire(
+    new URL('../../../apps/web/package.json', import.meta.url),
+  )
+  const { Window } = await import(
+    pathToFileURL(webRequire.resolve('happy-dom')).href
+  )
+  const win = new Window()
+  t.after(() => win.happyDOM.close())
+  win.document.body.innerHTML =
+    '<main data-comment-content>Visible<span class="synthetic-exclusion">Hidden</span></main>'
+  const root = win.document.querySelector('main')
+  const target = root.querySelector('span')
+  const observer = new win.MutationObserver(() => {})
+  observer.observe(target, { attributes: true })
+  t.after(() => observer.disconnect())
+  for (const classes of [[], ['synthetic-exclusion']]) {
+    await writeFile(
+      enginePath,
+      engineSource.replace(
+        /classes: \[[^\]]*\]/,
+        `classes: ${JSON.stringify(classes)}`,
+      ),
+    )
+    const entry = join(directory, 'fixture.ts')
+    await writeFile(
+      entry,
+      `export * from './reporter/anchor-engine.ts'; export { handleMutations } from './reporter/mutations.ts';`,
+    )
+    const bundle = await rolldown({ input: entry })
+    const output = join(directory, `fixture-${classes.length}.mjs`)
+    await bundle.write({ file: output, format: 'esm' })
+    await bundle.close()
+    const fixture = await import(pathToFileURL(output).href)
+    assert.equal(
+      fixture.createTextAnchorEngine(root).text,
+      classes.length ? 'Visible' : 'VisibleHidden',
+    )
+    assert.equal(
+      fixture.anchorExclusionDependencies().attributes.includes('class'),
+      Boolean(classes.length),
+    )
+    const ctx = {
+      doc: win.document,
+      observedAnchorRoot: root,
+      anchorSnapshotGeneration: 0,
+      pendingHighlights: [],
+      pendingAnchors: [],
+    }
+    target.setAttribute('class', 'synthetic-exclusion')
+    fixture.handleMutations(ctx, observer.takeRecords())
+    assert.equal(ctx.anchorSnapshotGeneration, classes.length)
+    target.setAttribute('data-comment-ui', '')
+    fixture.handleMutations(ctx, observer.takeRecords())
+    assert.equal(ctx.anchorSnapshotGeneration, classes.length + 1)
+    target.removeAttribute('data-comment-ui')
+    observer.takeRecords()
   }
 })
