@@ -34,10 +34,14 @@ signed URL query values are redacted.
 authentication, and phase data for agent critique.
 Immediately after sheet-opening clicks and before every phase PNG, capture waits
 for sheet content and overlay subtree animations to finish, sharing one 2 s
-deadline per wait. Empty or absent animations complete immediately.
+deadline per wait. Infinite-iteration animations are ignored; empty or absent
+animations complete immediately.
 Each phase records `evidence.sheetAnimationWait`; clicks also retain
-`evidence.clicked.sheetAnimationWait`. Both contain `status` (`completed` or
-`timed-out`), `elapsedMs`, and `timeoutMs: 2000`. A timeout is diagnostic:
+`evidence.clicked.sheetAnimationWait`. Both contain `status` (`completed`,
+`timed-out`, or `context-replaced`), `elapsedMs`, and `timeoutMs: 2000`.
+`context-replaced` records navigation destroying the browser execution context;
+capture still takes the PNG. Other unexpected browser errors propagate.
+A timeout is diagnostic:
 capture still takes the PNG, and a later successful wait does not overwrite it.
 
 Use the completed output with the task critique launcher. Pass every source file
@@ -76,8 +80,8 @@ Screen-only mode rejects `--task` and runs exactly one Claude visual reviewer.
 With `--provider codex`, the existing combined reviewer runs once with only
 visual responsibility and all validated screen PNGs attached. The scope judgment
 is included in either prompt. Sources and captures retain the same existence,
-containment, successful-status, and matching-commit requirements. An optional
-scope judgment with walkthrough-backed review does not narrow task coverage.
+containment, successful-status, and matching-commit requirements.
+`--scope-judgment` must be nonblank and cannot be used with `--walkthrough-root`.
 
 Walkthrough authentication comes from the task persona and the existing local
 development sign-in API. Scenario setup reuses the screen scenario mechanism;

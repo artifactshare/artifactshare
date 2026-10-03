@@ -462,19 +462,45 @@ export async function waitForSheetAnimations(
   const timeoutMs = 2_000
   const start = now()
   while (true) {
-    const settled = await page.evaluate(() =>
-      [
-        ...document.querySelectorAll(
-          '[data-slot="sheet-content"], [data-slot="sheet-overlay"]',
+    let timer
+    let settled
+    const remainingMs = timeoutMs - (now() - start)
+    if (remainingMs <= 0)
+      return { status: 'timed-out', elapsedMs: now() - start, timeoutMs }
+    try {
+      settled = await Promise.race([
+        page.evaluate(() =>
+          [
+            ...document.querySelectorAll(
+              '[data-slot="sheet-content"], [data-slot="sheet-overlay"]',
+            ),
+          ]
+            .flatMap((element) => element.getAnimations({ subtree: true }))
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .every((animation) => animation.playState === 'finished'),
         ),
-      ]
-        .flatMap((element) => element.getAnimations({ subtree: true }))
-        .every((animation) => animation.playState === 'finished'),
-    )
+        new Promise((resolveDeadline) => {
+          timer = setTimeout(() => resolveDeadline(false), remainingMs)
+        }),
+      ])
+    } catch (error) {
+      if (/execution context.*destroyed/i.test(error.message))
+        return {
+          status: 'context-replaced',
+          elapsedMs: now() - start,
+          timeoutMs,
+        }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
     const elapsedMs = now() - start
     if (settled || elapsedMs >= timeoutMs)
       return {
-        status: settled ? 'completed' : 'timed-out',
+        status: settled && elapsedMs < timeoutMs ? 'completed' : 'timed-out',
         elapsedMs,
         timeoutMs,
       }
@@ -620,14 +646,14 @@ async function applyAction({
       const locator = page.locator(action.selector).first()
       await locator.waitFor({ state: 'visible' })
       await locator.click()
-      const sheetAnimationWait = await waitForSheetAnimations(
-        page,
-        animationTiming,
-      )
       await page
         .locator(`${action.selector}[aria-expanded="true"]`)
         .first()
         .waitFor({ state: 'visible' })
+      const sheetAnimationWait = await waitForSheetAnimations(
+        page,
+        animationTiming,
+      )
       return {
         clicked: {
           selector: action.selector,

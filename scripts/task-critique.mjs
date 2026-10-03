@@ -26,7 +26,8 @@ function usage() {
   return `Usage:
   pnpm critique:tasks -- [--walkthrough-root <path>] [--scope-judgment <text>] --source <path> [--source <path>...] [--task <id>...] [--screen-root <path>...] [--provider codex|claude] [--copy-only] [--dispositions-file <path>] [--dry-run]
 
-Without --walkthrough-root, --screen-root and nonblank --scope-judgment are required; --task is not allowed.`
+Without --walkthrough-root, --screen-root and nonblank --scope-judgment are required; --task is not allowed.
+--scope-judgment is only allowed without --walkthrough-root and must be nonblank.`
 }
 
 function parseArgs(argv) {
@@ -67,13 +68,19 @@ function parseArgs(argv) {
     if (!value || value.startsWith('--'))
       throw new Error(`Missing value for ${arg}`)
     if (arg === '--walkthrough-root') options.walkthroughRoot = value
-    if (arg === '--scope-judgment') options.scopeJudgment = value.trim()
+    if (arg === '--scope-judgment') {
+      options.scopeJudgment = value.trim()
+      if (!options.scopeJudgment)
+        throw new Error('--scope-judgment must be nonblank.')
+    }
     if (arg === '--source') options.sources.push(value)
     if (arg === '--task') options.taskIds.push(value)
     if (arg === '--screen-root') options.screenRoots.push(value)
     if (arg === '--provider') options.provider = value
     if (arg === '--dispositions-file') options.dispositionsFile = value
   }
+  if (options.walkthroughRoot && options.scopeJudgment !== undefined)
+    throw new Error('--scope-judgment cannot be used with --walkthrough-root.')
   if (!options.walkthroughRoot) {
     if (options.taskIds.length)
       throw new Error('--task requires --walkthrough-root.')
@@ -343,11 +350,15 @@ function commonPrompt(input) {
     ...(!input.screenOnly
       ? [
           'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.',
+        ]
+      : []),
+    `Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the ${input.screenOnly ? 'user' : 'task'} decision.`,
+    'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
+    ...(!input.screenOnly
+      ? [
           'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
         ]
       : []),
-    'Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the user decision.',
-    'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
     'Return NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.',
     ...(input.screenOnly
       ? [
@@ -359,7 +370,9 @@ function commonPrompt(input) {
           `Evidence JSON: ${input.evidencePaths.join(', ')}`,
           `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
         ]),
-    ...(input.scopeJudgment ? [`Scope judgment: ${input.scopeJudgment}`] : []),
+    ...(input.screenOnly && input.scopeJudgment
+      ? [`Scope judgment: ${input.scopeJudgment}`]
+      : []),
     `Relevant source: ${input.sourcePaths.join(', ')}`,
     ...(input.dispositions
       ? [
