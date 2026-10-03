@@ -83,6 +83,7 @@ function Harness({
 }) {
   const [connected, setConnected] = useState(false)
   const comments = useViewerComments({
+    framePresent: false,
     artifactId,
     currentUserId: 'user-1',
     currentVersionId: 'version-1',

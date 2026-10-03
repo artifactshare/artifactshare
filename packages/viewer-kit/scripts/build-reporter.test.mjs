@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, rm, cp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 import { parseSync } from 'oxc-parser'
 import {
   entryPath,
@@ -377,4 +378,166 @@ test('whole private messages can only use captured messaging primitives', () => 
       )
     }
   }
+})
+
+test('anchor exclusion consumers share literal definitions and narrow selector helpers', async () => {
+  const read = (name) =>
+    readFile(join(dirname(entryPath), name + '.ts'), 'utf8')
+  const engine = await read('anchor-engine')
+  const mutations = await read('mutations')
+  const annotate = await read('annotate')
+  const { program, errors } = parseSync('anchor-engine.ts', engine)
+  assert.deepEqual(errors, [])
+  const constants = Object.fromEntries(
+    program.body.flatMap((node) => {
+      const declaration =
+        node.type === 'ExportNamedDeclaration' ? node.declaration : node
+      if (declaration?.type !== 'VariableDeclaration') return []
+      assert.equal(declaration.kind, 'const')
+      return declaration.declarations.map((decl) => {
+        assert.equal(decl.init.type, 'Literal')
+        return [decl.id.name, decl.init.value]
+      })
+    }),
+  )
+  const selector =
+    'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
+  assert.deepEqual(constants, {
+    TEXT_ANCHOR_EXCLUDED_SELECTOR: selector,
+    ANCHOR_IGNORE_ATTRIBUTE: 'data-anchor-ignore',
+    COMMENT_UI_ATTRIBUTE: 'data-comment-ui',
+    EXCLUSION_CLASS_ATTRIBUTE: 'class',
+  })
+  for (const attribute of [
+    constants.ANCHOR_IGNORE_ATTRIBUTE,
+    constants.COMMENT_UI_ATTRIBUTE,
+  ]) {
+    assert.ok(selector.includes('[' + attribute + ']'))
+  }
+  assert.match(engine, /closest\(TEXT_ANCHOR_EXCLUDED_SELECTOR\)/)
+  assert.match(
+    mutations,
+    /primordials\.closest\(element, ignoredMutationSelector\(\)\)/,
+  )
+  assert.match(
+    mutations,
+    /primordials\.hasAttribute\(\s*node as Element,\s*ANCHOR_IGNORE_ATTRIBUTE,?\s*\)/,
+  )
+  for (const name of [
+    'ANCHOR_IGNORE_ATTRIBUTE',
+    'COMMENT_UI_ATTRIBUTE',
+    'EXCLUSION_CLASS_ATTRIBUTE',
+  ]) {
+    assert.ok(mutations.includes('record.attributeName === ' + name))
+  }
+  assert.match(
+    annotate,
+    /primordials\.closest\(target, commentUiSelector\(\)\)/,
+  )
+  assert.match(annotate, /setAttribute\(ANCHOR_IGNORE_ATTRIBUTE, ''\)/)
+  for (const source of [mutations, annotate]) {
+    assert.doesNotMatch(
+      source,
+      /['"]data-(?:anchor-ignore|comment-ui)['"]|\[data-(?:anchor-ignore|comment-ui)\]/,
+    )
+  }
+  assert.doesNotMatch(mutations, /\.(?:concat|map|join|includes)\(/)
+  const { body } = await renderReporter()
+  assert.equal(body.split(selector).length - 1, 1)
+  // Execute the generated helpers without installing a reporter. renderReporter
+  // above still runs the production structural/security guard unchanged.
+  const helpers = body.replace(
+    'installReporter(window);',
+    'return [ignoredMutationSelector(), commentUiSelector()];',
+  )
+  assert.deepEqual(new Function('return ' + helpers)(), [
+    '[data-anchor-ignore],#ash-comment-highlight-style',
+    '[data-comment-ui]',
+  ])
+})
+
+test('generated mutation exclusion uses captured DOM methods and no replaceable array methods', async () => {
+  const { body } = await renderReporter()
+  const exposeHandler = body.replace(
+    'installReporter(window);',
+    'rebuildAfterMutations = function(ctx) { ctx.rebuilds++; }; return handleMutations;',
+  )
+  const result = runInNewContext(`
+    const handleMutations = ${exposeHandler};
+    const root = { nodeType: 1, contains() { return true; }, closest() { throw new Error('replaceable closest called'); } };
+    const ignored = { nodeType: 1, ignored: true, closest() { throw new Error('replaceable closest called'); }, hasAttribute() { throw new Error('replaceable hasAttribute called'); } };
+    const ctx = {
+      doc: { body: root, querySelector() { return root; } },
+      observedAnchorRoot: root,
+      primordials: {
+        closest(element, selector) { return element.ignored ? element : null; },
+        hasAttribute(element, name) { return element.ignored && name === 'data-anchor-ignore'; },
+      },
+      pendingHighlights: [{}], pendingAnchors: [],
+      anchorSnapshotGeneration: 0, badgePositionFrame: 1, rebuilds: 0,
+    };
+    const original = {};
+    const methods = ['concat', 'includes', 'map', 'join', 'some', 'filter'];
+    for (let index = 0; index < methods.length; index++) {
+      const name = methods[index];
+      original[name] = Array.prototype[name];
+      Array.prototype[name] = function () { throw new Error('replaceable ' + name + ' called'); };
+    }
+    try {
+      // Both added and removed nodes must be examined without concat. Ignored
+      // child lists must not rebuild the snapshot, but exclusion attributes do
+      // invalidate its generation even in the same observer batch.
+      const attributes = ['data-anchor-ignore', 'data-comment-ui', 'class'];
+      for (let index = 0; index < attributes.length; index++) {
+        handleMutations(ctx, [
+          { type: 'childList', target: ignored, addedNodes: [{ nodeType: 3 }], removedNodes: [] },
+          { type: 'childList', target: root, addedNodes: [ignored], removedNodes: [] },
+          { type: 'childList', target: root, addedNodes: [], removedNodes: [ignored] },
+          { type: 'attributes', target: root, attributeName: attributes[index] },
+        ]);
+      }
+      handleMutations(ctx, [{ type: 'attributes', target: root, attributeName: 'style' }]);
+      handleMutations(ctx, [{ type: 'childList', target: root, addedNodes: [{ nodeType: 3 }], removedNodes: [] }]);
+      handleMutations(ctx, [{ type: 'childList', target: root, addedNodes: [], removedNodes: [{ nodeType: 3 }] }]);
+      handleMutations(ctx, [{ type: 'characterData', target: { nodeType: 3, parentElement: root } }]);
+      JSON.stringify([ctx.anchorSnapshotGeneration, ctx.rebuilds]);
+    } finally {
+      for (let index = 0; index < methods.length; index++) {
+        const name = methods[index];
+        Array.prototype[name] = original[name];
+      }
+    }
+  `)
+  assert.equal(result, '[3,3]')
+})
+
+test('generated annotation exclusion uses captured closest after page replacement', async () => {
+  const { body } = await renderReporter()
+  const annotateTargetFrom = new Function(
+    'return ' +
+      body.replace('installReporter(window);', 'return annotateTargetFrom;'),
+  )()
+  const commentUi = {
+    nodeType: 1,
+    closest() {
+      throw new Error('page closest called')
+    },
+  }
+  const content = {
+    nodeType: 1,
+    closest() {
+      throw new Error('page closest called')
+    },
+  }
+  const ctx = {
+    doc: { body: {}, documentElement: {} },
+    primordials: {
+      closest(element, selector) {
+        assert.equal(selector, '[data-comment-ui]')
+        return element === commentUi ? commentUi : null
+      },
+    },
+  }
+  assert.equal(annotateTargetFrom(ctx, commentUi), null)
+  assert.equal(annotateTargetFrom(ctx, content), content)
 })
