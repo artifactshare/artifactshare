@@ -415,8 +415,14 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
     assert.ok(selector.includes('[' + attribute + ']'))
   }
   assert.match(engine, /closest\(TEXT_ANCHOR_EXCLUDED_SELECTOR\)/)
-  assert.match(mutations, /closest\(ignoredMutationSelector\(\)\)/)
-  assert.match(mutations, /hasAttribute\(ANCHOR_IGNORE_ATTRIBUTE\)/)
+  assert.match(
+    mutations,
+    /primordials\.closest\(element, ignoredMutationSelector\(\)\)/,
+  )
+  assert.match(
+    mutations,
+    /primordials\.hasAttribute\(\s*node as Element,\s*ANCHOR_IGNORE_ATTRIBUTE,?\s*\)/,
+  )
   for (const name of [
     'ANCHOR_IGNORE_ATTRIBUTE',
     'COMMENT_UI_ATTRIBUTE',
@@ -424,7 +430,10 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   ]) {
     assert.ok(mutations.includes('record.attributeName === ' + name))
   }
-  assert.match(annotate, /closest\(commentUiSelector\(\)\)/)
+  assert.match(
+    annotate,
+    /primordials\.closest\(target, commentUiSelector\(\)\)/,
+  )
   assert.match(annotate, /setAttribute\(ANCHOR_IGNORE_ATTRIBUTE, ''\)/)
   for (const source of [mutations, annotate]) {
     assert.doesNotMatch(
@@ -447,24 +456,28 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   ])
 })
 
-test('generated mutation exclusion does not call replaceable array methods', async () => {
+test('generated mutation exclusion uses captured DOM methods and no replaceable array methods', async () => {
   const { body } = await renderReporter()
   const exposeHandler = body.replace(
     'installReporter(window);',
-    'return handleMutations;',
+    'rebuildAfterMutations = function(ctx) { ctx.rebuilds++; }; return handleMutations;',
   )
   const result = runInNewContext(`
     const handleMutations = ${exposeHandler};
-    const root = { nodeType: 1, contains() { return true; }, closest() { return null; } };
-    const ignored = { nodeType: 1, hasAttribute(name) { return name === 'data-anchor-ignore'; } };
+    const root = { nodeType: 1, contains() { return true; }, closest() { throw new Error('replaceable closest called'); } };
+    const ignored = { nodeType: 1, ignored: true, closest() { throw new Error('replaceable closest called'); }, hasAttribute() { throw new Error('replaceable hasAttribute called'); } };
     const ctx = {
       doc: { body: root, querySelector() { return root; } },
       observedAnchorRoot: root,
+      primordials: {
+        closest(element, selector) { return element.ignored ? element : null; },
+        hasAttribute(element, name) { return element.ignored && name === 'data-anchor-ignore'; },
+      },
       pendingHighlights: [{}], pendingAnchors: [],
-      anchorSnapshotGeneration: 0, badgePositionFrame: 1,
+      anchorSnapshotGeneration: 0, badgePositionFrame: 1, rebuilds: 0,
     };
     const original = {};
-    const methods = ['concat', 'includes', 'map', 'join'];
+    const methods = ['concat', 'includes', 'map', 'join', 'some', 'filter'];
     for (let index = 0; index < methods.length; index++) {
       const name = methods[index];
       original[name] = Array.prototype[name];
@@ -477,13 +490,17 @@ test('generated mutation exclusion does not call replaceable array methods', asy
       const attributes = ['data-anchor-ignore', 'data-comment-ui', 'class'];
       for (let index = 0; index < attributes.length; index++) {
         handleMutations(ctx, [
+          { type: 'childList', target: ignored, addedNodes: [{ nodeType: 3 }], removedNodes: [] },
           { type: 'childList', target: root, addedNodes: [ignored], removedNodes: [] },
           { type: 'childList', target: root, addedNodes: [], removedNodes: [ignored] },
           { type: 'attributes', target: root, attributeName: attributes[index] },
         ]);
       }
       handleMutations(ctx, [{ type: 'attributes', target: root, attributeName: 'style' }]);
-      ctx.anchorSnapshotGeneration;
+      handleMutations(ctx, [{ type: 'childList', target: root, addedNodes: [{ nodeType: 3 }], removedNodes: [] }]);
+      handleMutations(ctx, [{ type: 'childList', target: root, addedNodes: [], removedNodes: [{ nodeType: 3 }] }]);
+      handleMutations(ctx, [{ type: 'characterData', target: { nodeType: 3, parentElement: root } }]);
+      JSON.stringify([ctx.anchorSnapshotGeneration, ctx.rebuilds]);
     } finally {
       for (let index = 0; index < methods.length; index++) {
         const name = methods[index];
@@ -491,5 +508,36 @@ test('generated mutation exclusion does not call replaceable array methods', asy
       }
     }
   `)
-  assert.equal(result, 3)
+  assert.equal(result, '[3,3]')
+})
+
+test('generated annotation exclusion uses captured closest after page replacement', async () => {
+  const { body } = await renderReporter()
+  const annotateTargetFrom = new Function(
+    'return ' +
+      body.replace('installReporter(window);', 'return annotateTargetFrom;'),
+  )()
+  const commentUi = {
+    nodeType: 1,
+    closest() {
+      throw new Error('page closest called')
+    },
+  }
+  const content = {
+    nodeType: 1,
+    closest() {
+      throw new Error('page closest called')
+    },
+  }
+  const ctx = {
+    doc: { body: {}, documentElement: {} },
+    primordials: {
+      closest(element, selector) {
+        assert.equal(selector, '[data-comment-ui]')
+        return element === commentUi ? commentUi : null
+      },
+    },
+  }
+  assert.equal(annotateTargetFrom(ctx, commentUi), null)
+  assert.equal(annotateTargetFrom(ctx, content), content)
 })

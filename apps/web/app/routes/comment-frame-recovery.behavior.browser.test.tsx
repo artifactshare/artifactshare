@@ -1,5 +1,6 @@
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import '~/app.css'
@@ -111,6 +112,7 @@ function Harness({
       />
       <output
         hidden
+        data-panel-subject={JSON.stringify(comments.panelThreads[0].subject)}
         data-saved-subject={JSON.stringify(comments.state.threads[0].subject)}
       />
     </TooltipProvider>
@@ -411,3 +413,34 @@ for (const width of [1280, 390]) {
     })
   }
 }
+
+test('a frame starts checking on the first render before availability effects', async () => {
+  const availability = vi.fn()
+  const transport = vi.fn(() =>
+    Promise.resolve(new Response(null, { status: 204 })),
+  )
+  vi.stubGlobal('fetch', transport)
+  // Server rendering never runs the frame effect. Read the production panel
+  // mapping directly because the panel portal itself is client-only.
+  const markup = renderToStaticMarkup(<Harness onAvailability={availability} />)
+  const rendered = new DOMParser().parseFromString(markup, 'text/html')
+  expect(rendered.querySelector('iframe')).not.toBeNull()
+  expect(
+    rendered
+      .querySelector('[data-panel-subject]')!
+      .getAttribute('data-panel-subject'),
+  ).toBe(JSON.stringify(threads[0].subject))
+  expect(
+    rendered
+      .querySelector('[data-saved-subject]')!
+      .getAttribute('data-saved-subject'),
+  ).toBe(JSON.stringify(threads[0].subject))
+  expect(availability).not.toHaveBeenCalled()
+  expect(transport).not.toHaveBeenCalled()
+
+  // The same mapping renders checking once the real panel portal mounts.
+  await mount({ onAvailability: availability })
+  expect(subject().innerText).toContain(en['comments.positionChecking'])
+  expect(subject().className).not.toContain('text-warning')
+  expect(transport).not.toHaveBeenCalled()
+})

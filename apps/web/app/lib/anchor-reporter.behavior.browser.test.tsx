@@ -1210,6 +1210,8 @@ test.each([
     const includes = vi.spyOn(realm.Array.prototype, 'includes')
     const map = vi.spyOn(realm.Array.prototype, 'map')
     const join = vi.spyOn(realm.Array.prototype, 'join')
+    const some = vi.spyOn(realm.Array.prototype, 'some').mockReturnValue(false)
+    const filter = vi.spyOn(realm.Array.prototype, 'filter').mockReturnValue([])
     try {
       // Exercise both child-list branches of the ignored-node filter while a
       // snapshot is pending. The old Array.from(...).concat(...) filter invokes
@@ -1221,6 +1223,10 @@ test.each([
       doc.querySelector('#words')!.setAttribute(attribute, value)
       // Exclusion membership and mutation relevance run before the pending timer.
       await new Promise<void>((resolve) => queueMicrotask(resolve))
+      expect(some).not.toHaveBeenCalled()
+      expect(filter).not.toHaveBeenCalled()
+      some.mockRestore()
+      filter.mockRestore()
       expect(concat).not.toHaveBeenCalled()
       expect(includes).not.toHaveBeenCalled()
       expect(map).not.toHaveBeenCalled()
@@ -1232,6 +1238,8 @@ test.each([
         walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
       ).toHaveLength(1)
     } finally {
+      some.mockRestore()
+      filter.mockRestore()
       concat.mockRestore()
       includes.mockRestore()
       map.mockRestore()
@@ -1240,6 +1248,46 @@ test.each([
     }
   },
 )
+
+test('content mutations remain relevant when page array methods reject mutation records', async () => {
+  const doc = await fixture('<p id="words">selected words</p>')
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'relevance',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const realm = doc.defaultView as Window & typeof globalThis
+  const originalSome = realm.Array.prototype.some
+  const originalFilter = realm.Array.prototype.filter
+  const some = vi
+    .spyOn(realm.Array.prototype, 'some')
+    .mockImplementation(function (this: unknown[], ...args) {
+      if (this[0] instanceof realm.MutationRecord) return false
+      return originalSome.apply(this, args)
+    })
+  const filter = vi
+    .spyOn(realm.Array.prototype, 'filter')
+    .mockImplementation(function (this: unknown[], ...args) {
+      if (this[0] instanceof realm.MutationRecord) return []
+      return originalFilter.apply(this, args)
+    })
+  try {
+    doc.querySelector('#words')!.firstChild!.textContent = 'removed words'
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('checking'),
+    )
+    expect(registry(doc).size).toBe(0)
+    expect(doc.querySelector('button.ash-comment-highlight-badge')).toBeNull()
+  } finally {
+    some.mockRestore()
+    filter.mockRestore()
+  }
+})
 
 test('a parent echo restores invalidated paint immediately during the debounce', async () => {
   const doc = await fixture(
@@ -1481,10 +1529,19 @@ test('annotation excludes comment UI but retains the narrower scope than text an
   ).toBe(true)
   const content = doc.querySelector('#content')!
   const ui = doc.querySelector('#ui')!
-  content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-  expect(content.classList.contains('as-preview-annotate-hover')).toBe(true)
-  ui.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-  expect(doc.querySelector('.as-preview-annotate-hover')).toBeNull()
+  const realm = doc.defaultView as unknown as typeof window
+  const closest = vi
+    .spyOn(realm.Element.prototype, 'closest')
+    .mockReturnValue(null)
+  try {
+    content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    expect(content.classList.contains('as-preview-annotate-hover')).toBe(true)
+    ui.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    expect(doc.querySelector('.as-preview-annotate-hover')).toBeNull()
+    expect(closest).not.toHaveBeenCalled()
+  } finally {
+    closest.mockRestore()
+  }
 })
 
 test('mutation relevance ignores added and removed ignored nodes but not comment UI content', async () => {
@@ -1502,6 +1559,18 @@ test('mutation relevance ignores added and removed ignored nodes but not comment
   })
   await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
   const walk = vi.spyOn(doc, 'createTreeWalker')
+  const realm = doc.defaultView as unknown as typeof window
+  const originalClosest = realm.Element.prototype.closest
+  const closest = vi
+    .spyOn(realm.Element.prototype, 'closest')
+    .mockImplementation(function (this: Element, selector: string) {
+      if (selector === '[data-anchor-ignore],#ash-comment-highlight-style')
+        return null
+      return originalClosest.call(this, selector)
+    })
+  const hasAttribute = vi
+    .spyOn(realm.Element.prototype, 'hasAttribute')
+    .mockReturnValue(false)
   try {
     const ignored = doc.createElement('div')
     ignored.setAttribute('data-anchor-ignore', '')
@@ -1512,10 +1581,14 @@ test('mutation relevance ignores added and removed ignored nodes but not comment
     ignored.remove()
     await new Promise<void>((resolve) => queueMicrotask(resolve))
     expect(walk).not.toHaveBeenCalled()
+    expect(closest).not.toHaveBeenCalled()
+    expect(hasAttribute).not.toHaveBeenCalled()
     doc.querySelector('#ui')!.textContent = 'UI words'
     await vi.waitFor(() => expect(walk).toHaveBeenCalled())
     expect(results()?.results[0]?.state).toBe('attached')
   } finally {
+    closest.mockRestore()
+    hasAttribute.mockRestore()
     walk.mockRestore()
   }
 })

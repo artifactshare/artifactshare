@@ -30,6 +30,7 @@ vi.mock('~/components/app/app-side-panel', async () => {
   }
 })
 import { CommentPanel } from './comment-panel'
+import { useViewerComments } from './viewer-shell'
 
 type PositionState = 'attached' | 'needs-check' | 'unchecked'
 
@@ -136,4 +137,51 @@ test('checking is neutral; only a missing quote uses warning colors', () => {
   expect(html).not.toContain('text-warning')
   expect(html).not.toContain(en['comments.positionChecking'])
   expect(html).not.toContain(' data-comment-thread-hitarea=""')
+})
+
+test('the first panel render checks an unchecked thread only when a frame is present', () => {
+  locale.value = 'en'
+  const initialThreads = [textThread('unchecked')]
+  function FirstRenderPanel({ framePresent }: { framePresent: boolean }) {
+    const comments = useViewerComments({
+      framePresent,
+      artifactId: 'abc123def4',
+      currentUserId: 'viewer',
+      currentVersionId: 'v1',
+      initialThreads,
+      targetCommentId: null,
+      liveEnabled: false,
+    })
+    expect(comments.state.threads[0].subject).toEqual(initialThreads[0].subject)
+    return (
+      <CommentPanel
+        shareableId="abc123def4"
+        viewerUserId="viewer"
+        threads={comments.panelThreads}
+        onThreadsChange={comments.replaceThreads}
+        isCurrentShareableId={comments.isCurrentArtifactId}
+        open
+        onOpenChange={comments.changePanelOpen}
+        targetThreadId={null}
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+      />
+    )
+  }
+  // No passive effects or availability setter run during server rendering.
+  const withFrame = renderToStaticMarkup(<FirstRenderPanel framePresent />)
+  expect(withFrame).toContain('Original words')
+  expect(withFrame).toContain(en['comments.positionChecking'])
+  expect(withFrame).not.toContain('text-warning')
+  const withoutFrame = renderToStaticMarkup(
+    <FirstRenderPanel framePresent={false} />,
+  )
+  expect(withoutFrame).toContain('Original words')
+  expect(withoutFrame).not.toContain(en['comments.positionChecking'])
+  expect(withoutFrame).toContain(
+    renderToStaticMarkup(
+      <strong className="hidden">{en['comments.subjectOrphaned']}</strong>,
+    ),
+  )
+  expect(withoutFrame).not.toContain('text-warning')
 })

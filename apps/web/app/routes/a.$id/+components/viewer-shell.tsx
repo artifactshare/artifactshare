@@ -672,7 +672,7 @@ export function useViewerComments({
   )
 
   const [reportedAnchorCheckingAvailable, setAnchorCheckingAvailable] =
-    useState(false)
+    useState(true)
   const anchorCheckingAvailable =
     framePresent && reportedAnchorCheckingAvailable
   const panelThreads = useMemo(

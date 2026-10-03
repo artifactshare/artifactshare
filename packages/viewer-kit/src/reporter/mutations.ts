@@ -51,59 +51,63 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
   ctx.observedAnchorRoot = root
   // Exclusion changes can arrive while a text debounce is pending, including
   // on nodes now ignored by the normal mutation filter. Never reuse that snapshot.
-  if (
-    rootReplaced ||
-    records.some(function (record) {
-      return (
-        record.type === 'attributes' &&
-        (record.attributeName === ANCHOR_IGNORE_ATTRIBUTE ||
-          record.attributeName === COMMENT_UI_ATTRIBUTE ||
-          record.attributeName === EXCLUSION_CLASS_ATTRIBUTE)
-      )
-    })
-  )
-    ctx.anchorSnapshotGeneration++
+  let exclusionChanged = false
+  for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
+    const record = records[recordIndex]
+    if (
+      record.type === 'attributes' &&
+      (record.attributeName === ANCHOR_IGNORE_ATTRIBUTE ||
+        record.attributeName === COMMENT_UI_ATTRIBUTE ||
+        record.attributeName === EXCLUSION_CLASS_ATTRIBUTE)
+    ) {
+      exclusionChanged = true
+      break
+    }
+  }
+  if (rootReplaced || exclusionChanged) ctx.anchorSnapshotGeneration++
   if (
     !root ||
     !ctx.doc.body ||
     (!ctx.pendingHighlights.length && !ctx.pendingAnchors.length)
   )
     return
-  let relevant = records.filter(function (record) {
-    if (record.type !== 'attributes' && !root.contains(record.target))
-      return false
+  let hasRelevant = false
+  let hasRelevantContent = false
+  for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
+    const record = records[recordIndex]
+    if (record.type !== 'attributes' && !root.contains(record.target)) continue
     let element =
       record.target.nodeType === 1
         ? (record.target as Element)
         : record.target.parentElement
-    if (element && element.closest(ignoredMutationSelector())) return false
+    if (element && ctx.primordials.closest(element, ignoredMutationSelector()))
+      continue
     if (record.type === 'childList') {
-      let allIgnored = true
+      let hasContentNode = false
       for (let group = 0; group < 2; group++) {
         const nodes = group === 0 ? record.addedNodes : record.removedNodes
         for (let index = 0; index < nodes.length; index++) {
           const node = nodes[index]
           if (
             node.nodeType !== 1 ||
-            (!(node as Element).hasAttribute(ANCHOR_IGNORE_ATTRIBUTE) &&
+            (!ctx.primordials.hasAttribute(
+              node as Element,
+              ANCHOR_IGNORE_ATTRIBUTE,
+            ) &&
               (node as Element).id !== 'ash-comment-highlight-style')
           )
-            allIgnored = false
+            hasContentNode = true
         }
       }
-      if (allIgnored) return false
+      if (!hasContentNode) continue
     }
-    return true
-  })
-  if (!rootReplaced && !relevant.length) return
+    hasRelevant = true
+    if (record.type !== 'attributes') hasRelevantContent = true
+  }
+  if (!rootReplaced && !hasRelevant) return
   // Layout changes never alter anchor text, but live range geometry may change.
   schedulePositionBadges(ctx)
-  if (
-    rootReplaced ||
-    relevant.some(function (record) {
-      return record.type !== 'attributes'
-    })
-  ) {
+  if (rootReplaced || hasRelevantContent) {
     // Observe ancestors too: replacing the content root invalidates its ranges.
     rebuildAfterMutations(ctx)
   }

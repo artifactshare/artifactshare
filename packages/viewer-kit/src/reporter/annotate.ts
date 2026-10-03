@@ -29,7 +29,7 @@ export function annotateTargetFrom(
   const target = eventTarget as Element | null
   if (!target || target.nodeType !== 1) return null
   if (target === ctx.doc.body || target === ctx.doc.documentElement) return null
-  if (target.closest && target.closest(commentUiSelector())) return null
+  if (ctx.primordials.closest(target, commentUiSelector())) return null
   return target
 }
 
