@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
 import {
+  captureStep,
   clickSettleMilliseconds,
   cleanupCliArtifacts,
   combineWalkthroughAndCleanupErrors,
@@ -204,4 +206,175 @@ test('walkthrough CLI runs as a fresh user inside the capture directory', () => 
     ARTIFACTSHARE_TOKEN: 'session',
     NODE_TLS_REJECT_UNAUTHORIZED: '0',
   })
+})
+
+function animatedPage(states) {
+  let time = 0
+  const events = []
+  const document = {
+    querySelectorAll(selector) {
+      assert.equal(
+        selector,
+        '[data-slot="sheet-content"], [data-slot="sheet-overlay"]',
+      )
+      return states(time).map((animations) => ({
+        getAnimations(options) {
+          assert.equal(options.subtree, true)
+          return animations.map((playState) => ({ playState }))
+        },
+      }))
+    },
+  }
+  const locator = {
+    waitFor: () => Promise.resolve(),
+    click: () => {
+      events.push('click')
+    },
+    count: () => Promise.resolve(1),
+    isVisible: () => Promise.resolve(true),
+    first() {
+      return this
+    },
+  }
+  const page = {
+    evaluate: (fn) => {
+      events.push('inspect')
+      return runInNewContext(`(${fn.toString()})()`, {
+        document,
+        navigator: {},
+      })
+    },
+    locator: () => locator,
+    url: () => 'https://localhost/a/example',
+    goto: () => Promise.resolve({ ok: () => true }),
+    route: () => Promise.resolve(),
+    waitForTimeout: () => {
+      events.push('action-delay')
+    },
+    waitForLoadState: () => {
+      events.push('load')
+      return Promise.resolve()
+    },
+    screenshot: () => {
+      events.push(`screenshot:${time}`)
+    },
+  }
+  return {
+    page,
+    events,
+    animationTiming: {
+      now: () => time,
+      sleep: (ms) => {
+        time += ms
+        events.push('poll')
+      },
+    },
+  }
+}
+
+test('phase capture waits for content and overlay subtree animations before PNG', async () => {
+  for (const states of [
+    (time) => [[time < 100 ? 'running' : 'finished'], []],
+    (time) => [['finished'], [time < 150 ? 'running' : 'finished']],
+    (time) => (time < 100 ? [['paused']] : []),
+    (time) => [time < 100 ? ['running'] : []],
+  ]) {
+    const fake = animatedPage(states)
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    })
+    assert.equal(evidence.sheetAnimationWait.status, 'completed')
+    assert.ok(evidence.sheetAnimationWait.elapsedMs >= 100)
+    assert.equal(fake.events.at(-2), 'inspect')
+    assert.match(fake.events.at(-1), /^screenshot:/)
+  }
+})
+
+test('absent, empty, and finished animations capture immediately', async () => {
+  for (const states of [[], [[], []], [['finished'], ['finished']]]) {
+    const fake = animatedPage(() => states)
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    })
+    assert.deepEqual(evidence.sheetAnimationWait, {
+      status: 'completed',
+      elapsedMs: 0,
+      timeoutMs: 2000,
+    })
+    assert.deepEqual(fake.events, ['inspect', 'screenshot:0'])
+  }
+})
+
+test('content and overlay share one bound and timeout still permits PNG', async () => {
+  const fake = animatedPage(() => [['running'], ['paused']])
+  const evidence = await captureStep({
+    ...fake,
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  assert.deepEqual(evidence.sheetAnimationWait, {
+    status: 'timed-out',
+    elapsedMs: 2000,
+    timeoutMs: 2000,
+  })
+  assert.equal(fake.events.at(-1), 'screenshot:2000')
+})
+
+test('sheet opening clicks settle immediately and retain separate phase diagnostics', async () => {
+  for (const kind of [
+    'gotoArtifactAndClick',
+    'gotoCliArtifactAndClick',
+    'click',
+    'clickWithClipboardFailure',
+  ]) {
+    const fake = animatedPage((time) => [
+      [time <= 2000 ? 'running' : 'finished'],
+      [],
+    ])
+    const evidence = await captureStep({
+      ...fake,
+      action: { kind, selector: 'button', captureDuringNavigation: true },
+      screenshot: {},
+      baseUrl: 'https://localhost',
+      state: { artifactIndex: 0, cliArtifactId: 'example' },
+      session: { workspaceId: 'workspace', userId: 'user' },
+    })
+    const click = fake.events.indexOf('click')
+    assert.equal(fake.events[click + 1], 'inspect')
+    assert.equal(evidence.clicked.sheetAnimationWait.status, 'timed-out')
+    assert.equal(evidence.sheetAnimationWait.status, 'completed')
+    assert.equal(evidence.sheetAnimationWait.elapsedMs, 50)
+    assert.equal(fake.events.at(-1), 'screenshot:2050')
+    assert.ok(!fake.events.includes('action-delay'))
+    assert.ok(!fake.events.includes('load'))
+  }
+})
+
+test('unexpected browser inspection errors prevent screenshots', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.evaluate = () => Promise.reject(new Error('browser disconnected'))
+  await assert.rejects(
+    captureStep({
+      ...fake,
+      action: { kind: 'inspect', selector: 'main' },
+      screenshot: {},
+    }),
+    /browser disconnected/,
+  )
+  assert.deepEqual(fake.events, [])
+})
+
+test('pre-screenshot wait follows existing load settling on a phase without clicks', async () => {
+  const fake = animatedPage(() => [])
+  fake.page.url = () => 'https://localhost/recent'
+  await captureStep({
+    ...fake,
+    action: { kind: 'inspect', selector: 'main' },
+    screenshot: {},
+  })
+  assert.deepEqual(fake.events, ['load', 'inspect', 'screenshot:0'])
 })

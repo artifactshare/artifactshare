@@ -20,6 +20,7 @@ import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import {
   cleanHead,
   invocation,
+  main,
   parseArgs,
   promptFor,
   readDispositions,
@@ -627,4 +628,356 @@ test('copy-only runs the Claude visual layer and needs crops', () => {
       ]),
     /Claude visual layer only/u,
   )
+})
+
+function screenOnlyFixture(t) {
+  const repo = mkdtempSync(join(tmpdir(), 'screen-only-critique-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const root = join(repo, 'screens')
+  const head = 'a'.repeat(40)
+  mkdirSync(root)
+  writeFileSync(join(repo, 'source.tsx'), 'export const screen = true\n')
+  const entries = ['viewer.png', 'viewer-mobile.png'].map((file) => {
+    writeFileSync(join(root, file), 'png')
+    return {
+      screen: 'viewer',
+      state: 'ready',
+      viewport: file,
+      status: 'success',
+      head,
+      file,
+    }
+  })
+  const save = () =>
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify(entries))
+  save()
+  const argv = [
+    '--screen-root',
+    'screens',
+    '--scope-judgment',
+    '  Only the review report changes; no registered task is affected.  ',
+    '--source',
+    'source.tsx',
+  ]
+  return { repo, root, head, entries, save, argv }
+}
+
+test('screen-only parser requires captures, scope judgment and source and rejects tasks', () => {
+  const valid = [
+    '--screen-root',
+    'screens',
+    '--scope-judgment',
+    ' none affected ',
+    '--source',
+    'source.tsx',
+  ]
+  for (const provider of ['claude', 'codex']) {
+    const parsed = parseArgs([...valid, '--provider', provider])
+    assert.equal(parsed.scopeJudgment, 'none affected')
+    assert.equal(parsed.walkthroughRoot, undefined)
+  }
+  for (const [flag, value] of [
+    ['--screen-root', 'screens'],
+    ['--scope-judgment', ' none affected '],
+    ['--source', 'source.tsx'],
+  ]) {
+    assert.throws(
+      () => parseArgs(valid.filter((arg) => arg !== flag && arg !== value)),
+      new RegExp(flag),
+    )
+  }
+  assert.throws(
+    () => parseArgs([...valid, '--scope-judgment', ' \t ']),
+    /--scope-judgment/,
+  )
+  assert.throws(
+    () => parseArgs([...valid, '--task', 'share-file-link']),
+    /--task requires --walkthrough-root/,
+  )
+  assert.throws(
+    () => parseArgs([...valid, '--provider', 'codex', '--copy-only']),
+    /--copy-only/,
+  )
+})
+
+test('screen-only main launches one visual reviewer with validated source and all PNGs', async (t) => {
+  const f = screenOnlyFixture(t)
+  const input = validateInputs(parseArgs(f.argv), {
+    repo: f.repo,
+    head: f.head,
+  })
+  assert.equal(input.root, undefined)
+  for (const key of [
+    'selected',
+    'acceptedBehavior',
+    'evidencePaths',
+    'imagePaths',
+  ])
+    assert.deepEqual(input[key], [])
+  assert.equal(input.screenImagePaths.length, 2)
+  for (const provider of ['claude', 'codex']) {
+    for (const dryRun of [false, true]) {
+      const calls = []
+      let output = ''
+      let checks = 0
+      await main({
+        argv: [
+          ...f.argv,
+          '--provider',
+          provider,
+          ...(dryRun ? ['--dry-run'] : []),
+        ],
+        repo: f.repo,
+        exec: (_command, args) => {
+          checks++
+          return args[0] === 'status' ? '' : f.head
+        },
+        stdout: {
+          write: (value) => {
+            output += value
+          },
+        },
+        run: (command, args, options) => {
+          calls.push({ command, args, input: options.input })
+          return {
+            status: 0,
+            stdout:
+              provider === 'codex'
+                ? 'Complete'
+                : JSON.stringify({
+                    is_error: false,
+                    subtype: 'success',
+                    result: 'Complete',
+                    permission_denials: [],
+                  }),
+          }
+        },
+      })
+      assert.equal(checks, 4)
+      const invocations = dryRun ? JSON.parse(output) : calls
+      assert.equal(calls.length, dryRun ? 0 : 1)
+      assert.equal(invocations.length, 1)
+      const call = invocations[0]
+      assert.equal(call.command, provider)
+      if (dryRun)
+        assert.equal(call.layer, provider === 'codex' ? 'combined' : 'visual')
+      const prompt =
+        provider === 'codex'
+          ? call.input
+          : call.args[call.args.indexOf('-p') + 1]
+      assert.match(prompt, /Only the review report changes/)
+      assert.match(prompt, /no registered task is affected/)
+      assert.match(prompt, /screen, state, viewport/)
+      assert.match(prompt, /source.tsx/)
+      assert.match(prompt, /viewer-mobile.png/)
+      assert.doesNotMatch(
+        prompt,
+        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding/,
+      )
+      if (provider === 'codex')
+        assert.deepEqual(
+          call.args.flatMap((arg, i) =>
+            arg === '--image' ? [call.args[i + 1]] : [],
+          ),
+          input.screenImagePaths,
+        )
+    }
+  }
+})
+
+test('walkthrough main retains two Claude layers and copy-only visual selection', async (t) => {
+  const f = fixture()
+  t.after(() => rmSync(f.repo, { recursive: true, force: true }))
+  const screens = screenOnlyFixture(t)
+  // Copy the independent screen manifest into this repository.
+  mkdirSync(join(f.repo, 'screens'))
+  for (const file of ['manifest.json', 'viewer.png', 'viewer-mobile.png'])
+    writeFileSync(
+      join(f.repo, 'screens', file),
+      readFileSync(join(screens.root, file)),
+    )
+  for (const copyOnly of [false, true]) {
+    let output = ''
+    await main({
+      argv: [
+        '--walkthrough-root',
+        'captures',
+        '--source',
+        'source.tsx',
+        '--dry-run',
+        ...(copyOnly ? ['--copy-only', '--screen-root', 'screens'] : []),
+      ],
+      repo: f.repo,
+      exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+      stdout: {
+        write: (value) => {
+          output += value
+        },
+      },
+      run: () => {
+        assert.fail('dry run launched a provider')
+      },
+    })
+    assert.deepEqual(
+      JSON.parse(output).map((call) => call.layer),
+      copyOnly ? ['visual'] : ['visual', 'task'],
+    )
+
+    const prompts = []
+    await main({
+      argv: [
+        '--walkthrough-root',
+        'captures',
+        '--source',
+        'source.tsx',
+        ...(copyOnly ? ['--copy-only', '--screen-root', 'screens'] : []),
+      ],
+      repo: f.repo,
+      exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+      stdout: { write: () => {} },
+      run: (_command, args) => {
+        prompts.push(args[args.indexOf('-p') + 1])
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            is_error: false,
+            subtype: 'success',
+            result: 'Complete',
+            permission_denials: [],
+          }),
+        }
+      },
+    })
+    assert.equal(prompts.length, copyOnly ? 1 : 2)
+    assert.match(prompts[0], /Visual layer:/)
+    if (!copyOnly) assert.match(prompts[1], /Task layer:/)
+  }
+})
+
+test('invalid screen-only captures never launch providers, including dry runs', async (t) => {
+  const cases = [
+    [
+      'stale HEAD',
+      (f) => {
+        f.entries[0].head = 'b'.repeat(40)
+        f.save()
+      },
+      /HEAD/,
+    ],
+    [
+      'failed entry',
+      (f) => {
+        f.entries[0].status = 'failed'
+        f.save()
+      },
+      /successful screen/,
+    ],
+    [
+      'empty manifest',
+      (f) => {
+        f.entries.length = 0
+        f.save()
+      },
+      /entries are required/,
+    ],
+    [
+      'missing manifest',
+      (f) => unlinkSync(join(f.root, 'manifest.json')),
+      /manifest.json/,
+    ],
+    [
+      'missing PNG',
+      (f) => unlinkSync(join(f.root, 'viewer.png')),
+      /PNG required/,
+    ],
+    [
+      'missing source',
+      (f) => unlinkSync(join(f.repo, 'source.tsx')),
+      /Source must/,
+    ],
+    [
+      'invalid root',
+      (f) => {
+        f.argv[1] = 'missing'
+      },
+      /Screen capture root/,
+    ],
+    [
+      'escaping PNG',
+      (f) => {
+        unlinkSync(join(f.root, 'viewer.png'))
+        symlinkSync(join(f.repo, 'source.tsx'), join(f.root, 'viewer.png'))
+      },
+      /PNG required/,
+    ],
+    [
+      'escaping manifest',
+      (f) => {
+        const file = join(f.root, 'manifest.json')
+        renameSync(file, join(f.repo, 'manifest.json'))
+        symlinkSync(join(f.repo, 'manifest.json'), file)
+      },
+      /manifest.json/,
+    ],
+    [
+      'escaping source',
+      (f) => {
+        unlinkSync(join(f.repo, 'source.tsx'))
+        symlinkSync(import.meta.filename, join(f.repo, 'source.tsx'))
+      },
+      /Source must/,
+    ],
+  ]
+  for (const [name, mutate, expected] of cases) {
+    await t.test(name, async (subtest) => {
+      const f = screenOnlyFixture(subtest)
+      mutate(f)
+      for (const dryRun of [false, true])
+        await assert.rejects(
+          main({
+            argv: [...f.argv, ...(dryRun ? ['--dry-run'] : [])],
+            repo: f.repo,
+            exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+            run: () => {
+              assert.fail('invalid input launched provider')
+            },
+            stdout: { write: () => {} },
+          }),
+          expected,
+        )
+    })
+  }
+})
+
+test('screen-only main preserves clean HEAD checks before and after providers', async (t) => {
+  const f = screenOnlyFixture(t)
+  let calls = 0
+  await assert.rejects(
+    main({
+      argv: f.argv,
+      repo: f.repo,
+      exec: () => ' M source.tsx',
+      run: () => {
+        calls++
+      },
+    }),
+    /clean committed/,
+  )
+  assert.equal(calls, 0)
+  let headReads = 0
+  await assert.rejects(
+    main({
+      argv: [...f.argv, '--provider', 'codex'],
+      repo: f.repo,
+      exec: (_command, args) =>
+        args[0] === 'status' ? '' : ++headReads === 1 ? f.head : 'b'.repeat(40),
+      run: () => {
+        calls++
+        return { status: 0, stdout: 'Complete' }
+      },
+      stdout: { write: () => {} },
+    }),
+    /HEAD or worktree changed/,
+  )
+  assert.equal(calls, 1)
 })

@@ -32,6 +32,13 @@ mixing alternative outcomes; authenticated network traces are not retained, and
 signed URL query values are redacted.
 `evidence.json` contains the same task, persona, mediation,
 authentication, and phase data for agent critique.
+Immediately after sheet-opening clicks and before every phase PNG, capture waits
+for sheet content and overlay subtree animations to finish, sharing one 2 s
+deadline per wait. Empty or absent animations complete immediately.
+Each phase records `evidence.sheetAnimationWait`; clicks also retain
+`evidence.clicked.sheetAnimationWait`. Both contain `status` (`completed` or
+`timed-out`), `elapsedMs`, and `timeoutMs: 2000`. A timeout is diagnostic:
+capture still takes the PNG, and a later successful wait does not overwrite it.
 
 Use the completed output with the task critique launcher. Pass every source file
 that owns the affected UI; the launcher rejects stale task/persona snapshots,
@@ -53,6 +60,24 @@ findings back into the screen ledger, task ledger, or walkthrough evidence.
 Both capture manifests record the current commit, and the launcher requires a
 clean checkout at that same commit. Pass `--screen-root` for affected states
 captured outside the selected walkthroughs.
+
+When no registered task is affected, omit `--walkthrough-root` and supply
+at least one `--screen-root`, a nonblank `--scope-judgment` explaining that
+decision, and the relevant `--source` files:
+
+```sh
+pnpm critique:tasks -- \
+  --screen-root "$capture_output_root/viewer" \
+  --scope-judgment "Only standalone screen presentation changed; no registered task is affected." \
+  --source 'apps/web/app/routes/a.$shareableId.tsx'
+```
+
+Screen-only mode rejects `--task` and runs exactly one Claude visual reviewer.
+With `--provider codex`, the existing combined reviewer runs once with only
+visual responsibility and all validated screen PNGs attached. The scope judgment
+is included in either prompt. Sources and captures retain the same existence,
+containment, successful-status, and matching-commit requirements. An optional
+scope judgment with walkthrough-backed review does not narrow task coverage.
 
 Walkthrough authentication comes from the task persona and the existing local
 development sign-in API. Scenario setup reuses the screen scenario mechanism;
