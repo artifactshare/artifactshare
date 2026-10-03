@@ -19,11 +19,16 @@ function fixture() {
     excluded: false,
     paintedText: 'quote',
     dark: false,
+    node: { parentElement: { closest: () => null } },
   }
-  const element = { closest: () => null }
-  const range = { startContainer: { parentElement: element } }
   const build = vi.fn(() => {
-    const { text, excluded } = source
+    const { text, excluded, node } = source
+    const range = {
+      startContainer: node,
+      endContainer: node,
+      startOffset: 0,
+      endOffset: 5,
+    }
     return {
       text,
       hash: text,
@@ -56,12 +61,13 @@ function fixture() {
     var observer;
     function MutationObserver(callback) { observer = callback; this.observe = () => {}; }
     function anchorRoot() { return root; }
-    function clearMarks() { paintedAnchors = []; appliedHighlightKey = ''; }
+    function clearMarks() { paintedAnchors = []; badges = []; appliedHighlightKey = ''; }
     function wrapRange(highlight, engine) {
       paintedAnchors.push({ highlight, ranges: engine.ranges() });
       paint(highlight);
     }
     function isDarkBackground() { return source.dark; }
+    function commentLabel(highlight) { return String(highlight.count || 1); }
     function positionBadges() {}
     function schedulePositionBadges() {}
     function scheduleChecking() {}
@@ -69,7 +75,9 @@ function fixture() {
     function missingState() { return 'checking'; }
     ${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}
     return {
-      apply: () => applyHighlights([{ threadId: 'quote', quotedText: 'quote' }]),
+      apply: (metadata = {}) => applyHighlights([{ threadId: 'quote', quotedText: 'quote', ...metadata }]),
+      highlight: () => paintedAnchors[0].highlight,
+      setBadges: (entries) => { badges = entries; },
       mutate: (attribute) => observer([{
         type: attribute ? 'attributes' : 'characterData',
         attributeName: attribute,
@@ -81,7 +89,9 @@ function fixture() {
   )
   return {
     ...(run(build, paint, send, source, root, setTimeout, clearTimeout) as {
-      apply: () => void
+      apply: (metadata?: Record<string, unknown>) => void
+      highlight: () => Record<string, unknown>
+      setBadges: (entries: unknown[]) => void
       mutate: (attribute?: string) => void
       painted: () => number
     }),
@@ -168,3 +178,46 @@ test('same-offset echoes retain paint until the background palette changes', () 
   f.apply()
   expect(f.paint).toHaveBeenCalledTimes(2)
 })
+
+test('metadata-only updates refresh the stored resolved highlight without painting', () => {
+  const f = fixture()
+  f.apply({ count: 1, prefixText: 'old' })
+  f.apply({ count: 2, prefixText: 'new' })
+  expect(f.paint).toHaveBeenCalledOnce()
+  expect(f.highlight()).toMatchObject({
+    count: 2,
+    prefixText: 'new',
+    textStart: 0,
+    textEnd: 5,
+  })
+})
+
+test('equal offsets on different nodes cannot reuse painted ranges', () => {
+  const f = fixture()
+  f.apply()
+  f.source.node = { parentElement: { closest: () => null } }
+  f.mutate('data-anchor-ignore')
+  f.apply()
+  expect(f.paint).toHaveBeenCalledTimes(2)
+})
+
+test.each(['badge', 'overlay'])(
+  'removed %s prevents paint reuse',
+  (removed) => {
+    const f = fixture()
+    f.apply()
+    f.setBadges([
+      {
+        badge: {
+          isConnected: removed !== 'badge',
+          dataset: { threadId: 'quote' },
+          getAttribute: () => null,
+          setAttribute: () => {},
+        },
+        overlays: { first: { isConnected: removed !== 'overlay' } },
+      },
+    ])
+    f.apply()
+    expect(f.paint).toHaveBeenCalledTimes(2)
+  },
+)

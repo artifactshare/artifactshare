@@ -383,6 +383,71 @@ describe('CSP reporter runtime behavior', () => {
     }
   })
 
+  test('same-offset updates move paint and jump targets after exclusions change', async () => {
+    const doc = await fixture(
+      '<main data-comment-content><p id="a">quote</p><p id="b" data-anchor-ignore>quote</p></main>',
+    )
+    const highlight = { threadId: 'quote', quotedText: 'quote', count: 1 }
+    await applyHighlights([highlight])
+    const registry = (
+      doc.defaultView as unknown as {
+        CSS: { highlights: Map<string, Set<Range>> }
+      }
+    ).CSS.highlights
+    const ranges = () => [...registry.values()].flatMap((paint) => [...paint])
+    const a = doc.querySelector<HTMLElement>('#a')!
+    const b = doc.querySelector<HTMLElement>('#b')!
+    expect(ranges()[0].startContainer).toBe(a.firstChild)
+    a.setAttribute('data-anchor-ignore', '')
+    b.removeAttribute('data-anchor-ignore')
+    await applyHighlights([{ ...highlight, count: 2 }])
+    expect(ranges()).toHaveLength(1)
+    expect(ranges()[0].startContainer).toBe(b.firstChild)
+    expect(ranges()[0].endContainer).toBe(b.firstChild)
+    expect(ranges().some((range) => a.contains(range.startContainer))).toBe(
+      false,
+    )
+    const jumpA = vi.spyOn(a, 'scrollIntoView')
+    const jumpB = vi.spyOn(b, 'scrollIntoView')
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'scroll-to-comment',
+        threadId: 'quote',
+      },
+      '*',
+    )
+    await probeReporter()
+    expect(jumpB).toHaveBeenCalledOnce()
+    expect(jumpA).not.toHaveBeenCalled()
+  })
+
+  test.each(['badge', 'overlay'])(
+    'unchanged updates restore a removed %s',
+    async (removed) => {
+      const doc = await fixture(
+        '<svg width="400" height="100"><text x="10" y="40">Highlighted text</text></svg>',
+      )
+      const highlights = [{ threadId: 'svg' }]
+      await applyHighlights(highlights)
+      const selector =
+        removed === 'badge'
+          ? '.ash-comment-highlight-badge'
+          : '.ash-comment-highlight-svg'
+      const original = doc.querySelector(selector)!
+      expect(original).not.toBeNull()
+      original.remove()
+      await applyHighlights(highlights)
+      const restored = doc.querySelector(selector)
+      expect(restored).not.toBeNull()
+      expect(restored!.isConnected).toBe(true)
+      expect(
+        doc.querySelector('.ash-comment-highlight-svg')!.getBoundingClientRect()
+          .width,
+      ).toBeGreaterThan(0)
+    },
+  )
+
   test('a focused badge survives live counter changes and equal-value node replacement', async () => {
     const doc = await fixture(
       '<p id="target">Highlighted text</p><p id="counter">0</p>',
