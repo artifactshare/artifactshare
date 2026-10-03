@@ -450,15 +450,9 @@ describe('SVG source-to-glyph mapping in the injected reporter', () => {
     const groups = new Function(
       'document',
       'NodeFilter',
-      'createTextAnchorEngine',
-      'anchorRoot',
-      `${script}; return svgTextRange({ textStart: 0, textEnd: 6 })`,
-    )(
-      document,
-      { SHOW_TEXT: 4 },
-      () => engine,
-      () => ({}),
-    )
+      'ranges',
+      `${script}; return svgTextRange(ranges)`,
+    )(document, { SHOW_TEXT: 4 }, engine.ranges())
     return { groups, container }
   }
 
@@ -489,4 +483,53 @@ describe('SVG source-to-glyph mapping in the injected reporter', () => {
   test('the complete injected script remains valid JavaScript', () => {
     expect(() => new Function(VIOLATION_REPORTER_SCRIPT_BODY)).not.toThrow()
   })
+})
+
+test('SVG state changes ignore a forged state label and retain unchanged styles', () => {
+  const styles: Record<string, string> = {}
+  const write = vi.fn(
+    (target: Record<string, string>, key: string, value: string) => {
+      target[key] = value
+      return true
+    },
+  )
+  const overlay = {
+    dataset: { palette: 'rgba(255, 200, 0, 0.2)|orange', state: '' },
+    style: new Proxy(styles, { set: write }),
+    getAttribute: () => JSON.stringify(styles),
+  }
+  const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function setSvgHighlightState(',
+  )
+  const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function highlightPalette(',
+    start,
+  )
+  const setState = new Function(
+    'textPaints',
+    'refreshTextPaints',
+    'document',
+    'CSS',
+    'svgOverlayStyles',
+    `${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}; return setSvgHighlightState`,
+  )(
+    [],
+    () => {},
+    { querySelectorAll: () => [overlay] },
+    { escape: (value: string) => value },
+    new WeakMap(),
+  )
+  setState('svg', false)
+  expect(styles.stroke).toBe('none')
+  overlay.dataset.state = 'active'
+  setState('svg', true)
+  expect(styles.stroke).toBe('orange')
+  expect(styles.strokeWidth).toBe('2')
+  overlay.dataset.state = 'normal'
+  setState('svg', false)
+  expect(styles.stroke).toBe('none')
+  expect(styles.strokeWidth).toBe('0')
+  write.mockClear()
+  setState('svg', false)
+  expect(write).not.toHaveBeenCalled()
 })

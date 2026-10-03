@@ -125,6 +125,7 @@ type SandboxFrameProps = {
   highlightThreadId: string | null
   followsAppTheme: boolean
   lowTrust?: boolean
+  onAnchorCheckingChange?: (available: boolean) => void
   onAnchorResolutions?: (results: AnchorResolutionMessage['results']) => void
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
@@ -352,6 +353,7 @@ function useSandboxFrameController({
   highlightThreadId,
   onTextSelection,
   onAnchorResolutions,
+  onAnchorCheckingChange,
   onTextSelectionClear,
   onThreadSelect,
   onOutsidePointerDown,
@@ -840,6 +842,38 @@ function useSandboxFrameController({
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [clearReadyFallback, lowTrust, mermaidEnabled, trustedMessageOrigin])
+
+  const reportAnchorChecking = useEffectEvent((available: boolean) => {
+    onAnchorCheckingChange?.(available)
+  })
+  const anchorCheckingWindow = useRef<{ url: string; deadline: number } | null>(
+    null,
+  )
+  useEffect(() => {
+    if (anchorCheckingWindow.current?.url !== url) {
+      anchorCheckingWindow.current = { url, deadline: Date.now() + 3000 }
+      reportAnchorChecking(true)
+    }
+    if (loadState === 'blocked' || loadState === 'paused') {
+      reportAnchorChecking(false)
+      return
+    }
+    if (loadState === 'ready') {
+      reportAnchorChecking(true)
+      return
+    }
+    // Recovery transitions retain the deadline established for this frame URL.
+    const remaining = anchorCheckingWindow.current.deadline - Date.now()
+    if (remaining <= 0) {
+      reportAnchorChecking(false)
+      return
+    }
+    const deadline = window.setTimeout(
+      () => reportAnchorChecking(false),
+      remaining,
+    )
+    return () => window.clearTimeout(deadline)
+  }, [loadState, url])
 
   useEffect(() => {
     if (loadState !== 'ready') return

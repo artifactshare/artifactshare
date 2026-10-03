@@ -164,6 +164,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   var pendingHighlights = [];
   var pendingAnchors = [];
   var measuredText = null;
+  var anchorSnapshotGeneration = 0;
   var paintedAnchors = [];
   var resolveStartedAt = 0;
   var resolveTimer = null;
@@ -470,6 +471,35 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (style) style.textContent = '.ash-comment-highlight-badge::after{content:attr(data-count);}';
   }
 
+  function paintIntact(highlightsById) {
+    var style = document.getElementById('ash-comment-highlight-style');
+    if (paintedAnchors.length && (!style || !style.isConnected || style.textContent !== textPaintCss())) return false;
+    if (typeof CSS !== 'undefined' && CSS.highlights &&
+        textPaints.some(function (paint) {
+          return CSS.highlights.get(paint.name) !== paint.highlight || paint.highlight.size !== paint.ranges.length ||
+            paint.ranges.some(function (range) { return !paint.highlight.has(range); });
+        })) return false;
+    if (badges.some(function (entry) {
+      return !highlightsById.has(entry.highlight.threadId) || !entry.badge.isConnected || (entry.overlays && Object.values(entry.overlays).some(function (shape) { return !shape.isConnected; }));
+    })) return false;
+    return paintedAnchors.every(function (entry) {
+      var next = highlightsById.get(entry.highlight.threadId);
+      if (!next || next.ranges.length !== entry.ranges.length || entry.ranges.some(function (range, index) {
+        var current = next.ranges[index];
+        return range.startContainer !== current.startContainer || range.startOffset !== current.startOffset ||
+          range.endContainer !== current.endContainer || range.endOffset !== current.endOffset;
+      })) return false;
+      if (entry.groups.length) {
+        var groups = svgTextRange(entry.ranges);
+        if (groups.length !== entry.groups.length || groups.some(function (group, index) {
+          var previous = entry.groups[index];
+          return group.text !== previous.text || group.start !== previous.start || group.end !== previous.end;
+        })) return false;
+      }
+      return true;
+    });
+  }
+
   function setCommentLabels(labels) {
     if (!labels || typeof labels !== 'object') return;
     if (typeof labels.openOne === 'string') commentLabels.openOne = labels.openOne;
@@ -660,13 +690,18 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   var svgActiveThreads = {};
-  function refreshTextPaints() {
-    var style = document.getElementById('ash-comment-highlight-style');
-    if (!style) return;
-    style.textContent = '.ash-comment-highlight-badge::after{content:attr(data-count);}' + textPaints.map(function (paint) {
+  var svgOverlayStyles = new WeakMap();
+  function textPaintCss() {
+    return '.ash-comment-highlight-badge::after{content:attr(data-count);}' + textPaints.map(function (paint) {
       return '::highlight(' + paint.name + '){background-color:' + paint.palette.markBg + ';text-decoration:underline;text-decoration-color:' +
         (paint.active ? paint.palette.outline : paint.palette.markUnderline) + ';text-decoration-thickness:' + (paint.active ? '3px' : '2px') + ';}';
     }).join('');
+  }
+  function refreshTextPaints() {
+    var style = document.getElementById('ash-comment-highlight-style');
+    if (!style) return;
+    var css = textPaintCss();
+    if (style.textContent !== css) style.textContent = css;
   }
   function setSvgHighlightState(threadId, active) {
     textPaints.forEach(function (paint) { if (paint.threadId === threadId) paint.active = active || paint.target; });
@@ -680,7 +715,10 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       var normalFill = parts[0];
       var outline = parts[1];
       var target = overlay.dataset.target === 'true';
-      overlay.dataset.state = active || target ? 'active' : 'normal';
+      var state = active || target ? 'active' : 'normal';
+      var applied = svgOverlayStyles.get(overlay);
+      if (overlay.dataset.state !== state) overlay.dataset.state = state;
+      if (applied && applied.state === state && overlay.getAttribute('style') === applied.style) continue;
       if (active || target) {
         overlay.style.fill = normalFill;
         overlay.style.stroke = outline;
@@ -691,6 +729,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         overlay.style.stroke = 'none';
         overlay.style.strokeWidth = '0';
       }
+      svgOverlayStyles.set(overlay, { state: state, style: overlay.getAttribute('style') });
     }
   }
 
@@ -877,9 +916,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     });
   }
 
-  function svgTextRange(highlight) {
-    var engine = createTextAnchorEngine(anchorRoot());
-    return engine.ranges(highlight.textStart, highlight.textEnd).flatMap(function (range) {
+  function svgTextRange(ranges) {
+    return ranges.flatMap(function (range) {
       var node = range.startContainer;
       if (!node.parentElement.closest('svg text')) return [];
       // SVG character indexes are local to the text content element. A tspan
@@ -921,9 +959,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     });
   }
 
-  function wrapSvgRange(highlight) {
-    if (!document.querySelector('svg text')) return false;
-    var groups = svgTextRange(highlight);
+  function wrapSvgRange(highlight, groups) {
     if (!groups.length) return false;
     var texts = groups.map(function (group) { return group.text; }).filter(function (text, index, all) { return all.indexOf(text) === index; });
     var first = texts[0];
@@ -932,12 +968,19 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     if (!svg || !svg.parentNode) return false;
     ensureCommentStyles();
     var overlays = {};
+    var badgeEntry = { badge: null, highlight: highlight, overlays: overlays, measure: measureSvgRange };
 
     function overlayKey(text, index) {
       return texts.indexOf(text) + ':' + index;
     }
 
+    function setAttributeIfChanged(shape, name, value) {
+      value = String(value);
+      if (shape.getAttribute(name) !== value) shape.setAttribute(name, value);
+    }
+
     function updateOverlay(text, index, box, screenCtm) {
+      var highlight = badgeEntry.highlight;
       var key = overlayKey(text, index);
       var shape = overlays[key];
       if (!shape) {
@@ -958,19 +1001,19 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       var scaleY = screenCtm ? Math.hypot(screenCtm.c, screenCtm.d) : 1;
       var padX = scaleX ? 2 / scaleX : 2;
       var padY = scaleY ? 2 / scaleY : 2;
-      shape.setAttribute('x', box.x - padX);
-      shape.setAttribute('y', box.y - padY);
-      shape.setAttribute('width', box.width + padX * 2);
-      shape.setAttribute('height', box.height + padY * 2);
+      setAttributeIfChanged(shape, 'x', box.x - padX);
+      setAttributeIfChanged(shape, 'y', box.y - padY);
+      setAttributeIfChanged(shape, 'width', box.width + padX * 2);
+      setAttributeIfChanged(shape, 'height', box.height + padY * 2);
       var textCtm = text.getCTM ? text.getCTM() : null;
       var parentCtm = shape.parentNode && shape.parentNode.getCTM ? shape.parentNode.getCTM() : null;
       if (textCtm && parentCtm && parentCtm.inverse) {
         var matrix = parentCtm.inverse().multiply(textCtm);
-        shape.setAttribute(
+        setAttributeIfChanged(shape,
           'transform',
           'matrix(' + [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].join(' ') + ')',
         );
-      } else {
+      } else if (shape.hasAttribute('transform')) {
         shape.removeAttribute('transform');
       }
       return shape;
@@ -1014,7 +1057,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
             var run = runs[runIndex];
             var overlayIndex = i + '-' + runIndex;
             var overlay = updateOverlay(group.text, overlayIndex, run, ctm);
-            overlay.style.display = isBadgeAnchorVisible(group.text) ? 'inline' : 'none';
+            var display = isBadgeAnchorVisible(group.text) ? 'inline' : 'none';
+            if (overlay.style.display !== display) overlay.style.display = display;
             usedOverlays[overlayKey(group.text, overlayIndex)] = true;
             var points = [
               [run.x, run.y],
@@ -1068,24 +1112,26 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         ? '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
         : '<svg viewBox="0 0 24 24" width="10" height="10" style="width:10px;height:10px;flex:none;border:0;padding:0;margin:0;background:none;box-shadow:none" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
     badge.style.cssText = badgeStyleForHighlight(highlight, isDarkBackgroundForSvgText(first));
-    badges.push({ badge: badge, measure: measureSvgRange });
+    badgeEntry.badge = badge;
+    badges.push(badgeEntry);
     measureSvgRange();
     return true;
   }
 
-  function wrapRange(highlight, engine, covered) {
-    var ranges = engine.ranges(highlight.textStart, highlight.textEnd);
+  function wrapRange(highlight, ranges, covered) {
     if (!ranges.length) return;
-    paintedAnchors.push({ highlight: highlight, ranges: ranges });
+    var groups = !covered && document.querySelector('svg text') ? svgTextRange(ranges) : [];
+    paintedAnchors.push({ highlight: highlight, ranges: ranges, groups: groups });
     if (covered) return;
-    var svgWrapped = wrapSvgRange(highlight);
+    var svgWrapped = wrapSvgRange(highlight, groups);
     ensureCommentStyles();
     var name = 'ash-comment-' + highlightNames.length;
     var palette = highlightPalette(isDarkBackground(ranges[0].startContainer.parentElement), highlight.status === 'resolved');
     if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
-      CSS.highlights.set(name, new Highlight(...ranges));
+      var paint = new Highlight(...ranges);
+      CSS.highlights.set(name, paint);
       highlightNames.push(name);
-      textPaints.push({ name: name, threadId: highlight.threadId, palette: palette, active: highlight.target, target: highlight.target });
+      textPaints.push({ name: name, highlight: paint, ranges: ranges, threadId: highlight.threadId, palette: palette, active: highlight.target, target: highlight.target });
       refreshTextPaints();
     }
     if (svgWrapped) return;
@@ -1117,8 +1163,8 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     else {
       badge = document.createElement('button');
       bindBadgePointer(badge);
-      document.documentElement.appendChild(badge);
     }
+    if (!badge.isConnected) document.documentElement.appendChild(badge);
     return badge;
   }
 
@@ -1131,20 +1177,49 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var deadlines = Object.values(checkingDeadlines).filter(function (deadline) { return deadline > Date.now(); });
     if (!deadlines.length) { checkingTimer = null; return; }
     checkingTimer = setTimeout(function () {
-      checkingTimer = null; applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors);
+      checkingTimer = null;
+      var engine = createTextAnchorEngine(anchorRoot());
+      applyHighlights(pendingHighlights, engine); verifyAnchors(pendingAnchors, engine);
     }, Math.max(1, Math.min.apply(null, deadlines) - Date.now()));
   }
 
   function applyHighlights(list, engine) {
+    anchorSnapshotGeneration++;
     pendingHighlights = Array.isArray(list) ? list : [];
     if (!pendingHighlights.length) { lastResolutionSignature = ''; clearMarks(); return; }
+    var forcePaint = !!engine;
     engine = engine || createTextAnchorEngine(anchorRoot());
     measuredText = engine.text;
-    clearMarks(true);
     var results = [];
     var resolvedHighlights = pendingHighlights.map(function (highlight) {
-      return { highlight: highlight, resolved: engine.resolve(highlight) };
+      var resolved = engine.resolve(highlight);
+      return { highlight: resolved ? { ...highlight, ...resolved } : highlight, resolved: resolved,
+        ranges: resolved ? engine.ranges(resolved.textStart, resolved.textEnd) : [] };
     });
+    var highlightsById = new Map(resolvedHighlights.map(function (entry) { return [entry.highlight.threadId, entry]; }));
+    // Metadata echoes retain paint only while its DOM ranges and owned nodes survive.
+    var paintKey = JSON.stringify(resolvedHighlights.map(function (entry) {
+      var palettes = entry.ranges.map(function (range) {
+        var element = range.startContainer.parentElement;
+        var svgText = element.closest('svg text') && element.closest('text,tspan,textPath');
+        return [isDarkBackground(element), svgText ? isDarkBackgroundForSvgText(svgText) : null];
+      });
+      return [entry.highlight.threadId, entry.highlight.status, entry.highlight.target, palettes,
+        entry.resolved && entry.resolved.textStart, entry.resolved && entry.resolved.textEnd];
+    }).sort(function (left, right) { return left[0].localeCompare(right[0]); }));
+    var repaint = forcePaint || appliedHighlightKey !== paintKey || !paintIntact(highlightsById);
+    if (repaint) clearMarks(true);
+    else {
+      paintedAnchors.forEach(function (entry) { entry.highlight = highlightsById.get(entry.highlight.threadId).highlight; });
+      badges.forEach(function (entry) {
+        var highlight = highlightsById.get(entry.highlight.threadId).highlight;
+        entry.highlight = highlight;
+        if (entry.badge.dataset.threadId !== highlight.threadId) entry.badge.dataset.threadId = highlight.threadId;
+        var count = String(highlight.count || 1), label = commentLabel(highlight);
+        if (entry.badge.dataset.count !== count) entry.badge.dataset.count = count;
+        if (entry.badge.getAttribute('aria-label') !== label) entry.badge.setAttribute('aria-label', label);
+      });
+    }
     resolvedHighlights.forEach(function (entry) {
       var highlight = entry.highlight, resolved = entry.resolved;
       var covered = resolved && highlight.status === 'resolved' && resolvedHighlights.some(function (other) {
@@ -1153,7 +1228,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       });
       if (resolved) {
         delete checkingDeadlines[highlight.threadId];
-        wrapRange({ ...highlight, ...resolved }, engine, covered);
+        if (repaint) wrapRange(entry.highlight, entry.ranges, covered);
       }
       results.push({ threadId: highlight.threadId,
         state: resolved ? 'attached' : missingState(highlight.threadId),
@@ -1163,6 +1238,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     });
     reusableBadges.forEach(function (badge) { badge.remove(); });
     reusableBadges.clear();
+    appliedHighlightKey = paintKey;
     positionBadges();
     var signature = JSON.stringify([documentToken, displayedVersionId, displayedPath, results.map(function (result) {
       return [result.threadId, result.state, result.textStart, result.textEnd];
@@ -1181,6 +1257,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       var first = entry.ranges[0];
       var last = entry.ranges[entry.ranges.length - 1];
       if (engine.paintedText(first, last) === engine.normalizedQuote(entry.highlight)) return true;
+      appliedHighlightKey = '';
       var id = entry.highlight.threadId;
       textPaints = textPaints.filter(function (paint) {
         if (paint.threadId !== id) return true;
@@ -1203,6 +1280,13 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var root = anchorRoot();
     var rootReplaced = root !== observedAnchorRoot;
     observedAnchorRoot = root;
+    // Exclusion changes can arrive while a text debounce is pending, including
+    // on nodes now ignored by the normal mutation filter. Never reuse that snapshot.
+    if (rootReplaced || records.some(function (record) {
+      return record.type === 'attributes' &&
+        (record.attributeName === 'data-anchor-ignore' || record.attributeName === 'data-comment-ui' ||
+          record.attributeName === 'class');
+    })) anchorSnapshotGeneration++;
     if (!root || !document.body || (!pendingHighlights.length && !pendingAnchors.length)) return;
     var relevant = records.filter(function (record) {
       if (record.type !== 'attributes' && !root.contains(record.target)) return false;
@@ -1233,10 +1317,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       invalidateChangedPaint(engine);
       clearTimeout(resolveTimer);
       if (!resolveStartedAt) resolveStartedAt = Date.now();
+      var snapshotGeneration = anchorSnapshotGeneration;
       resolveTimer = setTimeout(function () {
         resolveStartedAt = 0;
-        var latest = createTextAnchorEngine(anchorRoot());
-        applyHighlights(pendingHighlights, latest); verifyAnchors(pendingAnchors, latest);
+        if (snapshotGeneration !== anchorSnapshotGeneration) engine = createTextAnchorEngine(anchorRoot());
+        applyHighlights(pendingHighlights, engine); verifyAnchors(pendingAnchors, engine);
       }, Math.min(300, Math.max(0, 1000 - (Date.now() - resolveStartedAt))));
     }
   }
@@ -1536,6 +1621,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
    * content, so that is what is searched for; the captured surroundings only
    * decide between several equal candidates. */
   function verifyAnchors(anchors, engine) {
+    anchorSnapshotGeneration++;
     pendingAnchors = anchors || [];
     if (!pendingAnchors.length) return;
     var verdicts = [];
@@ -1763,7 +1849,11 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
 
   window.addEventListener('resize', schedulePositionBadges);
   window.addEventListener('scroll', schedulePositionBadges, true);
-  window.addEventListener('load', function () { applyHighlights(pendingHighlights); verifyAnchors(pendingAnchors); });
+  window.addEventListener('load', function () {
+    if (!pendingHighlights.length && !pendingAnchors.length) return;
+    var engine = createTextAnchorEngine(anchorRoot());
+    applyHighlights(pendingHighlights, engine); verifyAnchors(pendingAnchors, engine);
+  });
   window.addEventListener('load', schedulePositionBadges);
   window.addEventListener('load', updateMarkdownToc);
   window.addEventListener('scroll', updateMarkdownToc, { passive: true });
@@ -1789,7 +1879,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  't/WdkMukxpBjDdA/xULtF7OZafx9kr+u2QThY2545Go='
+  'AZKgd4eLLk2qN4NHBL9K9kTNtMuMUWhFXpYTHygM1/Y='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
