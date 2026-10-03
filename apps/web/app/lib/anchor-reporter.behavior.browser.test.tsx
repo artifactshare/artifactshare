@@ -1253,3 +1253,73 @@ test.each(['html', 'svg'])(
     if (kind === 'svg') expect(overlayFill()).not.toBe(shapeFill)
   },
 )
+
+test.each(['style removal', 'style edit', 'registry clear', 'registry delete'])(
+  'metadata echo repairs %s',
+  async (damage) => {
+    const doc = await fixture('<p>selected words</p>')
+    const anchor = {
+      threadId: 'repair',
+      selectorFormat: 'quote-v1',
+      quotedText: 'selected words',
+    }
+    send('comment-highlights', { highlights: [anchor] })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    const style = doc.querySelector('#ash-comment-highlight-style')!
+    const css = style.textContent
+    const paint = [...registry(doc).values()][0]
+    if (damage === 'style removal') style.remove()
+    if (damage === 'style edit') style.textContent = ''
+    if (damage === 'registry clear') registry(doc).clear()
+    if (damage === 'registry delete') registry(doc).delete('ash-comment-0')
+    send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+    await vi.waitFor(() =>
+      expect(
+        doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')?.dataset
+          .count,
+      ).toBe('2'),
+    )
+    expect(doc.querySelector('#ash-comment-highlight-style')?.textContent).toBe(
+      css,
+    )
+    expect(registry(doc).size).toBe(1)
+    expect([...registry(doc).values()][0]).not.toBe(paint)
+  },
+)
+
+test('metadata echo refreshes SVG glyph indexes when whitespace rendering changes', async () => {
+  const doc = await fixture(
+    '<svg width="400" height="80"><text x="10" y="40">first   selected words</text></svg>',
+  )
+  const anchor = {
+    threadId: 'spacing',
+    selectorFormat: 'quote-v1',
+    quotedText: 'selected words',
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const shape = doc.querySelector('.ash-comment-highlight-svg')!
+  const text = doc.querySelector('text')!
+  const count = text.getNumberOfChars()
+  // A head stylesheet is outside the anchor observer, and changes glyph
+  // indexes without changing the normalized text or DOM range endpoints.
+  const style = doc.createElement('style')
+  style.textContent = 'svg text { white-space: pre; }'
+  doc.head.appendChild(style)
+  expect(text.getNumberOfChars()).toBeGreaterThan(count)
+  send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+  await vi.waitFor(() =>
+    expect(
+      doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')?.dataset
+        .count,
+    ).toBe('2'),
+  )
+  expect(shape.isConnected).toBe(false)
+  const replacement = doc.querySelector('.ash-comment-highlight-svg')!
+  expect(Number(replacement.getAttribute('x'))).toBeCloseTo(
+    text.getExtentOfChar(8).x - 2,
+    0,
+  )
+})

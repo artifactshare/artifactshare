@@ -145,6 +145,7 @@ test('covered resolved text is retained for jump without invoking painting', () 
     'wrapSvgRange',
     'send',
     `
+    var document = { querySelector: () => null };
     var paintedAnchors = [], pendingHighlights = [], measuredText;
     var anchorSnapshotGeneration = 0, appliedHighlightKey = "";
     var highlightNames = [], documentToken = '', displayedVersionId = 'v1', displayedPath = null;
@@ -165,12 +166,13 @@ test('covered resolved text is retained for jump without invoking painting', () 
     return { paintedAnchors, checkingDeadlines };
   `,
   )
+  const resolveRanges = vi.fn(() => ranges)
   const result = run(
     {
       text: 'quote',
       hash: 'hash',
       resolve: () => ({ textStart: 0, textEnd: 5 }),
-      ranges: () => ranges,
+      ranges: resolveRanges,
     },
     paint,
     send,
@@ -183,6 +185,10 @@ test('covered resolved text is retained for jump without invoking painting', () 
       (entry: { highlight: { threadId: string } }) => entry.highlight.threadId,
     ),
   ).toEqual(['open', 'resolved'])
+  expect(resolveRanges).toHaveBeenCalledTimes(2)
+  expect(resolveRanges).toHaveBeenNthCalledWith(1, 0, 5)
+  expect(resolveRanges).toHaveBeenNthCalledWith(2, 0, 5)
+  expect(retained[0].ranges).toBe(ranges)
   expect(retained[1].ranges).toBe(ranges)
   expect(send.mock.calls[0]![0].results[1].state).toBe('attached')
 })

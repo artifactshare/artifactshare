@@ -130,6 +130,9 @@ describe('SandboxFrame recovery', () => {
       await Promise.resolve()
     })
     expect(tokenRequests).toHaveLength(1)
+    expect(stateOf(host)).toBe('resuming')
+    expect(checking).toHaveBeenLastCalledWith(false)
+    const callsAfterDeadline = checking.mock.calls.length
 
     await act(async () => {
       tokenRequests[0].resolve(
@@ -142,6 +145,10 @@ describe('SandboxFrame recovery', () => {
       await Promise.resolve()
     })
     expect(stateOf(host)).toBe('loading')
+    expect(checking.mock.calls.slice(callsAfterDeadline)).not.toContainEqual([
+      true,
+    ])
+    expect(checking).toHaveBeenLastCalledWith(false)
     const recoveredFrame = host.querySelector('iframe')
     expect(recoveredFrame).not.toBe(initialFrame)
 

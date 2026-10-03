@@ -846,15 +846,32 @@ function useSandboxFrameController({
   const reportAnchorChecking = useEffectEvent((available: boolean) => {
     onAnchorCheckingChange?.(available)
   })
+  const anchorCheckingWindow = useRef<{ url: string; deadline: number } | null>(
+    null,
+  )
   useEffect(() => {
+    if (anchorCheckingWindow.current?.url !== url) {
+      anchorCheckingWindow.current = { url, deadline: Date.now() + 3000 }
+      reportAnchorChecking(true)
+    }
     if (loadState === 'blocked' || loadState === 'paused') {
       reportAnchorChecking(false)
       return
     }
-    reportAnchorChecking(true)
-    if (loadState === 'ready') return
-    // A frame that never answers cannot report its own checking deadline.
-    const deadline = window.setTimeout(() => reportAnchorChecking(false), 3000)
+    if (loadState === 'ready') {
+      reportAnchorChecking(true)
+      return
+    }
+    // Recovery transitions retain the deadline established for this frame URL.
+    const remaining = anchorCheckingWindow.current.deadline - Date.now()
+    if (remaining <= 0) {
+      reportAnchorChecking(false)
+      return
+    }
+    const deadline = window.setTimeout(
+      () => reportAnchorChecking(false),
+      remaining,
+    )
     return () => window.clearTimeout(deadline)
   }, [loadState, url])
 

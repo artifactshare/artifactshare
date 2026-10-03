@@ -14,11 +14,30 @@ function fixture() {
     '  function scrollToThread(',
     start,
   )
+  const integrityStart = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function paintIntact(',
+  )
+  const integrityEnd = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function setCommentLabels(',
+    integrityStart,
+  )
+  const cssStart = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function textPaintCss(',
+  )
+  const cssEnd = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
+    '  function refreshTextPaints(',
+    cssStart,
+  )
   const source = {
     text: 'quote',
     excluded: false,
     paintedText: 'quote',
     dark: false,
+    style: {
+      isConnected: true,
+      textContent:
+        '.ash-comment-highlight-badge::after{content:attr(data-count);}',
+    },
     node: { parentElement: { closest: () => null } },
   }
   const build = vi.fn(() => {
@@ -52,18 +71,21 @@ function fixture() {
     `
     var pendingHighlights = [], pendingAnchors = [], measuredText = null;
     var anchorSnapshotGeneration = 0, appliedHighlightKey = '';
-    var paintedAnchors = [], textPaints = [], badges = [], reusableBadges = new Map();
+    var paintedAnchors = [], textPaints = [], highlightNames = [], badges = [], reusableBadges = new Map();
     var resolveStartedAt = 0, resolveTimer, checkingTimer, badgePositionFrame;
     var lastResolutionSignature = '', resolutionGeneration = 0, checkingDeadlines = {};
     var documentToken = 'token', displayedVersionId = 'v1', displayedPath = '/';
-    var document = { body: {}, documentElement: {}, querySelectorAll: () => [] };
+    var document = {
+      body: {}, documentElement: {}, querySelectorAll: () => [],
+      getElementById: () => source.style,
+    };
     var window = { addEventListener: () => {} };
     var observer;
     function MutationObserver(callback) { observer = callback; this.observe = () => {}; }
     function anchorRoot() { return root; }
     function clearMarks() { paintedAnchors = []; badges = []; appliedHighlightKey = ''; }
-    function wrapRange(highlight, engine) {
-      paintedAnchors.push({ highlight, ranges: engine.ranges() });
+    function wrapRange(highlight, ranges) {
+      paintedAnchors.push({ highlight, ranges, groups: [] });
       paint(highlight);
     }
     function isDarkBackground() { return source.dark; }
@@ -73,6 +95,8 @@ function fixture() {
     function scheduleChecking() {}
     function verifyAnchors() {}
     function missingState() { return 'checking'; }
+    ${VIOLATION_REPORTER_SCRIPT_BODY.slice(integrityStart, integrityEnd)}
+    ${VIOLATION_REPORTER_SCRIPT_BODY.slice(cssStart, cssEnd)}
     ${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}
     return {
       apply: (metadata = {}) => applyHighlights([{ threadId: 'quote', quotedText: 'quote', ...metadata }]),
@@ -218,6 +242,20 @@ test.each(['badge', 'overlay'])(
       },
     ])
     f.apply()
+    expect(f.paint).toHaveBeenCalledTimes(2)
+  },
+)
+
+test.each(['disconnected', 'changed'])(
+  '%s highlight stylesheet prevents metadata-only paint reuse',
+  (damage) => {
+    const f = fixture()
+    f.apply()
+    f.apply({ count: 2 })
+    expect(f.paint).toHaveBeenCalledOnce()
+    if (damage === 'disconnected') f.source.style.isConnected = false
+    else f.source.style.textContent = ''
+    f.apply({ count: 3 })
     expect(f.paint).toHaveBeenCalledTimes(2)
   },
 )
