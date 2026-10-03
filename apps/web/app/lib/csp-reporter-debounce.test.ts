@@ -84,6 +84,29 @@ afterEach(() => {
   document.getElementById('ash-comment-highlight-style')?.remove()
 })
 
+test('resolution signatures never expose the token to authored serialization', () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  const stringify = vi.spyOn(JSON, 'stringify')
+  f.apply()
+  expect(f.send).toHaveBeenCalledOnce()
+  expect(f.send.mock.calls[0][0].token).toBe('synthetic-token')
+  // Identical highlights still deduplicate resolution messages.
+  f.apply()
+  expect(f.send).toHaveBeenCalledOnce()
+  const calls = stringify.mock.calls.length
+  f.source.text = 'prefix quote'
+  f.mutate()
+  vi.advanceTimersByTime(300)
+  expect(f.send).toHaveBeenCalledTimes(2)
+  expect(stringify.mock.calls.length).toBeGreaterThan(calls)
+  const serialized = stringify.mock.results.map((result) => result.value)
+  stringify.mockRestore()
+  expect(serialized.some((value) => value?.includes('synthetic-token'))).toBe(
+    false,
+  )
+})
+
 test.each([true, false])(
   'a later exclusion cannot be undone by a debounce (parent echo: %s)',
   (echo) => {

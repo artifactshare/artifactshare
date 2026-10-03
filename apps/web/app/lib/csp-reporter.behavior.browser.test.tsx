@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
-import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
+import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
   buildPrintDocument,
@@ -205,6 +205,97 @@ describe('CSP reporter runtime behavior', () => {
         }
       ).reporterAttack,
     ).toEqual({ payloadReads: 0, redirected: 0 })
+  })
+
+  test('highlight serialization and mutation retries never disclose the document token', async () => {
+    const doc = await fixture()
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      const stringify = JSON.stringify;
+      const toString = String;
+      window.serializationAttack = { seen: [], jsonCalls: 0, stringCalls: 0 };
+      const attack = window.serializationAttack;
+      JSON.stringify = function(value, ...args) {
+        attack.jsonCalls++;
+        const serialized = stringify(value, ...args);
+        attack.seen.push(serialized);
+        return serialized;
+      };
+      for (const name of ['charAt', 'slice', 'substring', 'replace', 'trim', 'startsWith', 'padStart']) {
+        const original = String.prototype[name];
+        String.prototype[name] = function(...args) {
+          attack.stringCalls++;
+          attack.seen.push(toString(this));
+          return original.apply(this, args);
+        };
+      }
+    `
+    doc.body.appendChild(authored)
+    await applyHighlights([{ threadId: 'serialization-thread', colorIndex: 0 }])
+    const first = await waitForMessage('anchor-resolutions')
+    const attack = (
+      doc.defaultView as unknown as {
+        serializationAttack: {
+          seen: string[]
+          jsonCalls: number
+          stringCalls: number
+        }
+      }
+    ).serializationAttack
+    const calls = attack.jsonCalls
+    // Change normalized text so the observer's debounce must resolve again.
+    const content = doc.querySelector('#content')!
+    content.insertBefore(
+      doc.createTextNode('Added prefix. '),
+      content.firstChild,
+    )
+    const updated = await waitForMessage(
+      'anchor-resolutions',
+      (message) =>
+        (message.generation as number) > (first.generation as number),
+    )
+    expect(updated.token).toBe(before.token)
+    expect(attack.jsonCalls).toBeGreaterThan(calls)
+    expect(attack.stringCalls).toBeGreaterThan(0)
+    expect(
+      attack.seen.some((value) => value?.includes(before.token as string)),
+    ).toBe(false)
+
+    const forge = doc.createElement('script')
+    forge.textContent = `
+      const candidates = window.serializationAttack.seen.join(' ').match(/[a-f0-9]{64}/g) || [''];
+      for (const token of candidates) parent.postMessage({
+        source: 'artifactshare', kind: 'link-clicked',
+        href: 'https://example.com/forged', token
+      }, '*');
+    `
+    const from = messages.length
+    doc.body.appendChild(forge)
+    await waitForMessage(
+      'link-clicked',
+      (message) => message.href === 'https://example.com/forged',
+      from,
+    )
+    await probeReporter('after-serialization-attack')
+    const forged = messages
+      .slice(from)
+      .filter((message) => message.kind === 'link-clicked')
+    expect(forged.length).toBeGreaterThan(0)
+    for (const message of forged)
+      expect(canUseOsHandler(before.token as string, message.token, true)).toBe(
+        false,
+      )
+
+    const box = doc.querySelector('#normal')!.getBoundingClientRect()
+    const clickFrom = messages.length
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    const clicked = await waitForMessage('link-clicked', () => true, clickFrom)
+    expect(canUseOsHandler(before.token as string, clicked.token, true)).toBe(
+      true,
+    )
   })
 
   test('strict reporter callers never expose state to authored classic functions', async () => {

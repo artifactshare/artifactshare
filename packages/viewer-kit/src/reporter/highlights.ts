@@ -650,8 +650,9 @@ export function applyHighlights(
   ctx.reusableBadges.clear()
   ctx.appliedHighlightKey = paintKey
   positionBadges(ctx)
+  // The token is fixed for this installation. Keep it out of serialization:
+  // authored code can replace JSON.stringify and prototype toJSON methods.
   let signature = JSON.stringify([
-    ctx.documentToken,
     ctx.displayedVersionId,
     ctx.displayedPath,
     results.map(function (result) {

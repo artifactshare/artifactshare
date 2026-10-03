@@ -15,12 +15,14 @@ function fail(reason) {
   throw new Error(`Unsafe reporter bundle: ${reason}`)
 }
 
-function walk(node, visit) {
+function walk(node, visit, ancestors = []) {
   if (!node || typeof node !== 'object') return
-  if (typeof node.type === 'string') visit(node)
+  if (typeof node.type === 'string') visit(node, ancestors)
   for (const value of Object.values(node)) {
-    if (Array.isArray(value)) value.forEach((child) => walk(child, visit))
-    else if (value && typeof value === 'object') walk(value, visit)
+    if (Array.isArray(value))
+      value.forEach((child) => walk(child, visit, [...ancestors, node]))
+    else if (value && typeof value === 'object')
+      walk(value, visit, [...ancestors, node])
   }
 }
 
@@ -86,6 +88,78 @@ function validateSecurityFunction(fn) {
   })
 }
 
+// Secrets may only be assigned, tested without coercion, or placed directly in
+// send's message literal. Reject aliases and serialization, including prototype
+// calls, rather than trying to maintain a general-purpose taint analysis. Token
+// construction in installReporter is synchronous, before authored code runs.
+function validateSecretUse(node, ancestors) {
+  if (
+    node.type !== 'MemberExpression' ||
+    !identifier(node.object, 'ctx') ||
+    !['documentToken', 'readyChallenge'].includes(
+      node.computed ? node.property.value : node.property.name,
+    )
+  )
+    return
+  const parent = ancestors.at(-1)
+  if (parent?.type === 'AssignmentExpression' && parent.left === node) return
+  if (
+    parent?.type === 'BinaryExpression' &&
+    ['===', '!=='].includes(parent.operator)
+  )
+    return
+  let value = node
+  let index = ancestors.length - 1
+  while (ancestors[index]?.type === 'LogicalExpression') {
+    value = ancestors[index--]
+  }
+  if (
+    ancestors[index]?.type === 'IfStatement' &&
+    ancestors[index].test === value
+  )
+    return
+  const object = ancestors.at(-2)
+  const invocation = ancestors.at(-3)
+  if (
+    parent?.type === 'Property' &&
+    parent.value === node &&
+    object?.type === 'ObjectExpression' &&
+    call(invocation, 'send') &&
+    invocation.arguments[1] === object
+  )
+    return
+  fail(
+    'private token/challenge must stay out of replaceable calls, coercion, and aliases; use send(ctx, { ... })',
+  )
+}
+
+// These are the only functions receiving whole secret-bearing messages. Keep
+// their calls confined to local copying and the captured native primitives.
+// Neither path needs constructors; authored replacements can inspect arguments.
+function validateMessageCalls(fn) {
+  if (!['send', 'createMessagePayload'].includes(fn.id.name)) return
+  walk(fn, (node) => {
+    if (node.type === 'NewExpression')
+      fail(
+        `${fn.id.name}: uncaptured constructor call with private message access; use captured messaging primitives`,
+      )
+    if (node.type !== 'CallExpression') return
+    const callee = node.callee
+    if (
+      identifier(callee, 'createMessagePayload') ||
+      member(callee, 'primitives', 'objectCreate') ||
+      member(callee, 'primitives', 'objectKeys') ||
+      (callee.type === 'MemberExpression' &&
+        member(callee.object, 'ctx', 'primordials') &&
+        identifier(callee.property, 'savedPostMessage'))
+    )
+      return
+    fail(
+      `${fn.id.name}: uncaptured call with private message access; use captured messaging primitives`,
+    )
+  })
+}
+
 /** Reject initialization introduced by bundling, not just familiar helper names. */
 export function validateBundle(
   output,
@@ -129,6 +203,7 @@ export function validateBundle(
     if (statement.type === 'FunctionDeclaration') {
       if (securityFunctions.has(statement.id.name))
         validateSecurityFunction(statement)
+      validateMessageCalls(statement)
       functions.set(statement.id.name, statement)
       continue
     }
@@ -194,6 +269,7 @@ export function validateBundle(
     !member(firstCapture.declarations[0]?.init, 'win', 'parent')
   )
     fail('capturePrimordials must begin by saving the supplied window parent')
+  walk(program, validateSecretUse)
   walk(program, (node) => {
     if (
       node.type === 'FunctionDeclaration' &&

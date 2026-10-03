@@ -314,3 +314,58 @@ test('structural guard requires strict mode as the first IIFE statement', () => 
     )
   }
 })
+
+test('private values cannot reach replaceable globals, prototypes, coercion, or aliases', () => {
+  for (const operation of [
+    'JSON.stringify([ctx.documentToken, results]);',
+    'JSON.stringify({ challenge: ctx.readyChallenge });',
+    'String(ctx.documentToken);',
+    'ctx.documentToken.slice(0);',
+    "ctx['readyChallenge'].trim();",
+    'const secret = ctx.documentToken;',
+    'const wrapped = { token: ctx.documentToken };',
+    'const signature = `${ctx.documentToken}`;',
+    "String(ctx.documentToken || '');",
+  ]) {
+    const code = minimal.replace(
+      'installReporter(window);',
+      `function applyHighlights(ctx) { ${operation} } installReporter(window);`,
+    )
+    assert.throws(
+      () =>
+        validateBundle(
+          [chunk(code)],
+          new Set(['installReporter', 'capturePrimordials', 'applyHighlights']),
+        ),
+      /private token\/challenge/,
+    )
+  }
+})
+
+test('whole private messages can only use captured messaging primitives', () => {
+  for (const name of ['send', 'createMessagePayload']) {
+    for (const operation of [
+      'JSON.stringify(message);',
+      'String(message.token);',
+      'message.token.slice(0);',
+      'console.log(message);',
+      'setTimeout(callback, 0, message);',
+      'new String(message.token);',
+      'new Proxy(message, handler);',
+      'new ctx.win.Object(message);',
+    ]) {
+      const code = minimal.replace(
+        'installReporter(window);',
+        `function ${name}(ctx, message) { ${operation} } installReporter(window);`,
+      )
+      assert.throws(
+        () =>
+          validateBundle(
+            [chunk(code)],
+            new Set(['installReporter', 'capturePrimordials', name]),
+          ),
+        /uncaptured (?:constructor )?call with private message/,
+      )
+    }
+  }
+})
