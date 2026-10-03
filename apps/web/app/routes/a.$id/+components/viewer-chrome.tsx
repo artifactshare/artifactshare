@@ -216,6 +216,42 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
   return { requestId, dismiss }
 }
 
+function ViewerVisibilityChip({
+  visibility,
+  linkSuspended,
+  onClick,
+  className,
+  responsive,
+}: {
+  visibility: Visibility
+  linkSuspended?: boolean
+  onClick?: () => void
+  className: string
+  responsive: 'mobile-only' | 'desktop-only'
+}) {
+  const { t } = useT()
+  const paused = visibility === 'link' && linkSuspended === true
+  const label = t(
+    paused ? 'vw.linkSharingPaused' : shortVisibilityLabelKey(visibility),
+  )
+  const ariaLabel = onClick
+    ? `${label} · ${t('vw.changeVisibility')}`
+    : paused
+      ? label
+      : undefined
+
+  return (
+    <VisibilityChip
+      visibility={visibility}
+      label={label}
+      aria-label={ariaLabel}
+      className={className}
+      data-regression-responsive={responsive}
+      onClick={onClick}
+    />
+  )
+}
+
 export function ViewerChrome({
   artifact,
   user,
@@ -441,16 +477,11 @@ export function ViewerChrome({
 
         {user && currentVisibility ? (
           <div className="max-phone:col-span-2 max-phone:col-start-2 max-phone:row-start-3 max-phone:flex max-phone:items-center max-phone:pt-0.5 hidden min-w-0">
-            <VisibilityChip
+            <ViewerVisibilityChip
               visibility={currentVisibility}
-              label={t(shortVisibilityLabelKey(currentVisibility))}
-              aria-label={
-                canChangeVisibility
-                  ? `${t(shortVisibilityLabelKey(currentVisibility))} · ${t('vw.changeVisibility')}`
-                  : undefined
-              }
+              linkSuspended={artifact.linkSuspended}
               className="max-w-full"
-              data-regression-responsive="mobile-only"
+              responsive="mobile-only"
               onClick={
                 canChangeVisibility ? () => setVisibilityOpen(true) : undefined
               }
@@ -1193,16 +1224,11 @@ function ViewerActions({
         </Tooltip>
       ) : null}
       {user && currentVisibility ? (
-        <VisibilityChip
+        <ViewerVisibilityChip
           visibility={currentVisibility}
-          label={t(shortVisibilityLabelKey(currentVisibility))}
-          aria-label={
-            canChangeVisibility
-              ? `${t(shortVisibilityLabelKey(currentVisibility))} · ${t('vw.changeVisibility')}`
-              : undefined
-          }
+          linkSuspended={linkSuspended}
           className="max-phone:hidden"
-          data-regression-responsive="desktop-only"
+          responsive="desktop-only"
           onClick={canChangeVisibility ? onVisibilityOpen : undefined}
         />
       ) : null}

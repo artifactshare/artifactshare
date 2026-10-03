@@ -72,3 +72,8 @@ describe('project scope chip label contract', () => {
     },
   )
 })
+
+test('paused viewer chip has complete labels in both locales', () => {
+  expect(en['vw.linkSharingPaused']).toBe('Link sharing · Paused')
+  expect(ja['vw.linkSharingPaused']).toBe('リンク共有 · 一時停止中')
+})

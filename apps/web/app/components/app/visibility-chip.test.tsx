@@ -62,8 +62,26 @@ describe('VisibilityChip', () => {
       expect(html).toContain(`<span>${label}</span>`)
       expect(html).toContain('aria-hidden="true"')
       expect(html).not.toContain('aria-label=')
+      expect(html).not.toContain('role=')
     },
   )
+
+  test('names a non-interactive chip on the group span without a tab stop', () => {
+    const html = renderToStaticMarkup(
+      <VisibilityChip
+        visibility="link"
+        label="Link sharing · Paused"
+        aria-label="Link sharing · Paused"
+      />,
+    )
+    const chip = html.match(/^<span\b[^>]*>/)?.[0]
+    expect(chip).toContain('role="group"')
+    expect(chip).toContain('aria-label="Link sharing · Paused"')
+    expect(chip).toContain('title="Link sharing · Paused"')
+    expect(chip).not.toContain('tabindex=')
+    expect(chip).not.toContain('aria-live=')
+    expect(html).not.toContain('<button')
+  })
 
   test('does not render an unknown visibility', () => {
     const html = renderToStaticMarkup(
@@ -84,6 +102,9 @@ describe('VisibilityChip', () => {
       />,
     )
     expect(html).toMatch(/^<button\b/)
+    const chip = html.match(/^<button\b[^>]*>/)?.[0]
+    expect(chip).toContain('aria-label="Workspace · Change visibility"')
+    expect(chip).not.toContain('role=')
     expect(html).toContain('type="button"')
     expect(html).toContain('title="Change visibility"')
     expect(html).toContain('aria-label="Workspace · Change visibility"')
