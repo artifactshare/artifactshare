@@ -32,6 +32,15 @@ async function temporary(t) {
   return directory
 }
 
+test('retired reporter measurement script is absent', async () => {
+  await assert.rejects(
+    stat(new URL('./measure-reporter.mjs', import.meta.url)),
+    {
+      code: 'ENOENT',
+    },
+  )
+})
+
 test('generation is deterministic, formatter-stable, and hashes the exact UTF-8 body', async () => {
   const first = await renderReporter()
   const second = await renderReporter()

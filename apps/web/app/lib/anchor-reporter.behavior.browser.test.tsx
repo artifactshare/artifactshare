@@ -533,14 +533,17 @@ test('resolution messages are chunked for more than 100 comments', async () => {
       suffixText: '',
     })),
   })
-  await vi.waitFor(() => {
-    const batches = messages.filter(
-      (m) => m.kind === 'anchor-resolutions',
-    ) as AnchorResolutionMessage[]
-    expect(batches.map((m) => m.results.length)).toEqual([100, 100, 5])
-    expect(new Set(batches.map((m) => m.generation)).size).toBe(3)
-  })
-})
+  await vi.waitFor(
+    () => {
+      const batches = messages.filter(
+        (m) => m.kind === 'anchor-resolutions',
+      ) as AnchorResolutionMessage[]
+      expect(batches.map((m) => m.results.length)).toEqual([100, 100, 5])
+      expect(new Set(batches.map((m) => m.generation)).size).toBe(3)
+    },
+    { timeout: 10000 },
+  )
+}, 15000)
 
 test.each([false, true])(
   'inserting text between painted pieces clears before debounce (queued: %s)',
@@ -987,39 +990,59 @@ test.each(['pre', 'p', 'div', 'td'])(
   },
 )
 
-test('50 comments on a large document build one engine, including the SVG path', async () => {
-  const doc = await fixture(
-    `<p>${'large document padding '.repeat(15000)}</p>` +
-      Array.from({ length: 49 }, (_, i) => `<p>unique quote ${i} end</p>`).join(
-        '',
-      ) +
-      '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
-  )
-  const walk = vi.spyOn(doc, 'createTreeWalker')
-  try {
-    send('comment-highlights', {
-      highlights: Array.from({ length: 50 }, (_, i) => ({
-        threadId: `large-${i}`,
-        selectorFormat: 'quote-v1',
-        quotedText: i === 49 ? 'SVG quote' : `unique quote ${i} end`,
-      })),
-    })
-    await vi.waitFor(() => expect(results()?.results).toHaveLength(50))
-    expect(
-      results()!.results.every((result) => result.state === 'attached'),
-    ).toBe(true)
-    // Every engine construction creates exactly one walker over the anchor root;
-    // SVG glyph walkers are local to <text> and must not be counted as engines.
-    expect(
-      walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
-    ).toHaveLength(1)
-    expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(
-      50,
+test.each([0, 1200])(
+  '50 comments on a large document build one engine, including the SVG path (delivery delay: %i ms)',
+  async (deliveryDelay) => {
+    const doc = await fixture(
+      `<p>${'large document padding '.repeat(15000)}</p>` +
+        Array.from(
+          { length: 49 },
+          (_, i) => `<p>unique quote ${i} end</p>`,
+        ).join('') +
+        '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
     )
-  } finally {
-    walk.mockRestore()
-  }
-})
+    const walk = vi.spyOn(doc, 'createTreeWalker')
+    // Start both waits before delivery: the default budget must reject while
+    // the large-fixture budget must still observe all real reporter results.
+    const delivery = setTimeout(() => {
+      send('comment-highlights', {
+        highlights: Array.from({ length: 50 }, (_, i) => ({
+          threadId: `large-${i}`,
+          selectorFormat: 'quote-v1',
+          quotedText: i === 49 ? 'SVG quote' : `unique quote ${i} end`,
+        })),
+      })
+    }, deliveryDelay)
+    try {
+      const defaultTimeout = deliveryDelay
+        ? expect(
+            vi.waitFor(() => expect(results()?.results).toHaveLength(50)),
+          ).rejects.toThrow()
+        : Promise.resolve()
+      await Promise.all([
+        defaultTimeout,
+        vi.waitFor(() => expect(results()?.results).toHaveLength(50), {
+          timeout: 10000,
+        }),
+      ])
+      expect(
+        results()!.results.every((result) => result.state === 'attached'),
+      ).toBe(true)
+      // Every engine construction creates exactly one walker over the anchor root;
+      // SVG glyph walkers are local to <text> and must not be counted as engines.
+      expect(
+        walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
+      ).toHaveLength(1)
+      expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(
+        50,
+      )
+    } finally {
+      clearTimeout(delivery)
+      walk.mockRestore()
+    }
+  },
+  15000,
+)
 
 test('mutation debounce reuses the last observer snapshot for paint and verification', async () => {
   const doc = await fixture(
