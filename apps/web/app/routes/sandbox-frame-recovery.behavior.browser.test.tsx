@@ -121,7 +121,8 @@ describe('SandboxFrame recovery', () => {
       }),
     )
 
-    const host = await renderFrame()
+    const checking = vi.fn()
+    const host = await renderFrame(checking)
     const initialFrame = host.querySelector('iframe')
 
     await act(async () => {
@@ -151,6 +152,7 @@ describe('SandboxFrame recovery', () => {
     })
     expect(tokenRequests).toHaveLength(1)
     expect(stateOf(host)).toBe('paused')
+    expect(checking).toHaveBeenLastCalledWith(false)
 
     const retry = host.querySelector<HTMLButtonElement>('button')
     expect(retry?.textContent).toBe('Continue viewing')
@@ -283,12 +285,14 @@ describe('SandboxFrame recovery', () => {
       }),
     )
 
-    const host = await renderFrame()
+    const checking = vi.fn()
+    const host = await renderFrame(checking)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
       await Promise.resolve()
     })
     expect(stateOf(host)).toBe('blocked')
+    expect(checking).toHaveBeenLastCalledWith(false)
 
     await act(async () =>
       host.querySelector<HTMLButtonElement>('button')?.click(),
@@ -317,13 +321,16 @@ describe('SandboxFrame recovery', () => {
   })
 })
 
-async function renderFrame() {
+async function renderFrame(
+  onAnchorCheckingChange?: (available: boolean) => void,
+) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
     root?.render(
       <SandboxFrame
+        onAnchorCheckingChange={onAnchorCheckingChange}
         shareableId="abc123def4"
         versionId="v1"
         url={`${window.location.origin}/sandbox-frame-test?t=old`}
@@ -353,3 +360,17 @@ function stateOf(host: HTMLElement) {
     .querySelector('[data-sandbox-state]')
     ?.getAttribute('data-sandbox-state')
 }
+
+test('a frame that never becomes ready expires checking without inventing a resolution', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>(() => {})),
+  )
+  const checking = vi.fn()
+  const host = await renderFrame(checking)
+  expect(checking).toHaveBeenLastCalledWith(true)
+  await act(async () => vi.advanceTimersByTimeAsync(3001))
+  expect(stateOf(host)).toBe('loading')
+  expect(checking).toHaveBeenLastCalledWith(false)
+})

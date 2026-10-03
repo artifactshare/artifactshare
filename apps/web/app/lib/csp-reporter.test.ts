@@ -450,15 +450,9 @@ describe('SVG source-to-glyph mapping in the injected reporter', () => {
     const groups = new Function(
       'document',
       'NodeFilter',
-      'createTextAnchorEngine',
-      'anchorRoot',
-      `${script}; return svgTextRange({ textStart: 0, textEnd: 6 })`,
-    )(
-      document,
-      { SHOW_TEXT: 4 },
-      () => engine,
-      () => ({}),
-    )
+      'ranges',
+      `${script}; return svgTextRange(ranges)`,
+    )(document, { SHOW_TEXT: 4 }, engine.ranges())
     return { groups, container }
   }
 

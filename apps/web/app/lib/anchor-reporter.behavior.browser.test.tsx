@@ -986,3 +986,270 @@ test.each(['pre', 'p', 'div', 'td'])(
     expect(content.outerHTML).toBe(original)
   },
 )
+
+test('50 comments on a large document build one engine, including the SVG path', async () => {
+  const doc = await fixture(
+    `<p>${'large document padding '.repeat(15000)}</p>` +
+      Array.from({ length: 49 }, (_, i) => `<p>unique quote ${i} end</p>`).join(
+        '',
+      ) +
+      '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
+  )
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  try {
+    send('comment-highlights', {
+      highlights: Array.from({ length: 50 }, (_, i) => ({
+        threadId: `large-${i}`,
+        selectorFormat: 'quote-v1',
+        quotedText: i === 49 ? 'SVG quote' : `unique quote ${i} end`,
+      })),
+    })
+    await vi.waitFor(() => expect(results()?.results).toHaveLength(50))
+    expect(
+      results()!.results.every((result) => result.state === 'attached'),
+    ).toBe(true)
+    // Every engine construction creates exactly one walker over the anchor root;
+    // SVG glyph walkers are local to <text> and must not be counted as engines.
+    expect(
+      walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
+    ).toHaveLength(1)
+    expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(
+      50,
+    )
+  } finally {
+    walk.mockRestore()
+  }
+})
+
+test('mutation debounce reuses the last observer snapshot for paint and verification', async () => {
+  const doc = await fixture(
+    '<p id="words">selected words</p><p id="counter">0</p>',
+  )
+  const anchor = {
+    kind: 'text',
+    thread: 'mutation',
+    threadId: 'mutation',
+    selectorFormat: 'quote-v1',
+    quotedText: 'selected words',
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  send('verify-anchors', { anchors: [anchor], verificationId: 1 })
+  await vi.waitFor(() =>
+    expect(
+      messages.some(
+        (message) => (message as { kind: string }).kind === 'anchor-verdicts',
+      ),
+    ).toBe(true),
+  )
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  try {
+    doc.querySelector('#counter')!.textContent = 'latest text'
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(
+      walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
+    ).toHaveLength(1)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(
+      walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
+    ).toHaveLength(1)
+    expect(registry(doc).size).toBe(1)
+  } finally {
+    walk.mockRestore()
+  }
+})
+
+test('count and metadata echoes retain highlights and unchanged SVG geometry writes nothing', async () => {
+  const doc = await fixture(
+    '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
+  )
+  const anchor = {
+    threadId: 'svg-stable',
+    selectorFormat: 'quote-v1',
+    quotedText: 'SVG quote',
+    count: 1,
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const shape = doc.querySelector('.ash-comment-highlight-svg')!
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  const paint = [...registry(doc).values()][0]
+  const writes: MutationRecord[] = []
+  const observer = new MutationObserver((records) => writes.push(...records))
+  observer.observe(shape, { attributes: true })
+  observer.observe(doc.querySelector('#ash-comment-highlight-style')!, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  })
+  try {
+    send('comment-highlights', {
+      highlights: [
+        { ...anchor, count: 2, positionState: 'attached', checking: false },
+      ],
+    })
+    await vi.waitFor(() => expect(badge.dataset.count).toBe('2'))
+    expect(badge.getAttribute('aria-label')).toContain('2')
+    expect(doc.querySelector('.ash-comment-highlight-svg')).toBe(shape)
+    expect([...registry(doc).values()][0]).toBe(paint)
+    for (let i = 0; i < 3; i++) {
+      doc.defaultView!.dispatchEvent(new Event('scroll'))
+      badge.dispatchEvent(
+        new PointerEvent('pointerdown', { pointerId: 1, clientX: 0 }),
+      )
+      badge.dispatchEvent(
+        new PointerEvent('pointermove', { pointerId: 1, clientX: 10 }),
+      )
+      badge.dispatchEvent(
+        new PointerEvent('pointerup', { pointerId: 1, clientX: 10 }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    }
+    expect(writes).toEqual([])
+    // Positive control: a real geometry change must update the overlay.
+    doc.querySelector('text')!.setAttribute('x', '30')
+    await vi.waitFor(() => expect(writes.length).toBeGreaterThan(0))
+  } finally {
+    observer.disconnect()
+  }
+})
+
+test.each([
+  ['data-anchor-ignore', ''],
+  ['data-comment-ui', ''],
+  ['class', 'ash-comment-highlight-badge'],
+  ['class', 'mermaid-diagram'],
+])(
+  'debounced snapshots cannot reattach text excluded by %s=%s',
+  async (name, value) => {
+    const doc = await fixture(
+      '<p id="words">selected words</p><p id="counter">0</p>',
+    )
+    const anchor = {
+      threadId: 'excluded',
+      selectorFormat: 'quote-v1',
+      quotedText: 'selected words',
+    }
+    send('comment-highlights', { highlights: [anchor] })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    doc.querySelector('#counter')!.textContent = 'changed'
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    doc.querySelector('#words')!.setAttribute(name, value)
+    send('comment-highlights', { highlights: [anchor] })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('checking'),
+    )
+    const rejectedAt = messages.length
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(registry(doc).size).toBe(0)
+    expect(doc.querySelector('button.ash-comment-highlight-badge')).toBeNull()
+    expect(results()?.results[0]?.state).toBe('checking')
+    expect(
+      messages
+        .slice(rejectedAt)
+        .some(
+          (message) =>
+            message.kind === 'anchor-resolutions' &&
+            message.results.some((result) => result.state === 'attached'),
+        ),
+    ).toBe(false)
+  },
+)
+
+test('exclusion changes invalidate a pending snapshot even without a parent echo', async () => {
+  const doc = await fixture(
+    '<p id="words">selected words</p><p id="counter">0</p>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'excluded',
+        selectorFormat: 'quote-v1',
+        quotedText: 'selected words',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  doc.querySelector('#counter')!.textContent = 'changed'
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  const walk = vi.spyOn(doc, 'createTreeWalker')
+  try {
+    doc.querySelector('#words')!.setAttribute('data-anchor-ignore', '')
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(results()?.results[0]?.state).toBe('checking')
+    expect(registry(doc).size).toBe(0)
+    expect(
+      walk.mock.calls.filter(([root]) => root === doc.querySelector('main')),
+    ).toHaveLength(1)
+  } finally {
+    walk.mockRestore()
+  }
+})
+
+test('a parent echo restores invalidated paint immediately during the debounce', async () => {
+  const doc = await fixture(
+    '<p id="words">selected words</p><p id="counter">0</p>',
+  )
+  const anchor = {
+    threadId: 'replacement',
+    selectorFormat: 'quote-v1',
+    quotedText: 'selected words',
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  doc.querySelector('#words')!.textContent = 'selected words'
+  doc.querySelector('#counter')!.textContent = 'changed'
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  expect(registry(doc).size).toBe(0)
+  send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+  await vi.waitFor(
+    () => {
+      expect(
+        doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')?.dataset
+          .count,
+      ).toBe('2')
+      expect(registry(doc).size).toBe(1)
+    },
+    { timeout: 200, interval: 10 },
+  )
+})
+
+test.each(['html', 'svg'])(
+  'count updates repaint %s anchors when their palette changes',
+  async (kind) => {
+    const doc = await fixture(
+      kind === 'html'
+        ? '<p id="words" style="background:white">selected words</p>'
+        : '<svg width="300" height="80"><text id="words" x="10" y="40" fill="black">selected words</text></svg>',
+    )
+    const anchor = {
+      threadId: 'palette',
+      selectorFormat: 'quote-v1',
+      quotedText: 'selected words',
+    }
+    send('comment-highlights', { highlights: [anchor] })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    const badge = doc.querySelector<HTMLElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    const color = badge.style.backgroundColor
+    const paint = [...registry(doc).values()][0]
+    const overlayFill = () => {
+      const overlay = doc.querySelector('.ash-comment-highlight-svg')
+      expect(overlay).not.toBeNull()
+      return doc.defaultView!.getComputedStyle(overlay!).fill
+    }
+    const shapeFill = kind === 'svg' ? overlayFill() : null
+    if (kind === 'html')
+      doc.querySelector<HTMLElement>('#words')!.style.backgroundColor = 'black'
+    else doc.querySelector('#words')!.setAttribute('fill', 'white')
+    send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+    await vi.waitFor(() => expect(badge.dataset.count).toBe('2'))
+    expect(badge.style.backgroundColor).not.toBe(color)
+    expect([...registry(doc).values()][0]).not.toBe(paint)
+    if (kind === 'svg') expect(overlayFill()).not.toBe(shapeFill)
+  },
+)

@@ -696,20 +696,22 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
     )
   }
   const attached = thread.subject.state === 'attached'
+  const unchecked = thread.subject.positionState === 'unchecked'
+  const checking = thread.subject.checking ?? unchecked
+  const warning = !attached && !checking && !unchecked
   return (
     <div
       className={cn(
         'py-comment-block text-link grid rounded-[var(--r-lg)] border border-[color-mix(in_srgb,var(--link)_34%,var(--divider))] bg-transparent px-2.5 text-xs font-normal',
-        !attached &&
+        warning &&
           'text-warning border-[color-mix(in_srgb,var(--warning)_36%,var(--divider))] bg-[color-mix(in_srgb,var(--warning)_10%,var(--background))]',
       )}
     >
-      <strong className={attached ? 'hidden' : ''}>
+      <strong className={attached || (!warning && !checking) ? 'hidden' : ''}>
         {t(
           attached
             ? 'comments.subjectText'
-            : thread.subject.checking ||
-                thread.subject.positionState === 'unchecked'
+            : checking
               ? 'comments.positionChecking'
               : 'comments.subjectOrphaned',
         )}

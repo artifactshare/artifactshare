@@ -125,6 +125,7 @@ type SandboxFrameProps = {
   highlightThreadId: string | null
   followsAppTheme: boolean
   lowTrust?: boolean
+  onAnchorCheckingChange?: (available: boolean) => void
   onAnchorResolutions?: (results: AnchorResolutionMessage['results']) => void
   onTextSelection: (selection: PendingTextAnchor) => void
   onTextSelectionClear: () => void
@@ -352,6 +353,7 @@ function useSandboxFrameController({
   highlightThreadId,
   onTextSelection,
   onAnchorResolutions,
+  onAnchorCheckingChange,
   onTextSelectionClear,
   onThreadSelect,
   onOutsidePointerDown,
@@ -840,6 +842,21 @@ function useSandboxFrameController({
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [clearReadyFallback, lowTrust, mermaidEnabled, trustedMessageOrigin])
+
+  const reportAnchorChecking = useEffectEvent((available: boolean) => {
+    onAnchorCheckingChange?.(available)
+  })
+  useEffect(() => {
+    if (loadState === 'blocked' || loadState === 'paused') {
+      reportAnchorChecking(false)
+      return
+    }
+    reportAnchorChecking(true)
+    if (loadState === 'ready') return
+    // A frame that never answers cannot report its own checking deadline.
+    const deadline = window.setTimeout(() => reportAnchorChecking(false), 3000)
+    return () => window.clearTimeout(deadline)
+  }, [loadState, url])
 
   useEffect(() => {
     if (loadState !== 'ready') return

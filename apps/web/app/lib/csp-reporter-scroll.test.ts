@@ -137,13 +137,16 @@ test('covered resolved text is retained for jump without invoking painting', () 
   )
   const paint = vi.fn(() => true)
   const send = vi.fn()
-  const ranges = [{ startContainer: { parentElement: {} } }]
+  const ranges = [
+    { startContainer: { parentElement: { closest: () => null } } },
+  ]
   const run = new Function(
     'engine',
     'wrapSvgRange',
     'send',
     `
     var paintedAnchors = [], pendingHighlights = [], measuredText;
+    var anchorSnapshotGeneration = 0, appliedHighlightKey = "";
     var highlightNames = [], documentToken = '', displayedVersionId = 'v1', displayedPath = null;
     var lastResolutionSignature = '', resolutionGeneration = 0;
     var checkingDeadlines = { open: 1, resolved: 1 }, reusableBadges = new Map();

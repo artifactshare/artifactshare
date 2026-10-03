@@ -669,6 +669,20 @@ export function useViewerComments({
     [threadsRef],
   )
 
+  const [anchorCheckingAvailable, setAnchorCheckingAvailable] = useState(true)
+  const panelThreads = useMemo(
+    () =>
+      state.threads.map((thread) =>
+        !anchorCheckingAvailable &&
+        thread.subject.kind === 'text' &&
+        (thread.subject.checking ||
+          thread.subject.positionState === 'unchecked')
+          ? { ...thread, subject: { ...thread.subject, checking: false } }
+          : thread,
+      ),
+    [state.threads, anchorCheckingAvailable],
+  )
+
   const applyAnchorResolutions = useCallback(
     (results: AnchorResolutionMessage['results']) => {
       const next = threadsRef.current.map((thread) => {
@@ -1536,6 +1550,8 @@ export function useViewerComments({
     openPanel,
     replaceThreads,
     applyAnchorResolutions,
+    panelThreads,
+    setAnchorCheckingAvailable,
     changePanelOpen,
     targetThread,
     startTextSelection,
@@ -2474,6 +2490,7 @@ function ViewerShellView({
           fallbackToIndex={fallbackToIndex}
           commentThreads={comments.state.threads}
           onAnchorResolutions={comments.applyAnchorResolutions}
+          onAnchorCheckingChange={comments.setAnchorCheckingAvailable}
           targetThreadId={comments.state.targetThreadId}
           highlightThreadId={
             comments.state.inlineThreadId ?? comments.state.targetThreadId
@@ -2605,25 +2622,13 @@ function ViewerShellView({
         </>
       ) : null}
       {commentsEnabled && user ? (
-        <CommentPanel
-          key={artifact.id}
-          shareableId={artifact.id}
-          viewerUserId={user.id}
-          threads={comments.state.threads}
-          onThreadsChange={comments.replaceThreads}
-          isCurrentShareableId={comments.isCurrentArtifactId}
-          open={comments.state.panelOpen}
-          onOpenChange={comments.changePanelOpen}
-          targetThreadId={comments.state.targetThreadId}
-          targetThreadScroll={comments.state.targetThreadScroll}
-          onThreadNavigate={(thread) =>
-            comments.targetThread(thread.id, { scroll: 'start' })
-          }
-          returnFocusRef={comments.returnFocusRef}
+        <ViewerCommentPanel
+          artifact={artifact}
+          user={user}
+          state={state}
+          comments={comments}
+          newThreadComposerEnabled={newThreadComposerEnabled}
           collapsedFallbackRef={collapseToggleRef}
-          requestedFilter={comments.requestedFilter}
-          topbarCollapsed={state.chromeCollapsed}
-          showNewThreadComposer={newThreadComposerEnabled}
         />
       ) : null}
       {viewerListAvailable && user ? (
@@ -2644,5 +2649,43 @@ function ViewerShellView({
         />
       ) : null}
     </div>
+  )
+}
+
+function ViewerCommentPanel({
+  artifact,
+  user,
+  state,
+  comments,
+  newThreadComposerEnabled,
+  collapsedFallbackRef,
+}: Pick<
+  ViewerShellController,
+  'artifact' | 'state' | 'comments' | 'newThreadComposerEnabled'
+> & {
+  user: NonNullable<ViewerShellController['user']>
+  collapsedFallbackRef: { current: HTMLButtonElement | null }
+}) {
+  return (
+    <CommentPanel
+      key={artifact.id}
+      shareableId={artifact.id}
+      viewerUserId={user.id}
+      threads={comments.panelThreads}
+      onThreadsChange={comments.replaceThreads}
+      isCurrentShareableId={comments.isCurrentArtifactId}
+      open={comments.state.panelOpen}
+      onOpenChange={comments.changePanelOpen}
+      targetThreadId={comments.state.targetThreadId}
+      targetThreadScroll={comments.state.targetThreadScroll}
+      onThreadNavigate={(thread) =>
+        comments.targetThread(thread.id, { scroll: 'start' })
+      }
+      returnFocusRef={comments.returnFocusRef}
+      collapsedFallbackRef={collapsedFallbackRef}
+      requestedFilter={comments.requestedFilter}
+      topbarCollapsed={state.chromeCollapsed}
+      showNewThreadComposer={newThreadComposerEnabled}
+    />
   )
 }

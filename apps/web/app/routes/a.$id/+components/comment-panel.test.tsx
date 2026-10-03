@@ -123,3 +123,17 @@ test('a text comment keeps its list position while its check finishes', () => {
   expect(order('attached')).toBe(true)
   expect(order('needs-check')).toBe(false)
 })
+
+test('checking is neutral; only a missing quote uses warning colors', () => {
+  locale.value = 'en'
+  expect(render('unchecked')).not.toContain('text-warning')
+  expect(render('unchecked')).toContain(en['comments.positionChecking'])
+  expect(render('needs-check')).toContain('text-warning')
+  const thread = textThread('unchecked')
+  if (thread.subject.kind === 'text') thread.subject.checking = false
+  const html = renderThreads([thread])
+  expect(html).toContain('Original words')
+  expect(html).not.toContain('text-warning')
+  expect(html).not.toContain(en['comments.positionChecking'])
+  expect(html).not.toContain(' data-comment-thread-hitarea=""')
+})
