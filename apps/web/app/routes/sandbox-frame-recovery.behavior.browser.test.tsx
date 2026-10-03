@@ -141,10 +141,8 @@ describe('SandboxFrame recovery', () => {
           renderType: 'html',
         }),
       )
-      await Promise.resolve()
-      await Promise.resolve()
     })
-    expect(stateOf(host)).toBe('loading')
+    await expectFrameState(host, 'loading')
     expect(checking.mock.calls.slice(callsAfterDeadline)).not.toContainEqual([
       true,
     ])
@@ -175,10 +173,8 @@ describe('SandboxFrame recovery', () => {
           renderType: 'html',
         }),
       )
-      await Promise.resolve()
-      await Promise.resolve()
     })
-    expect(stateOf(host)).toBe('loading')
+    await expectFrameState(host, 'loading')
     expect(host.querySelector('iframe')).not.toBe(recoveredFrame)
   })
 
@@ -311,10 +307,8 @@ describe('SandboxFrame recovery', () => {
       tokenRequests[0].resolve(
         Response.json({ sandboxUrl: 'not a URL', renderType: 'html' }),
       )
-      await Promise.resolve()
-      await Promise.resolve()
     })
-    expect(stateOf(host)).toBe('paused')
+    await expectFrameState(host, 'paused')
     expect(host.textContent).toContain(
       'The last attempt did not finish. Try again or reload the page.',
     )
@@ -327,6 +321,17 @@ describe('SandboxFrame recovery', () => {
     )
   })
 })
+
+// Native Response body reads can finish after the microtask queue drains.
+// Poll without advancing the fake recovery deadlines, flushing React each time.
+async function expectFrameState(host: HTMLElement, expected: string) {
+  await expect
+    .poll(async () => {
+      await act(async () => {})
+      return stateOf(host)
+    })
+    .toBe(expected)
+}
 
 async function renderFrame(
   onAnchorCheckingChange?: (available: boolean) => void,

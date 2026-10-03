@@ -40,6 +40,13 @@ captures are documented in the [screen capture harness](docs/reference/screen-ca
 Manual product diagnostics are documented in [AI-search eligibility](docs/reference/ai-search-eligibility.md)
 and [performance trace automation](docs/reference/performance-trace-automation.md).
 
+The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
+After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.
+The generator owns `reporter.generated.ts`, including its exact script body and
+CSP hash; include that file with source changes.
+Run `node packages/viewer-kit/scripts/build-reporter.mjs --check` to check for drift
+without writing files. This check also runs as part of root `pnpm typecheck`.
+
 ## Development process
 
 Artifact Share currently accepts proposal-only pull requests, not code pull requests. Contributors describe a real situation and desired change; maintainers then own the issue, specification, implementation, verification, and release. Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a proposal.

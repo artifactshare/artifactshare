@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Internal: build the preview reporter from typed modules and test the shared anchor engine directly, preserving annotation and handshake behavior.
+
 - Preserve legacy preview annotations, including long quotes and trimmed context, and skip malformed saved records individually with a warning.
 - Resolve quoted comments in the viewer using exact context; expose optional `anchor.position_state` (`attached`, `needs-check`, `unchecked`) while retaining `anchor.state`. Local preview uses the same selectors and paints highlights without changing document text nodes.
 

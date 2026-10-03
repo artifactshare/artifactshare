@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
-import { VIOLATION_REPORTER_SCRIPT_BODY } from './csp-reporter'
+import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
   buildPrintDocument,
@@ -135,6 +135,374 @@ describe('CSP reporter runtime behavior', () => {
     expect(reply).toBeDefined()
     expect(reply.source).toBe(frame!.contentWindow)
     expect(reply.data.token).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('captured primordials survive authored replacements without accepting forged clicks or polluting messages', async () => {
+    const doc = await fixture(
+      '<a href="https://example.com/report" id="safe">Protected link</a>',
+    )
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      const define = Object.defineProperty;
+      window.reporterAttack = { payloadReads: 0, redirected: 0 };
+      const attacked = window.reporterAttack;
+      define(Object.prototype, 'token', { configurable: true, set() { attacked.payloadReads++; } });
+      define(Object.prototype, 'source', { configurable: true, set() { attacked.payloadReads++; } });
+      define(window, 'parent', { configurable: true, value: { postMessage() { attacked.redirected++; } } });
+      const unavailable = () => { throw new Error('authored replacement'); };
+      Array.prototype.map = unavailable;
+      WeakMap.prototype.get = unavailable;
+      WeakMap.prototype.set = unavailable;
+      WeakMap.prototype.delete = unavailable;
+      Element.prototype.closest = () => null;
+      Element.prototype.getAttribute = () => null;
+      Element.prototype.hasAttribute = () => false;
+      define(Event.prototype, 'target', { configurable: true, get() { return document.body; } });
+      define(Event.prototype, 'defaultPrevented', { configurable: true, get() { return true; } });
+      for (const key of ['button', 'metaKey', 'ctrlKey', 'shiftKey', 'altKey'])
+        define(MouseEvent.prototype, key, { configurable: true, get() { return key === 'button' ? 2 : true; } });
+      Object.create = unavailable;
+      Object.keys = unavailable;
+      Object.defineProperty = unavailable;
+    `
+    doc.body.appendChild(authored)
+    await probeReporter('after-authored-replacement')
+    const reply = messages.find(
+      (message) => message.challenge === 'after-authored-replacement',
+    )!
+    expect(reply.token).toBe(before.token)
+    expect(reply.source).toBe('artifactshare')
+    const from = messages.length
+    const link = doc.querySelector<HTMLAnchorElement>('#safe')!
+    const forged = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      detail: 1,
+      button: 0,
+    })
+    // Cancel the synthetic event in authored code to keep its native default
+    // action from navigating away; it still traverses the reporter capture listener.
+    link.addEventListener('click', (event) => {
+      if (!event.isTrusted) event.preventDefault()
+    })
+    link.dispatchEvent(forged)
+    await probeReporter('after-forged-click')
+    expect(
+      messages.slice(from).some((message) => message.kind === 'link-clicked'),
+    ).toBe(false)
+    const box = link.getBoundingClientRect()
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    const clicked = await waitForMessage('link-clicked', () => true, from)
+    expect(clicked.href).toBe('https://example.com/report')
+    expect(clicked.token).toBe(before.token)
+    expect(
+      (
+        doc.defaultView as unknown as Window & {
+          reporterAttack: { payloadReads: number; redirected: number }
+        }
+      ).reporterAttack,
+    ).toEqual({ payloadReads: 0, redirected: 0 })
+  })
+
+  test('highlight serialization and mutation retries never disclose the document token', async () => {
+    const doc = await fixture()
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      const stringify = JSON.stringify;
+      const toString = String;
+      window.serializationAttack = { seen: [], jsonCalls: 0, stringCalls: 0 };
+      const attack = window.serializationAttack;
+      JSON.stringify = function(value, ...args) {
+        attack.jsonCalls++;
+        const serialized = stringify(value, ...args);
+        attack.seen.push(serialized);
+        return serialized;
+      };
+      for (const name of ['charAt', 'slice', 'substring', 'replace', 'trim', 'startsWith', 'padStart']) {
+        const original = String.prototype[name];
+        String.prototype[name] = function(...args) {
+          attack.stringCalls++;
+          attack.seen.push(toString(this));
+          return original.apply(this, args);
+        };
+      }
+    `
+    doc.body.appendChild(authored)
+    await applyHighlights([{ threadId: 'serialization-thread', colorIndex: 0 }])
+    const first = await waitForMessage('anchor-resolutions')
+    const attack = (
+      doc.defaultView as unknown as {
+        serializationAttack: {
+          seen: string[]
+          jsonCalls: number
+          stringCalls: number
+        }
+      }
+    ).serializationAttack
+    const calls = attack.jsonCalls
+    // Change normalized text so the observer's debounce must resolve again.
+    const content = doc.querySelector('#content')!
+    content.insertBefore(
+      doc.createTextNode('Added prefix. '),
+      content.firstChild,
+    )
+    const updated = await waitForMessage(
+      'anchor-resolutions',
+      (message) =>
+        (message.generation as number) > (first.generation as number),
+    )
+    expect(updated.token).toBe(before.token)
+    expect(attack.jsonCalls).toBeGreaterThan(calls)
+    expect(attack.stringCalls).toBeGreaterThan(0)
+    expect(
+      attack.seen.some((value) => value?.includes(before.token as string)),
+    ).toBe(false)
+
+    const forge = doc.createElement('script')
+    forge.textContent = `
+      const candidates = window.serializationAttack.seen.join(' ').match(/[a-f0-9]{64}/g) || [''];
+      for (const token of candidates) parent.postMessage({
+        source: 'artifactshare', kind: 'link-clicked',
+        href: 'https://example.com/forged', token
+      }, '*');
+    `
+    const from = messages.length
+    doc.body.appendChild(forge)
+    await waitForMessage(
+      'link-clicked',
+      (message) => message.href === 'https://example.com/forged',
+      from,
+    )
+    await probeReporter('after-serialization-attack')
+    const forged = messages
+      .slice(from)
+      .filter((message) => message.kind === 'link-clicked')
+    expect(forged.length).toBeGreaterThan(0)
+    for (const message of forged)
+      expect(canUseOsHandler(before.token as string, message.token, true)).toBe(
+        false,
+      )
+
+    const box = doc.querySelector('#normal')!.getBoundingClientRect()
+    const clickFrom = messages.length
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    const clicked = await waitForMessage('link-clicked', () => true, clickFrom)
+    expect(canUseOsHandler(before.token as string, clicked.token, true)).toBe(
+      true,
+    )
+  })
+
+  test('strict reporter callers never expose state to authored classic functions', async () => {
+    const doc = await fixture(
+      '<a href="https://example.com/report" id="safe">Protected link</a><p id="words">Select these words</p>',
+    )
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      window.callerAttack = { linkCalls: 0, selectionCalls: 0, callers: 0, token: null, challenge: null };
+      const attack = window.callerAttack;
+      const originalCharAt = String.prototype.charAt;
+      const originalRect = Range.prototype.getBoundingClientRect;
+      function inspectCaller(caller) {
+        if (!caller) return;
+        attack.callers++;
+        const args = caller.arguments;
+        const ctx = args && args[0];
+        if (ctx) {
+          attack.token = ctx.documentToken || null;
+          attack.challenge = ctx.readyChallenge || null;
+        }
+      }
+      String.prototype.charAt = function charAt(index) {
+        attack.linkCalls++;
+        inspectCaller(charAt.caller);
+        return originalCharAt.call(this, index);
+      };
+      Range.prototype.getBoundingClientRect = function getBoundingClientRect() {
+        attack.selectionCalls++;
+        inspectCaller(getBoundingClientRect.caller);
+        return originalRect.call(this);
+      };
+    `
+    doc.body.appendChild(authored)
+    const from = messages.length
+    const box = doc.querySelector('#safe')!.getBoundingClientRect()
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    expect(
+      await waitForMessage('link-clicked', () => true, from),
+    ).toMatchObject({
+      href: 'https://example.com/report',
+      token: before.token,
+    })
+    const range = doc.createRange()
+    range.selectNodeContents(doc.querySelector('#words')!)
+    const selection = doc.defaultView!.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    doc.dispatchEvent(new Event('keyup', { bubbles: true }))
+    expect(
+      await waitForMessage('text-selection', () => true, from),
+    ).toMatchObject({
+      quotedText: 'Select these words',
+      token: before.token,
+    })
+    const attack = (
+      doc.defaultView as unknown as {
+        callerAttack: {
+          linkCalls: number
+          selectionCalls: number
+          callers: number
+          token: unknown
+          challenge: unknown
+        }
+      }
+    ).callerAttack
+    expect(attack.linkCalls).toBeGreaterThan(0)
+    expect(attack.selectionCalls).toBeGreaterThan(0)
+    expect(attack.callers).toBe(0)
+    expect(attack.token).toBeNull()
+    expect(attack.challenge).toBeNull()
+  })
+
+  test('authored array iterators cannot read private messages or change their fields', async () => {
+    const doc = await fixture(
+      '<a href="https://example.com/report" id="safe">Protected link</a><p id="words">Select these words</p>',
+    )
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      const originalIterator = Array.prototype[Symbol.iterator];
+      const owns = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+      window.iteratorAttack = { messageReads: 0, token: null, challenge: null };
+      Object.defineProperty(Object.prototype, '__reporter_probe__', {
+        configurable: true,
+        get() {
+          if (owns(this, 'kind')) {
+            window.iteratorAttack.messageReads++;
+            window.iteratorAttack.token = this.token;
+            window.iteratorAttack.challenge = this.challenge;
+          }
+          return 'polluted';
+        }
+      });
+      Array.prototype[Symbol.iterator] = function* () {
+        // Only key arrays are changed; ordinary anchor/layout arrays still work.
+        for (let index = 0; index < this.length; index++) {
+          if (this[index] === 'kind') { yield '__reporter_probe__'; break; }
+        }
+        const iterator = originalIterator.call(this);
+        let step;
+        while (!(step = iterator.next()).done) yield step.value;
+      };
+    `
+    doc.body.appendChild(authored)
+    await probeReporter('iterator-attack-probe')
+    const reply = await waitForMessage(
+      'ready',
+      (message) => message.challenge === 'iterator-attack-probe',
+    )
+    expect(reply).toEqual({
+      source: 'artifactshare',
+      kind: 'ready',
+      challenge: 'iterator-attack-probe',
+      token: before.token,
+    })
+
+    const from = messages.length
+    const link = doc.querySelector<HTMLAnchorElement>('#safe')!
+    link.addEventListener('click', (event) => {
+      if (!event.isTrusted) event.preventDefault()
+    })
+    link.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true }),
+    )
+    await probeReporter('iterator-forged-click')
+    expect(
+      messages.slice(from).some((message) => message.kind === 'link-clicked'),
+    ).toBe(false)
+    const box = link.getBoundingClientRect()
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    expect(await waitForMessage('link-clicked', () => true, from)).toEqual({
+      source: 'artifactshare',
+      kind: 'link-clicked',
+      href: 'https://example.com/report',
+      token: before.token,
+    })
+
+    const range = doc.createRange()
+    range.selectNodeContents(doc.querySelector('#words')!)
+    const selection = doc.defaultView!.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    const selectionFrom = messages.length
+    doc.dispatchEvent(new Event('keyup', { bubbles: true }))
+    const selectionMessage = await waitForMessage(
+      'text-selection',
+      () => true,
+      selectionFrom,
+    )
+    expect(Object.keys(selectionMessage).sort()).toEqual(
+      [
+        'source',
+        'kind',
+        'token',
+        'quotedText',
+        'prefixText',
+        'suffixText',
+        'textStart',
+        'textEnd',
+        'selectorFormat',
+        'textHash',
+        'ambiguousAtCreation',
+        'versionId',
+        'cssPath',
+        'rect',
+      ].sort(),
+    )
+    expect(selectionMessage.token).toBe(before.token)
+    expect(selectionMessage.quotedText).toBe('Select these words')
+    expect(selectionMessage.rect).toEqual({
+      top: expect.any(Number),
+      left: expect.any(Number),
+      width: expect.any(Number),
+      height: expect.any(Number),
+    })
+
+    const violation = new Event('securitypolicyviolation')
+    Object.assign(violation, {
+      violatedDirective: 'img-src',
+      blockedURI: 'https://example.org/image.png',
+    })
+    doc.dispatchEvent(violation)
+    expect(await waitForMessage('csp-violation')).toEqual({
+      source: 'artifactshare',
+      kind: 'csp-violation',
+      directive: 'img-src',
+      blockedURI: 'https://example.org/image.png',
+      sourceFile: null,
+      lineNumber: null,
+    })
+    expect(
+      (
+        doc.defaultView as unknown as {
+          iteratorAttack: {
+            messageReads: number
+            token: unknown
+            challenge: unknown
+          }
+        }
+      ).iteratorAttack,
+    ).toEqual({ messageReads: 0, token: null, challenge: null })
   })
 
   test('waits for an in-flight probe reply without sending duplicate checks', async () => {

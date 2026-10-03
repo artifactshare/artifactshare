@@ -1,18 +1,13 @@
 // @vitest-environment happy-dom
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+// @vitest-environment-options {"settings":{"enableJavaScriptEvaluation":true}}
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { renderPreviewShell } from './shell.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
 import { createPreviewStore } from './store.js'
-// Read the serialized engine without adding cross-package declaration outputs.
-const TEXT_ANCHOR_ENGINE_SCRIPT = new Function(
-  readFileSync(
-    join(import.meta.dirname, '../../../viewer-kit/src/text-anchor.ts'),
-    'utf8',
-  ).replace('export const', 'const') + '; return TEXT_ANCHOR_ENGINE_SCRIPT',
-)()
+import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 
 test('an unchanged page keeps saved legacy annotations attached without offering to discard them', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'preview-legacy-'))
@@ -64,7 +59,9 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     const post = vi
       .spyOn(frame.contentWindow!, 'postMessage')
       .mockImplementation(() => {})
-    new Function(script)()
+    const executable = document.createElement('script')
+    executable.textContent = script
+    document.body.appendChild(executable)
     await vi.waitFor(() =>
       expect(
         post.mock.calls.some(([message]) => message.kind === 'verify-anchors'),
@@ -75,15 +72,14 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     )![0]
     const content = document.createElement('main')
     content.innerHTML = '<p>The quick brown fox</p>'
-    const engine = new Function(
-      'root',
-      `${TEXT_ANCHOR_ENGINE_SCRIPT}; return createTextAnchorEngine(root)`,
-    )(content)
-    const verdicts = request.anchors.map((anchor: { thread: string }) => ({
-      thread: anchor.thread,
-      attached: engine.resolve(anchor) !== null,
-      position_state: engine.resolve(anchor) ? 'attached' : 'needs-check',
-    }))
+    const engine = createTextAnchorEngine(content)
+    const verdicts = request.anchors.map(
+      (anchor: { thread: string; quotedText: string }) => ({
+        thread: anchor.thread,
+        attached: engine.resolve(anchor) !== null,
+        position_state: engine.resolve(anchor) ? 'attached' : 'needs-check',
+      }),
+    )
     window.dispatchEvent(
       new MessageEvent('message', {
         source: frame.contentWindow,

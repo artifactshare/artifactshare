@@ -35,6 +35,8 @@ export default defineConfig({
           include: [
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
+            'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
           ],
         },
         {
@@ -42,6 +44,8 @@ export default defineConfig({
           include: [
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
+            'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
           ],
         },
       ],
