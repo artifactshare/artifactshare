@@ -161,12 +161,18 @@ test('same-offset echoes retain paint until the background palette changes', () 
 
 test('metadata-only updates refresh the stored resolved highlight without painting', () => {
   const f = fixture()
-  f.apply({ count: 1, prefixText: '' })
-  f.apply({ count: 2, prefixText: '   ' })
+  // Isolate painter metadata from anchor resolution: both replies resolve to
+  // the same production DOM ranges, despite different context metadata.
+  const engine = engines.createTextAnchorEngine(document.querySelector('main')!)
+  const resolved = engine.resolve({ quotedText: 'quote' })
+  vi.spyOn(engine, 'resolve').mockReturnValue(resolved)
+  f.build.mockReturnValue(engine)
+  f.apply({ count: 1, prefixText: 'old' })
+  f.apply({ count: 2, prefixText: 'new' })
   expect(f.paint).toHaveBeenCalledOnce()
   expect(f.highlight()).toMatchObject({
     count: 2,
-    prefixText: '   ',
+    prefixText: 'new',
     textStart: 0,
     textEnd: 5,
   })

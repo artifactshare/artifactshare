@@ -60,7 +60,8 @@ export function installMermaidResults(
     container.appendChild(ctx.doc.importNode(svg, true))
     pre.dataset.mermaidRendered = 'true'
     pre.hidden = true
-    pre.parentNode!.insertBefore(container, pre)
+    // Cloudflare also declares Element.before for HTMLRewriter; this is DOM.
+    ;(pre as ChildNode).before(container)
     delete ctx.mermaidBlocks[result.id]
   }
   schedulePositionBadges(ctx)

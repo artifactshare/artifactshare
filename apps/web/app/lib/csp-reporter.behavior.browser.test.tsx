@@ -207,6 +207,80 @@ describe('CSP reporter runtime behavior', () => {
     ).toEqual({ payloadReads: 0, redirected: 0 })
   })
 
+  test('strict reporter callers never expose state to authored classic functions', async () => {
+    const doc = await fixture(
+      '<a href="https://example.com/report" id="safe">Protected link</a><p id="words">Select these words</p>',
+    )
+    const before = messages.find((message) => message.kind === 'ready')!
+    const authored = doc.createElement('script')
+    authored.textContent = `
+      window.callerAttack = { linkCalls: 0, selectionCalls: 0, callers: 0, token: null, challenge: null };
+      const attack = window.callerAttack;
+      const originalCharAt = String.prototype.charAt;
+      const originalRect = Range.prototype.getBoundingClientRect;
+      function inspectCaller(caller) {
+        if (!caller) return;
+        attack.callers++;
+        const args = caller.arguments;
+        const ctx = args && args[0];
+        if (ctx) {
+          attack.token = ctx.documentToken || null;
+          attack.challenge = ctx.readyChallenge || null;
+        }
+      }
+      String.prototype.charAt = function charAt(index) {
+        attack.linkCalls++;
+        inspectCaller(charAt.caller);
+        return originalCharAt.call(this, index);
+      };
+      Range.prototype.getBoundingClientRect = function getBoundingClientRect() {
+        attack.selectionCalls++;
+        inspectCaller(getBoundingClientRect.caller);
+        return originalRect.call(this);
+      };
+    `
+    doc.body.appendChild(authored)
+    const from = messages.length
+    const box = doc.querySelector('#safe')!.getBoundingClientRect()
+    await page.elementLocator(frame!).click({
+      position: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+    })
+    expect(
+      await waitForMessage('link-clicked', () => true, from),
+    ).toMatchObject({
+      href: 'https://example.com/report',
+      token: before.token,
+    })
+    const range = doc.createRange()
+    range.selectNodeContents(doc.querySelector('#words')!)
+    const selection = doc.defaultView!.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    doc.dispatchEvent(new Event('keyup', { bubbles: true }))
+    expect(
+      await waitForMessage('text-selection', () => true, from),
+    ).toMatchObject({
+      quotedText: 'Select these words',
+      token: before.token,
+    })
+    const attack = (
+      doc.defaultView as unknown as {
+        callerAttack: {
+          linkCalls: number
+          selectionCalls: number
+          callers: number
+          token: unknown
+          challenge: unknown
+        }
+      }
+    ).callerAttack
+    expect(attack.linkCalls).toBeGreaterThan(0)
+    expect(attack.selectionCalls).toBeGreaterThan(0)
+    expect(attack.callers).toBe(0)
+    expect(attack.token).toBeNull()
+    expect(attack.challenge).toBeNull()
+  })
+
   test('authored array iterators cannot read private messages or change their fields', async () => {
     const doc = await fixture(
       '<a href="https://example.com/report" id="safe">Protected link</a><p id="words">Select these words</p>',

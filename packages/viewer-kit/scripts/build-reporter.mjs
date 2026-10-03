@@ -116,6 +116,13 @@ export function validateBundle(
   )
     fail('expected one unnamed, argument-free IIFE with no global assignment')
   const body = wrapper.body.body
+  if (
+    body[0]?.type !== 'ExpressionStatement' ||
+    body[0].directive !== 'use strict'
+  )
+    fail(
+      'IIFE must begin with a use strict directive to protect reporter state from caller/arguments access',
+    )
   const functions = new Map()
   let installs = 0
   for (const statement of body) {
@@ -253,6 +260,10 @@ export async function renderReporter({ entry = entryPath } = {}) {
   try {
     const { output } = await bundle.generate({
       format: 'iife',
+      // Keep strictness inside the IIFE; a top-level directive would also
+      // change the surrounding classic script's scope.
+      strict: false,
+      intro: '"use strict";',
       minify: false,
       sourcemap: false,
       codeSplitting: false,

@@ -17,6 +17,7 @@ function chunk(code) {
   return { type: 'chunk', code, imports: [], dynamicImports: [], exports: [] }
 }
 const minimal = `(() => {
+  "use strict";
   function capturePrimordials(win) { const savedParent = win.parent; return { savedParent }; }
   function installReporter(win) {
     if (win.parent === win) return;
@@ -298,4 +299,18 @@ test('security paths accept indexed copying through captured primordials', () =>
     ),
     code,
   )
+})
+
+test('structural guard requires strict mode as the first IIFE statement', () => {
+  for (const replacement of [
+    '',
+    '"use asm";',
+    'const inert = 1; "use strict";',
+  ]) {
+    assert.throws(
+      () =>
+        validateBundle([chunk(minimal.replace('"use strict";', replacement))]),
+      /IIFE must begin with a use strict directive/,
+    )
+  }
 })

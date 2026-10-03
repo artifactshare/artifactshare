@@ -28,6 +28,7 @@ import {
   svgTextRange,
   setSvgHighlightState,
 } from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
+import { installMermaidResults } from '../../../../packages/viewer-kit/src/reporter/mermaid.js'
 
 function state() {
   return createReporterState(window)
@@ -387,9 +388,19 @@ test('SVG state changes ignore a forged state label and retain unchanged styles'
   setSvgHighlightState(ctx, 'svg', false)
   expect(overlay.style.stroke).toBe('none')
   expect(overlay.style.strokeWidth).toBe('0')
+  const styleWrite = vi.fn((target, key, value) =>
+    Reflect.set(target, key, value),
+  )
+  Object.defineProperty(overlay, 'style', {
+    value: new Proxy(overlay.style, { set: styleWrite }),
+  })
   const write = vi.spyOn(ctx.svgOverlayStyles, 'set')
   setSvgHighlightState(ctx, 'svg', false)
   expect(write).not.toHaveBeenCalled()
+  expect(styleWrite).not.toHaveBeenCalled()
+  setSvgHighlightState(ctx, 'svg', true)
+  expect(styleWrite).toHaveBeenCalled()
+  expect(overlay.style.stroke).toBe('orange')
 })
 
 test('payload copying never invokes replaceable key-array iterators', () => {
@@ -435,4 +446,25 @@ test('payload copying never invokes replaceable key-array iterators', () => {
     challenge: 'synthetic-challenge',
     token: 'synthetic-token',
   })
+})
+
+test('Mermaid results tolerate a detached block and render subsequent diagrams', () => {
+  const ctx = state()
+  ctx.readyChallenge = 'synthetic-challenge'
+  const detached = document.createElement('pre')
+  const attached = document.createElement('pre')
+  document.body.appendChild(detached)
+  document.body.appendChild(attached)
+  ctx.mermaidBlocks = { detached, attached }
+  detached.remove()
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg"><text>Diagram</text></svg>'
+  installMermaidResults(ctx, ctx.readyChallenge, [
+    { id: 'detached', svg },
+    { id: 'attached', svg },
+  ])
+  expect(document.querySelectorAll('.mermaid-diagram')).toHaveLength(1)
+  expect(attached.previousElementSibling?.textContent).toBe('Diagram')
+  expect(attached.hidden).toBe(true)
+  expect(ctx.mermaidBlocks).toEqual({})
 })
