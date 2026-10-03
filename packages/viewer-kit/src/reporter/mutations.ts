@@ -1,7 +1,13 @@
 import { schedulePositionBadges } from './badges.js'
 import type { ReporterState } from './state.js'
 import { verifyAnchors } from './annotate.js'
-import { createTextAnchorEngine } from './anchor-engine.js'
+import {
+  ANCHOR_IGNORE_ATTRIBUTE,
+  COMMENT_UI_ATTRIBUTE,
+  EXCLUSION_CLASS_ATTRIBUTE,
+  ignoredMutationSelector,
+  createTextAnchorEngine,
+} from './anchor-engine.js'
 import { anchorRoot } from './selection.js'
 import { applyHighlights, invalidateChangedPaint } from './highlights.js'
 
@@ -50,9 +56,9 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     records.some(function (record) {
       return (
         record.type === 'attributes' &&
-        (record.attributeName === 'data-anchor-ignore' ||
-          record.attributeName === 'data-comment-ui' ||
-          record.attributeName === 'class')
+        (record.attributeName === ANCHOR_IGNORE_ATTRIBUTE ||
+          record.attributeName === COMMENT_UI_ATTRIBUTE ||
+          record.attributeName === EXCLUSION_CLASS_ATTRIBUTE)
       )
     })
   )
@@ -70,24 +76,23 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
       record.target.nodeType === 1
         ? (record.target as Element)
         : record.target.parentElement
-    if (
-      element &&
-      element.closest('[data-anchor-ignore],#ash-comment-highlight-style')
-    )
-      return false
-    if (
-      record.type === 'childList' &&
-      Array.from(record.addedNodes)
-        .concat(Array.from(record.removedNodes))
-        .every(function (node) {
-          return (
-            node.nodeType === 1 &&
-            ((node as Element).hasAttribute('data-anchor-ignore') ||
-              (node as Element).id === 'ash-comment-highlight-style')
+    if (element && element.closest(ignoredMutationSelector())) return false
+    if (record.type === 'childList') {
+      let allIgnored = true
+      for (let group = 0; group < 2; group++) {
+        const nodes = group === 0 ? record.addedNodes : record.removedNodes
+        for (let index = 0; index < nodes.length; index++) {
+          const node = nodes[index]
+          if (
+            node.nodeType !== 1 ||
+            (!(node as Element).hasAttribute(ANCHOR_IGNORE_ATTRIBUTE) &&
+              (node as Element).id !== 'ash-comment-highlight-style')
           )
-        })
-    )
-      return false
+            allIgnored = false
+        }
+      }
+      if (allIgnored) return false
+    }
     return true
   })
   if (!rootReplaced && !relevant.length) return

@@ -520,6 +520,7 @@ function viewerCommentReducer(
 }
 
 export function useViewerComments({
+  framePresent,
   artifactId,
   currentUserId,
   currentVersionId,
@@ -532,6 +533,7 @@ export function useViewerComments({
   onLiveConnectionChanged,
   onPanelOpened,
 }: {
+  framePresent: boolean
   artifactId: string
   currentUserId: string | null
   currentVersionId: string | null
@@ -669,7 +671,10 @@ export function useViewerComments({
     [threadsRef],
   )
 
-  const [anchorCheckingAvailable, setAnchorCheckingAvailable] = useState(true)
+  const [reportedAnchorCheckingAvailable, setAnchorCheckingAvailable] =
+    useState(false)
+  const anchorCheckingAvailable =
+    framePresent && reportedAnchorCheckingAvailable
   const panelThreads = useMemo(
     () =>
       state.threads.map((thread) =>
@@ -1999,6 +2004,7 @@ function useViewerShellController({
   // 全体コメントの新規作成 composer は static_site のみ。html / md は本文選択で付ける。
   const newThreadComposerEnabled = renderType === 'static_site'
   const comments = useViewerComments({
+    framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
     currentUserId: user?.id ?? null,
     currentVersionId: artifact.currentVersionId ?? null,

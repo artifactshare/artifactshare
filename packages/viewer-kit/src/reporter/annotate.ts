@@ -1,6 +1,10 @@
 import type { TextAnchorEngine } from './anchor-engine.js'
 import type { VerificationAnchor, ReporterState } from './state.js'
-import { createTextAnchorEngine } from './anchor-engine.js'
+import {
+  ANCHOR_IGNORE_ATTRIBUTE,
+  commentUiSelector,
+  createTextAnchorEngine,
+} from './anchor-engine.js'
 import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
@@ -8,7 +12,7 @@ import { send } from './messaging.js'
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
   let style = ctx.doc.createElement('style')
-  style.setAttribute('data-anchor-ignore', '')
+  style.setAttribute(ANCHOR_IGNORE_ATTRIBUTE, '')
   style.id = 'as-preview-annotate-style'
   style.textContent =
     '.as-preview-annotate-hover{outline:2px solid #6366f1 !important;outline-offset:2px;}' +
@@ -25,7 +29,7 @@ export function annotateTargetFrom(
   const target = eventTarget as Element | null
   if (!target || target.nodeType !== 1) return null
   if (target === ctx.doc.body || target === ctx.doc.documentElement) return null
-  if (target.closest && target.closest('[data-comment-ui]')) return null
+  if (target.closest && target.closest(commentUiSelector())) return null
   return target
 }
 

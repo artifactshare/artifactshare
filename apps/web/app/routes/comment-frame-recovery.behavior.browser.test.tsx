@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
@@ -49,8 +49,16 @@ const threads: CommentThreadView[] = [
   },
 ]
 
-function Harness() {
+interface HarnessProps {
+  sandboxUrl?: string | null
+  onAvailability?: (available: boolean) => void
+}
+function Harness({
+  sandboxUrl = `${window.location.origin}/sandbox-frame-test?t=old`,
+  onAvailability,
+}: HarnessProps) {
   const comments = useViewerComments({
+    framePresent: Boolean(sandboxUrl),
     artifactId: 'abc123def4',
     currentUserId: 'viewer',
     currentVersionId: 'v1',
@@ -61,28 +69,33 @@ function Harness() {
   return (
     <TooltipProvider>
       <div style={{ height: '100vh' }}>
-        <SandboxFrame
-          shareableId="abc123def4"
-          versionId="v1"
-          url={`${window.location.origin}/sandbox-frame-test?t=old`}
-          name="Comment recovery fixture"
-          mermaidEnabled={false}
-          textAnchorsEnabled
-          linkNavigationMode="document"
-          bundlePaths={[]}
-          fallbackToIndex={false}
-          commentThreads={comments.state.threads}
-          onAnchorCheckingChange={comments.setAnchorCheckingAvailable}
-          onAnchorResolutions={comments.applyAnchorResolutions}
-          targetThreadId={null}
-          highlightThreadId={null}
-          followsAppTheme
-          onTextSelection={() => {}}
-          onTextSelectionClear={() => {}}
-          onThreadSelect={() => {}}
-          onOutsidePointerDown={() => {}}
-          sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
-        />
+        {sandboxUrl ? (
+          <SandboxFrame
+            shareableId="abc123def4"
+            versionId="v1"
+            url={sandboxUrl}
+            name="Comment recovery fixture"
+            mermaidEnabled={false}
+            textAnchorsEnabled
+            linkNavigationMode="document"
+            bundlePaths={[]}
+            fallbackToIndex={false}
+            commentThreads={comments.state.threads}
+            onAnchorCheckingChange={(available) => {
+              onAvailability?.(available)
+              comments.setAnchorCheckingAvailable(available)
+            }}
+            onAnchorResolutions={comments.applyAnchorResolutions}
+            targetThreadId={null}
+            highlightThreadId={null}
+            followsAppTheme
+            onTextSelection={() => {}}
+            onTextSelectionClear={() => {}}
+            onThreadSelect={() => {}}
+            onOutsidePointerDown={() => {}}
+            sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+          />
+        ) : null}
       </div>
       <CommentPanel
         shareableId="abc123def4"
@@ -118,7 +131,7 @@ afterEach(async () => {
   delete document.documentElement.dataset.theme
 })
 
-async function mount() {
+async function mount(props: HarnessProps = {}, strict = false) {
   document.documentElement.dataset.theme = 'light'
   captureStyle = document.createElement('style')
   captureStyle.textContent =
@@ -127,8 +140,19 @@ async function mount() {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  await act(async () => root?.render(<Harness />))
-  const frame = host.querySelector('iframe')!
+  await act(async () =>
+    root?.render(
+      strict ? (
+        <StrictMode>
+          <Harness {...props} />
+        </StrictMode>
+      ) : (
+        <Harness {...props} />
+      ),
+    ),
+  )
+  const frame = host.querySelector('iframe')
+  if (!frame) return host
   // A loaded but silent document models a frame that cannot run its reporter.
   // Settling this load prevents native load events from racing the fake clock.
   await act(async () => {
@@ -324,5 +348,66 @@ for (const width of [1280, 390]) {
       expect(subject().innerText).not.toContain(en['comments.subjectOrphaned'])
       expect(subject().className).not.toContain('text-warning')
     }, 20_000)
+  }
+}
+
+for (const width of [1280, 390]) {
+  for (const scenario of ['no-url', 'removed', 'strict-replay'] as const) {
+    test(`frame presence controls actual comment presentation: ${scenario} (${width}px)`, async () => {
+      await page.viewport(width, 900)
+      const transport = vi.fn(() =>
+        Promise.resolve(new Response(null, { status: 204 })),
+      )
+      vi.stubGlobal('fetch', transport)
+      const availability = vi.fn()
+      const host = await mount(
+        {
+          ...(scenario === 'no-url' ? { sandboxUrl: null } : {}),
+          onAvailability: availability,
+        },
+        scenario === 'strict-replay',
+      )
+      if (scenario !== 'no-url') {
+        expect(subject().innerText).toContain(en['comments.positionChecking'])
+      }
+      if (scenario === 'strict-replay') {
+        expect(availability.mock.calls.slice(0, 3)).toEqual([
+          [true],
+          [false],
+          [true],
+        ])
+      } else {
+        if (scenario === 'removed') {
+          await act(async () =>
+            root?.render(
+              <Harness sandboxUrl={null} onAvailability={availability} />,
+            ),
+          )
+          expect(availability).toHaveBeenLastCalledWith(false)
+        }
+        expect(subject().innerText).toContain(quote)
+        expect(subject().innerText).not.toContain(
+          en['comments.positionChecking'],
+        )
+        expect(subject().innerText).not.toContain(
+          en['comments.subjectOrphaned'],
+        )
+        expect(subject().className).not.toContain('text-warning')
+      }
+      expect(
+        host
+          .querySelector('[data-saved-subject]')!
+          .getAttribute('data-saved-subject'),
+      ).toBe(JSON.stringify(threads[0].subject))
+      expect(transport.mock.calls).toHaveLength(0)
+      await page.screenshot({
+        path: `__screenshots__/comment-presence-${scenario}-${width}.png`,
+      })
+      // Inverse control through the real frame effect, never a seeded checking flag.
+      if (scenario === 'no-url') {
+        await act(async () => root?.render(<Harness />))
+        expect(subject().innerText).toContain(en['comments.positionChecking'])
+      }
+    })
   }
 }

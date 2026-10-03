@@ -1,3 +1,19 @@
+// Only the engine consumes the full selector. Keeping it local also avoids
+// duplicating this literal through the bundler's exported-constant inlining.
+const TEXT_ANCHOR_EXCLUDED_SELECTOR =
+  'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
+export const ANCHOR_IGNORE_ATTRIBUTE = 'data-anchor-ignore'
+export const COMMENT_UI_ATTRIBUTE = 'data-comment-ui'
+export const EXCLUSION_CLASS_ATTRIBUTE = 'class'
+
+export function ignoredMutationSelector() {
+  return '[' + ANCHOR_IGNORE_ATTRIBUTE + '],#ash-comment-highlight-style'
+}
+
+export function commentUiSelector() {
+  return '[' + COMMENT_UI_ATTRIBUTE + ']'
+}
+
 export interface TextSelector {
   quotedText: string
   prefixText?: string | null
@@ -20,8 +36,6 @@ export function createTextAnchorEngine(root: Element) {
   const units: TextUnit[][] = []
   let text = ''
   let previousBlock: Element | null = null
-  const excluded =
-    'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
   const blockTags = new Set(
     'p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(
       ' ',
@@ -31,7 +45,7 @@ export function createTextAnchorEngine(root: Element) {
   let node
   while ((node = walker.nextNode())) {
     const element = node.nodeType === 1 ? (node as Element) : node.parentElement
-    if (!element || element.closest(excluded)) continue
+    if (!element || element.closest(TEXT_ANCHOR_EXCLUDED_SELECTOR)) continue
     if (node.nodeType === 1) {
       // Void boundaries have no text children for the block comparison below.
       if (
