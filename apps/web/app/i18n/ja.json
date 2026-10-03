@@ -604,6 +604,7 @@
   "vw.productSummary": "HTML ファイルを、社内で安全に共有するサービスです。",
   "vw.aboutLinkLabel": "About Artifact Share",
   "vw.productIntroHint": "サービスの紹介ページを開きます。",
+  "vw.linkSharingPaused": "リンク共有 · 一時停止中",
   "vw.changeVisibility": "共有範囲を変更",
   "vw.move": "移動先を選ぶ",
   "vw.exportGroup": "書き出し",

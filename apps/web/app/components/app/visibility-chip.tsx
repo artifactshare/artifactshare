@@ -102,6 +102,8 @@ export function VisibilityChip({
       variant={meta.variant}
       className={classes}
       title={title ?? label}
+      aria-label={ariaLabel}
+      role={ariaLabel !== undefined ? 'group' : undefined}
       data-regression-responsive={regressionResponsive}
     >
       <Icon aria-hidden="true" />

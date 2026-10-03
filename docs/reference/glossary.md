@@ -55,6 +55,7 @@ lint の `copy-glossary/no-violations` rule は「使わない語」列を deny 
 | プロジェクトの関係者だけへ見せる区分 | 関係者のみ | project members | `base_visibility = 'private'` | メンバー限定 |
 | ファイルが所属プロジェクトの共有範囲に従う区分 | プロジェクトの関係者 | project members | `visibility = 'project'` | — |
 | 一覧でファイルの共有範囲を識別するチップ | 個別共有、プロジェクト、社内全員、リンク共有 | Specific, Project, Company, Link sharing | `shortVisibilityLabelKey` | — |
+| 運営がリンク共有を一時停止したファイルの viewer チップ | リンク共有 · 一時停止中 | Link sharing · Paused | `vw.linkSharingPaused` | — |
 | 一覧でプロジェクト自体の共有範囲を識別するチップ | プロジェクト、社内全員 | Project, Company | `ProjectScopeChip` | — |
 | プロジェクトで継続的にファイルを見られる人 | プロジェクトの関係者 | project members | `projectShareDefaults` | ui:参加者、ui:メンバー |
 | プロジェクトの動きを購読する所属 | 参加 | join | `project_members` | フォロー、購読 |

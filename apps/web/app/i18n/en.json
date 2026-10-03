@@ -604,6 +604,7 @@
   "vw.productSummary": "A service for sharing HTML files safely within your company.",
   "vw.aboutLinkLabel": "About Artifact Share",
   "vw.productIntroHint": "Opens the service overview page.",
+  "vw.linkSharingPaused": "Link sharing · Paused",
   "vw.changeVisibility": "Change who can view",
   "vw.move": "Move to another place",
   "vw.exportGroup": "Export",

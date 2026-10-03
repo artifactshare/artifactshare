@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AnchorHTMLAttributes, ComponentProps, ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
+import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import {
   anonymousViewerSignInUrl,
@@ -12,11 +15,14 @@ vi.mock('~/hooks/use-hydrated', () => ({
   useHydrated: () => true,
 }))
 
+let mockDictionary: typeof en | null = null
+
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
-    locale: 'en',
+    locale: mockDictionary === ja ? 'ja' : 'en',
     t: (key: string, vars?: Record<string, string | number>) =>
-      ({
+      mockDictionary?.[key as keyof typeof en] ??
+      {
         'vw.back': 'Back',
         'vw.homeLink': 'Artifact Share home',
         'vw.copyUrl': 'Copy URL',
@@ -47,7 +53,8 @@ vi.mock('~/hooks/use-t', () => ({
         'vw.viewerListEntryLabel': `${vars?.label ?? ''}, show who viewed`,
         'analyticsConsent.change': 'Change analytics consent',
         'home.inboxLabel': 'Home',
-      })[key] ?? key,
+      }[key] ??
+      key,
     tPlural: (key: string, n: number) =>
       key === 'card.viewCount'
         ? `${n} views`
@@ -691,3 +698,147 @@ const artifact = {
   grants: [],
   viewCount: 7,
 }
+
+describe.each([
+  ['en', en],
+  ['ja', ja],
+] as const)('viewer sharing chips (%s)', (_locale, dictionary) => {
+  const user = {
+    id: 'u1',
+    email: 'owner@example.com',
+    name: 'Owner',
+    image: null,
+    initial: 'O',
+  }
+
+  beforeEach(() => {
+    mockDictionary = dictionary
+    return () => {
+      mockDictionary = null
+    }
+  })
+
+  function chips(html: string) {
+    return [
+      ...html.matchAll(
+        /<(button|span)\b[^>]*data-slot="badge"[^>]*>[\s\S]*?<span>[^<]*<\/span><\/\1>/g,
+      ),
+    ].map(([chip]) => chip)
+  }
+
+  test.each([true, false])(
+    'paused chips preserve edit permission: %s',
+    (editable) => {
+      const html = renderChrome({
+        artifact: {
+          ...artifact,
+          visibility: 'link',
+          linkSuspended: true,
+          canChangeVisibility: editable,
+        },
+        user: editable ? user : { ...user, id: 'u2' },
+        renderType: 'html',
+      })
+      const label = dictionary['vw.linkSharingPaused']
+      const name = editable
+        ? `${label} · ${dictionary['vw.changeVisibility']}`
+        : label
+      const rendered = chips(html)
+      expect(rendered).toHaveLength(2)
+      expect(rendered.join('')).toContain(
+        'data-regression-responsive="desktop-only"',
+      )
+      expect(rendered.join('')).toContain(
+        'data-regression-responsive="mobile-only"',
+      )
+      for (const chip of rendered) {
+        const tag = chip.slice(0, chip.indexOf('>') + 1)
+        expect(chip).toContain(`<span>${label}</span>`)
+        expect(tag).toContain(`aria-label="${name}"`)
+        expect(tag).toContain(`title="${label}"`)
+        expect(tag).toContain('data-variant="warning"')
+        expect(chip).toContain('tabler-icon-link')
+        if (tag.includes('data-regression-responsive="desktop-only"')) {
+          expect(tag).toContain('max-phone:hidden')
+        } else {
+          expect(tag).toContain('max-w-full')
+        }
+        if (editable) {
+          expect(tag).toMatch(/^<button\b/)
+          expect(tag).not.toContain('role=')
+        } else {
+          expect(tag).toMatch(/^<span\b/)
+          expect(tag).toContain('role="group"')
+          expect(tag).not.toContain('tabindex=')
+          expect(chip).not.toContain(dictionary['vw.changeVisibility'])
+          expect(chip).not.toContain('<button')
+        }
+      }
+      expect(html).toContain(`aria-label="${dictionary['vw.copyUrl']}"`)
+    },
+  )
+
+  test.each([
+    ['link', false, 'warning'],
+    ['link', undefined, 'warning'],
+    ['private', true, 'muted'],
+    ['project', true, 'success'],
+    ['workspace', true, 'info'],
+  ] as const)(
+    'preserves ordinary %s chips with suspension %s',
+    (visibility, linkSuspended, variant) => {
+      for (const editable of [true, false]) {
+        const rendered = chips(
+          renderChrome({
+            artifact: {
+              ...artifact,
+              visibility,
+              linkSuspended,
+              canChangeVisibility: editable,
+            },
+            user,
+            renderType: 'html',
+          }),
+        )
+        expect(rendered).toHaveLength(2)
+        const label = dictionary[shortVisibilityLabelKey(visibility)]
+        for (const chip of rendered) {
+          expect(chip).toContain(`<span>${label}</span>`)
+          expect(chip).toContain(`data-variant="${variant}"`)
+          expect(chip).not.toContain(dictionary['vw.linkSharingPaused'])
+          if (editable) {
+            expect(chip).toContain(
+              `aria-label="${label} · ${dictionary['vw.changeVisibility']}"`,
+            )
+          } else {
+            expect(chip).not.toContain('aria-label=')
+            expect(chip).not.toContain('role=')
+          }
+        }
+      }
+    },
+  )
+
+  test('omits anonymous and invalid-visibility chips even when suspended', () => {
+    for (const props of [
+      { user: null, visibility: 'link' },
+      { user, visibility: 'invalid' },
+    ]) {
+      expect(
+        chips(
+          renderChrome({
+            artifact: {
+              ...artifact,
+              visibility: props.visibility as ComponentProps<
+                typeof ViewerChrome
+              >['artifact']['visibility'],
+              linkSuspended: true,
+            },
+            user: props.user,
+            renderType: 'html',
+          }),
+        ),
+      ).toHaveLength(0)
+    }
+  })
+})
