@@ -8,7 +8,7 @@
     "workers/**/*",
     "worker-configuration.d.ts",
     "../../packages/contract/src/**/*",
-    "../../packages/viewer-kit/src/text-anchor.ts"
+    "../../packages/viewer-kit/src/**/*"
   ],
   "compilerOptions": {
     "composite": true,

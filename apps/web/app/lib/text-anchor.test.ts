@@ -1,18 +1,22 @@
+// @vitest-environment happy-dom
 import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'vitest'
-import { TEXT_ANCHOR_ENGINE_SCRIPT } from '../../../../packages/viewer-kit/src/text-anchor'
+import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 
 // Pure resolution tests run without a layout engine. Browser tests exercise
 // normalization boundaries, real selections and source ranges.
 function engine(text: string, additionalText?: string) {
-  const parent = { closest: () => null, localName: 'div' }
-  const nodes = [{ parentElement: parent, nodeValue: text }]
-  if (additionalText !== undefined)
-    nodes.push({
-      parentElement: { closest: () => null, localName: 'div' },
-      nodeValue: additionalText,
-    })
-  return measure(nodes, parent)
+  const root = document.createElement('main')
+  const paragraph = document.createElement('p')
+  paragraph.textContent = text
+  root.appendChild(paragraph)
+  if (additionalText !== undefined) {
+    const hidden = document.createElement('p')
+    hidden.hidden = true
+    hidden.textContent = additionalText
+    root.appendChild(hidden)
+  }
+  return createTextAnchorEngine(root)
 }
 
 type StubElement = {
@@ -30,29 +34,25 @@ function measure(
   }[],
   parent: StubElement,
 ) {
-  const document = {
-    createTreeWalker: () => {
-      let index = 0
-      return { nextNode: () => nodes[index++] ?? null }
-    },
+  const elements = new Map<StubElement, Element>()
+  function materialize(stub: StubElement): Element {
+    const existing = elements.get(stub)
+    if (existing) return existing
+    const element = document.createElement(stub.localName)
+    elements.set(stub, element)
+    if (stub.parentElement) materialize(stub.parentElement).appendChild(element)
+    return element
   }
-  return new Function(
-    'document',
-    'NodeFilter',
-    `${TEXT_ANCHOR_ENGINE_SCRIPT}; return createTextAnchorEngine(arguments[2])`,
-  )(document, { SHOW_TEXT: 4 }, parent) as {
-    text: string
-    hash: string
-    paintedText: (
-      first: { startContainer: object; startOffset: number },
-      last: { endContainer: object; endOffset: number },
-    ) => string | null
-    normalizedQuote: (selector: {
-      quotedText: string
-      selectorFormat?: string
-    }) => string
-    resolve: (selector: object) => { textStart: number; textEnd: number } | null
+  const root = materialize(parent)
+  for (const node of nodes) {
+    const owner = materialize(node.parentElement)
+    owner.appendChild(
+      node.nodeType === 1
+        ? document.createElement(node.localName!)
+        : document.createTextNode(node.nodeValue || ''),
+    )
   }
+  return createTextAnchorEngine(root)
 }
 
 function panelEngine(second = true) {
@@ -368,19 +368,24 @@ describe('strict normalized selectors', () => {
 })
 
 test('painted endpoints use the shared index including inserted text and normalized whitespace', () => {
-  const parent = { closest: () => null, localName: 'p' }
-  const first = { parentElement: parent, nodeValue: 'prefix selected   ' }
-  const last = { parentElement: parent, nodeValue: 'words suffix' }
+  const root = document.createElement('p')
+  const first = document.createTextNode('prefix selected   ')
+  const last = document.createTextNode('words suffix')
+  root.appendChild(first)
+  root.appendChild(last)
   const start = { startContainer: first, startOffset: 7 }
   const end = { endContainer: last, endOffset: 5 }
-  const before = measure([first, last], parent)
+  const before = createTextAnchorEngine(root)
   expect(before.paintedText(start, end)).toBe('selected words')
   expect(before.normalizedQuote({ quotedText: ' selected\n words  ' })).toBe(
     'selected words',
   )
-  const inserted = { parentElement: parent, nodeValue: 'changed ' }
-  const after = measure([first, inserted, last], parent)
+  const inserted = document.createTextNode('changed ')
+  root.insertBefore(inserted, last)
+  const after = createTextAnchorEngine(root)
   expect(after.paintedText(start, end)).toBe('selected changed words')
-  expect(measure([last], parent).paintedText(start, end)).toBeNull()
+  first.remove()
+  inserted.remove()
+  expect(createTextAnchorEngine(root).paintedText(start, end)).toBeNull()
   expect(after.paintedText(start, { ...end, endOffset: 0 })).toBeNull()
 })

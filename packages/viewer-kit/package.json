@@ -11,16 +11,22 @@
     "./markdown-autolink": "./src/markdown-autolink.ts",
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",
-    "./inject": "./src/inject.ts"
+    "./inject": "./src/inject.ts",
+    "./reporter/anchor-engine": "./src/reporter/anchor-engine.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate:reporter": "node scripts/build-reporter.mjs",
+    "check:reporter": "node scripts/build-reporter.mjs --check"
   },
   "dependencies": {
     "@tanstack/highlight": "0.1.0",
     "@tanstack/markdown": "0.0.14"
   },
   "devDependencies": {
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "rolldown": "1.2.8",
+    "oxc-parser": "0.149.0",
+    "oxfmt": "0.66.0"
   }
 }

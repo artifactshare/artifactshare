@@ -1,124 +1,74 @@
+// @vitest-environment happy-dom
 import { afterEach, expect, test, vi } from 'vitest'
+import type { AnchorResolutionMessage } from './csp-reporter'
 import {
-  VIOLATION_REPORTER_SCRIPT_BODY,
-  type AnchorResolutionMessage,
-} from './csp-reporter'
+  createReporterState,
+  type BadgeEntry,
+} from '../../../../packages/viewer-kit/src/reporter/state.js'
+import { verifyAnchors } from '../../../../packages/viewer-kit/src/reporter/annotate.js'
+import { installMessageListener } from '../../../../packages/viewer-kit/src/reporter/messaging.js'
+import * as engines from '../../../../packages/viewer-kit/src/reporter/anchor-engine.js'
+import * as svg from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
+import { applyHighlights } from '../../../../packages/viewer-kit/src/reporter/highlights.js'
+import { handleMutations } from '../../../../packages/viewer-kit/src/reporter/mutations.js'
 
-// Run the injected application and observer together with deterministic snapshots.
-// The browser suite supplies real DOM ranges, exclusions, badges and palettes.
 function fixture() {
-  const start = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function applyHighlights(',
-  )
-  const end = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function scrollToThread(',
-    start,
-  )
-  const integrityStart = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function paintIntact(',
-  )
-  const integrityEnd = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function setCommentLabels(',
-    integrityStart,
-  )
-  const cssStart = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function textPaintCss(',
-  )
-  const cssEnd = VIOLATION_REPORTER_SCRIPT_BODY.indexOf(
-    '  function refreshTextPaints(',
-    cssStart,
-  )
-  const source = {
-    text: 'quote',
-    excluded: false,
-    paintedText: 'quote',
-    dark: false,
-    style: {
-      isConnected: true,
-      textContent:
-        '.ash-comment-highlight-badge::after{content:attr(data-count);}',
-    },
-    node: { parentElement: { closest: () => null } },
-  }
-  const build = vi.fn(() => {
-    const { text, excluded, node } = source
-    const range = {
-      startContainer: node,
-      endContainer: node,
-      startOffset: 0,
-      endOffset: 5,
-    }
-    return {
-      text,
-      hash: text,
-      resolve: () => (excluded ? null : { textStart: 0, textEnd: 5 }),
-      ranges: () => [range],
-      paintedText: () => source.paintedText,
-      normalizedQuote: () => 'quote',
-    }
-  })
-  const paint = vi.fn()
+  document.body.innerHTML = '<main data-comment-content>quote</main>'
+  const root = document.querySelector('main')!
+  const node = root.firstChild!
+  const ctx = createReporterState(window)
+  ctx.observedAnchorRoot = root
+  ctx.documentToken = 'synthetic-token'
+  ctx.displayedVersionId = 'v1'
+  ctx.displayedPath = '/'
+  const build = vi.spyOn(engines, 'createTextAnchorEngine')
+  const paint = vi.spyOn(svg, 'wrapSvgRange')
   const send = vi.fn<(message: AnchorResolutionMessage) => void>()
-  const root = { contains: () => true }
-  const run = new Function(
-    'createTextAnchorEngine',
-    'paint',
-    'send',
-    'source',
-    'root',
-    'setTimeout',
-    'clearTimeout',
-    `
-    var pendingHighlights = [], pendingAnchors = [], measuredText = null;
-    var anchorSnapshotGeneration = 0, appliedHighlightKey = '';
-    var paintedAnchors = [], textPaints = [], highlightNames = [], badges = [], reusableBadges = new Map();
-    var resolveStartedAt = 0, resolveTimer, checkingTimer, badgePositionFrame;
-    var lastResolutionSignature = '', resolutionGeneration = 0, checkingDeadlines = {};
-    var documentToken = 'token', displayedVersionId = 'v1', displayedPath = '/';
-    var document = {
-      body: {}, documentElement: {}, querySelectorAll: () => [],
-      getElementById: () => source.style,
-    };
-    var window = { addEventListener: () => {} };
-    var observer;
-    function MutationObserver(callback) { observer = callback; this.observe = () => {}; }
-    function anchorRoot() { return root; }
-    function clearMarks() { paintedAnchors = []; badges = []; appliedHighlightKey = ''; }
-    function wrapRange(highlight, ranges) {
-      paintedAnchors.push({ highlight, ranges, groups: [] });
-      paint(highlight);
-    }
-    function isDarkBackground() { return source.dark; }
-    function commentLabel(highlight) { return String(highlight.count || 1); }
-    function positionBadges() {}
-    function schedulePositionBadges() {}
-    function scheduleChecking() {}
-    function verifyAnchors() {}
-    function missingState() { return 'checking'; }
-    ${VIOLATION_REPORTER_SCRIPT_BODY.slice(integrityStart, integrityEnd)}
-    ${VIOLATION_REPORTER_SCRIPT_BODY.slice(cssStart, cssEnd)}
-    ${VIOLATION_REPORTER_SCRIPT_BODY.slice(start, end)}
-    return {
-      apply: (metadata = {}) => applyHighlights([{ threadId: 'quote', quotedText: 'quote', ...metadata }]),
-      highlight: () => paintedAnchors[0].highlight,
-      setBadges: (entries) => { badges = entries; },
-      mutate: (attribute) => observer([{
-        type: attribute ? 'attributes' : 'characterData',
-        attributeName: attribute,
-        target: { nodeType: 1, closest: () => null }
-      }]),
-      painted: () => paintedAnchors.length,
-    };
-  `,
-  )
+  ctx.primordials.savedPostMessage = (_parent, message) =>
+    send(message as unknown as AnchorResolutionMessage)
+  const source = {
+    get text() {
+      return root.textContent || ''
+    },
+    set text(value: string) {
+      node.textContent = value
+    },
+    set excluded(value: boolean) {
+      root.toggleAttribute('data-anchor-ignore', value)
+    },
+    set paintedText(value: string) {
+      if (!value)
+        for (const painted of ctx.paintedAnchors)
+          for (const range of painted.ranges) range.collapse(true)
+    },
+    set dark(value: boolean) {
+      root.style.backgroundColor = value ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)'
+    },
+    get style() {
+      return document.getElementById('ash-comment-highlight-style')!
+    },
+    replaceNode() {
+      root.replaceChildren(document.createTextNode(root.textContent || ''))
+    },
+  }
   return {
-    ...(run(build, paint, send, source, root, setTimeout, clearTimeout) as {
-      apply: (metadata?: Record<string, unknown>) => void
-      highlight: () => Record<string, unknown>
-      setBadges: (entries: unknown[]) => void
-      mutate: (attribute?: string) => void
-      painted: () => number
-    }),
+    apply: (metadata = {}) =>
+      applyHighlights(ctx, [
+        { threadId: 'quote', quotedText: 'quote', ...metadata },
+      ]),
+    highlight: () => ctx.paintedAnchors[0]!.highlight,
+    setBadges: (entries: BadgeEntry[]) => {
+      ctx.badges = entries
+    },
+    mutate: (attribute?: string) =>
+      handleMutations(ctx, [
+        {
+          type: attribute ? 'attributes' : 'characterData',
+          attributeName: attribute || null,
+          target: root,
+        } as unknown as MutationRecord,
+      ]),
+    painted: () => ctx.paintedAnchors.length,
     source,
     build,
     paint,
@@ -126,7 +76,13 @@ function fixture() {
   }
 }
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.clearAllTimers()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  document.body.innerHTML = ''
+  document.getElementById('ash-comment-highlight-style')?.remove()
+})
 
 test.each([true, false])(
   'a later exclusion cannot be undone by a debounce (parent echo: %s)',
@@ -205,12 +161,12 @@ test('same-offset echoes retain paint until the background palette changes', () 
 
 test('metadata-only updates refresh the stored resolved highlight without painting', () => {
   const f = fixture()
-  f.apply({ count: 1, prefixText: 'old' })
-  f.apply({ count: 2, prefixText: 'new' })
+  f.apply({ count: 1, prefixText: '' })
+  f.apply({ count: 2, prefixText: '   ' })
   expect(f.paint).toHaveBeenCalledOnce()
   expect(f.highlight()).toMatchObject({
     count: 2,
-    prefixText: 'new',
+    prefixText: '   ',
     textStart: 0,
     textEnd: 5,
   })
@@ -219,7 +175,7 @@ test('metadata-only updates refresh the stored resolved highlight without painti
 test('equal offsets on different nodes cannot reuse painted ranges', () => {
   const f = fixture()
   f.apply()
-  f.source.node = { parentElement: { closest: () => null } }
+  f.source.replaceNode()
   f.mutate('data-anchor-ignore')
   f.apply()
   expect(f.paint).toHaveBeenCalledTimes(2)
@@ -230,17 +186,16 @@ test.each(['badge', 'overlay'])(
   (removed) => {
     const f = fixture()
     f.apply()
+    const badge = document.createElement('button')
+    badge.dataset.threadId = 'quote'
+    if (removed !== 'badge') document.body.appendChild(badge)
+    const overlay = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'rect',
+    )
+    if (removed !== 'overlay') document.body.appendChild(overlay)
     f.setBadges([
-      {
-        highlight: f.highlight(),
-        badge: {
-          isConnected: removed !== 'badge',
-          dataset: { threadId: 'quote' },
-          getAttribute: () => null,
-          setAttribute: () => {},
-        },
-        overlays: { first: { isConnected: removed !== 'overlay' } },
-      },
+      { highlight: f.highlight(), badge, overlays: { first: overlay } },
     ])
     f.apply()
     expect(f.paint).toHaveBeenCalledTimes(2)
@@ -254,7 +209,7 @@ test.each(['disconnected', 'changed'])(
     f.apply()
     f.apply({ count: 2 })
     expect(f.paint).toHaveBeenCalledOnce()
-    if (damage === 'disconnected') f.source.style.isConnected = false
+    if (damage === 'disconnected') f.source.style.remove()
     else f.source.style.textContent = ''
     f.apply({ count: 3 })
     expect(f.paint).toHaveBeenCalledTimes(2)
@@ -266,17 +221,15 @@ test.each(['changed badge id', 'missing highlight'])(
   (damage) => {
     const f = fixture()
     f.apply()
-    const badge = {
-      isConnected: true,
-      dataset: { threadId: 'changed-by-page', count: '1' },
-      getAttribute: () => null,
-      setAttribute: () => {},
-    }
+    const badge = document.createElement('button')
+    badge.dataset.threadId = 'changed-by-page'
+    badge.dataset.count = '1'
+    document.body.appendChild(badge)
     f.setBadges([
       {
         highlight:
           damage === 'missing highlight'
-            ? { threadId: 'missing' }
+            ? { threadId: 'missing', quotedText: 'quote' }
             : f.highlight(),
         badge,
       },
@@ -289,3 +242,61 @@ test.each(['changed badge id', 'missing highlight'])(
     }
   },
 )
+
+test('verification deadlines expire and generations advance without mixing request ids', () => {
+  vi.useFakeTimers()
+  document.body.innerHTML = '<main data-comment-content>quote</main>'
+  const ctx = createReporterState(window)
+  ctx.pendingVerificationId = 7
+  const send = vi.fn()
+  ctx.primordials.savedPostMessage = send
+  verifyAnchors(ctx, [
+    { kind: 'text', thread: 'missing', quotedText: 'missing' },
+  ])
+  expect(send.mock.calls[0]![1]).toMatchObject({
+    verificationId: 7,
+    generation: 1,
+    verdicts: [
+      { thread: 'missing', attached: false, position_state: 'checking' },
+    ],
+  })
+  vi.advanceTimersByTime(3000)
+  expect(send.mock.calls.at(-1)![1]).toMatchObject({
+    verificationId: 7,
+    generation: 2,
+    verdicts: [
+      { thread: 'missing', attached: false, position_state: 'needs-check' },
+    ],
+  })
+  expect(ctx.checkingTimer).toBeUndefined()
+
+  const listen = vi.fn()
+  ctx.primordials.savedAddEventListener = listen
+  installMessageListener(ctx)
+  const handle = listen.mock.calls[0]![1] as (event: MessageEvent) => void
+  const data = {
+    source: 'artifactshare-parent',
+    kind: 'verify-anchors',
+    anchors: [{ kind: 'text', thread: 'quote', quotedText: 'quote' }],
+  }
+  send.mockClear()
+  handle(
+    new MessageEvent('message', {
+      source: window,
+      data: { ...data, verificationId: 6 },
+    }),
+  )
+  expect(send).not.toHaveBeenCalled()
+  expect(ctx.pendingVerificationId).toBe(7)
+  handle(
+    new MessageEvent('message', {
+      source: window,
+      data: { ...data, verificationId: 8 },
+    }),
+  )
+  expect(send.mock.calls[0]![1]).toMatchObject({
+    verificationId: 8,
+    generation: 3,
+    verdicts: [{ thread: 'quote', attached: true, position_state: 'attached' }],
+  })
+})

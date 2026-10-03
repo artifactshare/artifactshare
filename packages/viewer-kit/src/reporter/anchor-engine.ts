@@ -1,20 +1,45 @@
-/** Self-contained anchor engine, injected verbatim so CSP hashes stay stable. */
-export const TEXT_ANCHOR_ENGINE_SCRIPT = String.raw`/** Self-contained: serialized into the sandbox, with no runtime imports. */
-function createTextAnchorEngine(root) {
-  const units = []
+export interface TextSelector {
+  quotedText: string
+  prefixText?: string | null
+  suffixText?: string | null
+  selectorFormat?: string | null
+  textStart?: number | null
+  textEnd?: number | null
+  textHash?: string | null
+  ambiguousAtCreation?: boolean | null
+}
+interface TextUnit {
+  node: Node
+  start: number
+  end: number
+}
+export type TextAnchorEngine = ReturnType<typeof createTextAnchorEngine>
+
+export function createTextAnchorEngine(root: Element) {
+  const document = root.ownerDocument
+  const units: TextUnit[][] = []
   let text = ''
-  let previousBlock = null
+  let previousBlock: Element | null = null
   const excluded =
     'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
-  const blockTags = new Set('p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(' '))
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT)
+  const blockTags = new Set(
+    'p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(
+      ' ',
+    ),
+  )
+  const walker = document.createTreeWalker(root, 4 | 1)
   let node
   while ((node = walker.nextNode())) {
-    const element = node.nodeType === 1 ? node : node.parentElement
+    const element = node.nodeType === 1 ? (node as Element) : node.parentElement
     if (!element || element.closest(excluded)) continue
     if (node.nodeType === 1) {
       // Void boundaries have no text children for the block comparison below.
-      if ((node.localName === 'br' || node.localName === 'hr') && text && !text.endsWith(' ')) {
+      if (
+        ((node as Element).localName === 'br' ||
+          (node as Element).localName === 'hr') &&
+        text &&
+        !text.endsWith(' ')
+      ) {
         text += ' '
         units.push([])
       }
@@ -22,11 +47,7 @@ function createTextAnchorEngine(root) {
     }
     const parent = node.parentElement
     let block = parent
-    while (
-      block &&
-      block !== root &&
-      !blockTags.has(block.localName)
-    )
+    while (block && block !== root && !blockTags.has(block.localName))
       block = block.parentElement
     if (text && previousBlock !== block && !text.endsWith(' ')) {
       text += ' '
@@ -36,26 +57,27 @@ function createTextAnchorEngine(root) {
     const value = node.nodeValue || ''
     for (let offset = 0; offset < value.length; offset++) {
       const segment = { node: node, start: offset, end: offset + 1 }
-      if (/\s/.test(value[offset])) {
+      if (/\s/.test(value[offset]!)) {
         if (!text) continue
-        if (text.endsWith(' ')) units[units.length - 1].push(segment)
+        if (text.endsWith(' ')) units[units.length - 1]!.push(segment)
         else {
           text += ' '
           units.push([segment])
         }
       } else {
-        text += value[offset]
+        text += value[offset]!
         units.push([segment])
       }
     }
   }
   // Synchronous SHA-256 binds the text snapshot to its ranges without async races.
-  function textHash(value) {
+  function textHash(value: string) {
     const bytes = new TextEncoder().encode(value)
     const words = new Uint32Array(Math.ceil((bytes.length + 9) / 64) * 16)
     for (let i = 0; i < bytes.length; i++)
-      words[i >>> 2] |= bytes[i] << (24 - (i % 4) * 8)
-    words[bytes.length >>> 2] |= 0x80 << (24 - (bytes.length % 4) * 8)
+      words[i >>> 2] = words[i >>> 2]! | (bytes[i]! << (24 - (i % 4) * 8))
+    words[bytes.length >>> 2] =
+      words[bytes.length >>> 2]! | (0x80 << (24 - (bytes.length % 4) * 8))
     words[words.length - 2] = Math.floor(bytes.length / 0x20000000)
     words[words.length - 1] = bytes.length * 8
     const h = [
@@ -75,29 +97,38 @@ function createTextAnchorEngine(root) {
       0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
       0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ]
-    const rotate = (x, n) => (x >>> n) | (x << (32 - n))
+    const rotate = (x: number, n: number) => (x >>> n) | (x << (32 - n))
     const w = new Uint32Array(64)
     for (let offset = 0; offset < words.length; offset += 16) {
       for (let i = 0; i < 64; i++) {
-        if (i < 16) w[i] = words[offset + i]
+        if (i < 16) w[i] = words[offset + i]!
         else {
-          const x = w[i - 15],
-            y = w[i - 2]
+          const x = w[i - 15]!,
+            y = w[i - 2]!
           w[i] =
-            w[i - 16] +
+            w[i - 16]! +
             (rotate(x, 7) ^ rotate(x, 18) ^ (x >>> 3)) +
-            w[i - 7] +
+            w[i - 7]! +
             (rotate(y, 17) ^ rotate(y, 19) ^ (y >>> 10))
         }
       }
-      let [a, b, c, d, e, f, g, j] = h
+      let [a, b, c, d, e, f, g, j] = h as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ]
       for (let i = 0; i < 64; i++) {
         const t1 =
           (j +
             (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) +
             ((e & f) ^ (~e & g)) +
-            k[i] +
-            w[i]) |
+            k[i]! +
+            w[i]!) |
           0
         const t2 =
           ((rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22)) +
@@ -113,28 +144,44 @@ function createTextAnchorEngine(root) {
         a = (t1 + t2) | 0
       }
       const next = [a, b, c, d, e, f, g, j]
-      for (let i = 0; i < 8; i++) h[i] = (h[i] + next[i]) | 0
+      for (let i = 0; i < 8; i++) h[i] = (h[i]! + next[i]!) | 0
     }
-    return h
-      .map((value) => (value >>> 0).toString(16).padStart(8, '0'))
-      .join('')
+    return h.map((word) => (word >>> 0).toString(16).padStart(8, '0')).join('')
   }
   const hash = textHash(text)
-  function hits(haystack, needle) {
+  function hits(haystack: string, needle: string) {
     const found = []
-    if (needle) for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) found.push(at)
+    if (needle)
+      for (
+        let at = haystack.indexOf(needle);
+        at >= 0;
+        at = haystack.indexOf(needle, at + 1)
+      )
+        found.push(at)
     return found
   }
-  function normalizedQuote(selector) {
+  function normalizedQuote(selector: TextSelector) {
     return selector.selectorFormat === 'normalized-v1'
       ? selector.quotedText
       : selector.quotedText.replace(/\s+/g, ' ').trim()
   }
-  function resolve(selector) {
-    if (!selector || typeof selector.quotedText !== 'string' || (selector.prefixText != null && typeof selector.prefixText !== 'string') || (selector.suffixText != null && typeof selector.suffixText !== 'string')) return null
+  function resolve(selector: TextSelector) {
+    if (
+      !selector ||
+      typeof selector.quotedText !== 'string' ||
+      (selector.prefixText != null &&
+        typeof selector.prefixText !== 'string') ||
+      (selector.suffixText != null && typeof selector.suffixText !== 'string')
+    )
+      return null
     const modern = selector.selectorFormat === 'normalized-v1'
     const legacy = !selector.selectorFormat
-    const normalize = (value) => (modern ? value : legacy ? value.replace(/\s+/g, ' ').trim() : value.replace(/\s+/g, ' '))
+    const normalize = (value: string) =>
+      modern
+        ? value
+        : legacy
+          ? value.replace(/\s+/g, ' ').trim()
+          : value.replace(/\s+/g, ' ')
     const quote = normalizedQuote(selector)
     const prefix = normalize(selector.prefixText || '')
     const suffix = normalize(selector.suffixText || '')
@@ -143,23 +190,27 @@ function createTextAnchorEngine(root) {
       // Old writers trimmed context edges, and agents pass context as the
       // text just before/after the quote. Restore only those joins, never
       // guess at missing separators inside context (e.g. old block text 'ab').
-      const positions = new Set()
+      const positions = new Set<number>()
       for (const before of prefix && !prefix.endsWith(' ') ? ['', ' '] : [''])
-        for (const after of suffix && !suffix.startsWith(' ') ? ['', ' '] : [''])
+        for (const after of suffix && !suffix.startsWith(' ')
+          ? ['', ' ']
+          : [''])
           for (const at of hits(text, prefix + before + quote + after + suffix))
             positions.add(at + prefix.length + before.length)
       if (positions.size !== 1) return null
-      const start = positions.values().next().value
+      const start = positions.values().next().value!
       return { textStart: start, textEnd: start + quote.length }
     }
     const matches = hits(text, prefix + quote + suffix)
-    const hit = matches.length === 1 ? matches[0] + prefix.length : -1
+    const hit = matches.length === 1 ? matches[0]! + prefix.length : -1
     const context = prefix + quote + suffix
     const start = selector.textStart,
       end = selector.textEnd
     if (
       modern &&
+      typeof start === 'number' &&
       Number.isInteger(start) &&
+      typeof end === 'number' &&
       Number.isInteger(end) &&
       start >= prefix.length &&
       end - start === quote.length &&
@@ -175,8 +226,8 @@ function createTextAnchorEngine(root) {
       }
     return null
   }
-  function ranges(start, end) {
-    const segments = []
+  function ranges(start: number, end: number) {
+    const segments: TextUnit[] = []
     for (const unit of units.slice(start, end))
       for (const segment of unit) {
         const last = segments[segments.length - 1]
@@ -193,24 +244,27 @@ function createTextAnchorEngine(root) {
   }
   // Reverse index for live painted endpoints: one document pass, then constant
   // time endpoint lookup per comment, including inserts between painted pieces.
-  const sourceIndexes = new WeakMap()
-  const sourceSegments = []
+  const sourceIndexes = new WeakMap<Node, number[]>()
+  const sourceSegments: { segment: TextUnit; index: number }[] = []
   units.forEach((segments, index) => {
     for (const segment of segments) {
       sourceSegments.push({ segment, index })
       let offsets = sourceIndexes.get(segment.node)
-      if (!offsets) sourceIndexes.set(segment.node, offsets = [])
+      if (!offsets) sourceIndexes.set(segment.node, (offsets = []))
       offsets[segment.start] = index
     }
   })
-  function paintedText(first, last) {
+  function paintedText(
+    first: Pick<Range, 'startContainer' | 'startOffset'>,
+    last: Pick<Range, 'endContainer' | 'endOffset'>,
+  ) {
     const start = sourceIndexes.get(first.startContainer)?.[first.startOffset]
     const end = sourceIndexes.get(last.endContainer)?.[last.endOffset - 1]
     return start === undefined || end === undefined || start > end
       ? null
       : text.slice(start, end + 1).trim()
   }
-  function mappedSlice(range) {
+  function mappedSlice(range: Range) {
     if (
       !root.contains(range.startContainer) ||
       !root.contains(range.endContainer) ||
@@ -219,32 +273,45 @@ function createTextAnchorEngine(root) {
       return null
     // Text endpoints use the existing reverse index. Element endpoints and
     // excluded gaps use binary search in document order, not a character scan.
-    function boundary(node, offset, isEnd) {
-      const direct = sourceIndexes.get(node)?.[isEnd ? offset - 1 : offset]
+    function boundary(boundaryNode: Node, offset: number, isEnd: boolean) {
+      const direct =
+        sourceIndexes.get(boundaryNode)?.[isEnd ? offset - 1 : offset]
       if (direct !== undefined) return direct + (isEnd ? 1 : 0)
       const point = document.createRange()
-      point.setStart(node, offset)
+      point.setStart(boundaryNode, offset)
       point.collapse(true)
-      let low = 0, high = sourceSegments.length
+      let low = 0,
+        high = sourceSegments.length
       while (low < high) {
         const mid = (low + high) >>> 1
-        const entry = sourceSegments[mid]
-        const comparison = point.comparePoint(entry.segment.node, isEnd ? entry.segment.start : entry.segment.end)
+        const entry = sourceSegments[mid]!
+        const comparison = point.comparePoint(
+          entry.segment.node,
+          isEnd ? entry.segment.start : entry.segment.end,
+        )
         if (isEnd ? comparison < 0 : comparison <= 0) low = mid + 1
         else high = mid
       }
       return isEnd
-        ? (low ? sourceSegments[low - 1].index + 1 : 0)
-        : (low < sourceSegments.length ? sourceSegments[low].index : text.length)
+        ? low
+          ? sourceSegments[low - 1]!.index + 1
+          : 0
+        : low < sourceSegments.length
+          ? sourceSegments[low]!.index
+          : text.length
     }
     let start = boundary(range.startContainer, range.startOffset, false)
     let end = boundary(range.endContainer, range.endOffset, true)
-    while (start >= 0 && start < end && /\s/.test(text[start])) start++
-    while (end > start && /\s/.test(text[end - 1])) end--
+    while (start >= 0 && start < end && /\s/.test(text[start]!)) start++
+    while (end > start && /\s/.test(text[end - 1]!)) end--
     if (start < 0 || start >= end || end - start > 1000) return null
-    return { textStart: start, textEnd: end, quotedText: text.slice(start, end) }
+    return {
+      textStart: start,
+      textEnd: end,
+      quotedText: text.slice(start, end),
+    }
   }
-  function describe(range) {
+  function describe(range: Range) {
     const mapped = mappedSlice(range)
     if (!mapped) return null
     const { textStart: start, textEnd: end, quotedText: quote } = mapped
@@ -268,6 +335,14 @@ function createTextAnchorEngine(root) {
       ambiguousAtCreation: ambiguous,
     }
   }
-  return { text, hash, describe, mappedSlice, resolve, ranges, paintedText, normalizedQuote }
+  return {
+    text,
+    hash,
+    describe,
+    mappedSlice,
+    resolve,
+    ranges,
+    paintedText,
+    normalizedQuote,
+  }
 }
-`

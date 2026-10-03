@@ -1,4 +1,5 @@
-import { TEXT_ANCHOR_ENGINE_SCRIPT } from '../../../../packages/viewer-kit/src/text-anchor'
+import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
+import { Window } from 'happy-dom'
 import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
@@ -428,25 +429,15 @@ describe('comments server', () => {
       prefix_text: 'the',
       suffix_text: 'here',
     })
+    if (subject.kind !== 'text') throw new Error('Expected text subject')
+    const loadedTextSelector = subject
     function resolve(text: string) {
-      const root = { localName: 'p', closest: () => null }
-      let next = true
-      const document = {
-        createTreeWalker: () => ({
-          nextNode: () => {
-            if (!next) return null
-            next = false
-            return { parentElement: root, nodeValue: text }
-          },
-        }),
-      }
-      return new Function(
-        'document',
-        'NodeFilter',
-        'root',
-        'selector',
-        `${TEXT_ANCHOR_ENGINE_SCRIPT}; return createTextAnchorEngine(root).resolve(selector)`,
-      )(document, { SHOW_TEXT: 4 }, root, subject)
+      const document = new Window().document
+      const root = document.createElement('p')
+      root.textContent = text
+      return createTextAnchorEngine(root as unknown as Element).resolve(
+        loadedTextSelector,
+      )
     }
     expect(resolve('the selected words here')).toEqual({
       textStart: 4,

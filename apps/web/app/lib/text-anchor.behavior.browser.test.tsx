@@ -1,29 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest'
-import { TEXT_ANCHOR_ENGINE_SCRIPT } from '../../../../packages/viewer-kit/src/text-anchor'
+import { createTextAnchorEngine as build } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 
-type Selector = {
-  quotedText: string
-  prefixText: string
-  suffixText: string
-  textStart: number
-  textEnd: number
-  textHash: string
-  selectorFormat: string
-  ambiguousAtCreation: boolean
-}
-type Engine = {
-  text: string
-  hash: string
-  describe: (range: Range) => Selector | null
-  resolve: (
-    selector: Partial<Selector>,
-  ) => { textStart: number; textEnd: number } | null
-  ranges: (start: number, end: number) => Range[]
-}
-const build = new Function(
-  'root',
-  `${TEXT_ANCHOR_ENGINE_SCRIPT}; return createTextAnchorEngine(root)`,
-) as (root: HTMLElement) => Engine
 let root: HTMLDivElement
 function fixture(html: string) {
   root = document.createElement('div')
@@ -65,7 +42,7 @@ describe('the injected normalized anchor engine', () => {
       [select('#hid', 8, '#hid', 8), 'start HIDDEN visible'],
       [select('#l1', 5, '#l2', 4), 'item one List'],
     ] as const
-    const selectors: Selector[] = []
+    const selectors: NonNullable<ReturnType<typeof engine.describe>>[] = []
     for (const [range, quote] of cases) {
       const selector = engine.describe(range)!
       expect(selector.quotedText).toBe(quote)
