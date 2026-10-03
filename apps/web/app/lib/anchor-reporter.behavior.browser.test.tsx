@@ -1254,40 +1254,101 @@ test.each(['html', 'svg'])(
   },
 )
 
-test.each(['style removal', 'style edit', 'registry clear', 'registry delete'])(
-  'metadata echo repairs %s',
-  async (damage) => {
-    const doc = await fixture('<p>selected words</p>')
+test.each([
+  'style removal',
+  'style edit',
+  'registry clear',
+  'registry delete',
+  'highlight clear',
+  'highlight ranges',
+  'highlight replacement',
+])('metadata echo repairs %s', async (damage) => {
+  const doc = await fixture('<p>selected words</p>')
+  const anchor = {
+    threadId: 'repair',
+    selectorFormat: 'quote-v1',
+    quotedText: 'selected words',
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const style = doc.querySelector('#ash-comment-highlight-style')!
+  const css = style.textContent
+  const paint = [...registry(doc).values()][0]
+  if (damage === 'style removal') style.remove()
+  if (damage === 'style edit') style.textContent = ''
+  if (damage === 'highlight clear') paint!.clear()
+  if (damage === 'highlight ranges') {
+    paint!.clear()
+    paint!.add(doc.createRange())
+  }
+  if (damage === 'highlight replacement') {
+    const replacement = new (paint!.constructor as new (
+      ...ranges: Range[]
+    ) => Set<Range>)(...paint!)
+    registry(doc).set('ash-comment-0', replacement)
+  }
+  if (damage === 'registry clear') registry(doc).clear()
+  if (damage === 'registry delete') registry(doc).delete('ash-comment-0')
+  send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+  await vi.waitFor(() =>
+    expect(
+      doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')?.dataset
+        .count,
+    ).toBe('2'),
+  )
+  expect(doc.querySelector('#ash-comment-highlight-style')?.textContent).toBe(
+    css,
+  )
+  expect(registry(doc).size).toBe(1)
+  const restored = [...registry(doc).values()][0]!
+  expect(restored).not.toBe(paint)
+  expect(restored.size).toBe(1)
+  expect([...restored][0]!.toString()).toBe('selected words')
+})
+
+test.each(['echo', 'scroll'])(
+  'SVG fill is repaired after %s',
+  async (trigger) => {
+    const doc = await fixture(
+      '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
+    )
     const anchor = {
-      threadId: 'repair',
+      threadId: 'fill',
       selectorFormat: 'quote-v1',
-      quotedText: 'selected words',
+      quotedText: 'SVG quote',
     }
     send('comment-highlights', { highlights: [anchor] })
     await vi.waitFor(() =>
       expect(results()?.results[0]?.state).toBe('attached'),
     )
-    const style = doc.querySelector('#ash-comment-highlight-style')!
-    const css = style.textContent
-    const paint = [...registry(doc).values()][0]
-    if (damage === 'style removal') style.remove()
-    if (damage === 'style edit') style.textContent = ''
-    if (damage === 'registry clear') registry(doc).clear()
-    if (damage === 'registry delete') registry(doc).delete('ash-comment-0')
-    send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
-    await vi.waitFor(() =>
-      expect(
-        doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')?.dataset
-          .count,
-      ).toBe('2'),
-    )
-    expect(doc.querySelector('#ash-comment-highlight-style')?.textContent).toBe(
-      css,
-    )
-    expect(registry(doc).size).toBe(1)
-    expect([...registry(doc).values()][0]).not.toBe(paint)
+    const shape = doc.querySelector<SVGElement>('.ash-comment-highlight-svg')!
+    const fill = shape.style.fill
+    expect(fill).not.toBe('none')
+    expect(fill).not.toBe('')
+    shape.style.fill = 'none'
+    if (trigger === 'echo')
+      send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+    else doc.defaultView!.dispatchEvent(new Event('scroll'))
+    await vi.waitFor(() => expect(shape.style.fill).toBe(fill))
+    expect(doc.querySelector('.ash-comment-highlight-svg')).toBe(shape)
   },
 )
+
+test('metadata echo repairs a changed badge thread id', async () => {
+  const doc = await fixture('<p>selected words</p>')
+  const anchor = {
+    threadId: 'badge',
+    selectorFormat: 'quote-v1',
+    quotedText: 'selected words',
+  }
+  send('comment-highlights', { highlights: [anchor] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  badge.dataset.threadId = 'changed-by-page'
+  send('comment-highlights', { highlights: [{ ...anchor, count: 2 }] })
+  await vi.waitFor(() => expect(badge.dataset.count).toBe('2'))
+  expect(badge.dataset.threadId).toBe('badge')
+})
 
 test('metadata echo refreshes SVG glyph indexes when whitespace rendering changes', async () => {
   const doc = await fixture(
@@ -1322,4 +1383,31 @@ test('metadata echo refreshes SVG glyph indexes when whitespace rendering change
     text.getExtentOfChar(8).x - 2,
     0,
   )
+})
+
+test('a forged SVG state label cannot suppress hover styling', async () => {
+  const doc = await fixture(
+    '<svg width="300" height="80"><text x="10" y="40">SVG quote</text></svg>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        threadId: 'state',
+        selectorFormat: 'quote-v1',
+        quotedText: 'SVG quote',
+      },
+    ],
+  })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const shape = doc.querySelector<SVGElement>('.ash-comment-highlight-svg')!
+  const badge = doc.querySelector<HTMLElement>('.ash-comment-highlight-badge')!
+  expect(shape.style.stroke).toBe('none')
+  shape.dataset.state = 'active'
+  badge.dispatchEvent(new PointerEvent('pointerenter'))
+  expect(shape.style.stroke).not.toBe('none')
+  expect(parseFloat(shape.style.strokeWidth)).toBe(2)
+  shape.dataset.state = 'normal'
+  badge.dispatchEvent(new PointerEvent('pointerleave'))
+  expect(shape.style.stroke).toBe('none')
+  expect(parseFloat(shape.style.strokeWidth)).toBe(0)
 })

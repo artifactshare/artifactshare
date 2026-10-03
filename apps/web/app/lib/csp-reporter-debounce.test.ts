@@ -232,6 +232,7 @@ test.each(['badge', 'overlay'])(
     f.apply()
     f.setBadges([
       {
+        highlight: f.highlight(),
         badge: {
           isConnected: removed !== 'badge',
           dataset: { threadId: 'quote' },
@@ -257,5 +258,34 @@ test.each(['disconnected', 'changed'])(
     else f.source.style.textContent = ''
     f.apply({ count: 3 })
     expect(f.paint).toHaveBeenCalledTimes(2)
+  },
+)
+
+test.each(['changed badge id', 'missing highlight'])(
+  'metadata echo tolerates %s',
+  (damage) => {
+    const f = fixture()
+    f.apply()
+    const badge = {
+      isConnected: true,
+      dataset: { threadId: 'changed-by-page', count: '1' },
+      getAttribute: () => null,
+      setAttribute: () => {},
+    }
+    f.setBadges([
+      {
+        highlight:
+          damage === 'missing highlight'
+            ? { threadId: 'missing' }
+            : f.highlight(),
+        badge,
+      },
+    ])
+    expect(() => f.apply({ count: 2 })).not.toThrow()
+    if (damage === 'missing highlight') expect(f.paint).toHaveBeenCalledTimes(2)
+    else {
+      expect(f.paint).toHaveBeenCalledOnce()
+      expect(badge.dataset).toEqual({ threadId: 'quote', count: '2' })
+    }
   },
 )

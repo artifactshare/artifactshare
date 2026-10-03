@@ -475,9 +475,12 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var style = document.getElementById('ash-comment-highlight-style');
     if (paintedAnchors.length && (!style || !style.isConnected || style.textContent !== textPaintCss())) return false;
     if (typeof CSS !== 'undefined' && CSS.highlights &&
-        highlightNames.concat(textPaints.map(function (paint) { return paint.name; })).some(function (name) { return !CSS.highlights.has(name); })) return false;
+        textPaints.some(function (paint) {
+          return CSS.highlights.get(paint.name) !== paint.highlight || paint.highlight.size !== paint.ranges.length ||
+            paint.ranges.some(function (range) { return !paint.highlight.has(range); });
+        })) return false;
     if (badges.some(function (entry) {
-      return !entry.badge.isConnected || (entry.overlays && Object.values(entry.overlays).some(function (shape) { return !shape.isConnected; }));
+      return !highlightsById.has(entry.highlight.threadId) || !entry.badge.isConnected || (entry.overlays && Object.values(entry.overlays).some(function (shape) { return !shape.isConnected; }));
     })) return false;
     return paintedAnchors.every(function (entry) {
       var next = highlightsById.get(entry.highlight.threadId);
@@ -687,6 +690,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
   }
 
   var svgActiveThreads = {};
+  var svgOverlayStyles = new WeakMap();
   function textPaintCss() {
     return '.ash-comment-highlight-badge::after{content:attr(data-count);}' + textPaints.map(function (paint) {
       return '::highlight(' + paint.name + '){background-color:' + paint.palette.markBg + ';text-decoration:underline;text-decoration-color:' +
@@ -712,8 +716,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       var outline = parts[1];
       var target = overlay.dataset.target === 'true';
       var state = active || target ? 'active' : 'normal';
-      if (overlay.dataset.state === state) continue;
-      overlay.dataset.state = state;
+      var applied = svgOverlayStyles.get(overlay);
+      if (overlay.dataset.state !== state) overlay.dataset.state = state;
+      if (applied && applied.state === state && overlay.getAttribute('style') === applied.style) continue;
       if (active || target) {
         overlay.style.fill = normalFill;
         overlay.style.stroke = outline;
@@ -724,6 +729,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
         overlay.style.stroke = 'none';
         overlay.style.strokeWidth = '0';
       }
+      svgOverlayStyles.set(overlay, { state: state, style: overlay.getAttribute('style') });
     }
   }
 
@@ -1122,9 +1128,10 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     var name = 'ash-comment-' + highlightNames.length;
     var palette = highlightPalette(isDarkBackground(ranges[0].startContainer.parentElement), highlight.status === 'resolved');
     if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
-      CSS.highlights.set(name, new Highlight(...ranges));
+      var paint = new Highlight(...ranges);
+      CSS.highlights.set(name, paint);
       highlightNames.push(name);
-      textPaints.push({ name: name, threadId: highlight.threadId, palette: palette, active: highlight.target, target: highlight.target });
+      textPaints.push({ name: name, highlight: paint, ranges: ranges, threadId: highlight.threadId, palette: palette, active: highlight.target, target: highlight.target });
       refreshTextPaints();
     }
     if (svgWrapped) return;
@@ -1205,8 +1212,9 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     else {
       paintedAnchors.forEach(function (entry) { entry.highlight = highlightsById.get(entry.highlight.threadId).highlight; });
       badges.forEach(function (entry) {
-        var highlight = highlightsById.get(entry.badge.dataset.threadId).highlight;
+        var highlight = highlightsById.get(entry.highlight.threadId).highlight;
         entry.highlight = highlight;
+        if (entry.badge.dataset.threadId !== highlight.threadId) entry.badge.dataset.threadId = highlight.threadId;
         var count = String(highlight.count || 1), label = commentLabel(highlight);
         if (entry.badge.dataset.count !== count) entry.badge.dataset.count = count;
         if (entry.badge.getAttribute('aria-label') !== label) entry.badge.setAttribute('aria-label', label);
@@ -1871,7 +1879,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  'WgQocxILnh1nRzEqp4Wug+2l5bWlvtSOwVlJtpOubD8='
+  'AZKgd4eLLk2qN4NHBL9K9kTNtMuMUWhFXpYTHygM1/Y='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
