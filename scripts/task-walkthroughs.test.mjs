@@ -59,3 +59,19 @@ test('records why a ledger task has no walkthrough', () => {
   assert.equal(walked.has(gap.id), false)
   assert.ok(gap.walkthroughGap.trim())
 })
+
+test('new reactions open the count hint and inspect marked content; later steps use ordinary comments', () => {
+  const walkthrough = taskWalkthroughs.find(
+    (item) => item.taskId === 'review-new-reactions',
+  )
+  const phase = (name) =>
+    walkthrough.steps.find((step) => step.phase === name).action
+  assert.equal(phase('pending').selector, '[data-revisit-comments]')
+  assert.equal(
+    phase('success').selector,
+    '[data-new-comment-thread] [data-new-comment-message]',
+  )
+  assert.equal(phase('recovery').kind, 'gotoArtifactAndClick')
+  assert.match(phase('recovery').selector, /aria-label="Comments"/)
+  assert.match(phase('next').selector, /aria-label="Comments"/)
+})

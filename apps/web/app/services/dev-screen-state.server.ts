@@ -1286,7 +1286,7 @@ export async function seedDevScreenState(
           resolved_by_id: null,
           resolved_at: null,
           created_at: openingAt,
-          updated_at: index <= 2 ? updateAt : openingAt,
+          updated_at: updateAt,
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
@@ -1297,21 +1297,21 @@ export async function seedDevScreenState(
           thread_id: threadId,
           body: `確認ポイント ${index}`,
           agent: null,
-          created_by_id: userId,
-          created_at: openingAt,
-          updated_at: openingAt,
+          created_by_id: index === 1 ? userId : ownerId,
+          created_at: index === 2 ? updateAt : openingAt,
+          updated_at: index === 2 ? updateAt : openingAt,
         })
         .onConflict((oc) => oc.column('id').doNothing())
         .execute()
-      if (index <= 2) {
+      if (index !== 2) {
         await db
           .insertInto('comment_messages')
           .values({
             id: `${threadId}-reply`,
             thread_id: threadId,
-            body: index === 1 ? '反映しました。' : '追加の確認事項があります。',
+            body: index === 1 ? '反映しました。' : '確認します。',
             agent: null,
-            created_by_id: ownerId,
+            created_by_id: index === 1 ? ownerId : userId,
             created_at: updateAt,
             updated_at: updateAt,
           })

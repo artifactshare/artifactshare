@@ -716,6 +716,7 @@
   "comments.deleteThreadConfirmTitle": "この会話を削除しますか?",
   "comments.deleteThreadConfirmBody": "コメントと返信がすべて削除されます。元に戻せません。",
   "comments.deleteConfirmAction": "削除",
+  "comments.new": "新着",
   "comments.edited": "編集済み",
   "comments.editLabel": "コメントを編集",
   "comments.cancelEdit": "編集をやめる",

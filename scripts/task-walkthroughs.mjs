@@ -199,20 +199,21 @@ export const taskWalkthroughs = [
       }),
       phase('pending', 'Viewer とコメントの読み込みを記録する', {
         kind: 'click',
-        selector:
-          'button[aria-label="Comments"], button[aria-label="コメント"]',
+        selector: '[data-revisit-comments]',
         captureDuringNavigation: true,
       }),
       phase('success', '新しいコメント本文を確認する', {
         kind: 'inspect',
-        selector: '[data-slot="sheet-content"]',
+        selector: '[data-new-comment-thread] [data-new-comment-message]',
       }),
       phase('failure', 'Home だけでは反応の対象を特定できない状態を残す', {
         kind: 'goto',
         path: '/',
       }),
-      phase('recovery', '最近見た全件の未読表示から探し直す', {
-        kind: 'gotoUnreadArtifact',
+      phase('recovery', '再訪して通常のコメントボタンから確認し直す', {
+        kind: 'gotoArtifactAndClick',
+        selector:
+          'button[aria-label="Comments"], button[aria-label="コメント"]',
       }),
       phase('next', '対象 Viewer のコメントへ戻る', {
         kind: 'gotoArtifactAndClick',

@@ -180,6 +180,16 @@ describe('viewer revisit-context dev screen state', () => {
       entryCurrentVersionId: `${shareableId}-v2`,
       version: { kind: 'ordinal', from: 1, to: 2 },
       commentCount: 2,
+      newCommentMessages: [
+        {
+          messageId: `${shareableId}-thread-1-reply`,
+          threadId: `${shareableId}-thread-1`,
+        },
+        {
+          messageId: `${shareableId}-thread-2-opening`,
+          threadId: `${shareableId}-thread-2`,
+        },
+      ],
     })
   })
 })

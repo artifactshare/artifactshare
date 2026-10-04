@@ -40,6 +40,7 @@ lint の `copy-glossary/no-violations` rule は「使わない語」列を deny 
 | 製品を使い始めること (ページ名・概念) | 利用開始 | get started | `/start` | 導入、ui:セットアップ |
 | 使い始めを促す行動ボタン | 無料で始める | Start for free | — | 今すぐ登録、申し込む |
 | 内容の該当箇所への反応 | コメント | comment | `comments` | フィードバック、注釈 |
+| 前回の閲覧境界より後に他の投稿者が書いたコメント | 新着 | New | `comments.new` | — |
 | 閲覧された回数 | 閲覧数 | views | `viewCount` | ビュー数、表示回数 |
 
 「投稿」は CLI、MCP、ブラウザに共通の総称。「アップロード」はブラウザ経路の操作名としてだけ使い、行為の総称にしない。

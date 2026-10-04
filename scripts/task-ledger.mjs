@@ -442,24 +442,24 @@ export const tasks = [
         screens: ['home/default'],
       },
       action: {
-        description: '対象ファイルを開き、コメントパネルを確認する',
-        screens: ['viewer/comments-open'],
+        description: '新着のあるファイルを開く',
+        screens: ['viewer/revisit-context'],
       },
       pending: {
-        description: 'Viewer とコメントの読み込みを待つ',
-        screens: ['viewer/comments-open'],
+        description: '新着コメントの案内からパネルを開く',
+        screens: ['viewer/revisit-comments-open'],
       },
       success: {
         description: '前回確認後のコメント内容を特定できる',
-        screens: ['viewer/comments-open'],
+        screens: ['viewer/revisit-comments-open'],
       },
       failure: {
         description: 'どのファイルに新しい反応があるか分からない',
         screens: ['home/default'],
       },
       recovery: {
-        description: '最近見た一覧の未読表示から対象を探し直す',
-        screens: ['recent/unread-comments'],
+        description: '再訪して通常のコメントボタンから確認し直す',
+        screens: ['viewer/comments-open'],
       },
       next: {
         description: 'コメントへ返信するか、指摘を反映した版を投稿する',

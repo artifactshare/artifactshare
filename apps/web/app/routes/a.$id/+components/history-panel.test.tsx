@@ -263,6 +263,7 @@ describe('HistoryPanel', () => {
           entryCurrentVersionId: 'version-2',
           version: { kind: 'ordinal', from: 1, to: 2 },
           commentCount: 2,
+          newCommentMessages: [],
         }}
         onCommentsOpen={() => {}}
         onOpenHistory={() => {}}
