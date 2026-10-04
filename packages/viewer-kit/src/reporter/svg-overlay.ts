@@ -101,17 +101,17 @@ export function svgTextRange(ctx: ReporterState, ranges: Range[]) {
     let start = -1,
       end = -1
     characters.forEach(function (units, index) {
-      if (
-        units.some(function (unit) {
-          return (
-            unit.node === node &&
-            unit.offset >= range.startOffset &&
-            unit.offset < range.endOffset
-          )
-        })
-      ) {
-        if (start < 0) start = index
-        end = index + 1
+      for (let i = 0; i < units.length; i++) {
+        let unit = units[i]
+        if (
+          unit.node === node &&
+          unit.offset >= range.startOffset &&
+          unit.offset < range.endOffset
+        ) {
+          if (start < 0) start = index
+          end = index + 1
+          break
+        }
       }
     })
     return start < 0 ? [] : [{ text: text, start: start, end: end }]

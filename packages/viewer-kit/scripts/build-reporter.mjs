@@ -95,15 +95,51 @@ const securityFunctions = new Set([
 
 // Decision-path lint is limited to the named security functions (including
 // nested callbacks): Object/Array/Reflect/Function references, realm-qualified
-// calls, and the build runtime's Array.prototype own names except constructor
-// and length. Direct bare Array.isArray calls remain permitted. This is not
-// general alias analysis or a ban on replaceable methods outside this set.
+// calls, and the fixed Node 24 Array.prototype own names except constructor
+// and length. Tests flag new runtime methods for explicit review. Direct bare
+// Array.isArray calls remain permitted. This is not general alias analysis or
+// a ban on replaceable methods outside this set.
 const decisionBuiltins = new Set(['Object', 'Array', 'Reflect', 'Function'])
-const arrayMethods = new Set(
-  Object.getOwnPropertyNames(Array.prototype).filter(
-    (name) => name !== 'constructor' && name !== 'length',
-  ),
-)
+const arrayMethods = new Set([
+  'at',
+  'concat',
+  'copyWithin',
+  'fill',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'lastIndexOf',
+  'pop',
+  'push',
+  'reverse',
+  'shift',
+  'unshift',
+  'slice',
+  'sort',
+  'splice',
+  'includes',
+  'indexOf',
+  'join',
+  'keys',
+  'entries',
+  'values',
+  'forEach',
+  'filter',
+  'flat',
+  'flatMap',
+  'map',
+  'every',
+  'some',
+  'reduce',
+  'reduceRight',
+  'toReversed',
+  'toSorted',
+  'toSpliced',
+  'with',
+  'toLocaleString',
+  'toString',
+])
 
 function validateSecurityFunction(fn) {
   walk(fn, (node, ancestors) => {
@@ -135,7 +171,17 @@ function validateSecurityFunction(fn) {
           `${fn.id.name}: uncaptured Object/Array/Reflect/Function reference; use captured primordials`,
         )
     }
-    if (node.type !== 'CallExpression') return
+    if (
+      (node.type === 'MemberExpression' &&
+        decisionBuiltins.has(memberName(node))) ||
+      (node.type === 'Property' &&
+        ancestors.at(-1)?.type === 'ObjectPattern' &&
+        decisionBuiltins.has(propertyName(node.key, node.computed)))
+    )
+      fail(
+        `${fn.id.name}: uncaptured Object/Array/Reflect/Function reference; use captured primordials`,
+      )
+    if (!['CallExpression', 'NewExpression'].includes(node.type)) return
     const directCallee = unwrap(node.callee)
     let callee = directCallee
     while (
@@ -151,6 +197,7 @@ function validateSecurityFunction(fn) {
     if (
       (decisionBuiltins.has(receiverName) || decisionBuiltins.has(method)) &&
       !(
+        node.type === 'CallExpression' &&
         callee === directCallee &&
         identifier(receiver, 'Array') &&
         method === 'isArray'
@@ -169,8 +216,12 @@ function validateSecurityFunction(fn) {
 function memberName(node) {
   node = unwrap(node)
   if (node?.type !== 'MemberExpression') return undefined
-  if (!node.computed) return node.property.name
-  const property = unwrap(node.property)
+  return propertyName(node.property, node.computed)
+}
+
+function propertyName(key, computed) {
+  if (!computed && key.type === 'Identifier') return key.name
+  const property = unwrap(key)
   if (property.type === 'Literal') return property.value
   if (property.type === 'TemplateLiteral' && !property.expressions.length)
     return property.quasis[0].value.cooked

@@ -363,7 +363,7 @@ test('whole private messages can only use captured messaging primitives', () => 
             [chunk(code)],
             new Set(['installReporter', 'capturePrimordials', name]),
           ),
-        /uncaptured (?:constructor )?call with private message|replaceable array method slice/,
+        /uncaptured (?:constructor )?call with private message|replaceable array method slice|uncaptured Object\/Array\/Reflect\/Function/,
       )
     }
   }
@@ -675,6 +675,35 @@ test('decision-path lint rejects realm built-ins and Array.prototype own names e
       /uncaptured Object\/Array/,
       operation,
     )
+})
+
+test('decision-path denylist does not change with build runtime prototype additions', async () => {
+  const name = 'syntheticFutureMethod'
+  const original = Object.getOwnPropertyDescriptor(Array.prototype, name)
+  try {
+    Object.defineProperty(Array.prototype, name, {
+      configurable: true,
+      value() {},
+    })
+    const { validateBundle: validateFreshBundle } =
+      await import('./build-reporter.mjs?synthetic-runtime-method')
+    const code = minimal.replace(
+      'installReporter(window);',
+      `function cssPath(ctx) { value.${name}(); } installReporter(window);`,
+    )
+    assert.doesNotThrow(() =>
+      validateFreshBundle(
+        [chunk(code)],
+        new Set(['installReporter', 'capturePrimordials', 'cssPath']),
+      ),
+    )
+  } finally {
+    if (original) Object.defineProperty(Array.prototype, name, original)
+    else delete Array.prototype[name]
+  }
+})
+
+test('fixed decision-path denylist covers every current Array.prototype method', () => {
   for (const method of Object.getOwnPropertyNames(Array.prototype).filter(
     (name) => name !== 'constructor' && name !== 'length',
   )) {
@@ -700,6 +729,37 @@ test('decision-path lint rejects realm built-ins and Array.prototype own names e
   assert.doesNotThrow(
     withOperation(
       "Array['isArray'](value); (Array).isArray(value); (0, Array.isArray)(value); (primitives.objectKeys)(value); for (let i = 0; i < value.length; i++) copy[i] = value[i];",
+      'cssPath',
+    ),
+  )
+})
+
+test('decision-path lint rejects realm built-in references, destructuring and constructors', () => {
+  for (const builtin of ['Object', 'Array', 'Reflect', 'Function']) {
+    for (const operation of [
+      `win.${builtin}.prototype.hasOwnProperty.call(value, key);`,
+      `const builtin = ctx.win.${builtin};`,
+      `const { ${builtin}: builtin } = win;`,
+      `({ ${builtin}: builtin } = win);`,
+      `const { ['${builtin}']: builtin } = win;`,
+      `new win.${builtin}(value);`,
+      `new ctx.win.${builtin}(value);`,
+      `new win['${builtin}'](value);`,
+    ]) {
+      assert.throws(
+        withOperation(`helper(() => { ${operation} });`, 'cssPath'),
+        /uncaptured Object\/Array\/Reflect\/Function/,
+        operation,
+      )
+    }
+  }
+  assert.throws(
+    withOperation('new Array.isArray(value);', 'cssPath'),
+    /uncaptured Object\/Array/,
+  )
+  assert.doesNotThrow(
+    withOperation(
+      'new primitives.SavedArray(); Array.isArray(value);',
       'cssPath',
     ),
   )
@@ -848,6 +908,42 @@ test('generated cssPath preserves invalid inputs, ancestor order and separators'
     cssPath(ctx, element),
     'body > main:nth-of-type(1) > p:nth-of-type(2)',
   )
+})
+
+test('generated SVG character mapping survives throwing page Array.some', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    'return svgTextRange;',
+  )
+  const result = runInNewContext(`
+    const svgTextRange = ${expose};
+    const text = {getNumberOfChars() {return 3;}};
+    const node = {nodeValue: 'a   b', parentElement: {closest() {return text;}}};
+    const ctx = {
+      win: {NodeFilter: {SHOW_TEXT: 4}},
+      doc: {createTreeWalker() {
+        let visited = false;
+        return {nextNode() {if (visited) return null; visited = true; return node;}};
+      }},
+    };
+    const range = {startContainer: node, startOffset: 2, endOffset: 5};
+    const initial = svgTextRange(ctx, [range]);
+    Array.prototype.some = function() {throw new Error('page some called');};
+    const collapsed = svgTextRange(ctx, [range]);
+    text.getNumberOfChars = function() {return 5;};
+    const raw = svgTextRange(ctx, [range]);
+    range.startOffset = 5;
+    const empty = svgTextRange(ctx, [range]);
+    JSON.stringify([initial, collapsed, raw, empty].map(groups =>
+      groups.map(group => ({start: group.start, end: group.end, sameText: group.text === text}))));
+  `)
+  assert.deepEqual(JSON.parse(result), [
+    [{ start: 1, end: 3, sameText: true }],
+    [{ start: 1, end: 3, sameText: true }],
+    [{ start: 2, end: 5, sameText: true }],
+    [],
+  ])
 })
 
 test('generated verification scans text anchors without page Array.some', async () => {

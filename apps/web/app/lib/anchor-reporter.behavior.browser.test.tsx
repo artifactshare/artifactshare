@@ -1599,6 +1599,90 @@ test('mutation relevance ignores added and removed ignored nodes but not comment
   }
 })
 
+test('SVG highlights keep text verification updating after page Array.some throws', async () => {
+  const doc = await fixture(
+    '<svg width="400" height="100"><text x="20" y="50">SVG words</text></svg><p id="words">selected words</p>',
+  )
+  const realm = doc.defaultView as Window & typeof globalThis
+  const errors: string[] = []
+  const onError = (event: ErrorEvent) => errors.push(event.message)
+  realm.addEventListener('error', onError)
+  const verdict = () =>
+    (
+      messages as unknown as {
+        kind: string
+        generation: number
+        verdicts?: {
+          thread: string
+          attached: boolean
+          position_state: string
+        }[]
+      }[]
+    ).findLast((message) => message.kind === 'anchor-verdicts')
+  let some: ReturnType<typeof vi.spyOn> | undefined
+  try {
+    send('comment-highlights', {
+      highlights: [
+        {
+          threadId: 'svg',
+          quotedText: 'SVG words',
+          selectorFormat: 'quote-v1',
+        },
+      ],
+    })
+    await vi.waitFor(() =>
+      expect(doc.querySelector('.ash-comment-highlight-svg')).not.toBeNull(),
+    )
+    send('verify-anchors', {
+      verificationId: 1,
+      anchors: [
+        {
+          kind: 'text',
+          thread: 'text',
+          quotedText: 'selected words',
+          selectorFormat: 'quote-v1',
+        },
+      ],
+    })
+    await vi.waitFor(() =>
+      expect(verdict()?.verdicts).toEqual([
+        { thread: 'text', attached: true, position_state: 'attached' },
+      ]),
+    )
+    const generation = verdict()!.generation
+    some = vi.spyOn(realm.Array.prototype, 'some').mockImplementation(() => {
+      throw new Error('page some called')
+    })
+    doc.querySelector('#words')!.textContent = 'changed words'
+    await vi.waitFor(() => {
+      expect(verdict()?.generation).toBeGreaterThan(generation)
+      expect(verdict()?.verdicts).toEqual([
+        { thread: 'text', attached: false, position_state: 'checking' },
+      ])
+    })
+    await vi.waitFor(
+      () =>
+        expect(verdict()?.verdicts).toEqual([
+          { thread: 'text', attached: false, position_state: 'needs-check' },
+        ]),
+      { timeout: 6000 },
+    )
+    doc.querySelector('#words')!.textContent = 'selected words'
+    await vi.waitFor(() =>
+      expect(verdict()?.verdicts).toEqual([
+        { thread: 'text', attached: true, position_state: 'attached' },
+      ]),
+    )
+    expect(doc.querySelector('.ash-comment-highlight-svg')).not.toBeNull()
+    expect(some).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+  } finally {
+    some?.mockRestore()
+    realm.removeEventListener('error', onError)
+    frame.remove()
+  }
+}, 15000)
+
 test.each(['false', 'throw'])(
   'text-only verification survives a %s page Array.some and later mutations',
   async (replacement) => {
