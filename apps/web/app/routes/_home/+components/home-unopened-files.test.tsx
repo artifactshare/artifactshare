@@ -1,12 +1,16 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { FileRowData } from './file-data'
 import { HomeUnopenedFiles } from './home-unopened-files'
 
 import { bindI18n, t } from '~/lib/i18n'
 const language = vi.hoisted(() => ({ locale: 'ja' as 'en' | 'ja' }))
+afterEach(() => {
+  language.locale = 'ja'
+})
+
 vi.mock('~/hooks/use-t', () => ({
   useT: () => bindI18n(language.locale),
 }))
@@ -110,6 +114,18 @@ test.each(['en', 'ja'] as const)(
     expect(render({ files: [file], total: 12, error: true })).not.toContain(
       'href="/files"',
     )
-    language.locale = 'ja'
   },
 )
+
+describe.sequential('locale cleanup after a failed assertion', () => {
+  // This expected failure exercises teardown when assertion-time cleanup would
+  // be skipped. The next test must still render in the default locale.
+  test.fails('interrupts a test after changing the shared locale', () => {
+    language.locale = 'en'
+    expect(render({ files: [file] })).toContain(t('ja', 'home.unopenedSeeAll'))
+  })
+
+  test('renders Japanese after the interrupted English test', () => {
+    expect(render({ files: [file] })).toContain(t('ja', 'home.unopenedSeeAll'))
+  })
+})
