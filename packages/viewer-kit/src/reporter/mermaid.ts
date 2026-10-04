@@ -15,7 +15,7 @@ export function requestMermaidRendering(ctx: ReporterState) {
     if (!pre) continue
     let id = 'artifactshare-mermaid-' + index
     ctx.mermaidBlocks[id] = pre
-    diagrams.push({ id: id, source: source })
+    diagrams[diagrams.length] = { id: id, source: source }
   }
   if (diagrams.length) {
     ctx.mermaidRequested = true

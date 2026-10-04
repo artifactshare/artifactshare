@@ -29,17 +29,42 @@ function identifier(node, name) {
   return node?.type === 'Identifier' && node.name === name
 }
 
+// Parentheses, optional-chain wrappers and the inert (0, fn) call spelling do
+// not hide the name being checked, even when optional calls may short-circuit.
+// Do not discard arbitrary sequence prefixes: initialization must remain inert.
+function unwrap(node) {
+  while (node) {
+    if (['ParenthesizedExpression', 'ChainExpression'].includes(node.type))
+      node = node.expression
+    else if (
+      node.type === 'SequenceExpression' &&
+      node.expressions
+        .slice(0, -1)
+        .every(
+          (value) =>
+            unwrap(value)?.type === 'Literal' && unwrap(value).value === 0,
+        )
+    )
+      node = node.expressions.at(-1)
+    else break
+  }
+  return node
+}
+
 function member(node, object, property) {
+  node = unwrap(node)
   return (
     node?.type === 'MemberExpression' &&
     !node.computed &&
-    identifier(node.object, object) &&
+    identifier(unwrap(node.object), object) &&
     identifier(node.property, property)
   )
 }
 
 function call(node, name) {
-  return node?.type === 'CallExpression' && identifier(node.callee, name)
+  return (
+    node?.type === 'CallExpression' && identifier(unwrap(node.callee), name)
+  )
 }
 
 // These entry points process private messages or trusted-event decisions. Walk
@@ -68,74 +93,101 @@ const securityFunctions = new Set([
   'installMermaidResults',
 ])
 
+// Decision-path lint is limited to the named security functions (including
+// nested callbacks): Object/Array/Reflect/Function references, realm-qualified
+// calls, and the build runtime's Array.prototype own names except constructor
+// and length. Direct bare Array.isArray calls remain permitted. This is not
+// general alias analysis or a ban on replaceable methods outside this set.
+const decisionBuiltins = new Set(['Object', 'Array', 'Reflect', 'Function'])
+const arrayMethods = new Set(
+  Object.getOwnPropertyNames(Array.prototype).filter(
+    (name) => name !== 'constructor' && name !== 'length',
+  ),
+)
+
 function validateSecurityFunction(fn) {
-  walk(fn, (node) => {
+  walk(fn, (node, ancestors) => {
     if (['ForOfStatement', 'SpreadElement', 'ArrayPattern'].includes(node.type))
       fail(
         `${fn.id.name}: ${node.type} can invoke authored iterators; use indexed loops and captured primordials`,
       )
     if (
-      node.type !== 'CallExpression' ||
-      node.callee.type !== 'MemberExpression'
+      node.type === 'Identifier' &&
+      decisionBuiltins.has(node.name) &&
+      !isNonReference(node, ancestors)
+    ) {
+      let index = ancestors.length - 1
+      while (unwrap(ancestors[index]) === node) index--
+      const parent = ancestors[index--]
+      while (unwrap(ancestors[index]) === parent) index--
+      const invocation = ancestors[index]
+      if (
+        !(
+          identifier(node, 'Array') &&
+          parent?.type === 'MemberExpression' &&
+          unwrap(parent.object) === node &&
+          memberName(parent) === 'isArray' &&
+          invocation?.type === 'CallExpression' &&
+          unwrap(invocation.callee) === parent
+        )
+      )
+        fail(
+          `${fn.id.name}: uncaptured Object/Array/Reflect/Function reference; use captured primordials`,
+        )
+    }
+    if (node.type !== 'CallExpression') return
+    const directCallee = unwrap(node.callee)
+    let callee = directCallee
+    while (
+      callee.type === 'MemberExpression' &&
+      ['call', 'apply', 'bind'].includes(memberName(callee))
     )
-      return
-    const receiver = node.callee.object
-    const method = memberName(node.callee)
+      callee = unwrap(callee.object)
+    if (callee.type !== 'MemberExpression') return
+    const receiver = unwrap(callee.object)
+    const method = memberName(callee)
     const receiverName =
       receiver.type === 'Identifier' ? receiver.name : memberName(receiver)
     if (
-      (receiverName === 'Object' || receiverName === 'Array') &&
-      !(identifier(receiver, 'Array') && method === 'isArray')
-    )
-      fail(
-        `${fn.id.name}: uncaptured Object/Array method; use captured primordials`,
+      (decisionBuiltins.has(receiverName) || decisionBuiltins.has(method)) &&
+      !(
+        callee === directCallee &&
+        identifier(receiver, 'Array') &&
+        method === 'isArray'
       )
-    if (
-      [
-        'forEach',
-        'some',
-        'map',
-        'filter',
-        'every',
-        'reduce',
-        'find',
-        'includes',
-        'indexOf',
-        'join',
-        'concat',
-      ].includes(method)
     )
       fail(
-        `${fn.id.name}: replaceable array method ${method}; use indexed loops and captured primordials`,
+        `${fn.id.name}: uncaptured Object/Array/Reflect/Function call; use captured primordials`,
+      )
+    if (arrayMethods.has(method))
+      fail(
+        `${fn.id.name}: replaceable array method ${method} from Array.prototype own names (except constructor and length); use indexed loops and captured primordials`,
       )
   })
 }
 
 function memberName(node) {
+  node = unwrap(node)
   if (node?.type !== 'MemberExpression') return undefined
   if (!node.computed) return node.property.name
-  if (node.property.type === 'Literal') return node.property.value
-  if (
-    node.property.type === 'TemplateLiteral' &&
-    !node.property.expressions.length
-  )
-    return node.property.quasis[0].value.cooked
+  const property = unwrap(node.property)
+  if (property.type === 'Literal') return property.value
+  if (property.type === 'TemplateLiteral' && !property.expressions.length)
+    return property.quasis[0].value.cooked
   return undefined
 }
 
-// Skipped writes and secret handling compare only against live values of
-// reporter-owned objects or captured primordials. Do not alias secret state.
-// Object-literal shorthand { ctx }, including in call arguments, wraps state
-// and is rejected; shorthand binding patterns only declare a local name.
-function validateCtxReference(node, ancestors, installReporter) {
-  if (!identifier(node, 'ctx')) return
+function isFunction(value) {
+  return [
+    'FunctionDeclaration',
+    'FunctionExpression',
+    'ArrowFunctionExpression',
+  ].includes(value?.type)
+}
+
+// Binding names and non-computed property keys are not value references.
+function isNonReference(node, ancestors) {
   const parent = ancestors.at(-1)
-  const isFunction = (value) =>
-    [
-      'FunctionDeclaration',
-      'FunctionExpression',
-      'ArrowFunctionExpression',
-    ].includes(value?.type)
   if (
     (parent?.type === 'VariableDeclarator' && parent.id === node) ||
     (isFunction(parent) &&
@@ -148,8 +200,13 @@ function validateCtxReference(node, ancestors, installReporter) {
     ) &&
       parent.label === node)
   )
-    return
-  if (parent?.type === 'MemberExpression' && !parent.computed) return
+    return true
+  if (
+    parent?.type === 'MemberExpression' &&
+    !parent.computed &&
+    parent.property === node
+  )
+    return true
   if (
     ['Property', 'MethodDefinition', 'PropertyDefinition'].includes(
       parent?.type,
@@ -158,7 +215,7 @@ function validateCtxReference(node, ancestors, installReporter) {
     !parent.computed &&
     (!parent.shorthand || parent.value !== node)
   )
-    return
+    return true
   // A shorthand key is only a property name. If the parser shares its node
   // with the value, classify that value below rather than exempting it too.
   // Binding patterns are declarations, not value references. Assignment patterns
@@ -166,9 +223,9 @@ function validateCtxReference(node, ancestors, installReporter) {
   let child = node
   for (let index = ancestors.length - 1; index >= 0; index--) {
     const owner = ancestors[index]
-    if (owner.type === 'VariableDeclarator' && owner.id === child) return
-    if (isFunction(owner) && owner.params.includes(child)) return
-    if (owner.type === 'CatchClause' && owner.param === child) return
+    if (owner.type === 'VariableDeclarator' && owner.id === child) return true
+    if (isFunction(owner) && owner.params.includes(child)) return true
+    if (owner.type === 'CatchClause' && owner.param === child) return true
     if (
       ![
         'Property',
@@ -183,16 +240,141 @@ function validateCtxReference(node, ancestors, installReporter) {
     if (owner.type === 'Property' && owner.value !== child) break
     child = owner
   }
-  if (parent?.type === 'CallExpression' && parent.arguments.includes(node))
+  return false
+}
+
+// Reserve bundle function names throughout the IIFE instead of attempting
+// general alias analysis. With no shadow bindings, writes, or dynamic code,
+// a bare callee name resolves to the declaration in the bundle function map.
+function validateFunctionBindings(program, functions) {
+  function targets(pattern, visit) {
+    pattern = unwrap(pattern)
+    if (!pattern) return
+    if (pattern.type === 'Identifier') visit(pattern)
+    else if (pattern.type === 'RestElement') targets(pattern.argument, visit)
+    else if (pattern.type === 'AssignmentPattern') targets(pattern.left, visit)
+    else if (pattern.type === 'ArrayPattern') {
+      for (const element of pattern.elements) targets(element, visit)
+    } else if (pattern.type === 'ObjectPattern') {
+      for (const property of pattern.properties)
+        targets(
+          property.type === 'RestElement' ? property.argument : property.value,
+          visit,
+        )
+    }
+    // Member assignment targets write properties, not lexical bindings.
+  }
+  const reject = (pattern, reason) =>
+    targets(pattern, (node) => {
+      if (functions.has(node.name))
+        fail(`bundle function binding ${node.name} must not be ${reason}`)
+    })
+  walk(program, (node, ancestors) => {
+    // Preserve only the existing initial capture spelling. This property name
+    // does not invoke the Function constructor or expose it to another call.
+    const initialCallBind =
+      identifier(node, 'Function') &&
+      ancestors.findLast(isFunction) === functions.get('capturePrimordials') &&
+      member(ancestors.at(-1), 'win', 'Function') &&
+      ['prototype', 'call', 'bind'].every((name, index) => {
+        const owner = ancestors.at(-2 - index)
+        return (
+          owner?.type === 'MemberExpression' &&
+          owner.object === ancestors.at(-1 - index) &&
+          memberName(owner) === name
+        )
+      }) &&
+      ancestors.at(-5)?.type === 'CallExpression' &&
+      ancestors.at(-5).callee === ancestors.at(-4)
+    if (
+      (identifier(node, 'eval') || identifier(node, 'Function')) &&
+      !initialCallBind
+    )
+      fail(
+        `dynamic code identifier ${node.name} is forbidden throughout the bundle`,
+      )
+    if (isFunction(node)) {
+      if (node !== functions.get(node.id?.name)) reject(node.id, 'shadowed')
+      for (const parameter of node.params) reject(parameter, 'shadowed')
+    }
+    if (node.type === 'VariableDeclarator') reject(node.id, 'shadowed')
+    if (node.type === 'CatchClause') reject(node.param, 'shadowed')
+    if (
+      [
+        'ImportSpecifier',
+        'ImportDefaultSpecifier',
+        'ImportNamespaceSpecifier',
+      ].includes(node.type)
+    )
+      reject(node.local, 'shadowed')
+    if (['ClassDeclaration', 'ClassExpression'].includes(node.type))
+      reject(node.id, 'shadowed')
+    if (node.type === 'AssignmentExpression') reject(node.left, 'reassigned')
+    if (node.type === 'UpdateExpression') reject(node.argument, 'reassigned')
+    if (['ForInStatement', 'ForOfStatement'].includes(node.type))
+      reject(node.left, 'reassigned')
+  })
+}
+
+// Secret-flow guard: documentToken/readyChallenge must not reach replaceable
+// code. Whole ctx arguments go only to bundle declarations whose matching
+// parameter is named ctx. Their names cannot be shadowed or reassigned.
+// eval/Function identifiers (except the initial win.Function.prototype.call.bind
+// capture), ctx receivers, arguments and non-ctx secret members are forbidden.
+// With normalized callees and reserved function bindings this
+// checks explicit secret flow in the repository's trusted reporter sources;
+// it is not a sandbox for arbitrary code or general alias/dynamic-key analysis.
+// Skipped writes and secret handling compare only against live values of
+// reporter-owned objects or captured primordials. Do not alias secret state.
+function validateCtxReference(node, ancestors, functions) {
+  if (!identifier(node, 'ctx') || isNonReference(node, ancestors)) return
+  const parent = ancestors.at(-1)
+  if (
+    parent?.type === 'MemberExpression' &&
+    !parent.computed &&
+    parent.object === node
+  ) {
+    let reference = parent
+    let index = ancestors.length - 2
+    while (
+      ['ParenthesizedExpression', 'ChainExpression'].includes(
+        ancestors[index]?.type,
+      )
+    ) {
+      reference = ancestors[index--]
+    }
+    const invocation = ancestors[index]
+    if (
+      (invocation?.type === 'CallExpression' &&
+        invocation.callee === reference) ||
+      (invocation?.type === 'TaggedTemplateExpression' &&
+        invocation.tag === reference)
+    )
+      fail(
+        'ctx must not be a call or tag receiver: replaceable code would receive secret state as this',
+      )
     return
+  }
+  if (parent?.type === 'CallExpression' && parent.arguments.includes(node)) {
+    const callee = unwrap(parent.callee)
+    const target = callee.type === 'Identifier' && functions.get(callee.name)
+    if (
+      target &&
+      identifier(target.params[parent.arguments.indexOf(node)], 'ctx')
+    )
+      return
+    fail(
+      'ctx call argument requires a bundle function declaration with a ctx parameter at that position',
+    )
+  }
   if (
     parent?.type === 'ReturnStatement' &&
     parent.argument === node &&
-    ancestors.findLast(isFunction) === installReporter
+    ancestors.findLast(isFunction) === functions.get('installReporter')
   )
     return
   fail(
-    'ctx value reference must be a non-computed member object or direct call argument; only installReporter may return ctx',
+    'ctx value reference must be a non-computed member object or a declared bundle function call argument matching its ctx parameter; only installReporter may return ctx',
   )
 }
 
@@ -203,12 +385,11 @@ function validateCtxReference(node, ancestors, installReporter) {
 function validateSecretUse(node, ancestors) {
   if (
     node.type !== 'MemberExpression' ||
-    !identifier(node.object, 'ctx') ||
-    !['documentToken', 'readyChallenge'].includes(
-      node.computed ? node.property.value : node.property.name,
-    )
+    !['documentToken', 'readyChallenge'].includes(memberName(node))
   )
     return
+  if (!identifier(unwrap(node.object), 'ctx'))
+    fail('private token/challenge member access requires ctx as its object')
   const parent = ancestors.at(-1)
   if (parent?.type === 'AssignmentExpression' && parent.left === node) return
   if (
@@ -252,7 +433,7 @@ function validateMessageCalls(fn) {
         `${fn.id.name}: uncaptured constructor call with private message access; use captured messaging primitives`,
       )
     if (node.type !== 'CallExpression') return
-    const callee = node.callee
+    const callee = unwrap(node.callee)
     if (
       identifier(callee, 'createMessagePayload') ||
       member(callee, 'primitives', 'objectCreate') ||
@@ -394,9 +575,14 @@ export function validateBundle(
     fail('capturePrimordials must begin by saving the supplied window parent')
   walk(program, validateSecretUse)
   walk(program, (node, ancestors) =>
-    validateCtxReference(node, ancestors, functions.get('installReporter')),
+    validateCtxReference(node, ancestors, functions),
   )
+  validateFunctionBindings(program, functions)
   walk(program, (node) => {
+    if (identifier(node, 'arguments'))
+      fail(
+        'arguments is forbidden: secret state must remain explicit ctx references',
+      )
     if (
       node.type === 'FunctionDeclaration' &&
       !sourceFunctions.has(node.id.name)
@@ -420,7 +606,7 @@ export function validateBundle(
       ['window', 'globalThis', 'self'].some(
         (name) =>
           node.left.type === 'MemberExpression' &&
-          identifier(node.left.object, name),
+          identifier(unwrap(node.left.object), name),
       )
     )
       fail('global assignments are forbidden')

@@ -58,6 +58,7 @@ export function clearMarks(ctx: ReporterState, preserveBadges = false) {
       '.ash-comment-highlight-badge::after{content:attr(data-count);}'
 }
 
+// Skipped writes compare live reporter-owned paint and DOM state.
 export function paintIntact(
   ctx: ReporterState,
   highlightsById: Map<string, ResolvedHighlight>,
@@ -534,6 +535,7 @@ export function scheduleChecking(ctx: ReporterState) {
   )
 }
 
+// Skip writes only while live reporter-owned values still match intact paint.
 export function applyHighlights(
   ctx: ReporterState,
   list: CommentHighlight[],

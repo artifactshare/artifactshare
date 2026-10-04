@@ -16,6 +16,7 @@ import {
 } from './annotate.js'
 import type { ReporterState } from './state.js'
 
+// Secret-bearing messages reach only captured messaging primordials.
 export function send(ctx: ReporterState, message: Record<string, unknown>) {
   try {
     let payload = createMessagePayload(ctx.primordials, message)
@@ -23,7 +24,6 @@ export function send(ctx: ReporterState, message: Record<string, unknown>) {
   } catch (e) {}
 }
 
-// Secret handling and skipped writes compare live reporter-owned values or captured primordials.
 export function ready(ctx: ReporterState) {
   if (ctx.readyChallenge && ctx.documentToken) {
     send(ctx, {

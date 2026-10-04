@@ -80,7 +80,6 @@ export function verifyAnchors(
   ctx.pendingAnchors = anchors || []
   if (!ctx.pendingAnchors.length) return
   let verdicts = []
-  // Skipped writes and secret handling use live reporter-owned values or captured primordials.
   if (!engine) {
     for (let i = 0; i < ctx.pendingAnchors.length; i++) {
       if (ctx.pendingAnchors[i].kind === 'text') {

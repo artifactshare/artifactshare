@@ -12,11 +12,11 @@ export function cssPath(ctx: ReporterState, element: Element | null) {
     while ((sibling = sibling.previousElementSibling)) {
       if (sibling.nodeName.toLowerCase() === name) index++
     }
-    parts.unshift(name + ':nth-of-type(' + index + ')')
+    parts[parts.length] = name + ':nth-of-type(' + index + ')'
     element = element.parentElement
   }
   let path = 'body'
-  for (let i = 0; i < parts.length; i++) path += ' > ' + parts[i]
+  for (let i = parts.length - 1; i >= 0; i--) path += ' > ' + parts[i]
   return path
 }
 
@@ -40,7 +40,7 @@ export function sendSelection(ctx: ReporterState) {
     return
   }
   let range = selection.getRangeAt(0)
-  if (!range.toString().trim()) {
+  if (!ctx.primordials.rangeToString(range).trim()) {
     send(ctx, { kind: 'text-selection-cleared' })
     return
   }
