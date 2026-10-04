@@ -217,6 +217,26 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+async function closeOrdinaryCommentsPanel() {
+  const trigger = page
+    .getByRole('button', { name: 'Comments', exact: true })
+    .element()
+  await userEvent.click(
+    page.getByRole('button', { name: 'Close', exact: true }),
+  )
+  // Focus restoration runs after the exit animation unmounts the sheet.
+  // Give that lifecycle its own wait before checking the return target.
+  await vi.waitFor(
+    () =>
+      expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull(),
+    { timeout: 5_000 },
+  )
+  await vi.waitFor(() => {
+    expect(document.activeElement).toBe(trigger)
+    expect(document.activeElement?.textContent).toBe('Comments')
+  })
+}
+
 for (const width of [390, 1280]) {
   test.each(['artifact', 'resolved', 'orphaned'] as const)(
     `count opens all, scrolls and focuses the first marked %s card at ${width}px`,
@@ -421,12 +441,7 @@ for (const width of [390, 1280]) {
       expect(label.getBoundingClientRect().bottom).toBeLessThanOrEqual(
         list.getBoundingClientRect().bottom,
       )
-      await userEvent.click(
-        page.getByRole('button', { name: 'Close', exact: true }),
-      )
-      await vi.waitFor(() =>
-        expect(document.activeElement?.textContent).toBe('Comments'),
-      )
+      await closeOrdinaryCommentsPanel()
       await userEvent.click(
         page.getByRole('button', { name: 'Comments', exact: true }),
       )
@@ -470,6 +485,30 @@ for (const width of [390, 1280]) {
     expect(document.querySelector('[data-new-comment-thread]')).toBeNull()
   })
 }
+
+test('ordinary close restores focus after a slow mobile sheet exit', async () => {
+  await page.viewport(390, 800)
+  await mount(entryFixture('artifact'))
+  await userEvent.click(
+    page.getByRole('button', { name: 'Comments', exact: true }),
+  )
+  await vi.waitFor(() =>
+    expect(document.activeElement?.id).toBe('comment-card-thread-first'),
+  )
+  const sheet = document.querySelector<HTMLElement>(
+    '[data-slot="sheet-content"]',
+  )!
+  await Promise.all(
+    sheet.getAnimations().map((animation) => animation.finished),
+  )
+  // Exceed waitFor's default one-second timeout to exercise the exit wait.
+  // Only the closed state is slowed; the real focus-restoration path is used.
+  const style = document.createElement('style')
+  style.textContent =
+    '[data-slot="sheet-content"][data-state="closed"] { animation-duration: 1.2s !important; }'
+  document.body.appendChild(style)
+  await closeOrdinaryCommentsPanel()
+})
 
 test.each(['deep-link', 'anchor-navigation'] as const)(
   'ordinary Comments preserves a paginated resolved %s target',
