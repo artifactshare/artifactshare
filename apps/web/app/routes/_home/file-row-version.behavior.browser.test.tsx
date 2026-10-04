@@ -9,12 +9,14 @@ import type { FileRowData } from './+components/file-data'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import '~/app.css'
 
+const language = vi.hoisted(() => ({ locale: 'ja' as 'en' | 'ja' }))
+
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
-    locale: 'ja',
+    locale: language.locale,
     t: (key: string, vars?: { version: number }) =>
       key.startsWith('home.')
-        ? bindI18n('ja').t(key as 'home.unopenedTitle')
+        ? bindI18n(language.locale).t(key as 'home.unopenedTitle')
         : vars?.version
           ? `Updated to v${vars.version}`
           : ({
@@ -28,7 +30,7 @@ vi.mock('~/hooks/use-t', () => ({
             }[key] ?? key),
     tPlural: (key: string, count: number) =>
       key === 'home.unopenedMore'
-        ? bindI18n('ja').tPlural('home.unopenedMore', count)
+        ? bindI18n(language.locale).tPlural('home.unopenedMore', count)
         : `${key}:${count}`,
   }),
 }))
@@ -65,6 +67,7 @@ const file: FileRowData = {
 
 let root: Root | undefined
 afterEach(() => {
+  language.locale = 'ja'
   root?.unmount()
   document.body.replaceChildren()
 })
@@ -193,9 +196,15 @@ test.each([390, 1280])(
   },
 )
 
-test.each([6, 12])(
-  'Japanese unopened header stays on one line with total %s at 390 px',
-  async (total) => {
+test.each([
+  { locale: 'en', total: 6 },
+  { locale: 'en', total: 12 },
+  { locale: 'ja', total: 6 },
+  { locale: 'ja', total: 12 },
+] as const)(
+  '$locale unopened header stays on one line with total $total at 390 px',
+  async ({ locale, total }) => {
+    language.locale = locale
     await page.viewport(390, 800)
     const host = document.createElement('div')
     host.style.width = '358px'
@@ -227,7 +236,9 @@ test.each([6, 12])(
     await waitForBrowserLayout()
     const link = host.querySelector<HTMLElement>('a[href="/files"]')!
     const heading = host.querySelector<HTMLElement>('h2')!
-    expect(link.textContent).toBe(`すべて見る（未確認ほか${total - 5}件）`)
+    expect(link.textContent).toBe(
+      bindI18n(locale).tPlural('home.unopenedMore', total - 5),
+    )
     for (const element of [link, heading]) {
       expect(element.getBoundingClientRect().height).toBeLessThanOrEqual(
         parseFloat(getComputedStyle(element).lineHeight) + 1,

@@ -104,9 +104,7 @@ test.each(['en', 'ja'] as const)(
         expect(html).toContain('href="/files"')
         expect(html).toContain(
           locale === 'en'
-            ? total === 6
-              ? 'See all my files (1 more unopened file)</a>'
-              : 'See all my files (7 more unopened files)</a>'
+            ? `All my files (+${total - 5} unopened)</a>`
             : `すべて見る（未確認ほか${total - 5}件）`,
         )
       }
