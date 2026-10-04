@@ -34,7 +34,7 @@ function commentCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
     .as('comment_count')
 }
 
-function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
+export function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
   return eb
     .selectFrom('versions')
     .select((sqb) => sqb.fn.count<number>('versions.id').as('value'))
@@ -43,7 +43,9 @@ function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
     .as('version_count')
 }
 
-function latestPublishedAtSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
+export function latestPublishedAtSelect(
+  eb: ExpressionBuilder<DB, 'shareables'>,
+) {
   return eb
     .selectFrom('versions')
     .select((sqb) =>
@@ -291,8 +293,8 @@ export async function listUnopenedOwnedArtifactsLimited(
   userId: string,
   workspaceId: string,
   limit = 5,
-): Promise<{ rows: ShareableFileRow[]; hasMore: boolean }> {
-  const rows = await artifactSelectQuery(db, workspaceId, userId)
+): Promise<{ rows: ShareableFileRow[]; total: number; hasMore: boolean }> {
+  const filtered = artifactSelectQuery(db, workspaceId, userId)
     .where('shareables.owner_user_id', '=', userId)
     .where('shareables.current_version_id', 'is not', null)
     .where((eb) =>
@@ -327,10 +329,17 @@ export async function listUnopenedOwnedArtifactsLimited(
     .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
     .orderBy('shareables.id', 'asc')
-    .limit(limit + 1)
-    .execute()
 
-  return { rows: rows.slice(0, limit), hasMore: rows.length > limit }
+  const [rows, count] = await Promise.all([
+    filtered.limit(limit).execute(),
+    filtered
+      .clearSelect()
+      .clearOrderBy()
+      .select((eb) => eb.fn.countAll<number>().as('total'))
+      .executeTakeFirstOrThrow(),
+  ])
+  const total = Number(count.total)
+  return { rows, total, hasMore: total > rows.length }
 }
 
 function recentArtifactsQuery(

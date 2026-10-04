@@ -102,8 +102,11 @@ export function CommentMessageItem({
             className="gap-comment-gap flex min-w-0 flex-wrap items-center"
           >
             {message.agent ? (
-              <span className="max-w-badge-max px-comment-badge-inline bg-agent-soft text-faint inline-flex min-w-0 items-center overflow-hidden rounded-[var(--r-sm)] py-px text-[length:var(--text-size-2xs)] leading-[var(--lh-badge)] font-medium text-ellipsis whitespace-nowrap">
-                {message.agent}
+              <span
+                title={message.agent}
+                className="max-w-badge-max px-comment-badge-inline bg-agent-soft text-faint inline-flex min-w-0 items-center overflow-hidden rounded-[var(--r-sm)] py-px text-[length:var(--text-size-2xs)] leading-[var(--lh-badge)] font-medium whitespace-nowrap"
+              >
+                <span className="block min-w-0 truncate">{message.agent}</span>
               </span>
             ) : null}
             <span className="shrink-0 whitespace-nowrap">

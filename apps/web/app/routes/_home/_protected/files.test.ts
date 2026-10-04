@@ -77,6 +77,49 @@ describe('/files loader', () => {
     ])
   })
 
+  test('returns independent published version facts for same-name files', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ name: 'report.html' })
+      .where('id', 'in', ['own-00', 'own-01'])
+      .execute()
+    for (const [id, shareableId, status, publishedAt] of [
+      ['v1', 'own-00', 'published', TS],
+      ['v2', 'own-00', 'published', '2026-06-15T00:00:00.000Z'],
+      ['v3', 'own-00', 'uploading', '2026-06-16T00:00:00.000Z'],
+      ['duplicate-v1', 'own-01', 'published', TS],
+    ] as const) {
+      await db
+        .insertInto('versions')
+        .values({
+          id,
+          shareable_id: shareableId,
+          artifact_kind: 'html_page',
+          status,
+          entrypoint_path: '/index.html',
+          r2_key: `test/${id}`,
+          size_bytes: 1,
+          sha256: id,
+          created_by_id: VIEWER.id,
+          created_at: TS,
+          published_at: publishedAt,
+        })
+        .execute()
+    }
+    const result = await load('/files')
+    expect(result.files.find((f) => f.id === 'own-00')).toMatchObject({
+      fileName: 'report.html',
+      versionCount: 2,
+      latestPublishedAt: '2026-06-15T00:00:00.000Z',
+    })
+    expect(result.files.find((f) => f.id === 'own-01')).toMatchObject({
+      fileName: 'report.html',
+      versionCount: 1,
+      latestPublishedAt: TS,
+    })
+    expect(Number.isNaN(Date.parse(result.now))).toBe(false)
+  })
+
   test('normalizes page in one redirect', async () => {
     expect(await redirectTo('/files?page=1')).toBe('/files')
   })

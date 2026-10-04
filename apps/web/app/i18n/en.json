@@ -87,6 +87,8 @@
   "home.unopenedTitle": "Unopened files",
   "home.unopenedDescription": "Files you created but have not opened yet",
   "home.unopenedError": "Could not load unopened files.",
+  "home.unopenedMoreOne": "All my files (+{n} unopened)",
+  "home.unopenedMoreOther": "All my files (+{n} unopened)",
   "home.unopenedSeeAll": "See all my files",
   "home.projects": "Projects",
   "home.recentViewed": "Recently seen",

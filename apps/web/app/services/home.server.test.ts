@@ -99,6 +99,7 @@ describe('listUnopenedOwnedArtifactsLimited', () => {
     const result = await listUnopenedOwnedArtifactsLimited(db, 'u1', 'ws-a')
 
     expect(result.rows.map((row) => row.id)).toEqual(['s-inbox-newer'])
+    expect(result.total).toBe(1)
     expect(result.hasMore).toBe(false)
   })
 
@@ -131,8 +132,71 @@ describe('listUnopenedOwnedArtifactsLimited', () => {
       's-unopened-2',
       's-unopened-1',
     ])
+    expect(result.total).toBe(9)
     expect(result.hasMore).toBe(true)
   })
+
+  test.each([0, 5, 6, 12])(
+    'counts exactly %s eligible files independently of the limit',
+    async (total) => {
+      await db
+        .insertInto('shareable_viewer_recency')
+        .values(
+          ['s-inbox-newer', 's-inbox-older', 's-project-recent'].map((id) => ({
+            shareable_id: id,
+            viewer_user_id: 'u1',
+            first_viewed_at: TS,
+            last_viewed_at: TS,
+          })),
+        )
+        .execute()
+      for (let i = 0; i < total; i++) {
+        const id = `s-count-${i}`
+        await db
+          .insertInto('shareables')
+          .values(
+            shareable({
+              id,
+              ownerUserId: 'u1',
+              containerId: 'inbox-u1',
+              updatedAt: TS,
+            }),
+          )
+          .execute()
+        await publishShareables(db, [id])
+      }
+      for (const limit of [5, 2, 20]) {
+        const result = await listUnopenedOwnedArtifactsLimited(
+          db,
+          'u1',
+          'ws-a',
+          limit,
+        )
+        expect(result.total).toBe(total)
+        expect(result.rows).toHaveLength(Math.min(limit, total))
+        expect(result.hasMore).toBe(total > limit)
+      }
+      if (total > 0) {
+        await db
+          .insertInto('shareable_viewer_recency')
+          .values({
+            shareable_id: 's-count-0',
+            viewer_user_id: 'u1',
+            first_viewed_at: TS,
+            last_viewed_at: TS,
+          })
+          .execute()
+        const result = await listUnopenedOwnedArtifactsLimited(
+          db,
+          'u1',
+          'ws-a',
+          20,
+        )
+        expect(result.total).toBe(total - 1)
+        expect(result.rows).toHaveLength(total - 1)
+      }
+    },
+  )
 
   test('does not change when another user has viewed the file', async () => {
     await db

@@ -248,6 +248,33 @@ describe('FileRow row actions', () => {
 })
 
 describe('FileRow unread motion layout', () => {
+  test.each([false, true])(
+    'inline owner puts motion in a separate mobile row (compact: %s)',
+    (homeCompact) => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter>
+          <FileRow
+            data={{ ...data, unreadCommentCount: 2 }}
+            inlineOwner
+            homeCompact={homeCompact}
+            hideMobileOwner
+            unreadBadges
+            now="2026-07-29T00:00:00.000Z"
+          />
+        </MemoryRouter>,
+      )
+      const mobile = html.split('data-regression-responsive="mobile-only"')[1]
+      expect(mobile).toContain(
+        '<span class="col-span-2 min-w-0 truncate">row.newCommentsOther:2</span>',
+      )
+      expect(html).toContain(
+        homeCompact
+          ? '@max-[theme(--breakpoint-stack)]:hidden'
+          : 'min-w-0 truncate max-wide:hidden',
+      )
+    },
+  )
+
   test('the desktop subline hides at narrow widths so the mobile meta row is not duplicated', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -497,4 +524,42 @@ describe('FileRow unreadBadges', () => {
     expect(html).not.toContain('row.newComments')
     expect(html).not.toContain('project.versionBadge')
   })
+})
+
+describe('My files recent version facts', () => {
+  test.each([
+    [2, '2026-07-29T00:00:00Z', true],
+    [2, '2026-07-22T00:00:00Z', true],
+    [2, '2026-07-21T23:59:59Z', false],
+    [1, '2026-07-29T00:00:00Z', false],
+    [2, null, false],
+    [2, 'invalid', false],
+  ])(
+    'version %s published %s eligible=%s',
+    (versionCount, latestPublishedAt, eligible) => {
+      const render = (versionDisplay?: 'with-unread' | 'recent') =>
+        renderToStaticMarkup(
+          <MemoryRouter>
+            <FileRow
+              data={{
+                ...data,
+                versionCount,
+                latestPublishedAt,
+                unreadCommentCount: 0,
+              }}
+              versionDisplay={versionDisplay}
+              hideMobileOwner
+              showOwner={false}
+              now="2026-07-29T00:00:00Z"
+            />{' '}
+          </MemoryRouter>,
+        )
+      const html = render('recent')
+      expect(html.includes('project.versionBadge:2')).toBe(eligible)
+      expect(html).not.toContain('bg-link size-2')
+      expect(html).not.toContain('recent.newComments')
+      expect(render('with-unread')).not.toContain('project.versionBadge:2')
+      expect(render()).not.toContain('project.versionBadge:2')
+    },
+  )
 })

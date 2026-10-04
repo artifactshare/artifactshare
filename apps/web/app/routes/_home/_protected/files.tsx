@@ -34,6 +34,10 @@ import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import { useT } from '~/hooks/use-t'
 import { groupByDay } from '~/lib/datetime'
 import { requireUser } from '~/middleware/context'
+import {
+  versionCountSelect,
+  latestPublishedAtSelect,
+} from '~/services/home.server'
 import { createDb } from '~/services/db.server'
 import { workspaceAccessRevokedSql } from '~/modules/access'
 import { recentQuery } from '~/lib/recent-query'
@@ -81,6 +85,7 @@ type LoaderData = {
   files: FileRowData[]
   total: number
   page: number
+  now: string
 }
 export const filesDateHeaderKey = 'table.created' as const
 
@@ -129,6 +134,8 @@ export async function loader({
   if (requestedPage > lastPage) throw redirect(filesUrl({ page: lastPage }))
   const rows = await filtered
     .select((eb) => [
+      versionCountSelect(eb),
+      latestPublishedAtSelect(eb),
       'shareables.id',
       'shareables.name',
       'shareables.derived_title',
@@ -164,6 +171,7 @@ export async function loader({
     ),
     total,
     page: requestedPage,
+    now: new Date().toISOString(),
   }
 }
 
@@ -247,6 +255,8 @@ export default function Files({ loaderData }: Route.ComponentProps) {
                   data={f}
                   showOwner={false}
                   hideMobileOwner
+                  versionDisplay="recent"
+                  now={loaderData.now}
                   menuEnabled
                   richStats
                   hideMobileVisibility

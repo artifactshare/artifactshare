@@ -12,21 +12,22 @@ import { currentGalleryReturnTo } from '~/lib/viewer-return'
 
 export function HomeUnopenedFiles({
   files,
-  hasMore,
+  total,
   error,
   now,
 }: {
   files: FileRowData[]
-  hasMore: boolean
+  total: number
   error: boolean
   now: string
 }) {
-  const { locale, t } = useT()
+  const { locale, t, tPlural } = useT()
   const { hydrated, timeZone } = useViewerCalendar()
   const location = useLocation()
 
   if (!error && files.length === 0) return null
 
+  const remaining = Math.max(0, total - files.length)
   const calendarNow = new Date(now)
 
   return (
@@ -38,9 +39,12 @@ export function HomeUnopenedFiles({
         titleId="home-unopened-heading"
         title={t('home.unopenedTitle')}
         actions={
-          hasMore ? (
+          // Every loaded, nonempty card offers /files, even with no remaining rows.
+          !error && files.length > 0 ? (
             <AppMoreLink className="text-xs" to="/files">
-              {t('home.unopenedSeeAll')}
+              {remaining > 0
+                ? tPlural('home.unopenedMore', remaining)
+                : t('home.unopenedSeeAll')}
             </AppMoreLink>
           ) : null
         }
