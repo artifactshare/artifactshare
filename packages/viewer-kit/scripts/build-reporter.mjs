@@ -409,9 +409,13 @@ function validateCtxReference(node, ancestors, functions) {
   if (parent?.type === 'CallExpression' && parent.arguments.includes(node)) {
     const callee = unwrap(parent.callee)
     const target = callee.type === 'Identifier' && functions.get(callee.name)
+    const position = parent.arguments.indexOf(node)
     if (
       target &&
-      identifier(target.params[parent.arguments.indexOf(node)], 'ctx')
+      !parent.arguments
+        .slice(0, position)
+        .some((arg) => arg.type === 'SpreadElement') &&
+      identifier(target.params[position], 'ctx')
     )
       return
     fail(

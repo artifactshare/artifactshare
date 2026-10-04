@@ -988,6 +988,48 @@ test('generated verification scans text anchors without page Array.some', async 
   }
 })
 
+test('generated mutation and checking callbacks verify even when painting throws', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    `
+    createTextAnchorEngine = function(root) { return {text: root.text}; };
+    applyHighlights = function() { throw new Error('paint failed'); };
+    invalidateChangedPaint = function() {};
+    verifyAnchors = function(ctx, anchors, engine) { ctx.verified = engine.text; };
+    return [rebuildAfterMutations, scheduleChecking];
+    `,
+  )
+  const result = runInNewContext(`
+    const [rebuild, schedule] = ${expose};
+    const outcomes = [];
+    for (const mode of ['equal', 'changed', 'checking']) {
+      let pending;
+      const root = {text: 'selected words'};
+      const ctx = {
+        doc: {body: root, querySelector() {return root;}},
+        win: {clearTimeout() {}, setTimeout(callback) {pending = callback;}},
+        pendingHighlights: [{}], pendingAnchors: [],
+        measuredText: mode === 'equal' ? root.text : '',
+        checkingDeadlines: {text: Date.now() + 3000},
+      };
+      try {
+        if (mode === 'checking') schedule(ctx);
+        else rebuild(ctx);
+        if (pending) pending();
+      } catch (error) {
+        outcomes.push([error.message, ctx.verified]);
+      }
+    }
+    JSON.stringify(outcomes);
+  `)
+  assert.deepEqual(JSON.parse(result), [
+    ['paint failed', 'selected words'],
+    ['paint failed', 'selected words'],
+    ['paint failed', 'selected words'],
+  ])
+})
+
 test('generated copy fallback and highlight styles retain their exclusion attributes', async () => {
   const { body } = await renderReporter()
   const [installCodeCopy, ensureCommentStyles] = new Function(
@@ -1109,6 +1151,21 @@ test('secret flow rejects ctx arguments to non-declarations and mismatched param
       [chunk(code)],
       new Set(['capturePrimordials', 'installReporter', 'helper', 'inspect']),
     ),
+  )
+})
+
+test('secret flow rejects spreads before ctx even when the syntactic parameter matches', () => {
+  const code = minimal.replace(
+    'installReporter(window);',
+    'function f(value, ctx) {} function inspect(ctx) { f(...[], ctx); } installReporter(window);',
+  )
+  assert.throws(
+    () =>
+      validateBundle(
+        [chunk(code)],
+        new Set(['capturePrimordials', 'installReporter', 'f', 'inspect']),
+      ),
+    /ctx call argument requires/,
   )
 })
 

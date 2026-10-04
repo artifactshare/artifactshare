@@ -110,8 +110,11 @@ export function installReporter(win: ReporterWindow) {
   ctx.win.addEventListener('load', function () {
     if (!ctx.pendingHighlights.length && !ctx.pendingAnchors.length) return
     let engine = createTextAnchorEngine(anchorRoot(ctx))
-    applyHighlights(ctx, ctx.pendingHighlights, engine)
-    verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    try {
+      applyHighlights(ctx, ctx.pendingHighlights, engine)
+    } finally {
+      verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    }
   })
   ctx.win.addEventListener('load', () => schedulePositionBadges(ctx))
   ctx.win.addEventListener('load', () => updateMarkdownToc(ctx))

@@ -1601,7 +1601,7 @@ test('mutation relevance ignores added and removed ignored nodes but not comment
 
 test('SVG highlights keep text verification updating after page Array.some throws', async () => {
   const doc = await fixture(
-    '<svg width="400" height="100"><text x="20" y="50">SVG words</text></svg><p id="words">selected words</p>',
+    '<svg width="400" height="100"><text x="20" y="50">SVG words</text></svg><p>painted words</p><p id="words">selected words</p>',
   )
   const realm = doc.defaultView as Window & typeof globalThis
   const errors: string[] = []
@@ -1627,12 +1627,19 @@ test('SVG highlights keep text verification updating after page Array.some throw
           threadId: 'svg',
           quotedText: 'SVG words',
           selectorFormat: 'quote-v1',
+          status: 'resolved',
+        },
+        {
+          threadId: 'painted',
+          quotedText: 'painted words',
+          selectorFormat: 'quote-v1',
         },
       ],
     })
     await vi.waitFor(() =>
       expect(doc.querySelector('.ash-comment-highlight-svg')).not.toBeNull(),
     )
+    expect(registry(doc).size).toBeGreaterThan(0)
     send('verify-anchors', {
       verificationId: 1,
       anchors: [
@@ -1682,6 +1689,51 @@ test('SVG highlights keep text verification updating after page Array.some throw
     frame.remove()
   }
 }, 15000)
+
+test('unchanged paint still sends resolutions after page Array.some throws', async () => {
+  const doc = await fixture('<p>painted words</p>')
+  const realm = doc.defaultView as Window & typeof globalThis
+  const highlights = [
+    {
+      threadId: 'painted',
+      quotedText: 'painted words',
+      selectorFormat: 'quote-v1',
+      status: 'resolved',
+    },
+  ]
+  const errors: string[] = []
+  const onError = (event: ErrorEvent) => errors.push(event.message)
+  realm.addEventListener('error', onError)
+  let some: ReturnType<typeof vi.spyOn> | undefined
+  try {
+    send('comment-highlights', { highlights })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    const paint = [...registry(doc).values()][0]
+    expect(paint).toBeDefined()
+    const badge = doc.querySelector('.ash-comment-highlight-badge')
+    const generation = results()!.generation
+    some = vi.spyOn(realm.Array.prototype, 'some').mockImplementation(() => {
+      throw new Error('page some called')
+    })
+    // A new displayed version needs a resolution echo without changing the paint key.
+    send('comment-highlights', { highlights, versionId: 'synthetic-v2' })
+    await vi.waitFor(() => {
+      expect(results()?.generation).toBeGreaterThan(generation)
+      expect(results()?.versionId).toBe('synthetic-v2')
+      expect(results()?.results[0]?.state).toBe('attached')
+    })
+    expect([...registry(doc).values()][0]).toBe(paint)
+    expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
+    expect(some).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+  } finally {
+    some?.mockRestore()
+    realm.removeEventListener('error', onError)
+    frame.remove()
+  }
+})
 
 test.each(['false', 'throw'])(
   'text-only verification survives a %s page Array.some and later mutations',

@@ -28,8 +28,11 @@ export function rebuildAfterMutations(ctx: ReporterState) {
     // Ranges are live DOM objects: rebuild even for equal-value node replacement.
     ctx.win.clearTimeout(ctx.resolveTimer)
     ctx.resolveStartedAt = 0
-    applyHighlights(ctx, ctx.pendingHighlights, engine)
-    verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    try {
+      applyHighlights(ctx, ctx.pendingHighlights, engine)
+    } finally {
+      verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    }
   } else {
     invalidateChangedPaint(ctx, engine)
     ctx.win.clearTimeout(ctx.resolveTimer)
@@ -40,8 +43,11 @@ export function rebuildAfterMutations(ctx: ReporterState) {
         ctx.resolveStartedAt = 0
         if (snapshotGeneration !== ctx.anchorSnapshotGeneration)
           engine = createTextAnchorEngine(anchorRoot(ctx))
-        applyHighlights(ctx, ctx.pendingHighlights, engine)
-        verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        try {
+          applyHighlights(ctx, ctx.pendingHighlights, engine)
+        } finally {
+          verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        }
       },
       Math.min(300, Math.max(0, 1000 - (Date.now() - ctx.resolveStartedAt))),
     )
