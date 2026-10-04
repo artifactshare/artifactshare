@@ -119,6 +119,7 @@ function Harness({
     currentUserId: 'u1',
     currentVersionId: 'v1',
     initialThreads: threads,
+    entryNewCommentMessages: context.newCommentMessages,
     targetCommentId,
     liveEnabled: false,
   })
@@ -204,7 +205,11 @@ async function mount(fixture: Parameters<typeof Harness>[0]) {
   root = createRoot(host)
   root.render(<Harness {...fixture} />)
   await vi.waitFor(() =>
-    expect(document.querySelector('[data-revisit-comments]')).not.toBeNull(),
+    expect(
+      document.querySelector(
+        fixture.context.commentCount > 0 ? '[data-revisit-comments]' : 'output',
+      ),
+    ).not.toBeNull(),
   )
 }
 afterEach(() => {
@@ -344,8 +349,15 @@ test('a count clicked after closing the panel focuses once and switching files c
     page.getByRole('button', { name: 'Comments', exact: true }),
   )
   await expect
-    .element(page.getByRole('tab', { name: 'Open', exact: true }))
+    .element(page.getByRole('tab', { name: 'All', exact: true }))
     .toHaveAttribute('aria-selected', 'true')
+  await vi.waitFor(() =>
+    expect(document.activeElement?.id).toBe('comment-card-thread-first'),
+  )
+  expect(document.querySelector('output')?.dataset.target).toBe('thread-first')
+  expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  // Ordinary opening uses the entry target without dismissing the count hint.
+  expect(document.querySelector('[data-revisit-comments]')).not.toBeNull()
   // Wait for the sheet to close before clicking the count hint underneath it.
   await userEvent.click(
     page.getByRole('button', { name: 'Close', exact: true }),
@@ -366,6 +378,98 @@ test('a count clicked after closing the panel focuses once and switching files c
   )
   expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
 })
+
+for (const width of [390, 1280]) {
+  test.each(['artifact', 'resolved', 'orphaned'] as const)(
+    `first ordinary open scrolls and focuses new %s comments at ${width}px`,
+    async (kind) => {
+      await page.viewport(width, 800)
+      await mount(entryFixture(kind))
+      await userEvent.click(
+        page.getByRole('button', { name: 'Comments', exact: true }),
+      )
+      await vi.waitFor(() =>
+        expect(
+          document.getElementById('comment-card-thread-first'),
+        ).not.toBeNull(),
+      )
+      const card = document.getElementById('comment-card-thread-first')!
+      await vi.waitFor(() => expect(document.activeElement).toBe(card))
+      await Promise.all(
+        document
+          .querySelector('[data-slot="sheet-content"]')!
+          .getAnimations({ subtree: true })
+          .map((animation) => animation.finished.catch(() => {})),
+      )
+      await waitForBrowserLayout()
+      expect(document.activeElement).toBe(card)
+      expect(document.querySelector('output')?.dataset.target).toBe(
+        'thread-first',
+      )
+      await expect
+        .element(page.getByRole('tab', { name: 'All', exact: true }))
+        .toHaveAttribute('aria-selected', 'true')
+      const list = card.parentElement!
+      expect(list.scrollTop).toBeGreaterThan(0)
+      const label = card.querySelector(
+        '[data-comment-message-meta]',
+      )!.firstElementChild!
+      expect(label.textContent).toBe('New')
+      expect(label.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        list.getBoundingClientRect().top,
+      )
+      expect(label.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        list.getBoundingClientRect().bottom,
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'Close', exact: true }),
+      )
+      await vi.waitFor(() =>
+        expect(document.activeElement?.textContent).toBe('Comments'),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'Comments', exact: true }),
+      )
+      await waitForBrowserLayout()
+      expect(document.querySelector('output')?.dataset.target).toBe('')
+      expect(document.activeElement).not.toBe(card)
+      expect(document.querySelector('[data-new-comment-thread]')).not.toBeNull()
+    },
+  )
+
+  test(`ordinary open keeps a deep-link target ahead of new comments at ${width}px`, async () => {
+    await page.viewport(width, 800)
+    await mount({ ...entryFixture('artifact'), targetCommentId: 'old-0' })
+    await expect
+      .element(page.getByRole('tab', { name: 'Open', exact: true }))
+      .toBeVisible()
+    await userEvent.click(
+      page.getByRole('button', { name: 'Comments', exact: true }),
+    )
+    await waitForBrowserLayout()
+    expect(document.querySelector('output')?.dataset.target).toBe('old-0')
+    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+    expect(document.activeElement?.id).not.toBe('comment-card-thread-first')
+  })
+
+  test(`ordinary open without new messages has no target at ${width}px`, async () => {
+    await page.viewport(width, 800)
+    const fixture = entryFixture('artifact')
+    fixture.context.commentCount = 0
+    fixture.context.newCommentMessages = []
+    await mount(fixture)
+    await userEvent.click(
+      page.getByRole('button', { name: 'Comments', exact: true }),
+    )
+    await expect
+      .element(page.getByRole('tab', { name: 'Open', exact: true }))
+      .toHaveAttribute('aria-selected', 'true')
+    await waitForBrowserLayout()
+    expect(document.querySelector('output')?.dataset.target).toBe('')
+    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+    expect(document.querySelector('[data-new-comment-thread]')).toBeNull()
+  })
+}
 
 test.each(['deep-link', 'anchor-navigation'] as const)(
   'ordinary Comments preserves a paginated resolved %s target',

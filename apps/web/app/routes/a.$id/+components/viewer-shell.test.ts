@@ -670,6 +670,27 @@ describe('opening an existing comment target', () => {
     },
   )
 
+  test('opening is remembered across close and reset for another artifact', () => {
+    expect(base.panelHasOpened).toBe(false)
+    const opened = viewerCommentReducer(base, {
+      type: 'panel-open-changed',
+      open: true,
+    })
+    const closed = viewerCommentReducer(opened, {
+      type: 'panel-open-changed',
+      open: false,
+    })
+    expect(closed.panelHasOpened).toBe(true)
+    expect(
+      viewerCommentReducer(closed, {
+        type: 'artifact-changed',
+        artifactId: 's2',
+        currentVersionId: 'v2',
+        threads: [],
+      }).panelHasOpened,
+    ).toBe(false)
+  })
+
   test('a resolved revisit request replaces an existing target', () => {
     const targeted = viewerCommentReducer(base, {
       type: 'thread-targeted',

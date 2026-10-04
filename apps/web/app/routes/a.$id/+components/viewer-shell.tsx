@@ -133,6 +133,7 @@ interface ViewerCommentState {
   threads: ReadonlyArray<CommentThreadView>
   presence: ReadonlyArray<ViewerPresence>
   panelOpen: boolean
+  panelHasOpened: boolean
   focusTargetOnOpen: boolean
   targetThreadId: string | null
   targetThreadScroll: 'center' | 'start'
@@ -402,6 +403,7 @@ export function createViewerCommentState(
     threads,
     presence: emptyPresence,
     panelOpen: false,
+    panelHasOpened: false,
     focusTargetOnOpen: false,
     targetThreadId,
     targetThreadScroll: 'start',
@@ -464,6 +466,7 @@ export function viewerCommentReducer(
         ? {
             ...state,
             panelOpen: true,
+            panelHasOpened: true,
             // Without a matching new message, open normally and preserve
             // existing deep-link/anchor navigation without a new focus request.
             targetThreadId: action.revisitThreadId ?? state.targetThreadId,
@@ -492,6 +495,7 @@ export function viewerCommentReducer(
       return {
         ...state,
         panelOpen: true,
+        panelHasOpened: true,
         targetThreadId: action.threadId,
         focusTargetOnOpen: false,
         targetThreadScroll: action.scroll ?? 'start',
@@ -546,6 +550,7 @@ export function useViewerComments({
   currentUserId,
   currentVersionId,
   initialThreads,
+  entryNewCommentMessages,
   targetCommentId,
   liveEnabled,
   onViewCountChanged,
@@ -559,6 +564,7 @@ export function useViewerComments({
   currentUserId: string | null
   currentVersionId: string | null
   initialThreads: ReadonlyArray<CommentThreadView>
+  entryNewCommentMessages?: ReadonlyArray<NewCommentMessage>
   targetCommentId: string | null
   liveEnabled: boolean
   onViewCountChanged?: (viewCount: number) => void
@@ -712,19 +718,32 @@ export function useViewerComments({
       newCommentMessages?: ReadonlyArray<NewCommentMessage>,
     ) => {
       returnFocusRef.current = returnFocusTo ?? getActiveElement()
-      requestedFilterRef.current = requestedFilter
-      onPanelOpenedRef.current?.()
+      // Only the first ordinary open gets the entry shortcut. Reopening must
+      // not replay it, and explicit navigation always keeps its own target.
+      const pairs =
+        newCommentMessages ??
+        (!state.panelHasOpened && !state.targetThreadId
+          ? entryNewCommentMessages
+          : undefined)
       const threadId =
-        newCommentMessages === undefined
+        pairs === undefined
           ? undefined
-          : firstNewCommentThread(panelThreads, newCommentMessages)
+          : firstNewCommentThread(panelThreads, pairs)
+      requestedFilterRef.current = threadId ? 'all' : requestedFilter
+      onPanelOpenedRef.current?.()
       dispatchComment({
         type: 'panel-open-changed',
         open: true,
         revisitThreadId: threadId,
       })
     },
-    [onPanelOpenedRef, panelThreads],
+    [
+      onPanelOpenedRef,
+      panelThreads,
+      entryNewCommentMessages,
+      state.panelHasOpened,
+      state.targetThreadId,
+    ],
   )
 
   const applyAnchorResolutions = useCallback(
@@ -2050,6 +2069,7 @@ function useViewerShellController({
     currentUserId: user?.id ?? null,
     currentVersionId: artifact.currentVersionId ?? null,
     initialThreads: initialCommentThreads,
+    entryNewCommentMessages: artifact.revisitContext?.newCommentMessages,
     targetCommentId,
     liveEnabled: commentsEnabled,
     onViewCountChanged: handleViewCountChanged,
