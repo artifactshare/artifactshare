@@ -81,6 +81,8 @@ export function capturePrimordials(win: ReporterWindow) {
   ) => void = win.Function.prototype.call.bind(
     win.EventTarget.prototype.addEventListener,
   )
+  const rangeToString: (range: Range) => string =
+    win.Function.prototype.call.bind(win.Range.prototype.toString)
   const arrayMap: <T, R>(
     array: ArrayLike<T>,
     callback: (value: T, index: number, array: ArrayLike<T>) => R,
@@ -133,6 +135,7 @@ export function capturePrimordials(win: ReporterWindow) {
     altKeyGet,
     preventDefault,
     addEventListener,
+    rangeToString,
     arrayMap,
     weakMapDelete,
     weakMapGet,

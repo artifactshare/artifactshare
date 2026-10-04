@@ -1,3 +1,4 @@
+import { anchorIgnoreAttribute, highlightStyleId } from './anchor-engine.js'
 import type { TextAnchorEngine } from './anchor-engine.js'
 import type {
   CommentHighlight,
@@ -18,10 +19,10 @@ import { verifyAnchors } from './annotate.js'
 import { send } from './messaging.js'
 
 export function ensureCommentStyles(ctx: ReporterState) {
-  if (ctx.doc.getElementById('ash-comment-highlight-style')) return
+  if (ctx.doc.getElementById(highlightStyleId())) return
   let style = ctx.doc.createElement('style')
-  style.setAttribute('data-anchor-ignore', '')
-  style.id = 'ash-comment-highlight-style'
+  style.setAttribute(anchorIgnoreAttribute(), '')
+  style.id = highlightStyleId()
   style.textContent =
     '.ash-comment-highlight-badge::after{content:attr(data-count);}'
   ctx.doc.head.appendChild(style)
@@ -51,79 +52,77 @@ export function clearMarks(ctx: ReporterState, preserveBadges = false) {
   for (let s = 0; s < svgOverlays.length; s++) svgOverlays[s].remove()
   if (!preserveBadges) ctx.svgActiveThreads = {}
   ctx.appliedHighlightKey = ''
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (style)
     style.textContent =
       '.ash-comment-highlight-badge::after{content:attr(data-count);}'
 }
 
+// Skipped writes compare live reporter-owned paint and DOM state.
 export function paintIntact(
   ctx: ReporterState,
   highlightsById: Map<string, ResolvedHighlight>,
 ) {
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (
     ctx.paintedAnchors.length &&
     (!style || !style.isConnected || style.textContent !== textPaintCss(ctx))
   )
     return false
-  if (
-    typeof ctx.win.CSS !== 'undefined' &&
-    ctx.win.CSS.highlights &&
-    ctx.textPaints.some(function (paint) {
-      return (
-        ctx.win.CSS.highlights.get(paint.name) !== paint.highlight ||
-        paint.highlight.size !== paint.ranges.length ||
-        paint.ranges.some(function (range) {
-          return !paint.highlight.has(range)
-        })
-      )
-    })
-  )
-    return false
-  if (
-    ctx.badges.some(function (entry) {
-      return (
-        !highlightsById.has(entry.highlight.threadId) ||
-        !entry.badge.isConnected ||
-        (entry.overlays &&
-          Object.values(entry.overlays).some(function (shape) {
-            return !shape.isConnected
-          }))
-      )
-    })
-  )
-    return false
-  return ctx.paintedAnchors.every(function (entry) {
-    let next = highlightsById.get(entry.highlight.threadId)
-    if (
-      !next ||
-      next.ranges.length !== entry.ranges.length ||
-      entry.ranges.some(function (range, index) {
-        let current = next.ranges[index]
-        return (
-          range.startContainer !== current.startContainer ||
-          range.startOffset !== current.startOffset ||
-          range.endContainer !== current.endContainer ||
-          range.endOffset !== current.endOffset
-        )
-      })
-    )
-      return false
-    if (entry.groups.length) {
-      let groups = svgTextRange(ctx, entry.ranges)
+  if (typeof ctx.win.CSS !== 'undefined' && ctx.win.CSS.highlights) {
+    for (let i = 0; i < ctx.textPaints.length; i++) {
+      let paint = ctx.textPaints[i]
       if (
-        groups.length !== entry.groups.length ||
-        groups.some(function (group, index) {
-          let previous = entry.groups[index]
-          return (
-            group.text !== previous.text ||
-            group.start !== previous.start ||
-            group.end !== previous.end
-          )
-        })
+        ctx.win.CSS.highlights.get(paint.name) !== paint.highlight ||
+        paint.highlight.size !== paint.ranges.length
       )
         return false
+      for (let j = 0; j < paint.ranges.length; j++) {
+        if (!paint.highlight.has(paint.ranges[j])) return false
+      }
+    }
+  }
+  for (let i = 0; i < ctx.badges.length; i++) {
+    let entry = ctx.badges[i]
+    if (
+      !highlightsById.has(entry.highlight.threadId) ||
+      !entry.badge.isConnected
+    )
+      return false
+    if (entry.overlays) {
+      let shapes = Object.values(entry.overlays)
+      for (let j = 0; j < shapes.length; j++) {
+        if (!shapes[j].isConnected) return false
+      }
+    }
+  }
+  return ctx.paintedAnchors.every(function (entry) {
+    let next = highlightsById.get(entry.highlight.threadId)
+    if (!next || next.ranges.length !== entry.ranges.length) return false
+    for (let i = 0; i < entry.ranges.length; i++) {
+      let range = entry.ranges[i]
+      let current = next.ranges[i]
+      if (
+        range.startContainer !== current.startContainer ||
+        range.startOffset !== current.startOffset ||
+        range.endContainer !== current.endContainer ||
+        range.endOffset !== current.endOffset
+      )
+        return false
+    }
+    if (entry.groups.length) {
+      let groups = svgTextRange(ctx, entry.ranges)
+      if (groups.length !== entry.groups.length) return false
+      for (let i = 0; i < groups.length; i++) {
+        let group = groups[i]
+        let previous = entry.groups[i]
+        if (
+          group.text !== previous.text ||
+          group.start !== previous.start ||
+          group.end !== previous.end
+        )
+          return false
+      }
     }
     return true
   })
@@ -368,7 +367,7 @@ export function textPaintCss(ctx: ReporterState) {
 }
 
 export function refreshTextPaints(ctx: ReporterState) {
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (!style) return
   let css = textPaintCss(ctx)
   if (style.textContent !== css) style.textContent = css
@@ -477,7 +476,7 @@ export function wrapRange(
   }
   if (svgWrapped) return
   let badge = takeBadge(ctx, highlight)
-  badge.setAttribute('data-anchor-ignore', '')
+  badge.setAttribute(anchorIgnoreAttribute(), '')
   badge.type = 'button'
   badge.className = 'ash-comment-highlight-badge'
   badge.setAttribute('aria-label', commentLabel(ctx, highlight))
@@ -526,13 +525,17 @@ export function scheduleChecking(ctx: ReporterState) {
     function () {
       ctx.checkingTimer = undefined
       let engine = createTextAnchorEngine(anchorRoot(ctx))
-      applyHighlights(ctx, ctx.pendingHighlights, engine)
-      verifyAnchors(ctx, ctx.pendingAnchors, engine)
+      try {
+        applyHighlights(ctx, ctx.pendingHighlights, engine)
+      } finally {
+        verifyAnchors(ctx, ctx.pendingAnchors, engine)
+      }
     },
     Math.max(1, Math.min.apply(null, deadlines) - Date.now()),
   )
 }
 
+// Skip writes only while live reporter-owned values still match intact paint.
 export function applyHighlights(
   ctx: ReporterState,
   list: CommentHighlight[],
@@ -621,17 +624,21 @@ export function applyHighlights(
   resolvedHighlights.forEach(function (entry) {
     let highlight = entry.highlight,
       resolved = entry.resolved
-    let covered =
-      resolved &&
-      highlight.status === 'resolved' &&
-      resolvedHighlights.some(function (other) {
-        return (
+    let covered = false
+    if (resolved && highlight.status === 'resolved') {
+      for (let i = 0; i < resolvedHighlights.length; i++) {
+        let other = resolvedHighlights[i]
+        if (
           other.highlight.status !== 'resolved' &&
           other.resolved &&
           resolved.textStart < other.resolved.textEnd &&
           other.resolved.textStart < resolved.textEnd
-        )
-      })
+        ) {
+          covered = true
+          break
+        }
+      }
+    }
     if (resolved) {
       delete ctx.checkingDeadlines[highlight.threadId]
       if (repaint) wrapRange(ctx, entry.highlight, entry.ranges, covered)

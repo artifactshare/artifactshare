@@ -1,10 +1,7 @@
+import { anchorIgnoreAttribute } from './anchor-engine.js'
 import type { TextAnchorEngine } from './anchor-engine.js'
 import type { VerificationAnchor, ReporterState } from './state.js'
-import {
-  ANCHOR_IGNORE_ATTRIBUTE,
-  commentUiSelector,
-  createTextAnchorEngine,
-} from './anchor-engine.js'
+import { commentUiSelector, createTextAnchorEngine } from './anchor-engine.js'
 import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
@@ -12,7 +9,7 @@ import { send } from './messaging.js'
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
   let style = ctx.doc.createElement('style')
-  style.setAttribute(ANCHOR_IGNORE_ATTRIBUTE, '')
+  style.setAttribute(anchorIgnoreAttribute(), '')
   style.id = 'as-preview-annotate-style'
   style.textContent =
     '.as-preview-annotate-hover{outline:2px solid #6366f1 !important;outline-offset:2px;}' +
@@ -83,13 +80,14 @@ export function verifyAnchors(
   ctx.pendingAnchors = anchors || []
   if (!ctx.pendingAnchors.length) return
   let verdicts = []
-  if (
-    !engine &&
-    ctx.pendingAnchors.some(function (anchor) {
-      return anchor.kind === 'text'
-    })
-  )
-    engine = createTextAnchorEngine(anchorRoot(ctx))
+  if (!engine) {
+    for (let i = 0; i < ctx.pendingAnchors.length; i++) {
+      if (ctx.pendingAnchors[i].kind === 'text') {
+        engine = createTextAnchorEngine(anchorRoot(ctx))
+        break
+      }
+    }
+  }
   for (let i = 0; i < (anchors || []).length; i++) {
     let anchor = anchors[i] || {}
     let attached = false

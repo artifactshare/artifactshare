@@ -16,6 +16,7 @@ import {
 } from './annotate.js'
 import type { ReporterState } from './state.js'
 
+// Secret-bearing messages reach only captured messaging primordials.
 export function send(ctx: ReporterState, message: Record<string, unknown>) {
   try {
     let payload = createMessagePayload(ctx.primordials, message)

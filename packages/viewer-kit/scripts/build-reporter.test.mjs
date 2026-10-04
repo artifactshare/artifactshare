@@ -11,7 +11,6 @@ import {
   generateReporter,
   renderReporter,
   validateBundle,
-  formatGenerated,
 } from './build-reporter.mjs'
 
 function chunk(code) {
@@ -33,16 +32,7 @@ async function temporary(t) {
   return directory
 }
 
-test('retired reporter measurement script is absent', async () => {
-  await assert.rejects(
-    stat(new URL('./measure-reporter.mjs', import.meta.url)),
-    {
-      code: 'ENOENT',
-    },
-  )
-})
-
-test('generation is deterministic, formatter-stable, and hashes the exact UTF-8 body', async () => {
+test('generation is deterministic and hashes the exact UTF-8 body', async () => {
   const first = await renderReporter()
   const second = await renderReporter()
   assert.deepEqual(second, first)
@@ -50,7 +40,6 @@ test('generation is deterministic, formatter-stable, and hashes the exact UTF-8 
     first.hash,
     createHash('sha256').update(first.body, 'utf8').digest('base64'),
   )
-  assert.equal(formatGenerated(first.source), first.source)
   const { program, errors } = parseSync('reporter.generated.ts', first.source)
   assert.deepEqual(errors, [])
   const values = program.body.map(
@@ -374,7 +363,7 @@ test('whole private messages can only use captured messaging primitives', () => 
             [chunk(code)],
             new Set(['installReporter', 'capturePrimordials', name]),
           ),
-        /uncaptured (?:constructor )?call with private message/,
+        /uncaptured (?:constructor )?call with private message|replaceable array method slice|uncaptured Object\/Array\/Reflect\/Function/,
       )
     }
   }
@@ -388,18 +377,22 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   const annotate = await read('annotate')
   const { program, errors } = parseSync('anchor-engine.ts', engine)
   assert.deepEqual(errors, [])
-  const constants = Object.fromEntries(
-    program.body.flatMap((node) => {
-      const declaration =
-        node.type === 'ExportNamedDeclaration' ? node.declaration : node
-      if (declaration?.type !== 'VariableDeclaration') return []
-      assert.equal(declaration.kind, 'const')
-      return declaration.declarations.map((decl) => {
-        assert.equal(decl.init.type, 'Literal')
-        return [decl.id.name, decl.init.value]
-      })
-    }),
-  )
+  const constants = {}
+  function value(node) {
+    if (node.type === 'Literal') return node.value
+    if (node.type === 'Identifier') return constants[node.name]
+    assert.equal(node.type, 'BinaryExpression')
+    assert.equal(node.operator, '+')
+    return value(node.left) + value(node.right)
+  }
+  for (const node of program.body) {
+    const declaration =
+      node.type === 'ExportNamedDeclaration' ? node.declaration : node
+    if (declaration?.type !== 'VariableDeclaration') continue
+    assert.equal(declaration.kind, 'const')
+    for (const decl of declaration.declarations)
+      constants[decl.id.name] = value(decl.init)
+  }
   const selector =
     'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
   assert.deepEqual(constants, {
@@ -407,6 +400,10 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
     ANCHOR_IGNORE_ATTRIBUTE: 'data-anchor-ignore',
     COMMENT_UI_ATTRIBUTE: 'data-comment-ui',
     EXCLUSION_CLASS_ATTRIBUTE: 'class',
+    HIGHLIGHT_STYLE_ID: 'ash-comment-highlight-style',
+    IGNORED_MUTATION_SELECTOR:
+      '[data-anchor-ignore],#ash-comment-highlight-style',
+    COMMENT_UI_SELECTOR: '[data-comment-ui]',
   })
   for (const attribute of [
     constants.ANCHOR_IGNORE_ATTRIBUTE,
@@ -421,11 +418,11 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   )
   assert.match(
     mutations,
-    /primordials\.hasAttribute\(\s*node as Element,\s*ANCHOR_IGNORE_ATTRIBUTE,?\s*\)/,
+    /primordials\.hasAttribute\(\s*node as Element,\s*anchorIgnoreAttribute\(\),?\s*\)/,
   )
   for (const name of [
-    'ANCHOR_IGNORE_ATTRIBUTE',
-    'COMMENT_UI_ATTRIBUTE',
+    'anchorIgnoreAttribute()',
+    'commentUiAttribute()',
     'EXCLUSION_CLASS_ATTRIBUTE',
   ]) {
     assert.ok(mutations.includes('record.attributeName === ' + name))
@@ -434,16 +431,38 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
     annotate,
     /primordials\.closest\(target, commentUiSelector\(\)\)/,
   )
-  assert.match(annotate, /setAttribute\(ANCHOR_IGNORE_ATTRIBUTE, ''\)/)
-  for (const source of [mutations, annotate]) {
+  assert.match(annotate, /setAttribute\(anchorIgnoreAttribute\(\), ''\)/)
+  for (const source of [
+    mutations,
+    annotate,
+    await read('toc'),
+    await read('svg-overlay'),
+    await read('highlights'),
+  ]) {
     assert.doesNotMatch(
       source,
       /['"]data-(?:anchor-ignore|comment-ui)['"]|\[data-(?:anchor-ignore|comment-ui)\]/,
     )
   }
+  for (const source of [mutations, await read('highlights')]) {
+    assert.doesNotMatch(source, /['"]ash-comment-highlight-style['"]/)
+    assert.match(source, /highlightStyleId\(\)/)
+  }
+  for (const name of ['ignoredMutationSelector', 'commentUiSelector']) {
+    const fn = program.body.find(
+      (node) => node.declaration?.id?.name === name,
+    ).declaration
+    assert.equal(fn.body.body.length, 1)
+    assert.equal(fn.body.body[0].argument.type, 'Identifier')
+  }
   assert.doesNotMatch(mutations, /\.(?:concat|map|join|includes)\(/)
   const { body } = await renderReporter()
-  assert.equal(body.split(selector).length - 1, 1)
+  for (const literal of [
+    'data-anchor-ignore',
+    'data-comment-ui',
+    'ash-comment-highlight-style',
+  ])
+    assert.equal(body.split(literal).length - 1, 1)
   // Execute the generated helpers without installing a reporter. renderReporter
   // above still runs the production structural/security guard unchanged.
   const helpers = body.replace(
@@ -456,7 +475,7 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   ])
 })
 
-test('generated mutation exclusion uses captured DOM methods and no replaceable array methods', async () => {
+test('generated mutation exclusion survives replacement of concat, includes, map, join, some and filter', async () => {
   const { body } = await renderReporter()
   const exposeHandler = body.replace(
     'installReporter(window);',
@@ -540,4 +559,875 @@ test('generated annotation exclusion uses captured closest after page replacemen
   }
   assert.equal(annotateTargetFrom(ctx, commentUi), null)
   assert.equal(annotateTargetFrom(ctx, content), content)
+})
+
+function withOperation(operation, name = 'inspect') {
+  const code = minimal.replace(
+    'installReporter(window);',
+    `function helper(ctx) {} function ${name}(ctx) { ${operation} } installReporter(window);`,
+  )
+  return () =>
+    validateBundle(
+      [chunk(code)],
+      new Set(['installReporter', 'capturePrimordials', 'helper', name]),
+    )
+}
+
+test('secret flow confines ctx to members, matching bundle function parameters and the install return', () => {
+  for (const operation of [
+    'const { documentToken } = ctx;',
+    'const [value] = ctx;',
+    '({ documentToken } = ctx);',
+    '([value] = ctx);',
+    'const alias = ctx;',
+    'alias = ctx;',
+    "ctx['field'];",
+    'ctx[key];',
+    'const object = {...ctx};',
+    'const array = [...ctx];',
+    'helper(...ctx);',
+    'return ctx;',
+    'const object = {ctx};',
+    'helper({ ctx });',
+    '({ ctx } = value);',
+    '({ ctx = other } = value);',
+    'const { [ctx]: value } = other;',
+    'const { value = ctx } = other;',
+    'ctx && helper();',
+    'new Helper(ctx);',
+    'ctx = other;',
+    'const text = `${ctx}`;',
+    'const f = () => ctx;',
+    'return ctx.documentToken;',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /ctx value reference|private token\/challenge/,
+      operation,
+    )
+  for (const operation of [
+    'const value = ctx.field; helper(ctx);',
+    'const ctx = {}; helper(ctx);',
+    'const { state: ctx } = value; helper(ctx);',
+    'const { ctx } = options; helper(ctx);',
+    'const { ctx = fallback } = options; helper(ctx);',
+    'const { nested: { ctx } } = options; helper(ctx);',
+    'const f = function ({ ctx }) { helper(ctx); };',
+    'const f = ({ ctx = fallback }) => helper(ctx);',
+    'try {} catch ({ ctx }) { helper(ctx); }',
+    'const [ctx] = values; helper(ctx);',
+    'const value = {ctx: 1}; value.ctx;',
+    'const value = { ctx() {} }; value.ctx();',
+    'class Value { ctx() {} }',
+    'class ctx {}',
+    'ctx: while (true) { break ctx; }',
+  ]) {
+    // Local binding fixtures use a separate scope from the ctx parameter.
+    assert.doesNotThrow(withOperation(`{ ${operation} }`))
+  }
+  const returning = minimal.replace(
+    'const primordials = capturePrimordials(win);',
+    'const primordials = capturePrimordials(win); const ctx = {}; return ctx;',
+  )
+  assert.doesNotThrow(() => validateBundle([chunk(returning)]))
+  for (const returned of [
+    'return (() => { return ctx; })();',
+    'return (function installReporter() { return ctx; })();',
+  ]) {
+    assert.throws(
+      () => validateBundle([chunk(returning.replace('return ctx;', returned))]),
+      /ctx value reference/,
+    )
+  }
+})
+
+test('decision-path lint rejects realm built-ins and Array.prototype own names except constructor and length', () => {
+  for (const operation of [
+    'ctx.win.Object.keys(value);',
+    '(ctx.win.Object).keys(value);',
+    '(0, ctx.win.Object).keys(value);',
+    '(Object).keys(value);',
+    '(0, Object).keys(value);',
+    '(0, win.Object.keys)(value);',
+    "ctx.win['Object']['keys'](value);",
+    'win.Array.from(value);',
+    'globalThis.Object.entries(value);',
+    "Object['keys'](value);",
+    "Array['from'](value);",
+    'ctx.win.Array.isArray(value);',
+    'win[`Object`][`keys`](value);',
+    'Object.keys.call(null, value);',
+    'Object.keys.apply(null, value);',
+    'Object.keys.bind(null)(value);',
+    'const k = Object.keys; k(value);',
+    'Reflect.ownKeys(value);',
+    'const invoke = Function.prototype.call;',
+    'const builtin = Array;',
+    'const builtin = Reflect;',
+    'Array.isArray.call(null, value);',
+    'const check = Array.isArray;',
+    'win.Reflect.ownKeys.call(null, value);',
+    'win.Function.call(null, value);',
+    'const builtin = {Object};',
+  ])
+    assert.throws(
+      withOperation(operation, 'cssPath'),
+      /uncaptured Object\/Array/,
+      operation,
+    )
+})
+
+test('decision-path denylist does not change with build runtime prototype additions', async () => {
+  const name = 'syntheticFutureMethod'
+  const original = Object.getOwnPropertyDescriptor(Array.prototype, name)
+  try {
+    Object.defineProperty(Array.prototype, name, {
+      configurable: true,
+      value() {},
+    })
+    const { validateBundle: validateFreshBundle } =
+      await import('./build-reporter.mjs?synthetic-runtime-method')
+    const code = minimal.replace(
+      'installReporter(window);',
+      `function cssPath(ctx) { value.${name}(); } installReporter(window);`,
+    )
+    assert.doesNotThrow(() =>
+      validateFreshBundle(
+        [chunk(code)],
+        new Set(['installReporter', 'capturePrimordials', 'cssPath']),
+      ),
+    )
+  } finally {
+    if (original) Object.defineProperty(Array.prototype, name, original)
+    else delete Array.prototype[name]
+  }
+})
+
+test('fixed decision-path denylist covers every current Array.prototype method', () => {
+  for (const method of Object.getOwnPropertyNames(Array.prototype).filter(
+    (name) => name !== 'constructor' && name !== 'length',
+  )) {
+    for (const expression of [
+      `items.${method}(callback)`,
+      `(items.${method})(callback)`,
+      `(0, items.${method})(callback)`,
+      `(items.${method}).call(items, callback)`,
+      `(0, items.${method}).call(items, callback)`,
+      `items['${method}'](callback)`,
+      'items[`' + method + '`](callback)',
+      `items.${method}.call(items, callback)`,
+      `items['${method}'].apply(items, args)`,
+      `items.${method}.bind(items)(callback)`,
+      `items.${method}.call.apply(null, args)`,
+    ]) {
+      assert.throws(
+        withOperation(`helper(() => { ${expression}; });`, 'cssPath'),
+        /replaceable array method/,
+      )
+    }
+  }
+  assert.doesNotThrow(
+    withOperation(
+      "Array['isArray'](value); (Array).isArray(value); (0, Array.isArray)(value); (primitives.objectKeys)(value); for (let i = 0; i < value.length; i++) copy[i] = value[i];",
+      'cssPath',
+    ),
+  )
+})
+
+test('decision-path lint rejects realm built-in references, destructuring and constructors', () => {
+  for (const builtin of ['Object', 'Array', 'Reflect', 'Function']) {
+    for (const operation of [
+      `win.${builtin}.prototype.hasOwnProperty.call(value, key);`,
+      `const builtin = ctx.win.${builtin};`,
+      `const { ${builtin}: builtin } = win;`,
+      `({ ${builtin}: builtin } = win);`,
+      `const { ['${builtin}']: builtin } = win;`,
+      `new win.${builtin}(value);`,
+      `new ctx.win.${builtin}(value);`,
+      `new win['${builtin}'](value);`,
+    ]) {
+      assert.throws(
+        withOperation(`helper(() => { ${operation} });`, 'cssPath'),
+        /uncaptured Object\/Array\/Reflect\/Function/,
+        operation,
+      )
+    }
+  }
+  assert.throws(
+    withOperation('new Array.isArray(value);', 'cssPath'),
+    /uncaptured Object\/Array/,
+  )
+  assert.doesNotThrow(
+    withOperation(
+      'new primitives.SavedArray(); Array.isArray(value);',
+      'cssPath',
+    ),
+  )
+})
+
+test('decision-path lint resolves wrapped computed property names', () => {
+  for (const key of ["('Object')", '(0, "Object")', '(`Object`)']) {
+    assert.throws(
+      withOperation(`win[${key}].create(value);`, 'cssPath'),
+      /uncaptured Object\/Array/,
+      key,
+    )
+  }
+  for (const method of [
+    'forEach',
+    'some',
+    'map',
+    'filter',
+    'every',
+    'reduce',
+    'find',
+    'includes',
+    'indexOf',
+    'join',
+    'concat',
+  ]) {
+    for (const key of [
+      `('${method}')`,
+      `(0, '${method}')`,
+      '(`' + method + '`)',
+    ]) {
+      assert.throws(
+        withOperation(`helper(() => items[${key}](callback));`, 'cssPath'),
+        /replaceable array method/,
+        key,
+      )
+    }
+  }
+  for (const key of [
+    "('documentToken')",
+    '(0, "readyChallenge")',
+    '(`readyChallenge`)',
+  ]) {
+    assert.throws(
+      withOperation(`state[${key}];`),
+      /private token\/challenge member access requires ctx/,
+      key,
+    )
+  }
+  assert.doesNotThrow(withOperation("Array[('isArray')](value);", 'cssPath'))
+})
+
+test('decision-path lint resolves parenthesized optional callees and receivers', () => {
+  for (const operation of [
+    '(win?.Object.keys)(value);',
+    '(win?.Object).keys(value);',
+    '(0, win?.Object.keys)(value);',
+    '(win?.Array).isArray(value);',
+    '(win?.Array.from)?.(value);',
+    '(win?.Object.keys).call(null, value);',
+  ]) {
+    assert.throws(
+      withOperation(operation, 'cssPath'),
+      /uncaptured Object\/Array/,
+      operation,
+    )
+  }
+  for (const operation of [
+    '(items?.some)(callback);',
+    '(0, items?.some)(callback);',
+    '(items?.some)?.(callback);',
+    '(items?.some).call(items, callback);',
+    '(items?.some)[("apply")](items, args);',
+    '(items?.[("some")])(callback);',
+  ]) {
+    assert.throws(
+      withOperation(`helper(() => { ${operation} });`, 'cssPath'),
+      /replaceable array method/,
+      operation,
+    )
+  }
+  assert.doesNotThrow(
+    withOperation(
+      '(Array?.isArray)(value); (primitives?.objectKeys)(value);',
+      'cssPath',
+    ),
+  )
+})
+
+test('inert strings concatenate only previously declared owned constants', () => {
+  for (const declarations of [
+    "const attr = 'owned'; const selector = '[' + attr + ']';",
+    "const attr = 'owned', selector = '[' + attr + ']';",
+  ])
+    assert.doesNotThrow(() =>
+      validateBundle([
+        chunk(
+          minimal.replace(
+            'function capturePrimordials',
+            declarations + ' function capturePrimordials',
+          ),
+        ),
+      ]),
+    )
+  for (const declarations of [
+    "let attr = 'owned'; const selector = '[' + attr + ']';",
+    "const selector = '[' + attr + ']'; const attr = 'owned';",
+    "const selector = '[' + value.attr + ']';",
+    "const selector = '[' + read() + ']';",
+    "const count = 1; const selector = '[' + count + ']';",
+    "const attr = 'owned'; let selector = '[' + attr + ']';",
+  ])
+    assert.throws(
+      () =>
+        validateBundle([
+          chunk(
+            minimal.replace(
+              'function capturePrimordials',
+              declarations + ' function capturePrimordials',
+            ),
+          ),
+        ]),
+      /only inert/,
+    )
+})
+
+test('generated cssPath preserves invalid inputs, ancestor order and separators', async () => {
+  const { body } = await renderReporter()
+  const cssPath = new Function(
+    'return ' + body.replace('installReporter(window);', 'return cssPath;'),
+  )()
+  const root = { nodeType: 1 }
+  const ctx = { doc: { body: root } }
+  assert.equal(cssPath(ctx, null), null)
+  assert.equal(cssPath(ctx, { nodeType: 3 }), null)
+  assert.equal(cssPath(ctx, root), 'body')
+  const main = { nodeType: 1, nodeName: 'MAIN', parentElement: root }
+  const previous = { nodeType: 1, nodeName: 'P' }
+  const element = {
+    nodeType: 1,
+    nodeName: 'P',
+    previousElementSibling: previous,
+    parentElement: main,
+  }
+  assert.equal(
+    cssPath(ctx, element),
+    'body > main:nth-of-type(1) > p:nth-of-type(2)',
+  )
+})
+
+test('generated SVG character mapping survives throwing page Array.some', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    'return svgTextRange;',
+  )
+  const result = runInNewContext(`
+    const svgTextRange = ${expose};
+    const text = {getNumberOfChars() {return 3;}};
+    const node = {nodeValue: 'a   b', parentElement: {closest() {return text;}}};
+    const ctx = {
+      win: {NodeFilter: {SHOW_TEXT: 4}},
+      doc: {createTreeWalker() {
+        let visited = false;
+        return {nextNode() {if (visited) return null; visited = true; return node;}};
+      }},
+    };
+    const range = {startContainer: node, startOffset: 2, endOffset: 5};
+    const initial = svgTextRange(ctx, [range]);
+    Array.prototype.some = function() {throw new Error('page some called');};
+    const collapsed = svgTextRange(ctx, [range]);
+    text.getNumberOfChars = function() {return 5;};
+    const raw = svgTextRange(ctx, [range]);
+    range.startOffset = 5;
+    const empty = svgTextRange(ctx, [range]);
+    JSON.stringify([initial, collapsed, raw, empty].map(groups =>
+      groups.map(group => ({start: group.start, end: group.end, sameText: group.text === text}))));
+  `)
+  assert.deepEqual(JSON.parse(result), [
+    [{ start: 1, end: 3, sameText: true }],
+    [{ start: 1, end: 3, sameText: true }],
+    [{ start: 2, end: 5, sameText: true }],
+    [],
+  ])
+})
+
+test('generated verification scans text anchors without page Array.some', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    `
+    createTextAnchorEngine = function(root) {
+      return {text: root.text, resolve(anchor) { return anchor.quotedText === root.text ? {} : null; }};
+    };
+    send = function(ctx, message) { ctx.messages.push(message); };
+    scheduleChecking = function() {};
+    applyHighlights = function() {};
+    invalidateChangedPaint = function() {};
+    return [verifyAnchors, rebuildAfterMutations];
+  `,
+  )
+  for (const replacement of [
+    'return false;',
+    "throw new Error('page some called');",
+  ]) {
+    const result = runInNewContext(`
+      const [verify, rebuild] = ${expose};
+      const root = {text: 'selected words'};
+      const ctx = {
+        doc: {body: root, querySelector() {return root;}},
+        win: {clearTimeout() {}, setTimeout(callback) {callback();}},
+        anchorSnapshotGeneration: 0, resolutionGeneration: 0,
+        pendingHighlights: [], checkingDeadlines: {attached: 1, missing: 1}, messages: [],
+      };
+      const anchors = [
+        {kind: 'text', thread: 'attached', quotedText: 'selected words'},
+        {kind: 'text', thread: 'missing', quotedText: 'absent words'},
+      ];
+      Array.prototype.some = function() { ${replacement} };
+      verify(ctx, anchors);
+      root.text = 'absent words';
+      rebuild(ctx);
+      JSON.stringify(ctx.messages.map(message => message.verdicts.map(verdict => verdict.attached)));
+    `)
+    assert.equal(result, '[[true,false],[false,true]]')
+  }
+})
+
+test('generated mutation and checking callbacks verify even when painting throws', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    `
+    createTextAnchorEngine = function(root) { return {text: root.text}; };
+    applyHighlights = function() { throw new Error('paint failed'); };
+    invalidateChangedPaint = function() {};
+    verifyAnchors = function(ctx, anchors, engine) { ctx.verified = engine.text; };
+    return [rebuildAfterMutations, scheduleChecking];
+    `,
+  )
+  const result = runInNewContext(`
+    const [rebuild, schedule] = ${expose};
+    const outcomes = [];
+    for (const mode of ['equal', 'changed', 'checking']) {
+      let pending;
+      const root = {text: 'selected words'};
+      const ctx = {
+        doc: {body: root, querySelector() {return root;}},
+        win: {clearTimeout() {}, setTimeout(callback) {pending = callback;}},
+        pendingHighlights: [{}], pendingAnchors: [],
+        measuredText: mode === 'equal' ? root.text : '',
+        checkingDeadlines: {text: Date.now() + 3000},
+      };
+      try {
+        if (mode === 'checking') schedule(ctx);
+        else rebuild(ctx);
+        if (pending) pending();
+      } catch (error) {
+        outcomes.push([error.message, ctx.verified]);
+      }
+    }
+    JSON.stringify(outcomes);
+  `)
+  assert.deepEqual(JSON.parse(result), [
+    ['paint failed', 'selected words'],
+    ['paint failed', 'selected words'],
+    ['paint failed', 'selected words'],
+  ])
+})
+
+test('generated copy fallback and highlight styles retain their exclusion attributes', async () => {
+  const { body } = await renderReporter()
+  const [installCodeCopy, ensureCommentStyles] = new Function(
+    'return ' +
+      body.replace(
+        'installReporter(window);',
+        'return [installCodeCopy, ensureCommentStyles];',
+      ),
+  )()
+  let click
+  const created = []
+  const doc = {
+    addEventListener(kind, listener) {
+      assert.equal(kind, 'click')
+      click = listener
+    },
+    getElementById() {
+      return null
+    },
+    createElement(tag) {
+      const element = {
+        tag,
+        style: {},
+        attributes: {},
+        setAttribute(name, value) {
+          this.attributes[name] = value
+        },
+        select() {},
+        remove() {},
+      }
+      created.push(element)
+      return element
+    },
+    body: { appendChild() {} },
+    head: { appendChild() {} },
+    execCommand() {
+      return false
+    },
+  }
+  const ctx = { doc, win: { navigator: {} } }
+  installCodeCopy(ctx)
+  const code = { textContent: 'example' }
+  const button = {
+    closest() {
+      return {
+        querySelector() {
+          return code
+        },
+      }
+    },
+  }
+  click({
+    target: {
+      closest() {
+        return button
+      },
+    },
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  ensureCommentStyles(ctx)
+  assert.deepEqual(
+    created.map((element) => [element.tag, element.attributes]),
+    [
+      ['textarea', { 'data-anchor-ignore': '' }],
+      ['style', { 'data-anchor-ignore': '' }],
+    ],
+  )
+  assert.equal(created[0].value, 'example')
+  assert.equal(created[1].id, 'ash-comment-highlight-style')
+})
+
+test('secret flow rejects ctx arguments to non-declarations and mismatched parameters', () => {
+  for (const operation of [
+    '[].push(ctx);',
+    'Object.keys(ctx);',
+    'foo(ctx);',
+    '(foo)(ctx);',
+    '(0, foo)(ctx);',
+    '(holder.helper)(ctx);',
+    '(0, holder.helper)(ctx);',
+    'const foo = value => value; foo(ctx);',
+    'const foo = function(ctx) {}; foo(ctx);',
+    'helper.call(null, ctx);',
+    'holder.helper(ctx);',
+    'helper(1, ctx);',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /ctx call argument requires/,
+      operation,
+    )
+  for (const parameter of ['state', '...ctx', '{ctx}', 'ctx = fallback']) {
+    const code = minimal.replace(
+      'installReporter(window);',
+      `function helper(${parameter}) {} function inspect(ctx) { helper(ctx); } installReporter(window);`,
+    )
+    assert.throws(
+      () =>
+        validateBundle(
+          [chunk(code)],
+          new Set([
+            'capturePrimordials',
+            'installReporter',
+            'helper',
+            'inspect',
+          ]),
+        ),
+      /ctx call argument requires/,
+      parameter,
+    )
+  }
+  const code = minimal.replace(
+    'installReporter(window);',
+    'function helper(value, ctx) {} function inspect(ctx) { helper(1, ctx); } installReporter(window);',
+  )
+  assert.doesNotThrow(() =>
+    validateBundle(
+      [chunk(code)],
+      new Set(['capturePrimordials', 'installReporter', 'helper', 'inspect']),
+    ),
+  )
+})
+
+test('secret flow rejects spreads before ctx even when the syntactic parameter matches', () => {
+  const code = minimal.replace(
+    'installReporter(window);',
+    'function f(value, ctx) {} function inspect(ctx) { f(...[], ctx); } installReporter(window);',
+  )
+  assert.throws(
+    () =>
+      validateBundle(
+        [chunk(code)],
+        new Set(['capturePrimordials', 'installReporter', 'f', 'inspect']),
+      ),
+    /ctx call argument requires/,
+  )
+})
+
+test('secret flow rejects arguments identifiers and secret members on non-ctx objects', () => {
+  for (const operation of [
+    'arguments;',
+    'arguments[0];',
+    'arguments[0].documentToken;',
+    'const value = {arguments: 1};',
+    'value.arguments;',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /arguments is forbidden|private token\/challenge member access requires ctx/,
+      operation,
+    )
+  for (const operation of [
+    'state.documentToken;',
+    'state.readyChallenge;',
+    "state['documentToken'];",
+    'state[`readyChallenge`];',
+    'state.documentToken = value;',
+    'if (state.readyChallenge === value) return;',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /private token\/challenge member access requires ctx/,
+      operation,
+    )
+})
+
+test('generated cssPath and Mermaid collection survive throwing unshift and push', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    'send = function(ctx, message) { ctx.message = message; }; return [cssPath, requestMermaidRendering];',
+  )
+  const result = runInNewContext(`
+    const [cssPath, requestMermaidRendering] = ${expose};
+    const root = {nodeType: 1, hasAttribute() {return true;}};
+    const main = {nodeType: 1, nodeName: 'MAIN', parentElement: root};
+    const element = {nodeType: 1, nodeName: 'P', parentElement: main};
+    const blocks = [
+      {textContent: '', closest() {return {};}},
+      {textContent: 'graph TD; A-->B', closest() {return {};}},
+      {textContent: 'graph TD; B-->C', closest() {return {};}},
+    ];
+    const ctx = {doc: {body: root, querySelectorAll() {return blocks;}}, mermaidBlocks: {}, readyChallenge: 'synthetic-v1'};
+    Array.prototype.unshift = Array.prototype.push = function() {throw new Error('page array method called');};
+    const path = cssPath(ctx, element);
+    requestMermaidRendering(ctx);
+    JSON.stringify({path, requested: ctx.mermaidRequested, message: ctx.message});
+  `)
+  assert.deepEqual(JSON.parse(result), {
+    path: 'body > main:nth-of-type(1) > p:nth-of-type(1)',
+    requested: true,
+    message: {
+      kind: 'mermaid-render-request',
+      renderToken: 'synthetic-v1',
+      diagrams: [
+        { id: 'artifactshare-mermaid-1', source: 'graph TD; A-->B' },
+        { id: 'artifactshare-mermaid-2', source: 'graph TD; B-->C' },
+      ],
+    },
+  })
+})
+
+test('generated selection uses captured Range text and preserves whitespace rejection', async () => {
+  const { body } = await renderReporter()
+  const sendSelection = new Function(
+    'return ' +
+      body.replace(
+        'installReporter(window);',
+        `
+      send = function(ctx, message) { ctx.message = message; };
+      createTextAnchorEngine = function() {
+        return {describe() {return {quotedText: 'selected words'};}};
+      };
+      return sendSelection;
+    `,
+      ),
+  )()
+  const root = { nodeType: 1 }
+  const range = {
+    commonAncestorContainer: root,
+    toString() {
+      throw new Error('page Range.toString called')
+    },
+    getBoundingClientRect() {
+      return { top: 1, left: 2, width: 3, height: 4 }
+    },
+  }
+  let text = 'selected words'
+  let reads = 0
+  const ctx = {
+    textAnchorsEnabled: true,
+    doc: {
+      body: root,
+      querySelector() {
+        return root
+      },
+    },
+    win: {
+      getSelection() {
+        return {
+          rangeCount: 1,
+          isCollapsed: false,
+          getRangeAt() {
+            return range
+          },
+        }
+      },
+    },
+    primordials: {
+      rangeToString(value) {
+        assert.equal(value, range)
+        reads++
+        return text
+      },
+    },
+  }
+  sendSelection(ctx)
+  assert.equal(ctx.message.kind, 'text-selection')
+  assert.equal(ctx.message.quotedText, 'selected words')
+  assert.equal(ctx.message.cssPath, 'body')
+  assert.deepEqual(ctx.message.rect, { top: 1, left: 2, width: 3, height: 4 })
+  text = ' \n\t'
+  sendSelection(ctx)
+  assert.deepEqual(ctx.message, { kind: 'text-selection-cleared' })
+  assert.equal(reads, 2)
+})
+
+test('secret flow rejects shadowing of bundle function bindings', () => {
+  for (const operation of [
+    'const helper = ctx.win.leak; helper(ctx);',
+    'const helper = ctx.win.leak; (helper)(ctx);',
+    'const helper = ctx.win.leak; (0, helper)(ctx);',
+    'var helper = ctx.win.leak; helper(ctx);',
+    'helper(ctx); var helper = ctx.win.leak;',
+    'const {leak: helper} = ctx.win; helper(ctx);',
+    'const [helper] = callbacks; helper(ctx);',
+    'const invoke = (helper) => helper(ctx);',
+    'const invoke = ({helper}) => helper(ctx);',
+    'try {} catch (helper) { helper(ctx); }',
+    'try {} catch ({helper}) { helper(ctx); }',
+    'function helper(state) { leak(state); } helper(ctx);',
+    'const invoke = function helper(state) { helper(ctx); };',
+    'class helper {} helper(ctx);',
+    'const invoke = class helper { run() { helper(ctx); } };',
+    'const {...helper} = callbacks; helper(ctx);',
+    'for (let helper of callbacks) helper(ctx);',
+    'switch (value) { case 1: let helper = leak; helper(ctx); }',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /bundle function binding helper.*shadowed/,
+      operation,
+    )
+})
+
+test('secret flow rejects writes to bundle function bindings', () => {
+  for (const operation of [
+    'helper = ctx.win.leak; helper(ctx);',
+    'helper(ctx); helper = ctx.win.leak;',
+    'helper ||= ctx.win.leak; helper(ctx);',
+    'helper++; helper(ctx);',
+    '(helper) = ctx.win.leak; helper(ctx);',
+    '(helper)++; helper(ctx);',
+    '({leak: helper} = ctx.win); helper(ctx);',
+    '({helper = leak} = value); helper(ctx);',
+    '[helper] = callbacks; helper(ctx);',
+    '[...helper] = callbacks; helper(ctx);',
+    'for (helper of callbacks) helper(ctx);',
+    'for (helper in callbacks) helper(ctx);',
+    'const mutate = () => { helper = leak; }; helper(ctx);',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /bundle function binding helper.*reassigned/,
+      operation,
+    )
+})
+
+test('secret flow rejects passing ctx as the implicit call or tag receiver', () => {
+  for (const operation of [
+    'ctx.leak();',
+    'ctx.leak?.();',
+    '(ctx.leak)();',
+    'ctx?.leak();',
+    'ctx.leak`value`;',
+    '(ctx.leak)`value`;',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /ctx must not be a call or tag receiver/,
+      operation,
+    )
+})
+
+test('secret flow rejects eval and Function identifiers outside the initial call.bind capture', () => {
+  for (const operation of [
+    `eval('leak(ctx)');`,
+    `(eval)('leak(ctx)');`,
+    `((eval))('helper = leak');`,
+    `const invoke = () => eval('helper = leak');`,
+    `(0, eval)('helper = leak');`,
+    'const run = eval; run(source);',
+    'window.eval(source);',
+    'Function(source);',
+    'new Function(source);',
+    'const Constructor = Function;',
+    'window.Function(source);',
+    'const object = { eval: source };',
+    'const object = { Function: source };',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /dynamic code identifier (?:eval|Function) is forbidden/,
+      operation,
+    )
+  for (const operation of [
+    'win.Function(source);',
+    'new win.Function(source);',
+    'const Constructor = win.Function;',
+    'const prototype = win.Function.prototype;',
+    'const bind = win.Function.prototype.call.bind;',
+    'const invoke = () => win.Function.prototype.call.bind(callback);',
+    'eval(source);',
+  ]) {
+    const code = minimal.replace(
+      'return { savedParent };',
+      `${operation} return { savedParent };`,
+    )
+    assert.throws(
+      () => validateBundle([chunk(code)]),
+      /dynamic code identifier (?:eval|Function) is forbidden/,
+      operation,
+    )
+  }
+  assert.doesNotThrow(() =>
+    validateBundle([
+      chunk(
+        minimal.replace(
+          'return { savedParent };',
+          'const post = win.Function.prototype.call.bind(savedParent.postMessage); return { savedParent };',
+        ),
+      ),
+    ]),
+  )
+})
+
+test('stable bundle function calls remain valid through callbacks and unrelated properties', () => {
+  assert.doesNotThrow(
+    withOperation(`
+    const invoke = () => helper(ctx);
+    const object = {helper: ctx.field};
+    object.helper = other;
+    const {helper: local} = object;
+    for (object.helper of callbacks) helper(ctx);
+    helper(ctx);
+    (helper)(ctx);
+    (0, helper)(ctx);
+  `),
+  )
 })

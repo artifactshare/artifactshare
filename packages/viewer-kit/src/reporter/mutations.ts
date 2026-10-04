@@ -1,9 +1,12 @@
+import {
+  anchorIgnoreAttribute,
+  commentUiAttribute,
+  highlightStyleId,
+} from './anchor-engine.js'
 import { schedulePositionBadges } from './badges.js'
 import type { ReporterState } from './state.js'
 import { verifyAnchors } from './annotate.js'
 import {
-  ANCHOR_IGNORE_ATTRIBUTE,
-  COMMENT_UI_ATTRIBUTE,
   EXCLUSION_CLASS_ATTRIBUTE,
   ignoredMutationSelector,
   createTextAnchorEngine,
@@ -12,11 +15,10 @@ import { anchorRoot } from './selection.js'
 import { applyHighlights, invalidateChangedPaint } from './highlights.js'
 
 export function rebuildAfterMutations(ctx: ReporterState) {
-  let hasText =
-    ctx.pendingHighlights.length ||
-    ctx.pendingAnchors.some(function (anchor) {
-      return anchor.kind === 'text'
-    })
+  let hasText = ctx.pendingHighlights.length > 0
+  for (let i = 0; !hasText && i < ctx.pendingAnchors.length; i++) {
+    if (ctx.pendingAnchors[i].kind === 'text') hasText = true
+  }
   if (!hasText) {
     verifyAnchors(ctx, ctx.pendingAnchors)
     return
@@ -26,8 +28,11 @@ export function rebuildAfterMutations(ctx: ReporterState) {
     // Ranges are live DOM objects: rebuild even for equal-value node replacement.
     ctx.win.clearTimeout(ctx.resolveTimer)
     ctx.resolveStartedAt = 0
-    applyHighlights(ctx, ctx.pendingHighlights, engine)
-    verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    try {
+      applyHighlights(ctx, ctx.pendingHighlights, engine)
+    } finally {
+      verifyAnchors(ctx, ctx.pendingAnchors, engine)
+    }
   } else {
     invalidateChangedPaint(ctx, engine)
     ctx.win.clearTimeout(ctx.resolveTimer)
@@ -38,8 +43,11 @@ export function rebuildAfterMutations(ctx: ReporterState) {
         ctx.resolveStartedAt = 0
         if (snapshotGeneration !== ctx.anchorSnapshotGeneration)
           engine = createTextAnchorEngine(anchorRoot(ctx))
-        applyHighlights(ctx, ctx.pendingHighlights, engine)
-        verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        try {
+          applyHighlights(ctx, ctx.pendingHighlights, engine)
+        } finally {
+          verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        }
       },
       Math.min(300, Math.max(0, 1000 - (Date.now() - ctx.resolveStartedAt))),
     )
@@ -56,8 +64,8 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     const record = records[recordIndex]
     if (
       record.type === 'attributes' &&
-      (record.attributeName === ANCHOR_IGNORE_ATTRIBUTE ||
-        record.attributeName === COMMENT_UI_ATTRIBUTE ||
+      (record.attributeName === anchorIgnoreAttribute() ||
+        record.attributeName === commentUiAttribute() ||
         record.attributeName === EXCLUSION_CLASS_ATTRIBUTE)
     ) {
       exclusionChanged = true
@@ -92,9 +100,9 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
             node.nodeType !== 1 ||
             (!ctx.primordials.hasAttribute(
               node as Element,
-              ANCHOR_IGNORE_ATTRIBUTE,
+              anchorIgnoreAttribute(),
             ) &&
-              (node as Element).id !== 'ash-comment-highlight-style')
+              (node as Element).id !== highlightStyleId())
           )
             hasContentNode = true
         }

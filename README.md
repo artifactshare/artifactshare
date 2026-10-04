@@ -42,6 +42,7 @@ and [performance trace automation](docs/reference/performance-trace-automation.m
 
 The sandbox reporter is maintained in `packages/viewer-kit/src/reporter/*.ts`.
 After changing it, run `pnpm --filter @artifactshare/viewer-kit generate:reporter`.
+The generated file is deterministic, unformatted output and is excluded from repository formatting.
 The generator owns `reporter.generated.ts`, including its exact script body and
 CSP hash; include that file with source changes.
 Run `node packages/viewer-kit/scripts/build-reporter.mjs --check` to check for drift

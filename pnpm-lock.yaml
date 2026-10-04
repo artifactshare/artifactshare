@@ -449,9 +449,6 @@ importers:
       oxc-parser:
         specifier: 0.149.0
         version: 0.149.0
-      oxfmt:
-        specifier: 0.66.0
-        version: 0.66.0(vite-plus@0.3.1(@opentelemetry/api@1.9.1)(@types/node@24.13.4)(@vitest/browser-playwright@4.1.11)(esbuild@0.28.1)(happy-dom@20.14.5)(jiti@2.7.0)(msw@2.15.0(@types/node@24.13.4)(typescript@7.0.2))(typescript@7.0.2)(yaml@2.9.1))
       rolldown:
         specifier: 1.2.8
         version: 1.2.8

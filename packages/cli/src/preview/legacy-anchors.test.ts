@@ -70,6 +70,9 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     const request = post.mock.calls.find(
       ([message]) => message.kind === 'verify-anchors',
     )![0]
+    expect(document.querySelector('.thread')!.textContent).toContain(
+      PREVIEW_MESSAGES.en['preview.positionChecking'],
+    )
     const content = document.createElement('main')
     content.innerHTML = '<p>The quick brown fox</p>'
     const engine = createTextAnchorEngine(content)
@@ -93,6 +96,9 @@ test('an unchanged page keeps saved legacy annotations attached without offering
         },
       }),
     )
+    expect(document.querySelector('.thread')!.textContent).not.toContain(
+      PREVIEW_MESSAGES.en['preview.positionChecking'],
+    )
     expect(verdicts[0].attached).toBe(true)
     expect(
       document.querySelector('#orphanNotice')!.classList.contains('show'),
@@ -109,6 +115,32 @@ test('an unchanged page keeps saved legacy annotations attached without offering
           init?.body?.includes('orphaned'),
       ),
     ).toBe(false)
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: window.location.origin,
+        data: {
+          source: 'artifactshare',
+          kind: 'anchor-verdicts',
+          verificationId: request.verificationId,
+          generation: 2,
+          verdicts: [
+            {
+              thread: request.anchors[0].thread,
+              attached: false,
+              position_state: 'needs-check',
+            },
+          ],
+        },
+      }),
+    )
+    expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(1)
+    expect(
+      document.querySelector('#orphanNotice')!.classList.contains('show'),
+    ).toBe(true)
+    expect(document.querySelector('.thread')!.textContent).toContain(
+      PREVIEW_MESSAGES.en['preview.positionNeedsCheck'],
+    )
   } finally {
     for (const [type, listener] of listeners.mock.calls)
       window.removeEventListener(type, listener)
