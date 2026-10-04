@@ -217,9 +217,9 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-async function closeOrdinaryCommentsPanel() {
+async function closeCommentsPanel(returnTarget = 'Comments') {
   const trigger = page
-    .getByRole('button', { name: 'Comments', exact: true })
+    .getByRole('button', { name: returnTarget, exact: true })
     .element()
   await userEvent.click(
     page.getByRole('button', { name: 'Close', exact: true }),
@@ -233,7 +233,10 @@ async function closeOrdinaryCommentsPanel() {
   )
   await vi.waitFor(() => {
     expect(document.activeElement).toBe(trigger)
-    expect(document.activeElement?.textContent).toBe('Comments')
+    expect(
+      document.activeElement?.getAttribute('aria-label') ??
+        document.activeElement?.textContent,
+    ).toBe(returnTarget)
   })
 }
 
@@ -255,17 +258,21 @@ for (const width of [390, 1280]) {
           .map((animation) => animation.finished.catch(() => {})),
       )
       await waitForBrowserLayout()
-      expect(document.activeElement).toBe(target())
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(target())
+      })
       expect(document.querySelector('[data-revisit-comments]')).toBeNull()
       await expect
         .element(page.getByRole('tab', { name: 'All', exact: true }))
         .toHaveAttribute('aria-selected', 'true')
-      expect(document.querySelector('output')?.dataset.target).toBe(
-        'thread-first',
-      )
-      expect(document.querySelector('output')?.dataset.focusRequest).toBe(
-        'false',
-      )
+      await vi.waitFor(() => {
+        expect(document.querySelector('output')?.dataset.target).toBe(
+          'thread-first',
+        )
+        expect(document.querySelector('output')?.dataset.focusRequest).toBe(
+          'false',
+        )
+      })
       const scroller = target().parentElement!
       expect(scroller.scrollTop).toBeGreaterThan(0)
       const cardRect = target().getBoundingClientRect()
@@ -298,19 +305,16 @@ for (const width of [390, 1280]) {
         .getByRole('button', { name: 'Update 0', exact: true })
         .element() as HTMLButtonElement
       updateButton.focus()
-      expect(document.activeElement).toBe(updateButton)
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(updateButton)
+      })
       await userEvent.keyboard('{Enter}')
       await waitForBrowserLayout()
       expect(updateButton.textContent).toBe('Update 1')
-      expect(document.activeElement).toBe(updateButton)
-      await userEvent.click(
-        page.getByRole('button', { name: 'Close', exact: true }),
-      )
-      await vi.waitFor(() =>
-        expect(document.activeElement?.getAttribute('aria-label')).toBe(
-          'Version status: v1',
-        ),
-      )
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(updateButton)
+      })
+      await closeCommentsPanel('Version status: v1')
       await userEvent.click(
         page.getByRole('button', { name: 'Comments', exact: true }),
       )
@@ -320,8 +324,10 @@ for (const width of [390, 1280]) {
         ).not.toBeNull(),
       )
       await waitForBrowserLayout()
-      expect(document.querySelector('output')?.dataset.target).toBe('')
-      expect(document.activeElement).not.toBe(target())
+      await vi.waitFor(() => {
+        expect(document.querySelector('output')?.dataset.target).toBe('')
+        expect(document.activeElement).not.toBe(target())
+      })
       expect(document.querySelector('[data-revisit-comments]')).toBeNull()
       expect(
         document.querySelectorAll('[data-new-comment-message]'),
@@ -358,7 +364,9 @@ test('deleted message pairs open all without a stale target', async () => {
   await expect
     .element(page.getByRole('tab', { name: 'All', exact: true }))
     .toHaveAttribute('aria-selected', 'true')
-  expect(document.querySelector('output')?.dataset.target).toBe('')
+  await vi.waitFor(() => {
+    expect(document.querySelector('output')?.dataset.target).toBe('')
+  })
   expect(document.querySelector('[data-new-comment-thread]')).toBeNull()
 })
 
@@ -374,29 +382,32 @@ test('a count clicked after closing the panel focuses once and switching files c
   await vi.waitFor(() =>
     expect(document.activeElement?.id).toBe('comment-card-thread-first'),
   )
-  expect(document.querySelector('output')?.dataset.target).toBe('thread-first')
-  expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  await vi.waitFor(() => {
+    expect(document.querySelector('output')?.dataset.target).toBe(
+      'thread-first',
+    )
+    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  })
   // Ordinary opening uses the entry target without dismissing the count hint.
   expect(document.querySelector('[data-revisit-comments]')).not.toBeNull()
   // Wait for the sheet to close before clicking the count hint underneath it.
-  await userEvent.click(
-    page.getByRole('button', { name: 'Close', exact: true }),
-  )
-  await vi.waitFor(() =>
-    expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull(),
-  )
+  await closeCommentsPanel()
   await userEvent.click(
     document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
   )
   await vi.waitFor(() =>
     expect(document.activeElement?.id).toBe('comment-card-thread-first'),
   )
-  expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  await vi.waitFor(() => {
+    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  })
   root!.render(<Harness {...fixture} artifactId="abc123def5" />)
   await vi.waitFor(() =>
     expect(document.querySelector('output')?.dataset.target).toBe(''),
   )
-  expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  await vi.waitFor(() => {
+    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+  })
 })
 
 for (const width of [390, 1280]) {
@@ -422,10 +433,12 @@ for (const width of [390, 1280]) {
           .map((animation) => animation.finished.catch(() => {})),
       )
       await waitForBrowserLayout()
-      expect(document.activeElement).toBe(card)
-      expect(document.querySelector('output')?.dataset.target).toBe(
-        'thread-first',
-      )
+      await vi.waitFor(() => {
+        expect(document.activeElement).toBe(card)
+        expect(document.querySelector('output')?.dataset.target).toBe(
+          'thread-first',
+        )
+      })
       await expect
         .element(page.getByRole('tab', { name: 'All', exact: true }))
         .toHaveAttribute('aria-selected', 'true')
@@ -441,13 +454,15 @@ for (const width of [390, 1280]) {
       expect(label.getBoundingClientRect().bottom).toBeLessThanOrEqual(
         list.getBoundingClientRect().bottom,
       )
-      await closeOrdinaryCommentsPanel()
+      await closeCommentsPanel()
       await userEvent.click(
         page.getByRole('button', { name: 'Comments', exact: true }),
       )
       await waitForBrowserLayout()
-      expect(document.querySelector('output')?.dataset.target).toBe('')
-      expect(document.activeElement).not.toBe(card)
+      await vi.waitFor(() => {
+        expect(document.querySelector('output')?.dataset.target).toBe('')
+        expect(document.activeElement).not.toBe(card)
+      })
       expect(document.querySelector('[data-new-comment-thread]')).not.toBeNull()
     },
   )
@@ -462,9 +477,13 @@ for (const width of [390, 1280]) {
       page.getByRole('button', { name: 'Comments', exact: true }),
     )
     await waitForBrowserLayout()
-    expect(document.querySelector('output')?.dataset.target).toBe('old-0')
-    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
-    expect(document.activeElement?.id).not.toBe('comment-card-thread-first')
+    await vi.waitFor(() => {
+      expect(document.querySelector('output')?.dataset.target).toBe('old-0')
+      expect(document.querySelector('output')?.dataset.focusRequest).toBe(
+        'false',
+      )
+      expect(document.activeElement?.id).not.toBe('comment-card-thread-first')
+    })
   })
 
   test(`ordinary open without new messages has no target at ${width}px`, async () => {
@@ -480,35 +499,44 @@ for (const width of [390, 1280]) {
       .element(page.getByRole('tab', { name: 'Open', exact: true }))
       .toHaveAttribute('aria-selected', 'true')
     await waitForBrowserLayout()
-    expect(document.querySelector('output')?.dataset.target).toBe('')
-    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+    await vi.waitFor(() => {
+      expect(document.querySelector('output')?.dataset.target).toBe('')
+      expect(document.querySelector('output')?.dataset.focusRequest).toBe(
+        'false',
+      )
+    })
     expect(document.querySelector('[data-new-comment-thread]')).toBeNull()
   })
 }
 
-test('ordinary close restores focus after a slow mobile sheet exit', async () => {
-  await page.viewport(390, 800)
-  await mount(entryFixture('artifact'))
-  await userEvent.click(
-    page.getByRole('button', { name: 'Comments', exact: true }),
-  )
-  await vi.waitFor(() =>
-    expect(document.activeElement?.id).toBe('comment-card-thread-first'),
-  )
-  const sheet = document.querySelector<HTMLElement>(
-    '[data-slot="sheet-content"]',
-  )!
-  await Promise.all(
-    sheet.getAnimations().map((animation) => animation.finished),
-  )
-  // Exceed waitFor's default one-second timeout to exercise the exit wait.
-  // Only the closed state is slowed; the real focus-restoration path is used.
-  const style = document.createElement('style')
-  style.textContent =
-    '[data-slot="sheet-content"][data-state="closed"] { animation-duration: 1.2s !important; }'
-  document.body.appendChild(style)
-  await closeOrdinaryCommentsPanel()
-})
+test.each(['Comments', 'Version status: v1'])(
+  'close restores focus to %s after a slow mobile sheet exit',
+  async (returnTarget) => {
+    await page.viewport(390, 800)
+    await mount(entryFixture('artifact'))
+    await userEvent.click(
+      returnTarget === 'Comments'
+        ? page.getByRole('button', { name: 'Comments', exact: true })
+        : document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
+    )
+    await vi.waitFor(() =>
+      expect(document.activeElement?.id).toBe('comment-card-thread-first'),
+    )
+    const sheet = document.querySelector<HTMLElement>(
+      '[data-slot="sheet-content"]',
+    )!
+    await Promise.all(
+      sheet.getAnimations().map((animation) => animation.finished),
+    )
+    // Exceed waitFor's default one-second timeout to exercise the exit wait.
+    // Only the closed state is slowed; the real focus-restoration path is used.
+    const style = document.createElement('style')
+    style.textContent =
+      '[data-slot="sheet-content"][data-state="closed"] { animation-duration: 1.2s !important; }'
+    document.body.appendChild(style)
+    await closeCommentsPanel(returnTarget)
+  },
+)
 
 test.each(['deep-link', 'anchor-navigation'] as const)(
   'ordinary Comments preserves a paginated resolved %s target',
@@ -544,37 +572,42 @@ test.each(['deep-link', 'anchor-navigation'] as const)(
       .getByRole('button', { name: 'Comments', exact: true })
       .element() as HTMLButtonElement
     commentsButton.focus()
-    expect(document.activeElement).toBe(commentsButton)
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(commentsButton)
+    })
     await userEvent.keyboard('{Enter}')
     await waitForBrowserLayout()
-    expect(document.querySelector('output')?.dataset.target).toBe(target.id)
-    expect(document.querySelector('output')?.dataset.targetScroll).toBe(
-      source === 'deep-link' ? 'start' : 'center',
-    )
+    await vi.waitFor(() => {
+      expect(document.querySelector('output')?.dataset.target).toBe(target.id)
+      expect(document.querySelector('output')?.dataset.targetScroll).toBe(
+        source === 'deep-link' ? 'start' : 'center',
+      )
+    })
     await expect
       .element(page.getByRole('tab', { name: 'Resolved', exact: true }))
       .toHaveAttribute('aria-selected', 'true')
     expect(document.getElementById(card.id)).toBe(card)
     expect(card.classList.contains('ring-3')).toBe(true)
     expect(document.querySelectorAll('article')).toHaveLength(51)
-    expect(document.activeElement).toBe(commentsButton)
-    expect(document.querySelector('output')?.dataset.focusRequest).toBe('false')
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(commentsButton)
+      expect(document.querySelector('output')?.dataset.focusRequest).toBe(
+        'false',
+      )
+    })
 
     // Close the sheet so the count hint is reachable, then reopen with a
     // request containing only messages that have since been removed.
-    await userEvent.click(
-      page.getByRole('button', { name: 'Close', exact: true }),
-    )
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull(),
-    )
+    await closeCommentsPanel()
     await userEvent.click(
       document.querySelector<HTMLButtonElement>('[data-revisit-comments]')!,
     )
     await expect
       .element(page.getByRole('tab', { name: 'All', exact: true }))
       .toHaveAttribute('aria-selected', 'true')
-    expect(document.querySelector('output')?.dataset.target).toBe('')
+    await vi.waitFor(() => {
+      expect(document.querySelector('output')?.dataset.target).toBe('')
+    })
     expect(document.getElementById(card.id)).toBeNull()
   },
 )
