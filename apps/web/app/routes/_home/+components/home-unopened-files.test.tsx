@@ -5,14 +5,10 @@ import { describe, expect, test, vi } from 'vitest'
 import type { FileRowData } from './file-data'
 import { HomeUnopenedFiles } from './home-unopened-files'
 
-import { t } from '~/lib/i18n'
+import { bindI18n, t } from '~/lib/i18n'
 const language = vi.hoisted(() => ({ locale: 'ja' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: language.locale,
-    t: (key: Parameters<typeof t>[1], vars?: Record<string, string | number>) =>
-      t(language.locale, key, vars),
-  }),
+  useT: () => bindI18n(language.locale),
 }))
 
 vi.mock('~/hooks/use-viewer-calendar', () => ({
@@ -64,7 +60,7 @@ describe('HomeUnopenedFiles', () => {
     expect(render({})).toBe('')
   })
 
-  test('shows owned unopened files and the existing all-files destination', () => {
+  test('shows owned unopened files with the all-files link when none remain', () => {
     const html = render({ files: [file] })
 
     expect(html).toContain('未確認のファイル')
@@ -74,6 +70,7 @@ describe('HomeUnopenedFiles', () => {
     expect(html).toContain('href="/a/unopened-file"')
     expect(html).not.toContain('aria-label="確認するレポート"')
     expect(html).toContain('href="/files"')
+    expect(html).toContain(t('ja', 'home.unopenedSeeAll'))
     expect(html).not.toContain('Codex')
     expect(html).not.toContain('Claude')
   })
@@ -87,7 +84,7 @@ describe('HomeUnopenedFiles', () => {
 })
 
 test.each(['en', 'ja'] as const)(
-  'remaining count and fallback links in %s',
+  'keeps the all-files link for one to five files and shows remaining counts for six and twelve in %s',
   (locale) => {
     language.locale = locale
     for (const total of [1, 5, 6, 12]) {
@@ -96,12 +93,19 @@ test.each(['en', 'ja'] as const)(
         id: `file-${i}`,
       }))
       const html = render({ files, total })
-      expect(html).toContain('href="/files"')
-      expect(html).toContain(
-        total > 5
-          ? t(locale, 'home.unopenedMore', { n: total - 5 })
-          : t(locale, 'home.unopenedSeeAll'),
-      )
+      if (total <= files.length) {
+        expect(html).toContain('href="/files"')
+        expect(html).toContain(t(locale, 'home.unopenedSeeAll'))
+      } else {
+        expect(html).toContain('href="/files"')
+        expect(html).toContain(
+          locale === 'en'
+            ? total === 6
+              ? 'See 1 more unopened file</a>'
+              : 'See 7 more unopened files</a>'
+            : `未確認のファイルをさらに見る（${total - 5} 件）`,
+        )
+      }
     }
     expect(render({ files: [file], total: 12, error: true })).not.toContain(
       'href="/files"',

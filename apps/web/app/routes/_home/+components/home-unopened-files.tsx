@@ -21,7 +21,7 @@ export function HomeUnopenedFiles({
   error: boolean
   now: string
 }) {
-  const { locale, t } = useT()
+  const { locale, t, tPlural } = useT()
   const { hydrated, timeZone } = useViewerCalendar()
   const location = useLocation()
 
@@ -39,10 +39,11 @@ export function HomeUnopenedFiles({
         titleId="home-unopened-heading"
         title={t('home.unopenedTitle')}
         actions={
+          // Every loaded, nonempty card offers /files, even with no remaining rows.
           !error && files.length > 0 ? (
             <AppMoreLink className="text-xs" to="/files">
               {remaining > 0
-                ? t('home.unopenedMore', { n: remaining })
+                ? tPlural('home.unopenedMore', remaining)
                 : t('home.unopenedSeeAll')}
             </AppMoreLink>
           ) : null
