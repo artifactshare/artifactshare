@@ -11,7 +11,6 @@ import {
   generateReporter,
   renderReporter,
   validateBundle,
-  formatGenerated,
 } from './build-reporter.mjs'
 
 function chunk(code) {
@@ -33,16 +32,7 @@ async function temporary(t) {
   return directory
 }
 
-test('retired reporter measurement script is absent', async () => {
-  await assert.rejects(
-    stat(new URL('./measure-reporter.mjs', import.meta.url)),
-    {
-      code: 'ENOENT',
-    },
-  )
-})
-
-test('generation is deterministic, formatter-stable, and hashes the exact UTF-8 body', async () => {
+test('generation is deterministic and hashes the exact UTF-8 body', async () => {
   const first = await renderReporter()
   const second = await renderReporter()
   assert.deepEqual(second, first)
@@ -50,7 +40,6 @@ test('generation is deterministic, formatter-stable, and hashes the exact UTF-8 
     first.hash,
     createHash('sha256').update(first.body, 'utf8').digest('base64'),
   )
-  assert.equal(formatGenerated(first.source), first.source)
   const { program, errors } = parseSync('reporter.generated.ts', first.source)
   assert.deepEqual(errors, [])
   const values = program.body.map(
@@ -388,18 +377,22 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   const annotate = await read('annotate')
   const { program, errors } = parseSync('anchor-engine.ts', engine)
   assert.deepEqual(errors, [])
-  const constants = Object.fromEntries(
-    program.body.flatMap((node) => {
-      const declaration =
-        node.type === 'ExportNamedDeclaration' ? node.declaration : node
-      if (declaration?.type !== 'VariableDeclaration') return []
-      assert.equal(declaration.kind, 'const')
-      return declaration.declarations.map((decl) => {
-        assert.equal(decl.init.type, 'Literal')
-        return [decl.id.name, decl.init.value]
-      })
-    }),
-  )
+  const constants = {}
+  function value(node) {
+    if (node.type === 'Literal') return node.value
+    if (node.type === 'Identifier') return constants[node.name]
+    assert.equal(node.type, 'BinaryExpression')
+    assert.equal(node.operator, '+')
+    return value(node.left) + value(node.right)
+  }
+  for (const node of program.body) {
+    const declaration =
+      node.type === 'ExportNamedDeclaration' ? node.declaration : node
+    if (declaration?.type !== 'VariableDeclaration') continue
+    assert.equal(declaration.kind, 'const')
+    for (const decl of declaration.declarations)
+      constants[decl.id.name] = value(decl.init)
+  }
   const selector =
     'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
   assert.deepEqual(constants, {
@@ -407,6 +400,10 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
     ANCHOR_IGNORE_ATTRIBUTE: 'data-anchor-ignore',
     COMMENT_UI_ATTRIBUTE: 'data-comment-ui',
     EXCLUSION_CLASS_ATTRIBUTE: 'class',
+    HIGHLIGHT_STYLE_ID: 'ash-comment-highlight-style',
+    IGNORED_MUTATION_SELECTOR:
+      '[data-anchor-ignore],#ash-comment-highlight-style',
+    COMMENT_UI_SELECTOR: '[data-comment-ui]',
   })
   for (const attribute of [
     constants.ANCHOR_IGNORE_ATTRIBUTE,
@@ -421,11 +418,11 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
   )
   assert.match(
     mutations,
-    /primordials\.hasAttribute\(\s*node as Element,\s*ANCHOR_IGNORE_ATTRIBUTE,?\s*\)/,
+    /primordials\.hasAttribute\(\s*node as Element,\s*anchorIgnoreAttribute\(\),?\s*\)/,
   )
   for (const name of [
-    'ANCHOR_IGNORE_ATTRIBUTE',
-    'COMMENT_UI_ATTRIBUTE',
+    'anchorIgnoreAttribute()',
+    'commentUiAttribute()',
     'EXCLUSION_CLASS_ATTRIBUTE',
   ]) {
     assert.ok(mutations.includes('record.attributeName === ' + name))
@@ -434,16 +431,38 @@ test('anchor exclusion consumers share literal definitions and narrow selector h
     annotate,
     /primordials\.closest\(target, commentUiSelector\(\)\)/,
   )
-  assert.match(annotate, /setAttribute\(ANCHOR_IGNORE_ATTRIBUTE, ''\)/)
-  for (const source of [mutations, annotate]) {
+  assert.match(annotate, /setAttribute\(anchorIgnoreAttribute\(\), ''\)/)
+  for (const source of [
+    mutations,
+    annotate,
+    await read('toc'),
+    await read('svg-overlay'),
+    await read('highlights'),
+  ]) {
     assert.doesNotMatch(
       source,
       /['"]data-(?:anchor-ignore|comment-ui)['"]|\[data-(?:anchor-ignore|comment-ui)\]/,
     )
   }
+  for (const source of [mutations, await read('highlights')]) {
+    assert.doesNotMatch(source, /['"]ash-comment-highlight-style['"]/)
+    assert.match(source, /highlightStyleId\(\)/)
+  }
+  for (const name of ['ignoredMutationSelector', 'commentUiSelector']) {
+    const fn = program.body.find(
+      (node) => node.declaration?.id?.name === name,
+    ).declaration
+    assert.equal(fn.body.body.length, 1)
+    assert.equal(fn.body.body[0].argument.type, 'Identifier')
+  }
   assert.doesNotMatch(mutations, /\.(?:concat|map|join|includes)\(/)
   const { body } = await renderReporter()
-  assert.equal(body.split(selector).length - 1, 1)
+  for (const literal of [
+    'data-anchor-ignore',
+    'data-comment-ui',
+    'ash-comment-highlight-style',
+  ])
+    assert.equal(body.split(literal).length - 1, 1)
   // Execute the generated helpers without installing a reporter. renderReporter
   // above still runs the production structural/security guard unchanged.
   const helpers = body.replace(
@@ -540,4 +559,306 @@ test('generated annotation exclusion uses captured closest after page replacemen
   }
   assert.equal(annotateTargetFrom(ctx, commentUi), null)
   assert.equal(annotateTargetFrom(ctx, content), content)
+})
+
+function withOperation(operation, name = 'inspect') {
+  const code = minimal.replace(
+    'installReporter(window);',
+    `function ${name}(ctx) { ${operation} } installReporter(window);`,
+  )
+  return () =>
+    validateBundle(
+      [chunk(code)],
+      new Set(['installReporter', 'capturePrimordials', name]),
+    )
+}
+
+test('ctx references cannot escape member reads and direct call arguments', () => {
+  for (const operation of [
+    'const { documentToken } = ctx;',
+    'const [value] = ctx;',
+    '({ documentToken } = ctx);',
+    '([value] = ctx);',
+    'const alias = ctx;',
+    'alias = ctx;',
+    "ctx['field'];",
+    'ctx[key];',
+    'const object = {...ctx};',
+    'const array = [...ctx];',
+    'helper(...ctx);',
+    'return ctx;',
+    'const object = {ctx};',
+    'helper({ ctx });',
+    '({ ctx } = value);',
+    '({ ctx = other } = value);',
+    'const { [ctx]: value } = other;',
+    'const { value = ctx } = other;',
+    'ctx && helper();',
+    'new Helper(ctx);',
+    'ctx = other;',
+    'const text = `${ctx}`;',
+    'const f = () => ctx;',
+    'return ctx.documentToken;',
+  ])
+    assert.throws(
+      withOperation(operation),
+      /ctx value reference|private token\/challenge/,
+      operation,
+    )
+  for (const operation of [
+    'const value = ctx.field; helper(ctx);',
+    'const ctx = {}; helper(ctx);',
+    'const { state: ctx } = value; helper(ctx);',
+    'const { ctx } = options; helper(ctx);',
+    'const { ctx = fallback } = options; helper(ctx);',
+    'const { nested: { ctx } } = options; helper(ctx);',
+    'const f = function ({ ctx }) { helper(ctx); };',
+    'const f = ({ ctx = fallback }) => helper(ctx);',
+    'try {} catch ({ ctx }) { helper(ctx); }',
+    'const [ctx] = values; helper(ctx);',
+    'const value = {ctx: 1}; value.ctx;',
+    'const value = { ctx() {} }; value.ctx();',
+    'class Value { ctx() {} }',
+    'class ctx {}',
+    'ctx: while (true) { break ctx; }',
+  ]) {
+    // Local binding fixtures use a separate scope from the ctx parameter.
+    assert.doesNotThrow(withOperation(`{ ${operation} }`))
+  }
+  const returning = minimal.replace(
+    'const primordials = capturePrimordials(win);',
+    'const primordials = capturePrimordials(win); const ctx = {}; return ctx;',
+  )
+  assert.doesNotThrow(() => validateBundle([chunk(returning)]))
+  for (const returned of [
+    'return (() => { return ctx; })();',
+    'return (function installReporter() { return ctx; })();',
+  ]) {
+    assert.throws(
+      () => validateBundle([chunk(returning.replace('return ctx;', returned))]),
+      /ctx value reference/,
+    )
+  }
+})
+
+test('security callbacks reject realm built-ins and every replaceable array method', () => {
+  for (const operation of [
+    'ctx.win.Object.keys(value);',
+    "ctx.win['Object']['keys'](value);",
+    'win.Array.from(value);',
+    'globalThis.Object.entries(value);',
+    "Object['keys'](value);",
+    "Array['from'](value);",
+    'ctx.win.Array.isArray(value);',
+    'win[`Object`][`keys`](value);',
+  ])
+    assert.throws(
+      withOperation(operation, 'cssPath'),
+      /uncaptured Object\/Array/,
+    )
+  for (const method of [
+    'forEach',
+    'some',
+    'map',
+    'filter',
+    'every',
+    'reduce',
+    'find',
+    'includes',
+    'indexOf',
+    'join',
+    'concat',
+  ]) {
+    for (const expression of [
+      `items.${method}(callback)`,
+      `items['${method}'](callback)`,
+      'items[`' + method + '`](callback)',
+    ]) {
+      assert.throws(
+        withOperation(`helper(() => { ${expression}; });`, 'cssPath'),
+        /replaceable array method/,
+      )
+    }
+  }
+  assert.doesNotThrow(
+    withOperation(
+      "Array['isArray'](value); primitives.objectKeys(value); for (let i = 0; i < value.length; i++) copy[i] = value[i];",
+      'cssPath',
+    ),
+  )
+})
+
+test('inert strings concatenate only previously declared owned constants', () => {
+  for (const declarations of [
+    "const attr = 'owned'; const selector = '[' + attr + ']';",
+    "const attr = 'owned', selector = '[' + attr + ']';",
+  ])
+    assert.doesNotThrow(() =>
+      validateBundle([
+        chunk(
+          minimal.replace(
+            'function capturePrimordials',
+            declarations + ' function capturePrimordials',
+          ),
+        ),
+      ]),
+    )
+  for (const declarations of [
+    "let attr = 'owned'; const selector = '[' + attr + ']';",
+    "const selector = '[' + attr + ']'; const attr = 'owned';",
+    "const selector = '[' + value.attr + ']';",
+    "const selector = '[' + read() + ']';",
+    "const count = 1; const selector = '[' + count + ']';",
+    "const attr = 'owned'; let selector = '[' + attr + ']';",
+  ])
+    assert.throws(
+      () =>
+        validateBundle([
+          chunk(
+            minimal.replace(
+              'function capturePrimordials',
+              declarations + ' function capturePrimordials',
+            ),
+          ),
+        ]),
+      /only inert/,
+    )
+})
+
+test('generated cssPath preserves invalid inputs, ancestor order and separators', async () => {
+  const { body } = await renderReporter()
+  const cssPath = new Function(
+    'return ' + body.replace('installReporter(window);', 'return cssPath;'),
+  )()
+  const root = { nodeType: 1 }
+  const ctx = { doc: { body: root } }
+  assert.equal(cssPath(ctx, null), null)
+  assert.equal(cssPath(ctx, { nodeType: 3 }), null)
+  assert.equal(cssPath(ctx, root), 'body')
+  const main = { nodeType: 1, nodeName: 'MAIN', parentElement: root }
+  const previous = { nodeType: 1, nodeName: 'P' }
+  const element = {
+    nodeType: 1,
+    nodeName: 'P',
+    previousElementSibling: previous,
+    parentElement: main,
+  }
+  assert.equal(
+    cssPath(ctx, element),
+    'body > main:nth-of-type(1) > p:nth-of-type(2)',
+  )
+})
+
+test('generated verification scans text anchors without page Array.some', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    `
+    createTextAnchorEngine = function(root) {
+      return {text: root.text, resolve(anchor) { return anchor.quotedText === root.text ? {} : null; }};
+    };
+    send = function(ctx, message) { ctx.messages.push(message); };
+    scheduleChecking = function() {};
+    applyHighlights = function() {};
+    invalidateChangedPaint = function() {};
+    return [verifyAnchors, rebuildAfterMutations];
+  `,
+  )
+  for (const replacement of [
+    'return false;',
+    "throw new Error('page some called');",
+  ]) {
+    const result = runInNewContext(`
+      const [verify, rebuild] = ${expose};
+      const root = {text: 'selected words'};
+      const ctx = {
+        doc: {body: root, querySelector() {return root;}},
+        win: {clearTimeout() {}, setTimeout(callback) {callback();}},
+        anchorSnapshotGeneration: 0, resolutionGeneration: 0,
+        pendingHighlights: [], checkingDeadlines: {attached: 1, missing: 1}, messages: [],
+      };
+      const anchors = [
+        {kind: 'text', thread: 'attached', quotedText: 'selected words'},
+        {kind: 'text', thread: 'missing', quotedText: 'absent words'},
+      ];
+      Array.prototype.some = function() { ${replacement} };
+      verify(ctx, anchors);
+      root.text = 'absent words';
+      rebuild(ctx);
+      JSON.stringify(ctx.messages.map(message => message.verdicts.map(verdict => verdict.attached)));
+    `)
+    assert.equal(result, '[[true,false],[false,true]]')
+  }
+})
+
+test('generated copy fallback and highlight styles retain their exclusion attributes', async () => {
+  const { body } = await renderReporter()
+  const [installCodeCopy, ensureCommentStyles] = new Function(
+    'return ' +
+      body.replace(
+        'installReporter(window);',
+        'return [installCodeCopy, ensureCommentStyles];',
+      ),
+  )()
+  let click
+  const created = []
+  const doc = {
+    addEventListener(kind, listener) {
+      assert.equal(kind, 'click')
+      click = listener
+    },
+    getElementById() {
+      return null
+    },
+    createElement(tag) {
+      const element = {
+        tag,
+        style: {},
+        attributes: {},
+        setAttribute(name, value) {
+          this.attributes[name] = value
+        },
+        select() {},
+        remove() {},
+      }
+      created.push(element)
+      return element
+    },
+    body: { appendChild() {} },
+    head: { appendChild() {} },
+    execCommand() {
+      return false
+    },
+  }
+  const ctx = { doc, win: { navigator: {} } }
+  installCodeCopy(ctx)
+  const code = { textContent: 'example' }
+  const button = {
+    closest() {
+      return {
+        querySelector() {
+          return code
+        },
+      }
+    },
+  }
+  click({
+    target: {
+      closest() {
+        return button
+      },
+    },
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  ensureCommentStyles(ctx)
+  assert.deepEqual(
+    created.map((element) => [element.tag, element.attributes]),
+    [
+      ['textarea', { 'data-anchor-ignore': '' }],
+      ['style', { 'data-anchor-ignore': '' }],
+    ],
+  )
+  assert.equal(created[0].value, 'example')
+  assert.equal(created[1].id, 'ash-comment-highlight-style')
 })

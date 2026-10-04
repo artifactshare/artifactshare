@@ -1,3 +1,4 @@
+import { anchorIgnoreAttribute } from './anchor-engine.js'
 import type { CommentHighlight, SvgTextGroup, ReporterState } from './state.js'
 import {
   refreshTextPaints,
@@ -169,7 +170,7 @@ export function wrapSvgRange(
     if (!shape) {
       shape = ctx.doc.createElementNS('http://www.w3.org/2000/svg', 'rect')
       shape.setAttribute('class', 'ash-comment-highlight-svg')
-      shape.setAttribute('data-anchor-ignore', '')
+      shape.setAttribute(anchorIgnoreAttribute(), '')
       shape.setAttribute('pointer-events', 'none')
       shape.dataset.threadId = currentHighlight.threadId
       shape.dataset.target = currentHighlight.target ? 'true' : 'false'
@@ -337,7 +338,7 @@ export function wrapSvgRange(
   }
 
   let badge = takeBadge(ctx, highlight)
-  badge.setAttribute('data-anchor-ignore', '')
+  badge.setAttribute(anchorIgnoreAttribute(), '')
   badge.type = 'button'
   badge.className = 'ash-comment-highlight-badge'
   badge.dataset.threadId = highlight.threadId

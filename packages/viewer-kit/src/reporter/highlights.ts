@@ -1,3 +1,4 @@
+import { anchorIgnoreAttribute, highlightStyleId } from './anchor-engine.js'
 import type { TextAnchorEngine } from './anchor-engine.js'
 import type {
   CommentHighlight,
@@ -18,10 +19,10 @@ import { verifyAnchors } from './annotate.js'
 import { send } from './messaging.js'
 
 export function ensureCommentStyles(ctx: ReporterState) {
-  if (ctx.doc.getElementById('ash-comment-highlight-style')) return
+  if (ctx.doc.getElementById(highlightStyleId())) return
   let style = ctx.doc.createElement('style')
-  style.setAttribute('data-anchor-ignore', '')
-  style.id = 'ash-comment-highlight-style'
+  style.setAttribute(anchorIgnoreAttribute(), '')
+  style.id = highlightStyleId()
   style.textContent =
     '.ash-comment-highlight-badge::after{content:attr(data-count);}'
   ctx.doc.head.appendChild(style)
@@ -51,7 +52,7 @@ export function clearMarks(ctx: ReporterState, preserveBadges = false) {
   for (let s = 0; s < svgOverlays.length; s++) svgOverlays[s].remove()
   if (!preserveBadges) ctx.svgActiveThreads = {}
   ctx.appliedHighlightKey = ''
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (style)
     style.textContent =
       '.ash-comment-highlight-badge::after{content:attr(data-count);}'
@@ -61,7 +62,7 @@ export function paintIntact(
   ctx: ReporterState,
   highlightsById: Map<string, ResolvedHighlight>,
 ) {
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (
     ctx.paintedAnchors.length &&
     (!style || !style.isConnected || style.textContent !== textPaintCss(ctx))
@@ -368,7 +369,7 @@ export function textPaintCss(ctx: ReporterState) {
 }
 
 export function refreshTextPaints(ctx: ReporterState) {
-  let style = ctx.doc.getElementById('ash-comment-highlight-style')
+  let style = ctx.doc.getElementById(highlightStyleId())
   if (!style) return
   let css = textPaintCss(ctx)
   if (style.textContent !== css) style.textContent = css
@@ -477,7 +478,7 @@ export function wrapRange(
   }
   if (svgWrapped) return
   let badge = takeBadge(ctx, highlight)
-  badge.setAttribute('data-anchor-ignore', '')
+  badge.setAttribute(anchorIgnoreAttribute(), '')
   badge.type = 'button'
   badge.className = 'ash-comment-highlight-badge'
   badge.setAttribute('aria-label', commentLabel(ctx, highlight))

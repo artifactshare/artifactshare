@@ -15,7 +15,9 @@ export function cssPath(ctx: ReporterState, element: Element | null) {
     parts.unshift(name + ':nth-of-type(' + index + ')')
     element = element.parentElement
   }
-  return parts.length ? 'body > ' + parts.join(' > ') : 'body'
+  let path = 'body'
+  for (let i = 0; i < parts.length; i++) path += ' > ' + parts[i]
+  return path
 }
 
 export function selectedElement(ctx: ReporterState, range: Range) {

@@ -1,3 +1,4 @@
+import { anchorIgnoreAttribute } from './anchor-engine.js'
 import type { ReporterState } from './state.js'
 
 export function updateMarkdownToc(ctx: ReporterState) {
@@ -39,7 +40,7 @@ export function installCodeCopy(ctx: ReporterState) {
     }
     let fallback = function () {
       let textarea = ctx.doc.createElement('textarea')
-      textarea.setAttribute('data-anchor-ignore', '')
+      textarea.setAttribute(anchorIgnoreAttribute(), '')
       textarea.value = code.textContent || ''
       textarea.style.position = 'fixed'
       textarea.style.opacity = '0'

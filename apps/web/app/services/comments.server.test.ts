@@ -432,12 +432,16 @@ describe('comments server', () => {
     if (subject.kind !== 'text') throw new Error('Expected text subject')
     const loadedTextSelector = subject
     function resolve(text: string) {
-      const document = new Window().document
-      const root = document.createElement('p')
-      root.textContent = text
-      return createTextAnchorEngine(root as unknown as Element).resolve(
-        loadedTextSelector,
-      )
+      const window = new Window()
+      try {
+        const root = window.document.createElement('p')
+        root.textContent = text
+        return createTextAnchorEngine(root as unknown as Element).resolve(
+          loadedTextSelector,
+        )
+      } finally {
+        window.close()
+      }
     }
     expect(resolve('the selected words here')).toEqual({
       textStart: 4,

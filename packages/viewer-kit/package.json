@@ -26,7 +26,6 @@
   "devDependencies": {
     "typescript": "7.0.2",
     "rolldown": "1.2.8",
-    "oxc-parser": "0.149.0",
-    "oxfmt": "0.66.0"
+    "oxc-parser": "0.149.0"
   }
 }

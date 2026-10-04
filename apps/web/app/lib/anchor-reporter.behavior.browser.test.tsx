@@ -293,6 +293,12 @@ test('omits paint safely without Custom Highlight support and retains badge navi
   const badge = doc.querySelector<HTMLButtonElement>(
     '.ash-comment-highlight-badge',
   )!
+  expect(badge.hasAttribute('data-anchor-ignore')).toBe(true)
+  expect(
+    doc
+      .getElementById('ash-comment-highlight-style')!
+      .hasAttribute('data-anchor-ignore'),
+  ).toBe(true)
   badge.click()
   await vi.waitFor(() =>
     expect(
@@ -1591,4 +1597,127 @@ test('mutation relevance ignores added and removed ignored nodes but not comment
     hasAttribute.mockRestore()
     walk.mockRestore()
   }
+})
+
+test.each(['false', 'throw'])(
+  'text-only verification survives a %s page Array.some and later mutations',
+  async (replacement) => {
+    const doc = await fixture('<p id="words">selected words</p>')
+    const realm = doc.defaultView as Window & typeof globalThis
+    const errors: string[] = []
+    const onError = (event: ErrorEvent) => errors.push(event.message)
+    realm.addEventListener('error', onError)
+    const some = vi
+      .spyOn(realm.Array.prototype, 'some')
+      .mockImplementation(() => {
+        if (replacement === 'throw') throw new Error('page some called')
+        return false
+      })
+    const verdict = () =>
+      (
+        messages as unknown as {
+          kind: string
+          generation: number
+          verdicts?: {
+            thread: string
+            attached: boolean
+            position_state: string
+          }[]
+        }[]
+      ).findLast((message) => message.kind === 'anchor-verdicts')
+    try {
+      send('verify-anchors', {
+        verificationId: 1,
+        anchors: [
+          {
+            kind: 'text',
+            thread: 'attached',
+            quotedText: 'selected words',
+            selectorFormat: 'quote-v1',
+          },
+          {
+            kind: 'text',
+            thread: 'missing',
+            quotedText: 'absent words',
+            selectorFormat: 'quote-v1',
+          },
+        ],
+      })
+      await vi.waitFor(() =>
+        expect(verdict()?.verdicts).toEqual([
+          { thread: 'attached', attached: true, position_state: 'attached' },
+          { thread: 'missing', attached: false, position_state: 'checking' },
+        ]),
+      )
+      await vi.waitFor(
+        () =>
+          expect(verdict()?.verdicts).toEqual([
+            { thread: 'attached', attached: true, position_state: 'attached' },
+            {
+              thread: 'missing',
+              attached: false,
+              position_state: 'needs-check',
+            },
+          ]),
+        { timeout: 6000 },
+      )
+      const generation = verdict()!.generation
+      doc.querySelector('#words')!.textContent = 'absent words'
+      await vi.waitFor(() => {
+        expect(verdict()?.generation).toBeGreaterThan(generation)
+        expect(verdict()?.verdicts).toEqual([
+          { thread: 'attached', attached: false, position_state: 'checking' },
+          { thread: 'missing', attached: true, position_state: 'attached' },
+        ])
+      })
+      await vi.waitFor(
+        () =>
+          expect(verdict()?.verdicts).toEqual([
+            {
+              thread: 'attached',
+              attached: false,
+              position_state: 'needs-check',
+            },
+            { thread: 'missing', attached: true, position_state: 'attached' },
+          ]),
+        { timeout: 6000 },
+      )
+      expect(some).not.toHaveBeenCalled()
+      expect(errors).toEqual([])
+    } finally {
+      some.mockRestore()
+      realm.removeEventListener('error', onError)
+      frame.remove()
+    }
+  },
+  15000,
+)
+
+test.each([
+  ['body', 'body'],
+  [
+    '#nested',
+    'body > main:nth-of-type(1) > section:nth-of-type(1) > p:nth-of-type(1)',
+  ],
+  ['#sibling', 'body > main:nth-of-type(1) > p:nth-of-type(2)'],
+])('selection emits the legacy CSS path for %s', async (target, expected) => {
+  const doc = await fixture(
+    '<section><p id="nested">nested words</p></section><p>first</p><p id="sibling">second words</p>',
+  )
+  const element = doc.querySelector(target)!
+  const range = doc.createRange()
+  if (target === 'body') {
+    // Body endpoints are valid only when the body is the anchor root.
+    // The fixture's usual main root deliberately rejects endpoints outside it.
+    doc.querySelector('main')!.removeAttribute('data-comment-content')
+    range.setStart(doc.body, 0)
+    range.setEnd(doc.body, 1)
+  } else range.selectNodeContents(element)
+  expect(range.commonAncestorContainer).toBe(element)
+  doc.defaultView!.getSelection()!.removeAllRanges()
+  doc.defaultView!.getSelection()!.addRange(range)
+  doc.dispatchEvent(new MouseEvent('mouseup'))
+  const message = await selection()
+  expect(message.cssPath).toBe(expected)
+  expect(doc.querySelector(message.cssPath!)).toBe(element)
 })

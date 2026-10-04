@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { readFile, writeFile, realpath } from 'node:fs/promises'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
 import { parseSync } from 'oxc-parser'
 import { rolldown } from 'rolldown'
 
@@ -76,16 +75,125 @@ function validateSecurityFunction(fn) {
         `${fn.id.name}: ${node.type} can invoke authored iterators; use indexed loops and captured primordials`,
       )
     if (
-      node.type === 'CallExpression' &&
-      node.callee.type === 'MemberExpression' &&
-      (identifier(node.callee.object, 'Object') ||
-        (identifier(node.callee.object, 'Array') &&
-          !identifier(node.callee.property, 'isArray')))
+      node.type !== 'CallExpression' ||
+      node.callee.type !== 'MemberExpression'
+    )
+      return
+    const receiver = node.callee.object
+    const method = memberName(node.callee)
+    const receiverName =
+      receiver.type === 'Identifier' ? receiver.name : memberName(receiver)
+    if (
+      (receiverName === 'Object' || receiverName === 'Array') &&
+      !(identifier(receiver, 'Array') && method === 'isArray')
     )
       fail(
         `${fn.id.name}: uncaptured Object/Array method; use captured primordials`,
       )
+    if (
+      [
+        'forEach',
+        'some',
+        'map',
+        'filter',
+        'every',
+        'reduce',
+        'find',
+        'includes',
+        'indexOf',
+        'join',
+        'concat',
+      ].includes(method)
+    )
+      fail(
+        `${fn.id.name}: replaceable array method ${method}; use indexed loops and captured primordials`,
+      )
   })
+}
+
+function memberName(node) {
+  if (node?.type !== 'MemberExpression') return undefined
+  if (!node.computed) return node.property.name
+  if (node.property.type === 'Literal') return node.property.value
+  if (
+    node.property.type === 'TemplateLiteral' &&
+    !node.property.expressions.length
+  )
+    return node.property.quasis[0].value.cooked
+  return undefined
+}
+
+// Skipped writes and secret handling compare only against live values of
+// reporter-owned objects or captured primordials. Do not alias secret state.
+// Object-literal shorthand { ctx }, including in call arguments, wraps state
+// and is rejected; shorthand binding patterns only declare a local name.
+function validateCtxReference(node, ancestors, installReporter) {
+  if (!identifier(node, 'ctx')) return
+  const parent = ancestors.at(-1)
+  const isFunction = (value) =>
+    [
+      'FunctionDeclaration',
+      'FunctionExpression',
+      'ArrowFunctionExpression',
+    ].includes(value?.type)
+  if (
+    (parent?.type === 'VariableDeclarator' && parent.id === node) ||
+    (isFunction(parent) &&
+      (parent.id === node || parent.params.includes(node))) ||
+    (parent?.type === 'CatchClause' && parent.param === node) ||
+    (['ClassDeclaration', 'ClassExpression'].includes(parent?.type) &&
+      parent.id === node) ||
+    (['LabeledStatement', 'BreakStatement', 'ContinueStatement'].includes(
+      parent?.type,
+    ) &&
+      parent.label === node)
+  )
+    return
+  if (parent?.type === 'MemberExpression' && !parent.computed) return
+  if (
+    ['Property', 'MethodDefinition', 'PropertyDefinition'].includes(
+      parent?.type,
+    ) &&
+    parent.key === node &&
+    !parent.computed &&
+    (!parent.shorthand || parent.value !== node)
+  )
+    return
+  // A shorthand key is only a property name. If the parser shares its node
+  // with the value, classify that value below rather than exempting it too.
+  // Binding patterns are declarations, not value references. Assignment patterns
+  // on the left of an assignment remain references and are deliberately rejected.
+  let child = node
+  for (let index = ancestors.length - 1; index >= 0; index--) {
+    const owner = ancestors[index]
+    if (owner.type === 'VariableDeclarator' && owner.id === child) return
+    if (isFunction(owner) && owner.params.includes(child)) return
+    if (owner.type === 'CatchClause' && owner.param === child) return
+    if (
+      ![
+        'Property',
+        'ObjectPattern',
+        'ArrayPattern',
+        'RestElement',
+        'AssignmentPattern',
+      ].includes(owner.type)
+    )
+      break
+    if (owner.type === 'AssignmentPattern' && owner.left !== child) break
+    if (owner.type === 'Property' && owner.value !== child) break
+    child = owner
+  }
+  if (parent?.type === 'CallExpression' && parent.arguments.includes(node))
+    return
+  if (
+    parent?.type === 'ReturnStatement' &&
+    parent.argument === node &&
+    ancestors.findLast(isFunction) === installReporter
+  )
+    return
+  fail(
+    'ctx value reference must be a non-computed member object or direct call argument; only installReporter may return ctx',
+  )
 }
 
 // Secrets may only be assigned, tested without coercion, or placed directly in
@@ -199,6 +307,14 @@ export function validateBundle(
     )
   const functions = new Map()
   let installs = 0
+  const ownedStrings = new Set()
+  const inertString = (node) =>
+    (node?.type === 'Literal' && typeof node.value === 'string') ||
+    (node?.type === 'Identifier' && ownedStrings.has(node.name)) ||
+    (node?.type === 'BinaryExpression' &&
+      node.operator === '+' &&
+      inertString(node.left) &&
+      inertString(node.right))
   for (const statement of body) {
     if (statement.type === 'FunctionDeclaration') {
       if (securityFunctions.has(statement.id.name))
@@ -207,18 +323,25 @@ export function validateBundle(
       functions.set(statement.id.name, statement)
       continue
     }
-    if (
-      statement.type === 'VariableDeclaration' &&
-      statement.declarations.every(
-        (declaration) =>
-          declaration.id.type === 'Identifier' &&
-          declaration.init?.type === 'Literal' &&
-          ['string', 'number', 'boolean'].includes(
-            typeof declaration.init.value,
-          ),
-      )
-    )
+    if (statement.type === 'VariableDeclaration') {
+      for (const declaration of statement.declarations) {
+        const value = declaration.init
+        if (
+          declaration.id.type !== 'Identifier' ||
+          !(
+            (value?.type === 'Literal' &&
+              ['string', 'number', 'boolean'].includes(typeof value.value)) ||
+            (statement.kind === 'const' && inertString(value))
+          )
+        )
+          fail(
+            'only inert function/primitive declarations may precede installReporter(window)',
+          )
+        if (statement.kind === 'const' && inertString(value))
+          ownedStrings.add(declaration.id.name)
+      }
       continue
+    }
     if (
       statement.type === 'ExpressionStatement' &&
       statement.directive === 'use strict'
@@ -270,6 +393,9 @@ export function validateBundle(
   )
     fail('capturePrimordials must begin by saving the supplied window parent')
   walk(program, validateSecretUse)
+  walk(program, (node, ancestors) =>
+    validateCtxReference(node, ancestors, functions.get('installReporter')),
+  )
   walk(program, (node) => {
     if (
       node.type === 'FunctionDeclaration' &&
@@ -302,23 +428,6 @@ export function validateBundle(
   if (/<\/script/i.test(chunk.code))
     fail('literal closing script tag would end injection early')
   return chunk.code
-}
-
-export function formatGenerated(source) {
-  const result = spawnSync(
-    resolve(here, '../node_modules/.bin/oxfmt'),
-    [
-      '--config',
-      resolve(repository, '.oxfmtrc.json'),
-      '--stdin-filepath',
-      outputPath,
-    ],
-    { input: source, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
-  )
-  if (result.error) throw result.error
-  if (result.status !== 0)
-    throw new Error(`Formatting reporter data failed: ${result.stderr}`)
-  return result.stdout
 }
 
 export async function renderReporter({ entry = entryPath } = {}) {
@@ -371,12 +480,11 @@ export async function renderReporter({ entry = entryPath } = {}) {
       .replace(/\r\n/g, '\n')
       .replace(/^[ \t]*\/\/#(?:end)?region[^\n]*(?:\n|$)/gm, '')
     const hash = createHash('sha256').update(body, 'utf8').digest('base64')
-    const source = formatGenerated(
+    const source =
       '// Generated by packages/viewer-kit/scripts/build-reporter.mjs. Do not edit.\n' +
-        '// Run pnpm --filter @artifactshare/viewer-kit generate:reporter to regenerate.\n' +
-        `export const VIOLATION_REPORTER_SCRIPT_BODY = ${JSON.stringify(body)}\n` +
-        `export const VIOLATION_REPORTER_SHA256 = ${JSON.stringify(hash)}\n`,
-    )
+      '// Run pnpm --filter @artifactshare/viewer-kit generate:reporter to regenerate.\n' +
+      `export const VIOLATION_REPORTER_SCRIPT_BODY = ${JSON.stringify(body)}\n` +
+      `export const VIOLATION_REPORTER_SHA256 = ${JSON.stringify(hash)}\n`
     return { body, hash, source }
   } finally {
     await bundle.close()

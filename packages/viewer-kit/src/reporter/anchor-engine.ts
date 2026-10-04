@@ -1,17 +1,33 @@
-// Only the engine consumes the full selector. Keeping it local also avoids
-// duplicating this literal through the bundler's exported-constant inlining.
-const TEXT_ANCHOR_EXCLUDED_SELECTOR =
-  'script,style,noscript,template,textarea,select,[data-anchor-ignore],[data-comment-ui],.ash-comment-highlight-badge,.mermaid-diagram'
-export const ANCHOR_IGNORE_ATTRIBUTE = 'data-anchor-ignore'
-export const COMMENT_UI_ATTRIBUTE = 'data-comment-ui'
+// Keep owned strings local and expose narrow accessors so bundling cannot
+// duplicate literals by inlining exported constants into their consumers.
+const ANCHOR_IGNORE_ATTRIBUTE = 'data-anchor-ignore'
+const COMMENT_UI_ATTRIBUTE = 'data-comment-ui'
 export const EXCLUSION_CLASS_ATTRIBUTE = 'class'
+const HIGHLIGHT_STYLE_ID = 'ash-comment-highlight-style'
+const TEXT_ANCHOR_EXCLUDED_SELECTOR =
+  'script,style,noscript,template,textarea,select,[' +
+  ANCHOR_IGNORE_ATTRIBUTE +
+  '],[' +
+  COMMENT_UI_ATTRIBUTE +
+  '],.ash-comment-highlight-badge,.mermaid-diagram'
+const IGNORED_MUTATION_SELECTOR =
+  '[' + ANCHOR_IGNORE_ATTRIBUTE + '],#' + HIGHLIGHT_STYLE_ID
+const COMMENT_UI_SELECTOR = '[' + COMMENT_UI_ATTRIBUTE + ']'
 
-export function ignoredMutationSelector() {
-  return '[' + ANCHOR_IGNORE_ATTRIBUTE + '],#ash-comment-highlight-style'
+export function anchorIgnoreAttribute() {
+  return ANCHOR_IGNORE_ATTRIBUTE
 }
-
+export function commentUiAttribute() {
+  return COMMENT_UI_ATTRIBUTE
+}
+export function highlightStyleId() {
+  return HIGHLIGHT_STYLE_ID
+}
+export function ignoredMutationSelector() {
+  return IGNORED_MUTATION_SELECTOR
+}
 export function commentUiSelector() {
-  return '[' + COMMENT_UI_ATTRIBUTE + ']'
+  return COMMENT_UI_SELECTOR
 }
 
 export interface TextSelector {

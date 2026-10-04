@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Internal: harden shared preview-reporter generation guards and preserve text verification when page code replaces array methods.
+
 - Internal: build the preview reporter from typed modules and test the shared anchor engine directly, preserving annotation and handshake behavior.
 
 - Preserve legacy preview annotations, including long quotes and trimmed context, and skip malformed saved records individually with a warning.
