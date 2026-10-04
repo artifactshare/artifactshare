@@ -1,5 +1,7 @@
-import type { NewCommentMessage } from './comment-order'
-import type { ViewerRevisitContext } from '~/services/viewer-revisit.server'
+import type {
+  NewCommentMessage,
+  ViewerRevisitContext,
+} from '~/lib/viewer-revisit'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import {
   useCallback,

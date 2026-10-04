@@ -1,11 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CommentMessageItem } from './comment-message-item'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
 import type { CommentMessageView } from '~/lib/comments'
 
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
+afterEach(() => {
+  locale.value = 'en'
+})
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     t: (key: string) =>
@@ -81,6 +84,5 @@ test.each(['en', 'ja'] as const)(
     expect(marked).toContain('data-new-comment-message="true"')
     expect(render(null)).not.toContain(`>${label}<`)
     expect(render(null)).not.toContain('data-new-comment-message')
-    locale.value = 'en'
   },
 )

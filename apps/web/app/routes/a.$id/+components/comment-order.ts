@@ -1,6 +1,6 @@
 import type { CommentThreadView } from '~/lib/comments'
 
-export type NewCommentMessage = { messageId: string; threadId: string }
+import type { NewCommentMessage } from '~/lib/viewer-revisit'
 
 export function firstNewCommentThread(
   threads: ReadonlyArray<CommentThreadView>,

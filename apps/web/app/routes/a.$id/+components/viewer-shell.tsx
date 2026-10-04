@@ -1,5 +1,8 @@
-import type { ViewerRevisitContext } from '~/services/viewer-revisit.server'
-import { firstNewCommentThread, type NewCommentMessage } from './comment-order'
+import { firstNewCommentThread } from './comment-order'
+import type {
+  NewCommentMessage,
+  ViewerRevisitContext,
+} from '~/lib/viewer-revisit'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import {
@@ -461,14 +464,11 @@ export function viewerCommentReducer(
         ? {
             ...state,
             panelOpen: true,
-            // An ordinary open preserves deep-link/anchor navigation. An
-            // explicit null revisit target clears a now-missing new message.
-            targetThreadId:
-              action.revisitThreadId === undefined
-                ? state.targetThreadId
-                : action.revisitThreadId,
+            // Without a matching new message, open normally and preserve
+            // existing deep-link/anchor navigation without a new focus request.
+            targetThreadId: action.revisitThreadId ?? state.targetThreadId,
             targetThreadScroll:
-              action.revisitThreadId === undefined
+              action.revisitThreadId == null
                 ? state.targetThreadScroll
                 : 'start',
             focusTargetOnOpen: Boolean(action.revisitThreadId),

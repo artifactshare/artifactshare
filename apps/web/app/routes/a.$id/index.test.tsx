@@ -1,5 +1,6 @@
 import { createViewerRevisitFixture } from '~/test/viewer-revisit-fixture'
 import * as viewerRevisitService from '~/services/viewer-revisit.server'
+import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
@@ -1311,7 +1312,7 @@ describe('/a/:id loader', () => {
       INSERT INTO comment_messages (id, thread_id, body, created_by_id, created_at, updated_at)
         VALUES ('message-1', 'thread-1', 'A new reaction', 'u2', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
     `)
-    let entrySnapshot: viewerRevisitService.ViewerRevisitContext | null = null
+    let entrySnapshot: ViewerRevisitContext | null = null
     const loadSpy = vi
       .spyOn(viewerRevisitService, 'loadViewerRevisitContext')
       .mockImplementation(async (_db, input) => {

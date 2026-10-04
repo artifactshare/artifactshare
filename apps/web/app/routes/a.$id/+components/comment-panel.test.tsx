@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
@@ -9,6 +9,9 @@ vi.mock('react-router', async (importOriginal) => ({
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
+afterEach(() => {
+  locale.value = 'en'
+})
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
@@ -252,7 +255,6 @@ test.each(['en', 'ja'] as const)(
     const unmarked = renderThreads([root, replies, old])
     expect(unmarked).not.toContain(`>${label}<`)
     expect(unmarked).not.toContain('data-new-comment-thread')
-    locale.value = 'en'
   },
 )
 
@@ -290,8 +292,47 @@ test('a resolved revisit target expands thread pagination while the requested al
     'New reaction in a resolved thread',
   )
   const html = renderThreads(threads, pairs, target.id, 'all')
-  expect(html).toContain('aria-label="New reaction in a resolved thread"')
+  expect(html).toContain('aria-labelledby="comment-card-header-thread-target"')
+  expect(html).toContain('id="comment-card-header-thread-target"')
+  expect(html).not.toContain('aria-label="New reaction in a resolved thread"')
   expect(html).toContain('tabindex="-1"')
   expect(html).toContain('data-new-comment-thread="true"')
   expect(html.match(/<article/g)).toHaveLength(51)
+})
+
+test('a target reveals selected replies older than its reply page while ordinary cards keep pagination', () => {
+  const thread: CommentThreadView = {
+    ...textThread('attached'),
+    messages: Array.from({ length: 56 }, (_, index) => ({
+      id: `message-${index}`,
+      body: `Reply body ${index}.`,
+      agent: null,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      author: {
+        id: 'u2',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    })),
+  }
+  const pairs = [2, 54].map((index) => ({
+    threadId: thread.id,
+    messageId: `message-${index}`,
+  }))
+  const target = renderThreads([thread], pairs, thread.id, 'all')
+  expect(target).toContain('Reply body 2.')
+  expect(target).toContain('Reply body 54.')
+  expect(target).not.toContain('Reply body 1.')
+  expect(target.match(/data-new-comment-message="true"/g)).toHaveLength(2)
+  const ordinary = renderThreads([thread], pairs)
+  expect(ordinary).not.toContain('Reply body 2.')
+  expect(ordinary.match(/data-new-comment-message="true"/g)).toHaveLength(1)
+  expect(ordinary).toContain('data-new-comment-thread="true"')
+  const unmarkedTarget = renderThreads([thread], [], thread.id, 'all')
+  expect(unmarkedTarget).not.toContain('Reply body 2.')
+  expect(unmarkedTarget).not.toContain('data-new-comment-message')
 })

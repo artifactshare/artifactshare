@@ -2,15 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 import { commentThreadWindowExpression } from './comment-thread-window.server'
 
-export type ViewerRevisitContext = {
-  entryCurrentVersionId: string
-  version:
-    | { kind: 'ordinal'; from: number; to: number }
-    | { kind: 'fallback' }
-    | null
-  commentCount: number
-  newCommentMessages: Array<{ messageId: string; threadId: string }>
-}
+import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 
 type HistoryVersion = { id: string; ordinal: number }
 

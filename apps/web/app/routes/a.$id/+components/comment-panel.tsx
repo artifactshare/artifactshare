@@ -42,7 +42,8 @@ import { IconMessage, IconX } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
 import { AppSidePanel } from '~/components/app/app-side-panel'
 import { restoreViewerPanelFocus } from './viewer-dom'
-import { compareCommentThreads, type NewCommentMessage } from './comment-order'
+import { compareCommentThreads } from './comment-order'
+import type { NewCommentMessage } from '~/lib/viewer-revisit'
 import { NewCommentBadge } from './new-comment-badge'
 
 type CommentFilter = 'open' | 'all' | 'resolved'
@@ -593,12 +594,18 @@ function ThreadCard({
   }
 
   const showAllReplies = target || repliesExpanded
-  const hiddenReplyCount = showAllReplies
-    ? Math.max(0, replyMessages.length - replyLimit)
-    : Math.max(0, replyMessages.length - COLLAPSED_REPLY_COUNT)
-  const displayedReplyMessages = showAllReplies
-    ? replyMessages.slice(-replyLimit)
-    : replyMessages.slice(-COLLAPSED_REPLY_COUNT)
+  const firstNewReplyIndex = replyMessages.findIndex((message) =>
+    newMessageIds.has(message.id),
+  )
+  // Keep normal reply pagination, but expose every selected reply at the target.
+  const visibleReplyLimit = Math.max(
+    showAllReplies ? replyLimit : COLLAPSED_REPLY_COUNT,
+    target && firstNewReplyIndex >= 0
+      ? replyMessages.length - firstNewReplyIndex
+      : 0,
+  )
+  const hiddenReplyCount = Math.max(0, replyMessages.length - visibleReplyLimit)
+  const displayedReplyMessages = replyMessages.slice(-visibleReplyLimit)
   const canNavigateToText =
     thread.subject.kind === 'text' && thread.subject.state === 'attached'
 
@@ -607,7 +614,7 @@ function ThreadCard({
       ref={threadRef}
       id={`comment-card-${thread.id}`}
       tabIndex={-1}
-      aria-label={firstMessage?.body}
+      aria-labelledby={`comment-card-header-${thread.id}`}
       data-new-comment-thread={hasNewMessages || undefined}
       className={cn(
         'focus-visible:ring-ring/50 bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 focus-visible:ring-3 focus-visible:outline-none has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
@@ -660,7 +667,10 @@ function ThreadCard({
         className="flex min-w-0 items-center justify-between gap-2.5"
         data-thread-content=""
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div
+          id={`comment-card-header-${thread.id}`}
+          className="flex flex-wrap items-center gap-2"
+        >
           <CommentStatusBadge status={thread.status} />
           {hasNewMessages ? <NewCommentBadge /> : null}
         </div>
@@ -726,7 +736,8 @@ function ThreadCard({
                 setReplyLimit((current) =>
                   Math.min(
                     replyMessages.length,
-                    current + EXPANDED_REPLY_PAGE_SIZE,
+                    Math.max(current, visibleReplyLimit) +
+                      EXPANDED_REPLY_PAGE_SIZE,
                   ),
                 )
               }}

@@ -670,7 +670,7 @@ describe('opening an existing comment target', () => {
     },
   )
 
-  test('explicit revisit requests replace or clear an existing target', () => {
+  test('a resolved revisit request replaces an existing target', () => {
     const targeted = viewerCommentReducer(base, {
       type: 'thread-targeted',
       threadId: 'thread-1',
@@ -687,16 +687,49 @@ describe('opening an existing comment target', () => {
       targetThreadScroll: 'start',
       focusTargetOnOpen: true,
     })
-    expect(
-      viewerCommentReducer(targeted, {
+  })
+
+  test.each(['deep-link', 'anchor-navigation'] as const)(
+    'a count request with no matching message preserves the %s target',
+    (source) => {
+      const targeted =
+        source === 'deep-link'
+          ? createViewerCommentState('s1', 'v1', [], 'thread-1')
+          : viewerCommentReducer(base, {
+              type: 'thread-targeted',
+              threadId: 'thread-1',
+              scroll: 'center',
+            })
+      const revisitThreadId = firstNewCommentThread(targeted.threads, [
+        { threadId: 'thread-deleted', messageId: 'message-deleted' },
+      ])
+      expect(revisitThreadId).toBeNull()
+      const opened = viewerCommentReducer(targeted, {
         type: 'panel-open-changed',
         open: true,
-        revisitThreadId: null,
-      }),
-    ).toMatchObject({
-      targetThreadId: null,
-      targetThreadScroll: 'start',
-      focusTargetOnOpen: false,
-    })
-  })
+        revisitThreadId,
+      })
+      expect(opened).toMatchObject({
+        panelOpen: true,
+        targetThreadId: 'thread-1',
+        targetThreadScroll: source === 'deep-link' ? 'start' : 'center',
+        focusTargetOnOpen: false,
+      })
+      const closed = viewerCommentReducer(opened, {
+        type: 'panel-open-changed',
+        open: false,
+      })
+      expect(
+        viewerCommentReducer(closed, {
+          type: 'panel-open-changed',
+          open: true,
+          revisitThreadId,
+        }),
+      ).toMatchObject({
+        targetThreadId: null,
+        targetThreadScroll: 'start',
+        focusTargetOnOpen: false,
+      })
+    },
+  )
 })
