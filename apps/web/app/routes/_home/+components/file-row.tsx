@@ -530,7 +530,11 @@ const FileRowSurface = memo(function FileRowSurface({
                   <span
                     className={cn(
                       'min-w-0 truncate',
-                      !inlineOwner && 'max-wide:hidden',
+                      inlineOwner && dateRail
+                        ? '@max-recent-rail-wide:hidden'
+                        : inlineOwner && homeCompact
+                          ? '@max-[theme(--breakpoint-stack)]:hidden'
+                          : 'max-wide:hidden',
                     )}
                   >
                     {inlineOwner ? <span aria-hidden="true"> · </span> : null}
@@ -641,9 +645,8 @@ const FileRowSurface = memo(function FileRowSurface({
                   />
                 </span>
               ) : null}
-              {!inlineOwner &&
-              (versionDisplay === 'recent' ||
-                (!hideMobileOwner && unreadBadges)) &&
+              {(versionDisplay === 'recent' ||
+                ((inlineOwner || !hideMobileOwner) && unreadBadges)) &&
               motionSegments.length > 0 ? (
                 // 既存セルの列位置を動かさないよう、動きは 2 列ぶんの独立行にする
                 <span className="col-span-2 min-w-0 truncate">

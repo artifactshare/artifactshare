@@ -105,9 +105,9 @@ test.each(['en', 'ja'] as const)(
         expect(html).toContain(
           locale === 'en'
             ? total === 6
-              ? 'See 1 more unopened file</a>'
-              : 'See 7 more unopened files</a>'
-            : `未確認のファイルをさらに見る（${total - 5} 件）`,
+              ? 'See all my files (1 more unopened file)</a>'
+              : 'See all my files (7 more unopened files)</a>'
+            : `すべて見る（未確認ほか${total - 5}件）`,
         )
       }
     }

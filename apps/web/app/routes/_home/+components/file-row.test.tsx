@@ -248,6 +248,33 @@ describe('FileRow row actions', () => {
 })
 
 describe('FileRow unread motion layout', () => {
+  test.each([false, true])(
+    'inline owner puts motion in a separate mobile row (compact: %s)',
+    (homeCompact) => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter>
+          <FileRow
+            data={{ ...data, unreadCommentCount: 2 }}
+            inlineOwner
+            homeCompact={homeCompact}
+            hideMobileOwner
+            unreadBadges
+            now="2026-07-29T00:00:00.000Z"
+          />
+        </MemoryRouter>,
+      )
+      const mobile = html.split('data-regression-responsive="mobile-only"')[1]
+      expect(mobile).toContain(
+        '<span class="col-span-2 min-w-0 truncate">row.newCommentsOther:2</span>',
+      )
+      expect(html).toContain(
+        homeCompact
+          ? '@max-[theme(--breakpoint-stack)]:hidden'
+          : 'min-w-0 truncate max-wide:hidden',
+      )
+    },
+  )
+
   test('the desktop subline hides at narrow widths so the mobile meta row is not duplicated', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
