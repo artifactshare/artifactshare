@@ -365,9 +365,11 @@ export async function seedDevScreenState(
       scenario === 'recent/content-rich'
         ? [
             ...representativeNames,
+            // Keep the recent v2 original and its same-name v1 duplicate on page 2.
             ...Array.from(
               { length: 20 },
-              (_, index) => `Archived review ${index + 4}.html`,
+              (_, index) =>
+                `Archived review ${index === 18 ? 21 : index + 4}.html`,
             ),
           ]
         : representativeNames
@@ -461,7 +463,7 @@ export async function seedDevScreenState(
                 ? (['v1'] as const)
                 : index === 20
                   ? (['v1', 'v2'] as const)
-                  : index === 0 || index === 19
+                  : index === 0 || index === 19 || index === 21
                     ? (['v1'] as const)
                     : []
           if (versionNames.length > 0) {

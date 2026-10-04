@@ -498,3 +498,41 @@ describe('FileRow unreadBadges', () => {
     expect(html).not.toContain('project.versionBadge')
   })
 })
+
+describe('My files recent version facts', () => {
+  test.each([
+    [2, '2026-07-29T00:00:00Z', true],
+    [2, '2026-07-22T00:00:00Z', true],
+    [2, '2026-07-21T23:59:59Z', false],
+    [1, '2026-07-29T00:00:00Z', false],
+    [2, null, false],
+    [2, 'invalid', false],
+  ])(
+    'version %s published %s eligible=%s',
+    (versionCount, latestPublishedAt, eligible) => {
+      const render = (versionDisplay?: 'with-unread' | 'recent') =>
+        renderToStaticMarkup(
+          <MemoryRouter>
+            <FileRow
+              data={{
+                ...data,
+                versionCount,
+                latestPublishedAt,
+                unreadCommentCount: 0,
+              }}
+              versionDisplay={versionDisplay}
+              hideMobileOwner
+              showOwner={false}
+              now="2026-07-29T00:00:00Z"
+            />{' '}
+          </MemoryRouter>,
+        )
+      const html = render('recent')
+      expect(html.includes('project.versionBadge:2')).toBe(eligible)
+      expect(html).not.toContain('bg-link size-2')
+      expect(html).not.toContain('recent.newComments')
+      expect(render('with-unread')).not.toContain('project.versionBadge:2')
+      expect(render()).not.toContain('project.versionBadge:2')
+    },
+  )
+})

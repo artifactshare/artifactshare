@@ -124,6 +124,8 @@ interface FileRowProps {
   selectable?: boolean
   selected?: boolean
   onToggleSelect?: () => void
+  /** My files の版情報を未読状態と独立して表示する。 */
+  versionDisplay?: 'with-unread' | 'recent'
   /** 未読ドットと版・コメントのサブ行。 */
   unreadBadges?: boolean
   /** 閲覧日の見せ方。grouped は行内時刻を省き、with-preview は最新コメントも表示する。 */
@@ -152,6 +154,7 @@ export function FileRow({
   selected = false,
   onToggleSelect,
   unreadBadges = false,
+  versionDisplay = 'with-unread',
   recencyPresentation = 'row',
   now,
   homeCompact = false,
@@ -252,6 +255,7 @@ export function FileRow({
           hideMobileVisibility={hideMobileVisibility}
           richStats={richStats}
           unreadBadges={unreadBadges}
+          versionDisplay={versionDisplay}
           recencyPresentation={recencyPresentation}
           now={now}
           homeCompact={homeCompact}
@@ -347,6 +351,7 @@ interface FileRowSurfaceProps {
   inlineOwner: boolean
   hideMobileVisibility: boolean
   richStats: boolean
+  versionDisplay: 'with-unread' | 'recent'
   unreadBadges: boolean
   recencyPresentation: 'row' | 'grouped' | 'grouped-with-preview'
   now?: string
@@ -431,6 +436,7 @@ const FileRowSurface = memo(function FileRowSurface({
   hideMobileVisibility,
   richStats,
   unreadBadges,
+  versionDisplay,
   recencyPresentation,
   now,
   homeCompact,
@@ -441,7 +447,7 @@ const FileRowSurface = memo(function FileRowSurface({
   const { t, tPlural } = useT()
 
   const versionMotionLabel =
-    unreadBadges && now
+    (unreadBadges || versionDisplay === 'recent') && now
       ? versionBadgeLabel(data, now, (version) =>
           t('project.versionBadge', { version }),
         )
@@ -449,8 +455,7 @@ const FileRowSurface = memo(function FileRowSurface({
   const unreadCommentLabel = unreadBadges
     ? unreadNewCommentLabel(data.unreadCommentCount ?? 0, t, tPlural)
     : null
-  const motionSubline =
-    unreadBadges && (versionMotionLabel || unreadCommentLabel)
+  const motionSubline = versionMotionLabel || unreadCommentLabel
   const showUnreadDot = unreadBadges && fileHasUnread(data)
 
   const motionSegments = [versionMotionLabel, unreadCommentLabel].filter(
@@ -637,8 +642,8 @@ const FileRowSurface = memo(function FileRowSurface({
                 </span>
               ) : null}
               {!inlineOwner &&
-              !hideMobileOwner &&
-              unreadBadges &&
+              (versionDisplay === 'recent' ||
+                (!hideMobileOwner && unreadBadges)) &&
               motionSegments.length > 0 ? (
                 // 既存セルの列位置を動かさないよう、動きは 2 列ぶんの独立行にする
                 <span className="col-span-2 min-w-0 truncate">

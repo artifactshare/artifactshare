@@ -12,12 +12,12 @@ import { currentGalleryReturnTo } from '~/lib/viewer-return'
 
 export function HomeUnopenedFiles({
   files,
-  hasMore,
+  total,
   error,
   now,
 }: {
   files: FileRowData[]
-  hasMore: boolean
+  total: number
   error: boolean
   now: string
 }) {
@@ -27,6 +27,7 @@ export function HomeUnopenedFiles({
 
   if (!error && files.length === 0) return null
 
+  const remaining = Math.max(0, total - files.length)
   const calendarNow = new Date(now)
 
   return (
@@ -38,9 +39,11 @@ export function HomeUnopenedFiles({
         titleId="home-unopened-heading"
         title={t('home.unopenedTitle')}
         actions={
-          hasMore ? (
+          !error && files.length > 0 ? (
             <AppMoreLink className="text-xs" to="/files">
-              {t('home.unopenedSeeAll')}
+              {remaining > 0
+                ? t('home.unopenedMore', { n: remaining })
+                : t('home.unopenedSeeAll')}
             </AppMoreLink>
           ) : null
         }

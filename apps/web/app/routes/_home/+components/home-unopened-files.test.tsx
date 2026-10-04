@@ -5,17 +5,13 @@ import { describe, expect, test, vi } from 'vitest'
 import type { FileRowData } from './file-data'
 import { HomeUnopenedFiles } from './home-unopened-files'
 
+import { t } from '~/lib/i18n'
+const language = vi.hoisted(() => ({ locale: 'ja' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
-    locale: 'ja',
-    t: (key: string) =>
-      ({
-        'home.unopenedTitle': '未確認のファイル',
-        'home.unopenedDescription': '自分が作成し、まだ開いていないファイル',
-        'home.unopenedError': '未確認のファイルを読み込めませんでした。',
-        'home.unopenedSeeAll': '自分のファイルをすべて見る',
-        'home.reload': '再読み込み',
-      })[key] ?? key,
+    locale: language.locale,
+    t: (key: Parameters<typeof t>[1], vars?: Record<string, string | number>) =>
+      t(language.locale, key, vars),
   }),
 }))
 
@@ -46,7 +42,7 @@ const file: FileRowData = {
 
 function render(props: {
   files?: FileRowData[]
-  hasMore?: boolean
+  total?: number
   error?: boolean
 }) {
   return renderToStaticMarkup(
@@ -55,7 +51,7 @@ function render(props: {
       null,
       createElement(HomeUnopenedFiles, {
         files: props.files ?? [],
-        hasMore: props.hasMore ?? false,
+        total: props.total ?? props.files?.length ?? 0,
         error: props.error ?? false,
         now: '2026-08-24T07:00:00.000Z',
       }),
@@ -69,7 +65,7 @@ describe('HomeUnopenedFiles', () => {
   })
 
   test('shows owned unopened files and the existing all-files destination', () => {
-    const html = render({ files: [file], hasMore: true })
+    const html = render({ files: [file] })
 
     expect(html).toContain('未確認のファイル')
     expect(html).toContain('自分が作成し、まだ開いていないファイル')
@@ -89,3 +85,27 @@ describe('HomeUnopenedFiles', () => {
     expect(html).toContain('href="."')
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'remaining count and fallback links in %s',
+  (locale) => {
+    language.locale = locale
+    for (const total of [1, 5, 6, 12]) {
+      const files = Array.from({ length: Math.min(total, 5) }, (_, i) => ({
+        ...file,
+        id: `file-${i}`,
+      }))
+      const html = render({ files, total })
+      expect(html).toContain('href="/files"')
+      expect(html).toContain(
+        total > 5
+          ? t(locale, 'home.unopenedMore', { n: total - 5 })
+          : t(locale, 'home.unopenedSeeAll'),
+      )
+    }
+    expect(render({ files: [file], total: 12, error: true })).not.toContain(
+      'href="/files"',
+    )
+    language.locale = 'ja'
+  },
+)

@@ -283,7 +283,7 @@ type LoaderData =
       }
       unopened?: {
         files: ReturnType<typeof toFileRowData>[]
-        hasMore: boolean
+        total: number
         error: boolean
       }
       recent?: {
@@ -401,7 +401,7 @@ export async function loader(
     },
     unopened: {
       files: convert(unopenedResult?.rows ?? []),
-      hasMore: unopenedResult?.hasMore ?? false,
+      total: unopenedResult?.total ?? 0,
       error: !unopenedResult,
     },
     recent: {
@@ -515,7 +515,7 @@ function Home({ loaderData }: { loaderData: LoaderData }) {
             {unopened ? (
               <HomeUnopenedFiles
                 files={unopened.files}
-                hasMore={unopened.hasMore}
+                total={unopened.total}
                 error={unopened.error}
                 now={recent.now}
               />

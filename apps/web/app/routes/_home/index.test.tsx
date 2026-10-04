@@ -133,8 +133,36 @@ describe('/ home loader', () => {
       's-owner-project',
       's-owner-workspace',
     ])
+    expect(result.unopened?.total).toBe(3)
     expect(result.recent?.rows).toBeDefined()
   })
+
+  test.each(['count', 'list'])(
+    'isolates an unopened %s query failure',
+    async (failure) => {
+      dbHolder.db = db.withPlugin({
+        transformQuery({ node }) {
+          const query = JSON.stringify(node)
+          if (
+            query.includes('unopened_recency') &&
+            query.includes('"name":"total"') === (failure === 'count')
+          ) {
+            throw new Error('Unopened query failed')
+          }
+          return node
+        },
+        async transformResult({ result }) {
+          return result
+        },
+      })
+      const result = await loadHome(sessionUser({ id: 'u-owner' }))
+      expect(result.signedIn).toBe(true)
+      if (!result.signedIn) return
+      expect(result.unopened).toEqual({ files: [], total: 0, error: true })
+      expect(result.rail?.errors.files).toBe(false)
+      expect(result.recent?.rows).toBeDefined()
+    },
+  )
 
   test.each([
     ['/ja', 'en', {}, 'ja'],

@@ -19,7 +19,12 @@ import {
   listProjectsForIndex,
 } from './project-membership.server'
 import { listSharedProjects } from './projects.server'
-import { listRecentArtifactsLimited } from './home.server'
+import {
+  listRecentArtifactsLimited,
+  listUnopenedOwnedArtifactsLimited,
+  versionCountSelect,
+  latestPublishedAtSelect,
+} from './home.server'
 import { listWorkspaceBots } from './bot-members.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
 
@@ -227,7 +232,7 @@ describe('recent content-rich dev screen state', () => {
     ])
   })
 
-  test('leaves one current owned file without the owners recency row', async () => {
+  test('leaves six unopened files with the failure artifact outside the five visible rows', async () => {
     ;({ db } = createMigratedInMemoryDb())
     const now = '2026-07-31T12:00:00.000Z'
     const { workspaceId } = await ensureDevScreenState(
@@ -272,6 +277,16 @@ describe('recent content-rich dev screen state', () => {
       current_version_id: `${shareableId}-v1`,
     })
     expect(recency).toBeUndefined()
+    const unopened = await listUnopenedOwnedArtifactsLimited(
+      db,
+      userId,
+      workspaceId,
+    )
+    expect(unopened.total).toBe(6)
+    expect(unopened.rows).toHaveLength(5)
+    expect(unopened.rows.map((row) => row.id)).not.toContain(
+      devShareableId(`${workspaceId}-${userId}-file-6`),
+    )
   })
 
   test('distinguishes a working two-version artifact from missing body and source states', async () => {
@@ -335,6 +350,27 @@ describe('recent content-rich dev screen state', () => {
       `${shareableIds[2]}-v2`,
     ])
     expect(versions.at(-1)?.published_at).toBe('2026-07-31T11:30:00.000Z')
+    const pair = await db
+      .selectFrom('shareables')
+      .select((eb) => [
+        'shareables.id',
+        'shareables.name',
+        versionCountSelect(eb),
+        latestPublishedAtSelect(eb),
+      ])
+      .where(
+        'shareables.id',
+        'in',
+        [21, 22].map((n) =>
+          devShareableId(`${workspaceId}-${userId}-file-${n}`),
+        ),
+      )
+      .orderBy('shareables.created_at', 'desc')
+      .execute()
+    expect(pair).toHaveLength(2)
+    expect(pair[0].name).toBe(pair[1].name)
+    expect(pair.map((row) => row.version_count)).toEqual([2, 1])
+    expect(pair[0].latest_published_at).toBe('2026-07-31T11:30:00.000Z')
   })
 
   test('seeds unread comments and resets recency and comment data on reseed', async () => {
