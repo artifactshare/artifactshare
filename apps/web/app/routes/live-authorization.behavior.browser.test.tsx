@@ -1,6 +1,7 @@
 // Browser mode cannot load a test module from the route directory whose name
 // contains `$`, so this behavior test lives one level above the component.
 import { act, useState } from 'react'
+import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
@@ -125,13 +126,45 @@ function Harness({
   )
 }
 
+// Retain native JSON reads, including reads from deliberately aborted fetches.
+// Empty and stale snapshots need this witness because their DOM may not change.
+let authorizedBodies: Array<{ settled: boolean }> = []
+
+function observeAuthorizedBody(response: Response) {
+  const completion = { settled: false }
+  authorizedBodies.push(completion)
+  const readJson = response.json.bind(response)
+  response.json = async () => {
+    try {
+      return await readJson()
+    } finally {
+      completion.settled = true
+    }
+  }
+  return response
+}
+
 function authorizedResponse(threads: unknown[] = []) {
   return Promise.resolve(
-    new Response(JSON.stringify({ threads }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }),
+    observeAuthorizedBody(
+      new Response(JSON.stringify({ threads }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
   )
+}
+
+async function settleAuthorizedResponses(
+  condition: () => boolean = () => true,
+  description = 'authorized response JSON consumed',
+) {
+  await waitForRealTaskCondition(async () => {
+    await act(async () => {})
+    return authorizedBodies.every((body) => body.settled) && condition()
+  }, description)
+  // Flush the consumers of the native reads, including stale-result suppression.
+  await act(async () => {})
 }
 
 async function flush() {
@@ -146,6 +179,13 @@ describe('bounded live authorization browser lifecycle', () => {
   let host: HTMLDivElement
   let fetchMock: ReturnType<typeof vi.fn>
 
+  async function waitForThreads(ids: string) {
+    await settleAuthorizedResponses(
+      () => host.querySelector('output')?.dataset.threads === ids,
+      `committed thread IDs: ${ids}`,
+    )
+  }
+
   beforeEach(async () => {
     ;(
       globalThis as typeof globalThis & {
@@ -154,6 +194,7 @@ describe('bounded live authorization browser lifecycle', () => {
     ).IS_REACT_ACT_ENVIRONMENT = true
     vi.useFakeTimers()
     ControlledWebSocket.instances = []
+    authorizedBodies = []
     vi.stubGlobal('WebSocket', ControlledWebSocket)
     fetchMock = vi.fn(() => authorizedResponse())
     vi.stubGlobal('fetch', fetchMock)
@@ -183,7 +224,7 @@ describe('bounded live authorization browser lifecycle', () => {
   test('reconciles a comment with its notification withheld once per direct renewal without a recovery check', async () => {
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -207,7 +248,7 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(host.querySelector('output')?.dataset.threads).toBe('')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     await act(async () => renewal.open())
-    await flush()
+    await waitForThreads(localThread.id)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
     expect(ControlledWebSocket.instances).toHaveLength(2)
@@ -224,7 +265,7 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(host.querySelector('output')?.dataset.connected).toBe('true')
 
     await act(async () => nextRenewal.open())
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
     expect(host.textContent).toBe('Viewer')
@@ -251,7 +292,7 @@ describe('bounded live authorization browser lifecycle', () => {
       fetchMock.mockImplementationOnce(() => authorizedResponse([oldThread]))
       const first = ControlledWebSocket.instances[0]!
       await act(async () => first.open())
-      await flush()
+      await waitForThreads(oldThread.id)
       expect(host.querySelector('output')?.dataset.threads).toBe(oldThread.id)
 
       let finishOld!: (response: Response) => void
@@ -281,7 +322,7 @@ describe('bounded live authorization browser lifecycle', () => {
       // The mock deliberately completes even if aborted, exercising stale data
       // suppression after settlement rather than relying on transport cancellation.
       await act(async () => finishOld(await authorizedResponse([oldThread])))
-      await flush()
+      await settleAuthorizedResponses()
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
       expect(oldSignal.aborted).toBe(true)
       expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -292,7 +333,7 @@ describe('bounded live authorization browser lifecycle', () => {
       await act(async () =>
         finishReplacement(await authorizedResponse([localThread, oldThread])),
       )
-      await flush()
+      await waitForThreads(`${localThread.id},${oldThread.id}`)
       expect(host.querySelector('output')?.dataset.threads).toBe(
         `${localThread.id},${oldThread.id}`,
       )
@@ -317,7 +358,7 @@ describe('bounded live authorization browser lifecycle', () => {
     )
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     expect(host.querySelector('output')?.dataset.threads).toBe('')
 
     const remoteThread = { ...oldThread, id: 'missed-remote-thread' }
@@ -354,7 +395,7 @@ describe('bounded live authorization browser lifecycle', () => {
     await act(async () =>
       finishRenewal(await authorizedResponse([localThread, remoteThread])),
     )
-    await flush()
+    await settleAuthorizedResponses()
     expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
     await advance(2_000)
     expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
@@ -363,7 +404,7 @@ describe('bounded live authorization browser lifecycle', () => {
     await act(async () =>
       finishReplacement(await authorizedResponse([localThread, remoteThread])),
     )
-    await flush()
+    await waitForThreads(`${localThread.id},${remoteThread.id}`)
     expect(host.querySelector('output')?.dataset.threads).toBe(
       `${localThread.id},${remoteThread.id}`,
     )
@@ -381,7 +422,7 @@ describe('bounded live authorization browser lifecycle', () => {
       root.render(<Harness mutation={{ requiresReconcile: false }} />),
     )
     await act(async () => ControlledWebSocket.instances[0]!.open())
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(1)
     await act(async () => host.querySelector('button')!.click())
     await advance(2_000)
@@ -428,13 +469,14 @@ describe('bounded live authorization browser lifecycle', () => {
               : await authorizedResponse([oldThread]),
           )
       })
-      await flush()
+      if (completion === 'success') await settleAuthorizedResponses()
+      else await flush()
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(host.querySelector('output')?.dataset.threads).toBe('')
       await act(async () =>
         finishRenewal(await authorizedResponse([localThread])),
       )
-      await flush()
+      await settleAuthorizedResponses()
       await advance(2_000)
 
       expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -447,7 +489,7 @@ describe('bounded live authorization browser lifecycle', () => {
   test('closes the renewed socket after its own ordinary reconciliation repeats an auth error', async () => {
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     fetchMock.mockClear()
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 403 }))
@@ -496,7 +538,7 @@ describe('bounded live authorization browser lifecycle', () => {
       if (kind === 'renewal') {
         await act(async () => first.fail(4401, 'live-authorization-expired'))
         await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
-        await flush()
+        await settleAuthorizedResponses()
         await advance(2_000)
       } else {
         const visibility = vi.spyOn(document, 'visibilityState', 'get')
@@ -505,7 +547,8 @@ describe('bounded live authorization browser lifecycle', () => {
           await act(async () =>
             document.dispatchEvent(new Event('visibilitychange')),
           )
-          await flush()
+          if (value === 'visible') await settleAuthorizedResponses()
+          else await flush()
         }
       }
       expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -523,7 +566,8 @@ describe('bounded live authorization browser lifecycle', () => {
               : await authorizedResponse([]),
           )
       })
-      await flush()
+      if (completion === 'success') await settleAuthorizedResponses()
+      else await flush()
       await advance(2_000)
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
       expect(oldSignal.aborted).toBe(true)
@@ -544,10 +588,11 @@ describe('bounded live authorization browser lifecycle', () => {
           document.dispatchEvent(new Event('visibilitychange')),
         )
         await flush()
+        if (value === 'visible') await settleAuthorizedResponses()
       }
       const first = ControlledWebSocket.instances[0]!
       await act(async () => first.open())
-      await flush()
+      await settleAuthorizedResponses()
       fetchMock.mockClear()
       if (kind === 'renewal') {
         await act(async () => first.fail(4401, 'live-authorization-expired'))
@@ -578,7 +623,7 @@ describe('bounded live authorization browser lifecycle', () => {
           }),
         ),
       )
-      await flush()
+      await settleAuthorizedResponses()
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         expect(ControlledWebSocket.instances).toHaveLength(4 + attempt)
         await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
@@ -603,12 +648,12 @@ describe('bounded live authorization browser lifecycle', () => {
       )
       const first = ControlledWebSocket.instances[0]!
       await act(async () => first.open())
-      await flush()
+      await settleAuthorizedResponses()
       fetchMock.mockClear()
       if (kind === 'renewal') {
         await act(async () => first.fail(4401, 'live-authorization-expired'))
         await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
-        await flush()
+        await settleAuthorizedResponses()
         await advance(2_000)
       } else {
         const visibility = vi.spyOn(document, 'visibilityState', 'get')
@@ -617,7 +662,8 @@ describe('bounded live authorization browser lifecycle', () => {
           await act(async () =>
             document.dispatchEvent(new Event('visibilitychange')),
           )
-          await flush()
+          if (value === 'visible') await settleAuthorizedResponses()
+          else await flush()
         }
       }
       expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -641,7 +687,7 @@ describe('bounded live authorization browser lifecycle', () => {
       await act(async () =>
         finishReconcile(await authorizedResponse([localThread])),
       )
-      await flush()
+      await settleAuthorizedResponses()
       await act(async () =>
         recovery.message({
           type: 'comments-changed',
@@ -653,7 +699,7 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
       await act(async () => recovery.message({ type: 'comments-changed' }))
-      await flush()
+      await settleAuthorizedResponses()
       expect(fetchMock).toHaveBeenCalledTimes(3)
     },
   )
@@ -671,7 +717,7 @@ describe('bounded live authorization browser lifecycle', () => {
       )
       const first = ControlledWebSocket.instances[0]!
       await act(async () => first.open())
-      await flush()
+      await settleAuthorizedResponses()
       fetchMock.mockClear()
       let finishCheck!: (response: Response) => void
       fetchMock.mockImplementationOnce(
@@ -700,7 +746,7 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
 
       await act(async () => finishCheck(await authorizedResponse()))
-      await flush()
+      await settleAuthorizedResponses()
       if (kind === 'renewal') await advance(2_000)
       const recovery = ControlledWebSocket.instances.at(-1)!
       expect(recovery.readyState).toBe(ControlledWebSocket.CONNECTING)
@@ -720,7 +766,7 @@ describe('bounded live authorization browser lifecycle', () => {
       await act(async () =>
         finishReconcile(await authorizedResponse([localThread])),
       )
-      await flush()
+      await settleAuthorizedResponses()
       await act(async () =>
         recovery.message({
           type: 'comments-changed',
@@ -732,7 +778,7 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
       await act(async () => recovery.message({ type: 'comments-changed' }))
-      await flush()
+      await settleAuthorizedResponses()
       expect(fetchMock).toHaveBeenCalledTimes(3)
     },
   )
@@ -745,6 +791,7 @@ describe('bounded live authorization browser lifecycle', () => {
         document.dispatchEvent(new Event('visibilitychange')),
       )
       await flush()
+      if (value === 'visible') await settleAuthorizedResponses()
     }
     await setVisibility('hidden')
     await setVisibility('visible')
@@ -769,7 +816,7 @@ describe('bounded live authorization browser lifecycle', () => {
     await act(async () =>
       finishInterrupted(await authorizedResponse([localThread])),
     )
-    await flush()
+    await settleAuthorizedResponses()
     expect(ControlledWebSocket.instances).toHaveLength(3)
     expect(host.querySelector('output')?.dataset.threads).toBe('')
 
@@ -798,6 +845,7 @@ describe('bounded live authorization browser lifecycle', () => {
           document.dispatchEvent(new Event('visibilitychange')),
         )
         await flush()
+        if (value === 'visible') await settleAuthorizedResponses()
       }
       await setVisibility('hidden')
       await setVisibility('visible')
@@ -838,7 +886,8 @@ describe('bounded live authorization browser lifecycle', () => {
           finishOld(await authorizedResponse([localThread]))
         else rejectOld(new TypeError('old request aborted'))
       })
-      await flush()
+      if (oldResult === 'authorized') await settleAuthorizedResponses()
+      else await flush()
       expect(replacementSignal.aborted).toBe(false)
       expect(ControlledWebSocket.instances).toHaveLength(3)
       expect(host.querySelector('output')?.dataset.threads).toBe('')
@@ -847,7 +896,7 @@ describe('bounded live authorization browser lifecycle', () => {
       await act(async () =>
         finishReplacement(await authorizedResponse([localThread])),
       )
-      await flush()
+      await settleAuthorizedResponses()
       expect(ControlledWebSocket.instances).toHaveLength(4)
       const replacement = ControlledWebSocket.instances.at(-1)!
       expect(replacement.readyState).toBe(ControlledWebSocket.CONNECTING)
@@ -872,7 +921,7 @@ describe('bounded live authorization browser lifecycle', () => {
   test('uses one dedicated check and caps a denied renewal after its first failed attempt', async () => {
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     fetchMock.mockClear()
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 403 }))
 
@@ -890,7 +939,7 @@ describe('bounded live authorization browser lifecycle', () => {
   test('uses a fresh dedicated check for explicit mutation recovery after a stop', async () => {
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     fetchMock.mockClear()
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 403 }))
 
@@ -907,7 +956,7 @@ describe('bounded live authorization browser lifecycle', () => {
         }),
       )
     })
-    await flush()
+    await settleAuthorizedResponses()
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(ControlledWebSocket.instances).toHaveLength(3)
@@ -916,13 +965,13 @@ describe('bounded live authorization browser lifecycle', () => {
   test('uses exact two and four second delays with a three-attempt authorized renewal cap', async () => {
     const first = ControlledWebSocket.instances[0]!
     await act(async () => first.open())
-    await flush()
+    await settleAuthorizedResponses()
     fetchMock.mockClear()
     fetchMock.mockImplementationOnce(() => authorizedResponse([]))
 
     await act(async () => first.fail(4401, 'live-authorization-expired'))
     await act(async () => ControlledWebSocket.instances[1]!.fail())
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -968,6 +1017,7 @@ describe('bounded live authorization browser lifecycle', () => {
           document.dispatchEvent(new Event('visibilitychange'))
         })
         await flush()
+        if (value === 'visible') await settleAuthorizedResponses()
       }
       const advance = async (ms: number) => {
         await act(async () => {
@@ -976,7 +1026,7 @@ describe('bounded live authorization browser lifecycle', () => {
       }
 
       await act(async () => ControlledWebSocket.instances[0]!.open())
-      await flush()
+      await settleAuthorizedResponses()
       fetchMock.mockClear()
       await setVisibility('hidden')
       await setVisibility('visible')
@@ -1051,7 +1101,7 @@ describe('bounded live authorization browser lifecycle', () => {
     async (closeBehavior) => {
       const first = ControlledWebSocket.instances[0]!
       await act(async () => first.open())
-      await flush()
+      await settleAuthorizedResponses()
       await act(async () =>
         first.message({
           type: 'presence',
@@ -1073,6 +1123,7 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(fetchMock).not.toHaveBeenCalled()
       expect(host.textContent).toBe('Viewer')
       await advance(1)
+      await settleAuthorizedResponses()
       expect(close).toHaveBeenCalledTimes(1)
       expect(fetchMock).toHaveBeenCalledTimes(1)
       expect(host.querySelector('output')?.dataset.connected).toBe('true')
@@ -1101,7 +1152,7 @@ describe('bounded live authorization browser lifecycle', () => {
           }),
         ),
       )
-      await flush()
+      await settleAuthorizedResponses()
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(ControlledWebSocket.instances).toHaveLength(5)
       await act(async () => ControlledWebSocket.instances[4]!.open())
@@ -1123,6 +1174,7 @@ describe('bounded live authorization browser lifecycle', () => {
     }
     expect(fetchMock).not.toHaveBeenCalled()
     await advance(8_000)
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const beforeBounded = ControlledWebSocket.instances.length
     const bounded = ControlledWebSocket.instances.at(-1)!
@@ -1158,8 +1210,10 @@ describe('bounded live authorization browser lifecycle', () => {
       await advance(30_000)
       // Keep the HTTP check within its own 15-second timeout.
       await advance(14_999)
-      await act(async () => finishCheck(new Response('{}', { status: 200 })))
-      await flush()
+      await act(async () =>
+        finishCheck(observeAuthorizedBody(new Response('{}', { status: 200 }))),
+      )
+      await settleAuthorizedResponses()
       await advance(30_000)
       const stalled = ControlledWebSocket.instances.at(-1)!
       // Delay its timeout callback; a late open must independently enforce t=120s.
@@ -1205,7 +1259,7 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(signal.aborted).toBe(true)
     const socketCount = ControlledWebSocket.instances.length
     await act(async () => finishCheck(await authorizedResponse([localThread])))
-    await flush()
+    await settleAuthorizedResponses()
     await advance(60_000)
     expect(ControlledWebSocket.instances).toHaveLength(socketCount)
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -1218,7 +1272,7 @@ describe('bounded live authorization browser lifecycle', () => {
         }),
       ),
     )
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(ControlledWebSocket.instances).toHaveLength(socketCount + 1)
   })
@@ -1231,6 +1285,7 @@ describe('bounded live authorization browser lifecycle', () => {
         document.dispatchEvent(new Event('visibilitychange')),
       )
       await flush()
+      if (value === 'visible') await settleAuthorizedResponses()
     }
     await setVisibility('hidden')
     await setVisibility('visible')
@@ -1262,6 +1317,7 @@ describe('bounded live authorization browser lifecycle', () => {
           document.dispatchEvent(new Event('visibilitychange')),
         )
         await flush()
+        if (value === 'visible') await settleAuthorizedResponses()
       }
       await setVisibility('hidden')
       await setVisibility('visible')
@@ -1290,7 +1346,7 @@ describe('bounded live authorization browser lifecycle', () => {
             }),
           ),
         )
-        await flush()
+        await settleAuthorizedResponses()
       }
       expect(fetchMock).toHaveBeenCalledTimes(3)
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -1315,6 +1371,7 @@ describe('bounded live authorization browser lifecycle', () => {
       current.open()
       current.message('pong')
     })
+    await settleAuthorizedResponses()
     await advance(VIEWER_FETCH_TIMEOUT_MS)
     expect(current.readyState).toBe(ControlledWebSocket.OPEN)
     expect(ControlledWebSocket.instances).toHaveLength(2)
@@ -1392,7 +1449,7 @@ describe('bounded live authorization browser lifecycle', () => {
         }),
       ),
     )
-    await flush()
+    await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(ControlledWebSocket.instances).toHaveLength(countAtBoundary + 1)
     const recovered = ControlledWebSocket.instances.at(-1)!

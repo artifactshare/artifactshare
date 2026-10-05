@@ -1,7 +1,10 @@
+import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SandboxFrame } from './a.$id/+components/sandbox-frame'
+
+const realNow = performance.now.bind(performance)
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -127,8 +130,12 @@ describe('SandboxFrame recovery', () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
-      await Promise.resolve()
     })
+    await waitForRealTaskCondition(
+      () => tokenRequests.length === 1,
+      'first token request',
+    )
+    await expectFrameState(host, 'resuming')
     expect(tokenRequests).toHaveLength(1)
     expect(stateOf(host)).toBe('resuming')
     expect(checking).toHaveBeenLastCalledWith(false)
@@ -152,9 +159,8 @@ describe('SandboxFrame recovery', () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
-      await Promise.resolve()
-      await Promise.resolve()
     })
+    await expectFrameState(host, 'paused')
     expect(tokenRequests).toHaveLength(1)
     expect(stateOf(host)).toBe('paused')
     expect(checking).toHaveBeenLastCalledWith(false)
@@ -243,8 +249,12 @@ describe('SandboxFrame recovery', () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
-      await Promise.resolve()
     })
+    await waitForRealTaskCondition(
+      () => tokenRequests.length === 1,
+      'first token request',
+    )
+    await expectFrameState(host, 'resuming')
     expect(tokenRequests).toHaveLength(1)
     expect(stateOf(host)).toBe('resuming')
 
@@ -256,18 +266,30 @@ describe('SandboxFrame recovery', () => {
     })
     expect(stateOf(host)).toBe('loading')
 
-    await act(async () => {
-      tokenRequests[0].resolve(
-        Response.json({
-          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=stale`,
-          renderType: 'html',
-        }),
-      )
-      await Promise.resolve()
-      await Promise.resolve()
-      await vi.advanceTimersByTimeAsync(3000)
-      await Promise.resolve()
+    const staleResponse = Response.json({
+      sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=stale`,
+      renderType: 'html',
     })
+    const readJson = staleResponse.json.bind(staleResponse)
+    let staleBodyRead = false
+    staleResponse.json = async () => {
+      const body = await readJson()
+      staleBodyRead = true
+      return body
+    }
+    await act(async () => tokenRequests[0].resolve(staleResponse))
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return staleBodyRead
+    }, 'stale token body consumed')
+    await expectFrameState(host, 'loading')
+    expect(host.querySelector('iframe')?.src).not.toContain('t=stale')
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    await waitForRealTaskCondition(
+      () => tokenRequests.length === 2,
+      'restored token request',
+    )
+    await expectFrameState(host, 'resuming')
 
     expect(tokenRequests).toHaveLength(2)
     expect(stateOf(host)).toBe('resuming')
@@ -325,12 +347,11 @@ describe('SandboxFrame recovery', () => {
 // Native Response body reads can finish after the microtask queue drains.
 // Poll without advancing the fake recovery deadlines, flushing React each time.
 async function expectFrameState(host: HTMLElement, expected: string) {
-  await expect
-    .poll(async () => {
-      await act(async () => {})
-      return stateOf(host)
-    })
-    .toBe(expected)
+  await waitForRealTaskCondition(async () => {
+    await act(async () => {})
+    return stateOf(host) === expected
+  }, `frame state ${expected}`)
+  expect(stateOf(host)).toBe(expected)
 }
 
 async function renderFrame(
@@ -385,4 +406,120 @@ test('a frame that never becomes ready expires checking without inventing a reso
   await act(async () => vi.advanceTimersByTimeAsync(3001))
   expect(stateOf(host)).toBe('loading')
   expect(checking).toHaveBeenLastCalledWith(false)
+})
+
+describe('waitForRealTaskCondition', () => {
+  test.each(['native', 'streamed'] as const)(
+    'consumes a %s Response body without advancing fake time',
+    async (kind) => {
+      vi.useFakeTimers()
+      const now = Date.now()
+      const timer = vi.fn()
+      setTimeout(timer, 1)
+      const delivery = new MessageChannel()
+      let turns = 0
+      const startedAt = realNow()
+      try {
+        const response =
+          kind === 'native'
+            ? new Response('body ready')
+            : new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    delivery.port1.onmessage = () => {
+                      turns += 1
+                      if (turns < 60 || realNow() - startedAt < 100) {
+                        delivery.port2.postMessage(null)
+                      } else {
+                        controller.enqueue(
+                          new TextEncoder().encode('body ready'),
+                        )
+                        controller.close()
+                      }
+                    }
+                    delivery.port2.postMessage(null)
+                  },
+                }),
+              )
+        let text: string | undefined
+        const consumed = response.text().then((value) => {
+          text = value
+        })
+        // This control fails if the stream fixture stops requiring real tasks.
+        await Promise.resolve()
+        await Promise.resolve()
+        if (kind === 'streamed') expect(text).toBeUndefined()
+        await waitForRealTaskCondition(
+          () => text === 'body ready',
+          `${kind} body read`,
+        )
+        await consumed
+        expect(text).toBe('body ready')
+        if (kind === 'streamed') {
+          expect(turns).toBeGreaterThanOrEqual(60)
+          expect(realNow() - startedAt).toBeGreaterThanOrEqual(100)
+        }
+        expect(Date.now()).toBe(now)
+        expect(timer).not.toHaveBeenCalled()
+        expect(vi.getTimerCount()).toBe(1)
+      } finally {
+        delivery.port1.onmessage = null
+        delivery.port1.close()
+        delivery.port2.close()
+      }
+    },
+  )
+
+  test.each([undefined, 30])(
+    'waits for the real-time budget (%s) without advancing fake time',
+    async (budgetMs) => {
+      vi.useFakeTimers()
+      const now = Date.now()
+      const timer = vi.fn()
+      setTimeout(timer, 1)
+      const condition = vi.fn(() => false)
+      const startedAt = realNow()
+      await expect(
+        waitForRealTaskCondition(condition, 'missing response', budgetMs),
+      ).rejects.toThrow(
+        `Condition "missing response" did not hold after ${budgetMs ?? 1000} ms of real time`,
+      )
+      expect(realNow() - startedAt).toBeGreaterThanOrEqual(budgetMs ?? 1000)
+      expect(condition).toHaveBeenCalled()
+      expect(Date.now()).toBe(now)
+      expect(timer).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(1)
+    },
+  )
+
+  test('checks initially, closes ports on settlement, and propagates predicate errors', async () => {
+    vi.useFakeTimers()
+    const postMessage = vi.spyOn(MessagePort.prototype, 'postMessage')
+    const close = vi.spyOn(MessagePort.prototype, 'close')
+    try {
+      await waitForRealTaskCondition(() => true, 'already ready', 0)
+      expect(postMessage).not.toHaveBeenCalled()
+      let checks = 0
+      await waitForRealTaskCondition(() => ++checks === 3, 'eventually ready')
+      expect(checks).toBe(3)
+      expect(close).toHaveBeenCalledTimes(2)
+      close.mockClear()
+      await expect(
+        waitForRealTaskCondition(() => false, 'never ready', 30),
+      ).rejects.toThrow('never ready')
+      expect(close).toHaveBeenCalledTimes(2)
+      close.mockClear()
+      const failure = new Error('predicate failed')
+      await expect(
+        waitForRealTaskCondition(() => {
+          if (++checks === 5) throw failure
+          return false
+        }, 'broken predicate'),
+      ).rejects.toBe(failure)
+      expect(close).toHaveBeenCalledTimes(2)
+    } finally {
+      close.mockRestore()
+      postMessage.mockRestore()
+    }
+  })
 })
