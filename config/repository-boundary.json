@@ -176,7 +176,9 @@
     "scripts/ci/flaky-report.mjs",
     "scripts/flaky-report.test.mjs",
     "scripts/flaky-runs.test.mjs",
-    "scripts/flaky-detector-contract.test.mjs"
+    "scripts/flaky-detector-contract.test.mjs",
+    "scripts/ci/changed-browser-repetitions.mjs",
+    "scripts/changed-browser-repetitions.test.mjs"
   ],
   "canonical_prefixes": [
     "apps/web/app/",

@@ -90,7 +90,7 @@ test('public CI pins external actions and disables install scripts', () => {
   assert.doesNotMatch(workflow, /persist-credentials:\s*true/)
 })
 
-test('PRs run only the install-free boundary guard', () => {
+test('PR boundary guard remains install-free', () => {
   const guard = JSON.stringify(parsedWorkflow.jobs['pull-request-guard'])
   assert.match(workflow, /pull-request-guard:/)
   assert.match(workflow, /if: github\.event_name == 'pull_request'/)
@@ -767,9 +767,12 @@ test('browser libsoup workaround is mandatory, ordered, isolated, and retains br
     ([name, job]) =>
       (job.steps ?? []).filter((step) => step.run === command).map(() => name),
   )
-  assert.deepEqual(occurrences, ['browser-validation'])
+  assert.deepEqual(occurrences, [
+    'changed-browser-repetitions',
+    'browser-validation',
+  ])
   for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
-    if (name !== 'browser-validation')
+    if (!['browser-validation', 'changed-browser-repetitions'].includes(name))
       assert.doesNotMatch(JSON.stringify(job), /pw:browser/)
   }
 })
@@ -828,4 +831,176 @@ test('libsoup cache is pin-derived, exact, restored before use and independently
     result.stdout.trim(),
     `key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map((library) => library.replacement).join('-')}`,
   )
+})
+
+test('changed browser lane is PR-only and gates every head-code step with exact classification', () => {
+  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
+  assert.equal(lane.name, 'Changed browser behavior repetitions')
+  assert.equal(lane.if, "github.event_name == 'pull_request'")
+  assert.equal(lane['runs-on'], 'ubuntu-latest')
+  assert.equal(lane['timeout-minutes'], 360)
+  assert.equal(lane.env.REPETITIONS, '5')
+  assert.equal(lane.env.RESULTS_DIR, undefined)
+  assert.equal(
+    lane.env.PUBLIC_PR_BASE,
+    '${{ github.event.pull_request.base.sha }}',
+  )
+  assert.equal(
+    lane.env.PUBLIC_PR_HEAD,
+    '${{ github.event.pull_request.head.sha }}',
+  )
+  assert.deepEqual(
+    lane.steps.slice(0, 2),
+    parsedWorkflow.jobs['pull-request-guard'].steps.slice(0, 2),
+  )
+  const checkout = lane.steps[2]
+  assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/)
+  assert.deepEqual(checkout.with, {
+    'persist-credentials': false,
+    ref: '${{ github.event.pull_request.head.sha }}',
+    'fetch-depth': 0,
+    'fetch-tags': false,
+  })
+  for (const step of lane.steps.slice(2)) {
+    assert.match(step.if, /steps\.classify\.outputs\.is_maintainer == 'true'/)
+    assert.equal(step['continue-on-error'], undefined)
+  }
+  const selection = lane.steps.find((step) => step.id === 'select')
+  assert.match(selection.run, /git cat-file -e "\$PUBLIC_PR_BASE\^\{commit\}"/)
+  assert.match(selection.run, /changed-browser-repetitions\.mjs select/)
+  const plan = lane.steps.find((step) => step.id === 'plan')
+  for (const step of lane.steps.slice(
+    lane.steps.indexOf(selection) + 1,
+    lane.steps.indexOf(plan) + 1,
+  ))
+    assert.match(step.if, /steps\.select\.outputs\.has_files == 'true'/)
+  const browser = parsedWorkflow.jobs['browser-validation'].steps
+  const key = lane.steps.find((step) => step.id === 'webkit-libsoup-cache-key')
+  const cache = lane.steps.find((step) =>
+    step.uses?.startsWith('actions/cache@'),
+  )
+  const install = lane.steps.find((step) =>
+    step.run?.includes('playwright install'),
+  )
+  const patch = lane.steps.find(
+    (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
+  )
+  for (const step of [key, cache, install, patch]) {
+    assert.match(step.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
+    const { if: condition, ...rest } = step
+    assert.ok(condition)
+    assert.deepEqual(
+      rest,
+      browser.find(
+        (original) =>
+          original.name === step.name &&
+          original.run === step.run &&
+          original.uses === step.uses,
+      ),
+    )
+  }
+  assert.ok(lane.steps.indexOf(plan) < lane.steps.indexOf(key))
+  assert.ok(lane.steps.indexOf(key) < lane.steps.indexOf(cache))
+  assert.ok(lane.steps.indexOf(cache) < lane.steps.indexOf(install))
+  assert.equal(lane.steps.indexOf(patch), lane.steps.indexOf(install) + 1)
+  const repeat = lane.steps.find((step) => step.id === 'repeat')
+  assert.equal(repeat.env.DEBUG, 'pw:browser')
+  assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
+  assert.equal(
+    repeat.run,
+    'node scripts/ci/changed-browser-repetitions.mjs run',
+  )
+  const summary = lane.steps.at(-1)
+  assert.match(summary.if, /!cancelled\(\)/)
+  assert.match(summary.if, /failure\(\)/)
+  assert.match(summary.run, /changed-browser-repetitions\.mjs report/)
+  assert.match(summary.run, /exit 1/)
+  assert.doesNotMatch(
+    JSON.stringify(lane),
+    /fixtures:build|continue-on-error|restore-keys/,
+  )
+  assert.ok(
+    !parsedWorkflow.jobs.validate.needs.includes('changed-browser-repetitions'),
+  )
+})
+
+test('new lane classification rejects forks, case differences, and missing names before checkout', (t) => {
+  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
+  const script = lane.steps[1].run.trim().match(/^node -e "(.*)"$/u)[1]
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'changed-classify-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  for (const [head, base, expected] of [
+    ['owner/repo', 'owner/repo', true],
+    ['fork/repo', 'owner/repo', false],
+    ['Owner/repo', 'owner/repo', false],
+    ['', 'owner/repo', false],
+    ['owner/repo', '', false],
+    [undefined, 'owner/repo', false],
+    ['owner/repo', undefined, false],
+    [undefined, undefined, false],
+    ['', '', false],
+  ]) {
+    const output = path.join(directory, 'output')
+    fs.writeFileSync(output, '')
+    const env = { ...process.env, GITHUB_OUTPUT: output }
+    delete env.PUBLIC_PR_HEAD_REPO
+    delete env.PUBLIC_PR_BASE_REPO
+    if (head !== undefined) env.PUBLIC_PR_HEAD_REPO = head
+    if (base !== undefined) env.PUBLIC_PR_BASE_REPO = base
+    const result = spawnSync(process.execPath, ['-e', script], {
+      env,
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(fs.readFileSync(output, 'utf8'), `is_maintainer=${expected}\n`)
+    if (!expected)
+      for (const step of lane.steps.slice(2))
+        assert.match(
+          step.if,
+          /steps\.classify\.outputs\.is_maintainer == 'true'/,
+        )
+  }
+})
+
+test('changed browser results use runner context only in step environments', () => {
+  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
+  assert.doesNotMatch(JSON.stringify(lane.env), /\brunner\s*\./)
+  const commands = ['select', 'plan', 'run', 'report']
+  for (const command of commands) {
+    const step = lane.steps.find((entry) =>
+      entry.run?.includes(
+        `node scripts/ci/changed-browser-repetitions.mjs ${command}`,
+      ),
+    )
+    assert.ok(step, command)
+    assert.equal(
+      step.env.RESULTS_DIR,
+      '${{ runner.temp }}/changed-browser-repetitions',
+      command,
+    )
+  }
+})
+
+test('changed browser status functions appear only in if conditions', () => {
+  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
+  const inspect = (value) => {
+    if (typeof value === 'string') {
+      for (const [expression] of value.matchAll(/\$\{\{[\s\S]*?\}\}/g))
+        assert.doesNotMatch(
+          expression,
+          /\b(?:always|success|failure|cancelled)\s*\(/,
+        )
+    } else if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value))
+        if (key !== 'if') inspect(child)
+    }
+  }
+  inspect(lane)
+  const summary = lane.steps.at(-1)
+  assert.equal(
+    summary.env.SETUP_FAILED,
+    "${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}",
+  )
+  assert.match(summary.if, /!cancelled\(\)/)
+  assert.match(summary.if, /failure\(\)/)
 })

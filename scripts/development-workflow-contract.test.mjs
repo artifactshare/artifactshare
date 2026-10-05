@@ -89,3 +89,31 @@ test('retains fixed-target safety and public/private restrictions', () => {
   ])
     assert.ok(workflow.includes(phrase), phrase)
 })
+
+test('documents changed browser repetitions without altering required-check policy', () => {
+  for (const phrase of [
+    'changed-browser-repetitions',
+    'Changed browser behavior repetitions',
+    'case-sensitive',
+    'fixed PR head SHA',
+    'merge base',
+    'added/modified (`A`/`M`)',
+    'Renames, including modified renames',
+    'first 10 files',
+    'omitted paths',
+    'before dependency installation or config loading',
+    'Vitest discovery',
+    'effective excludes',
+    'no browsers are installed',
+    '`REPETITIONS`',
+    'defaults to `5`',
+    '`1` through `10`',
+    '60-second process-tree timeout',
+    '360-minute job timeout',
+    'passes/requested repetitions',
+    'all-skipped',
+    'Setup failures are explicit',
+    'Required-check policy is a separate decision',
+  ])
+    assert.ok(workflow.includes(phrase), phrase)
+})
