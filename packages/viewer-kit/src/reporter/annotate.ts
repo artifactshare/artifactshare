@@ -78,7 +78,12 @@ export function verifyAnchors(
 ) {
   ctx.anchorSnapshotGeneration++
   ctx.pendingAnchors = anchors || []
-  if (!ctx.pendingAnchors.length) return
+  if (!ctx.pendingAnchors.length) {
+    ctx.checkingAnchors = []
+    scheduleChecking(ctx)
+    return
+  }
+  let checking: number[] = []
   let verdicts = []
   if (!engine) {
     for (let i = 0; i < ctx.pendingAnchors.length; i++) {
@@ -100,7 +105,9 @@ export function verifyAnchors(
     verdicts.push({
       thread: anchor.thread,
       attached: attached,
-      position_state: attached ? 'attached' : missingState(ctx, anchor.thread),
+      position_state: attached
+        ? 'attached'
+        : missingState(ctx, anchor.thread, checking),
     })
   }
   send(ctx, {
@@ -109,6 +116,7 @@ export function verifyAnchors(
     generation: ++ctx.resolutionGeneration,
     verdicts: verdicts,
   })
+  ctx.checkingAnchors = checking
   scheduleChecking(ctx)
 }
 

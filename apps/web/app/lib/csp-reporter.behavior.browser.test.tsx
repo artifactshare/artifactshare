@@ -124,6 +124,143 @@ afterEach(() => {
   frame = undefined
 })
 
+// Only the frame clock is scripted; parent polling and browser timers stay real.
+function frameClock() {
+  const date = (frame!.contentWindow as Window & typeof globalThis).Date
+  const original = date.now
+  let read = () => 10000
+  date.now = () => read()
+  return {
+    set(next: () => number) {
+      read = next
+    },
+    restore() {
+      date.now = original
+    },
+  }
+}
+
+function positionState(message: ReporterMessage, thread: string) {
+  if (message.kind === 'anchor-verdicts')
+    return (
+      message.verdicts as { thread: string; position_state: string }[]
+    ).find((entry) => entry.thread === thread)?.position_state
+  if (message.kind === 'anchor-resolutions')
+    return (message.results as { threadId: string; state: string }[]).find(
+      (entry) => entry.threadId === thread,
+    )?.state
+}
+
+function postMissing(stream: 'highlight' | 'verification', versionId = 'v1') {
+  frame!.contentWindow!.postMessage(
+    stream === 'highlight'
+      ? {
+          source: 'artifactshare-parent',
+          kind: 'comment-highlights',
+          versionId,
+          highlights: [{ threadId: 'hosted', quotedText: 'Missing quote' }],
+        }
+      : {
+          source: 'artifactshare-parent',
+          kind: 'verify-anchors',
+          anchors: [
+            { kind: 'text', thread: 'preview', quotedText: 'Missing quote' },
+          ],
+        },
+    '*',
+  )
+}
+
+test.each([
+  ['highlight', true],
+  ['verification', true],
+  ['highlight', false],
+  ['verification', false],
+] as const)(
+  '%s checking survives a clock crossing inside a report pass (crossing: %s)',
+  async (stream, crossing) => {
+    await fixture('<p>Present quote</p>')
+    const clock = frameClock()
+    const kind =
+      stream === 'highlight' ? 'anchor-resolutions' : 'anchor-verdicts'
+    const thread = stream === 'highlight' ? 'hosted' : 'preview'
+    try {
+      postMissing(stream)
+      await waitForMessage(kind, (m) => positionState(m, thread) === 'checking')
+      const from = messages.length
+      const reads: number[] = []
+      clock.set(() => {
+        const value = crossing && reads.length ? 13000 : 12999
+        reads.push(value)
+        return value
+      })
+      // A changed version also makes the highlight report observable despite
+      // signature suppression of identical checking results.
+      postMissing(stream, 'v2')
+      await waitForMessage(kind, (m) => !!positionState(m, thread), from)
+      expect(reads[0]).toBe(12999)
+      if (crossing) expect(reads).toContain(13000)
+      else {
+        expect(reads.every((value) => value === 12999)).toBe(true)
+        expect(
+          messages
+            .slice(from)
+            .some((m) => positionState(m, thread) === 'needs-check'),
+        ).toBe(false)
+      }
+      clock.set(() => 18000)
+      await waitForMessage(
+        kind,
+        (m) => positionState(m, thread) === 'needs-check',
+        from,
+      )
+    } finally {
+      clock.restore()
+    }
+  },
+)
+
+test('both streams finish when the clock crosses in the shared checking callback', async () => {
+  await fixture('<p>Present quote</p>')
+  const clock = frameClock()
+  try {
+    postMissing('highlight')
+    postMissing('verification')
+    await waitForMessage(
+      'anchor-resolutions',
+      (m) => positionState(m, 'hosted') === 'checking',
+    )
+    await waitForMessage(
+      'anchor-verdicts',
+      (m) => positionState(m, 'preview') === 'checking',
+    )
+    const from = messages.length
+    const reads: number[] = []
+    clock.set(() => {
+      const value = reads.length ? 13000 : 12999
+      reads.push(value)
+      return value
+    })
+    // No parent message or DOM mutation: the original 3000 ms timer runs
+    // highlights first (unchanged checking signature), then verification.
+    await vi.waitFor(
+      () => {
+        for (const thread of ['hosted', 'preview'])
+          expect(
+            messages
+              .slice(from)
+              .some((m) => positionState(m, thread) === 'needs-check'),
+          ).toBe(true)
+      },
+      { timeout: 4500 },
+    )
+    expect(reads[0]).toBe(12999)
+    expect(reads).toContain(13000)
+  } finally {
+    clock.restore()
+  }
+})
+
 describe('CSP reporter runtime behavior', () => {
   test('readiness replies identify the artifact frame as their sender', async () => {
     await fixture('<p>Frame identity</p>')

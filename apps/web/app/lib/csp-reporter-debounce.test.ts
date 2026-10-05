@@ -9,6 +9,7 @@ import { verifyAnchors } from '../../../../packages/viewer-kit/src/reporter/anno
 import { installMessageListener } from '../../../../packages/viewer-kit/src/reporter/messaging.js'
 import * as engines from '../../../../packages/viewer-kit/src/reporter/anchor-engine.js'
 import * as svg from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
+import * as badges from '../../../../packages/viewer-kit/src/reporter/badges.js'
 import { applyHighlights } from '../../../../packages/viewer-kit/src/reporter/highlights.js'
 import { handleMutations } from '../../../../packages/viewer-kit/src/reporter/mutations.js'
 
@@ -329,3 +330,132 @@ test('verification deadlines expire and generations advance without mixing reque
     verdicts: [{ thread: 'quote', attached: true, position_state: 'attached' }],
   })
 })
+
+test.each(['highlight', 'verification'])(
+  'removing %s inputs preserves only the other stream checking obligation',
+  (removed) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10000)
+    const ctx = createReporterState(window)
+    ctx.primordials.savedPostMessage = vi.fn()
+    // The same thread id must still have independent reporting obligations.
+    applyHighlights(ctx, [{ threadId: 'missing', quotedText: 'missing' }])
+    verifyAnchors(ctx, [
+      { kind: 'element', thread: 'missing', selector: '#missing' },
+    ])
+    if (removed === 'highlight') applyHighlights(ctx, [])
+    else verifyAnchors(ctx, [])
+    expect(ctx.checkingTimer).toBeDefined()
+    if (removed === 'highlight') verifyAnchors(ctx, [])
+    else applyHighlights(ctx, [])
+    expect(ctx.checkingTimer).toBeUndefined()
+  },
+)
+
+test('a terminal verification cannot cancel the highlight follow-up across a deadline', () => {
+  vi.useFakeTimers()
+  const now = vi.spyOn(Date, 'now').mockReturnValue(10000)
+  const ctx = createReporterState(window)
+  const send = vi.fn()
+  ctx.primordials.savedPostMessage = send
+  applyHighlights(ctx, [{ threadId: 'hosted', quotedText: 'missing' }])
+  verifyAnchors(ctx, [
+    { kind: 'text', thread: 'preview', quotedText: 'missing' },
+  ])
+  now.mockReturnValueOnce(12999).mockReturnValue(13000)
+  vi.advanceTimersByTime(3000)
+  // The highlight signature was unchanged; verification has already finished.
+  expect(send.mock.calls.at(-1)![1].verdicts[0].position_state).toBe(
+    'needs-check',
+  )
+  expect(ctx.checkingTimer).toBeDefined()
+  vi.advanceTimersByTime(1)
+  expect(send.mock.calls.map((call) => call[1])).toContainEqual(
+    expect.objectContaining({
+      kind: 'anchor-resolutions',
+      results: [
+        expect.objectContaining({ threadId: 'hosted', state: 'needs-check' }),
+      ],
+    }),
+  )
+  expect(ctx.checkingTimer).toBeUndefined()
+})
+
+test.each([
+  'engine',
+  'highlight resolution',
+  'highlight positioning',
+  'verification resolution',
+])(
+  'repeated failed %s passes back off, retain checking reports, and recover',
+  (failure) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10000)
+    const ctx = createReporterState(window)
+    const send = vi.fn()
+    ctx.primordials.savedPostMessage = send
+    applyHighlights(ctx, [{ threadId: 'hosted', quotedText: 'missing' }])
+    verifyAnchors(ctx, [
+      { kind: 'text', thread: 'preview', quotedText: 'missing' },
+    ])
+    const engine = engines.createTextAnchorEngine(document.body)
+    const build = vi.spyOn(engines, 'createTextAnchorEngine')
+    if (failure === 'engine') {
+      build.mockImplementation(() => {
+        throw new Error('pass failed')
+      })
+    } else if (failure.endsWith('resolution')) {
+      const resolve = engine.resolve.bind(engine)
+      vi.spyOn(engine, 'resolve').mockImplementation((anchor) => {
+        const highlight = 'threadId' in anchor
+        if (highlight === (failure === 'highlight resolution')) {
+          throw new Error('pass failed')
+        }
+        return resolve(anchor)
+      })
+      build.mockReturnValue(engine)
+    } else {
+      vi.spyOn(badges, 'positionBadges').mockImplementation(() => {
+        throw new Error('pass failed')
+      })
+    }
+    expect(() => vi.advanceTimersByTime(3000)).toThrow('pass failed')
+    expect(ctx.checkingTimer).toBeDefined()
+    expect(
+      failure === 'verification resolution'
+        ? ctx.checkingAnchors
+        : ctx.checkingHighlights,
+    ).toEqual([13000])
+    // Each failure leaves exactly one retry. Intervals grow to a bounded cap,
+    // even when the other stream succeeds and schedules during the callback.
+    for (const delay of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1000, 1000]) {
+      const attempts = build.mock.calls.length
+      vi.advanceTimersByTime(delay - 1)
+      expect(build).toHaveBeenCalledTimes(attempts)
+      expect(() => vi.advanceTimersByTime(1)).toThrow('pass failed')
+      expect(build).toHaveBeenCalledTimes(attempts + 1)
+      expect(vi.getTimerCount()).toBe(1)
+    }
+    vi.restoreAllMocks()
+    vi.advanceTimersByTime(1000)
+    for (const [kind, field, id, state] of [
+      ['anchor-resolutions', 'results', 'threadId', 'state'],
+      ['anchor-verdicts', 'verdicts', 'thread', 'position_state'],
+    ]) {
+      const last = send.mock.calls
+        .map((call) => call[1])
+        .filter((message) => message.kind === kind)
+        .at(-1)
+      expect(last[field]).toEqual([
+        expect.objectContaining({
+          [id]: kind === 'anchor-resolutions' ? 'hosted' : 'preview',
+          [state]: 'needs-check',
+        }),
+      ])
+    }
+    expect(ctx.checkingTimer).toBeUndefined()
+    const count = send.mock.calls.length
+    vi.advanceTimersByTime(10000)
+    expect(send).toHaveBeenCalledTimes(count)
+  },
+)

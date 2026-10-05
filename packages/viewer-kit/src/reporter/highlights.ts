@@ -505,18 +505,26 @@ export function wrapRange(
   })
 }
 
-export function missingState(ctx: ReporterState, id: string) {
+export function missingState(
+  ctx: ReporterState,
+  id: string,
+  checking: number[],
+) {
   if (!ctx.checkingDeadlines[id]) ctx.checkingDeadlines[id] = Date.now() + 3000
-  return Date.now() < ctx.checkingDeadlines[id] ? 'checking' : 'needs-check'
+  let deadline = ctx.checkingDeadlines[id]
+  if (Date.now() < deadline) {
+    checking.push(deadline)
+    return 'checking'
+  }
+  return 'needs-check'
 }
 
-export function scheduleChecking(ctx: ReporterState) {
+export function scheduleChecking(ctx: ReporterState, retryDelay = 0) {
   if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
-  let deadlines = Object.values(ctx.checkingDeadlines).filter(
-    function (deadline) {
-      return deadline > Date.now()
-    },
-  )
+  // A checking report still needs a follow-up even if its deadline elapsed
+  // during this pass. Keep both streams: verification must not cancel an
+  // unchanged (signature-suppressed) highlight's outstanding report.
+  let deadlines = ctx.checkingHighlights.concat(ctx.checkingAnchors)
   if (!deadlines.length) {
     ctx.checkingTimer = undefined
     return
@@ -524,14 +532,27 @@ export function scheduleChecking(ctx: ReporterState) {
   ctx.checkingTimer = ctx.win.setTimeout(
     function () {
       ctx.checkingTimer = undefined
-      let engine = createTextAnchorEngine(anchorRoot(ctx))
+      let completed = false
       try {
-        applyHighlights(ctx, ctx.pendingHighlights, engine)
+        let engine = createTextAnchorEngine(anchorRoot(ctx))
+        try {
+          applyHighlights(ctx, ctx.pendingHighlights, engine)
+        } finally {
+          verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        }
+        completed = true
       } finally {
-        verifyAnchors(ctx, ctx.pendingAnchors, engine)
+        // Failed engine, paint, or verification work must not consume the
+        // follow-up owed to either stream's last checking report.
+        // Repeated failures back off to one retry per second. A successful
+        // paired pass returns to normal deadline scheduling.
+        scheduleChecking(
+          ctx,
+          completed ? 0 : Math.min(1000, Math.max(1, retryDelay * 2)),
+        )
       }
     },
-    Math.max(1, Math.min.apply(null, deadlines) - Date.now()),
+    Math.max(1, retryDelay, Math.min.apply(null, deadlines) - Date.now()),
   )
 }
 
@@ -544,10 +565,15 @@ export function applyHighlights(
   ctx.anchorSnapshotGeneration++
   ctx.pendingHighlights = Array.isArray(list) ? list : []
   if (!ctx.pendingHighlights.length) {
+    ctx.checkingHighlights = []
     ctx.lastResolutionSignature = ''
+    scheduleChecking(ctx)
     clearMarks(ctx)
     return
   }
+  // Stage the next report's obligations without discarding the last report
+  // if resolution, painting, or serialization fails partway through the pass.
+  let checking: number[] = []
   let forcePaint = !!engine
   engine = engine || createTextAnchorEngine(anchorRoot(ctx))
   ctx.measuredText = engine.text
@@ -645,7 +671,9 @@ export function applyHighlights(
     }
     results.push({
       threadId: highlight.threadId,
-      state: resolved ? 'attached' : missingState(ctx, highlight.threadId),
+      state: resolved
+        ? 'attached'
+        : missingState(ctx, highlight.threadId, checking),
       textStart: resolved ? resolved.textStart : null,
       textEnd: resolved ? resolved.textEnd : null,
       textHash: resolved ? engine.hash : null,
@@ -678,6 +706,7 @@ export function applyHighlights(
       })
     }
   ctx.lastResolutionSignature = signature
+  ctx.checkingHighlights = checking
   scheduleChecking(ctx)
 }
 
