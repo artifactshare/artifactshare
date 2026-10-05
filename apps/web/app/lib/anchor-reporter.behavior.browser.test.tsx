@@ -9,8 +9,21 @@ import {
 type Message = TextSelectionMessage | AnchorResolutionMessage
 let frame: HTMLIFrameElement
 let messages: Message[] = []
+let messageReceipts: {
+  message: Message
+  receivedAt: number
+  index: number
+}[] = []
 function receive(event: MessageEvent<Message>) {
-  if (event.source === frame?.contentWindow) messages.push(event.data)
+  if (event.source === frame?.contentWindow) {
+    messageReceipts.push({
+      message: event.data,
+      receivedAt: Date.now(),
+      index: messages.length,
+    })
+    if (messageReceipts.length > 50) messageReceipts.shift()
+    messages.push(event.data)
+  }
 }
 function send(kind: string, fields: object = {}) {
   frame.contentWindow!.postMessage(
@@ -27,6 +40,7 @@ function send(kind: string, fields: object = {}) {
 }
 async function fixture(html: string) {
   messages = []
+  messageReceipts = []
   window.addEventListener('message', receive)
   frame = document.createElement('iframe')
   frame.id = 'anchor-reporter'
@@ -1761,7 +1775,61 @@ test.each(['false', 'throw'])(
           }[]
         }[]
       ).findLast((message) => message.kind === 'anchor-verdicts')
+    let mutationAt: number | null = null
+    let requestedAt: number
+    let requestBoundary: number
+    const withVerdictHistory = async (wait: Promise<unknown>) => {
+      try {
+        await wait
+      } catch (error) {
+        const failedAt = Date.now()
+        const history = messageReceipts
+          .filter(
+            ({ message, index }) =>
+              index >= requestBoundary &&
+              (message as { kind: string }).kind === 'anchor-verdicts',
+          )
+          .map(({ message, receivedAt }) => {
+            const payload = message as unknown as {
+              generation: number
+              verificationId: number
+              verdicts: {
+                thread: string
+                attached: boolean
+                position_state: string
+              }[]
+            }
+            return {
+              sinceRequestMs: receivedAt - requestedAt,
+              sinceMutationMs:
+                mutationAt === null ? null : receivedAt - mutationAt,
+              generation: payload.generation,
+              verificationId: payload.verificationId,
+              verdicts: Array.from(payload.verdicts, (entry) => ({
+                thread: entry.thread,
+                attached: entry.attached,
+                position_state: entry.position_state,
+              })),
+            }
+          })
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n` +
+            'anchor-verdicts history since verify-anchors (latest 50 frame message records retained; null = not yet mutated):\n' +
+            (history.length
+              ? JSON.stringify(history, null, 2)
+              : '(empty retained verdict history)') +
+            `\nframe context: ${JSON.stringify({
+              readyState: doc.readyState,
+              visibilityState: doc.visibilityState,
+              mutationAgeMs: mutationAt === null ? null : failedAt - mutationAt,
+            })}`,
+          { cause: error },
+        )
+      }
+    }
     try {
+      requestBoundary = messages.length
+      requestedAt = Date.now()
       send('verify-anchors', {
         verificationId: 1,
         anchors: [
@@ -1779,44 +1847,57 @@ test.each(['false', 'throw'])(
           },
         ],
       })
-      await vi.waitFor(() =>
-        expect(verdict()?.verdicts).toEqual([
-          { thread: 'attached', attached: true, position_state: 'attached' },
-          { thread: 'missing', attached: false, position_state: 'checking' },
-        ]),
-      )
-      await vi.waitFor(
-        () =>
+      await withVerdictHistory(
+        vi.waitFor(() =>
           expect(verdict()?.verdicts).toEqual([
             { thread: 'attached', attached: true, position_state: 'attached' },
-            {
-              thread: 'missing',
-              attached: false,
-              position_state: 'needs-check',
-            },
+            { thread: 'missing', attached: false, position_state: 'checking' },
           ]),
-        { timeout: 6000 },
+        ),
+      )
+      await withVerdictHistory(
+        vi.waitFor(
+          () =>
+            expect(verdict()?.verdicts).toEqual([
+              {
+                thread: 'attached',
+                attached: true,
+                position_state: 'attached',
+              },
+              {
+                thread: 'missing',
+                attached: false,
+                position_state: 'needs-check',
+              },
+            ]),
+          { timeout: 6000 },
+        ),
       )
       const generation = verdict()!.generation
+      mutationAt = Date.now()
       doc.querySelector('#words')!.textContent = 'absent words'
-      await vi.waitFor(() => {
-        expect(verdict()?.generation).toBeGreaterThan(generation)
-        expect(verdict()?.verdicts).toEqual([
-          { thread: 'attached', attached: false, position_state: 'checking' },
-          { thread: 'missing', attached: true, position_state: 'attached' },
-        ])
-      })
-      await vi.waitFor(
-        () =>
+      await withVerdictHistory(
+        vi.waitFor(() => {
+          expect(verdict()?.generation).toBeGreaterThan(generation)
           expect(verdict()?.verdicts).toEqual([
-            {
-              thread: 'attached',
-              attached: false,
-              position_state: 'needs-check',
-            },
+            { thread: 'attached', attached: false, position_state: 'checking' },
             { thread: 'missing', attached: true, position_state: 'attached' },
-          ]),
-        { timeout: 6000 },
+          ])
+        }),
+      )
+      await withVerdictHistory(
+        vi.waitFor(
+          () =>
+            expect(verdict()?.verdicts).toEqual([
+              {
+                thread: 'attached',
+                attached: false,
+                position_state: 'needs-check',
+              },
+              { thread: 'missing', attached: true, position_state: 'attached' },
+            ]),
+          { timeout: 6000 },
+        ),
       )
       expect(some).not.toHaveBeenCalled()
       expect(errors).toEqual([])
