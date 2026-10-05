@@ -1012,6 +1012,9 @@ test('generated mutation and checking callbacks verify even when painting throws
         pendingHighlights: [{}], pendingAnchors: [],
         measuredText: mode === 'equal' ? root.text : '',
         checkingDeadlines: {text: Date.now() + 3000},
+        // The generated scheduler now follows outstanding reports in each
+        // stream, so seed the highlight report as well as its grace deadline.
+        checkingHighlights: [Date.now() + 3000], checkingAnchors: [],
       };
       try {
         if (mode === 'checking') schedule(ctx);

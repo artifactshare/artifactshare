@@ -87,6 +87,8 @@ export function createReporterState(
     resolveTimer: undefined as number | undefined,
     checkingTimer: undefined as number | undefined,
     checkingDeadlines: {} as Record<string, number>,
+    checkingHighlights: [] as number[],
+    checkingAnchors: [] as number[],
     pendingVerificationId: null as number | null,
     resolutionGeneration: 0,
     lastResolutionSignature: '',
