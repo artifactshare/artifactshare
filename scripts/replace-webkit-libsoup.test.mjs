@@ -472,6 +472,7 @@ for (const failure of [
   'network',
   '503',
   '429',
+  '408',
   'truncated',
   'oversized',
   'hash',
@@ -502,7 +503,7 @@ for (const failure of [
         if (attempts > 1) return new Response(archiveBytes)
         if (failure === 'network') throw new Error('network unavailable')
         if (failure === 'timeout') return new Response(archiveBytes)
-        if (failure === '503' || failure === '429')
+        if (['503', '429', '408'].includes(failure))
           return new Response('', { status: Number(failure) })
         if (failure === 'interrupted')
           return new Response(
@@ -537,8 +538,8 @@ for (const failure of [
             ? /network unavailable/
             : failure === 'interrupted'
               ? /stream interrupted/
-              : failure === '503' || failure === '429'
-                ? /HTTP/
+              : ['503', '429', '408'].includes(failure)
+                ? new RegExp(`HTTP ${failure}`)
                 : /byte count/,
     )
     assert.deepEqual(f.events, ['extract', 'write', 'write'])

@@ -66,7 +66,7 @@ jobs:
           console.log(`key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map(library => library.replacement).join('-')}`)
           NODE
       - name: Cache verified WebKit libsoup libraries
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.project == 'webkit'
         with:
           path: ${{ runner.temp }}/webkit-libsoup-cache

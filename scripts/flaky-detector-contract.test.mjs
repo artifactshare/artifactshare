@@ -146,7 +146,7 @@ test('libsoup cache is pin-derived, exact, restored before use and independently
   assert.ok(key && cache && patch)
   assert.equal(
     cache.uses,
-    'actions/cache@5a3ec84eff668545956fd18022155c47e93e2684',
+    'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
   )
   assert.equal(key.if, "matrix.project == 'webkit'")
   assert.equal(cache.if, "matrix.project == 'webkit'")

@@ -96,7 +96,8 @@ export async function downloadArchive(pin, destination, fetchArchive = fetch) {
     await response.body?.cancel().catch(() => undefined)
     throw new ArchiveDownloadError(
       `Archive download HTTP ${response.status}`,
-      response.status === 429 ||
+      response.status === 408 ||
+        response.status === 429 ||
         (response.status >= 500 && response.status <= 599),
     )
   }
