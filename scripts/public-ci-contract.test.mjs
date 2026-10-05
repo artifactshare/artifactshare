@@ -838,7 +838,7 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.equal(lane.name, 'Changed browser behavior repetitions')
   assert.equal(lane.if, "github.event_name == 'pull_request'")
   assert.equal(lane['runs-on'], 'ubuntu-latest')
-  assert.equal(lane['timeout-minutes'], 360)
+  assert.equal(lane['timeout-minutes'], 150)
   assert.equal(lane.env.REPETITIONS, '5')
   assert.equal(lane.env.RESULTS_DIR, undefined)
   assert.equal(
@@ -912,7 +912,7 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.ok(lane.steps.indexOf(cache) < lane.steps.indexOf(install))
   assert.equal(lane.steps.indexOf(patch), lane.steps.indexOf(install) + 1)
   const repeat = lane.steps.find((step) => step.id === 'repeat')
-  assert.equal(repeat['timeout-minutes'], 310)
+  assert.equal(repeat['timeout-minutes'], 120)
   assert.equal(repeat.env.DEBUG, 'pw:browser')
   assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
   assert.equal(

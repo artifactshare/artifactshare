@@ -6,6 +6,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import test from 'node:test'
 import {
   main,
+  MAX_PAIRS,
+  REPETITION_TIMEOUT_MS,
   selectFiles,
   selectChanges,
   validateRepetitions,
@@ -304,7 +306,8 @@ test('each pair receives 1/5/10 independent invocations with literal filters and
       results,
       executor: (command, args, options) => {
         assert.equal(command, 'pnpm')
-        assert.equal(options.timeoutMs, 60_000)
+        assert.equal(REPETITION_TIMEOUT_MS, 600_000)
+        assert.equal(options.timeoutMs, REPETITION_TIMEOUT_MS)
         assert.equal(options.env.DEBUG, 'pw:browser')
         const pair = plan.pairs.find(
           (candidate) => candidate.filter === args.at(-1),
@@ -615,7 +618,7 @@ test('CLI empty diff succeeds with explicit summary before loading dependencies'
   assert.match(fs.readFileSync(output, 'utf8'), /has_pairs=false/)
 })
 
-test('executes every selected pair in sorted order within the 300-invocation bound', async (t) => {
+test('caps sorted file/project pairs at 15 and executes at most 150 invocations', async (t) => {
   const files = Array.from(
     { length: 10 },
     (_, i) => `apps/web/app/${i}.behavior.browser.test.tsx`,
@@ -631,13 +634,14 @@ test('executes every selected pair in sorted order within the 300-invocation bou
       repetitions,
       discover: fixtureDiscovery(specs),
     })
-    assert.equal(plan.pairs.length, 30)
+    assert.equal(MAX_PAIRS, 15)
+    assert.equal(plan.pairs.length, MAX_PAIRS)
     assert.deepEqual(
       plan.pairs.map(({ file: name, project }) => ({
         file: name,
         project,
       })),
-      files.flatMap((name) =>
+      files.slice(0, 5).flatMap((name) =>
         ['chromium', 'firefox', 'webkit'].map((project) => ({
           file: name,
           project,
@@ -655,8 +659,8 @@ test('executes every selected pair in sorted order within the 300-invocation bou
       },
     })
     assert.equal(calls, plan.pairs.length * Number(repetitions))
-    assert.equal(calls, 30 * Number(repetitions))
-    assert.ok(calls <= 300)
+    assert.equal(calls, 15 * Number(repetitions))
+    assert.ok(calls <= 150)
     const summary = summarize(plan, { results })
     assert.equal(summary.failed, true)
     for (const pair of plan.pairs)
@@ -665,7 +669,23 @@ test('executes every selected pair in sorted order within the 300-invocation bou
           `| ${pair.file} | ${pair.project} | 0/${repetitions} |`,
         ),
       )
-    assert.doesNotMatch(summary.markdown, /Skipped file\/project pairs/)
+    const skipped = files.slice(5).flatMap((name) =>
+      ['chromium', 'firefox', 'webkit'].map((project) => ({
+        file: name,
+        project,
+      })),
+    )
+    assert.deepEqual(plan.skippedPairs, skipped)
+    assert.match(
+      summary.markdown,
+      /Skipped file\/project pairs \(pair cap: 15; not repeated\)/,
+    )
+    for (const pair of skipped) {
+      assert.ok(summary.markdown.includes(`- ${pair.file} / ${pair.project}`))
+      assert.ok(
+        !summary.markdown.includes(`| ${pair.file} | ${pair.project} |`),
+      )
+    }
   }
 })
 

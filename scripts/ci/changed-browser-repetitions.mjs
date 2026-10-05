@@ -7,6 +7,9 @@ import { stripVTControlCharacters } from 'node:util'
 import { suiteCommand, execute } from './flaky-runs.mjs'
 import { normalizeReport, normalizeFile, firstLine } from './flaky-report.mjs'
 
+export const REPETITION_TIMEOUT_MS = 600_000
+export const MAX_PAIRS = 15
+
 export function validateRepetitions(value = '5') {
   if (typeof value !== 'string' || !/^(?:[1-9]|10)$/.test(value))
     throw new Error('REPETITIONS must be an integer string from 1 to 10')
@@ -100,6 +103,7 @@ export async function buildPlan(
     ...selection,
     repetitions: count,
     pairs: [],
+    skippedPairs: [],
     excluded: [],
     projects: [],
   }
@@ -117,6 +121,10 @@ export async function buildPlan(
       ].sort()
       if (!projects.length) plan.excluded.push(file)
       for (const project of projects) {
+        if (plan.pairs.length >= MAX_PAIRS) {
+          plan.skippedPairs.push({ file, project })
+          continue
+        }
         const filter = file.slice('apps/web/'.length)
         const matches = (await discovery.specifications([filter])).filter(
           (spec) => spec.project === project,
@@ -191,7 +199,7 @@ export async function runPlan(
             invocation.args,
             {
               cwd: root,
-              timeoutMs: 60_000,
+              timeoutMs: REPETITION_TIMEOUT_MS,
               env: { ...process.env, ...invocation.env },
               stdio: ['ignore', 'pipe', 'pipe'],
             },
@@ -314,6 +322,14 @@ export function summarize(plan, { results, setupError } = {}) {
     lines.push(
       'Excluded by effective config includes/excludes:',
       ...plan.excluded.map((file) => `- ${cell(file)}`),
+      '',
+    )
+  if (plan.skippedPairs?.length)
+    lines.push(
+      `Skipped file/project pairs (pair cap: ${MAX_PAIRS}; not repeated):`,
+      ...plan.skippedPairs.map(
+        ({ file, project }) => `- ${cell(file)} / ${cell(project)}`,
+      ),
       '',
     )
   if (plan.total && plan.pairs?.length === 0)
