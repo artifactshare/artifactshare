@@ -743,3 +743,34 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
     /pnpm --filter @artifactshare\/cli test:package/,
   )
 })
+
+test('browser libsoup workaround is mandatory, ordered, isolated, and retains browser stderr', () => {
+  const browser = parsedWorkflow.jobs['browser-validation']
+  const command = 'node scripts/ci/replace-webkit-libsoup.mjs'
+  const index = browser.steps.findIndex((step) => step.run === command)
+  assert.ok(index > 0)
+  assert.equal(
+    browser.steps[index - 1].run,
+    'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
+  )
+  assert.equal(browser.steps[index + 1].run, 'pnpm test:behavior-browser')
+  assert.deepEqual(browser.steps[index + 1].env, { DEBUG: 'pw:browser' })
+  for (const step of browser.steps.slice(index - 1, index + 2)) {
+    assert.equal(step['continue-on-error'], undefined)
+    assert.equal(step.if, undefined)
+  }
+  assert.equal(browser['continue-on-error'], undefined)
+  assert.equal(browser.env?.DEBUG, undefined)
+  assert.equal(parsedWorkflow.env?.DEBUG, undefined)
+  const occurrences = Object.entries(parsedWorkflow.jobs).flatMap(
+    ([name, job]) =>
+      (job.steps ?? [])
+        .filter((step) => (step.run ?? '').includes('replace-webkit-libsoup'))
+        .map(() => name),
+  )
+  assert.deepEqual(occurrences, ['browser-validation'])
+  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
+    if (name !== 'browser-validation')
+      assert.doesNotMatch(JSON.stringify(job), /pw:browser/)
+  }
+})

@@ -240,7 +240,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
+      # libsoup 3.6.5 double release; upstream fix 794e089abe8a58486970a4646aae99b2f03b808e.
+      # Remove this workaround when Playwright selects WebKit r2370 or later.
+      - name: Replace WebKit libsoup with the pinned fixed build
+        run: node scripts/ci/replace-webkit-libsoup.mjs
       - run: pnpm test:behavior-browser
+        env:
+          DEBUG: pw:browser
       - name: Verify scenario routes and in-app navigation
         run: pnpm check:browser-local-state
 

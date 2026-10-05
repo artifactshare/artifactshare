@@ -58,6 +58,8 @@
     "scripts/billing-regression.mjs",
     "scripts/billing-regression.test.mjs",
     "scripts/browser-local-state.mjs",
+    "scripts/ci/replace-webkit-libsoup.mjs",
+    "scripts/replace-webkit-libsoup.test.mjs",
     "scripts/copy-glossary-lint-plugin.mjs",
     "scripts/copy-glossary-lint-plugin.test.mjs",
     "scripts/check-design-tokens.mjs",

@@ -75,6 +75,8 @@ test "$guard_status" -eq 0
 
 Record the commands and results in the pull request. If the affected surface is unclear, broaden validation or run `pnpm validate`. Never reduce production, credential, migration, billing, authentication, or public/private boundary checks on the basis that the merge queue will catch them later.
 
+The [CI browser job](../.github/workflows/public-ci.yml) temporarily runs a [hash-pinned libsoup replacement](../scripts/ci/replace-webkit-libsoup.mjs) after installing Playwright browsers. WebKit r2359 bundles libsoup 3.6.5 with a double-release defect ([upstream fix](https://gitlab.gnome.org/GNOME/libsoup/-/commit/794e089abe8a58486970a4646aae99b2f03b808e)); the workaround replaces only its WPE and GTK libraries from the pinned r2370 Ubuntu 24.04 archive. Unexpected revisions, original hashes (including an already-patched installation), archive bytes, or replacement hashes fail the job with removal/re-pin diagnostics. The behavior test step sets `DEBUG=pw:browser` to retain browser stderr. Remove the script, workflow step, dedicated tests, and their boundary manifest entries when Playwright selects WebKit r2370 or later; any other revision needs an explicit re-pin. Playwright remains at 1.63.0, and visual validation is unchanged.
+
 ## Delivery sequence
 
 1. Confirm the intended behavior and write a specification when design is needed.
