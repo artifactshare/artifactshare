@@ -189,7 +189,7 @@ jobs:
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
         run: node scripts/ci/changed-browser-repetitions.mjs plan
       - name: Compute WebKit libsoup cache key
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
         id: webkit-libsoup-cache-key
         run: |
           node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
@@ -197,31 +197,37 @@ jobs:
           console.log(`key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map(library => library.replacement).join('-')}`)
           NODE
       - name: Cache verified WebKit libsoup libraries
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/webkit-libsoup-cache
           key: ${{ steps.webkit-libsoup-cache-key.outputs.key }}
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
+      - run: |
+          read -r -a projects <<< "$BROWSER_PROJECTS"
+          pnpm --filter @artifactshare/web exec playwright install --with-deps "${projects[@]}"
+        env:
+          BROWSER_PROJECTS: ${{ steps.plan.outputs.projects }}
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
       # libsoup 3.6.5 double release; upstream fix 794e089abe8a58486970a4646aae99b2f03b808e.
       # Remove this workaround when Playwright selects WebKit r2370 or later.
       - name: Replace WebKit libsoup with the pinned fixed build
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
         run: node scripts/ci/replace-webkit-libsoup.mjs
         env:
           WEBKIT_LIBSOUP_CACHE_DIR: ${{ runner.temp }}/webkit-libsoup-cache
       - name: Repeat changed browser tests
         id: repeat
+        timeout-minutes: 310
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
         run: node scripts/ci/changed-browser-repetitions.mjs run
         env:
           RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
           DEBUG: pw:browser
       - name: Summarize changed browser repetitions
-        if: ${{ !cancelled() && steps.classify.outputs.is_maintainer == 'true' && (failure() || steps.select.outputs.has_files == 'true') }}
+        if: ${{ always() && steps.classify.outputs.is_maintainer == 'true' && (failure() || cancelled() || steps.select.outputs.has_files == 'true') }}
         env:
           RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
+          INTERRUPTED: ${{ job.status == 'cancelled' }}
           SETUP_FAILED: ${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}
         run: |
           if [ -f scripts/ci/changed-browser-repetitions.mjs ]; then

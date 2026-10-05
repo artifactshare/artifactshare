@@ -5,6 +5,7 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import test from 'node:test'
 import {
+  main,
   selectFiles,
   selectChanges,
   validateRepetitions,
@@ -65,10 +66,13 @@ test('selects only added/modified literal paths from NUL records, sorted and cap
     file,
     'R075',
     anchor,
+    'apps/web/app/renamed.behavior.browser.test.tsx',
+    'R100',
     file,
+    'apps/web/app/moved.behavior.browser.test.tsx',
     'C100',
     file,
-    anchor,
+    'apps/web/app/copied.behavior.browser.test.tsx',
     'A',
     'other/app/example.behavior.browser.test.tsx',
     'M',
@@ -164,10 +168,17 @@ test('plans injected authoritative specifications, exclusions and changed includ
   const excluded = 'apps/web/outside.behavior.browser.test.tsx'
   const plan = await buildPlan(selected([file, anchor, excluded]), {
     discover: () => discovery,
+    repetitions: '1',
   })
   assert.deepEqual(
     plan.pairs.map(({ file: name, project }) => ({ file: name, project })),
-    specs,
+    [...specs].sort((a, b) =>
+      a.file < b.file
+        ? -1
+        : a.file > b.file
+          ? 1
+          : a.project.localeCompare(b.project),
+    ),
   )
   assert.deepEqual(plan.excluded, [excluded])
   assert.equal(closed, 1)
@@ -211,7 +222,7 @@ test('plans injected authoritative specifications, exclusions and changed includ
   assert.equal(closed, 2)
 })
 
-test('real config discovery respects inherited includes, browser overrides and excludes without launching browsers', async () => {
+test('real config discovery respects inherited includes, browser overrides and excludes without launching browsers', async (t) => {
   const discovery = await discoverProjects(process.cwd())
   try {
     const specs = await discovery.specifications()
@@ -239,7 +250,32 @@ test('real config discovery respects inherited includes, browser overrides and e
         common.file,
         'apps/web/outside.behavior.browser.test.tsx',
       ]),
+      { repetitions: '1' },
     )
+    for (const [files, projects] of [
+      [[general.file], 'chromium'],
+      [[common.file], 'chromium firefox webkit'],
+      [[], ''],
+    ]) {
+      const results = temporary(t)
+      const output = path.join(results, 'output')
+      fs.writeFileSync(
+        path.join(results, 'selection.json'),
+        JSON.stringify(selected(files)),
+      )
+      assert.equal(
+        await main('plan', {
+          RESULTS_DIR: results,
+          GITHUB_OUTPUT: output,
+          REPETITIONS: '1',
+        }),
+        0,
+      )
+      assert.equal(
+        fs.readFileSync(output, 'utf8'),
+        `has_pairs=${Boolean(projects)}\nprojects=${projects}\nhas_webkit=${projects.includes('webkit')}\n`,
+      )
+    }
     assert.equal(plan.pairs.length, 4)
     assert.equal(plan.excluded.length, 1)
     assert.deepEqual(
@@ -295,12 +331,12 @@ test('each pair receives 1/5/10 independent invocations with literal filters and
         return { exitCode: 0, signal: null }
       },
     })
-    assert.equal(reports.size, Number(repetitions) * 2)
+    assert.equal(reports.size, Number(repetitions) * plan.pairs.length)
     const summary = summarize(plan, { results })
     assert.equal(summary.failed, false)
     assert.equal(
       summary.markdown.split(`| ${repetitions}/${repetitions} |`).length,
-      3,
+      plan.pairs.length + 1,
     )
   }
 })
@@ -388,6 +424,7 @@ for (const kind of [
       if (calls === 1 || calls === 5) {
         if (kind === 'spawn') throw new Error('spawn failed')
         failures[kind]?.(payload)
+        if (kind === 'timeout') failures.assertion(payload)
         if (kind !== 'missing')
           fs.writeFileSync(
             report,
@@ -408,6 +445,8 @@ for (const kind of [
     assert.equal(summary.failed, true)
     assert.match(summary.markdown, /3\/5/)
     assert.match(summary.markdown, /1: .+<br>5: /)
+    if (kind === 'timeout')
+      assert.match(summary.markdown, /Repetition timed out/)
     if (kind === 'assertion') {
       assert.match(summary.markdown, /first &#124; &#42;error&#42;/)
       assert.doesNotMatch(summary.markdown, /second line/)
@@ -417,7 +456,11 @@ for (const kind of [
 }
 
 test('summaries distinguish empty, excluded, capped, absent and setup outcomes', async (t) => {
-  assert.match(summarize(selected([])).markdown, /No changed/)
+  assert.match(
+    summarize(selected([])).markdown,
+    /No added or modified browser behavior test files \(renames, copies and deletions are not repeated\)\./,
+  )
+  assert.doesNotMatch(summarize(selected([])).markdown, /renamed\/copied/)
   assert.equal(summarize(selected([])).failed, false)
   const excluded = await buildPlan(selected(), {
     discover: fixtureDiscovery([]),
@@ -444,31 +487,47 @@ test('summaries distinguish empty, excluded, capped, absent and setup outcomes',
   assert.equal(summarize(undefined).failed, true)
 })
 
-test('CLI reports failures to summary and exits nonzero', (t) => {
-  const results = temporary(t)
-  const summary = path.join(results, 'summary.md')
-  const cli = (command, extra = {}) =>
-    spawnSync(
-      process.execPath,
-      ['scripts/ci/changed-browser-repetitions.mjs', command],
-      {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          RESULTS_DIR: results,
-          GITHUB_STEP_SUMMARY: summary,
-          ...extra,
+for (const command of ['select', 'plan']) {
+  test(`CLI ${command} failure and report write one summary heading and exit nonzero`, (t) => {
+    const results = temporary(t)
+    const summary = path.join(results, 'summary.md')
+    const cli = (step, extra = {}) =>
+      spawnSync(
+        process.execPath,
+        ['scripts/ci/changed-browser-repetitions.mjs', step],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            RESULTS_DIR: results,
+            GITHUB_STEP_SUMMARY: summary,
+            ...extra,
+          },
         },
-      },
+      )
+    if (command === 'plan')
+      fs.writeFileSync(
+        path.join(results, 'selection.json'),
+        JSON.stringify(selected()),
+      )
+    assert.equal(cli(command, { REPETITIONS: '11' }).status, 1)
+    assert.match(fs.readFileSync(summary, 'utf8'), /REPETITIONS/)
+    assert.equal(cli('report', { SETUP_FAILED: 'true' }).status, 1)
+    const markdown = fs.readFileSync(summary, 'utf8')
+    assert.equal(
+      markdown.match(/^## Changed browser behavior repetitions$/gm)?.length,
+      1,
     )
-  assert.equal(cli('select', { REPETITIONS: '11' }).status, 1)
-  assert.match(fs.readFileSync(summary, 'utf8'), /REPETITIONS/)
-  assert.equal(cli('report', { SETUP_FAILED: 'true' }).status, 1)
-  assert.match(
-    fs.readFileSync(summary, 'utf8'),
-    /Selection or plan unavailable/,
-  )
-})
+    assert.match(markdown, /REPETITIONS must be an integer string from 1 to 10/)
+    assert.match(markdown, /Setup failed or incomplete/)
+    assert.match(
+      markdown,
+      command === 'select'
+        ? /Selection or plan unavailable/
+        : /Project planning did not complete/,
+    )
+  })
+}
 
 test('removes stale reports, rejects unfinished statuses, and retains structured collection errors', async (t) => {
   const results = temporary(t)
@@ -545,7 +604,7 @@ test('CLI empty diff succeeds with explicit summary before loading dependencies'
   })
   assert.equal(result.status, 0, result.stderr)
   assert.equal(fs.readFileSync(output, 'utf8'), 'has_files=false\n')
-  assert.match(fs.readFileSync(summary, 'utf8'), /No changed browser/)
+  assert.match(fs.readFileSync(summary, 'utf8'), /No added or modified browser/)
   assert.equal(fs.existsSync(path.join(root, 'node_modules')), false)
   const planned = spawnSync(process.execPath, [cli, 'plan'], {
     cwd: root,
@@ -554,4 +613,93 @@ test('CLI empty diff succeeds with explicit summary before loading dependencies'
   })
   assert.equal(planned.status, 0, planned.stderr)
   assert.match(fs.readFileSync(output, 'utf8'), /has_pairs=false/)
+})
+
+test('executes every selected pair in sorted order within the 300-invocation bound', async (t) => {
+  const files = Array.from(
+    { length: 10 },
+    (_, i) => `apps/web/app/${i}.behavior.browser.test.tsx`,
+  )
+  const specs = files.flatMap((name) =>
+    ['webkit', 'firefox', 'chromium'].map((project) => ({
+      file: name,
+      project,
+    })),
+  )
+  for (const repetitions of ['1', '5', '10']) {
+    const plan = await buildPlan(selected(files.toReversed()), {
+      repetitions,
+      discover: fixtureDiscovery(specs),
+    })
+    assert.equal(plan.pairs.length, 30)
+    assert.deepEqual(
+      plan.pairs.map(({ file: name, project }) => ({
+        file: name,
+        project,
+      })),
+      files.flatMap((name) =>
+        ['chromium', 'firefox', 'webkit'].map((project) => ({
+          file: name,
+          project,
+        })),
+      ),
+    )
+    assert.deepEqual(plan.projects, ['chromium', 'firefox', 'webkit'])
+    let calls = 0
+    const results = temporary(t)
+    await runPlan(plan, {
+      results,
+      executor: () => {
+        calls++
+        return { exitCode: 1 }
+      },
+    })
+    assert.equal(calls, plan.pairs.length * Number(repetitions))
+    assert.equal(calls, 30 * Number(repetitions))
+    assert.ok(calls <= 300)
+    const summary = summarize(plan, { results })
+    assert.equal(summary.failed, true)
+    for (const pair of plan.pairs)
+      assert.ok(
+        summary.markdown.includes(
+          `| ${pair.file} | ${pair.project} | 0/${repetitions} |`,
+        ),
+      )
+    assert.doesNotMatch(summary.markdown, /Skipped file\/project pairs/)
+  }
+})
+
+test('report fails interrupted jobs even with passing completed reports', async (t) => {
+  const results = temporary(t)
+  const plan = await buildPlan(selected(), {
+    repetitions: '1',
+    discover: fixtureDiscovery([{ file, project: 'chromium' }]),
+  })
+  await runPlan(plan, {
+    results,
+    executor: (command, args) => {
+      fs.writeFileSync(
+        args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+        JSON.stringify(passing(plan.pairs[0])),
+      )
+      return { exitCode: 0 }
+    },
+  })
+  fs.writeFileSync(path.join(results, 'plan.json'), JSON.stringify(plan))
+  const summary = path.join(results, 'summary.md')
+  const result = spawnSync(
+    process.execPath,
+    ['scripts/ci/changed-browser-repetitions.mjs', 'report'],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RESULTS_DIR: results,
+        GITHUB_STEP_SUMMARY: summary,
+        INTERRUPTED: 'true',
+      },
+    },
+  )
+  assert.equal(result.status, 1)
+  assert.match(fs.readFileSync(summary, 'utf8'), /cancelled or interrupted/)
 })

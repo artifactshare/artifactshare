@@ -885,8 +885,8 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   const patch = lane.steps.find(
     (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
   )
-  for (const step of [key, cache, install, patch]) {
-    assert.match(step.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
+  for (const step of [key, cache, patch]) {
+    assert.match(step.if, /steps\.plan\.outputs\.has_webkit == 'true'/)
     const { if: condition, ...rest } = step
     assert.ok(condition)
     assert.deepEqual(
@@ -899,11 +899,20 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
       ),
     )
   }
+  assert.match(install.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
+  assert.equal(
+    install.env.BROWSER_PROJECTS,
+    '${{ steps.plan.outputs.projects }}',
+  )
+  assert.match(install.run, /read -r -a projects/)
+  assert.ok(install.run.includes('--with-deps "${projects[@]}"'))
+  assert.doesNotMatch(install.run, /chromium firefox webkit/)
   assert.ok(lane.steps.indexOf(plan) < lane.steps.indexOf(key))
   assert.ok(lane.steps.indexOf(key) < lane.steps.indexOf(cache))
   assert.ok(lane.steps.indexOf(cache) < lane.steps.indexOf(install))
   assert.equal(lane.steps.indexOf(patch), lane.steps.indexOf(install) + 1)
   const repeat = lane.steps.find((step) => step.id === 'repeat')
+  assert.equal(repeat['timeout-minutes'], 310)
   assert.equal(repeat.env.DEBUG, 'pw:browser')
   assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
   assert.equal(
@@ -911,7 +920,9 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
     'node scripts/ci/changed-browser-repetitions.mjs run',
   )
   const summary = lane.steps.at(-1)
-  assert.match(summary.if, /!cancelled\(\)/)
+  assert.match(summary.if, /always\(\)/)
+  assert.match(summary.if, /cancelled\(\)/)
+  assert.equal(summary.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
   assert.match(summary.if, /failure\(\)/)
   assert.match(summary.run, /changed-browser-repetitions\.mjs report/)
   assert.match(summary.run, /exit 1/)
@@ -1001,6 +1012,8 @@ test('changed browser status functions appear only in if conditions', () => {
     summary.env.SETUP_FAILED,
     "${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}",
   )
-  assert.match(summary.if, /!cancelled\(\)/)
+  assert.match(summary.if, /always\(\)/)
+  assert.match(summary.if, /cancelled\(\)/)
+  assert.equal(summary.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
   assert.match(summary.if, /failure\(\)/)
 })

@@ -96,12 +96,18 @@ export async function buildPlan(
   { root = process.cwd(), discover = discoverProjects, repetitions = '5' } = {},
 ) {
   const count = validateRepetitions(repetitions)
-  const plan = { ...selection, repetitions: count, pairs: [], excluded: [] }
+  const plan = {
+    ...selection,
+    repetitions: count,
+    pairs: [],
+    excluded: [],
+    projects: [],
+  }
   if (!selection.selected.length) return plan
   const discovery = await discover(root)
   try {
     const specifications = await discovery.specifications()
-    for (const file of selection.selected) {
+    for (const file of [...selection.selected].sort()) {
       const projects = [
         ...new Set(
           specifications
@@ -117,9 +123,17 @@ export async function buildPlan(
         )
         if (matches.length !== 1 || matches[0].file !== file)
           throw new Error(`Ambiguous file filter for ${file} / ${project}`)
-        plan.pairs.push({ file, project, filter })
+        const pair = { file, project, filter }
+        plan.pairs.push(pair)
       }
     }
+    plan.projects = [...new Set(plan.pairs.map((pair) => pair.project))].sort()
+    if (
+      plan.projects.some(
+        (project) => !['chromium', 'firefox', 'webkit'].includes(project),
+      )
+    )
+      throw new Error('Unsupported browser project')
     return plan
   } finally {
     await discovery.close()
@@ -212,13 +226,14 @@ export function repetitionResult(directory, pair, plan, repetition) {
       status.timedOut ||
       status.error
     )
-      infrastructure =
-        status.error ||
-        (status.timedOut
-          ? 'Repetition timed out'
-          : !status.completed
+      infrastructure = status.timedOut
+        ? 'Repetition timed out'
+        : status.error ||
+          (!status.completed
             ? 'Repetition did not complete'
             : `Process exited ${status.exitCode}, signal ${status.signal ?? 'none'}`)
+    if (status.timedOut)
+      return { passed: false, error: firstLine(infrastructure) }
     const text = fs.readFileSync(path.join(directory, 'report.json'), 'utf8')
     const rows = normalizeReport(text, status)
     const report = JSON.parse(text)
@@ -285,7 +300,10 @@ export function summarize(plan, { results, setupError } = {}) {
     '',
   )
   if (!plan.total)
-    lines.push('No changed browser behavior test files (added/modified).', '')
+    lines.push(
+      'No added or modified browser behavior test files (renames, copies and deletions are not repeated).',
+      '',
+    )
   if (plan.omitted.length)
     lines.push(
       'File cap: 10. Omitted paths:',
@@ -358,6 +376,8 @@ export async function main(command, env = process.env) {
       })
       writeJson(planPath, plan)
       output('has_pairs', plan.pairs.length > 0)
+      output('projects', plan.projects.join(' '))
+      output('has_webkit', plan.projects.includes('webkit'))
     } else if (command === 'run') {
       const plan = readJson(planPath)
       await runPlan(plan, { results: env.RESULTS_DIR })
@@ -379,18 +399,19 @@ export async function main(command, env = process.env) {
       const report = summarize(plan, {
         results: env.RESULTS_DIR,
         setupError:
-          env.SETUP_FAILED === 'true'
-            ? 'See the failed setup/selection step.'
-            : undefined,
+          env.INTERRUPTED === 'true'
+            ? 'Job cancelled or interrupted; results may be incomplete.'
+            : env.SETUP_FAILED === 'true'
+              ? 'See the failed setup/selection step.'
+              : undefined,
       })
       summary(report.markdown)
       return report.failed ? 1 : 0
     } else throw new Error('Expected select, plan, run, or report')
     return 0
   } catch (error) {
-    summary(
-      `## Changed browser behavior repetitions\n\n${cell(firstLine(error.message))}\n`,
-    )
+    // The report step owns the heading after a failed selection or plan.
+    summary(`${cell(firstLine(error.message))}\n\n`)
     return 1
   }
 }
