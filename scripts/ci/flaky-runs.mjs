@@ -71,9 +71,9 @@ export function suiteCommand(lane, report, root) {
       config,
       '--run',
       ...(lane.project ? [`--project=${lane.project}`] : []),
-      // JSON omits unhandled errors; keep the console reporter for diagnostics.
+      // Keep human diagnostics alongside the complete structured reporter.
       '--reporter=default',
-      '--reporter=json',
+      `--reporter=${path.join(root, 'scripts/ci/vitest-flaky-reporter.mjs')}`,
       `--outputFile=${report}`,
     ],
     env: lane.project
@@ -81,7 +81,7 @@ export function suiteCommand(lane, report, root) {
       : lane.suite === 'web-unit'
         ? { PUBLIC_TEST: '1' }
         : {},
-    format: 'vitest-json',
+    format: 'vitest-structured',
   }
 }
 
@@ -136,10 +136,37 @@ function processTable(ownership) {
 
 export async function terminateTree(
   pid,
-  { readProcesses = processTable, kill = process.kill, ownership } = {},
+  {
+    readProcesses = processTable,
+    kill = process.kill,
+    ownership,
+    afterExit = false,
+  } = {},
 ) {
   if (!pid) return []
   const diagnostics = []
+  if (afterExit) {
+    // A direct child's exit can precede its descendants' normal shutdown.
+    // Keep output pipes open during this bounded grace period; timeout cleanup
+    // still starts immediately.
+    const graceDeadline = Date.now() + 2000
+    try {
+      while (true) {
+        if (
+          !readProcesses(ownership).some(
+            (entry) =>
+              (entry.owned || entry.parent === pid) &&
+              !entry.state.startsWith('Z'),
+          )
+        )
+          return []
+        if (Date.now() >= graceDeadline) break
+        await delay(50)
+      }
+    } catch (error) {
+      diagnostics.push(error.message)
+    }
+  }
   const targets = new Set([pid])
   const signal = (target, name) => {
     try {
@@ -153,13 +180,15 @@ export async function terminateTree(
     // The inherited marker survives setsid and reparenting, including a parent
     // that exits before our first snapshot. Freeze marked processes as well as
     // descendants before rescanning, then kill the complete discovered tree.
-    signal(pid, 'SIGSTOP')
+    if (!afterExit) signal(pid, 'SIGSTOP')
     while (true) {
       const children = readProcesses(ownership).filter(
         (entry) =>
           (entry.owned || targets.has(entry.parent)) && !targets.has(entry.pid),
       )
       for (const child of children) {
+        if (afterExit && !child.state.startsWith('Z'))
+          diagnostics.push('Remaining descendant after suite exit')
         targets.add(child.pid)
         signal(child.pid, 'SIGSTOP')
       }
@@ -169,7 +198,8 @@ export async function terminateTree(
   } catch (error) {
     diagnostics.push(error.message)
   } finally {
-    for (const target of [...targets].reverse()) signal(target, 'SIGKILL')
+    for (const target of [...targets].reverse())
+      if (!afterExit || target !== pid) signal(target, 'SIGKILL')
     // Also catch any still-associated processes if discovery failed.
     signal(-pid, 'SIGKILL')
   }
@@ -213,46 +243,49 @@ export function execute(command, args, options, output) {
         timedOut,
         ...(error ? { error } : spawnError ? { error: spawnError } : {}),
       })
-    const timer = setTimeout(() => {
-      timedOut = true
-      // Catch both synchronous throws and rejected termination promises. Close
-      // can arrive during cleanup; only this path may finish a timed-out run.
-      void (async () => {
-        const diagnostics = [`Repetition timed out after ${timeoutMs} ms`]
+    let finishing = false
+    const cleanup = async (timeout) => {
+      if (finishing) return
+      finishing = true
+      clearTimeout(timer)
+      timedOut = timeout
+      const diagnostics = timeout
+        ? [`Repetition timed out after ${timeoutMs} ms`]
+        : []
+      try {
+        diagnostics.push(
+          ...(await terminate(child.pid, { ownership, afterExit: !timeout })),
+        )
+      } catch (error) {
+        diagnostics.push(`Termination failed: ${error.message}`)
         try {
-          diagnostics.push(...(await terminate(child.pid, { ownership })))
-        } catch (error) {
-          diagnostics.push(`Termination failed: ${error.message}`)
-          try {
-            child.kill('SIGKILL')
-          } catch (killError) {
-            diagnostics.push(
-              `Fallback termination failed: ${killError.message}`,
-            )
-          }
-        } finally {
-          const error = diagnostics.join('\n')
-          try {
-            output(`${error}\n`)
-          } catch (outputError) {
-            diagnostics.push(`Diagnostic output failed: ${outputError.message}`)
-          }
-          // A failed cleanup must not leave inherited pipes blocking the shard.
-          await delay(25)
-          child.stdout.destroy()
-          child.stderr.destroy()
-          finish(diagnostics.join('\n'))
+          child.kill('SIGKILL')
+        } catch (killError) {
+          diagnostics.push(`Fallback termination failed: ${killError.message}`)
         }
-      })()
-    }, timeoutMs)
+      } finally {
+        try {
+          if (diagnostics.length) output(`${diagnostics.join('\n')}\n`)
+        } catch (error) {
+          diagnostics.push(`Diagnostic output failed: ${error.message}`)
+        }
+        // Drain queued output, then release pipes even if cleanup failed.
+        await delay(25)
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(diagnostics.join('\n'))
+      }
+    }
+    const timer = setTimeout(() => void cleanup(true), timeoutMs)
     child.stdout.on('data', output)
     child.stderr.on('data', output)
     child.on('error', (error) => {
       spawnError = error.message
     })
+    child.on('exit', () => void cleanup(false))
     child.on('close', () => {
-      clearTimeout(timer)
-      if (!timedOut) finish()
+      // Spawn failures have no exit event.
+      if (!finishing) void cleanup(false)
     })
   })
 }

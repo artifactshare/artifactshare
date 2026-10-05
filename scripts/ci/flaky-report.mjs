@@ -42,118 +42,131 @@ const diagnostic = (error, file = '[suite]') => ({
 })
 const unhandledDiagnostic = (error) => ({
   ...diagnostic(error),
-  testName: `[unhandled error] ${firstLine(error)}`,
+  testName: '[unhandled error]',
   diagnosticKind: 'unhandled',
 })
-const crashPattern = /Browser connection was closed|Failed to run the test/i
 
-export function normalizeReport(text, status, log = '') {
+export function normalizeReport(text, status) {
   const rows = []
   if (status.format === 'node-jsonl') {
-    const events = text
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line))
-    if (events.at(-1)?.type !== 'complete')
-      throw new Error('Incomplete Node report')
-    for (const event of events.slice(0, -1)) {
-      if (
-        typeof event.file !== 'string' ||
-        typeof event.testName !== 'string' ||
-        !['passed', 'failed', 'skipped'].includes(event.status)
-      )
-        throw new Error('Invalid Node result')
-      rows.push({ ...event, error: errorText(event.error) })
-    }
-  } else if (status.format === 'vitest-json') {
-    const report = JSON.parse(text)
-    if (!Array.isArray(report.testResults))
-      throw new Error('Invalid Vitest report: testResults missing')
-    for (const file of report.testResults) {
-      if (
-        typeof file.name !== 'string' ||
-        !Array.isArray(file.assertionResults)
-      )
-        throw new Error('Invalid Vitest file result')
-      for (const assertion of file.assertionResults) {
+    let complete = false
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const event = JSON.parse(line)
+        if (complete) throw new Error('Result after Node completion')
+        if (event.type === 'complete') {
+          complete = true
+          continue
+        }
         if (
-          typeof assertion.fullName !== 'string' ||
-          ![
-            'passed',
-            'failed',
-            'pending',
-            'skipped',
-            'todo',
-            'disabled',
-          ].includes(assertion.status)
+          typeof event.file !== 'string' ||
+          typeof event.testName !== 'string' ||
+          !['passed', 'failed', 'skipped'].includes(event.status)
         )
-          throw new Error('Invalid Vitest assertion')
-        rows.push({
-          file: file.name,
-          testName: assertion.fullName,
+          throw new Error('Invalid Node result')
+        rows.push({ ...event, error: errorText(event.error) })
+      } catch (error) {
+        rows.push(diagnostic(`Invalid Node result: ${error.message}`))
+      }
+    }
+    if (!complete) rows.push(diagnostic('Incomplete Node report'))
+  } else if (status.format === 'vitest-structured') {
+    const report = JSON.parse(text)
+    if (
+      report.schemaVersion !== 1 ||
+      !Array.isArray(report.modules) ||
+      !Array.isArray(report.unhandledErrors) ||
+      !['passed', 'failed', 'interrupted'].includes(report.reason)
+    )
+      throw new Error('Invalid structured Vitest report')
+    const validateEntity = (entity, named = false) => {
+      if (
+        !['passed', 'failed', 'skipped', 'pending', 'queued'].includes(
+          entity.state,
+        ) ||
+        !Array.isArray(entity.errors) ||
+        (named &&
+          (!Array.isArray(entity.namePath) ||
+            !entity.namePath.length ||
+            !entity.namePath.every((name) => typeof name === 'string')))
+      )
+        throw new Error('Invalid Vitest entity')
+    }
+    for (const module of report.modules) {
+      validateEntity(module)
+      if (
+        typeof module.moduleId !== 'string' ||
+        module.project !== (status.project ?? null) ||
+        !Array.isArray(module.tests) ||
+        !Array.isArray(module.suites)
+      )
+        throw new Error('Invalid Vitest module identity')
+      const moduleRows = []
+      for (const test of module.tests) {
+        validateEntity(test, true)
+        moduleRows.push({
+          file: module.moduleId,
+          namePath: test.namePath,
+          testName: test.namePath.join(' > '),
           status:
-            assertion.status === 'failed'
-              ? 'failed'
-              : assertion.status === 'passed'
-                ? 'passed'
-                : 'skipped',
-          error: assertion.failureMessages?.map(errorText).join('\n') ?? '',
+            test.state === 'pending' || test.state === 'queued'
+              ? 'absent'
+              : test.state,
+          error: test.errors.map(errorText).join('\n'),
         })
       }
-      const failedAssertions = file.assertionResults.some(
-        (item) => item.status === 'failed',
-      )
+      for (const suite of module.suites) {
+        validateEntity(suite, true)
+        if (suite.errors.length)
+          moduleRows.push({
+            ...diagnostic(
+              suite.errors.map(errorText).join('\n'),
+              module.moduleId,
+            ),
+            namePath: suite.namePath,
+            testName: `[suite failure] ${suite.namePath.join(' > ')}`,
+            diagnosticKind: 'suite',
+          })
+      }
       if (
-        (!failedAssertions && (file.status === 'failed' || file.message)) ||
-        crashPattern.test(file.message ?? '')
-      ) {
-        rows.push(
+        module.errors.length ||
+        (module.state === 'failed' &&
+          !moduleRows.some((row) => row.status === 'failed'))
+      )
+        moduleRows.push(
           diagnostic(
-            errorText(file.message) || 'File failed without assertion results',
-            file.name,
+            module.errors.map(errorText).join('\n') ||
+              'Module failed without assertion results',
+            module.moduleId,
           ),
         )
-      }
+      rows.push(...moduleRows)
+    }
+    for (const unhandled of report.unhandledErrors) {
+      if (
+        !unhandled.error ||
+        (unhandled.moduleId !== null && typeof unhandled.moduleId !== 'string')
+      )
+        throw new Error('Invalid Vitest unhandled error')
+      const error = errorText(unhandled.error)
+      rows.push(unhandledDiagnostic(error))
+      if (unhandled.moduleId) rows.push(diagnostic(error, unhandled.moduleId))
     }
     if (
-      (report.success === false ||
-        report.numFailedTests > 0 ||
-        report.numFailedTestSuites > 0 ||
-        report.numRuntimeErrorTestSuites > 0) &&
+      report.reason === 'interrupted' ||
+      report.modules.some((module) =>
+        ['pending', 'queued'].includes(module.state),
+      ) ||
+      rows.some((row) => row.status === 'absent')
+    )
+      rows.push(diagnostic('Vitest run incomplete'))
+    if (
+      report.reason === 'failed' &&
       !rows.some((row) => row.status === 'failed')
     )
-      rows.push(diagnostic('Vitest reported failure without failed assertions'))
-    for (const error of report.unhandledErrors ?? [])
-      rows.push(unhandledDiagnostic(errorText(error)))
+      rows.push(diagnostic('Vitest reported failure without results'))
   } else throw new Error('Unknown report format')
-  if (status.format === 'vitest-json' && status.suite !== 'scripts') {
-    // The JSON reporter omits unhandled errors; the default reporter emits
-    // a banner followed by the error and stack. Keep these independent of
-    // assertion failures and infrastructure diagnostics.
-    const lines = clean(log).split('\n')
-    for (let index = 0; index < lines.length; index++) {
-      if (
-        !/^\s*⎯+\s+(?:Unhandled (?:Error|Rejection)|Uncaught Exception)\s+⎯+\s*$/.test(
-          lines[index],
-        )
-      )
-        continue
-      const message = lines.slice(index + 1).find((line) => line.trim())
-      rows.push(
-        unhandledDiagnostic(message || 'Unhandled error without details'),
-      )
-    }
-  }
-  // Script tests may print synthetic browser errors while testing this detector.
-  const browserLog = status.suite === 'behavior-browser' ? log : ''
-  for (const line of clean(browserLog).split('\n')) {
-    if (!crashPattern.test(line)) continue
-    // Only attribute a diagnostic when the crash line explicitly names a test file.
-    const file = line.match(
-      /(?:[A-Za-z]:)?[\w$+@./\\-]+\.(?:test|spec)\.[cm]?[jt]sx?/,
-    )?.[0]
-    rows.push(diagnostic(line, file))
-  }
   return rows.map((row) => ({ ...row, file: normalizeFile(row.file, status) }))
 }
 
@@ -187,22 +200,24 @@ export function aggregate({ results, repetitions, sha }) {
           status.project !== lane.project
         )
           throw new Error('Status identity mismatch')
-        if (status.timedOut)
-          rows.push(diagnostic(status.error || 'Repetition timed out'))
+        if (status.timedOut || status.error || status.signal)
+          rows.push(
+            diagnostic(
+              status.error ||
+                (status.timedOut
+                  ? 'Repetition timed out'
+                  : `Process terminated by ${status.signal}`),
+            ),
+          )
         if (!status.completed)
           rows.push(diagnostic('Repetition did not complete'))
         else laneCoverage.completed++
         if (!['report.json', 'report.jsonl'].includes(status.report))
           throw new Error('Invalid report path')
-        const log = fs.readFileSync(
-          path.join(directory, 'diagnostic.log'),
-          'utf8',
-        )
         rows.push(
           ...normalizeReport(
             fs.readFileSync(path.join(directory, status.report), 'utf8'),
             status,
-            log,
           ),
         )
         laneCoverage.reports++
@@ -217,33 +232,32 @@ export function aggregate({ results, repetitions, sha }) {
             ),
           )
       } catch (error) {
+        let tail = ''
+        try {
+          tail = clean(
+            fs.readFileSync(path.join(directory, 'diagnostic.log'), 'utf8'),
+          )
+            .trim()
+            .split('\n')
+            .slice(-10)
+            .join(' / ')
+        } catch {
+          /* Missing logs are covered by this infrastructure diagnostic. */
+        }
         rows.push(
           diagnostic(
-            `Missing or invalid result: ${error.code ?? error.message}`,
+            `Missing or invalid result: ${error.code ?? error.message}; process exited ${status?.exitCode ?? 'unknown'}, signal ${status?.signal ?? 'none'}${tail ? `; log tail: ${tail}` : ''}`,
           ),
         )
-        // Preserve a file-attributed crash even when the reporter never flushed.
-        if (status) {
-          try {
-            const log = fs.readFileSync(
-              path.join(directory, 'diagnostic.log'),
-              'utf8',
-            )
-            rows.push(
-              ...normalizeReport(
-                '{"testResults":[]}',
-                { ...status, format: 'vitest-json' },
-                log,
-              ),
-            )
-          } catch {
-            /* The missing diagnostics are already a suite failure. */
-          }
-        }
       }
       const perRun = new Map()
       for (const row of rows) {
-        const key = JSON.stringify([lane.id, row.file, row.testName])
+        const key = JSON.stringify([
+          lane.id,
+          row.file,
+          row.diagnosticKind ?? null,
+          row.namePath ?? row.testName,
+        ])
         const previous = perRun.get(key)
         if (
           !previous ||
@@ -259,6 +273,7 @@ export function aggregate({ results, repetitions, sha }) {
             project: lane.project,
             file: row.file,
             testName: row.testName,
+            ...(row.namePath ? { namePath: row.namePath } : {}),
             failureCount: 0,
             repetitions,
             passCount: 0,
@@ -269,6 +284,7 @@ export function aggregate({ results, repetitions, sha }) {
           }
           collected.set(key, entry)
         }
+        if (row.status === 'absent') continue
         entry.absentCount--
         if (row.status === 'failed') {
           entry.failureCount++

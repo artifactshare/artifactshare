@@ -14,18 +14,27 @@ const vitest = (
   file = '/repo/apps/web/a.test.ts',
   error = '',
 ) => ({
-  success: status !== 'failed',
-  testResults: [
+  schemaVersion: 1,
+  reason: status === 'failed' ? 'failed' : 'passed',
+  modules: [
     {
-      name: file,
-      status,
-      message: '',
-      assertionResults: [
-        { fullName: name, status, failureMessages: error ? [error] : [] },
+      moduleId: file,
+      project: null,
+      state: status,
+      errors: [],
+      suites: [],
+      tests: [
+        {
+          namePath: [name],
+          state: status,
+          errors: error ? [{ message: error }] : [],
+        },
       ],
     },
   ],
+  unhandledErrors: [],
 })
+
 function fixture(t, count = 2) {
   const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-report-'))
   t.after(() => fs.rmSync(results, { recursive: true, force: true }))
@@ -41,7 +50,7 @@ function fixture(t, count = 2) {
       repetition,
       repositoryRoot: '/repo',
       workspaceRoot: '/repo/apps/web',
-      format: 'vitest-json',
+      format: 'vitest-structured',
       report: 'report.json',
       completed: true,
       exitCode: 0,
@@ -52,6 +61,10 @@ function fixture(t, count = 2) {
       path.join(directory, 'status.json'),
       JSON.stringify(status),
     )
+    if (typeof report !== 'string') {
+      report = structuredClone(report)
+      for (const module of report.modules ?? []) module.project = lane.project
+    }
     fs.writeFileSync(
       path.join(directory, status.report),
       typeof report === 'string' ? report : JSON.stringify(report),
@@ -90,9 +103,7 @@ test('flaky, consistent, deduplication, earliest error, paths and Markdown escap
     '/repo/apps/web/a.test.ts',
     '\n\u001b[31mfirst|error\u001b[0m\nsecond',
   )
-  failed.testResults[0].assertionResults.push(
-    failed.testResults[0].assertionResults[0],
-  )
+  failed.modules[0].tests.push(failed.modules[0].tests[0])
   f.write(lanes[0], 1, failed)
   for (const rep of [1, 2])
     f.write(
@@ -135,54 +146,16 @@ for (const [label, report, changes] of [
   ['wrong sha', vitest(), { sha: 'other' }],
   ['nonzero', vitest(), { exitCode: 1 }],
   ['signal', vitest(), { exitCode: null, signal: 'SIGTERM' }],
-  ['unhandled', { testResults: [], success: false }, {}],
+  [
+    'unexplained failure',
+    { schemaVersion: 1, modules: [], unhandledErrors: [], reason: 'failed' },
+    {},
+  ],
 ])
   test(`${label} cannot pass`, (t) => {
     const f = fixture(t)
     f.write(lanes[0], 1, report, changes)
     assert.equal(f.read().flaky[0].diagnosticKind, 'suite')
-  })
-
-for (const message of [
-  'Browser connection was closed',
-  'Failed to run the test',
-])
-  test(`file and unattributed crash: ${message}`, (t) => {
-    const f = fixture(t)
-    f.write(lanes[0], 1, {
-      testResults: [
-        {
-          name: '/repo/apps/web/crash.test.ts',
-          status: 'failed',
-          message,
-          assertionResults: [],
-        },
-      ],
-    })
-    f.write(lanes[1], 1, vitest(), { log: message })
-    f.write(lanes[2], 1, '{', {
-      log: `/repo/apps/web/crash.test.ts: ${message}`,
-    })
-    const rows = f.read().flaky
-    assert.ok(
-      rows.some(
-        (row) =>
-          row.project === 'chromium' &&
-          row.file === 'apps/web/crash.test.ts' &&
-          row.testName === '[file failure]',
-      ),
-    )
-    assert.ok(
-      rows.some(
-        (row) => row.project === 'firefox' && row.diagnosticKind === 'suite',
-      ),
-    )
-    assert.ok(
-      rows.some(
-        (row) =>
-          row.project === 'webkit' && row.file === 'apps/web/crash.test.ts',
-      ),
-    )
   })
 
 test('Node JSON Lines preserves same names in different files, skips and absent outcomes', (t) => {
@@ -217,13 +190,11 @@ test('Node JSON Lines preserves same names in different files, skips and absent 
       .skipCount,
     1,
   )
-  assert.throws(
-    () =>
-      normalizeReport(events.replace('{"type":"complete"}', ''), {
-        format: 'node-jsonl',
-      }),
-    /Incomplete/,
-  )
+  const partial = normalizeReport(events.replace('{"type":"complete"}', ''), {
+    format: 'node-jsonl',
+  })
+  assert.ok(partial.some((row) => row.testName === 'outer > child'))
+  assert.ok(partial.some((row) => row.error === 'Incomplete Node report'))
 })
 
 test('CLI writes JSON and summary before its success/failure exit', (t) => {
@@ -246,66 +217,204 @@ test('CLI writes JSON and summary before its success/failure exit', (t) => {
   }
 })
 
+for (const timedOut of [false, true])
+  test(`partial Node report retains assertions and interruption: timeout=${timedOut}`, (t) => {
+    const f = fixture(t)
+    const partial = [
+      JSON.stringify({
+        file: '/repo/scripts/a.test.mjs',
+        testName: 'named failure',
+        status: 'failed',
+        error: { message: 'original assertion' },
+      }),
+      JSON.stringify({
+        file: '/repo/scripts/a.test.mjs',
+        testName: 'passed',
+        status: 'passed',
+      }),
+      '{"file":',
+    ].join('\n')
+    f.write(lanes[4], 1, partial, {
+      format: 'node-jsonl',
+      report: 'report.jsonl',
+      exitCode: null,
+      signal: 'SIGKILL',
+      timedOut,
+      ...(timedOut ? { error: 'Repetition timed out' } : {}),
+    })
+    const report = f.read()
+    const failure = report.flaky.find((row) => row.testName === 'named failure')
+    assert.equal(failure.firstError, 'original assertion')
+    assert.equal(failure.failureCount, 1)
+    assert.equal(failure.repetitions, 2)
+    assert.equal(failure.absentCount, 1)
+    assert.equal(
+      report.observations.find((row) => row.testName === 'passed').passCount,
+      1,
+    )
+    assert.match(
+      report.flaky.find((row) => row.testName === '[suite failure]').firstError,
+      timedOut ? /timed out/ : /SIGKILL/,
+    )
+  })
+
+test('structured identities separate hooks, assertions, modules, unhandled and infrastructure failures', (t) => {
+  const f = fixture(t)
+  const report = vitest(
+    'failed',
+    '[file failure]',
+    undefined,
+    'assertion error',
+  )
+  report.modules[0].errors = [{ message: 'module teardown failed' }]
+  report.modules[0].suites = [
+    {
+      namePath: ['outer', 'same [ title ]'],
+      state: 'failed',
+      errors: [{ message: 'hook failed' }],
+    },
+    {
+      namePath: ['other', 'same [ title ]'],
+      state: 'failed',
+      errors: [{ message: 'other hook' }],
+    },
+    { namePath: ['duplicate'], state: 'failed', errors: [] },
+    { namePath: ['duplicate'], state: 'failed', errors: [] },
+  ]
+  report.modules[0].tests.push(
+    {
+      namePath: ['a > b', 'c'],
+      state: 'failed',
+      errors: [{ message: 'first path' }],
+    },
+    {
+      namePath: ['a', 'b > c'],
+      state: 'failed',
+      errors: [{ message: 'second path' }],
+    },
+  )
+  report.unhandledErrors = [
+    { moduleId: null, error: { message: 'Unhandled rejection\nstack' } },
+  ]
+  f.write(lanes[0], 1, report, {
+    error: 'Repetition timed out',
+    timedOut: true,
+  })
+  const rows = f.read().flaky
+  assert.equal(rows.length, 8)
+  assert.equal(
+    rows.filter((row) => row.testName === '[file failure]').length,
+    2,
+  )
+  assert.equal(rows.filter((row) => row.testName === 'a > b > c').length, 2)
+  assert.ok(
+    rows.some(
+      (row) => row.testName === '[suite failure] outer > same [ title ]',
+    ),
+  )
+  assert.ok(
+    rows.some(
+      (row) => row.testName === '[suite failure] other > same [ title ]',
+    ),
+  )
+  assert.ok(
+    rows.some(
+      (row) =>
+        row.testName === '[unhandled error]' &&
+        row.firstError === 'Unhandled rejection',
+    ),
+  )
+  assert.ok(rows.every((row) => row.failureCount === 1))
+})
+
 for (const message of [
   'Browser connection was closed',
   'Failed to run the test',
-]) {
-  for (const truncated of [false, true]) {
-    test(`crash attribution preserves dollar route filenames: ${message}, truncated=${truncated}`, (t) => {
-      const f = fixture(t)
-      const file = 'apps/web/app/routes/share.$id.behavior.test.tsx'
-      f.write(lanes[0], 1, truncated ? '{' : vitest(), {
-        exitCode: 1,
-        log: `Error: ${message} in \`/repo/${file}\``,
-      })
-      const rows = f.read().flaky.filter((row) => row.diagnosticKind === 'file')
-      assert.equal(rows.length, 1)
-      assert.equal(rows[0].file, file)
-      assert.equal(rows[0].testName, '[file failure]')
-      assert.equal(rows[0].failureCount, 1)
-      assert.equal(rows[0].repetitions, 2)
-    })
-  }
-}
-
-test('script fixture console messages are not browser crashes', (t) => {
-  const f = fixture(t)
-  f.write(lanes[4], 1, vitest(), {
-    log: 'Error: Browser connection was closed while running tests\n',
-  })
-  assert.deepEqual(f.read().flaky, [])
-})
-
-test('unhandled errors remain independent of assertions and other diagnostics', (t) => {
-  const f = fixture(t)
-  for (const lane of [lanes[0], lanes[3], lanes[5]]) {
-    const report = vitest('failed', 'assertion', undefined, 'assertion error')
-    report.unhandledErrors = [{ message: 'Error: JSON unhandled\nstack' }]
-    f.write(lane, 1, report, {
-      exitCode: 1,
-      timedOut: true,
-      error: 'Repetition timed out',
-      log: '\u001b[31m⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯\u001b[0m\n\nTypeError: console unhandled\n  at example.ts:1\n',
-    })
-  }
-  const rows = f.read().flaky
-  for (const suite of ['behavior-browser', 'd1', 'web-unit']) {
-    const errors = rows.filter(
-      (row) => row.suite === suite && row.diagnosticKind === 'unhandled',
-    )
-    assert.deepEqual(errors.map((row) => row.firstError).sort(), [
-      'Error: JSON unhandled',
-      'TypeError: console unhandled',
-    ])
-    assert.ok(errors.every((row) => row.failureCount === 1))
-    assert.ok(
-      rows.some((row) => row.suite === suite && row.testName === 'assertion'),
-    )
+])
+  test(`structured browser errors retain file attribution: ${message}`, (t) => {
+    const f = fixture(t)
+    const report = vitest('failed', 'assertion', undefined, 'assertion failed')
+    report.unhandledErrors = [
+      {
+        moduleId: '/repo/apps/web/app/routes/share.$id.behavior.test.tsx',
+        error: { message },
+      },
+    ]
+    f.write(lanes[0], 1, report)
+    report.unhandledErrors[0].moduleId = null
+    f.write(lanes[1], 1, report)
+    const rows = f.read().flaky
     assert.ok(
       rows.some(
         (row) =>
-          row.suite === suite && row.firstError === 'Repetition timed out',
+          row.file === 'apps/web/app/routes/share.$id.behavior.test.tsx' &&
+          row.diagnosticKind === 'file',
       ),
     )
+    assert.equal(
+      rows.filter((row) => row.diagnosticKind === 'unhandled').length,
+      2,
+    )
+    assert.equal(rows.filter((row) => row.testName === 'assertion').length, 2)
+  })
+
+test('collection failure with no tests emits just one module diagnostic', (t) => {
+  const f = fixture(t)
+  const report = vitest('failed')
+  report.modules[0].tests = []
+  report.modules[0].errors = [{ message: 'load failed' }]
+  f.write(lanes[0], 1, report)
+  assert.deepEqual(
+    f.read().flaky.map((row) => [row.testName, row.firstError]),
+    [['[file failure]', 'load failed']],
+  )
+})
+
+test('unhandled error identity ignores changing messages and module attribution', (t) => {
+  const f = fixture(t)
+  for (const repetition of [1, 2]) {
+    const report = vitest()
+    report.unhandledErrors = [
+      { moduleId: null, error: { message: `request ${repetition} failed` } },
+    ]
+    f.write(lanes[3], repetition, report)
   }
+  const report = f.read()
+  assert.equal(report.flaky.length, 0)
+  assert.equal(report.consistentlyFailing.length, 1)
+  assert.equal(report.consistentlyFailing[0].firstError, 'request 1 failed')
+})
+
+test('console output cannot invent failures; missing structured output includes exit and log tail', (t) => {
+  const f = fixture(t)
+  f.write(lanes[0], 1, vitest(), {
+    log: 'FAIL a.test.ts > title [ location ]\nBrowser connection was closed',
+  })
+  assert.deepEqual(f.read().flaky, [])
+  const directory = f.write(lanes[0], 1, vitest(), {
+    exitCode: 7,
+    log: 'startup\nreporter could not load',
+  })
+  fs.rmSync(path.join(directory, 'report.json'))
+  const rows = f.read().flaky
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].file, '[suite]')
+  assert.match(
+    rows[0].firstError,
+    /process exited 7.*log tail: startup \/ reporter could not load/,
+  )
+})
+
+test('pending cases remain absent and force an incomplete-run diagnostic', (t) => {
+  const f = fixture(t)
+  f.write(lanes[0], 1, vitest('pending'))
+  f.write(lanes[0], 2, vitest('skipped'))
+  const report = f.read()
+  const row = report.observations.find(
+    (item) => item.project === 'chromium' && item.testName === 'outer > leaf',
+  )
+  assert.equal(row.absentCount, 1)
+  assert.equal(row.skipCount, 1)
+  assert.equal(row.passCount, 0)
+  assert.equal(report.flaky[0].firstError, 'Vitest run incomplete')
 })

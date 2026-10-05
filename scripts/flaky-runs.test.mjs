@@ -104,7 +104,10 @@ test('commands preserve whole-suite selection and environment', () => {
       assert.ok(command.args.includes('--run'))
       assert.deepEqual(
         command.args.filter((argument) => argument.startsWith('--reporter=')),
-        ['--reporter=default', '--reporter=json'],
+        [
+          '--reporter=default',
+          '--reporter=/repo/scripts/ci/vitest-flaky-reporter.mjs',
+        ],
       )
       assert.equal(command.args.at(-1), '--outputFile=/tmp/result.json')
       if (lane.project)
@@ -204,66 +207,6 @@ test('Node parent IDs disambiguate interleaved siblings and retain hook failures
   )
   assert.equal(rows[2].testName, '[file failure]')
   assert.equal(rows[2].error.message, 'hook failed')
-})
-
-test('Vitest console crashes survive alongside JSON assertion failures', async (t) => {
-  const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-diagnostics-'))
-  t.after(() => fs.rmSync(results, { recursive: true, force: true }))
-  const crash = 'Error: Browser connection was closed while running tests'
-  await runShard({
-    shard: plan(1)[0],
-    repetitions: 1,
-    sha: 'example-sha',
-    results,
-    executor: (_command, args, _options, output) => {
-      // Model the installed Vitest reporters: JSON writes assertions, while
-      // the default reporter prints unhandled browser errors to the console.
-      assert.ok(args.includes('--reporter=json'))
-      fs.writeFileSync(
-        args
-          .find((arg) => arg.startsWith('--outputFile='))
-          .slice('--outputFile='.length),
-        JSON.stringify({
-          success: false,
-          testResults: [
-            {
-              name: 'app/example.test.ts',
-              status: 'failed',
-              message: '',
-              assertionResults: [
-                {
-                  fullName: 'ordinary assertion',
-                  status: 'failed',
-                  failureMessages: ['assertion failed'],
-                },
-              ],
-            },
-          ],
-        }),
-      )
-      if (args.includes('--reporter=default')) output(`${crash}\n`)
-      return { exitCode: 1, signal: null }
-    },
-  })
-  const rows = aggregate({
-    results,
-    repetitions: 1,
-    sha: 'example-sha',
-  }).consistentlyFailing.filter((row) => row.project === 'chromium')
-  assert.equal(rows.length, 2)
-  assert.ok(rows.some((row) => row.testName === 'ordinary assertion'))
-  assert.ok(
-    rows.some(
-      (row) => row.testName === '[suite failure]' && row.firstError === crash,
-    ),
-  )
-  assert.match(
-    fs.readFileSync(
-      path.join(results, 'behavior-browser-chromium/1/diagnostic.log'),
-      'utf8',
-    ),
-    /Browser connection was closed/,
-  )
 })
 
 test('timeout removes reparented detached descendants before the next repetition', async (t) => {
@@ -528,4 +471,183 @@ test('each repetition passes its inherited ownership marker to timeout cleanup',
     markers.push(cleanupMarker)
   }
   assert.notEqual(markers[0], markers[1])
+})
+
+test('direct exit cleans inherited pipes before timeout and the next repetition', async (t) => {
+  const { execute } = await import('./ci/flaky-runs.mjs')
+  const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-leftovers-'))
+  let descendant
+  let cleaned = false
+  t.after(() => {
+    if (descendant) {
+      try {
+        process.kill(descendant, 'SIGKILL')
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
+    fs.rmSync(results, { recursive: true, force: true })
+  })
+  let calls = 0
+  await runShard({
+    shard: plan(2).find((shard) => shard.id === 'scripts'),
+    repetitions: 2,
+    sha: 'example-sha',
+    results,
+    executor: (_command, _args, options, output) => {
+      if (++calls === 2) {
+        assert.equal(cleaned, true)
+        return { exitCode: 0, signal: null }
+      }
+      let stdout = ''
+      return execute(
+        process.execPath,
+        [
+          '-e',
+          `
+        const { spawn } = require('node:child_process')
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
+          { detached: true, stdio: ['ignore', 1, 2] })
+        console.log(child.pid)
+        child.unref()
+      `,
+        ],
+        {
+          ...options,
+          timeoutMs: 2000,
+          terminate: async (_pid, { afterExit }) => {
+            descendant = Number(stdout.trim())
+            assert.ok(descendant > 0)
+            process.kill(descendant, 'SIGKILL')
+            assert.equal(afterExit, true, 'must clean up on exit, not timeout')
+            await new Promise((resolve) => setTimeout(resolve, 30))
+            cleaned = true
+            return ['Remaining descendant after suite exit']
+          },
+        },
+        (chunk) => {
+          stdout += chunk
+          output(chunk)
+        },
+      )
+    },
+  })
+  assert.equal(calls, 2)
+  const status = JSON.parse(
+    fs.readFileSync(path.join(results, 'scripts/1/status.json')),
+  )
+  assert.equal(status.exitCode, 0)
+  assert.equal(status.timedOut, false)
+  assert.match(status.error, /Remaining descendant/)
+  assert.match(
+    fs.readFileSync(path.join(results, 'scripts/1/diagnostic.log'), 'utf8'),
+    /Remaining descendant/,
+  )
+})
+
+test('post-exit tree cleanup diagnoses surviving descendants', async () => {
+  const signals = []
+  let killed = false
+  const diagnostics = await terminateTree(100, {
+    afterExit: true,
+    readProcesses: () =>
+      !killed ? [{ pid: 101, parent: 1, state: 'S', owned: true }] : [],
+    kill: (pid, signal) => {
+      signals.push([pid, signal])
+      if (pid === 101 && signal === 'SIGKILL') killed = true
+    },
+  })
+  assert.deepEqual(diagnostics, ['Remaining descendant after suite exit'])
+  assert.ok(
+    signals.some(([pid, signal]) => pid === 101 && signal === 'SIGKILL'),
+  )
+  assert.ok(!signals.some(([pid]) => pid === 100))
+})
+
+test('post-exit cleanup lets exiting descendants finish without signals or diagnostics', async () => {
+  const signals = []
+  const started = Date.now()
+  const diagnostics = await terminateTree(100, {
+    afterExit: true,
+    readProcesses: () =>
+      Date.now() - started < 600
+        ? [{ pid: 101, parent: 1, state: 'S', owned: true }]
+        : [],
+    kill: (pid, signal) => signals.push([pid, signal]),
+  })
+  assert.deepEqual(diagnostics, [])
+  assert.deepEqual(signals, [])
+})
+
+test('Vitest reporter uses 4.1.11 entities and writes complete structured results', async (t) => {
+  const { default: VitestReporter } =
+    await import('./ci/vitest-flaky-reporter.mjs')
+  const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-vitest-'))
+  t.after(() => fs.rmSync(results, { recursive: true, force: true }))
+  const module = {
+    type: 'module',
+    moduleId: '/repo/apps/web/app/example.test.ts',
+    project: { name: 'chromium' },
+    state: () => 'failed',
+    errors: () => [new Error('module error')],
+  }
+  const suite = (name, parent, errors = []) => ({
+    type: 'suite',
+    name,
+    parent,
+    state: () => 'failed',
+    errors: () => errors,
+  })
+  const outer = suite('outer', module)
+  const inner = suite('same [ title ]', outer, [new Error('hook error')])
+  const duplicate = suite('same [ title ]', outer)
+  const leaf = (parent, state) => ({
+    type: 'test',
+    name: 'leaf',
+    parent,
+    result: () => ({
+      state,
+      errors: state === 'failed' ? [new Error('assertion error')] : [],
+    }),
+  })
+  module.children = {
+    allSuites: () => [outer, inner, duplicate],
+    allTests: () => [leaf(inner, 'failed'), leaf(duplicate, 'skipped')],
+  }
+  const vitestReporter = new VitestReporter()
+  const output = path.join(results, 'report.json')
+  vitestReporter.onInit({ config: { outputFile: output } })
+  vitestReporter.onTestRunEnd(
+    [module],
+    [
+      new Error(
+        'Failed to run the test /repo/apps/web/app/routes/share.$id.behavior.test.tsx.',
+        { cause: new Error('Browser connection was closed') },
+      ),
+      Object.assign(new Error('Browser connection was closed'), {
+        VITEST_TEST_PATH: module.moduleId,
+      }),
+      new Error('unattributed error'),
+    ],
+    'failed',
+  )
+  const report = JSON.parse(fs.readFileSync(output))
+  assert.deepEqual(report.modules[0].tests[0].namePath, [
+    'outer',
+    'same [ title ]',
+    'leaf',
+  ])
+  assert.equal(report.modules[0].tests[1].state, 'skipped')
+  assert.equal(report.modules[0].errors[0].message, 'module error')
+  assert.equal(report.modules[0].suites[1].errors[0].message, 'hook error')
+  assert.equal(
+    report.unhandledErrors[0].moduleId,
+    '/repo/apps/web/app/routes/share.$id.behavior.test.tsx',
+  )
+  assert.equal(
+    report.unhandledErrors[0].error.cause.message,
+    'Browser connection was closed',
+  )
+  assert.equal(report.unhandledErrors[1].moduleId, module.moduleId)
+  assert.equal(report.unhandledErrors[2].moduleId, null)
 })

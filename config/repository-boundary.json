@@ -172,6 +172,7 @@
     "scripts/controlled-review-runner.test.mjs",
     "scripts/ci/flaky-runs.mjs",
     "scripts/ci/node-test-json-reporter.mjs",
+    "scripts/ci/vitest-flaky-reporter.mjs",
     "scripts/ci/flaky-report.mjs",
     "scripts/flaky-report.test.mjs",
     "scripts/flaky-runs.test.mjs",
