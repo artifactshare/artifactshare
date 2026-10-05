@@ -2,14 +2,7 @@ import { sql, type Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 import { commentThreadWindowExpression } from './comment-thread-window.server'
 
-export type ViewerRevisitContext = {
-  entryCurrentVersionId: string
-  version:
-    | { kind: 'ordinal'; from: number; to: number }
-    | { kind: 'fallback' }
-    | null
-  commentCount: number
-}
+import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 
 type HistoryVersion = { id: string; ordinal: number }
 
@@ -33,14 +26,7 @@ export async function loadViewerRevisitContext(
           AND v.created_by_id <> ${input.viewerUserId}
           AND (recency.version_seen_through_at IS NULL OR v.published_at > recency.version_seen_through_at)
       )`.as('versionCount'),
-      sql<number>`(
-        SELECT COUNT(*) FROM comment_messages cm
-        INNER JOIN comment_threads ct ON ct.id = cm.thread_id
-        WHERE ct.shareable_id = ${input.shareableId}
-          AND ${commentThreadWindowExpression(sql.val(input.shareableId), 'ct')}
-          AND cm.created_by_id <> ${input.viewerUserId}
-          AND (recency.comment_seen_through_at IS NULL OR cm.created_at > recency.comment_seen_through_at)
-      )`.as('commentCount'),
+      'recency.comment_seen_through_at as commentBoundary',
       sql<string | null>`(
         SELECT pv.id FROM versions pv
         WHERE pv.shareable_id = ${input.shareableId}
@@ -71,7 +57,28 @@ export async function loadViewerRevisitContext(
 
   if (!row) return null
   const versionCount = Number(row.versionCount ?? 0)
-  const commentCount = Number(row.commentCount ?? 0)
+  // Both queries use the same captured boundary before the loader records this visit.
+  const eligibleMessages = db
+    .selectFrom('comment_messages as cm')
+    .innerJoin('comment_threads as ct', 'ct.id', 'cm.thread_id')
+    .where('ct.shareable_id', '=', input.shareableId)
+    .where(commentThreadWindowExpression(sql.val(input.shareableId), 'ct'))
+    .where('cm.created_by_id', '<>', input.viewerUserId)
+    .$if(row.commentBoundary !== null, (query) =>
+      query.where('cm.created_at', '>', row.commentBoundary!),
+    )
+  const [count, newCommentMessages] = await Promise.all([
+    eligibleMessages
+      .select(sql<number>`COUNT(*)`.as('count'))
+      .executeTakeFirstOrThrow(),
+    eligibleMessages
+      .select(['cm.id as messageId', 'ct.id as threadId'])
+      .orderBy('cm.created_at', 'asc')
+      .orderBy('cm.id', 'asc')
+      .limit(100)
+      .execute(),
+  ])
+  const commentCount = Number(count.count)
   let version: ViewerRevisitContext['version'] = null
 
   if (versionCount > 0) {
@@ -98,5 +105,6 @@ export async function loadViewerRevisitContext(
     entryCurrentVersionId: input.currentVersionId,
     version,
     commentCount,
+    newCommentMessages,
   }
 }

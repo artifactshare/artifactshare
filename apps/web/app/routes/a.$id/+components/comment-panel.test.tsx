@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
@@ -9,6 +9,9 @@ vi.mock('react-router', async (importOriginal) => ({
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
+afterEach(() => {
+  locale.value = 'en'
+})
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
@@ -67,17 +70,24 @@ function render(positionState: PositionState) {
   return renderThreads([textThread(positionState)])
 }
 
-function renderThreads(threads: CommentThreadView[]) {
+function renderThreads(
+  threads: CommentThreadView[],
+  newCommentMessages: Array<{ messageId: string; threadId: string }> = [],
+  targetThreadId: string | null = null,
+  requestedFilter?: 'all',
+) {
   return renderToStaticMarkup(
     <CommentPanel
       shareableId="artifact"
       viewerUserId="viewer"
       threads={threads}
+      newCommentMessages={newCommentMessages}
       onThreadsChange={() => {}}
       isCurrentShareableId={() => true}
       open
       onOpenChange={() => {}}
-      targetThreadId={null}
+      targetThreadId={targetThreadId}
+      requestedFilter={requestedFilter}
       targetThreadScroll="center"
       onThreadNavigate={() => {}}
     />,
@@ -184,4 +194,145 @@ test('the first panel render checks an unchecked thread only when a frame is pre
     ),
   )
   expect(withoutFrame).not.toContain('text-warning')
+})
+
+test.each(['en', 'ja'] as const)(
+  'marks selected roots and replies with one card marker per thread (%s)',
+  (language) => {
+    locale.value = language
+    const makeMessage = (id: string) => ({
+      id,
+      body: id,
+      agent: null,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      author: {
+        id: 'u2',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    })
+    const root = {
+      ...textThread('attached', 'root'),
+      messages: [makeMessage('new-root')],
+    }
+    const replies = {
+      ...textThread('attached', 'replies'),
+      messages: [
+        'old-root',
+        'hidden-new',
+        'old-reply-1',
+        'old-reply-2',
+        'visible-new',
+      ].map(makeMessage),
+    }
+    const old = {
+      ...textThread('attached', 'old'),
+      messages: [makeMessage('old-message')],
+    }
+    const pairs = [
+      { threadId: 'root', messageId: 'new-root' },
+      { threadId: 'replies', messageId: 'hidden-new' },
+      { threadId: 'replies', messageId: 'visible-new' },
+      { threadId: 'old', messageId: 'deleted-message' },
+    ]
+    const html = renderThreads([root, replies, old], pairs)
+    const label = language === 'en' ? 'New' : '新着'
+    expect(html.match(new RegExp(`>${label}<`, 'g'))).toHaveLength(4)
+    expect(html.match(/data-new-comment-thread="true"/g)).toHaveLength(2)
+    expect(html.match(/data-new-comment-message="true"/g)).toHaveLength(2)
+    expect(html).not.toContain('hidden-new')
+    // A collapsed selected reply still marks its card without marking other messages.
+    const collapsed = renderThreads(
+      [replies],
+      [{ threadId: 'replies', messageId: 'hidden-new' }],
+    )
+    expect(collapsed).toContain('data-new-comment-thread="true"')
+    expect(collapsed).not.toContain('data-new-comment-message')
+    const unmarked = renderThreads([root, replies, old])
+    expect(unmarked).not.toContain(`>${label}<`)
+    expect(unmarked).not.toContain('data-new-comment-thread')
+  },
+)
+
+test('a resolved revisit target expands thread pagination while the requested all filter stays authoritative', () => {
+  const target: CommentThreadView = {
+    ...textThread('attached', 'thread-target'),
+    status: 'resolved',
+    subject: { kind: 'artifact' },
+    messages: [
+      {
+        id: 'new-message',
+        body: 'New reaction in a resolved thread',
+        agent: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        author: {
+          id: 'u2',
+          name: 'Reviewer',
+          email: 'reviewer@example.com',
+          image: null,
+        },
+        canEdit: false,
+        canDelete: false,
+      },
+    ],
+  }
+  const threads = [
+    ...Array.from({ length: 50 }, (_, index) =>
+      textThread('attached', `old-${index}`),
+    ),
+    target,
+  ]
+  const pairs = [{ messageId: 'new-message', threadId: target.id }]
+  expect(renderThreads(threads, pairs, null, 'all')).not.toContain(
+    'New reaction in a resolved thread',
+  )
+  const html = renderThreads(threads, pairs, target.id, 'all')
+  expect(html).toContain('aria-labelledby="comment-card-header-thread-target"')
+  expect(html).toContain('id="comment-card-header-thread-target"')
+  expect(html).not.toContain('aria-label="New reaction in a resolved thread"')
+  expect(html).toContain('tabindex="-1"')
+  expect(html).toContain('data-new-comment-thread="true"')
+  expect(html.match(/<article/g)).toHaveLength(51)
+})
+
+test('a target reveals selected replies older than its reply page while ordinary cards keep pagination', () => {
+  const thread: CommentThreadView = {
+    ...textThread('attached'),
+    messages: Array.from({ length: 56 }, (_, index) => ({
+      id: `message-${index}`,
+      body: `Reply body ${index}.`,
+      agent: null,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      author: {
+        id: 'u2',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    })),
+  }
+  const pairs = [2, 54].map((index) => ({
+    threadId: thread.id,
+    messageId: `message-${index}`,
+  }))
+  const target = renderThreads([thread], pairs, thread.id, 'all')
+  expect(target).toContain('Reply body 2.')
+  expect(target).toContain('Reply body 54.')
+  expect(target).not.toContain('Reply body 1.')
+  expect(target.match(/data-new-comment-message="true"/g)).toHaveLength(2)
+  const ordinary = renderThreads([thread], pairs)
+  expect(ordinary).not.toContain('Reply body 2.')
+  expect(ordinary.match(/data-new-comment-message="true"/g)).toHaveLength(1)
+  expect(ordinary).toContain('data-new-comment-thread="true"')
+  const unmarkedTarget = renderThreads([thread], [], thread.id, 'all')
+  expect(unmarkedTarget).not.toContain('Reply body 2.')
+  expect(unmarkedTarget).not.toContain('data-new-comment-message')
 })

@@ -1,3 +1,8 @@
+import { firstNewCommentThread } from './comment-order'
+import type {
+  NewCommentMessage,
+  ViewerRevisitContext,
+} from '~/lib/viewer-revisit'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import {
@@ -102,14 +107,7 @@ export type ViewerShellArtifact = {
   isHistoricalVersion?: boolean
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
-  revisitContext?: {
-    entryCurrentVersionId: string
-    version:
-      | { kind: 'ordinal'; from: number; to: number }
-      | { kind: 'fallback' }
-      | null
-    commentCount: number
-  } | null
+  revisitContext?: ViewerRevisitContext | null
 } & Parameters<typeof ViewerChrome>[0]['artifact']
 
 const emptyCommentThreads: ReadonlyArray<CommentThreadView> = []
@@ -135,6 +133,8 @@ interface ViewerCommentState {
   threads: ReadonlyArray<CommentThreadView>
   presence: ReadonlyArray<ViewerPresence>
   panelOpen: boolean
+  panelHasOpened: boolean
+  focusTargetOnOpen: boolean
   targetThreadId: string | null
   targetThreadScroll: 'center' | 'start'
   pendingTextAnchor: PendingTextAnchor | null
@@ -158,8 +158,13 @@ type ViewerCommentAction =
       type: 'presence-replaced'
       presence: ReadonlyArray<ViewerPresence>
     }
+  | { type: 'target-focus-consumed' }
   | { type: 'version-changed'; currentVersionId: string | null }
-  | { type: 'panel-open-changed'; open: boolean }
+  | {
+      type: 'panel-open-changed'
+      open: boolean
+      revisitThreadId?: string | null
+    }
   | {
       type: 'thread-targeted'
       threadId: string
@@ -386,7 +391,7 @@ function waitForCommentAuthRecheck(
   })
 }
 
-function createViewerCommentState(
+export function createViewerCommentState(
   artifactId: string,
   currentVersionId: string | null,
   threads: ReadonlyArray<CommentThreadView>,
@@ -398,6 +403,8 @@ function createViewerCommentState(
     threads,
     presence: emptyPresence,
     panelOpen: false,
+    panelHasOpened: false,
+    focusTargetOnOpen: false,
     targetThreadId,
     targetThreadScroll: 'start',
     pendingTextAnchor: null,
@@ -407,7 +414,7 @@ function createViewerCommentState(
   }
 }
 
-function viewerCommentReducer(
+export function viewerCommentReducer(
   state: ViewerCommentState,
   action: ViewerCommentAction,
 ): ViewerCommentState {
@@ -430,6 +437,7 @@ function viewerCommentReducer(
         ...state,
         threads: action.threads,
         targetThreadId: hasTargetThread ? state.targetThreadId : null,
+        focusTargetOnOpen: hasTargetThread && state.focusTargetOnOpen,
         targetThreadScroll: hasTargetThread
           ? state.targetThreadScroll
           : 'start',
@@ -437,12 +445,15 @@ function viewerCommentReducer(
         inlineThreadRect: hasInlineThread ? state.inlineThreadRect : null,
       }
     }
+    case 'target-focus-consumed':
+      return { ...state, focusTargetOnOpen: false }
     case 'presence-replaced':
       return { ...state, presence: action.presence }
     case 'version-changed':
       return {
         ...state,
         currentVersionId: action.currentVersionId,
+        focusTargetOnOpen: false,
         targetThreadId: null,
         targetThreadScroll: 'start',
         pendingTextAnchor: null,
@@ -455,6 +466,15 @@ function viewerCommentReducer(
         ? {
             ...state,
             panelOpen: true,
+            panelHasOpened: true,
+            // Without a matching new message, open normally and preserve
+            // existing deep-link/anchor navigation without a new focus request.
+            targetThreadId: action.revisitThreadId ?? state.targetThreadId,
+            targetThreadScroll:
+              action.revisitThreadId == null
+                ? state.targetThreadScroll
+                : 'start',
+            focusTargetOnOpen: Boolean(action.revisitThreadId),
             pendingTextAnchor: null,
             pendingComposerOpen: false,
             inlineThreadId: null,
@@ -463,6 +483,7 @@ function viewerCommentReducer(
         : {
             ...state,
             panelOpen: false,
+            focusTargetOnOpen: false,
             targetThreadId: null,
             targetThreadScroll: 'start',
             pendingTextAnchor: null,
@@ -474,7 +495,9 @@ function viewerCommentReducer(
       return {
         ...state,
         panelOpen: true,
+        panelHasOpened: true,
         targetThreadId: action.threadId,
+        focusTargetOnOpen: false,
         targetThreadScroll: action.scroll ?? 'start',
         inlineThreadId: null,
         inlineThreadRect: null,
@@ -483,6 +506,7 @@ function viewerCommentReducer(
       return {
         ...state,
         panelOpen: false,
+        focusTargetOnOpen: false,
         targetThreadId: null,
         targetThreadScroll: 'start',
         pendingTextAnchor: action.anchor,
@@ -505,6 +529,7 @@ function viewerCommentReducer(
     case 'inline-popover-closed':
       return {
         ...state,
+        focusTargetOnOpen: false,
         targetThreadId: null,
         targetThreadScroll: 'start',
         inlineThreadId: null,
@@ -525,6 +550,7 @@ export function useViewerComments({
   currentUserId,
   currentVersionId,
   initialThreads,
+  entryNewCommentMessages,
   targetCommentId,
   liveEnabled,
   onViewCountChanged,
@@ -538,6 +564,7 @@ export function useViewerComments({
   currentUserId: string | null
   currentVersionId: string | null
   initialThreads: ReadonlyArray<CommentThreadView>
+  entryNewCommentMessages?: ReadonlyArray<NewCommentMessage>
   targetCommentId: string | null
   liveEnabled: boolean
   onViewCountChanged?: (viewCount: number) => void
@@ -594,16 +621,6 @@ export function useViewerComments({
     dispatchComment({ type: 'thread-targeted', threadId: targetCommentId })
   }, [onPanelOpenedRef, targetCommentId])
 
-  const openPanel = useCallback(
-    (returnFocusTo?: HTMLElement | null, requestedFilter?: 'all') => {
-      returnFocusRef.current = returnFocusTo ?? getActiveElement()
-      requestedFilterRef.current = requestedFilter
-      onPanelOpenedRef.current?.()
-      dispatchComment({ type: 'panel-open-changed', open: true })
-    },
-    [onPanelOpenedRef],
-  )
-
   const replaceThreads = useCallback(
     (threads: ReadonlyArray<CommentThreadView>) => {
       dispatchComment({ type: 'threads-replaced', threads })
@@ -615,9 +632,15 @@ export function useViewerComments({
     [artifactIdRef],
   )
 
+  const consumeTargetFocus = useCallback(() => {
+    dispatchComment({ type: 'target-focus-consumed' })
+  }, [])
+
   const changePanelOpen = useCallback(
     (open: boolean) => {
-      if (!open) requestedFilterRef.current = undefined
+      if (!open) {
+        requestedFilterRef.current = undefined
+      }
       if (open) onPanelOpenedRef.current?.()
       dispatchComment({ type: 'panel-open-changed', open })
     },
@@ -686,6 +709,41 @@ export function useViewerComments({
           : thread,
       ),
     [state.threads, anchorCheckingAvailable],
+  )
+
+  const openPanel = useCallback(
+    (
+      returnFocusTo?: HTMLElement | null,
+      requestedFilter?: 'all',
+      newCommentMessages?: ReadonlyArray<NewCommentMessage>,
+    ) => {
+      returnFocusRef.current = returnFocusTo ?? getActiveElement()
+      // Only the first ordinary open gets the entry shortcut. Reopening must
+      // not replay it, and explicit navigation always keeps its own target.
+      const pairs =
+        newCommentMessages ??
+        (!state.panelHasOpened && !state.targetThreadId
+          ? entryNewCommentMessages
+          : undefined)
+      const threadId =
+        pairs === undefined
+          ? undefined
+          : firstNewCommentThread(panelThreads, pairs)
+      requestedFilterRef.current = threadId ? 'all' : requestedFilter
+      onPanelOpenedRef.current?.()
+      dispatchComment({
+        type: 'panel-open-changed',
+        open: true,
+        revisitThreadId: threadId,
+      })
+    },
+    [
+      onPanelOpenedRef,
+      panelThreads,
+      entryNewCommentMessages,
+      state.panelHasOpened,
+      state.targetThreadId,
+    ],
   )
 
   const applyAnchorResolutions = useCallback(
@@ -1551,6 +1609,8 @@ export function useViewerComments({
     totalCount,
     returnFocusRef,
     requestedFilter: requestedFilterRef.current,
+    focusTargetOnOpen: state.focusTargetOnOpen,
+    consumeTargetFocus,
     isCurrentArtifactId,
     openPanel,
     replaceThreads,
@@ -2009,6 +2069,7 @@ function useViewerShellController({
     currentUserId: user?.id ?? null,
     currentVersionId: artifact.currentVersionId ?? null,
     initialThreads: initialCommentThreads,
+    entryNewCommentMessages: artifact.revisitContext?.newCommentMessages,
     targetCommentId,
     liveEnabled: commentsEnabled,
     onViewCountChanged: handleViewCountChanged,
@@ -2690,6 +2751,9 @@ function ViewerCommentPanel({
       returnFocusRef={comments.returnFocusRef}
       collapsedFallbackRef={collapsedFallbackRef}
       requestedFilter={comments.requestedFilter}
+      focusTargetOnOpen={comments.focusTargetOnOpen}
+      onTargetFocusConsumed={comments.consumeTargetFocus}
+      newCommentMessages={artifact.revisitContext?.newCommentMessages}
       topbarCollapsed={state.chromeCollapsed}
       showNewThreadComposer={newThreadComposerEnabled}
     />

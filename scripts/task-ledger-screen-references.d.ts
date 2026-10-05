@@ -101,6 +101,7 @@ export type TaskLedgerScreenReference =
   | 'viewer/link-suspended-anonymous'
   | 'viewer/link-suspended-owner'
   | 'viewer/panel-collapsed'
+  | 'viewer/revisit-comments-open'
   | 'viewer/revisit-context'
   | 'viewer/updated-return'
   | 'viewer/updated-version-menu'

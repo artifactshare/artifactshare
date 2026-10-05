@@ -1,3 +1,6 @@
+import { createViewerRevisitFixture } from '~/test/viewer-revisit-fixture'
+import * as viewerRevisitService from '~/services/viewer-revisit.server'
+import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
@@ -1294,6 +1297,76 @@ describe('/a/:id loader', () => {
       }),
       expect.anything(),
     )
+  })
+
+  test('returns old-boundary entry IDs before persisting recency, then removes them on revisit', async () => {
+    const fixture = createViewerRevisitFixture('html123abc')
+    const realLoad = viewerRevisitService.loadViewerRevisitContext
+    const { recordViewerRecency } = await vi.importActual<
+      typeof import('~/services/views.server')
+    >('~/services/views.server')
+    const { context } = setupHtmlShareable()
+    fixture.sqlite.exec(`
+      INSERT INTO comment_threads (id, shareable_id, status, created_by_id, created_at, updated_at)
+        VALUES ('thread-1', 'html123abc', 'open', 'u2', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
+      INSERT INTO comment_messages (id, thread_id, body, created_by_id, created_at, updated_at)
+        VALUES ('message-1', 'thread-1', 'A new reaction', 'u2', '2026-01-03T00:00:00.000Z', '2026-01-03T00:00:00.000Z');
+    `)
+    let entrySnapshot: ViewerRevisitContext | null = null
+    const loadSpy = vi
+      .spyOn(viewerRevisitService, 'loadViewerRevisitContext')
+      .mockImplementation(async (_db, input) => {
+        entrySnapshot = await realLoad(fixture.db, input)
+        return entrySnapshot
+      })
+    const originalSelect = dbMock.selectFrom.getMockImplementation()!
+    dbMock.selectFrom.mockImplementation((table: string) =>
+      table === 'comment_messages'
+        ? fixture.db.selectFrom('comment_messages')
+        : originalSelect(table),
+    )
+    const pairs = [{ messageId: 'message-1', threadId: 'thread-1' }]
+    recordViewerRecencyMock.mockImplementation(
+      async (_db, id, userId, options) => {
+        expect(loadSpy).toHaveBeenCalled()
+        if (recordViewerRecencyMock.mock.calls.length === 1)
+          expect(entrySnapshot?.newCommentMessages).toEqual(pairs)
+        await recordViewerRecency(fixture.db, id, userId, options)
+      },
+    )
+    try {
+      const request = () =>
+        loader({
+          params: { id: 'html123abc' },
+          request: new Request('https://artifactshare.com/a/html123abc.data'),
+          context,
+        } as never)
+      const first = await request()
+      expect(first).toMatchObject({
+        kind: 'ok',
+        artifact: {
+          revisitContext: { commentCount: 1, newCommentMessages: pairs },
+        },
+      })
+      expect(
+        (
+          await fixture.db
+            .selectFrom('shareable_viewer_recency')
+            .select('comment_seen_through_at')
+            .executeTakeFirstOrThrow()
+        ).comment_seen_through_at,
+      ).toBe('2026-01-03T00:00:00.000Z')
+      expect(await request()).toMatchObject({
+        kind: 'ok',
+        artifact: { revisitContext: null },
+      })
+      expect(first).toMatchObject({
+        artifact: { revisitContext: { newCommentMessages: pairs } },
+      })
+    } finally {
+      loadSpy.mockRestore()
+      await fixture.db.destroy()
+    }
   })
 
   test('waits only for recency persistence and keeps view work in waitUntil', async () => {

@@ -1,3 +1,7 @@
+import type {
+  NewCommentMessage,
+  ViewerRevisitContext,
+} from '~/lib/viewer-revisit'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import {
   useCallback,
@@ -26,17 +30,11 @@ interface VersionWidgetProps {
   hasNewerVersion?: boolean
   onShowLatest?: () => void
   onOpenHistory: (returnFocusTo?: HTMLElement | null) => void
-  revisitContext?: {
-    entryCurrentVersionId: string
-    version:
-      | { kind: 'ordinal'; from: number; to: number }
-      | { kind: 'fallback' }
-      | null
-    commentCount: number
-  } | null
+  revisitContext?: ViewerRevisitContext | null
   onCommentsOpen?: (
     returnFocusTo?: HTMLElement | null,
     requestedFilter?: 'all',
+    newCommentMessages?: ReadonlyArray<NewCommentMessage>,
   ) => void
 }
 
@@ -235,11 +233,16 @@ export function VersionWidget({
           ) : null}
           {showCommentClue ? (
             <button
+              data-revisit-comments
               type="button"
               className="bg-background text-foreground border-border pointer-events-auto min-h-7 cursor-pointer rounded-[var(--r-md)] border px-2 text-sm whitespace-nowrap shadow-sm"
               onClick={() => {
                 setDismissedCommentsFor(revisitContext!.entryCurrentVersionId)
-                onCommentsOpen?.(triggerRef.current, 'all')
+                onCommentsOpen?.(
+                  triggerRef.current,
+                  'all',
+                  revisitContext!.newCommentMessages,
+                )
               }}
             >
               {tPlural('vw.revisitComments', revisitContext!.commentCount, {

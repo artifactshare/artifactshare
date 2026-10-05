@@ -1,9 +1,13 @@
+import type { CommentThreadView } from '~/lib/comments'
+import { firstNewCommentThread } from './comment-order'
 import { describe, expect, test } from 'vitest'
 import {
   classifyLiveRecoveryResponse,
   consumeAppliedCommentMutationEcho,
   createCommentRefreshScheduler,
   createViewerShellState,
+  createViewerCommentState,
+  viewerCommentReducer,
   mergeLiveViewCount,
   parseLiveMessage,
   rememberAppliedCommentMutationEcho,
@@ -548,4 +552,205 @@ describe('viewerShellReducer viewer list exclusivity', () => {
     expect(state.viewerListOpen).toBe(false)
     expect(state.viewerListCloseReason).toBe('forced')
   })
+})
+
+describe('new-comment target order', () => {
+  test('uses panel anchor/reply order, includes resolved cards and requires the exact loaded pair', () => {
+    const make = (
+      id: string,
+      subject: CommentThreadView['subject'],
+      count: number,
+      status: 'open' | 'resolved' = 'open',
+    ): CommentThreadView => ({
+      id,
+      subject,
+      status,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      resolvedAt: null,
+      canResolve: false,
+      messages: Array.from({ length: count }, (_, index) => ({
+        id: `${id}-${index}`,
+        body: 'Review',
+        agent: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        author: {
+          id: 'u1',
+          name: null,
+          email: 'viewer@example.com',
+          image: null,
+        },
+        canEdit: false,
+        canDelete: false,
+      })),
+    })
+    const attached: CommentThreadView['subject'] = {
+      kind: 'text',
+      state: 'attached',
+      positionState: 'attached',
+      quotedText: 'Review',
+      prefixText: '',
+      suffixText: '',
+      targetPath: '/index.html',
+      versionId: 'v1',
+      textStart: null,
+      textEnd: null,
+      cssPath: null,
+    }
+    const orphaned: CommentThreadView['subject'] = {
+      ...attached,
+      state: 'orphaned',
+      positionState: 'needs-check',
+    }
+    const threads = [
+      make('orphan', orphaned, 5),
+      make('artifact', { kind: 'artifact' }, 4),
+      make('short', attached, 1),
+      make('resolved', attached, 3, 'resolved'),
+    ]
+    const pairs = threads.map((thread) => ({
+      threadId: thread.id,
+      messageId: `${thread.id}-0`,
+    }))
+    expect(firstNewCommentThread(threads, pairs)).toBe('resolved')
+    expect(firstNewCommentThread(threads, pairs.slice(0, 3))).toBe('short')
+    expect(firstNewCommentThread(threads, pairs.slice(0, 2))).toBe('artifact')
+    expect(firstNewCommentThread(threads, pairs.slice(0, 1))).toBe('orphan')
+    expect(
+      firstNewCommentThread(threads, [
+        { threadId: 'resolved', messageId: 'deleted' },
+      ]),
+    ).toBeNull()
+    expect(
+      firstNewCommentThread(threads, [
+        { threadId: 'artifact', messageId: 'resolved-0' },
+      ]),
+    ).toBeNull()
+    expect(firstNewCommentThread([], pairs)).toBeNull()
+    expect(firstNewCommentThread(threads, [])).toBeNull()
+  })
+})
+
+describe('opening an existing comment target', () => {
+  const base = createViewerCommentState('s1', 'v1', [], null)
+
+  test.each(['start', 'center'] as const)(
+    'ordinary open preserves the target and %s alignment',
+    (scroll) => {
+      const targeted = viewerCommentReducer(base, {
+        type: 'thread-targeted',
+        threadId: 'thread-1',
+        scroll,
+      })
+      const opened = viewerCommentReducer(targeted, {
+        type: 'panel-open-changed',
+        open: true,
+      })
+      expect(opened).toMatchObject({
+        panelOpen: true,
+        targetThreadId: 'thread-1',
+        targetThreadScroll: scroll,
+        focusTargetOnOpen: false,
+      })
+      const closed = viewerCommentReducer(opened, {
+        type: 'panel-open-changed',
+        open: false,
+      })
+      expect(
+        viewerCommentReducer(closed, {
+          type: 'panel-open-changed',
+          open: true,
+        }),
+      ).toMatchObject({
+        targetThreadId: null,
+        targetThreadScroll: 'start',
+        focusTargetOnOpen: false,
+      })
+    },
+  )
+
+  test('opening is remembered across close and reset for another artifact', () => {
+    expect(base.panelHasOpened).toBe(false)
+    const opened = viewerCommentReducer(base, {
+      type: 'panel-open-changed',
+      open: true,
+    })
+    const closed = viewerCommentReducer(opened, {
+      type: 'panel-open-changed',
+      open: false,
+    })
+    expect(closed.panelHasOpened).toBe(true)
+    expect(
+      viewerCommentReducer(closed, {
+        type: 'artifact-changed',
+        artifactId: 's2',
+        currentVersionId: 'v2',
+        threads: [],
+      }).panelHasOpened,
+    ).toBe(false)
+  })
+
+  test('a resolved revisit request replaces an existing target', () => {
+    const targeted = viewerCommentReducer(base, {
+      type: 'thread-targeted',
+      threadId: 'thread-1',
+      scroll: 'center',
+    })
+    expect(
+      viewerCommentReducer(targeted, {
+        type: 'panel-open-changed',
+        open: true,
+        revisitThreadId: 'thread-2',
+      }),
+    ).toMatchObject({
+      targetThreadId: 'thread-2',
+      targetThreadScroll: 'start',
+      focusTargetOnOpen: true,
+    })
+  })
+
+  test.each(['deep-link', 'anchor-navigation'] as const)(
+    'a count request with no matching message preserves the %s target',
+    (source) => {
+      const targeted =
+        source === 'deep-link'
+          ? createViewerCommentState('s1', 'v1', [], 'thread-1')
+          : viewerCommentReducer(base, {
+              type: 'thread-targeted',
+              threadId: 'thread-1',
+              scroll: 'center',
+            })
+      const revisitThreadId = firstNewCommentThread(targeted.threads, [
+        { threadId: 'thread-deleted', messageId: 'message-deleted' },
+      ])
+      expect(revisitThreadId).toBeNull()
+      const opened = viewerCommentReducer(targeted, {
+        type: 'panel-open-changed',
+        open: true,
+        revisitThreadId,
+      })
+      expect(opened).toMatchObject({
+        panelOpen: true,
+        targetThreadId: 'thread-1',
+        targetThreadScroll: source === 'deep-link' ? 'start' : 'center',
+        focusTargetOnOpen: false,
+      })
+      const closed = viewerCommentReducer(opened, {
+        type: 'panel-open-changed',
+        open: false,
+      })
+      expect(
+        viewerCommentReducer(closed, {
+          type: 'panel-open-changed',
+          open: true,
+          revisitThreadId,
+        }),
+      ).toMatchObject({
+        targetThreadId: null,
+        targetThreadScroll: 'start',
+        focusTargetOnOpen: false,
+      })
+    },
+  )
 })

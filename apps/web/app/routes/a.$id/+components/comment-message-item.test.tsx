@@ -1,9 +1,22 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CommentMessageItem } from './comment-message-item'
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
 import type { CommentMessageView } from '~/lib/comments'
 
-vi.mock('~/hooks/use-t', () => ({ useT: () => ({ t: (key: string) => key }) }))
+const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
+afterEach(() => {
+  locale.value = 'en'
+})
+vi.mock('~/hooks/use-t', () => ({
+  useT: () => ({
+    t: (key: string) =>
+      key === 'comments.new'
+        ? (locale.value === 'en' ? en : ja)['comments.new']
+        : key,
+  }),
+}))
 
 const message: CommentMessageView = {
   id: 'message-1',
@@ -51,3 +64,25 @@ describe('comment agent badge', () => {
     )
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'new message labels are opt-in and localized (%s)',
+  (language) => {
+    locale.value = language
+    const label = language === 'en' ? 'New' : '新着'
+    const marked = renderToStaticMarkup(
+      <CommentMessageItem
+        message={message}
+        locale={language}
+        pending={false}
+        isNew
+        onUpdate={async () => true}
+        onDelete={async () => true}
+      />,
+    )
+    expect(marked).toContain(`>${label}<`)
+    expect(marked).toContain('data-new-comment-message="true"')
+    expect(render(null)).not.toContain(`>${label}<`)
+    expect(render(null)).not.toContain('data-new-comment-message')
+  },
+)

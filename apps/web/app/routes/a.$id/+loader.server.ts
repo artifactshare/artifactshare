@@ -72,10 +72,8 @@ import {
   recordAnonymousViewSignalAndMaybeJudge,
 } from '~/services/link-abuse-signals.server'
 import { findWorkspaceIdByDomainClaim } from '~/services/workspace-domain-claims.server'
-import {
-  loadViewerRevisitContext,
-  type ViewerRevisitContext,
-} from '~/services/viewer-revisit.server'
+import { loadViewerRevisitContext } from '~/services/viewer-revisit.server'
+import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
 import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { Route } from './+types/index'
 

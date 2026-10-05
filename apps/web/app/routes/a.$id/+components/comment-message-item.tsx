@@ -5,6 +5,7 @@ import {
   type FormEvent,
   type MouseEvent,
 } from 'react'
+import { NewCommentBadge } from './new-comment-badge'
 import { AuthorAvatar } from '~/components/app/author-avatar'
 import { UserKindBadge } from '~/components/app/user-kind-badge'
 import { IconButton } from '~/components/app/icon-button'
@@ -36,12 +37,14 @@ import { IconDots, IconPencil, IconTrash } from '@tabler/icons-react'
 
 export function CommentMessageItem({
   message,
+  isNew = false,
   locale,
   pending,
   className,
   onUpdate,
   onDelete,
 }: {
+  isNew?: boolean
   message: CommentThreadView['messages'][number]
   locale: Parameters<typeof formatRelative>[1]
   pending: boolean
@@ -80,7 +83,10 @@ export function CommentMessageItem({
   }
 
   return (
-    <div className={cn('relative grid min-w-0 gap-1.5 p-0', className)}>
+    <div
+      data-new-comment-message={isNew || undefined}
+      className={cn('relative grid min-w-0 gap-1.5 p-0', className)}
+    >
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="text-muted-foreground gap-comment-gap flex min-w-0 flex-1 flex-wrap items-center text-xs">
           <div
@@ -101,6 +107,7 @@ export function CommentMessageItem({
             data-comment-message-meta
             className="gap-comment-gap flex min-w-0 flex-wrap items-center"
           >
+            {isNew ? <NewCommentBadge /> : null}
             {message.agent ? (
               <span
                 title={message.agent}

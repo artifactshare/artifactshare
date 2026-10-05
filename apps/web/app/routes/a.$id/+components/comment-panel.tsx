@@ -1,11 +1,14 @@
 import {
   useLayoutEffect,
+  useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
   useReducer,
   type FormEvent,
   type RefObject,
+  type ReactNode,
 } from 'react'
 import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { Button } from '~/components/ui/button'
@@ -39,6 +42,9 @@ import { IconMessage, IconX } from '@tabler/icons-react'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
 import { AppSidePanel } from '~/components/app/app-side-panel'
 import { restoreViewerPanelFocus } from './viewer-dom'
+import { compareCommentThreads } from './comment-order'
+import type { NewCommentMessage } from '~/lib/viewer-revisit'
+import { NewCommentBadge } from './new-comment-badge'
 
 type CommentFilter = 'open' | 'all' | 'resolved'
 type TargetThreadScroll = 'center' | 'start'
@@ -55,6 +61,9 @@ interface CommentPanelProps {
   isCurrentShareableId: (shareableId: string) => boolean
   open: boolean
   onOpenChange: (open: boolean) => void
+  newCommentMessages?: ReadonlyArray<NewCommentMessage>
+  focusTargetOnOpen?: boolean
+  onTargetFocusConsumed?: () => void
   targetThreadId: string | null
   targetThreadScroll: TargetThreadScroll
   onThreadNavigate: (thread: CommentThreadView) => void
@@ -75,6 +84,9 @@ export function CommentPanel({
   isCurrentShareableId,
   open,
   onOpenChange,
+  newCommentMessages = [],
+  focusTargetOnOpen = false,
+  onTargetFocusConsumed,
   targetThreadId,
   targetThreadScroll,
   onThreadNavigate,
@@ -117,6 +129,14 @@ export function CommentPanel({
     shareableId,
     isCurrentShareableId,
     onThreadsChange,
+  })
+
+  const handleOpenAutoFocus = useRevisitCommentFocus({
+    open,
+    focusTargetOnOpen,
+    targetThreadId,
+    targetThreadScroll,
+    onTargetFocusConsumed,
   })
 
   const targetThread = useMemo(
@@ -196,6 +216,7 @@ export function CommentPanel({
             <ThreadCard
               key={thread.id}
               thread={thread}
+              newCommentMessages={newCommentMessages}
               locale={locale}
               target={thread.id === targetThreadId}
               targetScroll={targetThreadScroll}
@@ -287,6 +308,7 @@ export function CommentPanel({
     <AppSidePanel
       open={open}
       onOpenChange={onOpenChange}
+      onOpenAutoFocus={handleOpenAutoFocus}
       onCloseAutoFocus={(event) => {
         event.preventDefault()
         restoreViewerPanelFocus({
@@ -315,11 +337,9 @@ export function CommentPanel({
     >
       <CommentPanelHeader />
 
-      <Tabs
-        className="flex min-h-0 flex-1 flex-col"
+      <CommentPanelTabs
         value={visibleFilter}
-        onValueChange={(value) => {
-          const item = value as CommentFilter
+        onValueChange={(item) => {
           setActiveRequestedFilter(undefined)
           setAutoFilterTarget(
             targetThreadFilterKey
@@ -329,23 +349,8 @@ export function CommentPanel({
           setFilter(item)
         }}
       >
-        <TabsList aria-label={t('comments.filterLabel')}>
-          {(['open', 'all', 'resolved'] as const).map((item) => (
-            <TabsTrigger key={item} value={item}>
-              {t(`comments.filter.${item}`)}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {(['open', 'all', 'resolved'] as const).map((item) => (
-          <TabsContent
-            key={item}
-            value={item}
-            className="flex min-h-0 flex-1 flex-col"
-          >
-            {commentList}
-          </TabsContent>
-        ))}
-      </Tabs>
+        {commentList}
+      </CommentPanelTabs>
       {showNewThreadComposer ? (
         <NewThreadComposer
           pending={pendingKeys.has('create-thread')}
@@ -355,6 +360,94 @@ export function CommentPanel({
         />
       ) : null}
     </AppSidePanel>
+  )
+}
+
+function useRevisitCommentFocus({
+  open,
+  focusTargetOnOpen,
+  targetThreadId,
+  targetThreadScroll,
+  onTargetFocusConsumed,
+}: Pick<
+  CommentPanelProps,
+  | 'open'
+  | 'focusTargetOnOpen'
+  | 'targetThreadId'
+  | 'targetThreadScroll'
+  | 'onTargetFocusConsumed'
+>) {
+  const autofocusSettled = useRef(false)
+  const consumeFocus = useEffectEvent(() => onTargetFocusConsumed?.())
+  // Initial opening is handled by the sheet's autofocus event below. Only an
+  // already-open panel needs a deferred focus request; it cannot race autofocus.
+  useEffect(() => {
+    if (!open) {
+      autofocusSettled.current = false
+      return
+    }
+    if (!focusTargetOnOpen || !targetThreadId || !autofocusSettled.current)
+      return
+    const frame = requestAnimationFrame(() => {
+      focusCommentCard(targetThreadId, targetThreadScroll)
+      consumeFocus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, focusTargetOnOpen, targetThreadId, targetThreadScroll])
+
+  return (event: Event) => {
+    autofocusSettled.current = true
+    if (!focusTargetOnOpen || !targetThreadId) return
+    if (focusCommentCard(targetThreadId, targetThreadScroll))
+      event.preventDefault()
+    onTargetFocusConsumed?.()
+  }
+}
+
+function focusCommentCard(
+  threadId: string,
+  block: TargetThreadScroll,
+): boolean {
+  const card = document.getElementById(`comment-card-${threadId}`)
+  if (!card) return false
+  card.scrollIntoView({ block })
+  card.focus({ preventScroll: true })
+  return true
+}
+
+function CommentPanelTabs({
+  value,
+  onValueChange,
+  children,
+}: {
+  value: CommentFilter
+  onValueChange: (value: CommentFilter) => void
+  children: ReactNode
+}) {
+  const { t } = useT()
+  return (
+    <Tabs
+      className="flex min-h-0 flex-1 flex-col"
+      value={value}
+      onValueChange={(nextFilter) => onValueChange(nextFilter as CommentFilter)}
+    >
+      <TabsList aria-label={t('comments.filterLabel')}>
+        {(['open', 'all', 'resolved'] as const).map((item) => (
+          <TabsTrigger key={item} value={item}>
+            {t(`comments.filter.${item}`)}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {(['open', 'all', 'resolved'] as const).map((item) => (
+        <TabsContent
+          key={item}
+          value={item}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {children}
+        </TabsContent>
+      ))}
+    </Tabs>
   )
 }
 
@@ -421,6 +514,7 @@ function NewThreadComposer({
 
 function ThreadCard({
   thread,
+  newCommentMessages,
   locale,
   target,
   targetScroll,
@@ -439,6 +533,7 @@ function ThreadCard({
   onReplyCancel,
 }: {
   thread: CommentThreadView
+  newCommentMessages: ReadonlyArray<NewCommentMessage>
   locale: Parameters<typeof formatRelative>[1]
   target: boolean
   targetScroll: TargetThreadScroll
@@ -470,6 +565,13 @@ function ThreadCard({
     x: number
     y: number
   } | null>(null)
+  const newMessageIds = new Set<string>()
+  for (const pair of newCommentMessages) {
+    if (pair.threadId === thread.id) newMessageIds.add(pair.messageId)
+  }
+  const hasNewMessages = thread.messages.some((message) =>
+    newMessageIds.has(message.id),
+  )
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
 
@@ -492,20 +594,30 @@ function ThreadCard({
   }
 
   const showAllReplies = target || repliesExpanded
-  const hiddenReplyCount = showAllReplies
-    ? Math.max(0, replyMessages.length - replyLimit)
-    : Math.max(0, replyMessages.length - COLLAPSED_REPLY_COUNT)
-  const displayedReplyMessages = showAllReplies
-    ? replyMessages.slice(-replyLimit)
-    : replyMessages.slice(-COLLAPSED_REPLY_COUNT)
+  const firstNewReplyIndex = replyMessages.findIndex((message) =>
+    newMessageIds.has(message.id),
+  )
+  // Keep normal reply pagination, but expose every selected reply at the target.
+  const visibleReplyLimit = Math.max(
+    showAllReplies ? replyLimit : COLLAPSED_REPLY_COUNT,
+    target && firstNewReplyIndex >= 0
+      ? replyMessages.length - firstNewReplyIndex
+      : 0,
+  )
+  const hiddenReplyCount = Math.max(0, replyMessages.length - visibleReplyLimit)
+  const displayedReplyMessages = replyMessages.slice(-visibleReplyLimit)
   const canNavigateToText =
     thread.subject.kind === 'text' && thread.subject.state === 'attached'
 
   return (
     <article
       ref={threadRef}
+      id={`comment-card-${thread.id}`}
+      tabIndex={-1}
+      aria-labelledby={`comment-card-header-${thread.id}`}
+      data-new-comment-thread={hasNewMessages || undefined}
       className={cn(
-        'bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
+        'focus-visible:ring-ring/50 bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 focus-visible:ring-3 focus-visible:outline-none has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
         canNavigateToText &&
           'cursor-pointer [&>[data-thread-content]]:relative [&>[data-thread-content]]:z-1',
         target &&
@@ -555,7 +667,13 @@ function ThreadCard({
         className="flex min-w-0 items-center justify-between gap-2.5"
         data-thread-content=""
       >
-        <CommentStatusBadge status={thread.status} />
+        <div
+          id={`comment-card-header-${thread.id}`}
+          className="flex flex-wrap items-center gap-2"
+        >
+          <CommentStatusBadge status={thread.status} />
+          {hasNewMessages ? <NewCommentBadge /> : null}
+        </div>
         <div className="inline-flex shrink-0 items-center gap-1">
           {thread.canResolve ? (
             <CommentResolveButton
@@ -592,6 +710,7 @@ function ThreadCard({
         <div className="min-w-0" data-thread-content="">
           <CommentMessageItem
             message={firstMessage}
+            isNew={newMessageIds.has(firstMessage.id)}
             locale={locale}
             pending={pendingKeys.has(`message:${firstMessage.id}`)}
             onUpdate={onUpdateMessage}
@@ -617,7 +736,8 @@ function ThreadCard({
                 setReplyLimit((current) =>
                   Math.min(
                     replyMessages.length,
-                    current + EXPANDED_REPLY_PAGE_SIZE,
+                    Math.max(current, visibleReplyLimit) +
+                      EXPANDED_REPLY_PAGE_SIZE,
                   ),
                 )
               }}
@@ -629,6 +749,7 @@ function ThreadCard({
             <CommentMessageItem
               key={message.id}
               message={message}
+              isNew={newMessageIds.has(message.id)}
               locale={locale}
               pending={pendingKeys.has(`message:${message.id}`)}
               onUpdate={onUpdateMessage}
@@ -721,27 +842,4 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
       </span>
     </div>
   )
-}
-
-function compareCommentThreads(
-  left: CommentThreadView,
-  right: CommentThreadView,
-): number {
-  const rank = (thread: CommentThreadView) => {
-    // A comment still being checked keeps the attached position, so the
-    // list does not jump when the check finishes.
-    if (
-      thread.subject.kind === 'text' &&
-      (thread.subject.state === 'attached' ||
-        thread.subject.checking ||
-        thread.subject.positionState === 'unchecked')
-    ) {
-      return 0
-    }
-    if (thread.subject.kind === 'artifact') return 1
-    return 2
-  }
-  const rankDiff = rank(left) - rank(right)
-  if (rankDiff !== 0) return rankDiff
-  return right.messages.length - left.messages.length
 }

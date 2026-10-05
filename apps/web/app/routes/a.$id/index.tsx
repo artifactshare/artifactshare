@@ -325,6 +325,17 @@ export const screen = {
       },
     },
     {
+      id: 'revisit-comments-open',
+      description: '新着コメントの案内から、新着ラベル付きカードへ移動した状態',
+      setup: {
+        scenario: 'viewer/revisit-context',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          { action: 'click', selector: '[data-revisit-comments]' },
+        ],
+      },
+    },
+    {
       id: 'updated-version-menu',
       description: '前回閲覧後に更新された成果物の版メニューを開いた状態',
       setup: {

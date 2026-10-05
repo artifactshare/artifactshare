@@ -716,6 +716,7 @@
   "comments.deleteThreadConfirmTitle": "Delete this conversation?",
   "comments.deleteThreadConfirmBody": "All comments and replies in this conversation will be deleted. This cannot be undone.",
   "comments.deleteConfirmAction": "Delete",
+  "comments.new": "New",
   "comments.edited": "Edited",
   "comments.editLabel": "Edit comment",
   "comments.cancelEdit": "Cancel edit",
