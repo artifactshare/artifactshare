@@ -229,7 +229,10 @@ describe('sharing recovery browser behavior', () => {
     window.history.replaceState({}, '', '/a/abc123def4')
     renderViewer(owner)
     await waitForBrowserLayout()
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(host.querySelector('[aria-label="Copy link"]')).not.toBeNull(),
+    )
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-button]')).not.toBeNull(),
     )
@@ -246,7 +249,10 @@ describe('sharing recovery browser behavior', () => {
     expect(firstToast.textContent).toContain(firstUrl)
 
     await waitForBrowserLayout()
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(host.querySelector('[aria-label="Copy link"]')).not.toBeNull(),
+    )
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-button]')).not.toBeNull(),
     )
@@ -257,7 +263,10 @@ describe('sharing recovery browser behavior', () => {
 
     renderViewer(owner, secondArtifact)
     await waitForBrowserLayout()
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    await vi.waitFor(() =>
+      expect(host.querySelector('[aria-label="Copy link"]')).not.toBeNull(),
+    )
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-button]')).not.toBeNull(),
     )

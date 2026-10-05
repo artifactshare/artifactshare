@@ -13,6 +13,10 @@ const domains = {
   'D1 と SQLite': ['constraint error', 'apps/web/db/schema.sql'],
   'React Router と Web UI': [
     '負の対照',
+    '`act` の外で render した後',
+    '操作対象の要素が存在するまで待つ',
+    'optional chaining で呼び出してはいけません',
+    'apps/web/app/test/browser-layout.ts',
     'apps/web/app/routes/auth-middleware-contract.test.ts',
   ],
   Workers: ['anchorServerBuild', 'apps/web/workers/app.test.ts'],
@@ -88,5 +92,13 @@ test('negative control: a missing referenced path fails', () => {
         ),
       ),
     /scripts\/missing-analytics\.mjs/,
+  )
+})
+
+test('negative control: removing the browser interaction rule fails', () => {
+  assert.throws(() =>
+    assertContract(
+      doc.replace('optional chaining で呼び出してはいけません', ''),
+    ),
   )
 })
