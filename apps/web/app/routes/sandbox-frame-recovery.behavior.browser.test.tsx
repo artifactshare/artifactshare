@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SandboxFrame } from './a.$id/+components/sandbox-frame'
 
+const realNow = performance.now.bind(performance)
+
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 vi.mock('~/hooks/use-t', async () => {
@@ -416,6 +418,7 @@ describe('waitForRealTaskCondition', () => {
       setTimeout(timer, 1)
       const delivery = new MessageChannel()
       let turns = 0
+      const startedAt = realNow()
       try {
         const response =
           kind === 'native'
@@ -425,7 +428,7 @@ describe('waitForRealTaskCondition', () => {
                   start(controller) {
                     delivery.port1.onmessage = () => {
                       turns += 1
-                      if (turns < 5) {
+                      if (turns < 60 || realNow() - startedAt < 100) {
                         delivery.port2.postMessage(null)
                       } else {
                         controller.enqueue(
@@ -452,7 +455,10 @@ describe('waitForRealTaskCondition', () => {
         )
         await consumed
         expect(text).toBe('body ready')
-        if (kind === 'streamed') expect(turns).toBe(5)
+        if (kind === 'streamed') {
+          expect(turns).toBeGreaterThanOrEqual(60)
+          expect(realNow() - startedAt).toBeGreaterThanOrEqual(100)
+        }
         expect(Date.now()).toBe(now)
         expect(timer).not.toHaveBeenCalled()
         expect(vi.getTimerCount()).toBe(1)
@@ -464,24 +470,29 @@ describe('waitForRealTaskCondition', () => {
     },
   )
 
-  test('names an unmet condition and its bound without advancing fake time', async () => {
-    vi.useFakeTimers()
-    const now = Date.now()
-    const timer = vi.fn()
-    setTimeout(timer, 1)
-    const condition = vi.fn(() => false)
-    await expect(
-      waitForRealTaskCondition(condition, 'missing response', 3),
-    ).rejects.toThrow(
-      'Condition "missing response" did not hold after 3 real task yields',
-    )
-    expect(condition).toHaveBeenCalledTimes(4)
-    expect(Date.now()).toBe(now)
-    expect(timer).not.toHaveBeenCalled()
-    expect(vi.getTimerCount()).toBe(1)
-  })
+  test.each([undefined, 30])(
+    'waits for the real-time budget (%s) without advancing fake time',
+    async (budgetMs) => {
+      vi.useFakeTimers()
+      const now = Date.now()
+      const timer = vi.fn()
+      setTimeout(timer, 1)
+      const condition = vi.fn(() => false)
+      const startedAt = realNow()
+      await expect(
+        waitForRealTaskCondition(condition, 'missing response', budgetMs),
+      ).rejects.toThrow(
+        `Condition "missing response" did not hold after ${budgetMs ?? 1000} ms of real time`,
+      )
+      expect(realNow() - startedAt).toBeGreaterThanOrEqual(budgetMs ?? 1000)
+      expect(condition).toHaveBeenCalled()
+      expect(Date.now()).toBe(now)
+      expect(timer).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(1)
+    },
+  )
 
-  test('checks initially and after the last allowed yield, and propagates predicate errors', async () => {
+  test('checks initially, closes ports on settlement, and propagates predicate errors', async () => {
     vi.useFakeTimers()
     const postMessage = vi.spyOn(MessagePort.prototype, 'postMessage')
     const close = vi.spyOn(MessagePort.prototype, 'close')
@@ -489,12 +500,12 @@ describe('waitForRealTaskCondition', () => {
       await waitForRealTaskCondition(() => true, 'already ready', 0)
       expect(postMessage).not.toHaveBeenCalled()
       let checks = 0
-      await waitForRealTaskCondition(() => ++checks === 3, 'last yield', 2)
+      await waitForRealTaskCondition(() => ++checks === 3, 'eventually ready')
       expect(checks).toBe(3)
       expect(close).toHaveBeenCalledTimes(2)
       close.mockClear()
       await expect(
-        waitForRealTaskCondition(() => false, 'never ready', 1),
+        waitForRealTaskCondition(() => false, 'never ready', 30),
       ).rejects.toThrow('never ready')
       expect(close).toHaveBeenCalledTimes(2)
       close.mockClear()

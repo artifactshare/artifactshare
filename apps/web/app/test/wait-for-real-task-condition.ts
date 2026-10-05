@@ -1,14 +1,18 @@
+// Capture the native clock before tests install fake timers (including performance).
+const realNow = performance.now.bind(performance)
+
 /** Wait for native async work without moving a fake clock. */
 export async function waitForRealTaskCondition(
   condition: () => boolean | Promise<boolean>,
   description: string,
-  maxTaskYields = 50,
+  budgetMs = 1000,
 ): Promise<void> {
+  const startedAt = realNow()
   let channel: MessageChannel | undefined
   try {
-    for (let yielded = 0; yielded <= maxTaskYields; yielded += 1) {
+    while (true) {
       if (await condition()) return
-      if (yielded === maxTaskYields) break
+      if (realNow() - startedAt >= budgetMs) break
       await Promise.resolve()
       channel ??= new MessageChannel()
       await new Promise<void>((resolve) => {
@@ -20,7 +24,7 @@ export async function waitForRealTaskCondition(
       })
     }
     throw new Error(
-      `Condition "${description}" did not hold after ${maxTaskYields} real task yields`,
+      `Condition "${description}" did not hold after ${budgetMs} ms of real time`,
     )
   } finally {
     if (channel) {
