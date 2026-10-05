@@ -275,3 +275,37 @@ test('script fixture console messages are not browser crashes', (t) => {
   })
   assert.deepEqual(f.read().flaky, [])
 })
+
+test('unhandled errors remain independent of assertions and other diagnostics', (t) => {
+  const f = fixture(t)
+  for (const lane of [lanes[0], lanes[3], lanes[5]]) {
+    const report = vitest('failed', 'assertion', undefined, 'assertion error')
+    report.unhandledErrors = [{ message: 'Error: JSON unhandled\nstack' }]
+    f.write(lane, 1, report, {
+      exitCode: 1,
+      timedOut: true,
+      error: 'Repetition timed out',
+      log: '\u001b[31m⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯\u001b[0m\n\nTypeError: console unhandled\n  at example.ts:1\n',
+    })
+  }
+  const rows = f.read().flaky
+  for (const suite of ['behavior-browser', 'd1', 'web-unit']) {
+    const errors = rows.filter(
+      (row) => row.suite === suite && row.diagnosticKind === 'unhandled',
+    )
+    assert.deepEqual(errors.map((row) => row.firstError).sort(), [
+      'Error: JSON unhandled',
+      'TypeError: console unhandled',
+    ])
+    assert.ok(errors.every((row) => row.failureCount === 1))
+    assert.ok(
+      rows.some((row) => row.suite === suite && row.testName === 'assertion'),
+    )
+    assert.ok(
+      rows.some(
+        (row) =>
+          row.suite === suite && row.firstError === 'Repetition timed out',
+      ),
+    )
+  }
+})

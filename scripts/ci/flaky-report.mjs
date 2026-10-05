@@ -40,6 +40,11 @@ const diagnostic = (error, file = '[suite]') => ({
   error,
   diagnosticKind: file === '[suite]' ? 'suite' : 'file',
 })
+const unhandledDiagnostic = (error) => ({
+  ...diagnostic(error),
+  testName: `[unhandled error] ${firstLine(error)}`,
+  diagnosticKind: 'unhandled',
+})
 const crashPattern = /Browser connection was closed|Failed to run the test/i
 
 export function normalizeReport(text, status, log = '') {
@@ -119,15 +124,33 @@ export function normalizeReport(text, status, log = '') {
     )
       rows.push(diagnostic('Vitest reported failure without failed assertions'))
     for (const error of report.unhandledErrors ?? [])
-      rows.push(diagnostic(errorText(error)))
+      rows.push(unhandledDiagnostic(errorText(error)))
   } else throw new Error('Unknown report format')
+  if (status.format === 'vitest-json' && status.suite !== 'scripts') {
+    // The JSON reporter omits unhandled errors; the default reporter emits
+    // a banner followed by the error and stack. Keep these independent of
+    // assertion failures and infrastructure diagnostics.
+    const lines = clean(log).split('\n')
+    for (let index = 0; index < lines.length; index++) {
+      if (
+        !/^\s*⎯+\s+(?:Unhandled (?:Error|Rejection)|Uncaught Exception)\s+⎯+\s*$/.test(
+          lines[index],
+        )
+      )
+        continue
+      const message = lines.slice(index + 1).find((line) => line.trim())
+      rows.push(
+        unhandledDiagnostic(message || 'Unhandled error without details'),
+      )
+    }
+  }
   // Script tests may print synthetic browser errors while testing this detector.
   const browserLog = status.suite === 'behavior-browser' ? log : ''
   for (const line of clean(browserLog).split('\n')) {
     if (!crashPattern.test(line)) continue
     // Only attribute a diagnostic when the crash line explicitly names a test file.
     const file = line.match(
-      /(?:[A-Za-z]:)?[\w$./\\-]+\.(?:test|spec)\.[cm]?[jt]sx?/,
+      /(?:[A-Za-z]:)?[\w$+@./\\-]+\.(?:test|spec)\.[cm]?[jt]sx?/,
     )?.[0]
     rows.push(diagnostic(line, file))
   }
@@ -164,6 +187,8 @@ export function aggregate({ results, repetitions, sha }) {
           status.project !== lane.project
         )
           throw new Error('Status identity mismatch')
+        if (status.timedOut)
+          rows.push(diagnostic(status.error || 'Repetition timed out'))
         if (!status.completed)
           rows.push(diagnostic('Repetition did not complete'))
         else laneCoverage.completed++

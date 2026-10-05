@@ -9,6 +9,7 @@ import {
   validateCount,
   runShard,
   suiteCommand,
+  terminateTree,
 } from './ci/flaky-runs.mjs'
 import reporter, { serializeError } from './ci/node-test-json-reporter.mjs'
 import { aggregate } from './ci/flaky-report.mjs'
@@ -263,4 +264,268 @@ test('Vitest console crashes survive alongside JSON assertion failures', async (
     ),
     /Browser connection was closed/,
   )
+})
+
+test('timeout removes reparented detached descendants before the next repetition', async (t) => {
+  if (process.platform !== 'linux') {
+    t.skip('Reparented ownership discovery requires Linux /proc')
+    return
+  }
+  const { execute, repetitionTimeoutMs } = await import('./ci/flaky-runs.mjs')
+  assert.ok(2 * repetitionTimeoutMs <= 40 * 60 * 1000)
+  const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-timeout-'))
+  const pidFile = path.join(results, 'descendant.pid')
+  t.after(() => {
+    try {
+      if (fs.existsSync(pidFile))
+        process.kill(Number(fs.readFileSync(pidFile)), 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    } finally {
+      fs.rmSync(results, { recursive: true, force: true })
+    }
+  })
+  let calls = 0
+  await runShard({
+    shard: plan(2).find((shard) => shard.id === 'd1'),
+    repetitions: 2,
+    sha: 'example-sha',
+    results,
+    timeoutMs: 1000,
+    executor: (_command, _args, options, output) => {
+      calls++
+      if (calls === 2) {
+        const pid = Number(fs.readFileSync(pidFile))
+        let living = false
+        try {
+          process.kill(pid, 0)
+          living =
+            process.platform !== 'linux' ||
+            !fs.readFileSync(`/proc/${pid}/stat`, 'utf8').includes(') Z ')
+        } catch (error) {
+          if (!['ESRCH', 'ENOENT'].includes(error.code)) throw error
+        }
+        assert.equal(living, false, 'detached descendant survived cleanup')
+        return { exitCode: 0, signal: null }
+      }
+      // The intermediary exits immediately after launching a detached browser.
+      // By timeout, ancestry no longer connects that browser to the suite.
+      return execute(
+        process.execPath,
+        [
+          '-e',
+          `
+        const { spawn } = require('node:child_process')
+        const intermediary = spawn(process.execPath, ['-e', ${JSON.stringify(`
+          const { spawn } = require('node:child_process')
+          const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+          require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))
+          child.unref()
+        `)}], { stdio: 'ignore' })
+        intermediary.on('exit', () => console.log('grandchild ready; intermediary exited'))
+        setInterval(() => {}, 1000)
+      `,
+        ],
+        options,
+        output,
+      )
+    },
+  })
+  assert.equal(calls, 2)
+  const directory = path.join(results, 'd1/1')
+  const status = JSON.parse(
+    fs.readFileSync(path.join(directory, 'status.json')),
+  )
+  assert.equal(status.timedOut, true)
+  assert.equal(status.signal, 'SIGKILL')
+  assert.match(status.error, /timed out after 1000 ms/)
+  assert.match(
+    fs.readFileSync(path.join(directory, 'diagnostic.log'), 'utf8'),
+    /grandchild ready[\s\S]*timed out/,
+  )
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(results, 'd1/2/status.json')))
+      .exitCode,
+    0,
+  )
+  assert.match(
+    aggregate({
+      results,
+      repetitions: 2,
+      sha: 'example-sha',
+    }).consistentlyFailing.find((row) => row.suite === 'd1').firstError,
+    /timed out/,
+  )
+})
+
+test('Node file failures resolve relative CLI paths against absolute event files', async () => {
+  const rows = []
+  for await (const line of reporter([
+    {
+      type: 'test:fail',
+      data: {
+        name: 'scripts/example.test.mjs',
+        file: path.resolve('scripts/example.test.mjs'),
+        nesting: 0,
+        details: {
+          error: { message: 'process crashed', failureType: 'testCodeFailure' },
+        },
+      },
+    },
+  ]))
+    rows.push(JSON.parse(line))
+  assert.equal(rows[0].testName, '[file failure]')
+  assert.equal(rows[0].diagnosticKind, 'file')
+})
+
+for (const asynchronous of [false, true])
+  test(`timeout contains ${asynchronous ? 'rejected' : 'thrown'} termination errors`, async (t) => {
+    const { execute } = await import('./ci/flaky-runs.mjs')
+    const results = fs.mkdtempSync(path.join(os.tmpdir(), 'flaky-kill-error-'))
+    t.after(() => fs.rmSync(results, { recursive: true, force: true }))
+    let calls = 0
+    await runShard({
+      shard: plan(2).find((shard) => shard.id === 'd1'),
+      repetitions: 2,
+      sha: 'example-sha',
+      results,
+      executor: (_command, _args, options, output) => {
+        if (++calls === 2) return { exitCode: 0, signal: null }
+        const fail = () => {
+          throw new Error('injected termination error')
+        }
+        return execute(
+          process.execPath,
+          ['-e', 'setInterval(() => {}, 1000)'],
+          {
+            ...options,
+            timeoutMs: 100,
+            terminate: asynchronous ? () => Promise.resolve().then(fail) : fail,
+          },
+          output,
+        )
+      },
+    })
+    assert.equal(calls, 2)
+    const status = JSON.parse(
+      fs.readFileSync(path.join(results, 'd1/1/status.json')),
+    )
+    assert.equal(status.timedOut, true)
+    assert.match(status.error, /Termination failed: injected termination error/)
+    assert.match(
+      fs.readFileSync(path.join(results, 'd1/1/diagnostic.log'), 'utf8'),
+      /injected termination error/,
+    )
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(results, 'd1/2/status.json')))
+        .exitCode,
+      0,
+    )
+  })
+
+test('tree cleanup discovers separate groups and waits for descendants to exit', async () => {
+  const signals = []
+  let reads = 0
+  const diagnostics = await terminateTree(100, {
+    readProcesses: () => {
+      reads++
+      // A second generation appears after the first discovery snapshot.
+      if (reads === 1) return [{ pid: 101, parent: 100, state: 'S' }]
+      if (reads <= 3)
+        return [
+          { pid: 101, parent: 100, state: 'T' },
+          { pid: 102, parent: 101, state: 'T' },
+        ]
+      if (reads === 4) return [{ pid: 102, parent: 1, state: 'R' }]
+      return []
+    },
+    kill: (pid, signal) => signals.push([pid, signal]),
+  })
+  assert.deepEqual(diagnostics, [])
+  assert.equal(reads, 5)
+  assert.deepEqual(signals, [
+    [100, 'SIGSTOP'],
+    [101, 'SIGSTOP'],
+    [102, 'SIGSTOP'],
+    [102, 'SIGKILL'],
+    [101, 'SIGKILL'],
+    [100, 'SIGKILL'],
+    [-100, 'SIGKILL'],
+  ])
+})
+
+test('tree cleanup retains signal errors and still terminates other descendants', async () => {
+  let reads = 0
+  const signals = []
+  const diagnostics = await terminateTree(100, {
+    readProcesses: () =>
+      ++reads <= 2 ? [{ pid: 101, parent: 100, state: 'S' }] : [],
+    kill: (pid, signal) => {
+      signals.push([pid, signal])
+      if (pid === 101 && signal === 'SIGKILL') throw new Error('signal denied')
+    },
+  })
+  assert.deepEqual(diagnostics, ['signal denied'])
+  assert.ok(
+    signals.some(([pid, signal]) => pid === 100 && signal === 'SIGKILL'),
+  )
+})
+
+test('cleanup includes marked orphans whose ancestry disappeared before discovery', async () => {
+  const signals = []
+  let reads = 0
+  const diagnostics = await terminateTree(100, {
+    ownership: 'repetition-one',
+    readProcesses: (ownership) => {
+      assert.equal(ownership, 'repetition-one')
+      return ++reads <= 2
+        ? [
+            { pid: 102, parent: 1, state: 'S', owned: true },
+            { pid: 103, parent: 1, state: 'S', owned: false },
+          ]
+        : []
+    },
+    kill: (pid, signal) => signals.push([pid, signal]),
+  })
+  assert.deepEqual(diagnostics, [])
+  assert.ok(
+    signals.some(([pid, signal]) => pid === 102 && signal === 'SIGKILL'),
+  )
+  assert.ok(!signals.some(([pid]) => pid === 103))
+})
+
+test('each repetition passes its inherited ownership marker to timeout cleanup', async () => {
+  const { execute } = await import('./ci/flaky-runs.mjs')
+  const markers = []
+  for (let repetition = 0; repetition < 2; repetition++) {
+    let output = ''
+    let cleanupMarker
+    const result = await execute(
+      process.execPath,
+      [
+        '-e',
+        `
+      console.log(process.env.ARTIFACTSHARE_FLAKY_REPETITION)
+      setInterval(() => {}, 1000)
+    `,
+      ],
+      {
+        timeoutMs: 500,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        terminate: (pid, { ownership }) => {
+          cleanupMarker = ownership
+          process.kill(pid, 'SIGKILL')
+          return []
+        },
+      },
+      (chunk) => {
+        output += chunk
+      },
+    )
+    assert.equal(result.timedOut, true)
+    assert.ok(cleanupMarker)
+    assert.equal(output.split('\n')[0], cleanupMarker)
+    markers.push(cleanupMarker)
+  }
+  assert.notEqual(markers[0], markers[1])
 })

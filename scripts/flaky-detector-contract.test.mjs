@@ -125,3 +125,11 @@ test('aggregation runs after failed workers, tolerates missing artifacts, and up
   ])
     assert.ok(doc.includes(phrase))
 })
+
+test('overlapping detector runs are independent rather than replacing pending runs', () => {
+  assert.equal(workflow.concurrency, undefined)
+  assert.match(
+    fs.readFileSync('docs/development-workflow.md', 'utf8'),
+    /Overlapping workflow runs execute independently/,
+  )
+})

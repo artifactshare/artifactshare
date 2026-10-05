@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 // Node 24 test:pass/test:fail events carry nesting, name, file and details.
 // Node 24 supplies testId/parentId; scope IDs by file for concurrent workers.
 export function serializeError(error, seen = new Set()) {
@@ -46,7 +48,10 @@ export default async function* reporter(source) {
       parent = identities.get(JSON.stringify([data.file, parent.parentId]))
     }
     const fileFailure =
-      data.details?.type === 'suite' || (error && data.name === data.file)
+      data.details?.type === 'suite' ||
+      (error &&
+        data.file &&
+        path.resolve(data.name) === path.resolve(data.file))
     const testName = fileFailure
       ? '[file failure]'
       : [
