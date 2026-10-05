@@ -169,7 +169,13 @@
     ".agents/skills/controlled-review/scripts/test_render_prompt.py",
     ".claude/skills/controlled-review/SKILL.md",
     "scripts/controlled-review-runner.mjs",
-    "scripts/controlled-review-runner.test.mjs"
+    "scripts/controlled-review-runner.test.mjs",
+    "scripts/ci/flaky-runs.mjs",
+    "scripts/ci/node-test-json-reporter.mjs",
+    "scripts/ci/flaky-report.mjs",
+    "scripts/flaky-report.test.mjs",
+    "scripts/flaky-runs.test.mjs",
+    "scripts/flaky-detector-contract.test.mjs"
   ],
   "canonical_prefixes": [
     "apps/web/app/",
@@ -216,7 +222,8 @@
       ".github/workflows/public-ci.yml",
       ".github/workflows/release-cli.yml",
       ".github/workflows/release-qm-bridge.yml",
-      ".github/workflows/release-npm-reserved.yml"
+      ".github/workflows/release-npm-reserved.yml",
+      ".github/workflows/flaky-detector.yml"
     ]
   }
 }
