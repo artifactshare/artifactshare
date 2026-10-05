@@ -135,6 +135,108 @@ jobs:
             fi
           fi
 
+  changed-browser-repetitions:
+    name: Changed browser behavior repetitions
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      REPETITIONS: '5'
+      PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
+      PUBLIC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Classify pull request
+        id: classify
+        env:
+          PUBLIC_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PUBLIC_PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          node -e "const fs=require('node:fs'); const headRepoFullName=process.env.PUBLIC_PR_HEAD_REPO ?? ''; const baseRepoFullName=process.env.PUBLIC_PR_BASE_REPO ?? ''; const isMaintainer=headRepoFullName !== '' && headRepoFullName === baseRepoFullName; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'is_maintainer=' + isMaintainer + '\n')"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - name: Select changed browser tests
+        id: select
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
+        run: |
+          git cat-file -e "$PUBLIC_PR_BASE^{commit}" || git fetch --no-tags origin "$PUBLIC_PR_BASE"
+          node scripts/ci/changed-browser-repetitions.mjs select
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - run: pnpm --filter @artifactshare/contract build
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - name: Resolve changed file projects
+        id: plan
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        run: node scripts/ci/changed-browser-repetitions.mjs plan
+      - name: Compute WebKit libsoup cache key
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
+        id: webkit-libsoup-cache-key
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { PIN } from './scripts/ci/replace-webkit-libsoup.mjs'
+          console.log(`key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map(library => library.replacement).join('-')}`)
+          NODE
+      - name: Cache verified WebKit libsoup libraries
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/webkit-libsoup-cache
+          key: ${{ steps.webkit-libsoup-cache-key.outputs.key }}
+      - run: |
+          read -r -a projects <<< "$BROWSER_PROJECTS"
+          pnpm --filter @artifactshare/web exec playwright install --with-deps "${projects[@]}"
+        env:
+          BROWSER_PROJECTS: ${{ steps.plan.outputs.projects }}
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+      # libsoup 3.6.5 double release; upstream fix 794e089abe8a58486970a4646aae99b2f03b808e.
+      # Remove this workaround when Playwright selects WebKit r2370 or later.
+      - name: Replace WebKit libsoup with the pinned fixed build
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_webkit == 'true' }}
+        run: node scripts/ci/replace-webkit-libsoup.mjs
+        env:
+          WEBKIT_LIBSOUP_CACHE_DIR: ${{ runner.temp }}/webkit-libsoup-cache
+      - name: Repeat changed browser tests
+        id: repeat
+        timeout-minutes: 120
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+        run: node scripts/ci/changed-browser-repetitions.mjs run
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
+          DEBUG: pw:browser
+      - name: Summarize changed browser repetitions
+        if: ${{ always() && steps.classify.outputs.is_maintainer == 'true' && (failure() || cancelled() || steps.select.outputs.has_files == 'true') }}
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
+          INTERRUPTED: ${{ job.status == 'cancelled' }}
+          SETUP_FAILED: ${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}
+        run: |
+          if [ -f scripts/ci/changed-browser-repetitions.mjs ]; then
+            node scripts/ci/changed-browser-repetitions.mjs report
+          else
+            echo 'Changed browser behavior repetitions: checkout/setup failed; results unavailable.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
   static-validation:
     name: Public static and unit validation
     if: github.event_name == 'merge_group'
