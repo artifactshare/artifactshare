@@ -70,21 +70,51 @@ export function selectChanges({ base, head, root = process.cwd() }) {
   return { ...selectFiles(diff), base, head }
 }
 
-export async function discoverProjects(root) {
+export async function discoverProjects(root, exclude = []) {
   const workspace = path.join(root, 'apps/web')
   const require = createRequire(path.join(workspace, 'package.json'))
   const { createVitest } = await import(
     pathToFileURL(require.resolve('vitest/node')).href
   )
-  const ctx = await createVitest('test', {
-    root: workspace,
-    config: path.join(workspace, 'vitest.behavior.browser.config.ts'),
-    watch: false,
-    // Discovery needs project configuration and globs, not an API listener.
-    api: false,
-  })
+  const { configDefaults } = await import(
+    pathToFileURL(require.resolve('vitest/config')).href
+  )
+  const ctx = await createVitest(
+    'test',
+    {
+      root: workspace,
+      config: path.join(workspace, 'vitest.behavior.browser.config.ts'),
+      watch: false,
+      cliExclude: exclude,
+      // Discovery needs project configuration and globs, not an API listener.
+      api: false,
+    },
+    {
+      plugins: [
+        {
+          name: 'isolate-discovery-exclusions',
+          enforce: 'pre',
+          config(config) {
+            config.test ??= {}
+            // Vitest appends CLI exclusions in place; keep contexts independent.
+            config.test.exclude = [
+              ...(config.test.exclude ?? configDefaults.exclude),
+            ]
+          },
+        },
+      ],
+    },
+  )
   return {
-    async specifications(filters = []) {
+    async specifications(filters = [], exclusions = []) {
+      if (exclusions.length) {
+        const filtered = await discoverProjects(root, exclusions)
+        try {
+          return await filtered.specifications(filters)
+        } finally {
+          await filtered.close()
+        }
+      }
       return (await ctx.globTestSpecifications(filters)).map((spec) => ({
         file: path.relative(root, spec.moduleId).split(path.sep).join('/'),
         project: spec.project.name,
@@ -125,13 +155,30 @@ export async function buildPlan(
           plan.skippedPairs.push({ file, project })
           continue
         }
-        const filter = file.slice('apps/web/'.length)
-        const matches = (await discovery.specifications([filter])).filter(
+        const filter = path.resolve(root, file)
+        let matches = (await discovery.specifications([filter])).filter(
           (spec) => spec.project === project,
         )
+        // Vitest also compares absolute filters as relative, case-insensitive
+        // substrings. Exclude collisions literally, then verify discovery again.
+        const exclude = [
+          ...new Set(
+            matches
+              .filter((spec) => spec.file !== file)
+              .map((spec) =>
+                spec.file
+                  .slice('apps/web/'.length)
+                  .replace(/[\\*?{}()[\]!+@]/g, '\\$&'),
+              ),
+          ),
+        ]
+        if (exclude.length)
+          matches = (await discovery.specifications([filter], exclude)).filter(
+            (spec) => spec.project === project,
+          )
         if (matches.length !== 1 || matches[0].file !== file)
           throw new Error(`Ambiguous file filter for ${file} / ${project}`)
-        const pair = { file, project, filter }
+        const pair = { file, project, filter, exclude }
         plan.pairs.push(pair)
       }
     }
@@ -170,6 +217,8 @@ export async function runPlan(
         report,
         root,
       )
+      for (const exclusion of pair.exclude)
+        invocation.args.push(`--exclude=${exclusion}`)
       invocation.args.push(pair.filter)
       const status = {
         ...pair,

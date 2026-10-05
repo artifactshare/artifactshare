@@ -31,9 +31,21 @@ const temporary = (t) => {
   return directory
 }
 const fixtureDiscovery = (specifications) => () => ({
-  specifications: (filters = []) =>
+  specifications: (filters = [], exclusions = []) =>
     specifications.filter(
-      (spec) => !filters.length || spec.file.includes(filters[0]),
+      (spec) =>
+        (!filters.length ||
+          spec.file
+            .slice('apps/web/'.length)
+            .toLowerCase()
+            .includes(
+              path.relative(path.resolve('apps/web'), filters[0]).toLowerCase(),
+            )) &&
+        !exclusions.includes(
+          spec.file
+            .slice('apps/web/'.length)
+            .replace(/[\\*?{}()[\]!+@]/g, '\\$&'),
+        ),
     ),
   close: async () => {},
 })
@@ -212,7 +224,7 @@ test('plans injected authoritative specifications, exclusions and changed includ
   )
   const ambiguous = await fixtureDiscovery([
     ...specs,
-    { file: `apps/web/duplicate/${file.slice(9)}`, project: 'chromium' },
+    { file, project: 'chromium' },
   ])()
   ambiguous.close = () => {
     closed++
@@ -222,6 +234,109 @@ test('plans injected authoritative specifications, exclusions and changed includ
     /Ambiguous/,
   )
   assert.equal(closed, 2)
+})
+
+test('suffix and case-insensitive collisions execute only the selected file', async (t) => {
+  const collision = `apps/web/duplicate/${file.slice(9).toUpperCase()}`
+  const specs = [file, collision].flatMap((name) =>
+    ['chromium', 'firefox', 'webkit'].map((project) => ({
+      file: name,
+      project,
+    })),
+  )
+  const discovery = fixtureDiscovery(specs)()
+  assert.deepEqual(await discovery.specifications([path.resolve(file)]), specs)
+  const plan = await buildPlan(selected([file]), {
+    repetitions: '1',
+    discover: fixtureDiscovery(specs),
+  })
+  assert.equal(plan.pairs.length, 3)
+  const results = temporary(t)
+  const invocations = []
+  await runPlan(plan, {
+    results,
+    executor: async (command, args) => {
+      invocations.push({ command, args: [...args] })
+      const exclusions = args
+        .filter((arg) => arg.startsWith('--exclude='))
+        .map((arg) => arg.slice(10))
+      const project = args.find((arg) => arg.startsWith('--project=')).slice(10)
+      const matches = (
+        await discovery.specifications([args.at(-1)], exclusions)
+      ).filter((spec) => spec.project === project)
+      const report = passing({ file, project })
+      report.modules = matches.flatMap((pair) => passing(pair).modules)
+      fs.writeFileSync(
+        args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+        JSON.stringify(report),
+      )
+      return { exitCode: 0 }
+    },
+  })
+  assert.equal(invocations.length, 3)
+  for (const [index, { command, args }] of invocations.entries()) {
+    assert.equal(command, 'pnpm')
+    assert.equal(args.at(-1), path.resolve(file))
+    assert.ok(args.includes(`--project=${plan.pairs[index].project}`))
+    const exclusions = args
+      .filter((arg) => arg.startsWith('--exclude='))
+      .map((arg) => arg.slice(10))
+    assert.deepEqual(exclusions, [collision.slice('apps/web/'.length)])
+    const matches = await discovery.specifications([args.at(-1)], exclusions)
+    assert.deepEqual([...new Set(matches.map((spec) => spec.file))], [file])
+  }
+  assert.equal(summarize(plan, { results }).failed, false)
+})
+
+test('Vitest discovery isolates suffix and case collisions without browser execution', async (t) => {
+  const root = fs.realpathSync(temporary(t))
+  const workspace = path.join(root, 'apps/web')
+  fs.mkdirSync(workspace, { recursive: true })
+  fs.symlinkSync(
+    path.resolve('apps/web/node_modules'),
+    path.join(workspace, 'node_modules'),
+    'dir',
+  )
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"module"}')
+  fs.writeFileSync(
+    path.join(workspace, 'vitest.behavior.browser.config.ts'),
+    `
+    export default { test: {
+      include: ['**/*.test.tsx'],
+      browser: { enabled: true, instances: [{ browser: 'chromium' }] }
+    } }
+  `,
+  )
+  const names = [
+    'apps/web/app/example[one].behavior.browser.test.tsx',
+    'apps/web/nested/app/example[one].behavior.browser.test.tsx',
+    'apps/web/other/APP/EXAMPLE[ONE].behavior.browser.test.tsx',
+  ]
+  for (const name of names) {
+    fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
+    fs.writeFileSync(path.join(root, name), '')
+  }
+  const discovery = await discoverProjects(root)
+  try {
+    assert.equal(
+      (await discovery.specifications([path.resolve(root, names[0])])).length,
+      3,
+    )
+  } finally {
+    await discovery.close()
+  }
+  const plan = await buildPlan(selected(names), { root, repetitions: '1' })
+  assert.equal(plan.pairs.length, 3)
+  for (const pair of plan.pairs) {
+    const verified = await discoverProjects(root, pair.exclude)
+    try {
+      assert.deepEqual(await verified.specifications([pair.filter]), [
+        { file: pair.file, project: pair.project },
+      ])
+    } finally {
+      await verified.close()
+    }
+  }
 })
 
 test('real config discovery respects inherited includes, browser overrides and excludes without launching browsers', async (t) => {
