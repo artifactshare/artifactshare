@@ -1,3 +1,4 @@
+import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -285,6 +286,12 @@ for (const width of [1280, 390]) {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3001)
       })
+      if (failure === 'suspended') {
+        await waitForRealTaskCondition(async () => {
+          await act(async () => {})
+          return state(host) === 'paused'
+        }, 'suspended comment frame paused')
+      }
       expect(state(host)).toBe(
         failure === 'failed'
           ? 'blocked'

@@ -24,7 +24,7 @@
 ## React Router と Web UI
 
 - **機械検査で強制済み**：認証 middleware の割り当ては `apps/web/app/routes/auth-middleware-contract.test.ts`、design token は `scripts/check-design-tokens.mjs` が検査します。
-- **人が判断する現行規則**：client code から server-only module を import しません。loader、action、middleware では正規化済みの `url` を使い、生の受信 URL が必要な場合だけ `request.url` を使います。hydration 前後で DOM 構造を変える場合は hydration gate を設けます。CLI が呼ぶ API route では Bearer token 対応 middleware を使います。「表示されないこと」を確認する test では、条件を反転した負の対照も実行します。
+- **人が判断する現行規則**：client code から server-only module を import しません。loader、action、middleware では正規化済みの `url` を使い、生の受信 URL が必要な場合だけ `request.url` を使います。hydration 前後で DOM 構造を変える場合は hydration gate を設けます。CLI が呼ぶ API route では Bearer token 対応 middleware を使います。「表示されないこと」を確認する test では、条件を反転した負の対照も実行します。fake timers 下では `Response` の `text()`、`json()`、`arrayBuffer()` が microtask だけで完了すると仮定しません。body の読み取りには実 task が必要な場合があるため、`apps/web/app/test/wait-for-real-task-condition.ts` の共有 helper で観測可能な結果を待ちます。
 - **復元しない事項**：機械検査へ置き換わった token 値や DOM 断片の一覧は復元しません。
 
 ## Workers
