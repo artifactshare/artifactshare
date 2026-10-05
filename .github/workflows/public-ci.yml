@@ -239,11 +239,25 @@ jobs:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Compute WebKit libsoup cache key
+        id: webkit-libsoup-cache-key
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { PIN } from './scripts/ci/replace-webkit-libsoup.mjs'
+          console.log(`key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map(library => library.replacement).join('-')}`)
+          NODE
+      - name: Cache verified WebKit libsoup libraries
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/webkit-libsoup-cache
+          key: ${{ steps.webkit-libsoup-cache-key.outputs.key }}
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
       # libsoup 3.6.5 double release; upstream fix 794e089abe8a58486970a4646aae99b2f03b808e.
       # Remove this workaround when Playwright selects WebKit r2370 or later.
       - name: Replace WebKit libsoup with the pinned fixed build
         run: node scripts/ci/replace-webkit-libsoup.mjs
+        env:
+          WEBKIT_LIBSOUP_CACHE_DIR: ${{ runner.temp }}/webkit-libsoup-cache
       - run: pnpm test:behavior-browser
         env:
           DEBUG: pw:browser

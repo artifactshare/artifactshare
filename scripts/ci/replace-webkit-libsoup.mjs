@@ -5,7 +5,8 @@ import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
-import { Transform } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
+import { setTimeout as waitFor } from 'node:timers/promises'
 import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -54,11 +55,21 @@ export function selectedWebkitDirectory(executable) {
   return path.dirname(executable)
 }
 
+class IntegrityError extends Error {}
+
+class ArchiveDownloadError extends Error {
+  constructor(message, retryable, cause) {
+    super(message, { cause })
+    this.retryable = retryable
+  }
+}
+
 export async function verifyFile(filename, expected, size) {
   const stat = await fs.lstat(filename)
-  if (!stat.isFile()) throw new Error(`Expected regular file: ${filename}`)
+  if (!stat.isFile())
+    throw new IntegrityError(`Expected regular file: ${filename}`)
   if (size !== undefined && stat.size !== size) {
-    throw new Error(
+    throw new IntegrityError(
       `Unexpected byte count for ${filename}: ${stat.size}, expected ${size}`,
     )
   }
@@ -66,7 +77,7 @@ export async function verifyFile(filename, expected, size) {
   for await (const chunk of createReadStream(filename)) hash.update(chunk)
   const actual = hash.digest('hex')
   if (actual !== expected)
-    throw new Error(
+    throw new IntegrityError(
       `SHA-256 mismatch for ${filename}: ${actual}, expected ${expected}`,
     )
   return stat
@@ -74,30 +85,63 @@ export async function verifyFile(filename, expected, size) {
 
 export async function downloadArchive(pin, destination, fetchArchive = fetch) {
   const signal = AbortSignal.timeout(180_000)
-  const response = await fetchArchive(pin.url, { signal })
-  if (!response.ok || !response.body)
-    throw new Error(`Archive download HTTP ${response.status}`)
+  let response
+  try {
+    response = await fetchArchive(pin.url, { signal })
+  } catch (error) {
+    throw new ArchiveDownloadError(error.message, true, error)
+  }
+  if (!response.ok) {
+    // The HTTP status remains authoritative if discarding its body fails.
+    await response.body?.cancel().catch(() => undefined)
+    throw new ArchiveDownloadError(
+      `Archive download HTTP ${response.status}`,
+      response.status === 429 ||
+        (response.status >= 500 && response.status <= 599),
+    )
+  }
+  if (!response.body)
+    throw new ArchiveDownloadError('Archive download has no body', true)
   let bytes = 0
   const counter = new Transform({
     transform(chunk, encoding, callback) {
       bytes += chunk.length
       callback(
         bytes > pin.size
-          ? new Error('Archive download exceeds pinned byte count')
+          ? new ArchiveDownloadError(
+              'Archive download exceeds pinned byte count',
+              true,
+            )
           : null,
         chunk,
       )
     },
   })
-  await pipeline(
-    response.body,
-    counter,
-    createWriteStream(destination, { flags: 'wx' }),
-    { signal },
-  )
+  const source = Readable.fromWeb(response.body)
+  const destinationStream = createWriteStream(destination, { flags: 'wx' })
+  // Record the originating stream before pipeline propagates its error to peers.
+  let origin
+  source.on('error', () => {
+    origin ??= 'transport'
+  })
+  destinationStream.on('error', () => {
+    origin ??= 'filesystem'
+  })
+  try {
+    await pipeline(source, counter, destinationStream, { signal })
+  } catch (error) {
+    if (error instanceof ArchiveDownloadError) throw error
+    if (
+      origin === 'transport' ||
+      (signal.aborted && error.name === 'AbortError')
+    )
+      throw new ArchiveDownloadError(error.message, true, error)
+    throw error
+  }
   if (bytes !== pin.size)
-    throw new Error(
+    throw new ArchiveDownloadError(
       `Archive download byte count ${bytes}, expected ${pin.size}`,
+      true,
     )
 }
 
@@ -125,8 +169,11 @@ export async function replaceWebkitLibsoup({
   copy = fs.copyFile,
   verify = verifyFile,
   log = console.log,
+  wait = waitFor,
+  cacheDirectory,
 } = {}) {
   let temporary
+  let cacheStaging
   const messages = []
   let phase = 'inspect selected WebKit and original libraries'
   try {
@@ -141,22 +188,79 @@ export async function replaceWebkitLibsoup({
       const stat = await verify(target, library.original)
       targets.push({ ...library, target, mode: stat.mode & 0o7777 })
     }
-    temporary = await fs.mkdtemp(path.join(temporaryRoot, 'webkit-libsoup-'))
-    const archive = path.join(temporary, 'webkit.zip')
-    const staging = path.join(temporary, 'staging')
-    phase = 'download archive'
-    await download(pin, archive)
-    phase = 'verify archive'
-    await verify(archive, pin.sha256, pin.size)
-    phase = 'extract libraries'
-    await fs.mkdir(staging)
-    await extract(archive, staging, pin.libraries)
-    phase = 'verify staged libraries'
-    for (const library of targets)
-      await verify(path.join(staging, library.path), library.replacement)
+    let source
+    if (cacheDirectory) {
+      phase = 'verify cached libraries'
+      cacheDirectory = path.resolve(cacheDirectory)
+      try {
+        for (const library of targets)
+          await verify(
+            path.join(cacheDirectory, library.path),
+            library.replacement,
+          )
+        source = cacheDirectory
+      } catch (error) {
+        if (
+          !(error instanceof IntegrityError) &&
+          error.code !== 'ENOENT' &&
+          error.code !== 'ENOTDIR'
+        )
+          throw error
+        log(`WebKit libsoup cache rejected: ${error.message}`)
+        phase = 'discard rejected cache'
+        await fs.rm(cacheDirectory, { recursive: true, force: true })
+      }
+    }
+    if (!source) {
+      phase = 'create temporary staging'
+      temporary = await fs.mkdtemp(path.join(temporaryRoot, 'webkit-libsoup-'))
+      const archive = path.join(temporary, 'webkit.zip')
+      const staging = path.join(temporary, 'staging')
+      const delays = [2000, 5000, 10000]
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          phase = 'download archive'
+          await download(pin, archive)
+          phase = 'verify archive'
+          await verify(archive, pin.sha256, pin.size)
+          break
+        } catch (error) {
+          log(
+            `WebKit libsoup archive attempt ${attempt}/4 failed: ${error.message}`,
+          )
+          await fs.rm(archive, { force: true })
+          if (
+            !(error.retryable === true || error instanceof IntegrityError) ||
+            attempt === 4
+          )
+            throw error
+          await wait(delays[attempt - 1])
+        }
+      }
+      phase = 'extract libraries'
+      await fs.mkdir(staging)
+      await extract(archive, staging, pin.libraries)
+      phase = 'verify staged libraries'
+      for (const library of targets)
+        await verify(path.join(staging, library.path), library.replacement)
+      source = staging
+      if (cacheDirectory) {
+        phase = 'publish verified cache'
+        await fs.mkdir(path.dirname(cacheDirectory), { recursive: true })
+        cacheStaging = await fs.mkdtemp(`${cacheDirectory}.staging-`)
+        for (const library of targets) {
+          const destination = path.join(cacheStaging, library.path)
+          await fs.mkdir(path.dirname(destination), { recursive: true })
+          await fs.copyFile(path.join(staging, library.path), destination)
+          await verify(destination, library.replacement)
+        }
+        await fs.rename(cacheStaging, cacheDirectory)
+        cacheStaging = undefined
+      }
+    }
     phase = 'replace installed libraries'
     for (const library of targets) {
-      await copy(path.join(staging, library.path), library.target)
+      await copy(path.join(source, library.path), library.target)
       await fs.chmod(library.target, library.mode)
     }
     phase = 'verify installed libraries'
@@ -172,6 +276,8 @@ export async function replaceWebkitLibsoup({
       { cause: error },
     )
   } finally {
+    if (cacheStaging)
+      await fs.rm(cacheStaging, { recursive: true, force: true })
     if (temporary) await fs.rm(temporary, { recursive: true, force: true })
   }
   for (const message of messages) log(message)
@@ -181,7 +287,9 @@ if (
   process.argv[1] &&
   pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
 ) {
-  replaceWebkitLibsoup().catch((error) => {
+  replaceWebkitLibsoup({
+    cacheDirectory: process.env.WEBKIT_LIBSOUP_CACHE_DIR || undefined,
+  }).catch((error) => {
     console.error(error.message)
     process.exitCode = 1
   })

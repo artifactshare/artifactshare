@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { PIN } from './ci/replace-webkit-libsoup.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
@@ -131,5 +133,73 @@ test('overlapping detector runs are independent rather than replacing pending ru
   assert.match(
     fs.readFileSync('docs/development-workflow.md', 'utf8'),
     /Overlapping workflow runs execute independently/,
+  )
+})
+
+test('libsoup cache is pin-derived, exact, restored before use and independently verified', () => {
+  const lane = steps
+  const key = lane.find((step) => step.id === 'webkit-libsoup-cache-key')
+  const cache = lane.find((step) => step.uses?.startsWith('actions/cache@'))
+  const patch = lane.find(
+    (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
+  )
+  assert.ok(key && cache && patch)
+  assert.equal(
+    cache.uses,
+    'actions/cache@5a3ec84eff668545956fd18022155c47e93e2684',
+  )
+  assert.equal(key.if, "matrix.project == 'webkit'")
+  assert.equal(cache.if, "matrix.project == 'webkit'")
+  assert.equal(patch.if, "matrix.project == 'webkit'")
+  assert.equal(cache['continue-on-error'], undefined)
+  assert.equal(key['continue-on-error'], undefined)
+  assert.equal(patch['continue-on-error'], undefined)
+  assert.deepEqual(cache.with, {
+    path: '${{ runner.temp }}/webkit-libsoup-cache',
+    key: '${{ steps.webkit-libsoup-cache-key.outputs.key }}',
+  })
+  assert.equal(patch.env.WEBKIT_LIBSOUP_CACHE_DIR, cache.with.path)
+  const setup = lane.findIndex((step) =>
+    step.uses?.startsWith('actions/setup-node@'),
+  )
+  const install = lane.findIndex((step) =>
+    step.run?.includes('playwright install'),
+  )
+  assert.ok(setup < lane.indexOf(key))
+  assert.ok(lane.indexOf(key) < lane.indexOf(cache))
+  assert.ok(lane.indexOf(cache) < install)
+  assert.ok(install < lane.indexOf(patch))
+  assert.doesNotMatch(JSON.stringify(lane), /cache-hit|restore-keys/)
+  assert.match(
+    key.run,
+    /import \{ PIN \} from '\.\/scripts\/ci\/replace-webkit-libsoup\.mjs'/,
+  )
+  const lines = key.run.trim().split('\n')
+  assert.equal(
+    lines[0],
+    `node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"`,
+  )
+  assert.equal(lines.at(-1), 'NODE')
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', lines.slice(1, -1).join('\n')],
+    { encoding: 'utf8' },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(
+    result.stdout.trim(),
+    `key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map((library) => library.replacement).join('-')}`,
+  )
+})
+
+test('detector and CI share the exact cache key formula and directory', () => {
+  const browser = ci.jobs['browser-validation'].steps
+  assert.equal(
+    steps.find((step) => step.id === 'webkit-libsoup-cache-key').run,
+    browser.find((step) => step.id === 'webkit-libsoup-cache-key').run,
+  )
+  assert.deepEqual(
+    steps.find((step) => step.uses?.startsWith('actions/cache@')).with,
+    browser.find((step) => step.uses?.startsWith('actions/cache@')).with,
   )
 })
