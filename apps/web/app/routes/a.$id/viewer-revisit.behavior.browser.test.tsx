@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { cdp, page, server, userEvent } from 'vitest/browser'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentThreadView } from '~/lib/comments'
@@ -611,3 +611,60 @@ test.each(['deep-link', 'anchor-navigation'] as const)(
     expect(document.getElementById(card.id)).toBeNull()
   },
 )
+
+describe('waitForBrowserLayout commit ordering', () => {
+  test.each(Array.from({ length: 20 }, (_, batch) => batch))(
+    'commits fresh renders before measuring layout (batch %i)',
+    async (batch) => {
+      const session = server.browser === 'chromium' ? cdp() : undefined
+      try {
+        await session?.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+        await document.fonts.ready
+        for (let cycle = 0; cycle < 10; cycle += 1) {
+          const probeHost = document.createElement('div')
+          document.body.appendChild(probeHost)
+          const probeRoot = createRoot(probeHost)
+          try {
+            await new Promise<void>((resolve) => {
+              requestAnimationFrame(() => {
+                // Leave the rendering step: resolving inside rAF would resume
+                // in its microtask checkpoint, before this frame has finished.
+                const channel = new MessageChannel()
+                channel.port1.onmessage = () => {
+                  channel.port1.close()
+                  channel.port2.close()
+                  resolve()
+                }
+                channel.port2.postMessage(null)
+              })
+            })
+            // Occupy a normal task until the next frame is due, then queue
+            // React's task. A frame-only helper can now beat that React task.
+            const frameDeadline = performance.now() + 20
+            while (performance.now() < frameDeadline) {
+              // Let a frame become due without yielding to the event loop.
+            }
+            const marker = `layout-probe-${batch * 10 + cycle}`
+            probeRoot.render(
+              <div data-layout-probe={marker} style={{ width: 80, height: 24 }}>
+                {marker}
+              </div>,
+            )
+            await waitForBrowserLayout()
+            const probe = probeHost.querySelector<HTMLElement>(
+              `[data-layout-probe="${marker}"]`,
+            )
+            expect(probe).not.toBeNull()
+            expect(probe!.getBoundingClientRect().width).toBeGreaterThan(0)
+            expect(probe!.getBoundingClientRect().height).toBeGreaterThan(0)
+          } finally {
+            probeRoot.unmount()
+            probeHost.remove()
+          }
+        }
+      } finally {
+        await session?.send('Emulation.setCPUThrottlingRate', { rate: 1 })
+      }
+    },
+  )
+})
