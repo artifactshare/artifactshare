@@ -57,6 +57,7 @@ async function fixture(t) {
   const logs = []
   const options = {
     pin,
+    wait: (delay) => Promise.resolve(events.push(`wait ${delay}`)),
     platform: 'linux',
     temporaryRoot: root,
     resolveExecutable: () => executable,
@@ -84,7 +85,11 @@ async function fixture(t) {
 }
 
 async function assertClean(f) {
-  assert.deepEqual(await fs.readdir(f.root), ['webkit-2359'])
+  assert.ok(
+    (await fs.readdir(f.root)).every((name) =>
+      ['webkit-2359', 'cache'].includes(name),
+    ),
+  )
 }
 
 async function assertOriginals(f) {
@@ -200,6 +205,12 @@ test('workspace Playwright resolves default, absolute, relative, INIT_CWD and he
 
 test('new selected revision cannot be hidden by a stale r2359 cache; missing executable fails before download', async (t) => {
   const f = await fixture(t)
+  f.options.cacheDirectory = await seedCache(f)
+  f.options.verify = (filename, ...args) => {
+    if (filename.startsWith(f.options.cacheDirectory))
+      f.events.push('cache read')
+    return verifyFile(filename, ...args)
+  }
   for (const executable of [
     path.join(f.root, 'webkit-2370/pw_run.sh'),
     path.join(f.root, 'missing/webkit-2359/pw_run.sh'),
@@ -220,6 +231,12 @@ for (const index of [0, 1]) {
   for (const state of ['wrong', 'missing', 'patched', 'symlink']) {
     test(`original ${index} ${state} fails before downloading or writing`, async (t) => {
       const f = await fixture(t)
+      f.options.cacheDirectory = await seedCache(f)
+      f.options.verify = (filename, ...args) => {
+        if (filename.startsWith(f.options.cacheDirectory))
+          f.events.push('cache read')
+        return verifyFile(filename, ...args)
+      }
       if (state === 'missing' || state === 'symlink')
         await fs.unlink(f.targets[index])
       if (state === 'symlink') await fs.symlink(f.executable, f.targets[index])
@@ -300,7 +317,7 @@ for (const failure of [
     }
     await assert.rejects(replaceWebkitLibsoup(f.options), /workaround failed/)
     assert.ok(!f.events.includes('write'))
-    assert.deepEqual(f.logs, [])
+    assert.ok(!f.logs.some((message) => message.startsWith('Replaced ')))
     await assertOriginals(f)
     await assertClean(f)
   })
@@ -322,7 +339,7 @@ for (const failure of ['write', 'readback']) {
       replaceWebkitLibsoup(f.options),
       failure === 'write' ? /write denied/ : /SHA-256 mismatch/,
     )
-    assert.deepEqual(f.logs, [])
+    assert.ok(!f.logs.some((message) => message.startsWith('Replaced ')))
     await assertClean(f)
   })
 }
@@ -435,8 +452,256 @@ for (const index of [0, 1]) {
         replaceWebkitLibsoup(f.options),
         failure === 'missing' ? /read-back unavailable/ : /SHA-256 mismatch/,
       )
-      assert.deepEqual(f.logs, [])
+      assert.ok(!f.logs.some((message) => message.startsWith('Replaced ')))
       await assertClean(f)
     })
   }
+}
+
+async function seedCache(f) {
+  const cache = path.join(f.root, 'cache')
+  for (const [i, library] of f.pin.libraries.entries()) {
+    const filename = path.join(cache, library.path)
+    await fs.mkdir(path.dirname(filename), { recursive: true })
+    await fs.writeFile(filename, replacements[i])
+  }
+  return cache
+}
+
+for (const failure of [
+  'network',
+  '503',
+  '429',
+  '408',
+  'truncated',
+  'oversized',
+  'hash',
+  'interrupted',
+  'timeout',
+]) {
+  test(`archive ${failure} retries once with clean exclusive destination`, async (t) => {
+    const f = await fixture(t)
+    let attempts = 0
+    const delays = []
+    if (failure === 'timeout') {
+      t.mock.method(AbortSignal, 'timeout', (milliseconds) => {
+        assert.equal(milliseconds, 180_000)
+        return attempts === 0
+          ? AbortSignal.abort(new DOMException('timed out', 'TimeoutError'))
+          : new AbortController().signal
+      })
+    }
+    f.options.wait = async (delay) => {
+      delays.push(delay)
+      assert.deepEqual(f.events, [])
+      await assertOriginals(f)
+    }
+    f.options.download = (pin, destination) =>
+      downloadArchive(pin, destination, async () => {
+        await assert.rejects(fs.lstat(destination), { code: 'ENOENT' })
+        attempts++
+        if (attempts > 1) return new Response(archiveBytes)
+        if (failure === 'network') throw new Error('network unavailable')
+        if (failure === 'timeout') return new Response(archiveBytes)
+        if (['503', '429', '408'].includes(failure))
+          return new Response('', { status: Number(failure) })
+        if (failure === 'interrupted')
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('partial'))
+              },
+              pull(controller) {
+                controller.error(new Error('stream interrupted'))
+              },
+            }),
+          )
+        return new Response(
+          failure === 'truncated'
+            ? 'short'
+            : failure === 'oversized'
+              ? archiveBytes + 'extra'
+              : 'x'.repeat(pin.size),
+        )
+      })
+    await replaceWebkitLibsoup(f.options)
+    assert.equal(attempts, 2)
+    assert.deepEqual(delays, [2000])
+    assert.match(f.logs[0], /attempt 1\/4 failed:/)
+    assert.match(
+      f.logs[0],
+      failure === 'hash'
+        ? /SHA-256/
+        : failure === 'timeout'
+          ? /aborted/
+          : failure === 'network'
+            ? /network unavailable/
+            : failure === 'interrupted'
+              ? /stream interrupted/
+              : ['503', '429', '408'].includes(failure)
+                ? new RegExp(`HTTP ${failure}`)
+                : /byte count/,
+    )
+    assert.deepEqual(f.events, ['extract', 'write', 'write'])
+    await assertClean(f)
+  })
+}
+
+test('persistent transport failure stops at four attempts, three waits, cleans partial bytes and preserves originals', async (t) => {
+  const f = await fixture(t)
+  let attempts = 0
+  f.options.download = (pin, destination) =>
+    downloadArchive(pin, destination, () => {
+      attempts++
+      return Promise.resolve(new Response('partial'))
+    })
+  await assert.rejects(
+    replaceWebkitLibsoup(f.options),
+    /failed to download archive:.*byte count.*removed or re-pinned/,
+  )
+  assert.equal(attempts, 4)
+  assert.deepEqual(f.events, ['wait 2000', 'wait 5000', 'wait 10000'])
+  assert.equal(f.logs.length, 4)
+  f.logs.forEach((message, index) =>
+    assert.match(message, new RegExp(`attempt ${index + 1}/4 failed:`)),
+  )
+  await assertOriginals(f)
+  await assertClean(f)
+})
+
+for (const failure of ['404', 'disk']) {
+  test(`${failure} download error is terminal`, async (t) => {
+    const f = await fixture(t)
+    let attempts = 0
+    f.options.download = async (pin, destination) => {
+      attempts++
+      if (failure === 'disk') await fs.writeFile(destination, 'existing')
+      await downloadArchive(pin, destination, () =>
+        Promise.resolve(
+          new Response(archiveBytes, { status: failure === '404' ? 404 : 200 }),
+        ),
+      )
+    }
+    await assert.rejects(
+      replaceWebkitLibsoup(f.options),
+      failure === '404' ? /HTTP 404/ : /EEXIST/,
+    )
+    assert.equal(attempts, 1)
+    assert.deepEqual(f.events, [])
+    await assertOriginals(f)
+    await assertClean(f)
+  })
+}
+
+for (const state of [
+  'valid',
+  'missing directory',
+  'missing member',
+  'wrong 0',
+  'wrong 1',
+  'directory',
+  'symlink',
+]) {
+  for (const suffix of ['', path.sep]) {
+    test(`cache ${state}${suffix ? ' with trailing slash' : ''} selects a complete verified source and supports reuse`, async (t) => {
+      const f = await fixture(t)
+      const cache = await seedCache(f)
+      const member = path.join(
+        cache,
+        f.pin.libraries[state === 'wrong 1' ? 1 : 0].path,
+      )
+      if (state === 'missing directory') await fs.rm(cache, { recursive: true })
+      if (['missing member', 'directory', 'symlink'].includes(state))
+        await fs.unlink(member)
+      if (state.startsWith('wrong')) await fs.writeFile(member, 'bad')
+      if (state === 'directory') await fs.mkdir(member)
+      if (state === 'symlink') await fs.symlink(f.targets[0], member)
+      f.options.cacheDirectory = cache + suffix
+      await replaceWebkitLibsoup(f.options)
+      assert.deepEqual(
+        f.events,
+        state === 'valid'
+          ? ['write', 'write']
+          : ['download', 'extract', 'write', 'write'],
+      )
+      if (state !== 'valid') assert.match(f.logs[0], /cache rejected:/)
+      for (const [i, library] of f.pin.libraries.entries()) {
+        await verifyFile(path.join(cache, library.path), library.replacement)
+        assert.equal((await fs.stat(f.targets[i])).mode & 0o777, 0o751)
+        assert.equal(
+          await fs.readlink(
+            path.join(path.dirname(f.targets[i]), 'libsoup-3.0.so.0'),
+          ),
+          path.basename(f.targets[i]),
+        )
+        await fs.writeFile(f.targets[i], originals[i])
+      }
+      f.events.length = 0
+      await replaceWebkitLibsoup(f.options)
+      assert.deepEqual(f.events, ['write', 'write'])
+      assert.deepEqual((await fs.readdir(f.root)).sort(), [
+        'cache',
+        'webkit-2359',
+      ])
+    })
+  }
+}
+
+for (const failure of ['archive', 'extraction', 'staged']) {
+  test(`${failure} failure never publishes cache or retries later stages`, async (t) => {
+    const f = await fixture(t)
+    f.options.cacheDirectory = path.join(f.root, 'cache')
+    if (failure === 'archive')
+      f.options.download = (_, destination) => fs.writeFile(destination, 'bad')
+    if (failure === 'extraction')
+      f.options.extract = () => Promise.reject(new Error('unzip failed'))
+    if (failure === 'staged') {
+      const extract = f.options.extract
+      f.options.extract = async (...args) => {
+        await extract(...args)
+        await fs.writeFile(path.join(args[1], f.pin.libraries[1].path), 'bad')
+      }
+    }
+    await assert.rejects(replaceWebkitLibsoup(f.options), /workaround failed/)
+    assert.equal(
+      f.events.filter((event) => event === 'download').length,
+      failure === 'archive' ? 0 : 1,
+    )
+    assert.equal(
+      f.events.filter((event) => event.startsWith('wait')).length,
+      failure === 'archive' ? 3 : 0,
+    )
+    await assert.rejects(fs.lstat(f.options.cacheDirectory), { code: 'ENOENT' })
+    await assertOriginals(f)
+    await assertClean(f)
+  })
+}
+
+for (const phase of ['read', 'publication']) {
+  test(`cache ${phase} I/O failure is terminal and cleans unpublished staging`, async (t) => {
+    const f = await fixture(t)
+    const cache =
+      phase === 'read' ? await seedCache(f) : path.join(f.root, 'cache')
+    f.options.cacheDirectory = cache
+    f.options.verify = (filename, ...args) => {
+      if (
+        phase === 'read'
+          ? filename.startsWith(`${cache}/`)
+          : filename.startsWith(`${cache}.staging-`)
+      )
+        return Promise.reject(
+          Object.assign(new Error('cache I/O failed'), { code: 'EIO' }),
+        )
+      return verifyFile(filename, ...args)
+    }
+    await assert.rejects(
+      replaceWebkitLibsoup(f.options),
+      /failed to (verify cached libraries|publish verified cache): cache I\/O failed/,
+    )
+    assert.deepEqual(f.events, phase === 'read' ? [] : ['download', 'extract'])
+    if (phase === 'publication')
+      await assert.rejects(fs.lstat(cache), { code: 'ENOENT' })
+    await assertOriginals(f)
+    await assertClean(f)
+  })
 }

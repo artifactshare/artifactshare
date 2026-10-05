@@ -57,10 +57,26 @@ jobs:
         run: pnpm fixtures:build
       - if: matrix.suite == 'behavior-browser' || matrix.suite == 'web-unit'
         run: pnpm --filter @artifactshare/contract build
+      - name: Compute WebKit libsoup cache key
+        id: webkit-libsoup-cache-key
+        if: matrix.project == 'webkit'
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { PIN } from './scripts/ci/replace-webkit-libsoup.mjs'
+          console.log(`key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map(library => library.replacement).join('-')}`)
+          NODE
+      - name: Cache verified WebKit libsoup libraries
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.project == 'webkit'
+        with:
+          path: ${{ runner.temp }}/webkit-libsoup-cache
+          key: ${{ steps.webkit-libsoup-cache-key.outputs.key }}
       - if: matrix.suite == 'behavior-browser'
         run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
       - if: matrix.project == 'webkit'
         run: node scripts/ci/replace-webkit-libsoup.mjs
+        env:
+          WEBKIT_LIBSOUP_CACHE_DIR: ${{ runner.temp }}/webkit-libsoup-cache
       - name: Repeat the whole suite
         env:
           SHARD: ${{ toJSON(matrix) }}
