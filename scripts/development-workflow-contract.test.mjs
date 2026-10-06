@@ -135,6 +135,9 @@ test('queue rebuild confirms removal and monitoring requires manual recovery', (
     'bounded membership reconciliation and enqueue restoration',
     'monitoring is passive: it never dequeues or enqueues',
     'one bounded GraphQL read',
+    'a confirmed merge returns the merged result',
+    'a closed PR fails without rebuild advice',
+    'the timeout retains the unavailable entry state, read error, and manual rerun instruction',
     'Time in the current state is unknown',
     'manually rerun `pnpm pr:queue -- --pr <number>`',
   ])

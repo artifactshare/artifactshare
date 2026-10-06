@@ -527,13 +527,19 @@ for (const recovery of [
         )
       },
     })
-    await assert.rejects(
-      queue({ ...h, args: noWait }),
-      new RegExp(
-        `confirmation unavailable; recovery: ${['MERGED', 'CLOSED'].includes(recovery) ? recovery.toLowerCase() : 'queued'}`,
-        'u',
-      ),
-    )
+    if (recovery === 'MERGED')
+      assert.deepEqual(await queue({ ...h, args: noWait }), {
+        kind: 'merged',
+        pr: 12,
+      })
+    else
+      await assert.rejects(
+        queue({ ...h, args: noWait }),
+        new RegExp(
+          `confirmation unavailable; recovery: ${recovery === 'CLOSED' ? 'closed' : 'queued'}`,
+          'u',
+        ),
+      )
     assert.equal(operations(h).filter((op) => op === 'dequeue').length, 1)
     assert.equal(
       operations(h).includes('enqueue'),
@@ -698,7 +704,7 @@ for (const budget of ['consecutive', 'total']) {
           budget === 'consecutive' ? '20' : '5',
         ],
       }),
-      /^Error: diagnostic budget exhausted$/u,
+      /Timed out.*Queue entry state: unavailable.*diagnostic budget exhausted.*Transient error budget exceeded.*pnpm pr:queue -- --pr 12/u,
     )
     assert.equal(polls, budget === 'consecutive' ? 3 : 24)
     assert.equal(operations(h).filter((op) => op === 'diagnostic').length, 1)
@@ -740,10 +746,16 @@ for (const state of ['OPEN', 'MERGED', 'CLOSED', 'unreadable']) {
         }
       },
     })
-    await assert.rejects(
-      queue({ ...h, args: noWait }),
-      /removal timeout.*recovery:/u,
-    )
+    if (state === 'MERGED')
+      assert.deepEqual(await queue({ ...h, args: noWait }), {
+        kind: 'merged',
+        pr: 12,
+      })
+    else
+      await assert.rejects(
+        queue({ ...h, args: noWait }),
+        /removal timeout.*recovery:/u,
+      )
     assert.equal(operations(h).filter((op) => op === 'dequeue').length, 1)
     assert.equal(
       operations(h).includes('enqueue'),
@@ -769,4 +781,77 @@ test('confirmed closed during removal suppresses recovery even if later reads fa
     /CLOSED.*recovery: closed/u,
   )
   assert.deepEqual(operations(h), ['read', 'dequeue', 'read'])
+})
+
+for (const phase of ['enqueue', 'restoration']) {
+  test(`merged during ${phase} verification returns the merged result`, async () => {
+    let reads = 0
+    const h = harness({
+      failing: (_, args) => phase === 'restoration' && args[1] === 'list',
+      graphql: (op) => {
+        if (op === 'read') {
+          reads += 1
+          if (reads === 1) return membership(oldEntry)
+          if (reads === 2 || (phase === 'restoration' && reads === 3))
+            return membership(null)
+          if (reads === (phase === 'restoration' ? 4 : 3))
+            return membership(null, 'MERGED')
+          assert.fail('No further reads after confirmed merge')
+        }
+        if (op === 'enqueue') throw new Error('enqueue response lost')
+      },
+    })
+    assert.deepEqual(await queue({ ...h, args: ['--pr', '12'] }), {
+      kind: 'merged',
+      pr: 12,
+    })
+    assert.equal(operations(h).filter((op) => op === 'enqueue').length, 1)
+    assert.equal(operations(h).filter((op) => op === 'dequeue').length, 1)
+    assert.ok(!h.logs.some((line) => line.startsWith('Queued')))
+    assert.match(h.logs.at(-1), /merged/u)
+  })
+}
+
+for (const state of ['MERGED', 'CLOSED']) {
+  test(`deadline diagnostic respects terminal PR state ${state}`, async () => {
+    const h = harness({
+      states: ['OPEN'],
+      graphql: (op) => {
+        if (op === 'diagnostic') return membership(null, state)
+      },
+    })
+    const result = queue({ ...h, args: ['--pr', '12', '--timeout', '1'] })
+    if (state === 'MERGED')
+      assert.deepEqual(await result, { kind: 'merged', pr: 12 })
+    else
+      await assert.rejects(result, (error) => {
+        assert.match(error.message, /is CLOSED; the queue entry is gone/u)
+        assert.doesNotMatch(error.message, /pr:queue|may still be running/u)
+        return true
+      })
+    assert.deepEqual(operations(h), ['read', 'diagnostic'])
+    assert.ok(!h.logs.some((line) => /pr:queue/u.test(line)))
+  })
+}
+
+test('failed timeout diagnostic preserves timeout context within the budget', async () => {
+  const h = harness({
+    states: ['OPEN'],
+    graphql: (op) => {
+      if (op === 'diagnostic') return { errors: [{ message: 'read failed' }] }
+    },
+  })
+  await assert.rejects(
+    queue({ ...h, args: ['--pr', '12', '--timeout', '1'] }),
+    (error) => {
+      assert.match(error.message, /Timed out after 1 minutes/u)
+      assert.match(error.message, /Queue entry state: unavailable/u)
+      assert.match(error.message, /GraphQL: read failed/u)
+      assert.match(error.message, /may still be running/u)
+      assert.match(error.message, /pnpm pr:queue -- --pr 12/u)
+      assert.doesNotMatch(error.message, /budget exceeded/u)
+      return true
+    },
+  )
+  assert.deepEqual(operations(h), ['read', 'diagnostic'])
 })

@@ -457,7 +457,8 @@ async function queue({
   if (initial.mergeQueueEntry) {
     let phase = 'clear the previous queue entry'
     // Guard from the very first mutation: even a rejected response may have
-    // removed membership remotely. Recovery must never hide the setup error.
+    // removed membership remotely. Only a confirmed merge supersedes the
+    // setup error; restoring membership alone is not a successful rebuild.
     try {
       const removed = await removeEntry(api, sleep, log)
       if (removed.state === 'MERGED') return { kind: 'merged', pr: parsed.pr }
@@ -474,6 +475,10 @@ async function queue({
       const recovery = GONE_STATES.has(error.state)
         ? { outcome: error.state.toLowerCase() }
         : await restoreEntry(api, sleep, log)
+      if (recovery.outcome === 'merged') {
+        log(`PR #${parsed.pr} merged.`)
+        return { kind: 'merged', pr: parsed.pr }
+      }
       throw new Error(
         `Could not ${phase} for PR #${parsed.pr}: ${errorText(error)}; recovery: ${recovery.outcome}${recovery.error ? ` (${errorText(recovery.error)})` : ''}.`,
       )
@@ -515,17 +520,29 @@ async function queue({
     await sleep(parsed.interval * 1000)
   }
   let diagnostic
+  let membership
   try {
-    diagnostic = timeoutDiagnostic(api.read(true), now)
+    membership = api.read(true)
   } catch (error) {
     consecutive += 1
     total += 1
-    if (consecutive > TRANSIENT_ERROR_BUDGET || total > TRANSIENT_ERROR_TOTAL)
-      throw error
     log(
       `gh call failed (${consecutive}/${TRANSIENT_ERROR_BUDGET}, ${total}/${TRANSIENT_ERROR_TOTAL} total): ${errorText(error)}`,
     )
-    diagnostic = `Queue diagnostic unavailable: ${errorText(error)}.`
+    diagnostic = `Queue entry state: unavailable; queue diagnostic unavailable: ${errorText(error)}.`
+    if (consecutive > TRANSIENT_ERROR_BUDGET || total > TRANSIENT_ERROR_TOTAL)
+      diagnostic += ' Transient error budget exceeded.'
+  }
+  if (membership) {
+    if (membership.state === 'MERGED') {
+      log(`PR #${parsed.pr} merged.`)
+      return { kind: 'merged', pr: parsed.pr }
+    }
+    if (membership.state === 'CLOSED')
+      throw new QueueGoneError(
+        `PR #${parsed.pr} is CLOSED; the queue entry is gone.`,
+      )
+    diagnostic = timeoutDiagnostic(membership, now)
   }
   throw new Error(
     `Timed out after ${parsed.timeout} minutes waiting for PR #${parsed.pr} to merge; the queue entry may still be running. ${diagnostic} Run pnpm pr:queue -- --pr ${parsed.pr} again to rebuild the entry.`,
