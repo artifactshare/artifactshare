@@ -127,3 +127,17 @@ test('documents changed browser repetitions without altering required-check poli
   ])
     assert.ok(workflow.includes(phrase), phrase)
 })
+
+test('queue rebuild confirms removal and monitoring requires manual recovery', () => {
+  for (const phrase of [
+    'GraphQL `dequeuePullRequest`, confirms the entry is absent within a bounded wait',
+    'then calls `enqueuePullRequest`',
+    'bounded membership reconciliation and enqueue restoration',
+    'monitoring is passive: it never dequeues or enqueues',
+    'one bounded GraphQL read',
+    'Time in the current state is unknown',
+    'manually rerun `pnpm pr:queue -- --pr <number>`',
+  ])
+    assert.ok(workflow.includes(phrase), phrase)
+  assert.doesNotMatch(workflow, /`--disable-auto` then `--auto`/u)
+})
