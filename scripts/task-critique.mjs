@@ -342,18 +342,16 @@ function commonPrompt(input) {
     'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.',
     'First report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.',
     'Allowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.',
-    'Give every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.',
-    'Use fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.',
-    'Use measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.',
+    'Give every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.',
+    'Use fix-now for reproducible task failure, correctness, safety, accessibility, data loss, or a change that clearly improves the user experience or UI with a proportional fix. State the concrete improvement and its evidence: what the user sees or can do differently.',
     'If a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.',
-    'Use do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.',
+    'Use do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.',
     ...(!input.screenOnly
       ? [
-          'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.',
+          'Check the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.',
         ]
       : []),
-    `Do not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the ${input.screenOnly ? 'user' : 'task'} decision.`,
-    'Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.',
+    'When only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.',
     ...(!input.screenOnly
       ? [
           'Every task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.',
@@ -380,7 +378,7 @@ function commonPrompt(input) {
           `Dispositions:\n${input.dispositions}`,
         ]
       : []),
-    `Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes ${input.screenOnly ? 'screen, state, viewport' : 'task, viewport, phase'}, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.`,
+    `Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes ${input.screenOnly ? 'screen, state, viewport' : 'task, viewport, phase'}, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.`,
   ].join('\n')
 }
 

@@ -117,6 +117,10 @@ test('carries accepted task behavior into the critique prompt', () => {
   assert.match(prompt, /閲覧数は所有者本人の閲覧も含む/u)
   assert.match(prompt, /管理外のファイルは更新しない/u)
   assert.match(prompt, /new evidence of user harm/u)
+  assert.match(
+    prompt,
+    /Without such evidence, do not reintroduce the same alternative as a new finding\./u,
+  )
 })
 
 test('accepts walkthrough evidence from the configured external capture root', () => {
@@ -403,30 +407,34 @@ test('builds distinct visual and task reviewer contracts', () => {
   assert.match(task, /needs to decide X/u)
   assert.match(
     task,
-    /Give every resolved finding one disposition: fix-now, measure-first, or do-not-pursue/u,
+    /Give every resolved finding one disposition: fix-now or do-not-pursue/u,
   )
-  assert.match(task, /numerator and denominator/u)
-  assert.match(task, /privacy boundary/u)
-  assert.match(task, /decision checkpoint/u)
-  assert.match(task, /decision rule stated before collection/u)
-  assert.match(task, /Do not delay these findings for measurement/u)
   assert.match(
     task,
-    /verified product-defect with a proportional fix that adds no product complexity/u,
+    /reproducible task failure, correctness, safety, accessibility, data loss/u,
   )
+  assert.match(
+    task,
+    /clearly improves the user experience or UI with a proportional fix/u,
+  )
+  assert.match(
+    task,
+    /State the concrete improvement and its evidence: what the user sees or can do differently/u,
+  )
+  assert.match(
+    task,
+    /verified capture\/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear/u,
+  )
+  assert.match(task, /Record the reason in one sentence/u)
+  assert.match(task, /Do not create product remediation work/u)
   assert.match(task, /needs-verification, return NEEDS INPUT/u)
   assert.match(task, /evidence that must be recaptured or supplied/u)
   assert.match(task, /remaining evidence is sufficient/u)
-  assert.match(task, /claims with no evidence of a product problem/u)
-  assert.match(
-    task,
-    /Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity/u,
-  )
   assert.match(task, /Each resolved finding includes/u)
   assert.match(task, /required evidence, with no disposition/u)
   assert.match(
     task,
-    /Split a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions/u,
+    /When only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence/u,
   )
   const request = invocation(
     { id: 'task', model: 'fable', effort: 'low' },
@@ -434,6 +442,111 @@ test('builds distinct visual and task reviewer contracts', () => {
   )
   assert.ok(request.args.includes('fable'))
   assert.ok(request.args.includes('low'))
+})
+
+const retiredMeasurementGuidance =
+  /measure-first|measurement|observation target|observable outcome|numerator|denominator|privacy boundary|decision checkpoint|decision timing|threshold|baseline|計測|観測対象|分子と分母|プライバシー境界|判定時期|閾値|基準値/iu
+
+test('fresh prompts use only clear-improvement dispositions in every mode', () => {
+  for (const [id, screenOnly] of [
+    ['visual', false],
+    ['task', false],
+    ['combined', false],
+    ['visual', true],
+    ['combined', true],
+  ]) {
+    const prompt = promptFor(
+      { id },
+      {
+        selected: ['task'],
+        evidencePaths: [],
+        imagePaths: [],
+        screenImagePaths: [],
+        sourcePaths: [],
+        screenOnly,
+      },
+    )
+    assert.doesNotMatch(prompt, retiredMeasurementGuidance)
+    assert.match(prompt, /one disposition: fix-now or do-not-pursue\./u)
+    assert.match(
+      prompt,
+      /clearly improves the user experience or UI with a proportional fix/u,
+    )
+    assert.match(
+      prompt,
+      /concrete improvement and its evidence: what the user sees or can do differently/u,
+    )
+    assert.match(prompt, /plausible problems whose improvement is not clear/u)
+    assert.match(prompt, /Record the reason in one sentence/u)
+    assert.match(
+      prompt,
+      /report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence/u,
+    )
+    assert.match(
+      prompt,
+      /needs-verification, return NEEDS INPUT without a disposition/u,
+    )
+    assert.match(prompt, /evidence that must be recaptured or supplied/u)
+    assert.match(
+      prompt,
+      /only when the remaining evidence is sufficient to complete the critique/u,
+    )
+  }
+})
+
+test('active critique documentation agrees with the clear-improvement contract', () => {
+  const workflow = readFileSync(
+    new URL('../docs/development-workflow.md', import.meta.url),
+    'utf8',
+  )
+    .split('## UI critique\n')[1]
+    .split('\n## ')[0]
+  const design = readFileSync(
+    new URL('../docs/reference/design-system.md', import.meta.url),
+    'utf8',
+  )
+  const policy = design.split('## 14. ')[1].split('\n## 15. ')[0]
+  for (const text of [workflow, policy]) {
+    assert.doesNotMatch(text, retiredMeasurementGuidance)
+    assert.match(text, /fix-now/u)
+    assert.match(text, /do-not-pursue/u)
+    assert.match(text, /needs-verification/u)
+    assert.match(text, /NEEDS INPUT/u)
+  }
+  assert.match(workflow, /separate disposition: `fix-now` or `do-not-pursue`/u)
+  assert.match(
+    workflow,
+    /clearly improves the user experience or UI with a proportional fix/u,
+  )
+  assert.match(workflow, /what the user sees or can do differently/u)
+  assert.match(workflow, /plausible problems whose improvement is not clear/u)
+  assert.match(
+    workflow,
+    /Record the reason in one sentence and do not create product remediation work/u,
+  )
+  assert.match(
+    workflow,
+    /that part as `fix-now` and the rest as `do-not-pursue`, as separate findings with their own evidence/u,
+  )
+  assert.match(
+    workflow,
+    /repeating the alternative without new evidence is not a new finding\./u,
+  )
+  assert.match(policy, /二つの処置/u)
+  assert.match(policy, /利用者体験や UI が明確に改善し、問題に見合った修正/u)
+  assert.match(policy, /具体的な改善と、その証拠/u)
+  assert.match(policy, /問題の可能性はあっても改善が明確でない/u)
+  assert.match(policy, /見送る理由を一文で記録し、改修作業を起票しない/u)
+  assert.match(
+    policy,
+    /その部分を `fix-now`、残りを `do-not-pursue` として別々の所見に分け、それぞれの証拠/u,
+  )
+  assert.match(design, /現行仕様 v0\.28 \(unreleased\)/u)
+  assert.match(
+    design,
+    /v0\.27 \| 批評所見を直す、計測する、見送るに分ける判断手順を追加/u,
+  )
+  assert.match(design, /### Unreleased[\s\S]*\| Unreleased \| v0\.28 \|/u)
 })
 
 test('selects one Codex layer with every validated PNG as an image argument', () => {
@@ -561,7 +674,10 @@ function readFile(path) {
 test('dispositions from earlier rounds reach every critique layer', () => {
   const dir = mkdtempSync(join(tmpdir(), 'critique-dispositions-'))
   const file = join(dir, 'dispositions.md')
-  writeFileSync(file, '- fixed: time and size wrapped in version rows\n')
+  writeFileSync(
+    file,
+    '- fixed: time and size wrapped in version rows\n- deferred: earlier measure-first measurement plan\n',
+  )
   assert.equal(
     parseArgs([
       '--walkthrough-root',
@@ -574,6 +690,7 @@ test('dispositions from earlier rounds reach every critique layer', () => {
     file,
   )
   const dispositions = readDispositions(file, dir)
+  assert.equal(dispositions, readFileSync(file, 'utf8').trim())
   const input = {
     selected: ['task'],
     evidencePaths: [],
@@ -589,6 +706,7 @@ test('dispositions from earlier rounds reach every critique layer', () => {
     const prompt = promptFor(layer, input)
     assert.match(prompt, /Do not re-raise a dispositioned finding/u)
     assert.match(prompt, /fixed: time and size wrapped in version rows/u)
+    assert.ok(prompt.includes(dispositions))
   }
   assert.doesNotMatch(
     promptFor(
@@ -982,8 +1100,8 @@ test('screen-only main preserves clean HEAD checks before and after providers', 
   assert.equal(calls, 1)
 })
 
-// Frozen output from origin/main (23bf001dfd10182cae358db54f5d70f591915887).
-test('walkthrough prompts retain the base wording and ordering for every reviewer', () => {
+// Literal expected prompts for the two-disposition clear-improvement contract.
+test('walkthrough prompts match the clear-improvement contract for every reviewer', () => {
   const input = {
     selected: ['review-new-reactions'],
     acceptedBehavior: ['Accepted behavior fixture.'],
@@ -995,10 +1113,10 @@ test('walkthrough prompts retain the base wording and ordering for every reviewe
   }
   const expected = {
     visual:
-      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\nStandalone screen PNG files: screens/viewer.png\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.',
-    task: 'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.',
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task failure, correctness, safety, accessibility, data loss, or a change that clearly improves the user experience or UI with a proportional fix. State the concrete improvement and its evidence: what the user sees or can do differently.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.',
+    task: 'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task failure, correctness, safety, accessibility, data loss, or a change that clearly improves the user experience or UI with a proportional fix. State the concrete improvement and its evidence: what the user sees or can do differently.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.',
     combined:
-      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now, measure-first, or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task breakage, correctness, safety, accessibility, data loss, established impact with a proportional fix, or a verified product-defect with a proportional fix that adds no product complexity. Do not delay these findings for measurement.\nUse measure-first when a product problem is plausible but its frequency, dominant cause, or user impact is unknown and a remediation would add product complexity. A measure-first finding must define the observable outcome, numerator and denominator, privacy boundary, decision checkpoint, and a decision rule stated before collection.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for verified capture/environment or artificial-seed defects, unsupported preferences, and claims with no evidence of a product problem. Unknown frequency or user impact belongs to measure-first only when evidence supports a plausible product problem, no fix-now condition applies, and remediation would add product complexity. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding or a measure-first project.\nDo not invent a decision threshold or measurement plan unless the proposed numerator and denominator can be observed within a stated privacy boundary and the threshold has a reason tied to the task decision.\nSplit a minimal fix-now repair from a larger measure-first remediation into separate findings with separate evidence and dispositions.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition. For measure-first, include all required measurement fields instead of proposing remediation UI.\nStandalone screen PNG files: screens/viewer.png\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.',
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for reproducible task failure, correctness, safety, accessibility, data loss, or a change that clearly improves the user experience or UI with a proportional fix. State the concrete improvement and its evidence: what the user sees or can do differently.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.',
   }
   for (const [id, prompt] of Object.entries(expected)) {
     assert.equal(promptFor({ id }, input), prompt)
