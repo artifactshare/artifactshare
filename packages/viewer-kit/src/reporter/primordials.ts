@@ -19,6 +19,12 @@ export function capturePrimordials(win: ReporterWindow) {
     win.Event.prototype,
     'defaultPrevented',
   )
+  const persistedGetter = win.PageTransitionEvent
+    ? win.Object.getOwnPropertyDescriptor(
+        win.PageTransitionEvent.prototype,
+        'persisted',
+      )
+    : undefined
   const buttonGetter = win.Object.getOwnPropertyDescriptor(
     win.MouseEvent.prototype,
     'button',
@@ -51,6 +57,10 @@ export function capturePrimordials(win: ReporterWindow) {
     defaultPreventedGetter && defaultPreventedGetter.get
       ? win.Function.prototype.call.bind(defaultPreventedGetter.get)
       : null
+  const persistedGet: ((event: Event) => boolean) | null =
+    persistedGetter && persistedGetter.get
+      ? win.Function.prototype.call.bind(persistedGetter.get)
+      : null
   const buttonGet: ((event: Event) => number) | null =
     buttonGetter && buttonGetter.get
       ? win.Function.prototype.call.bind(buttonGetter.get)
@@ -73,10 +83,10 @@ export function capturePrimordials(win: ReporterWindow) {
       : null
   const preventDefault: (event: Event) => void =
     win.Function.prototype.call.bind(win.Event.prototype.preventDefault)
-  const addEventListener: <K extends keyof GlobalEventHandlersEventMap>(
+  const addEventListener: <K extends keyof WindowEventMap>(
     target: EventTarget,
     type: K,
-    listener: (event: GlobalEventHandlersEventMap[K]) => void,
+    listener: (event: WindowEventMap[K]) => void,
     options?: boolean | AddEventListenerOptions,
   ) => void = win.Function.prototype.call.bind(
     win.EventTarget.prototype.addEventListener,
@@ -128,6 +138,7 @@ export function capturePrimordials(win: ReporterWindow) {
     trustedGet,
     targetGet,
     defaultPreventedGet,
+    persistedGet,
     buttonGet,
     metaKeyGet,
     ctrlKeyGet,

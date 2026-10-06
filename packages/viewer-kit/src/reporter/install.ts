@@ -1,6 +1,6 @@
 import { installCspViolations } from './csp-violations.js'
 import { installCodeCopy, updateMarkdownToc } from './toc.js'
-import { installMessageListener, ready } from './messaging.js'
+import { installMessageListener, readEventValue, ready } from './messaging.js'
 import { installAnchorObserver } from './mutations.js'
 import { capturePrimordials, type ReporterWindow } from './primordials.js'
 import { createReporterState } from './state.js'
@@ -37,7 +37,9 @@ export function installReporter(win: ReporterWindow) {
     ctx.documentToken = ''
   }
   installAnchorObserver(ctx)
-  ctx.win.addEventListener('pagehide', function () {
+  ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
+    if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)
+      return
     ctx.anchorObserver!.disconnect()
     ctx.win.clearTimeout(ctx.resolveTimer)
     ctx.win.clearTimeout(ctx.checkingTimer)

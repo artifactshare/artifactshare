@@ -1938,3 +1938,193 @@ test.each([
   expect(message.cssPath).toBe(expected)
   expect(doc.querySelector(message.cssPath!)).toBe(element)
 })
+
+function lifecycle(doc: Document, persisted: boolean) {
+  const realm = doc.defaultView as Window & typeof globalThis
+  realm.dispatchEvent(new realm.PageTransitionEvent('pagehide', { persisted }))
+  realm.dispatchEvent(new realm.PageTransitionEvent('pageshow', { persisted }))
+}
+
+const lifecycleHighlight = {
+  threadId: 'thread-1',
+  quotedText: 'selected words',
+  prefixText: '',
+  suffixText: '',
+  count: 1,
+}
+
+test('persisted lifecycle retains paint and observes later text mutations', async () => {
+  const doc = await fixture('<p id="selected">selected words</p>')
+  send('comment-highlights', { highlights: [lifecycleHighlight] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('attached'))
+  const paints = [...registry(doc).entries()]
+  const badge = doc.querySelector('.ash-comment-highlight-badge')!
+  const generation = results()!.generation
+  lifecycle(doc, true)
+  expect(paints.length).toBeGreaterThan(0)
+  for (const [name, highlight] of paints) {
+    expect(registry(doc).get(name)).toBe(highlight)
+    for (const range of highlight) {
+      expect(range.toString()).toBe('selected words')
+      expect(range.getBoundingClientRect().width).toBeGreaterThan(0)
+    }
+  }
+  expect(badge.isConnected).toBe(true)
+  expect(badge.getBoundingClientRect().width).toBeGreaterThan(0)
+  doc.querySelector('#selected')!.textContent = 'changed words'
+  await vi.waitFor(() => {
+    expect(results()!.generation).toBeGreaterThan(generation)
+    expect(results()?.results[0]?.state).toBe('checking')
+  })
+  const changedGeneration = results()!.generation
+  doc.querySelector('#selected')!.textContent = 'selected words'
+  await vi.waitFor(() => {
+    expect(results()!.generation).toBeGreaterThan(changedGeneration)
+    expect(results()?.results[0]?.state).toBe('attached')
+  })
+})
+
+// Resolve the barrier inside the observer's setTimeout call, before its 300 ms
+// debounce can fire. No reporter hook or timing race is needed.
+async function pendingLifecycleMutation(doc: Document) {
+  const realm: Window = doc.defaultView!
+  const original = realm.setTimeout
+  let scheduled!: () => void
+  const barrier = new Promise<void>((resolve) => {
+    scheduled = resolve
+  })
+  realm.setTimeout = ((
+    handler: TimerHandler,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
+    const id = original.call(realm, handler, delay, ...args)
+    if (delay === 300) scheduled()
+    return id
+  }) as typeof realm.setTimeout
+  try {
+    doc.querySelector('#selected')!.textContent = 'selected words'
+    await barrier
+  } finally {
+    realm.setTimeout = original
+  }
+}
+
+test('persisted lifecycle retains an already scheduled resolve debounce', async () => {
+  const doc = await fixture('<p id="selected">other words</p>')
+  send('comment-highlights', { highlights: [lifecycleHighlight] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('checking'))
+  const generation = results()!.generation
+  await pendingLifecycleMutation(doc)
+  lifecycle(doc, true)
+  await vi.waitFor(() => {
+    expect(results()!.generation).toBeGreaterThan(generation)
+    expect(results()?.results[0]?.state).toBe('attached')
+  })
+})
+
+test('persisted lifecycle retains the original checking deadline', async () => {
+  const doc = await fixture('<p>other words</p>')
+  send('comment-highlights', { highlights: [lifecycleHighlight] })
+  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('checking'))
+  const generation = results()!.generation
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  lifecycle(doc, true)
+  await vi.waitFor(
+    () => {
+      expect(results()!.generation).toBeGreaterThan(generation)
+      expect(results()?.results[0]?.state).toBe('needs-check')
+    },
+    { timeout: 2400 },
+  )
+}, 15000)
+
+test('non-persisted lifecycle removes paint and cancels pending reports', async () => {
+  const doc = await fixture(
+    '<p>painted words</p><p id="selected">other words</p>',
+  )
+  send('comment-highlights', {
+    highlights: [
+      {
+        ...lifecycleHighlight,
+        threadId: 'painted',
+        quotedText: 'painted words',
+      },
+      lifecycleHighlight,
+    ],
+  })
+  await vi.waitFor(() => {
+    expect(results()?.results.map((result) => result.state)).toEqual([
+      'attached',
+      'checking',
+    ])
+  })
+  send('verify-anchors', {
+    verificationId: 1,
+    anchors: [
+      { kind: 'text', thread: 'thread-1', quotedText: 'selected words' },
+    ],
+  })
+  const verdicts = () =>
+    messages.filter(
+      (message) => (message as { kind: string }).kind === 'anchor-verdicts',
+    )
+  await vi.waitFor(() => expect(verdicts().length).toBeGreaterThan(0))
+  const verdictCount = verdicts().length
+  const badge = doc.querySelector('.ash-comment-highlight-badge')!
+  await pendingLifecycleMutation(doc)
+  const generation = results()!.generation
+  lifecycle(doc, false)
+  expect(registry(doc).size).toBe(0)
+  expect(badge.isConnected).toBe(false)
+  doc.querySelector('#selected')!.textContent = 'changed again'
+  await new Promise((resolve) => setTimeout(resolve, 3500))
+  expect(results()!.generation).toBe(generation)
+  expect(verdicts()).toHaveLength(verdictCount)
+  expect(registry(doc).size).toBe(0)
+}, 15000)
+
+test.each([
+  [true, false],
+  [true, true],
+  [false, false],
+  [false, true],
+])(
+  'lifecycle uses captured native persistence despite authored properties: persisted=%s, throwing=%s',
+  async (persisted, throwing) => {
+    const doc = await fixture('<p>selected words</p>')
+    send('comment-highlights', { highlights: [lifecycleHighlight] })
+    await vi.waitFor(() =>
+      expect(results()?.results[0]?.state).toBe('attached'),
+    )
+    const realm = doc.defaultView as Window & typeof globalThis
+    const prototype = realm.PageTransitionEvent.prototype
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'persisted')!
+    try {
+      Object.defineProperty(prototype, 'persisted', {
+        configurable: true,
+        get() {
+          if (throwing) throw new Error('authored getter')
+          return !persisted
+        },
+      })
+      const event = new realm.PageTransitionEvent('pagehide', { persisted })
+      Object.defineProperty(event, 'persisted', {
+        get() {
+          if (throwing) throw new Error('authored property')
+          return !persisted
+        },
+      })
+      realm.dispatchEvent(event)
+      expect(registry(doc).size > 0).toBe(persisted)
+      if (persisted) {
+        const invalid = new realm.Event('pagehide')
+        Object.defineProperty(invalid, 'persisted', { value: true })
+        realm.dispatchEvent(invalid)
+        expect(registry(doc).size).toBe(0)
+      }
+    } finally {
+      Object.defineProperty(prototype, 'persisted', descriptor)
+    }
+  },
+)
