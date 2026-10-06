@@ -15,10 +15,6 @@ const REPLACED_CONCLUSIONS = new Set(['cancelled', 'skipped', 'stale'])
 // How long a replaced run may go without a successor before it is reported.
 const REPLACEMENT_GRACE_MS = 15 * 60_000
 const RETRY_DELAY_MS = 5_000
-// gh's wording when auto-merge is not enabled (observed: "Can't disable
-// auto-merge for this pull request.").
-const NOT_QUEUED =
-  /can.t disable auto-merge|not enabled|not queued|is not in a merge queue|no auto-merge/iu
 const GONE_STATES = new Set(['CLOSED', 'MERGED'])
 
 /** The PR left the queue for good; no polling can recover from this. */
@@ -147,7 +143,7 @@ function prState(exec, pr) {
       'view',
       String(pr),
       '--json',
-      'state,isDraft,mergeStateStatus',
+      'id,state,isDraft,mergeStateStatus',
     ]),
   )
 }
@@ -262,6 +258,173 @@ async function ghWithRetries(
   throw lastError
 }
 
+// All queue membership requests are bounded, including timeout diagnostics.
+function queueApi(exec, pullRequestId) {
+  if (!pullRequestId) throw new Error('Missing pull request node ID.')
+  const request = (query) => {
+    const result = JSON.parse(
+      output(
+        exec,
+        'gh',
+        [
+          'api',
+          'graphql',
+          '-f',
+          `query=${query}`,
+          '-f',
+          `pullRequestId=${pullRequestId}`,
+        ],
+        { timeout: 30_000 },
+      ),
+    )
+    if (result.errors?.length)
+      throw new Error(
+        `GraphQL: ${result.errors.map((error) => error.message).join('; ')}`,
+      )
+    if (!result.data) throw new Error('Missing GraphQL data.')
+    return result.data
+  }
+  return {
+    read(diagnostic = false) {
+      const fields = diagnostic
+        ? 'id state enqueuedAt headCommit { statusCheckRollup { state } }'
+        : 'id enqueuedAt'
+      const data = request(`query($pullRequestId: ID!) {
+        node(id: $pullRequestId) { ... on PullRequest {
+          id state mergeQueueEntry { ${fields} }
+        } }
+      }`)
+      const pr = data.node
+      if (
+        !pr?.id ||
+        !['OPEN', 'MERGED', 'CLOSED'].includes(pr.state) ||
+        !Object.hasOwn(pr, 'mergeQueueEntry') ||
+        (pr.mergeQueueEntry !== null && !pr.mergeQueueEntry?.id)
+      )
+        throw new Error('Missing or invalid pull request queue data.')
+      return pr
+    },
+    dequeue() {
+      const data = request(`mutation($pullRequestId: ID!) {
+        dequeuePullRequest(input: { id: $pullRequestId }) { clientMutationId }
+      }`)
+      if (!data.dequeuePullRequest)
+        throw new Error('Missing dequeuePullRequest payload.')
+    },
+    enqueue() {
+      const data = request(`mutation($pullRequestId: ID!) {
+        enqueuePullRequest(input: { pullRequestId: $pullRequestId }) {
+          mergeQueueEntry { id enqueuedAt }
+        }
+      }`)
+      if (!data.enqueuePullRequest)
+        throw new Error('Missing enqueuePullRequest payload.')
+      return data.enqueuePullRequest.mergeQueueEntry
+    },
+  }
+}
+
+// Each ambiguous enqueue is read back before another mutation. Even recovery
+// has only three mutation attempts and three verification reads.
+async function enqueueEntry(api, sleep, log) {
+  let lastError
+  let membership
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    membership = undefined
+    try {
+      const entry = api.enqueue()
+      if (entry?.id) return { outcome: 'queued' }
+      lastError = new Error('Enqueue returned no queue entry.')
+    } catch (error) {
+      lastError = error
+    }
+    try {
+      membership = api.read()
+      if (GONE_STATES.has(membership.state))
+        return { outcome: membership.state.toLowerCase(), error: lastError }
+      if (membership.mergeQueueEntry) return { outcome: 'queued' }
+    } catch (error) {
+      log(`Enqueue verification failed: ${errorText(error)}`)
+    }
+    if (attempt < 3) await sleep(RETRY_DELAY_MS)
+  }
+  return {
+    outcome: membership ? 'not queued' : 'queue status unknown',
+    error: lastError,
+  }
+}
+
+async function restoreEntry(api, sleep, log) {
+  let membership
+  try {
+    membership = await ghWithRetries(() => api.read(), log, sleep)
+  } catch (error) {
+    log(`Queue reconciliation failed: ${errorText(error)}`)
+  }
+  if (membership && GONE_STATES.has(membership.state))
+    return { outcome: membership.state.toLowerCase() }
+  if (membership?.mergeQueueEntry) return { outcome: 'queued' }
+  return enqueueEntry(api, sleep, log)
+}
+
+async function removeEntry(api, sleep, log) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      api.dequeue()
+      break
+    } catch (error) {
+      // The mutation might have succeeded remotely. Never repeat it unless a
+      // bounded read proves the old membership is still present.
+      let membership
+      try {
+        membership = api.read()
+      } catch (readError) {
+        throw new Error(
+          `${errorText(error)}; reconciliation: ${errorText(readError)}`,
+        )
+      }
+      if (
+        membership.state !== 'OPEN' ||
+        !membership.mergeQueueEntry ||
+        attempt === 3
+      )
+        throw Object.assign(new Error(errorText(error)), {
+          state: membership.state,
+        })
+      log(`Dequeue failed (${attempt}/3): ${errorText(error)}`)
+      await sleep(RETRY_DELAY_MS)
+    }
+  }
+  let lastError
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const membership = api.read()
+      if (membership.state === 'MERGED') return membership
+      if (membership.state === 'CLOSED')
+        throw Object.assign(new QueueGoneError('PR is CLOSED.'), {
+          state: 'CLOSED',
+        })
+      if (!membership.mergeQueueEntry) return membership
+      lastError = new Error('Queue entry remains present after dequeue.')
+    } catch (error) {
+      if (error instanceof QueueGoneError) throw error
+      lastError = error
+    }
+    if (attempt < 3) await sleep(RETRY_DELAY_MS)
+  }
+  throw lastError
+}
+
+function timeoutDiagnostic(membership, now) {
+  const entry = membership.mergeQueueEntry
+  if (!entry) return 'Queue entry: absent.'
+  const stamp = Date.parse(entry.enqueuedAt)
+  const age = Number.isFinite(stamp)
+    ? `${Math.max(0, Math.floor((now() - stamp) / 1000))} seconds`
+    : 'unknown'
+  return `Queue entry state: ${entry.state ?? 'unknown'}; merge-group rollup state: ${entry.headCommit?.statusCheckRollup?.state ?? 'unknown'}; time in current state: unknown (GitHub does not expose a transition timestamp); elapsed since enqueue: ${age}.`
+}
+
 async function queue({
   args = process.argv.slice(2),
   exec = execFileSync,
@@ -279,35 +442,58 @@ async function queue({
     throw new Error(`PR #${parsed.pr} is ${state.state}.`)
   if (state.isDraft)
     throw new Error(`PR #${parsed.pr} is a Draft; run pnpm pr:ready first.`)
-  // Rebuild the queue entry so it runs the current head, not an old snapshot.
-  // A previous entry that cannot be cleared is an error: continuing would
-  // watch a run of the old snapshot.
-  try {
-    exec('gh', ['pr', 'merge', String(parsed.pr), '--disable-auto'], {
-      encoding: 'utf8',
-    })
-  } catch (error) {
-    const text = errorText(error)
-    if (!NOT_QUEUED.test(text))
+  const api = queueApi(exec, state.id)
+  const initial = await ghWithRetries(() => api.read(), log, sleep)
+  if (initial.state === 'MERGED') return { kind: 'merged', pr: parsed.pr }
+  if (initial.state !== 'OPEN')
+    throw new Error(`PR #${parsed.pr} is ${initial.state}.`)
+  let known
+  const snapshot = async () =>
+    new Set(
+      (await ghWithRetries(() => queueRuns(exec, parsed.pr), log, sleep)).map(
+        (run) => run.databaseId,
+      ),
+    )
+  if (initial.mergeQueueEntry) {
+    let phase = 'clear the previous queue entry'
+    // Guard from the very first mutation: even a rejected response may have
+    // removed membership remotely. Only a confirmed merge supersedes the
+    // setup error; restoring membership alone is not a successful rebuild.
+    try {
+      const removed = await removeEntry(api, sleep, log)
+      if (removed.state === 'MERGED') return { kind: 'merged', pr: parsed.pr }
+      phase = 'snapshot earlier queue runs'
+      known = await snapshot()
+      phase = 'enqueue the rebuilt queue entry'
+      const result = await enqueueEntry(api, sleep, log)
+      if (result.outcome !== 'queued')
+        throw Object.assign(
+          new Error(`${errorText(result.error)}; ${result.outcome}`),
+          { state: result.outcome.toUpperCase() },
+        )
+    } catch (error) {
+      const recovery = GONE_STATES.has(error.state)
+        ? { outcome: error.state.toLowerCase() }
+        : await restoreEntry(api, sleep, log)
+      if (recovery.outcome === 'merged') {
+        log(`PR #${parsed.pr} merged.`)
+        return { kind: 'merged', pr: parsed.pr }
+      }
       throw new Error(
-        `Could not clear the previous queue entry for PR #${parsed.pr}: ${text}`,
+        `Could not ${phase} for PR #${parsed.pr}: ${errorText(error)}; recovery: ${recovery.outcome}${recovery.error ? ` (${errorText(recovery.error)})` : ''}.`,
       )
+    }
+  } else {
+    known = await snapshot()
+    await ghWithRetries(
+      () =>
+        exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
+          encoding: 'utf8',
+        }),
+      log,
+      sleep,
+    )
   }
-  // Runs that exist now belong to earlier entries (including the one just
-  // cancelled); they are never this attempt's run.
-  const known = new Set(
-    (await ghWithRetries(() => queueRuns(exec, parsed.pr), log, sleep)).map(
-      (run) => run.databaseId,
-    ),
-  )
-  await ghWithRetries(
-    () =>
-      exec('gh', ['pr', 'merge', String(parsed.pr), '--auto'], {
-        encoding: 'utf8',
-      }),
-    log,
-    sleep,
-  )
   log(`Queued PR #${parsed.pr}.`)
   if (!parsed.wait) return { kind: 'queued', pr: parsed.pr }
 
@@ -333,8 +519,33 @@ async function queue({
     if (result) return result
     await sleep(parsed.interval * 1000)
   }
+  let diagnostic
+  let membership
+  try {
+    membership = api.read(true)
+  } catch (error) {
+    consecutive += 1
+    total += 1
+    log(
+      `gh call failed (${consecutive}/${TRANSIENT_ERROR_BUDGET}, ${total}/${TRANSIENT_ERROR_TOTAL} total): ${errorText(error)}`,
+    )
+    diagnostic = `Queue entry state: unavailable; queue diagnostic unavailable: ${errorText(error)}.`
+    if (consecutive > TRANSIENT_ERROR_BUDGET || total > TRANSIENT_ERROR_TOTAL)
+      diagnostic += ' Transient error budget exceeded.'
+  }
+  if (membership) {
+    if (membership.state === 'MERGED') {
+      log(`PR #${parsed.pr} merged.`)
+      return { kind: 'merged', pr: parsed.pr }
+    }
+    if (membership.state === 'CLOSED')
+      throw new QueueGoneError(
+        `PR #${parsed.pr} is CLOSED; the queue entry is gone.`,
+      )
+    diagnostic = timeoutDiagnostic(membership, now)
+  }
   throw new Error(
-    `Timed out after ${parsed.timeout} minutes waiting for PR #${parsed.pr} to merge; the queue entry may still be running.`,
+    `Timed out after ${parsed.timeout} minutes waiting for PR #${parsed.pr} to merge; the queue entry may still be running. ${diagnostic} Run pnpm pr:queue -- --pr ${parsed.pr} again to rebuild the entry.`,
   )
 }
 
