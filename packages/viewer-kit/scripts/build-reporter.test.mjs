@@ -1434,3 +1434,168 @@ test('stable bundle function calls remain valid through callbacks and unrelated 
   `),
   )
 })
+
+test('generated lifecycle retains native persisted state and otherwise performs ordered cleanup', async () => {
+  const { body } = await renderReporter()
+  // Keep capture, install and clearMarks real; stub unrelated document setup.
+  const install = new Function(
+    'return ' +
+      body.replace(
+        'installReporter(window);',
+        `
+    installAnchorObserver = function(ctx) {
+      ctx.anchorObserver = {disconnect() { ctx.win.calls.push('disconnect'); }};
+      if (ctx.win.replaceListener) ctx.win.addEventListener = function(kind) {
+        if (kind === 'pagehide') throw new Error('replaced window listener');
+      };
+    };
+    installCodeCopy = installMessageListener = installCspViolations = ready = function() {};
+    return installReporter;
+  `,
+      ),
+  )()
+  for (const mode of [
+    'true',
+    'captured-listener',
+    'false',
+    'invalid',
+    'missing',
+    'absent',
+  ]) {
+    const calls = []
+    const listeners = new Map()
+    const nativeValues = new WeakMap()
+    class PageTransitionEvent {
+      constructor(persisted) {
+        nativeValues.set(this, persisted)
+      }
+      get persisted() {
+        if (!nativeValues.has(this)) throw new TypeError('invalid event')
+        return nativeValues.get(this)
+      }
+    }
+    class EventTarget {
+      addEventListener(kind, callback) {
+        listeners.set(kind, callback)
+      }
+    }
+    class Event {
+      preventDefault() {}
+    }
+    class Element {
+      closest() {}
+      getAttribute() {}
+      hasAttribute() {}
+    }
+    const win = {
+      parent: { postMessage() {} },
+      Function,
+      Object,
+      Array,
+      Map,
+      WeakMap,
+      Uint8Array,
+      Event,
+      EventTarget,
+      Element,
+      MouseEvent: class {},
+      Range: class {},
+      PageTransitionEvent,
+      calls,
+      replaceListener: mode === 'captured-listener',
+      document: {
+        addEventListener() {},
+        querySelectorAll() {
+          return [
+            {
+              remove() {
+                calls.push('overlay')
+              },
+            },
+          ]
+        },
+        getElementById() {
+          return null
+        },
+      },
+      addEventListener(kind, callback) {
+        listeners.set(kind, callback)
+      },
+      clearTimeout(id) {
+        calls.push(['timeout', id])
+      },
+      cancelAnimationFrame(id) {
+        calls.push(['frame', id])
+      },
+      setInterval() {
+        return 1
+      },
+      CSS: {
+        highlights: {
+          delete(name) {
+            calls.push(['highlight', name])
+          },
+        },
+      },
+    }
+    if (mode === 'missing') delete PageTransitionEvent.prototype.persisted
+    if (mode === 'absent') win.PageTransitionEvent = undefined
+    const ctx = install(win)
+    ctx.resolveTimer = 11
+    ctx.checkingTimer = 12
+    ctx.badgePositionFrame = 13
+    ctx.badges = [
+      {
+        badge: {
+          remove() {
+            calls.push('badge')
+          },
+        },
+      },
+    ]
+    ctx.highlightNames = ['paint']
+    ctx.paintedAnchors = [{}]
+    ctx.textPaints = [{}]
+    Object.defineProperty(PageTransitionEvent.prototype, 'persisted', {
+      configurable: true,
+      get() {
+        throw new Error('replaced prototype')
+      },
+    })
+    const event =
+      mode === 'invalid'
+        ? {}
+        : new PageTransitionEvent(
+            mode === 'true' || mode === 'captured-listener',
+          )
+    Object.defineProperty(event, 'persisted', {
+      get() {
+        throw new Error('authored property')
+      },
+    })
+    assert.equal(listeners.has('pageshow'), false)
+    listeners.get('pagehide')(event)
+    assert.deepEqual(
+      calls,
+      mode === 'true' || mode === 'captured-listener'
+        ? []
+        : [
+            'disconnect',
+            ['timeout', 11],
+            ['timeout', 12],
+            ['frame', 13],
+            'badge',
+            ['highlight', 'paint'],
+            'overlay',
+          ],
+    )
+    assert.equal(
+      ctx.paintedAnchors.length,
+      mode === 'true' || mode === 'captured-listener' ? 1 : 0,
+    )
+    assert.equal(
+      ctx.textPaints.length,
+      mode === 'true' || mode === 'captured-listener' ? 1 : 0,
+    )
+  }
+})
