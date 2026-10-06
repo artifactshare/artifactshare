@@ -16,7 +16,7 @@ import {
   rectFromPointer,
   sendOutsidePointerDown,
 } from './badges.js'
-import { clearMarks, applyHighlights } from './highlights.js'
+import { clearMarks, applyHighlights, scheduleChecking } from './highlights.js'
 import { onAnnotateHover, onAnnotateClick, verifyAnchors } from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
@@ -43,6 +43,15 @@ export function installReporter(win: ReporterWindow) {
     ctx.win.clearTimeout(ctx.checkingTimer)
     ctx.win.cancelAnimationFrame(ctx.badgePositionFrame)
     clearMarks(ctx)
+  })
+  ctx.win.addEventListener('pageshow', function (event) {
+    if (
+      !event.persisted ||
+      (!ctx.checkingHighlights.length && !ctx.checkingAnchors.length)
+    )
+      return
+    installAnchorObserver(ctx)
+    scheduleChecking(ctx)
   })
   ctx.doc.addEventListener('click', function (event) {
     let selection = ctx.win.getSelection()

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Resume local preview anchor checking follow-ups after back/forward restoration.
+
 - Internal: harden shared preview-reporter generation guards and preserve text verification when page code replaces array methods.
 
 - Internal: build the preview reporter from typed modules and test the shared anchor engine directly, preserving annotation and handshake behavior.

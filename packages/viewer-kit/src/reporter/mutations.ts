@@ -122,9 +122,9 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
 }
 export function installAnchorObserver(ctx: ReporterState) {
   ctx.observedAnchorRoot = anchorRoot(ctx)
-  const observer = new ctx.win.MutationObserver((records) =>
-    handleMutations(ctx, records),
-  )
+  const observer =
+    ctx.anchorObserver ??
+    new ctx.win.MutationObserver((records) => handleMutations(ctx, records))
   ctx.anchorObserver = observer
   observer.observe(ctx.doc.documentElement, {
     subtree: true,

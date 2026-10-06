@@ -171,6 +171,184 @@ function postMissing(stream: 'highlight' | 'verification', versionId = 'v1') {
   )
 }
 
+function pageTransition(type: 'pagehide' | 'pageshow', persisted = true) {
+  const win = frame!.contentWindow as Window & typeof globalThis
+  win.dispatchEvent(new win.PageTransitionEvent(type, { persisted }))
+}
+
+describe.each(['highlight', 'verification'] as const)(
+  '%s back/forward restoration',
+  (stream) => {
+    const kind =
+      stream === 'highlight' ? 'anchor-resolutions' : 'anchor-verdicts'
+    const thread = stream === 'highlight' ? 'hosted' : 'preview'
+
+    test('resumes an elapsed checking deadline without host input', async () => {
+      await fixture('<p>Present quote</p>')
+      const clock = frameClock()
+      try {
+        postMissing(stream)
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+        )
+        pageTransition('pagehide')
+        clock.set(() => 18000)
+        const from = messages.length
+        pageTransition('pageshow')
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'needs-check',
+          from,
+        )
+      } finally {
+        clock.restore()
+      }
+    })
+
+    test('uses the remaining grace of the original deadline', async () => {
+      await fixture('<p>Present quote</p>')
+      const clock = frameClock()
+      try {
+        postMissing(stream)
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+        )
+        pageTransition('pagehide')
+        clock.set(() => 12000)
+        const from = messages.length
+        pageTransition('pageshow')
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(
+          messages
+            .slice(from)
+            .some((m) => positionState(m, thread) === 'needs-check'),
+        ).toBe(false)
+        clock.set(() => 13001)
+        // The remaining 1000 ms must finish within this wait. A fresh 3000 ms
+        // grace or a cleared original timer cannot satisfy it.
+        await vi.waitFor(
+          () => {
+            expect(
+              messages
+                .slice(from)
+                .some((m) => positionState(m, thread) === 'needs-check'),
+            ).toBe(true)
+          },
+          { timeout: 1500 },
+        )
+      } finally {
+        clock.restore()
+      }
+    })
+
+    test('observes attachment and subsequent content changes after restore', async () => {
+      const doc = await fixture('<p id="target">Present quote</p>')
+      const clock = frameClock()
+      try {
+        postMissing(stream)
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+        )
+        pageTransition('pagehide')
+        // Keep all 3000 ms of grace. Both mutation assertions have 1000 ms
+        // bounds, so the resumed checking timer cannot explain attachment.
+        const from = messages.length
+        pageTransition('pageshow')
+        pageTransition('pageshow')
+        doc.querySelector('#target')!.textContent = 'Missing quote'
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'attached',
+          from,
+        )
+        const changed = messages.length
+        doc.querySelector('#target')!.textContent = 'Present quote again'
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+          changed,
+        )
+      } finally {
+        clock.restore()
+      }
+    })
+
+    test('ignores non-persisted pageshow with outstanding checking', async () => {
+      await fixture('<p>Present quote</p>')
+      const clock = frameClock()
+      try {
+        postMissing(stream)
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+        )
+        pageTransition('pagehide')
+        clock.set(() => 18000)
+        const from = messages.length
+        pageTransition('pageshow', false)
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(
+          messages
+            .slice(from)
+            .some((m) => positionState(m, thread) === 'needs-check'),
+        ).toBe(false)
+        pageTransition('pageshow')
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'needs-check',
+          from,
+        )
+      } finally {
+        clock.restore()
+      }
+    })
+  },
+)
+
+test.each(['empty', 'highlight', 'verification'] as const)(
+  'persisted pageshow posts nothing with %s settled obligations',
+  async (stream) => {
+    await fixture('<p>Present quote</p>')
+    const clock = frameClock()
+    try {
+      if (stream !== 'empty') {
+        const kind =
+          stream === 'highlight' ? 'anchor-resolutions' : 'anchor-verdicts'
+        const thread = stream === 'highlight' ? 'hosted' : 'preview'
+        postMissing(stream)
+        await waitForMessage(
+          kind,
+          (m) => positionState(m, thread) === 'checking',
+        )
+        clock.set(() => 18000)
+        // Settle the obligation while retaining the pending input.
+        await vi.waitFor(
+          () => {
+            expect(
+              messages.some((m) => positionState(m, thread) === 'needs-check'),
+            ).toBe(true)
+          },
+          { timeout: 4000 },
+        )
+      }
+      // All 20 unsolicited ready repeats and queued messages must finish
+      // before counting the complete message stream.
+      await new Promise((resolve) => setTimeout(resolve, 2200))
+      pageTransition('pagehide')
+      const count = messages.length
+      pageTransition('pageshow')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(messages).toHaveLength(count)
+    } finally {
+      clock.restore()
+    }
+  },
+  10000,
+)
+
 test.each([
   ['highlight', true],
   ['verification', true],
