@@ -3,7 +3,7 @@ ALTER TABLE shareables ADD COLUMN version_sequence INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE versions ADD COLUMN number INTEGER;
 
 WITH ranked AS (
-  SELECT id, ROW_NUMBER() OVER (PARTITION BY shareable_id ORDER BY published_at, created_at, id) AS ordinal
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY shareable_id ORDER BY created_at, id) AS ordinal
   FROM versions WHERE status = 'published' AND published_at IS NOT NULL
 )
 UPDATE versions SET number = (SELECT ordinal FROM ranked WHERE ranked.id = versions.id);

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { applyMigrations, loadMigrations } from './sqlite-fixture'
 
-test('retention migration backfills publication order, excludes failed uploads, and never reuses numbers', () => {
+test('retention migration backfills created_at/id order, excludes failed uploads, and never reuses numbers', () => {
   const sqlite = new DatabaseSync(':memory:')
   try {
     const migrations = loadMigrations()
@@ -23,7 +23,9 @@ test('retention migration backfills publication order, excludes failed uploads, 
     const insert =
       sqlite.prepare(`INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at)
       VALUES (?, 's1', 'html_page', ?, '/index.html', ?, 12, 'hash', 'u1', ?, ?)`)
+    // Creation order wins even when publication finishes later.
     insert.run('v3', 'published', 'key3', '2026-09-01', '2026-09-03')
+    // Tied timestamps use id order, regardless of insertion order.
     insert.run('v2', 'published', 'key2', '2026-09-02', '2026-09-02')
     insert.run('v1', 'published', 'key1', '2026-09-02', '2026-09-02')
     insert.run('failed', 'failed', 'failed-key', '2026-09-01', null)
@@ -35,9 +37,9 @@ test('retention migration backfills publication order, excludes failed uploads, 
     ).toEqual([
       { id: 'failed', number: null },
       { id: 'pending', number: null },
-      { id: 'v1', number: 1 },
-      { id: 'v2', number: 2 },
-      { id: 'v3', number: 3 },
+      { id: 'v1', number: 2 },
+      { id: 'v2', number: 3 },
+      { id: 'v3', number: 1 },
     ])
     expect(
       sqlite
