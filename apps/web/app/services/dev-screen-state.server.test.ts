@@ -424,7 +424,7 @@ describe('recent content-rich dev screen state', () => {
       .executeTakeFirstOrThrow()
     const shareable = await db
       .selectFrom('shareables')
-      .select(['current_version_id'])
+      .select(['current_version_id', 'retain_versions'])
       .where('id', '=', shareableId)
       .executeTakeFirstOrThrow()
     expect(version).toMatchObject({
@@ -451,6 +451,7 @@ describe('recent content-rich dev screen state', () => {
     ])
     expect(version.size_bytes).toBeGreaterThan(1)
     expect(shareable.current_version_id).toBe(`${shareableId}-v1`)
+    expect(shareable.retain_versions).toBe(1)
     const recency = await db
       .selectFrom('shareable_viewer_recency')
       .selectAll()
@@ -532,6 +533,12 @@ describe('recent content-rich dev screen state', () => {
       .where('id', '=', `${shareableId}-thread`)
       .execute()
 
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: null })
+      .where('id', '=', shareableId)
+      .execute()
+
     await seedDevScreenState(
       db,
       'recent/content-rich',
@@ -547,7 +554,7 @@ describe('recent content-rich dev screen state', () => {
       .executeTakeFirstOrThrow()
     const resetShareable = await db
       .selectFrom('shareables')
-      .select(['current_version_id'])
+      .select(['current_version_id', 'retain_versions'])
       .where('id', '=', shareableId)
       .executeTakeFirstOrThrow()
     expect(resetVersion).toMatchObject({
@@ -556,6 +563,7 @@ describe('recent content-rich dev screen state', () => {
       published_at: '2026-07-31T12:00:00.000Z',
     })
     expect(resetShareable.current_version_id).toBe(`${shareableId}-v1`)
+    expect(resetShareable.retain_versions).toBe(1)
 
     const resetRecency = await db
       .selectFrom('shareable_viewer_recency')

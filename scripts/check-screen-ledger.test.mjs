@@ -32,6 +32,20 @@ import {
   validateLedger,
 } from './screen-ledger.mjs'
 
+test('viewer retention history capture opens the seeded latest-only artifact', () => {
+  const viewer = ledgerScreens.find((screen) => screen.id === 'viewer')
+  const state = viewer.states.find(
+    (candidate) => candidate.id === 'history-retention-open',
+  )
+  assert.ok(state)
+  assert.equal(state.setup.scenario, 'recent/content-rich')
+  assert.equal(state.setup.scenarioArtifactIndex, 1)
+  assert.deepEqual(state.setup.interactions.slice(0, 2), [
+    { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+    { action: 'click', selector: '[data-viewer-history-menu-item]' },
+  ])
+})
+
 test('allows a state to capture anonymously from an authenticated scenario seed', () => {
   const screen = { auth: 'team-owner' }
   const state = {

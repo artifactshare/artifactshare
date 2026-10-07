@@ -299,6 +299,29 @@ export const screen = {
       },
     },
     {
+      id: 'history-retention-open',
+      description:
+        '最新版のみを保持する成果物の履歴パネルで保持設定を確認する状態',
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          {
+            action: 'click',
+            selector: '[data-viewer-more-menu-trigger]',
+          },
+          {
+            action: 'click',
+            selector: '[data-viewer-history-menu-item]',
+          },
+          {
+            action: 'click',
+            selector: '[data-slot="sheet-title"]',
+          },
+        ],
+      },
+    },
+    {
       id: 'viewer-list-entry',
       description:
         'メタ行の閲覧した人セグメントが phone の閉状態でも見える状態 (interaction なし。シード追加により既存 viewer/comments-open の capture も変わる)',

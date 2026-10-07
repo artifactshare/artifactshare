@@ -138,7 +138,12 @@ export function HistoryPanelBody({
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3.5">
         {retainVersions != null ? (
           <p className="text-muted-foreground m-0 text-xs">
-            {t('vw.retentionNote', { count: retainVersions })}
+            {t(
+              retainVersions === 1
+                ? 'vw.retentionNoteOne'
+                : 'vw.retentionNoteOther',
+              { count: retainVersions },
+            )}
           </p>
         ) : null}
         <VersionRows versions={versions} locale={locale} t={t} />

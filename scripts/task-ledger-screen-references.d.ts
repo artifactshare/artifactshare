@@ -98,6 +98,7 @@ export type TaskLedgerScreenReference =
   | 'viewer/default'
   | 'viewer/free-owner-visibility-dialog'
   | 'viewer/history-open'
+  | 'viewer/history-retention-open'
   | 'viewer/link-suspended-anonymous'
   | 'viewer/link-suspended-owner'
   | 'viewer/panel-collapsed'

@@ -1,3 +1,4 @@
+import { bindI18n } from '~/lib/i18n'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import { HistoryPanel, HistoryPanelBody, VersionWidget } from './history-panel'
@@ -329,9 +330,16 @@ const t = (key: string, vars?: Record<string, string | number>) =>
     'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
   })[key] ?? key
 
-test.each([1, 24, null])(
-  'history notes configured retention %s',
-  (retainVersions) => {
+test.each([
+  { locale: 'en', retainVersions: 1, note: 'Keeping the latest version' },
+  { locale: 'en', retainVersions: 24, note: 'Keeping the latest 24 versions' },
+  { locale: 'en', retainVersions: null, note: null },
+  { locale: 'ja', retainVersions: 1, note: '最新版のみを保持しています' },
+  { locale: 'ja', retainVersions: 24, note: '最新の24版を保持しています' },
+  { locale: 'ja', retainVersions: null, note: null },
+] as const)(
+  '$locale history notes configured retention $retainVersions',
+  ({ locale, retainVersions, note }) => {
     const html = renderToStaticMarkup(
       <HistoryPanelBody
         retainVersions={retainVersions}
@@ -343,17 +351,15 @@ test.each([1, 24, null])(
         replaceMode="single"
         setLocalDropActive={() => {}}
         submitFiles={() => {}}
-        locale="en"
-        t={
-          ((key: string, vars?: Record<string, string | number>) =>
-            key === 'vw.retentionNote'
-              ? `Keeping the latest ${vars?.count} versions`
-              : key) as never
-        }
+        locale={locale}
+        t={bindI18n(locale).t}
       />,
     )
-    if (retainVersions === null)
+    if (note === null) {
       expect(html).not.toContain('Keeping the latest')
-    else expect(html).toContain(`Keeping the latest ${retainVersions} versions`)
+      expect(html).not.toContain('保持しています')
+    } else {
+      expect(html).toContain(`>${note}</p>`)
+    }
   },
 )
