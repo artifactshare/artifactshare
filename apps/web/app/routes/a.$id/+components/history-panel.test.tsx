@@ -331,7 +331,7 @@ const t = (key: string, vars?: Record<string, string | number>) =>
   })[key] ?? key
 
 test.each([
-  { locale: 'en', retainVersions: 1, note: 'Keeping the latest version' },
+  { locale: 'en', retainVersions: 1, note: 'Keeping only the latest version' },
   { locale: 'en', retainVersions: 24, note: 'Keeping the latest 24 versions' },
   { locale: 'en', retainVersions: null, note: null },
   { locale: 'ja', retainVersions: 1, note: '最新版のみを保持しています' },
