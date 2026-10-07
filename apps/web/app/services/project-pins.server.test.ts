@@ -214,5 +214,8 @@ describe('project pins', () => {
     const rows = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
     expect(rows).toHaveLength(1)
     expect(rows[0]?.latestVersionNumber).toBe(2)
+    await db.deleteFrom('versions').where('id', '=', 'v1').execute()
+    const pruned = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
+    expect(pruned[0]?.latestVersionNumber).toBe(2)
   })
 })

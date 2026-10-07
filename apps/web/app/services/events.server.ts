@@ -135,11 +135,7 @@ export async function listFeedEvents(
         ),
         'events.actor_user_id as actorId',
         'actors.name as actorName',
-        sql<
-          number | null
-        >`(select count(*) from versions v2 where v2.shareable_id = events.shareable_id and v2.status = 'published' and v2.published_at <= events.created_at)`.as(
-          'versionNumber',
-        ),
+        'subject_versions.number as versionNumber',
         'comment_messages.body as commentBody',
         'events.created_at as createdAt',
         'shareables.container_id as containerId',
@@ -486,9 +482,7 @@ export async function listFeedEvents(
             'events.shareable_id as shareableId',
             'events.actor_user_id as actorId',
             'events.created_at as createdAt',
-            sql<number>`(select count(*) from versions v2 where v2.shareable_id = events.shareable_id and v2.status = 'published' and v2.published_at <= events.created_at)`.as(
-              'versionNumber',
-            ),
+            'versions.number as versionNumber',
           ])
           .where('events.type', '=', 'version_published')
           .where('shareables.workspace_id', '=', user.workspaceId)

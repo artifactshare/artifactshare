@@ -1207,6 +1207,7 @@
           "--title",
           "--visibility",
           "--link-expires-at",
+          "--retain-versions",
           "--no-link-expiry",
           "--grant-email",
           "--revoke-email",

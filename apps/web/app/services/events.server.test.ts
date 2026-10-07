@@ -846,6 +846,29 @@ describe('events helpers', () => {
     })
   })
 
+  test('feed keeps stored numbers after older published versions are pruned', async () => {
+    const { db } = await fixture()
+    try {
+      await setupViewedOtherShareable(db)
+      await insertVersion(db, 'v2', 's2', 'u2', '2026-01-02T10:00:00Z')
+      await insertVersionUpdate(db, 'e2', 'v2', 'u2', '2026-01-02T10:00:00Z')
+      await insertVersion(db, 'v3', 's2', 'u2', '2026-01-02T11:00:00Z')
+      await insertVersionUpdate(db, 'e3', 'v3', 'u2', '2026-01-02T11:00:00Z')
+      await db.deleteFrom('versions').where('id', '=', 'v2').execute()
+      const result = await listFeedEvents(db, {
+        user: feedUser,
+        timeZone: 'UTC',
+        slice: 'mine',
+        targetRows: 10,
+        maxRawEvents: 100,
+      })
+      expect(result.rows).toHaveLength(1)
+      expect(result.rows[0]).toMatchObject({ id: 'e3', versionNumber: 2 })
+    } finally {
+      await db.destroy()
+    }
+  })
+
   test('mine keeps one viewed other-owned version as an individual row with null range', async () => {
     const { db } = await fixture()
     await setupViewedOtherShareable(db)

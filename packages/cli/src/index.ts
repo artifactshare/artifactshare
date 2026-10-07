@@ -505,6 +505,12 @@ const editDefinition = define({
       toKebab: true,
       description: 'Set a finite link expiry as an RFC3339 UTC timestamp',
     },
+    retainVersions: {
+      type: 'string',
+      toKebab: true,
+      description:
+        'Keep the latest N versions; use all to clear retention (owner only)',
+    },
     noLinkExpiry: {
       type: 'boolean',
       toKebab: true,

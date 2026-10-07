@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 40
+version: 41
 managed: true
 -->
 
@@ -281,6 +281,12 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-o
 npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
 ```
 
+- Owners with unrestricted credentials can set `edit <target> --retain-versions N`
+  to keep the latest N published versions, or `--retain-versions all` to keep all
+  future versions. Setting or lowering retention immediately deletes older
+  versions; the response reports `retain_versions` and `deleted_versions`.
+  Deleted version links return 404, while comments and surviving version numbers
+  remain. Agent-preset credentials cannot change retention.
 - `edit` changes title, visibility, explicit viewers, or project placement
   without adding a new version.
 - Set `--visibility link` with `--link-expires-at <RFC3339 UTC>` for a finite

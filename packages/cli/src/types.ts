@@ -24,6 +24,7 @@ export type CliOptions = {
   key?: string | true
   linkExpiresAt?: string
   noLinkExpiry?: boolean
+  retainVersions?: string
   noSlackNotify?: boolean
   note?: string
   offset?: string

@@ -1595,7 +1595,7 @@ describe('bridge file publishing', () => {
     ).toEqual(before)
   })
 
-  test('retains a committed version when the first post-batch read fails', async () => {
+  test('preserves bridge success and notification when the post-commit pruning read fails', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
@@ -1644,65 +1644,192 @@ describe('bridge file publishing', () => {
       'https://artifactshare.com',
     )
 
-    expect(result).toEqual({ kind: 'internal-error' })
+    expect(result).toMatchObject({
+      kind: 'ok',
+      result: { artifact: { id: first.result.artifact.id }, replayed: false },
+    })
     const current = sqlite
       .prepare(`SELECT current_version_id FROM shareables WHERE id = ?`)
       .get(first.result.artifact.id) as { current_version_id: string }
     expect(current.current_version_id).not.toBe(first.result.versionId)
+    expect(notifyVersionChanged).toHaveBeenLastCalledWith(
+      current.current_version_id,
+    )
     expect(bucketState.size).toBe(2)
   })
 
-  test('updates a bridge-created artifact without changing its URL', async () => {
+  test('preserves the committed version and notification when the result read fails after commit', async () => {
     seedProject('project-1', 'Private design', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
-    const user = bridgeUser()
     const firstBody = new TextEncoder().encode('# First')
     const first = await executeBridgeRequest(
       db,
       authority,
-      user,
+      bridgeUser(),
       await fileMetadata({
-        requestId: 'publish-first',
+        requestId: 'post-commit-read-base',
         body: firstBody,
         conversationKind: 'private_channel',
       }),
-      [new File([firstBody], 'file-0', { type: 'text/markdown' })],
+      [new File([firstBody], 'note.md', { type: 'text/markdown' })],
       'https://artifactshare.com',
     )
     expect(first.kind).toBe('ok')
     if (first.kind !== 'ok') return
-
     const nextBody = new TextEncoder().encode('# Second')
-    const updated = await executeBridgeRequest(
+    d1BatchHook.callback = (sqlStatements) => {
+      if (
+        !sqlStatements.some((statement) =>
+          statement.includes('bridge_operations'),
+        )
+      ) {
+        return
+      }
+      d1BatchHook.callback = null
+      const selectFrom = db.selectFrom.bind(db)
+      vi.spyOn(db, 'selectFrom').mockImplementation((...args) => {
+        if (args[0] === 'bridge_requests as request') {
+          throw new Error('D1 unavailable after commit')
+        }
+        return selectFrom(...args)
+      })
+    }
+
+    const result = await executeBridgeRequest(
       db,
       authority,
-      user,
+      bridgeUser(),
       await fileMetadata({
-        requestId: 'update-second',
+        requestId: 'post-commit-read-update',
         operation: 'update',
         targetArtifactId: first.result.artifact.id,
         body: nextBody,
         conversationKind: 'private_channel',
       }),
-      [new File([nextBody], 'file-0', { type: 'text/markdown' })],
+      [new File([nextBody], 'note.md', { type: 'text/markdown' })],
       'https://artifactshare.com',
     )
-    expect(updated).toMatchObject({
-      kind: 'ok',
-      result: { artifact: { id: first.result.artifact.id }, replayed: false },
-    })
+
+    expect(result).toEqual({ kind: 'internal-error' })
+    const current = sqlite
+      .prepare(`SELECT current_version_id FROM shareables WHERE id = ?`)
+      .get(first.result.artifact.id) as { current_version_id: string }
+    expect(current.current_version_id).not.toBe(first.result.versionId)
     expect(notifyVersionChanged).toHaveBeenLastCalledWith(
-      updated.kind === 'ok' ? updated.result.versionId : 'unreachable',
+      current.current_version_id,
     )
-    expect(
-      sqlite
-        .prepare(
-          `SELECT COUNT(*) AS count FROM versions WHERE shareable_id = ?`,
-        )
-        .get(first.result.artifact.id),
-    ).toEqual({ count: 2 })
+    expect(bucketState.size).toBe(2)
   })
+
+  test.each([
+    [null, false],
+    [1, false],
+    [1, true],
+  ] as const)(
+    'updates a bridge-created artifact with retention %s (pruning failure: %s) without changing its URL',
+    async (retain, failPruning) => {
+      seedProject('project-1', 'Private design', 'private')
+      seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
+      const { executeBridgeRequest } =
+        await import('./bridge-publishing.server')
+      const user = bridgeUser()
+      const firstBody = new TextEncoder().encode('# First')
+      const first = await executeBridgeRequest(
+        db,
+        authority,
+        user,
+        await fileMetadata({
+          requestId: 'publish-first',
+          body: firstBody,
+          conversationKind: 'private_channel',
+        }),
+        [new File([firstBody], 'file-0', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      )
+      expect(first.kind).toBe('ok')
+      if (first.kind !== 'ok') return
+
+      sqlite
+        .prepare('UPDATE shareables SET retain_versions = ? WHERE id = ?')
+        .run(retain, first.result.artifact.id)
+      if (failPruning)
+        sqlite.exec(
+          "CREATE TRIGGER fail_retention BEFORE DELETE ON versions BEGIN SELECT RAISE(ABORT, 'prune failed'); END",
+        )
+      const nextBody = new TextEncoder().encode('# Second')
+      const updated = await executeBridgeRequest(
+        db,
+        authority,
+        user,
+        await fileMetadata({
+          requestId: 'update-second',
+          operation: 'update',
+          targetArtifactId: first.result.artifact.id,
+          body: nextBody,
+          conversationKind: 'private_channel',
+        }),
+        [new File([nextBody], 'file-0', { type: 'text/markdown' })],
+        'https://artifactshare.com',
+      )
+      expect(updated).toMatchObject({
+        kind: 'ok',
+        result: { artifact: { id: first.result.artifact.id }, replayed: false },
+      })
+      expect(notifyVersionChanged).toHaveBeenLastCalledWith(
+        updated.kind === 'ok' ? updated.result.versionId : 'unreachable',
+      )
+      expect(
+        sqlite
+          .prepare(
+            `SELECT COUNT(*) AS count FROM versions WHERE shareable_id = ?`,
+          )
+          .get(first.result.artifact.id),
+      ).toEqual({ count: failPruning ? 2 : (retain ?? 2) })
+      expect(bucketState.size).toBe(failPruning ? 2 : (retain ?? 2))
+      if (retain === 1 && !failPruning) {
+        expect(
+          sqlite
+            .prepare('SELECT id FROM versions WHERE id = ?')
+            .get(first.result.versionId),
+        ).toBeUndefined()
+        expect(
+          sqlite
+            .prepare('SELECT id FROM bridge_operations WHERE request_id = ?')
+            .get('publish-first'),
+        ).toBeUndefined()
+        const puts = bucket.put.mock.calls.length
+        const replay = await executeBridgeRequest(
+          db,
+          authority,
+          user,
+          await fileMetadata({
+            requestId: 'publish-first',
+            body: firstBody,
+            conversationKind: 'private_channel',
+          }),
+          [new File([firstBody], 'file-0', { type: 'text/markdown' })],
+          'https://artifactshare.com',
+        )
+        expect(replay).toMatchObject({
+          kind: 'ok',
+          result: {
+            artifact: { id: first.result.artifact.id },
+            versionId: first.result.versionId,
+            replayed: true,
+          },
+        })
+        expect(bucket.put).toHaveBeenCalledTimes(puts)
+      }
+      expect(
+        sqlite
+          .prepare(
+            'SELECT MAX(number) AS number FROM versions WHERE shareable_id = ?',
+          )
+          .get(first.result.artifact.id),
+      ).toEqual({ number: 2 })
+    },
+  )
 
   test('does not commit a channel update after the bridge bot is stopped', async () => {
     seedProject('project-1', 'Private design', 'private')

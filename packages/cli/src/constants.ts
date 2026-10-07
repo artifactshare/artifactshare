@@ -61,6 +61,7 @@ export const VALUE_FLAGS = new Set([
   'quote-before',
   'remove-email',
   'reply-to',
+  'retain-versions',
   'revoke-email',
   'scope',
   'session',

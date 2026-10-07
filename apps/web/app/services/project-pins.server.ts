@@ -17,8 +17,8 @@ export async function listProjectPins(
       join.on(
         'latest.id',
         '=',
-        // published_at の同時刻タイでも 1 行に定まるよう id で決定的に選ぶ
-        sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' order by v2.published_at desc, v2.id desc limit 1)`,
+        // Publication numbers stay stable after retention prunes older rows.
+        sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' order by v2.number desc, v2.id desc limit 1)`,
       ),
     )
     .leftJoin(
@@ -32,9 +32,7 @@ export async function listProjectPins(
       'shareables.derived_title as derivedTitle',
       'shareables.title_override as titleOverride',
       'shareables.artifact_kind as artifactKind',
-      sql<number>`(select count(*) from versions v3 where v3.shareable_id = shareables.id and v3.status = 'published')`.as(
-        'latestVersionNumber',
-      ),
+      sql<number>`coalesce(latest.number, 0)`.as('latestVersionNumber'),
       'latest.published_at as latestPublishedAt',
       'latestAuthors.name as latestAuthorName',
       'latestAuthors.email as latestAuthorEmail',

@@ -515,6 +515,9 @@ export async function seedDevScreenState(
               .updateTable('shareables')
               .set({
                 current_version_id: currentVersionId,
+                ...(scenario === 'recent/content-rich' && index === 0
+                  ? { retain_versions: 1 }
+                  : {}),
                 ...(index === 20
                   ? {
                       updated_at: new Date(

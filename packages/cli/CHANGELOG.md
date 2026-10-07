@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Add owner-only `edit --retain-versions N` (or `all`) to prune old versions, release storage, and preserve version numbers.
+
 - Preserve local-preview highlights and anchor updates after back/forward restoration.
 
 - Internal: harden shared preview-reporter generation guards and preserve text verification when page code replaces array methods.

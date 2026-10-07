@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 40
+version: 41
 managed: true
 -->
 
@@ -125,3 +125,5 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+Owners with unrestricted credentials can use `edit <target> --retain-versions N` to keep the latest N versions, or `--retain-versions all` to clear the limit. Setting or lowering retention prunes older published versions immediately; the response includes `retain_versions` and `deleted_versions`. Comments and surviving version numbers remain. Agent-preset credentials cannot change retention.

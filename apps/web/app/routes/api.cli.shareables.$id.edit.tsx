@@ -10,6 +10,7 @@ import {
 } from '~/lib/shareable-settings-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
+import { pruneVersions } from '~/services/version-retention.server'
 import { withDb } from '~/services/db.server'
 import { editShareableSettings } from '~/services/shareables.server'
 import type { Route } from './+types/api.cli.shareables.$id.edit'
@@ -33,6 +34,30 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
   const parsed = cliEditInput(parsedBody.data)
 
+  const authority = getCliAuthority(context)
+  if (parsedBody.data.retain_versions !== undefined) {
+    if (authority !== null && authority.kind !== 'unrestricted') {
+      return errorResponse(
+        'forbidden',
+        'Version retention requires unrestricted owner credentials.',
+        403,
+      )
+    }
+    const owned = await withDb((db) =>
+      db
+        .selectFrom('shareables')
+        .select('id')
+        .where('id', '=', parsedParams.data.id)
+        .where('owner_user_id', '=', user.id)
+        .executeTakeFirst(),
+    )
+    if (!owned)
+      return errorResponse(
+        'forbidden',
+        'Only the artifact owner can change version retention.',
+        403,
+      )
+  }
   const result = await withDb(
     async (db) =>
       await editShareableSettings(
@@ -40,16 +65,42 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         user,
         parsedParams.data.id,
         parsed,
-        getCliAuthority(context),
+        authority,
       ),
   )
   switch (result.kind) {
-    case 'ok':
+    case 'ok': {
+      const retention = parsedBody.data.retain_versions
+      const metadata =
+        retention === undefined
+          ? {}
+          : await withDb(async (db) => {
+              const updated = await db
+                .updateTable('shareables')
+                .set({ retain_versions: retention })
+                .where('id', '=', parsedParams.data.id)
+                .where('owner_user_id', '=', user.id)
+                .returning('id')
+                .executeTakeFirst()
+              if (!updated) return null
+              return {
+                retain_versions: retention,
+                deleted_versions: await pruneVersions(db, parsedParams.data.id),
+              }
+            })
+      if (metadata === null)
+        return errorResponse(
+          'forbidden',
+          'Only the artifact owner can change version retention.',
+          403,
+        )
       return Response.json(
-        CliEditResponseSchema.parse(
-          cliEditSuccessBody(request.url, result.shareable),
-        ),
+        CliEditResponseSchema.parse({
+          ...cliEditSuccessBody(request.url, result.shareable),
+          ...metadata,
+        }),
       )
+    }
     default:
       return cliEditErrorResponse(result)
   }

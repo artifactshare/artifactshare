@@ -597,6 +597,8 @@
   "menu.rename": "Rename",
   "vw.back": "Back",
   "vw.more": "More",
+  "vw.retentionNoteOne": "Keeping only the latest version",
+  "vw.retentionNoteOther": "Keeping the latest {count} versions",
   "vw.versionHistory": "History & add new version",
   "vw.versionHistoryReadonly": "Version history",
   "history.viewingVersion": "Viewing {version}",

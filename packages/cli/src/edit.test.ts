@@ -457,3 +457,60 @@ test('edit maps grant limit failures to too_many_grants', async () => {
     },
   )
 })
+
+test('edit sends retention values and reports deleted versions', async () => {
+  const requests: unknown[] = []
+  await withServer(
+    async (request, response) => {
+      const body = JSON.parse(await collectBody(request))
+      requests.push(body)
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifact: { id: 'abc123def4' },
+          title: 'Report',
+          destination: { type: 'home', project_id: null },
+          share: { visibility: 'private' },
+          retain_versions: body.retain_versions,
+          deleted_versions: 4,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      for (const [option, retain] of [
+        ['2', 2],
+        ['all', null],
+      ] as const) {
+        const result = await runAsync(
+          [
+            'edit',
+            'abc123def4',
+            '--retain-versions',
+            option,
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const response = expectSuccess(result, 'edit')
+        assert.equal(response.data.retain_versions, retain)
+        assert.equal(response.data.deleted_versions, 4)
+      }
+    },
+  )
+  assert.deepEqual(requests, [
+    { retain_versions: 2 },
+    { retain_versions: null },
+  ])
+})
+
+for (const option of ['0', '-1', '1.5', 'invalid', '9007199254740992']) {
+  test(`edit rejects invalid retention ${option} before authentication`, () => {
+    const result = run(
+      ['edit', 'abc123def4', `--retain-versions=${option}`, '--json'],
+      { ARTIFACTSHARE_TOKEN: '' },
+    )
+    expectFailure(result, { command: 'edit', code: 'validation_failed' })
+  })
+}

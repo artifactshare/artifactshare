@@ -4302,6 +4302,152 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('returns its committed number when another publish prunes it before the batch returns', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', 'bundle1')
+      .execute()
+    const publishNext = async () => {
+      const begun = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+      )
+      if (begun.kind !== 'ok') throw new Error('expected upload session')
+      await begun.session.addFile(
+        siteTextFile('/index.html', '<title>Next</title>', 'text/html'),
+      )
+      return begun.session.commitVersion()
+    }
+    sqliteRef.afterNextBatch = async () => {
+      const next = await publishNext()
+      expect(next).toMatchObject({ kind: 'ok', number: 3 })
+    }
+    try {
+      const result = await publishNext()
+      expect(result).toMatchObject({ kind: 'ok', number: 2 })
+      if (result.kind !== 'ok') throw new Error('expected publication')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('id')
+          .where('id', '=', result.versionId)
+          .executeTakeFirst(),
+      ).toBeUndefined()
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('number')
+          .where('shareable_id', '=', 'bundle1')
+          .execute(),
+      ).toEqual([{ number: 3 }])
+    } finally {
+      sqliteRef.afterNextBatch = null
+    }
+  })
+
+  test('a pruning failure preserves a committed static-site version and its notification', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', 'bundle1')
+      .execute()
+    sqliteRef.current!.exec(
+      "CREATE TRIGGER fail_retention BEFORE DELETE ON versions BEGIN SELECT RAISE(ABORT, 'prune failed'); END",
+    )
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const begun = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+      )
+      if (begun.kind !== 'ok') throw new Error('expected upload session')
+      await begun.session.addFile(
+        siteTextFile('/index.html', '<title>Report</title>', 'text/html'),
+      )
+      expect(await begun.session.commitVersion()).toMatchObject({
+        kind: 'ok',
+        versionId: begun.session.versionId,
+      })
+      expect(artifactLiveMock.notifyVersionChanged).toHaveBeenCalledWith(
+        begun.session.versionId,
+      )
+      expect(
+        await db
+          .selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', 'bundle1')
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ current_version_id: begun.session.versionId })
+      expect(log).toHaveBeenCalledWith(
+        'version_retention_after_publish_failed',
+        expect.objectContaining({ shareable_id: 'bundle1' }),
+      )
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test('prunes static-site versions and all their file objects after committing', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', 'bundle1')
+      .execute()
+    let previousKeys = ['ws-a/bundle1/bv1/index.html']
+    for (let number = 2; number <= 3; number++) {
+      const begun = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+      )
+      if (begun.kind !== 'ok') throw new Error('expected upload session')
+      await begun.session.addFile(
+        siteTextFile('/index.html', '<title>Report</title>', 'text/html'),
+      )
+      await begun.session.addFile(
+        siteTextFile('/data.json', '{"value":1}', 'application/json'),
+      )
+      expect((await begun.session.commitVersion()).kind).toBe('ok')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('number')
+          .where('shareable_id', '=', 'bundle1')
+          .execute(),
+      ).toEqual([{ number }])
+      for (const key of previousKeys)
+        expect(storageMock.deleteArtifact).toHaveBeenCalledWith(
+          expect.anything(),
+          key,
+        )
+      previousKeys = (
+        await db
+          .selectFrom('version_files')
+          .select('r2_key')
+          .where('version_id', '=', begun.session.versionId)
+          .execute()
+      ).map((file) => file.r2_key)
+      const version = await db
+        .selectFrom('versions')
+        .select('size_bytes')
+        .where('id', '=', begun.session.versionId)
+        .executeTakeFirstOrThrow()
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select('storage_used_bytes')
+          .where('id', '=', OWNER.workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ storage_used_bytes: version.size_bytes })
+    }
+  })
+
   test('static-site commits label and omission without inheriting prior text', async () => {
     for (const label of ['Restructured', undefined]) {
       const begun = await beginStaticSiteBundleVersionUploadSession(
@@ -4363,6 +4509,7 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     expect(result).toEqual({
       kind: 'ok',
       id: 'bundle1',
+      number: 2,
       versionId: begun.session.versionId,
     })
     expect(artifactLiveMock.getByName).toHaveBeenCalledWith('bundle1')
@@ -4669,6 +4816,144 @@ describe('createVersion', () => {
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
   })
+
+  test('returns its committed number when another publish prunes it before the batch returns', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', 'share1')
+      .execute()
+    const publishNext = () =>
+      createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('index.html', '<p>Next</p>'),
+      })
+    sqliteRef.afterNextBatch = async () => {
+      const next = await publishNext()
+      expect(next).toMatchObject({ kind: 'ok', number: 3 })
+    }
+    try {
+      const result = await publishNext()
+      expect(result).toMatchObject({ kind: 'ok', number: 2 })
+      if (result.kind !== 'ok') throw new Error('expected publication')
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('id')
+          .where('id', '=', result.versionId)
+          .executeTakeFirst(),
+      ).toBeUndefined()
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('number')
+          .where('shareable_id', '=', 'share1')
+          .execute(),
+      ).toEqual([{ number: 3 }])
+    } finally {
+      sqliteRef.afterNextBatch = null
+    }
+  })
+
+  test.each(['lookup', 'delete'])(
+    'a pruning %s failure preserves single-file publication and notification',
+    async (failure) => {
+      let lookup: ReturnType<typeof vi.spyOn> | undefined
+      if (failure === 'delete') {
+        await db
+          .updateTable('shareables')
+          .set({ retain_versions: 1 })
+          .where('id', '=', 'share1')
+          .execute()
+        sqliteRef.current!.exec(
+          "CREATE TRIGGER fail_retention BEFORE DELETE ON versions BEGIN SELECT RAISE(ABORT, 'prune failed'); END",
+        )
+      } else {
+        // Unset artifacts also perform the lookup; fail only after publication.
+        sqliteRef.afterNextBatch = () => {
+          lookup = vi.spyOn(db, 'selectFrom').mockImplementationOnce(() => {
+            throw new Error('prune lookup failed')
+          })
+        }
+      }
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const result = await createVersion({
+          db,
+          user: OWNER,
+          shareableId: 'share1',
+          file: htmlFile('index.html', '<p>Updated</p>'),
+        })
+        expect(result.kind).toBe('ok')
+        if (result.kind !== 'ok') throw new Error('expected publication')
+        expect(artifactLiveMock.notifyVersionChanged).toHaveBeenCalledWith(
+          result.versionId,
+        )
+        expect(
+          await db
+            .selectFrom('shareables')
+            .select('current_version_id')
+            .where('id', '=', 'share1')
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ current_version_id: result.versionId })
+        expect(log).toHaveBeenCalledWith(
+          'version_retention_after_publish_failed',
+          expect.objectContaining({ shareable_id: 'share1' }),
+        )
+      } finally {
+        lookup?.mockRestore()
+        log.mockRestore()
+        sqliteRef.afterNextBatch = null
+      }
+    },
+  )
+
+  test.each([false, true])(
+    'prunes after each successful publication without renumbering (conditional: %s)',
+    async (conditional) => {
+      await db
+        .updateTable('shareables')
+        .set({ retain_versions: 1 })
+        .where('id', '=', 'share1')
+        .execute()
+      await db
+        .updateTable('workspaces')
+        .set({ storage_used_bytes: 100 })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+      let current = 'v1'
+      for (let number = 2; number <= 4; number++) {
+        const file = htmlFile('index.html', `<p>Update ${number}</p>`)
+        const result = await createVersion({
+          db,
+          user: OWNER,
+          shareableId: 'share1',
+          file,
+          ...(conditional ? { expectedCurrentVersionId: current } : {}),
+        })
+        expect(result.kind).toBe('ok')
+        if (result.kind !== 'ok') throw new Error('expected publication')
+        expect(
+          await db
+            .selectFrom('versions')
+            .select(['id', 'number'])
+            .where('shareable_id', '=', 'share1')
+            .execute(),
+        ).toEqual([{ id: result.versionId, number }])
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .select('storage_used_bytes')
+            .where('id', '=', OWNER.workspaceId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ storage_used_bytes: file.size })
+        current = result.versionId
+      }
+      expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(3)
+    },
+  )
 
   test.each([false, true])(
     'persists a label and never inherits it (conditional insert: %s)',
