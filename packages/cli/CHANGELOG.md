@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-08
+
 - Add owner-only `edit --retain-versions N` (or `all`) to prune old versions, release storage, and preserve version numbers.
 
 - Preserve local-preview highlights and anchor updates after back/forward restoration.
