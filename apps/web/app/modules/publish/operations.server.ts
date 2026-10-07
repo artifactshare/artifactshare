@@ -1,3 +1,4 @@
+import { pruneVersionsAfterPublish } from '~/services/version-retention.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { env } from 'cloudflare:workers'
@@ -6,7 +7,11 @@ import { nowIso } from '~/lib/datetime'
 import { MAX_GRANT_EMAILS, normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
-import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
+import {
+  batchRows,
+  runD1Batch,
+  runD1BatchWithResults,
+} from '~/lib/d1-batch.server'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
 import { visibilityForContainer } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
@@ -89,7 +94,12 @@ export type UploadShareableResult =
   | LinkSharingWriteFailure
 
 export type CreateVersionResult =
-  | { kind: 'ok'; versionId: string; artifactKind: ArtifactKind }
+  | {
+      kind: 'ok'
+      versionId: string
+      number: number
+      artifactKind: ArtifactKind
+    }
   | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'not-found' }
   | { kind: 'copy-forbidden' }
@@ -460,6 +470,7 @@ export async function createVersion(
     return { kind: 'not-found' }
   }
   let versionInsertResult: unknown
+  let number: number | undefined
   try {
     if (auditQuery) {
       versionQueries.push(
@@ -470,7 +481,17 @@ export async function createVersion(
         }),
       )
     }
-    ;[versionInsertResult] = await runD1BatchWithResults(db, ...versionQueries)
+    const results = await runD1BatchWithResults(
+      db,
+      ...versionQueries,
+      db
+        .selectFrom('versions')
+        .select('number')
+        .where('id', '=', prepared.versionId),
+    )
+    versionInsertResult = results[0]
+    // A guarded insert can be empty; that path returns a conflict below.
+    number = batchRows<{ number: number }>(results.at(-1))[0]?.number
   } catch {
     await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
       console.error('r2_compensation_failed', {
@@ -527,6 +548,7 @@ export async function createVersion(
     }
   }
 
+  await pruneVersionsAfterPublish(db, shareableId)
   await scheduleArtifactVersionChanged(shareableId, prepared.versionId, {
     waitUntil,
   })
@@ -534,6 +556,7 @@ export async function createVersion(
   return {
     kind: 'ok',
     versionId: prepared.versionId,
+    number: number!,
     artifactKind: prepared.artifactKind,
   }
 }

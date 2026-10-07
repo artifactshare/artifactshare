@@ -59,6 +59,49 @@ describe('resolveCliCandidates', () => {
     )
   })
 
+  test('version resolution keeps its published ordinal after older versions are removed', async () => {
+    await db
+      .deleteFrom('versions')
+      .where('shareable_id', '=', 'art123')
+      .where('id', '!=', 'ver1')
+      .execute()
+    const result = await resolveCliCandidates(db, USER, 'ver1')
+    expect(result.candidates).toContainEqual(
+      expect.objectContaining({ kind: 'version', ordinal: 2 }),
+    )
+  })
+
+  test.each(['uploading', 'failed', 'published'] as const)(
+    'preserves creation-order resolution for an unnumbered %s version',
+    async (status) => {
+      const original = await db
+        .selectFrom('versions')
+        .selectAll()
+        .where('id', '=', 'ver1')
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('versions')
+        .values({
+          ...original,
+          id: 'ver2',
+          status,
+          number: null,
+          published_at: null,
+        })
+        .execute()
+      const result = await resolveCliCandidates(db, USER, 'ver2')
+      expect(result.candidates).toContainEqual(
+        expect.objectContaining({
+          kind: 'version',
+          id: 'ver2',
+          ordinal: 3,
+          published_at: null,
+          is_current: false,
+        }),
+      )
+    },
+  )
+
   test('resolves pasted share URLs with asset suffixes', async () => {
     const result = await resolveCliCandidates(
       db,

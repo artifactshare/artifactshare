@@ -84,6 +84,22 @@ function buildEditPayload(
   | { error: ReturnType<typeof validationError>; body?: never } {
   const body: CliEditRequest = {}
   let hasChange = false
+  if (parsed.options.retainVersions !== undefined) {
+    const value = parsed.options.retainVersions
+    if (
+      value !== 'all' &&
+      (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))
+    ) {
+      return {
+        error: validationError(
+          '--retain-versions must be a positive integer or all.',
+          'Pass --retain-versions 1 or --retain-versions all.',
+        ),
+      }
+    }
+    body.retain_versions = value === 'all' ? null : Number(value)
+    hasChange = true
+  }
 
   if (
     parsed.options.linkExpiresAt !== undefined &&
@@ -174,7 +190,7 @@ function buildEditPayload(
     return {
       error: validationError(
         'At least one edit option is required.',
-        'Pass --title, --visibility, --link-expires-at, --no-link-expiry, --grant-email, --revoke-email, --project-id, or --home.',
+        'Pass --title, --visibility, --link-expires-at, --no-link-expiry, --retain-versions, --grant-email, --revoke-email, --project-id, or --home.',
       ),
     }
   }

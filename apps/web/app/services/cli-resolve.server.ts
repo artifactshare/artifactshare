@@ -239,23 +239,20 @@ async function versionCandidates(
   const rows = await db
     .selectFrom('versions')
     .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
-    .select((eb) => [
+    .select([
       'versions.id as id',
       'versions.shareable_id as shareable_id',
       'shareables.current_version_id as current_version_id',
       'versions.published_at as published_at',
       'versions.size_bytes as size_bytes',
-      eb
-        .selectFrom('versions as older')
-        .select((sub) => sub.fn.count<number>('older.id').as('count'))
-        .whereRef('older.shareable_id', '=', 'versions.shareable_id')
-        .where(
-          sql<boolean>`(
-            older.created_at < versions.created_at
-            OR (older.created_at = versions.created_at AND older.id <= versions.id)
-          )`,
-        )
-        .as('ordinal'),
+      // Only published versions have durable numbers. Preserve the legacy
+      // creation-order count when resolving an unpublished or failed upload.
+      sql<number>`coalesce(versions.number, (
+        SELECT count(*) FROM versions older
+        WHERE older.shareable_id = versions.shareable_id
+          AND (older.created_at < versions.created_at
+            OR (older.created_at = versions.created_at AND older.id <= versions.id))
+      ))`.as('ordinal'),
     ])
     .where('versions.id', '=', versionId)
     .where('shareables.workspace_id', '=', user.workspaceId)

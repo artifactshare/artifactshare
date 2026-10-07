@@ -41,7 +41,7 @@ export function projectFileRowsQuery(db: Kysely<DB>, containerId: string) {
       'shareables.created_at as created_at',
       eb
         .selectFrom('versions')
-        .select((sqb) => sqb.fn.count<number>('versions.id').as('value'))
+        .select((sqb) => sqb.fn.max<number>('versions.number').as('value'))
         .whereRef('versions.shareable_id', '=', 'shareables.id')
         .where('versions.status', '=', 'published')
         .as('version_count'),

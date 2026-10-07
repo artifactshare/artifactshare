@@ -576,7 +576,7 @@ CREATE TABLE shareables (
   updated_at                 TEXT NOT NULL,
   last_accessed_at           TEXT,
   container_id               TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE SET NULL -- artifact_containers_no_delete_with_shareables prevents the SET NULL path
-, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT);
+, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX shareables_workspace_owner_created
   ON shareables(workspace_id, owner_user_id, created_at DESC);
 CREATE UNIQUE INDEX shareables_workspace_slug
@@ -809,6 +809,7 @@ CREATE INDEX access_requests_handler_pending
   ON access_requests(handler_user_id, status, created_at, id);
 
 CREATE TABLE versions (
+  number                    INTEGER,
   id                        TEXT PRIMARY KEY,                                         -- migration-generated hex or app-side nanoid
   shareable_id              TEXT NOT NULL REFERENCES shareables(id) ON DELETE CASCADE,
   artifact_kind             TEXT NOT NULL,
@@ -1424,3 +1425,20 @@ CREATE TABLE comment_anchor_results (
 );
 
 CREATE INDEX idx_comment_anchor_results_version_id ON comment_anchor_results(version_id);
+
+CREATE TRIGGER versions_number_insert AFTER INSERT ON versions
+WHEN NEW.status = 'published' AND NEW.published_at IS NOT NULL
+BEGIN
+  UPDATE shareables SET version_sequence = version_sequence + 1 WHERE id = NEW.shareable_id;
+  UPDATE versions SET number = (SELECT version_sequence FROM shareables WHERE id = NEW.shareable_id) WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER versions_number_publish AFTER UPDATE OF status, published_at ON versions
+WHEN NEW.status = 'published' AND NEW.published_at IS NOT NULL AND OLD.number IS NULL
+BEGIN
+  UPDATE shareables SET version_sequence = version_sequence + 1 WHERE id = NEW.shareable_id;
+  UPDATE versions SET number = (SELECT version_sequence FROM shareables WHERE id = NEW.shareable_id) WHERE id = NEW.id;
+END;
+
+CREATE INDEX versions_shareable_number ON versions(shareable_id, number DESC);
+CREATE INDEX shareables_current_version_id ON shareables(current_version_id);

@@ -1,3 +1,4 @@
+import { pruneVersionsAfterPublish } from './version-retention.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
 import { externalGrantDomainSql } from './project-membership.server'
@@ -11,7 +12,11 @@ import { MAX_GRANT_EMAILS, normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { computeFileSha256 } from '~/lib/sha256'
 import { isSqliteConstraintError } from '~/lib/d1-errors.server'
-import { runD1Batch, runD1BatchWithResults } from '~/lib/d1-batch.server'
+import {
+  batchRows,
+  runD1Batch,
+  runD1BatchWithResults,
+} from '~/lib/d1-batch.server'
 import type {
   ArtifactKind,
   EditableVisibility,
@@ -322,7 +327,7 @@ export type UploadStaticSiteBundleResult =
   | LinkSharingWriteFailure
 
 export type UpdateStaticSiteBundleResult =
-  | { kind: 'ok'; id: string; versionId: string }
+  | { kind: 'ok'; id: string; versionId: string; number: number }
   | { kind: 'not-found' }
   | { kind: 'invalid-container' }
   | { kind: 'version-conflict'; currentVersionId: string | null }
@@ -2258,11 +2263,19 @@ export class StaticSiteBundleUploadSession {
       versionPublishedEventQuery(this.db, { versionId: this.versionId }),
     )
     let versionInsertResult: unknown
+    let number: number | undefined
     try {
-      ;[versionInsertResult] = await runD1BatchWithResults(
+      const results = await runD1BatchWithResults(
         this.db,
         ...versionQueries,
+        this.db
+          .selectFrom('versions')
+          .select('number')
+          .where('id', '=', this.versionId),
       )
+      versionInsertResult = results[0]
+      // A guarded insert can be empty; that path returns a conflict below.
+      number = batchRows<{ number: number }>(results.at(-1))[0]?.number
     } catch (err) {
       console.error('static_site_version_d1_commit_failed', {
         shareable_id: this.shareableId,
@@ -2358,13 +2371,19 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
+    await pruneVersionsAfterPublish(this.db, this.shareableId)
     await scheduleArtifactVersionChanged(
       this.shareableId,
       this.versionId,
       this.notificationOptions,
     )
 
-    return { kind: 'ok', id: this.shareableId, versionId: this.versionId }
+    return {
+      kind: 'ok',
+      id: this.shareableId,
+      versionId: this.versionId,
+      number: number!,
+    }
   }
 
   async abort(): Promise<void> {

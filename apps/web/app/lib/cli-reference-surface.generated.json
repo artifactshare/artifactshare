@@ -326,6 +326,7 @@
         "--title",
         "--visibility",
         "--link-expires-at",
+        "--retain-versions",
         "--no-link-expiry",
         "--grant-email",
         "--revoke-email",
@@ -805,5 +806,5 @@
       ]
     }
   ],
-  "generated_date": "2026-09-30"
+  "generated_date": "2026-10-07"
 }

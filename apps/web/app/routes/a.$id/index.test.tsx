@@ -360,12 +360,12 @@ describe('/a/:id loader', () => {
               }),
             })
           }
-          if (outsideCap && versionQueryCount === 4)
+          if (outsideCap && versionQueryCount === 3)
             return chain({
               executeTakeFirst: vi.fn().mockResolvedValue({
                 id: 'v1',
                 label: 'Restructured',
-                ordinal: 1,
+                ordinal: 41,
                 createdAt: '2026-05-24T00:00:00Z',
                 sizeBytes: 128,
               }),
@@ -378,11 +378,13 @@ describe('/a/:id loader', () => {
               [
                 {
                   id: 'v2',
+                  number: 52,
                   createdAt: '2026-05-25T00:00:00Z',
                   sizeBytes: 256,
                 },
                 {
                   id: 'v1',
+                  number: 41,
                   label: 'Restructured',
                   createdAt: '2026-05-24T00:00:00Z',
                   sizeBytes: 128,
@@ -431,7 +433,7 @@ describe('/a/:id loader', () => {
       expect(result.artifact).toMatchObject({
         currentVersionId: 'v2',
         displayedVersionId: 'v1',
-        displayedVersionOrdinal: 1,
+        displayedVersionOrdinal: 41,
         isHistoricalVersion: true,
         canReplaceFile: true,
       })
@@ -447,6 +449,20 @@ describe('/a/:id loader', () => {
         label: 'Restructured',
       })
       expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+      // A retained history link can disappear between visits after pruning.
+      dbMock.selectFrom.mockImplementation((table: string) => {
+        if (table === 'shareables') return shareableQuery(shareable)
+        return emptyFirstQuery()
+      })
+      await expect(
+        loader({
+          params: { id: 'html123abc' },
+          request: new Request(
+            'https://artifactshare.com/a/html123abc?version=v1',
+          ),
+          context,
+        } as never),
+      ).rejects.toMatchObject({ status: 404 })
       // Historical versions never query or expose the viewer list.
       expect(countShareableViewersMock).not.toHaveBeenCalled()
       expect(result.artifact).toMatchObject({

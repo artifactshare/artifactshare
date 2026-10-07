@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
@@ -525,4 +526,30 @@ test('parseCliArgs reads --no-fixtures', () => {
     parseCliArgs(['node', 'dev-setup.mjs', '--no-fixtures']).fixtures,
     false,
   )
+})
+
+test('application schema remains identical to stored definitions on non-reset setup', () => {
+  const schema = readFileSync(
+    new URL('../apps/web/db/schema.sql', import.meta.url),
+    'utf8',
+  )
+  const sqlite = new DatabaseSync(':memory:')
+  try {
+    sqlite.exec(schema)
+    const expected = schemaObjectDefinitions(schema)
+    const stored = sqlite
+      .prepare(
+        "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'",
+      )
+      .all()
+    for (const row of stored) {
+      assert.equal(
+        normalizeDefinition(row.sql),
+        normalizeDefinition(expected.get(row.name)),
+        row.name,
+      )
+    }
+  } finally {
+    sqlite.close()
+  }
 })

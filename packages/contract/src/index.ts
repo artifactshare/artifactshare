@@ -851,6 +851,7 @@ const CliEditDestinationSchema = z.union([
 
 export const CliEditRequestSchema = z
   .object({
+    retain_versions: z.number().int().min(1).nullable().optional(),
     title: z.string().optional(),
     visibility: CliEditableVisibilitySchema.optional(),
     link_expires_at: z.string().nullable().optional(),
@@ -878,6 +879,8 @@ export type CliArtifactDestination = z.infer<
 >
 
 export const CliEditResponseSchema = z.object({
+  retain_versions: z.number().int().min(1).nullable().optional(),
+  deleted_versions: z.number().int().min(0).optional(),
   artifact: CliArtifactReferenceSchema,
   title: z.string(),
   destination: CliArtifactDestinationSchema,

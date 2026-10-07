@@ -490,6 +490,8 @@ interface VerificationsTable {
 }
 
 interface ShareablesTable {
+  retain_versions: Generated<number | null>
+  version_sequence: Generated<number>
   id: string
   workspace_id: string
   owner_user_id: string
@@ -550,6 +552,7 @@ interface AccessRequestsTable {
 }
 
 interface VersionsTable {
+  number: Generated<number | null>
   label: Generated<string | null>
   id: string
   shareable_id: string

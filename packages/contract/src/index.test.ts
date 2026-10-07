@@ -1064,3 +1064,19 @@ describe('comment position compatibility', () => {
     ).toBe(false)
   })
 })
+
+describe('version retention edit contract', () => {
+  it.each([1, 2, 8760, null])('accepts retention %s', (retain_versions) => {
+    expect(CLI_EDIT_REQUEST_SCHEMA.parse({ retain_versions })).toEqual({
+      retain_versions,
+    })
+  })
+  it.each([0, -1, 1.5, '2', Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid retention %s',
+    (retain_versions) => {
+      expect(
+        CLI_EDIT_REQUEST_SCHEMA.safeParse({ retain_versions }).success,
+      ).toBe(false)
+    },
+  )
+})

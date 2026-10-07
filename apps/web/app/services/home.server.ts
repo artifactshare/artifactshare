@@ -37,7 +37,7 @@ function commentCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
 export function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
   return eb
     .selectFrom('versions')
-    .select((sqb) => sqb.fn.count<number>('versions.id').as('value'))
+    .select((sqb) => sqb.fn.max<number>('versions.number').as('value'))
     .whereRef('versions.shareable_id', '=', 'shareables.id')
     .where('versions.status', '=', 'published')
     .as('version_count')

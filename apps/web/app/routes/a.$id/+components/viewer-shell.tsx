@@ -105,6 +105,7 @@ export type ViewerShellArtifact = {
   displayedVersionId?: string
   displayedVersionOrdinal?: number
   isHistoricalVersion?: boolean
+  retainVersions?: number | null
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
@@ -2625,6 +2626,7 @@ function ViewerShellView({
       ) : null}
       {canViewHistory ? (
         <HistoryPanel
+          retainVersions={artifact.retainVersions}
           versions={artifact.versions ?? []}
           open={state.historyOpen}
           onOpenChange={(open) => {

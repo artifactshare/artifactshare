@@ -1,3 +1,4 @@
+import { pruneVersionsAfterPublish } from './version-retention.server'
 import { sql, type Compilable, type Kysely, type RawBuilder } from 'kysely'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
@@ -451,6 +452,7 @@ async function publishBridgeFileVersion(
       })
       if (committed) {
         retained = true
+        await pruneVersionsAfterPublish(db, target.id)
         await notifyArtifactVersionChanged(target.id, prepared.versionId)
         const result = await readBridgeResult(
           db,
@@ -566,6 +568,7 @@ async function publishBridgeStaticSite(
       })
       if (committed) {
         retained = true
+        await pruneVersionsAfterPublish(db, target.id)
         await notifyArtifactVersionChanged(target.id, staged.prepared.versionId)
         const result = await readBridgeResult(
           db,
@@ -2163,13 +2166,15 @@ async function readBridgeResult(
       )`,
     )
     .where(
-      sql<boolean>`EXISTS (
+      // Completed publish requests retain their version id as a tombstone even
+      // when retention cascades away the version and its operation provenance.
+      sql<boolean>`(request.result_version_id IS NOT NULL OR EXISTS (
         SELECT 1
         FROM bridge_operations provenance
         WHERE provenance.bridge_authority_id = request.bridge_authority_id
           AND provenance.request_id = request.request_id
           AND provenance.artifact_id = artifact.id
-      )`,
+      ))`,
     )
     .executeTakeFirst()
   if (!row) return null

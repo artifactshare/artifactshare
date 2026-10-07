@@ -33,3 +33,10 @@ export async function runD1BatchWithResults(
   })
   return await database.batch(stmts)
 }
+
+// D1 wraps SELECT rows, while the in-process database returns them directly.
+export function batchRows<T>(result: unknown): T[] {
+  return (
+    Array.isArray(result) ? result : (result as { results: T[] }).results
+  ) as T[]
+}

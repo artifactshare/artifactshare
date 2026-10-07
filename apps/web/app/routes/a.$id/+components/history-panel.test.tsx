@@ -328,3 +328,32 @@ const t = (key: string, vars?: Record<string, string | number>) =>
     'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
     'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
   })[key] ?? key
+
+test.each([1, 24, null])(
+  'history notes configured retention %s',
+  (retainVersions) => {
+    const html = renderToStaticMarkup(
+      <HistoryPanelBody
+        retainVersions={retainVersions}
+        versions={[]}
+        canReplaceFile={false}
+        active={false}
+        uploading={false}
+        inputRef={{ current: null }}
+        replaceMode="single"
+        setLocalDropActive={() => {}}
+        submitFiles={() => {}}
+        locale="en"
+        t={
+          ((key: string, vars?: Record<string, string | number>) =>
+            key === 'vw.retentionNote'
+              ? `Keeping the latest ${vars?.count} versions`
+              : key) as never
+        }
+      />,
+    )
+    if (retainVersions === null)
+      expect(html).not.toContain('Keeping the latest')
+    else expect(html).toContain(`Keeping the latest ${retainVersions} versions`)
+  },
+)

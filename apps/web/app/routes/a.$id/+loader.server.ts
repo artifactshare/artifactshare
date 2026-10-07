@@ -107,6 +107,7 @@ interface ArtifactSummary {
   displayedVersionId: string
   displayedVersionOrdinal: number
   isHistoricalVersion: boolean
+  retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
@@ -224,6 +225,7 @@ export type LoaderData =
         displayedVersionId: string
         displayedVersionOrdinal: number
         isHistoricalVersion: boolean
+        retainVersions?: number | null
         versions: ReadonlyArray<VersionRow>
         grants: ReadonlyArray<GrantEntry>
         comments: ReadonlyArray<CommentThreadView>
@@ -288,6 +290,7 @@ export async function loader({
       'shareables.view_count',
       'shareables.updated_at',
       'shareables.current_version_id',
+      'shareables.retain_versions',
       'shareables.container_id',
       'users.email as owner_email',
       'users.name as owner_name',
@@ -772,6 +775,7 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
+        retainVersions: shareable.retain_versions,
         versions,
         grants,
         comments,
@@ -809,6 +813,7 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
+        retainVersions: shareable.retain_versions,
         versions,
         grants,
         comments,
@@ -875,6 +880,7 @@ export async function loader({
       displayedVersionId: displayedVersion.id,
       displayedVersionOrdinal,
       isHistoricalVersion,
+      retainVersions: shareable.retain_versions,
       versions,
       grants,
       comments,
@@ -1440,40 +1446,31 @@ async function loadHistoryVersions(
   displayedVersionId: string,
   mayShowCreatorEmail: boolean,
 ): Promise<ReadonlyArray<VersionRow>> {
-  const [countRow, rows] = await Promise.all([
-    db
-      .selectFrom('versions')
-      .select((eb) => eb.fn.count<number>('id').as('count'))
-      .where('shareable_id', '=', shareableId)
-      .where('status', '=', 'published')
-      .where('published_at', 'is not', null)
-      .executeTakeFirst(),
-    db
-      .selectFrom('versions')
-      .leftJoin('users', 'users.id', 'versions.created_by_id')
-      .select([
-        'versions.id',
-        'versions.label',
-        'versions.created_at as createdAt',
-        'versions.size_bytes as sizeBytes',
-        'users.email as createdByEmail',
-        'users.name as createdByName',
-        'versions.created_by_agent_profile_id as createdByAgentProfileId',
-      ])
-      .where('versions.shareable_id', '=', shareableId)
-      .where('versions.status', '=', 'published')
-      .where('versions.published_at', 'is not', null)
-      .orderBy('versions.created_at', 'desc')
-      .orderBy('versions.id', 'desc')
-      .limit(50)
-      .execute(),
-  ])
-  const total = Number(countRow?.count ?? 0)
+  const rows = await db
+    .selectFrom('versions')
+    .leftJoin('users', 'users.id', 'versions.created_by_id')
+    .select([
+      'versions.id',
+      'versions.label',
+      'versions.number',
+      'versions.created_at as createdAt',
+      'versions.size_bytes as sizeBytes',
+      'users.email as createdByEmail',
+      'users.name as createdByName',
+      'versions.created_by_agent_profile_id as createdByAgentProfileId',
+    ])
+    .where('versions.shareable_id', '=', shareableId)
+    .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
+    .orderBy('versions.number', 'desc')
+    .orderBy('versions.id', 'desc')
+    .limit(50)
+    .execute()
 
-  const versions = rows.map((row, index) => ({
+  const versions = rows.map((row) => ({
     id: row.id,
     label: row.label,
-    ordinal: total - index,
+    ordinal: Number(row.number),
     createdAt: row.createdAt,
     sizeBytes: row.sizeBytes,
     isCurrent: row.id === currentVersionId,
@@ -1490,7 +1487,7 @@ async function loadHistoryVersions(
   const displayedRow = await db
     .selectFrom('versions')
     .leftJoin('users', 'users.id', 'versions.created_by_id')
-    .select((eb) => [
+    .select([
       'versions.id',
       'versions.label',
       'versions.created_at as createdAt',
@@ -1498,19 +1495,7 @@ async function loadHistoryVersions(
       'users.email as createdByEmail',
       'users.name as createdByName',
       'versions.created_by_agent_profile_id as createdByAgentProfileId',
-      eb
-        .selectFrom('versions as older')
-        .select((sub) => sub.fn.count<number>('older.id').as('count'))
-        .whereRef('older.shareable_id', '=', 'versions.shareable_id')
-        .where('older.status', '=', 'published')
-        .where('older.published_at', 'is not', null)
-        .where(
-          sql<boolean>`(
-            older.created_at < versions.created_at
-            OR (older.created_at = versions.created_at AND older.id <= versions.id)
-          )`,
-        )
-        .as('ordinal'),
+      'versions.number as ordinal',
     ])
     .where('versions.shareable_id', '=', shareableId)
     .where('versions.id', '=', displayedVersionId)

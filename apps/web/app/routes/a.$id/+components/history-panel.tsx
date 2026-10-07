@@ -16,6 +16,7 @@ export type { VersionRow } from './version-history-types'
 export { VersionWidget } from './version-widget'
 
 interface HistoryPanelProps {
+  retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -31,6 +32,7 @@ interface HistoryPanelProps {
 
 export function HistoryPanel({
   versions,
+  retainVersions,
   open,
   onOpenChange,
   canReplaceFile = false,
@@ -90,6 +92,7 @@ export function HistoryPanel({
         </SheetClose>
       </SheetHeader>
       <HistoryPanelBody
+        retainVersions={retainVersions}
         versions={versions}
         canReplaceFile={canReplaceFile}
         active={active}
@@ -107,6 +110,7 @@ export function HistoryPanel({
 
 export function HistoryPanelBody({
   versions,
+  retainVersions,
   canReplaceFile,
   active,
   uploading,
@@ -117,6 +121,7 @@ export function HistoryPanelBody({
   locale,
   t,
 }: {
+  retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
   active: boolean
@@ -131,6 +136,11 @@ export function HistoryPanelBody({
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3.5">
+        {retainVersions != null ? (
+          <p className="text-muted-foreground m-0 text-xs">
+            {t('vw.retentionNote', { count: retainVersions })}
+          </p>
+        ) : null}
         <VersionRows versions={versions} locale={locale} t={t} />
       </div>
 

@@ -165,15 +165,22 @@ describe('/api/shareables/:id/versions', () => {
         ])
           insert.run(id!, artifact!, status!, created!, published!)
         createDbMock.mockReturnValue(db)
-        publishMock.mockResolvedValue({ kind: 'ok', versionId: 'v2' })
+        publishMock.mockResolvedValue({
+          kind: 'ok',
+          versionId: 'v2',
+          number: 3,
+        })
         const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
         beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
           kind: 'ok',
           session: {
             addFile,
-            commitVersion: vi
-              .fn()
-              .mockResolvedValue({ kind: 'ok', id: 's1', versionId: 'v2' }),
+            commitVersion: vi.fn().mockResolvedValue({
+              kind: 'ok',
+              id: 's1',
+              versionId: 'v2',
+              number: 3,
+            }),
             abort: vi.fn(),
             get fileCount() {
               return addFile.mock.calls.length
@@ -198,6 +205,18 @@ describe('/api/shareables/:id/versions', () => {
           number: 3,
           label,
         })
+        sqlite.exec("DELETE FROM versions WHERE id IN ('v0', 'v1')")
+        const afterPruning = await action(
+          actionArgsFor(
+            `https://artifactshare.test/api/shareables/s1/versions?${query}`,
+            form,
+          ),
+        )
+        expect(afterPruning.status).toBe(200)
+        expect(await afterPruning.json()).toMatchObject({
+          versionId: 'v2',
+          number: 3,
+        })
       } finally {
         await db.destroy()
       }
@@ -210,9 +229,9 @@ describe('/api/shareables/:id/versions', () => {
     ['static_site', 'error'],
     ['static_site', 'missing-row'],
   ])(
-    'preserves committed %s success when the ordinal lookup returns %s',
+    'returns committed %s number even when the version lookup would return %s',
     async (kind, failure) => {
-      const result = { kind: 'ok', id: 's1', versionId: 'ver2' }
+      const result = { kind: 'ok', id: 's1', versionId: 'ver2', number: 2 }
       publishMock.mockResolvedValue(result)
       const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
       const commitVersion = vi.fn().mockResolvedValue(result)
@@ -246,16 +265,14 @@ describe('/api/shareables/:id/versions', () => {
       expect(await json(response)).toEqual({
         id: 's1',
         versionId: 'ver2',
+        number: 2,
         label: null,
         shareUrl: 'https://artifactshare.test/a/s1',
         ...(kind === 'static_site' ? { artifactKind: 'static_site' } : {}),
       })
-      expect(versionNumberLookupMock).toHaveBeenCalledTimes(1)
+      expect(versionNumberLookupMock).not.toHaveBeenCalled()
       const committed = kind === 'static_site' ? commitVersion : publishMock
       expect(committed).toHaveBeenCalledTimes(1)
-      expect(committed.mock.invocationCallOrder[0]).toBeLessThan(
-        versionNumberLookupMock.mock.invocationCallOrder[0]!,
-      )
       expect(abort).not.toHaveBeenCalled()
     },
   )
@@ -295,7 +312,7 @@ describe('/api/shareables/:id/versions', () => {
   test.each(['index.html', 'index.md'])(
     'normalizes labels before single-file publication for %s',
     async (filename) => {
-      publishMock.mockResolvedValue({ kind: 'ok', versionId: 'v1' })
+      publishMock.mockResolvedValue({ kind: 'ok', versionId: 'v1', number: 2 })
       const form = new FormData()
       form.append('file', new File(['# Report'], filename))
       const response = await action(
@@ -335,7 +352,7 @@ describe('/api/shareables/:id/versions', () => {
   })
 
   test('single-file replacement returns the new version id', async () => {
-    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2', number: 2 })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -352,7 +369,7 @@ describe('/api/shareables/:id/versions', () => {
   })
 
   test('single-file replacement uses the first file when a later file entry is text', async () => {
-    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2', number: 2 })
     const form = new FormData()
     form.append('file', new File(['replacement'], 'index.html'))
     form.append('file', 'ignored')
@@ -368,7 +385,7 @@ describe('/api/shareables/:id/versions', () => {
 
   test('single-file replacement preserves a link artifact URL', async () => {
     visibilityRef.current = 'link'
-    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2' })
+    publishMock.mockResolvedValue({ kind: 'ok', versionId: 'ver2', number: 2 })
     const form = new FormData()
     form.append('file', new File(['<p>replacement</p>'], 'index.html'))
 
@@ -396,6 +413,7 @@ describe('/api/shareables/:id/versions', () => {
           kind: 'ok',
           id: 'abc123def4',
           versionId: 'ver2',
+          number: 2,
         }),
         abort: vi.fn(),
         get fileCount() {
@@ -429,7 +447,7 @@ describe('/api/shareables/:id/versions', () => {
     const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
     const commitVersion = vi
       .fn()
-      .mockResolvedValue({ kind: 'ok', id: 's1', versionId: 'ver1' })
+      .mockResolvedValue({ kind: 'ok', id: 's1', versionId: 'ver1', number: 2 })
     const abort = vi.fn()
     beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
       kind: 'ok',

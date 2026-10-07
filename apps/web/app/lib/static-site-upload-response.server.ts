@@ -54,6 +54,7 @@ export function staticSiteBundleResponse(
       return Response.json({
         id: result.id,
         versionId: result.versionId,
+        ...('number' in result ? { number: result.number } : {}),
         artifactKind: 'static_site',
         ...('visibility' in result ? { visibility: result.visibility } : {}),
         ...('linkExpiresAt' in result
