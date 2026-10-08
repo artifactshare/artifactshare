@@ -132,3 +132,41 @@ test('builds the parent-owned external-link policy sent after readiness', () => 
     mode: 'direct',
   })
 })
+
+test('CSP metadata still requires the exact origin and frame identity', () => {
+  const origin = 'https://site123abc.sandbox.artifactshare.com'
+  const frame = {} as Window
+  const data = {
+    source: 'artifactshare',
+    kind: 'csp-violation',
+    directive: 'script-src',
+    blockedURI: 'eval',
+    sourceFile: null,
+    lineNumber: 0,
+    sample: 'eval(1)',
+    disposition: 'enforce',
+  }
+  const event = { origin, source: frame, data } as MessageEvent
+  expect(sandboxMessageFromFrame(event, origin, frame)).toEqual(data)
+  expect(
+    sandboxMessageFromFrame(
+      { ...event, origin: 'https://example.com' } as MessageEvent,
+      origin,
+      frame,
+    ),
+  ).toBeNull()
+  expect(
+    sandboxMessageFromFrame(
+      { ...event, source: {} } as MessageEvent,
+      origin,
+      frame,
+    ),
+  ).toBeNull()
+  expect(
+    sandboxMessageFromFrame(
+      { ...event, data: { ...data, sample: 'x'.repeat(81) } } as MessageEvent,
+      origin,
+      frame,
+    ),
+  ).toBeNull()
+})

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Internal: shared sandbox reporter includes bounded diagnostic samples and CSP disposition.
+
 - Explain DuckDB-WASM runtime extension loading and the optional bundled extension repository in the bundled skill and Cursor rule.
 
 - Document static-site WebAssembly and worker support, including DuckDB-WASM from jsDelivr, in the bundled agent instructions.

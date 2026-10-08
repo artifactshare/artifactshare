@@ -516,3 +516,68 @@ test('Mermaid results tolerate a detached block and render subsequent diagrams',
   expect(attached.hidden).toBe(true)
   expect(ctx.mermaidBlocks).toEqual({})
 })
+
+const validCspReport = {
+  source: 'artifactshare',
+  kind: 'csp-violation',
+  directive: 'script-src',
+  blockedURI: 'eval',
+  sourceFile: null,
+  lineNumber: null,
+}
+test.each([
+  {},
+  { sample: '', disposition: 'enforce' },
+  { sample: 'a'.repeat(80), disposition: 'report' },
+])('accepts legacy and optional CSP metadata %j', (metadata) => {
+  expect(isSandboxMessage({ ...validCspReport, ...metadata })).toBe(true)
+})
+test.each([
+  { directive: null },
+  { blockedURI: 1 },
+  { sourceFile: 3 },
+  { sourceFile: undefined },
+  { lineNumber: undefined },
+  { lineNumber: -1 },
+  { lineNumber: Infinity },
+  { lineNumber: NaN },
+  { lineNumber: '1' },
+  { sample: null },
+  { sample: 2 },
+  { sample: 'a'.repeat(81) },
+  { disposition: 'other' },
+  { disposition: null },
+])('rejects malformed CSP report %j', (invalid) => {
+  expect(isSandboxMessage({ ...validCspReport, ...invalid })).toBe(false)
+})
+test.each([0, 80, 81, 200])(
+  'emits at most 80 UTF-16 units from a %i-unit sample',
+  (length) => {
+    const ctx = state()
+    const post = vi.spyOn(ctx.primordials, 'savedPostMessage')
+    const events = new EventTarget()
+    vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
+      events.addEventListener.bind(events),
+    )
+    installCspViolations(ctx)
+    for (const disposition of ['enforce', 'report']) {
+      events.dispatchEvent(
+        Object.assign(new Event('securitypolicyviolation'), {
+          effectiveDirective: 'script-src',
+          blockedURI: 'eval',
+          sample: 'x'.repeat(length),
+          disposition,
+        }),
+      )
+      expect(post).toHaveBeenLastCalledWith(
+        ctx.primordials.savedParent,
+        {
+          ...validCspReport,
+          sample: 'x'.repeat(Math.min(length, 80)),
+          disposition,
+        },
+        '*',
+      )
+    }
+  },
+)

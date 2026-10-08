@@ -1,3 +1,4 @@
+import { SOCIAL_EMBED_SCRIPT_CSP_SOURCES } from '@artifactshare/viewer-kit/script-policy-sources'
 import type { ArtifactType } from '../../app/lib/artifact-type'
 import {
   EXTERNAL_SCRIPT_CSP_SOURCES,
@@ -8,8 +9,6 @@ export const CSP_HEADER = 'Content-Security-Policy'
 export const ROBOTS_HEADER = 'X-Robots-Tag'
 export const ROBOTS_VALUE = 'noindex, nofollow'
 export const REFERRER_POLICY = 'strict-origin'
-const SOCIAL_EMBED_SCRIPT_CSP_SOURCES =
-  'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://sf16-website-login.neutral.ttwstatic.com https://www.instagram.com https://www.threads.com https://www.threads.net'
 const SOCIAL_EMBED_STYLE_CSP_SOURCES =
   'https://sf16-website-login.neutral.ttwstatic.com'
 const SOCIAL_EMBED_CONNECT_CSP_SOURCES = 'https://www.tiktok.com'
