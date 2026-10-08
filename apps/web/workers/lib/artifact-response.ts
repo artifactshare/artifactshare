@@ -150,11 +150,16 @@ export function staticSiteAssetResponse(
   init?: { status?: number; headers?: Headers },
   responseDomain?: { domain: string },
 ): Response {
+  // XML documents may have another bundle asset as their immediate ancestor.
+  // Keep all viewer/embed ancestors; script responses retain their exact policy.
+  const ancestors = isXmlContent(contentType)
+    ? `'self' ${frameAncestors}`
+    : frameAncestors
   return contentResponse(
     body,
     contentType,
     isJavaScriptContent(contentType) || isXmlContent(contentType)
-      ? artifactContentSecurityPolicy('static_site', frameAncestors)
+      ? artifactContentSecurityPolicy('static_site', ancestors)
       : null,
     init,
     responseDomain,

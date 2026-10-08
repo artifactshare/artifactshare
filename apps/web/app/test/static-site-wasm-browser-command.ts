@@ -457,3 +457,147 @@ declare module 'vitest/browser' {
     }>
   }
 }
+
+// Isolate XML frame-ancestors from the parent's separate object-src restriction.
+// The host is intentionally unpoliced: production static-site HTML still denies
+// objects via default-src 'none'. The SVG uses the complete production policy.
+export const staticSiteXmlEmbedding = defineBrowserCommand(async ({ page }) => {
+  const context = await page.context().browser()!.newContext()
+  let assetOrigin = ''
+  let viewerOrigin = ''
+  let blockedRequests = 0
+  let controlRequests = 0
+  const viewerServer = createServer((request, response) => {
+    if (request.url === '/blocked' || request.url === '/control') {
+      if (request.url === '/blocked') blockedRequests += 1
+      else controlRequests += 1
+      response.writeHead(200, { 'Access-Control-Allow-Origin': '*' })
+      response.end('reachable')
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'text/html' })
+    response.end(
+      `<!doctype html><iframe src="${assetOrigin}/host.html"></iframe>`,
+    )
+  })
+  const assetServer = createServer(async (request, response) => {
+    let asset: Response
+    if (request.url === '/chart.svg') {
+      asset = staticSiteAssetResponse(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16">
+          <rect width="24" height="16" fill="red"/>
+          <script><![CDATA[
+            document.documentElement.setAttribute('data-marker', 'executed');
+            (async () => {
+              let evalBlocked = false;
+              try { eval('1'); } catch (error) { evalBlocked = error instanceof EvalError; }
+              let networkBlocked = false;
+              try { await fetch('${viewerOrigin}/blocked'); } catch { networkBlocked = true; }
+              document.documentElement.setAttribute('data-result', JSON.stringify({ evalBlocked, networkBlocked }));
+            })();
+          ]]></script>
+        </svg>`,
+        'image/svg+xml',
+        viewerOrigin,
+      )
+    } else if (request.url === '/host.html') {
+      asset = contentResponse(
+        `<!doctype html><body><script>
+          (async () => {
+            // Prove the unlisted origin is reachable before the SVG probes it.
+            const control = await fetch('${viewerOrigin}/control');
+            if (await control.text() !== 'reachable') throw new Error('Control failed');
+            const object = document.createElement('object');
+            object.type = 'image/svg+xml';
+            object.data = '/chart.svg';
+            object.width = '24';
+            object.height = '16';
+            document.body.appendChild(object);
+          })();
+        </script></body>`,
+        'text/html',
+        null,
+      )
+    } else {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(asset.status, Object.fromEntries(asset.headers))
+    response.end(Buffer.from(await asset.arrayBuffer()))
+  })
+  try {
+    for (const server of [viewerServer, assetServer]) {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+    }
+    const viewerAddress = viewerServer.address()
+    const assetAddress = assetServer.address()
+    if (
+      !viewerAddress ||
+      typeof viewerAddress === 'string' ||
+      !assetAddress ||
+      typeof assetAddress === 'string'
+    )
+      throw new Error('Missing XML embedding fixture ports')
+    viewerOrigin = `http://127.0.0.1:${viewerAddress.port}`
+    assetOrigin = `http://127.0.0.1:${assetAddress.port}`
+    await context.route('**/*', async (route) => {
+      if (
+        [viewerOrigin, assetOrigin].includes(
+          new URL(route.request().url()).origin,
+        )
+      )
+        await route.continue()
+      else await route.abort()
+    })
+    const viewer = await context.newPage()
+    await viewer.goto(viewerOrigin, { timeout: 15000 })
+    const host = viewer
+      .frames()
+      .find((frame) => frame.url() === `${assetOrigin}/host.html`)
+    if (!host) throw new Error('XML object host did not load')
+    await host.waitForFunction(
+      () => {
+        const doc = document.querySelector('object')?.contentDocument
+        return doc?.documentElement.hasAttribute('data-result')
+      },
+      undefined,
+      { timeout: 15000 },
+    )
+    const result = await host.evaluate(() => {
+      const doc = document.querySelector('object')!.contentDocument!
+      const rect = doc.querySelector('rect')!.getBoundingClientRect()
+      return {
+        marker: doc.documentElement.getAttribute('data-marker'),
+        rendered: rect.width > 0 && rect.height > 0,
+        ...JSON.parse(doc.documentElement.getAttribute('data-result')!),
+      }
+    })
+    return { ...result, blockedRequests, controlRequests }
+  } finally {
+    try {
+      await context.close()
+    } finally {
+      for (const server of [viewerServer, assetServer]) {
+        if (!server.listening) continue
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+        })
+      }
+    }
+  }
+})
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    staticSiteXmlEmbedding: () => Promise<{
+      marker: string
+      rendered: boolean
+      evalBlocked: boolean
+      networkBlocked: boolean
+      blockedRequests: number
+      controlRequests: number
+    }>
+  }
+}

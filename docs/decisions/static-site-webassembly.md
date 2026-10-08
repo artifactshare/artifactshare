@@ -16,6 +16,11 @@ same-origin script file keeps the eval and network limits. MIME matching ignores
 case and charset parameters and covers JavaScript MIME variants. Asset bytes
 and range handling are unchanged. XML document responses (application/xml,
 text/xml, and all +xml types, including SVG and XHTML) also carry the policy.
+Only XML responses add `'self'` to `frame-ancestors`, retaining the supplied
+viewer, link-viewer, and embed origins. This permits a same-origin intermediate
+ancestor when the parent permits embedding. It does not relax the parent's
+`object-src` or `frame-src`: static-site HTML still blocks objects through
+`default-src 'none'` and does not permit same-origin child frames.
 Other binary responses, including PNG and WASM, receive no CSP.
 
 Static-site asset requests with a `Service-Worker: script` header (ignoring
@@ -28,8 +33,9 @@ navigated to. SVG still renders as an image; image embedding does not apply the
 response CSP. Authorization and single-document HTML/Markdown are unchanged.
 
 `https://extensions.duckdb.org` is the sole added `connect-src` origin, appended
-after the existing sources. Image, frame, and media origins remain unchanged. Frame ancestors, iframe
-sandbox permissions, version-scoped origins, and access checks stay unchanged.
+after the existing sources. Image, frame, and media origins remain unchanged.
+Only XML response frame ancestors change. Iframe sandbox permissions,
+version-scoped origins, and access checks stay unchanged.
 The reporter continues to forward native CSP violations: permitted operations
 produce no notices, and blocked eval remains reportable.
 
@@ -101,3 +107,8 @@ Deterministic regression probes exercise service-worker refusal and XML document
 eval/network blocking over loopback, with a reachable CORS-enabled negative
 control and SVG image rendering. Handler tests cover all bundle access paths,
 normalized headers, and byte ranges without reading rejected script bodies.
+
+An additional loopback object probe isolates XML `frame-ancestors` using an
+unrestricted host page beneath a different viewer origin. The embedded SVG must
+render and execute a benign marker while eval and unlisted-origin fetches remain
+blocked. This probe does not assert that static-site HTML permits objects.

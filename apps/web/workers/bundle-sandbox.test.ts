@@ -37,6 +37,7 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
   consumeJti: consumeJtiMock,
 }))
 
+import { staticSiteAssetResponse } from './lib/artifact-response'
 import { signSandboxToken } from '../app/lib/sandbox-token'
 import { sandboxVersionLabel } from '../app/lib/hosts'
 import { encodeBase64Url } from '../app/lib/base64url'
@@ -181,6 +182,40 @@ function expectStaticSiteCsp(csp: string, ancestor = 'https://localhost:5173') {
       expect(directive).not.toContain(extensionOrigin)
   }
 }
+
+test.each([
+  'https://localhost:5173',
+  'https://abc123def4.artifactshare.link',
+  'https://localhost:5173 https://*.web-sandbox.oaiusercontent.com vscode-file://vscode-app',
+])(
+  'XML assets retain every supplied ancestor and ordinary header: %s',
+  async (ancestors) => {
+    const xml = staticSiteAssetResponse('<root/>', 'application/xml', ancestors)
+    const script = staticSiteAssetResponse(
+      '<root/>',
+      'text/javascript',
+      ancestors,
+    )
+    expectStaticSiteCsp(
+      xml.headers.get('Content-Security-Policy')!,
+      `'self' ${ancestors}`,
+    )
+    expectStaticSiteCsp(
+      script.headers.get('Content-Security-Policy')!,
+      ancestors,
+    )
+    const xmlHeaders = new Headers(xml.headers)
+    const scriptHeaders = new Headers(script.headers)
+    for (const headers of [xmlHeaders, scriptHeaders]) {
+      headers.delete('Content-Security-Policy')
+      headers.delete('Content-Type')
+    }
+    expect(Object.fromEntries(xmlHeaders)).toEqual(
+      Object.fromEntries(scriptHeaders),
+    )
+    expect(await xml.text()).toBe(await script.text())
+  },
+)
 
 const expectedPermissionsPolicy =
   'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com" "https://platform.twitter.com" "https://embed.bsky.app" "https://www.tiktok.com" "https://www.instagram.com" "https://www.threads.com" "https://www.threads.net"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
@@ -1643,7 +1678,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
       expectStaticSiteCsp(
         response.headers.get('Content-Security-Policy')!,
-        'https://abc123def4.localhost:5173',
+        "'self' https://abc123def4.localhost:5173",
       )
     },
   )
@@ -2662,13 +2697,21 @@ describe('handleArtifactSandboxRequest', () => {
   ])(
     'serves %s assets with CSP for scripts and XML documents',
     async (mime) => {
-      const isScript = ![
+      const isXml = [
+        'image/svg+xml',
+        'application/xml',
+        'text/xml',
+        'application/xhtml+xml',
+        'application/rss+xml',
+        'Application/Problem+XML; Charset=UTF-8',
+      ].includes(mime)
+      const hasPolicy = ![
         'text/css',
         'image/png',
         'application/wasm',
         'application/octet-stream',
       ].includes(mime)
-      const path = isScript ? '/worker.js' : '/fixture.wasm'
+      const path = hasPolicy ? '/worker.js' : '/fixture.wasm'
       await dbRef
         .current!.updateTable('version_files')
         .set({ path, mime_type: mime })
@@ -2692,14 +2735,22 @@ describe('handleArtifactSandboxRequest', () => {
         }),
       )
       expect(response.status).toBe(200)
-      if (isScript)
+      if (hasPolicy)
         expectStaticSiteCsp(
           response.headers.get('Content-Security-Policy') ?? '',
+          isXml ? "'self' https://localhost:5173" : 'https://localhost:5173',
         )
       expect(response.headers.get('Content-Type')).toBe(mime)
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
       expect(response.headers.get('Content-Security-Policy')).toBe(
-        isScript ? entry.headers.get('Content-Security-Policy') : null,
+        hasPolicy
+          ? entry.headers
+              .get('Content-Security-Policy')!
+              .replace(
+                'frame-ancestors ',
+                isXml ? "frame-ancestors 'self' " : 'frame-ancestors ',
+              )
+          : null,
       )
     },
   )

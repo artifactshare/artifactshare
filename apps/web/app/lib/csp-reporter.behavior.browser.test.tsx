@@ -1503,3 +1503,14 @@ test.skipIf(server.browser !== 'chromium')(
     expect(result.blockedRequests).toBe(0)
   },
 )
+
+test('XML object embedding allows the asset ancestor and retains eval and network limits', async () => {
+  expect(await server.commands.staticSiteXmlEmbedding()).toEqual({
+    marker: 'executed',
+    rendered: true,
+    evalBlocked: true,
+    networkBlocked: true,
+    blockedRequests: 0,
+    controlRequests: 1,
+  })
+})
