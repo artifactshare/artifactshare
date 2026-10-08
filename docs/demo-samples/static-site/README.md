@@ -10,6 +10,21 @@ file from the CDN. Blob workers inherit the page's policy. The script CDNs are
 jsDelivr, cdnjs, unpkg, esm.sh, and the Tailwind CDN; this does not grant access to
 arbitrary network origins.
 
+DuckDB-WASM loads runtime extensions such as `parquet` and `json` from
+`https://extensions.duckdb.org/<duckdb-version>/<wasm_eh|wasm_mvp>/<name>.duckdb_extension.wasm`.
+Static-site `connect-src` permits that origin: blob workers inherit the page's
+policy, and same-origin JavaScript workers carry it. This permission covers
+extension fetching, not arbitrary network origins.
+
+To avoid the external extension request, bundle every needed extension matching
+the DuckDB engine version and selected WASM platform. Preserve the repository's
+version/platform layout, for example
+`extensions/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm`. In the page, compute
+`new URL('extensions/', location.href).href` and use that absolute same-origin
+repository URL in `SET custom_extension_repository = '<absolute same-origin repository URL>'`
+before any extension loads or queries. This avoids requests to the extension
+host; jsDelivr core bundles still require CDN requests.
+
 For a dashboard, keep HTML and JavaScript alongside `data/*.parquet`. In the
 page, build an absolute same-origin URL with
 `new URL('data/rows.parquet', location.href).href` and pass it to DuckDB-WASM's

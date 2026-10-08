@@ -121,6 +121,62 @@ const youtubeFrameCspSources =
 const socialEmbedFrameCspSources =
   'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://www.instagram.com https://www.threads.com https://www.threads.net'
 const embedFrameCspSources = `${youtubeFrameCspSources} ${socialEmbedFrameCspSources}`
+// Independent baseline headers: only the static-site connect source may change.
+const baselineTail = [
+  'frame-ancestors https://localhost:5173',
+  "base-uri 'none'",
+  "form-action 'none'",
+  'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
+]
+const baselineStaticSiteCsp = [
+  "default-src 'none'",
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${externalCspSources}`,
+  "worker-src 'self' blob:",
+  `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
+  "img-src 'self' data: blob:",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "media-src 'self' https: data: blob:",
+  `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources}`,
+  `frame-src ${embedFrameCspSources}`,
+  ...baselineTail,
+].join('; ')
+const baselineHtmlCsp = [
+  "default-src 'none'",
+  `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources} ${socialEmbedScriptCspSources}`,
+  `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
+  "img-src 'self' data: https: blob:",
+  "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+  "media-src 'self' https: data: blob:",
+  `connect-src ${externalCspSources} ${socialEmbedConnectCspSources}`,
+  `frame-src ${embedFrameCspSources}`,
+  ...baselineTail,
+].join('; ')
+const baselineMarkdownCsp = [
+  "default-src 'none'",
+  `script-src 'sha256-${VIOLATION_REPORTER_SHA256}'`,
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "font-src 'self' data:",
+  "connect-src 'none'",
+  `frame-src ${youtubeFrameCspSources}`,
+  ...baselineTail,
+].join('; ')
+
+function expectStaticSiteCsp(csp: string) {
+  const extensionOrigin = 'https://extensions.duckdb.org'
+  expect(csp.split(extensionOrigin)).toHaveLength(2)
+  expect(csp.replace(` ${extensionOrigin}`, '')).toBe(baselineStaticSiteCsp)
+  expect(cspDirective(csp, 'connect-src')).toBe(
+    `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources} ${extensionOrigin}`,
+  )
+  for (const directive of csp.split('; ')) {
+    if (!directive.startsWith('connect-src '))
+      expect(directive).not.toContain(extensionOrigin)
+  }
+}
+
 const expectedPermissionsPolicy =
   'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com" "https://platform.twitter.com" "https://embed.bsky.app" "https://www.tiktok.com" "https://www.instagram.com" "https://www.threads.com" "https://www.threads.net"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
 
@@ -1077,12 +1133,13 @@ describe('handleArtifactSandboxRequest', () => {
       'frame-ancestors https://localhost:5173',
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expectStaticSiteCsp(csp)
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${externalCspSources}`,
     )
     expect(cspDirective(csp, 'worker-src')).toBe("worker-src 'self' blob:")
     expect(cspDirective(csp, 'connect-src')).toBe(
-      `connect-src 'self' ${externalCspSources} https://www.tiktok.com`,
+      `connect-src 'self' ${externalCspSources} https://www.tiktok.com https://extensions.duckdb.org`,
     )
     expect(cspDirective(csp, 'img-src')).toBe("img-src 'self' data: blob:")
     expect(cspDirective(csp, 'sandbox')).toBe(
@@ -2177,12 +2234,13 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const linkedPageCsp =
       linkedPage.headers.get('Content-Security-Policy') ?? ''
+    expectStaticSiteCsp(linkedPageCsp)
     const linkedPageConnectSrc = cspDirective(linkedPageCsp, 'connect-src')
     expect(cspDirective(linkedPageCsp, 'frame-src')).toBe(
       `frame-src ${embedFrameCspSources}`,
     )
     expect(linkedPageConnectSrc).toBe(
-      `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources}`,
+      `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources} https://extensions.duckdb.org`,
     )
     expect(cspDirective(linkedPageCsp, 'script-src-elem')).toBe(
       `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
@@ -2324,6 +2382,8 @@ describe('handleArtifactSandboxRequest', () => {
       'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toBe(baselineHtmlCsp)
+    expect(csp).not.toContain('https://extensions.duckdb.org')
     expect(cspDirective(csp, 'connect-src')).toBe(
       `connect-src ${externalCspSources} ${socialEmbedConnectCspSources}`,
     )
@@ -2463,6 +2523,8 @@ describe('handleArtifactSandboxRequest', () => {
       'text/html; charset=utf-8',
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toBe(baselineMarkdownCsp)
+    expect(csp).not.toContain('https://extensions.duckdb.org')
     expect(cspDirective(csp, 'connect-src')).toBe("connect-src 'none'")
     expect(cspDirective(csp, 'frame-src')).toBe(
       `frame-src ${youtubeFrameCspSources}`,
@@ -2560,6 +2622,8 @@ describe('handleArtifactSandboxRequest', () => {
       }),
     )
     expect(response.status).toBe(200)
+    if (isScript)
+      expectStaticSiteCsp(response.headers.get('Content-Security-Policy') ?? '')
     expect(response.headers.get('Content-Type')).toBe(mime)
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
     expect(response.headers.get('Content-Security-Policy')).toBe(
