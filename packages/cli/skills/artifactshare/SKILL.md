@@ -564,3 +564,17 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+## Static-site scripts and data
+
+Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.
+DuckDB-WASM can load from jsDelivr: its `getJsDelivrBundles()` setup uses a blob
+worker to `importScripts()` the CDN worker and fetch its `.wasm` file. The existing
+script CDNs are allowed inside blob workers; JavaScript `eval` and `new Function`
+remain blocked in the page and its blob workers.
+
+Keep data such as `data/*.parquet` in the shared folder and use same-origin URLs.
+Static-site binary assets support HTTP byte ranges. To refresh data while keeping
+the same share URL, replace the data locally and update the folder as a new
+version; each version retains its own isolated origin. Single-file HTML and
+Markdown have different script policies; these permissions apply to folder shares.

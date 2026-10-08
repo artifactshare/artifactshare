@@ -1,4 +1,8 @@
 import { env } from 'cloudflare:workers'
+import {
+  EXTERNAL_SCRIPT_CSP_SOURCES,
+  STATIC_SITE_SCRIPT_DIRECTIVES,
+} from './lib/script-csp'
 import type { Kysely } from 'kysely'
 import type { ArtifactType } from '../app/lib/artifact-type'
 import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
@@ -47,8 +51,6 @@ const CSP_HEADER = 'Content-Security-Policy'
 const ROBOTS_HEADER = 'X-Robots-Tag'
 const ROBOTS_VALUE = 'noindex, nofollow'
 const REFERRER_POLICY = 'strict-origin'
-const EXTERNAL_SCRIPT_CSP_SOURCES =
-  'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh https://cdn.tailwindcss.com'
 const SOCIAL_EMBED_SCRIPT_CSP_SOURCES =
   'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://sf16-website-login.neutral.ttwstatic.com https://www.instagram.com https://www.threads.com https://www.threads.net'
 const SOCIAL_EMBED_STYLE_CSP_SOURCES =
@@ -936,7 +938,7 @@ function artifactCsp(
           ]
         : [
             "default-src 'none'",
-            "script-src 'self' 'unsafe-inline'",
+            ...STATIC_SITE_SCRIPT_DIRECTIVES,
             `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_SCRIPT_CSP_SOURCES}`,
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,

@@ -1437,3 +1437,32 @@ test('a covered resolved comment retains verified ranges for jump without painti
   })
   expect(doc.querySelector('[data-thread-id="resolved"]')).toBeNull()
 })
+
+test('static sites run WASM and workers without notices while blocked JavaScript is reported', async () => {
+  const result = await server.commands.staticSiteWasm(
+    VIOLATION_REPORTER_SCRIPT_BODY,
+  )
+  expect(result.error).toBeUndefined()
+  expect(result.local).toBe('worker-wasm')
+  expect(result.blob).toBe('worker-wasm')
+  expect(result.allowedReports).toEqual([])
+  expect(result.blocked).toEqual([true, true, true, true])
+  expect(result.blockedRequests).toBe(0)
+  if (server.browser !== 'webkit') {
+    expect(result.reports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'csp-violation',
+          directive: 'script-src',
+          blockedURI: 'eval',
+        }),
+      ]),
+    )
+  }
+  // Browsers may redact the path of a cross-origin violation report.
+  expect(
+    result.reports
+      .filter((report) => report.directive === 'connect-src')
+      .map((report) => new URL(report.blockedURI).origin),
+  ).toContain(result.blockedOrigin)
+})

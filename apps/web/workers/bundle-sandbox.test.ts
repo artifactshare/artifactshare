@@ -1076,6 +1076,20 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Security-Policy')).toContain(
       'frame-ancestors https://localhost:5173',
     )
+    const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(cspDirective(csp, 'script-src')).toBe(
+      `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${externalCspSources}`,
+    )
+    expect(cspDirective(csp, 'worker-src')).toBe("worker-src 'self' blob:")
+    expect(cspDirective(csp, 'connect-src')).toBe(
+      `connect-src 'self' ${externalCspSources} https://www.tiktok.com`,
+    )
+    expect(cspDirective(csp, 'img-src')).toBe("img-src 'self' data: blob:")
+    expect(cspDirective(csp, 'sandbox')).toBe(
+      'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
+    )
+    expect(csp).not.toContain("'unsafe-eval'")
+
     expect(response.headers.get('Content-Security-Policy')).toContain(
       `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
@@ -2319,6 +2333,8 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
+    expect(csp).not.toContain("'wasm-unsafe-eval'")
+    expect(cspDirective(csp, 'worker-src')).toBeUndefined()
     expect(cspDirective(csp, 'style-src')).toBe(
       `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
@@ -2454,6 +2470,8 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'sha256-${VIOLATION_REPORTER_SHA256}'`,
     )
+    expect(csp).not.toContain("'wasm-unsafe-eval'")
+    expect(cspDirective(csp, 'worker-src')).toBeUndefined()
     expect(response.headers.get('Permissions-Policy')).toBe(
       expectedPermissionsPolicy,
     )

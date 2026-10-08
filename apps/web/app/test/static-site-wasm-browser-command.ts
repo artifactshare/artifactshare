@@ -1,0 +1,175 @@
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { defineBrowserCommand } from '@vitest/browser-playwright'
+import {
+  EXTERNAL_SCRIPT_CSP_SOURCES,
+  STATIC_SITE_SCRIPT_DIRECTIVES,
+} from '../../workers/lib/script-csp'
+
+// Serve worker requests over loopback: page.route cannot reliably fulfill
+// worker fetch/importScripts across all three browser engines. CDN permission
+// is checked against the response's script-src/connect-src in bundle-sandbox.test.
+export const staticSiteWasm = defineBrowserCommand(
+  async ({ page }, reporter: string) => {
+    const artifact = await page.context().newPage()
+    const wasm = [0, 97, 115, 109, 1, 0, 0, 0]
+    const csp = [
+      "default-src 'none'",
+      ...STATIC_SITE_SCRIPT_DIRECTIVES,
+      `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
+      `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
+      'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
+    ].join('; ')
+    const worker = (origin: string) => `
+      (async () => {
+        const response = await fetch('${origin}/fixture.wasm');
+        await WebAssembly.instantiateStreaming(response);
+        postMessage('worker-wasm');
+      })().catch(error => postMessage(String(error)));
+    `
+    let origin = ''
+    let blockedOrigin = ''
+    let blockedRequests = 0
+    // A second loopback port is a real, reachable origin outside the policy.
+    // If CSP regresses, these requests succeed and the negative controls fail.
+    const blockedServer = createServer((_request, response) => {
+      blockedRequests += 1
+      response.writeHead(200, {
+        'Content-Type': 'text/javascript',
+        'Access-Control-Allow-Origin': '*',
+      })
+      response.end('')
+    })
+    let html = ''
+    const fixtureServer = createServer((request, response) => {
+      const path = new URL(request.url ?? '/', origin).pathname
+      if (path === '/fixture.wasm') {
+        response.setHeader('Content-Type', 'application/wasm')
+        response.end(Buffer.from(wasm))
+      } else if (path === '/worker.js') {
+        response.setHeader('Content-Type', 'text/javascript')
+        response.end(worker(origin))
+      } else if (path === '/') {
+        response.setHeader('Content-Type', 'text/html')
+        response.end(`<!doctype html><script>
+          window.reports = [];
+          addEventListener('message', event => {
+            if (event.source === document.querySelector('iframe').contentWindow &&
+                event.data?.kind === 'csp-violation') reports.push(event.data);
+          });
+        </script><iframe sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" src="/artifact.html"></iframe>`)
+      } else if (path === '/artifact.html') {
+        response.setHeader('Content-Type', 'text/html')
+        response.setHeader('Content-Security-Policy', csp)
+        response.end(html)
+      } else {
+        response.writeHead(404).end()
+      }
+    })
+    try {
+      blockedServer.listen(0, '127.0.0.1')
+      await once(blockedServer, 'listening')
+      const blockedAddress = blockedServer.address()
+      if (!blockedAddress || typeof blockedAddress === 'string')
+        throw new Error('Missing blocked-origin fixture port')
+      blockedOrigin = `http://127.0.0.1:${blockedAddress.port}`
+      fixtureServer.listen(0, '127.0.0.1')
+      await once(fixtureServer, 'listening')
+      const address = fixtureServer.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Missing fixture port')
+      origin = `http://127.0.0.1:${address.port}`
+      html = `<!doctype html><body>
+      <script>
+        window.reports = parent.reports;
+      </script>
+      <script>${reporter}</script>
+      <script>
+        (async () => {
+          const bytes = new Uint8Array(${JSON.stringify(wasm)});
+          await WebAssembly.compile(bytes);
+          await WebAssembly.instantiate(bytes);
+          await WebAssembly.instantiateStreaming(fetch('/fixture.wasm'));
+          const runWorker = (url, label) => new Promise((resolve, reject) => {
+            const worker = new Worker(url);
+            worker.onmessage = event => { worker.terminate(); resolve(event.data); };
+            worker.onerror = event => { worker.terminate(); reject(new Error(label + " worker: " + (event.message || "script failed to load"))); };
+          });
+          const local = await runWorker('/worker.js', 'same-origin');
+          const url = URL.createObjectURL(new Blob([
+            'importScripts("${origin}/worker.js")'
+          ], { type: 'text/javascript' }));
+          let blob;
+          try { blob = await runWorker(url, 'blob'); } finally { URL.revokeObjectURL(url); }
+          // Allow native violation events and reporter postMessages to arrive.
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const allowedReports = reports.slice();
+          const blocked = [];
+          // Let these exceptions reach the browser's uncaught-exception path.
+          // Observe the error without catching it or synthesizing a CSP event,
+          // so reporting exercises only native CSP violations.
+          for (const source of ["eval('1')", "new Function('return 1')()"]) {
+            let evalBlocked = false;
+            const onError = event => { evalBlocked = event.error instanceof EvalError; };
+            window.addEventListener('error', onError);
+            const script = document.createElement('script');
+            script.textContent = source;
+            try { document.body.appendChild(script); }
+            finally {
+              window.removeEventListener('error', onError);
+              script.remove();
+            }
+            blocked.push(evalBlocked);
+          }
+          try { await fetch('${blockedOrigin}/fixture.wasm'); blocked.push(false); }
+          catch { blocked.push(true); }
+          const scriptBlocked = await new Promise(resolve => {
+            const script = document.createElement('script');
+            script.src = '${blockedOrigin}/script.js';
+            script.onload = () => resolve(false);
+            script.onerror = () => resolve(true);
+            document.body.appendChild(script);
+          });
+          blocked.push(scriptBlocked);
+          await new Promise(resolve => setTimeout(resolve, 100));
+          document.body.dataset.result = JSON.stringify({ local, blob, allowedReports, blocked, reports });
+        })().catch(error => { document.body.dataset.result = JSON.stringify({ error: String(error) }); });
+      </script>
+    </body>`
+      await artifact.goto(origin)
+      const content = artifact
+        .frames()
+        .find((frame) => frame.url().endsWith('/artifact.html'))
+      if (!content) throw new Error('Static-site frame did not load')
+      await content.waitForFunction(() => Boolean(document.body.dataset.result))
+      const result = await content.evaluate(() =>
+        JSON.parse(document.body.dataset.result!),
+      )
+      return { ...result, blockedOrigin, blockedRequests }
+    } finally {
+      await artifact.close()
+      for (const server of [fixtureServer, blockedServer]) {
+        if (!server.listening) continue
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+        })
+      }
+    }
+  },
+)
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    staticSiteWasm: (reporter: string) => Promise<{
+      error?: string
+      blockedOrigin: string
+      blockedRequests: number
+      local: string
+      blob: string
+      allowedReports: unknown[]
+      blocked: boolean[]
+      reports: { kind: string; directive: string; blockedURI: string }[]
+    }>
+  }
+}
