@@ -2517,6 +2517,56 @@ describe('handleArtifactSandboxRequest', () => {
     expect(body).not.toContain('繧')
   })
 
+  test.each([
+    'text/javascript',
+    'application/javascript',
+    'application/ecmascript',
+    'text/ecmascript',
+    'application/x-javascript',
+    'text/x-javascript',
+    'application/x-ecmascript',
+    'text/x-ecmascript',
+    'text/javascript1.5',
+    'text/jscript',
+    'text/livescript',
+    'Text/JavaScript; Charset=UTF-8',
+    'application/wasm',
+    'application/octet-stream',
+  ])('serves %s assets with worker CSP only for JavaScript', async (mime) => {
+    const isScript = !['application/wasm', 'application/octet-stream'].includes(
+      mime,
+    )
+    const path = isScript ? '/worker.js' : '/fixture.wasm'
+    await dbRef
+      .current!.updateTable('version_files')
+      .set({ path, mime_type: mime })
+      .where('id', '=', 'vf-css')
+      .execute()
+    const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
+    storageMock.getArtifact
+      .mockResolvedValueOnce(storedArtifact('<p>Dashboard</p>', 'text/html'))
+      .mockResolvedValueOnce({
+        body: new Response(bytes).body,
+        size: bytes.length,
+        httpMetadata: { contentType: mime },
+      })
+    const token = await entrypointToken()
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}${path}`, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe(mime)
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+    expect(response.headers.get('Content-Security-Policy')).toBe(
+      isScript ? entry.headers.get('Content-Security-Policy') : null,
+    )
+  })
+
   test('does not send document CSP on static-site assets', async () => {
     storageMock.getArtifact
       .mockResolvedValueOnce(

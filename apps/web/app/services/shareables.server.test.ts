@@ -3602,6 +3602,77 @@ describe('StaticSiteBundleUploadSession', () => {
     expect(version.fallback_to_index).toBe(0)
   })
 
+  test.each(['', 'text/html'])(
+    'stores WASM and Parquet in create and update sessions with client MIME %j',
+    async (type) => {
+      const created = await beginStaticSiteBundleUploadSession(db, OWNER)
+      if (created.kind !== 'ok') throw new Error('expected create session')
+      const assets = [
+        {
+          path: '/engine.WASM',
+          bytes: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]),
+          mime: 'application/wasm',
+        },
+        {
+          path: '/data/rows.PARQUET',
+          bytes: new Uint8Array([80, 65, 82, 49, 0, 255, 128, 80, 65, 82, 49]),
+          mime: 'application/octet-stream',
+        },
+      ]
+      const storeFiles = async (session: typeof created.session) => {
+        expect(
+          await session.addFile(
+            siteTextFile('/index.html', '<p>Dashboard</p>', 'text/html'),
+          ),
+        ).toEqual({ kind: 'ok' })
+        for (const asset of assets) {
+          expect(
+            await session.addFile(
+              new File([asset.bytes], asset.path, { type }),
+            ),
+          ).toEqual({ kind: 'ok' })
+          expect(storageMock.putArtifact).toHaveBeenCalledWith(
+            {},
+            expect.stringContaining(asset.path),
+            asset.bytes.buffer,
+            { contentType: asset.mime },
+          )
+        }
+        expect(
+          await session.addFile(
+            new File(['no'], '/unsupported.bin', { type: 'application/wasm' }),
+          ),
+        ).toEqual({ kind: 'unsupported-type', path: '/unsupported.bin' })
+      }
+      const checkRows = async (versionId: string) => {
+        const rows = await db
+          .selectFrom('version_files')
+          .select(['path', 'mime_type', 'size_bytes'])
+          .where('version_id', '=', versionId)
+          .execute()
+        for (const asset of assets)
+          expect(rows).toContainEqual({
+            path: asset.path,
+            mime_type: asset.mime,
+            size_bytes: asset.bytes.length,
+          })
+      }
+      await storeFiles(created.session)
+      expect((await created.session.commit('private')).kind).toBe('ok')
+      await checkRows(created.session.versionId)
+      const updated = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        created.session.shareableId,
+      )
+      if (updated.kind !== 'ok') throw new Error('expected update session')
+      storageMock.putArtifact.mockClear()
+      await storeFiles(updated.session)
+      expect((await updated.session.commitVersion()).kind).toBe('ok')
+      await checkRows(updated.session.versionId)
+    },
+  )
+
   test('accepts framework sidecars and MP4 video in static site bundles', async () => {
     const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
 

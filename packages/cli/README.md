@@ -6,6 +6,10 @@ The official CLI to open, share, and update files, folders, and static sites on 
 
 Artifact Share hosts AI-built reports, documents, and static sites so you can share them with teammates and clients. This CLI shares a single file or a whole folder (HTML, Markdown, exported SPAs, images included), updates versions, opens shared URLs for agents, reads content and comments back, and works the same for humans, terminal agents (Claude Code, Codex, Cursor Agent), and automation.
 
+## WebAssembly dashboards
+
+Static sites support WebAssembly and same-origin or blob workers. For DuckDB-WASM, getJsDelivrBundles() selects jsDelivr assets: a blob worker uses importScripts() to load the worker script, then fetches and compiles the .wasm file. Query same-origin data/*.parquet files with SQL. Folder uploads accept .wasm and .parquet within the existing file count, per-file size, total size and path limits. JavaScript eval and new Function remain blocked; existing network allowlists still apply. Single-file HTML and Markdown policies are unchanged.
+
 ## Quick start
 
 Requires Node.js 22 or later.

@@ -253,3 +253,25 @@ test('documents agent update recovery in both locales', () => {
     ).toContain('--expected-version <version-id>')
   }
 })
+
+test('documents static-site analytics capabilities and limits in both locales', () => {
+  for (const locale of ['en', 'ja'] as const) {
+    const body = cliReferenceContent(locale).sections.basics.body
+    for (const term of [
+      'WebAssembly',
+      'worker',
+      'blob',
+      'DuckDB-WASM',
+      'getJsDelivrBundles()',
+      'jsDelivr',
+      'importScripts()',
+      '.wasm',
+      'data/*.parquet',
+      'eval',
+      'new Function',
+    ])
+      expect(body).toContain(term)
+    expect(body).toMatch(/existing file count|既存のファイル数/)
+    expect(body).toMatch(/network allowlists|通信先も既存の許可リスト/)
+  }
+})

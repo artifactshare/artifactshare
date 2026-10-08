@@ -2,9 +2,10 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import {
-  EXTERNAL_SCRIPT_CSP_SOURCES,
-  STATIC_SITE_SCRIPT_DIRECTIVES,
-} from '../../workers/lib/script-csp'
+  artifactContentSecurityPolicy,
+  contentResponse,
+  staticSiteAssetResponse,
+} from '../../workers/lib/artifact-response'
 
 // Serve worker requests over loopback: page.route cannot reliably fulfill
 // worker fetch/importScripts across all three browser engines. CDN permission
@@ -13,18 +14,17 @@ export const staticSiteWasm = defineBrowserCommand(
   async ({ page }, reporter: string) => {
     const artifact = await page.context().newPage()
     const wasm = [0, 97, 115, 109, 1, 0, 0, 0]
-    const csp = [
-      "default-src 'none'",
-      ...STATIC_SITE_SCRIPT_DIRECTIVES,
-      `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
-      `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES}`,
-      'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
-    ].join('; ')
     const worker = (origin: string) => `
       (async () => {
         const response = await fetch('${origin}/fixture.wasm');
         await WebAssembly.instantiateStreaming(response);
-        postMessage('worker-wasm');
+        let evalBlocked = false;
+        try { eval('1'); } catch (error) { evalBlocked = error instanceof EvalError; }
+        let functionBlocked = false;
+        try { new Function('return 1')(); } catch (error) { functionBlocked = error instanceof EvalError; }
+        let networkBlocked = false;
+        try { await fetch('${blockedOrigin}/worker-fetch'); } catch { networkBlocked = true; }
+        postMessage({ wasm: 'worker-wasm', evalBlocked, functionBlocked, networkBlocked });
       })().catch(error => postMessage(String(error)));
     `
     let origin = ''
@@ -41,14 +41,26 @@ export const staticSiteWasm = defineBrowserCommand(
       response.end('')
     })
     let html = ''
-    const fixtureServer = createServer((request, response) => {
+    const fixtureServer = createServer(async (request, response) => {
       const path = new URL(request.url ?? '/', origin).pathname
+      // Use the same response builders as serveBundleFile. Only the allowed
+      // ancestor is the loopback harness rather than the deployed app origin.
+      const send = async (asset: Response) => {
+        response.writeHead(asset.status, Object.fromEntries(asset.headers))
+        response.end(Buffer.from(await asset.arrayBuffer()))
+      }
       if (path === '/fixture.wasm') {
-        response.setHeader('Content-Type', 'application/wasm')
-        response.end(Buffer.from(wasm))
+        await send(
+          staticSiteAssetResponse(
+            new Response(new Uint8Array(wasm)).body,
+            'application/wasm',
+            origin,
+          ),
+        )
       } else if (path === '/worker.js') {
-        response.setHeader('Content-Type', 'text/javascript')
-        response.end(worker(origin))
+        await send(
+          staticSiteAssetResponse(worker(origin), 'text/javascript', origin),
+        )
       } else if (path === '/') {
         response.setHeader('Content-Type', 'text/html')
         response.end(`<!doctype html><script>
@@ -59,9 +71,13 @@ export const staticSiteWasm = defineBrowserCommand(
           });
         </script><iframe sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" src="/artifact.html"></iframe>`)
       } else if (path === '/artifact.html') {
-        response.setHeader('Content-Type', 'text/html')
-        response.setHeader('Content-Security-Policy', csp)
-        response.end(html)
+        await send(
+          contentResponse(
+            html,
+            'text/html',
+            artifactContentSecurityPolicy('static_site', origin),
+          ),
+        )
       } else {
         response.writeHead(404).end()
       }
@@ -165,8 +181,18 @@ declare module 'vitest/browser' {
       error?: string
       blockedOrigin: string
       blockedRequests: number
-      local: string
-      blob: string
+      local: {
+        wasm: string
+        evalBlocked: boolean
+        functionBlocked: boolean
+        networkBlocked: boolean
+      }
+      blob: {
+        wasm: string
+        evalBlocked: boolean
+        functionBlocked: boolean
+        networkBlocked: boolean
+      }
       allowedReports: unknown[]
       blocked: boolean[]
       reports: { kind: string; directive: string; blockedURI: string }[]

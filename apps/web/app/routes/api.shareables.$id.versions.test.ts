@@ -1,6 +1,8 @@
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
+
+const putBundleFileMock = vi.hoisted(() => vi.fn())
 
 const publishMock = vi.hoisted(() => vi.fn())
 const publishPrincipalMock = vi.hoisted(() => vi.fn())
@@ -17,7 +19,7 @@ const visibilityRef = vi.hoisted(() => ({
 }))
 
 vi.mock('cloudflare:workers', () => ({
-  env: { APP_ENV: 'development' },
+  env: { APP_ENV: 'development', BUCKET: { put: putBundleFileMock } },
 }))
 
 vi.mock('~/middleware/auth', () => ({
@@ -444,7 +446,31 @@ describe('/api/shareables/:id/versions', () => {
   })
 
   test('static_site hint streams files through a version upload session', async () => {
-    const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+    // Keep publication mocked here, but exercise production path/extension/MIME
+    // validation and storage through the real session before the route commits.
+    const { StaticSiteBundleUploadSession } = await vi.importActual<
+      typeof import('~/services/shareables.server')
+    >('~/services/shareables.server')
+    const { db } = createMigratedInMemoryDb()
+    onTestFinished(() => db.destroy())
+    putBundleFileMock.mockReset().mockResolvedValue(undefined)
+    const acceptanceSession = new StaticSiteBundleUploadSession(
+      db,
+      { id: 'u1', workspaceId: 'ws1' },
+      's1',
+      1024 * 1024,
+      {
+        kind: 'version',
+        label: null,
+        touchArtifactKeyId: null,
+        expectedCurrentVersionId: null,
+        preserveArtifactIdentity: true,
+        authority: null,
+        agentProfileId: null,
+      },
+      { workspaceId: 'ws1', contributorGuardrailLimit: 50 },
+    )
+    const addFile = vi.fn((file: File) => acceptanceSession.addFile(file))
     const commitVersion = vi
       .fn()
       .mockResolvedValue({ kind: 'ok', id: 's1', versionId: 'ver1', number: 2 })
@@ -463,6 +489,11 @@ describe('/api/shareables/:id/versions', () => {
     const form = new FormData()
     form.append('file', new File(['<p>new</p>'], 'index.html'))
     form.append('file', new File(['body{}'], 'assets/site.css'))
+
+    const binary = new Uint8Array([0, 255, 128, 65])
+    for (const name of ['engine.WASM', 'data/rows.PARQUET']) {
+      form.append('file', new File([binary], name, { type: 'text/plain' }))
+    }
 
     const response = await action(
       actionArgsFor(
@@ -504,7 +535,26 @@ describe('/api/shareables/:id/versions', () => {
     const promise = Promise.resolve()
     waitUntil(promise)
     expect(waitUntilMock).toHaveBeenCalledWith(promise)
-    expect(addFile).toHaveBeenCalledTimes(2)
+    expect(addFile).toHaveBeenCalledTimes(4)
+    for (const [offset, name] of [
+      'engine.WASM',
+      'data/rows.PARQUET',
+    ].entries()) {
+      const file = addFile.mock.calls[offset + 2][0]
+      expect(file.name).toBe(name)
+      expect(new Uint8Array(await file.arrayBuffer())).toEqual(binary)
+      expect(putBundleFileMock).toHaveBeenCalledWith(
+        `${acceptanceSession.r2Prefix}${name}`,
+        binary.buffer,
+        {
+          httpMetadata: {
+            contentType: name.endsWith('.WASM')
+              ? 'application/wasm'
+              : 'application/octet-stream',
+          },
+        },
+      )
+    }
     expect(commitVersion).toHaveBeenCalledTimes(1)
     expect(publishMock).not.toHaveBeenCalled()
     expect(abort).not.toHaveBeenCalled()
