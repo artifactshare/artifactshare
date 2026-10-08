@@ -5,8 +5,10 @@ same-origin and blob workers, and load DuckDB-WASM from the existing script CDNs
 Single-file HTML and Markdown retain their current policies.
 
 The static-site `script-src` includes `wasm-unsafe-eval` and the existing script
-CDN origins. Blob workers inherit this policy, and their `importScripts()` uses
-`script-src`, not the document's `script-src-elem`. `worker-src 'self' blob:`
+CDN origins. Blob workers inherit this policy. The existing CDN origins appear
+in both `script-src` and `script-src-elem`, so worker `importScripts()` calls are
+allowed whichever directive an engine applies. `script-src-elem` also lists the
+social embed script hosts; no new origin is added. `worker-src 'self' blob:`
 allows worker creation. JavaScript `eval` and `new Function` remain blocked in
 documents served with the static-site CSP and their blob workers. JavaScript
 files served from a static site carry that CSP, so a worker started from a
@@ -45,10 +47,8 @@ WebKit blocks eval but dispatches no CSP violation event for it, so the reporter
 does not report it there. This is existing behavior, unchanged by this work.
 Allowed WebAssembly and worker operations must produce no reports in any engine.
 
-The reporter retains the document-only native CSP listener from main. The
-window listener and message-based EvalError fallback are removed; no reproduced
-Chromium or Firefox failure establishes a need for the extra listener. Errors
-and unhandled rejections are not interpreted as CSP violations.
+The reporter is unchanged and retains its document-only native CSP listener.
+Errors and unhandled rejections are not interpreted as CSP violations.
 
 Folder uploads accept `.wasm` as `application/wasm` and `.parquet` as
 `application/octet-stream`, based on the extension rather than client MIME.

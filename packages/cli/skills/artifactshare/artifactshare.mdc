@@ -137,7 +137,10 @@ worker to `importScripts()` the CDN worker and fetch its `.wasm` file. The exist
 script CDNs are allowed inside blob workers; JavaScript `eval` and `new Function`
 remain blocked in the page and its blob workers.
 
-Keep data such as `data/*.parquet` in the shared folder and use same-origin URLs.
+Keep data such as `data/*.parquet` in the shared folder. In the page, build an
+absolute same-origin URL with `new URL('data/rows.parquet', location.href).href`
+and pass it to DuckDB-WASM's `registerFileURL()` before querying the registered
+file with SQL. Relative URLs cannot be resolved inside its blob worker.
 Static-site binary assets support HTTP byte ranges. To refresh data while keeping
 the same share URL, replace the data locally and update the folder as a new
 version; each version retains its own isolated origin. Single-file HTML and

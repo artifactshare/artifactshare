@@ -8,7 +8,7 @@ Artifact Share hosts AI-built reports, documents, and static sites so you can sh
 
 ## WebAssembly dashboards
 
-Static sites support WebAssembly and same-origin or blob workers. For DuckDB-WASM, getJsDelivrBundles() selects jsDelivr assets: a blob worker uses importScripts() to load the worker script, then fetches and compiles the .wasm file. Query same-origin data/*.parquet files with SQL. Folder uploads accept .wasm and .parquet within the existing file count, per-file size, total size and path limits. JavaScript eval and new Function remain blocked; existing network allowlists still apply. Single-file HTML and Markdown policies are unchanged.
+Static sites support WebAssembly and same-origin or blob workers. For DuckDB-WASM, getJsDelivrBundles() selects jsDelivr assets: a blob worker uses importScripts() to load the worker script, then fetches and compiles the .wasm file. For same-origin data/*.parquet files, build an absolute URL in the page with new URL('data/rows.parquet', location.href).href and pass it to DuckDB-WASM's registerFileURL() before querying the registered file with SQL. Relative URLs cannot be resolved inside its blob worker. Folder uploads accept .wasm and .parquet within the existing file count, per-file size, total size and path limits. JavaScript eval and new Function remain blocked; existing network allowlists still apply. Single-file HTML and Markdown policies are unchanged.
 
 ## Quick start
 
