@@ -24,6 +24,39 @@ export const screen = {
       setup: {},
     },
     {
+      id: 'csp-artifact',
+      description:
+        '成果物自身の通信がブロックされ、未認証の閲覧者にも診断を表示する状態',
+      setup: {
+        auth: 'anonymous',
+        seedAuth: 'team-owner',
+        scenario: 'viewer/csp-diagnostics',
+        scenarioArtifactIndex: 1,
+        ready: {
+          selector: 'aside[role="status"]',
+          description: 'artifact CSP diagnostic',
+        },
+        interactions: [
+          { action: 'click', selector: 'aside[role="status"] summary' },
+        ],
+      },
+    },
+    {
+      id: 'csp-environment-owner',
+      description: 'オーナーに閲覧環境の診断グループと説明を表示する状態',
+      setup: {
+        scenario: 'viewer/csp-diagnostics',
+        scenarioArtifactIndex: 2,
+        ready: {
+          selector: 'aside[role="status"]',
+          description: 'environment CSP diagnostic',
+        },
+        interactions: [
+          { action: 'click', selector: 'aside[role="status"] summary' },
+        ],
+      },
+    },
+    {
       id: 'panel-collapsed',
       description: '閲覧パネルを折りたたんだ状態',
       setup: {

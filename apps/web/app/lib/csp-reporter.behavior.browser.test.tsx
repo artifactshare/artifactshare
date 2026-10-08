@@ -1,3 +1,7 @@
+import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
+import { CSP_DIAGNOSTIC_BODIES } from '../services/dev-csp-diagnostic-fixtures'
+import { classifyCspViolation } from './csp-violation-classification'
+import { isSandboxMessage } from './csp-reporter'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
@@ -1532,4 +1536,39 @@ test.each(['enforce', 'report'])(
       disposition,
     })
   },
+)
+
+test.each([
+  { index: 0, classification: 'artifact', directive: 'connect-src' },
+  { index: 1, classification: 'environment', directive: 'script-src' },
+] as const)(
+  'viewer capture seed produces an attributable $classification report under the HTML policy',
+  async ({ index, classification, directive }) => {
+    const result = await server.commands.cspDiagnostic(
+      injectReadyReporter(CSP_DIAGNOSTIC_BODIES[index]),
+    )
+    expect(result.errors).toEqual([])
+    expect(result.unexpectedRequests).toEqual([])
+    expect(result.reports.length).toBeGreaterThan(0)
+    for (const report of result.reports) {
+      expect(isSandboxMessage(report)).toBe(true)
+      expect(report.directive).toBe(directive)
+      expect(
+        classifyCspViolation(report.sourceFile, result.sandboxOrigin, 'html'),
+      ).toBe(classification)
+    }
+    if (classification === 'environment') {
+      expect(result.reports[0]).toMatchObject({
+        blockedURI: 'eval',
+        sourceFile: null,
+        sample: 'environment diagnostic example',
+        disposition: 'enforce',
+      })
+    } else {
+      expect(new URL(result.reports[0].blockedURI).origin).toBe(
+        'https://example.com',
+      )
+    }
+  },
+  10000,
 )

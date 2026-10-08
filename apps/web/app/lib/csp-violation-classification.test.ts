@@ -57,3 +57,79 @@ describe('CSP source attribution', () => {
     expect(classifyCspViolation(source, origin, 'html')).toBe('environment')
   })
 })
+
+describe('CSP resource attribution when the initiating source is absent', () => {
+  test.each([
+    'https://example.com/a.png',
+    'http://example.com/frame.html',
+    `${origin}/a.png`,
+    'data:image/png;base64,AA==',
+    `blob:${origin}/abc`,
+    'file:///a.png',
+  ])('attributes the blocked resource %s to the artifact', (blockedURI) => {
+    for (const source of [null, '']) {
+      for (const renderType of ['html', 'md', 'static_site']) {
+        expect(
+          classifyCspViolation(source, origin, renderType, blockedURI),
+        ).toBe('artifact')
+      }
+    }
+  })
+
+  test.each([
+    '',
+    'eval',
+    'wasm-eval',
+    'inline',
+    'not a URL',
+    '/a.png',
+    '//example.com/a.png',
+    'chrome-extension://abc/a.png',
+    'moz-extension://abc/frame.html',
+    'safari-web-extension://abc/app.js',
+    'CHROME-EXTENSION://abc/a.png',
+  ])(
+    'keeps unattributable execution or extension resource %s in the environment',
+    (blockedURI) => {
+      for (const source of [null, '']) {
+        expect(classifyCspViolation(source, origin, 'html', blockedURI)).toBe(
+          'environment',
+        )
+      }
+    },
+  )
+
+  test.each([
+    'https://example.com/a.png',
+    'chrome-extension://abc/a.png',
+    'eval',
+  ])('keeps a nonempty source authoritative when blocking %s', (blockedURI) => {
+    expect(
+      classifyCspViolation(`${origin}/index.html`, origin, 'html', blockedURI),
+    ).toBe('artifact')
+    expect(
+      classifyCspViolation(
+        'https://cdn.jsdelivr.net/app.js',
+        origin,
+        'html',
+        blockedURI,
+      ),
+    ).toBe('artifact')
+    expect(
+      classifyCspViolation(
+        'chrome-extension://abc/app.js',
+        origin,
+        'html',
+        blockedURI,
+      ),
+    ).toBe('environment')
+    expect(
+      classifyCspViolation(
+        'https://example.com/app.js',
+        origin,
+        'html',
+        blockedURI,
+      ),
+    ).toBe('environment')
+  })
+})

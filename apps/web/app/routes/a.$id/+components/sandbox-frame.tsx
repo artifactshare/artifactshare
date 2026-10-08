@@ -341,6 +341,7 @@ function SandboxState({
 
 function useSandboxFrameController({
   renderType,
+  canViewEnvironmentDiagnostics,
   shareableId,
   versionId,
   url,
@@ -781,16 +782,20 @@ function useSandboxFrameController({
       )
       if (!message) return
       if (message.kind === 'csp-violation') {
+        const classification = classifyCspViolation(
+          message.sourceFile,
+          trustedMessageOrigin,
+          renderType,
+          message.blockedURI,
+        )
+        if (classification === 'environment' && !canViewEnvironmentDiagnostics)
+          return
         setViolations((prev) => [
           ...prev,
           {
             ...message,
             id: crypto.randomUUID(),
-            classification: classifyCspViolation(
-              message.sourceFile,
-              trustedMessageOrigin,
-              renderType,
-            ),
+            classification,
           },
         ])
       } else if (message.kind === 'ready') {
@@ -852,6 +857,7 @@ function useSandboxFrameController({
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [
+    canViewEnvironmentDiagnostics,
     clearReadyFallback,
     lowTrust,
     mermaidEnabled,

@@ -1,3 +1,4 @@
+import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 import type { Kysely } from 'kysely'
 import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
@@ -101,6 +102,18 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario === 'viewer/csp-diagnostics') {
+    await Promise.all(
+      CSP_DIAGNOSTIC_BODIES.map((html, index) =>
+        bucket.put(
+          `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-${index + 1}`)}-v1`,
+          html,
+          { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+        ),
+      ),
+    )
+    return
+  }
   if (scenario === 'viewer/bridge-attribution') {
     const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
     await bucket.put(
@@ -336,31 +349,34 @@ export async function seedDevScreenState(
     scenario === 'recent/content-rich' ||
     scenario === 'viewer/link-suspended' ||
     scenario === 'viewer/bridge-attribution' ||
+    scenario === 'viewer/csp-diagnostics' ||
     scenario === 'viewer/access-requests' ||
     scenario === 'project-detail/with-files' ||
     scenario === 'project-detail/with-pins'
   ) {
     const representativeNames =
-      scenario === 'home/first-file'
-        ? ['First file.html']
-        : scenario === 'viewer/bridge-attribution'
-          ? ['Market research.html']
-          : scenario === 'viewer/access-requests'
-            ? ['FY2027 product strategy.html']
-            : scenario === 'home/unopened-file'
-              ? [
-                  'Quarterly report.html',
-                  'Design handoff.html',
-                  'Launch notes.md',
-                  'Hiring plan.html',
-                  'KPI review.md',
-                  'Release checklist.html',
-                ]
-              : [
-                  'Quarterly report.html',
-                  'Design handoff.html',
-                  'Launch notes.md',
-                ]
+      scenario === 'viewer/csp-diagnostics'
+        ? ['Script diagnostic.html', 'Environment diagnostic.html']
+        : scenario === 'home/first-file'
+          ? ['First file.html']
+          : scenario === 'viewer/bridge-attribution'
+            ? ['Market research.html']
+            : scenario === 'viewer/access-requests'
+              ? ['FY2027 product strategy.html']
+              : scenario === 'home/unopened-file'
+                ? [
+                    'Quarterly report.html',
+                    'Design handoff.html',
+                    'Launch notes.md',
+                    'Hiring plan.html',
+                    'KPI review.md',
+                    'Release checklist.html',
+                  ]
+                : [
+                    'Quarterly report.html',
+                    'Design handoff.html',
+                    'Launch notes.md',
+                  ]
     const names =
       scenario === 'recent/content-rich'
         ? [
@@ -402,7 +418,8 @@ export async function seedDevScreenState(
           : ((scenario === 'recent/content-rich' ||
                 scenario === 'viewer/link-suspended') &&
                 index === 0) ||
-              scenario === 'viewer/bridge-attribution'
+              scenario === 'viewer/bridge-attribution' ||
+              scenario === 'viewer/csp-diagnostics'
             ? 'link'
             : 'private'
         const existing = await db
@@ -454,12 +471,14 @@ export async function seedDevScreenState(
           scenario === 'recent/content-rich' ||
           scenario === 'viewer/link-suspended' ||
           scenario === 'viewer/bridge-attribution' ||
+          scenario === 'viewer/csp-diagnostics' ||
           scenario === 'home/unopened-file'
         ) {
           const versionNames =
             scenario === 'home/unopened-file'
               ? (['v1'] as const)
-              : scenario === 'viewer/bridge-attribution'
+              : scenario === 'viewer/bridge-attribution' ||
+                  scenario === 'viewer/csp-diagnostics'
                 ? (['v1'] as const)
                 : index === 20
                   ? (['v1', 'v2'] as const)
@@ -473,7 +492,10 @@ export async function seedDevScreenState(
               const versionTimestamp = isUpdatedVersion
                 ? new Date(Date.parse(now) - 30 * 60_000).toISOString()
                 : timestamp
-              const body = recentContentRichBody(index, versionName)
+              const body =
+                scenario === 'viewer/csp-diagnostics'
+                  ? CSP_DIAGNOSTIC_BODIES[index]
+                  : recentContentRichBody(index, versionName)
               const sizeBytes = body
                 ? new TextEncoder().encode(body).byteLength
                 : 1

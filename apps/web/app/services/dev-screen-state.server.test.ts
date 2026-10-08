@@ -1123,3 +1123,63 @@ describe('settings with-bots dev screen state', () => {
     await db.destroy()
   })
 })
+
+test('CSP capture scenario publishes both HTML bodies with matching metadata', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    const scenario = 'viewer/csp-diagnostics'
+    expect(isScreenScenario(scenario)).toBe(true)
+    const now = '2026-08-17T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'viewer@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    const put = vi.fn().mockResolvedValue(undefined)
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      scenario,
+      workspaceId,
+      userId,
+    )
+    expect(put).toHaveBeenCalledTimes(2)
+    for (const [key, body] of put.mock.calls) {
+      const version = await db
+        .selectFrom('versions')
+        .innerJoin('shareables', 'shareables.current_version_id', 'versions.id')
+        .select([
+          'versions.artifact_kind',
+          'versions.size_bytes',
+          'shareables.visibility',
+          'shareables.owner_user_id',
+        ])
+        .where('versions.r2_key', '=', key)
+        .executeTakeFirstOrThrow()
+      expect(version).toEqual({
+        artifact_kind: 'html_page',
+        size_bytes: new TextEncoder().encode(body).byteLength,
+        visibility: 'link',
+        owner_user_id: userId,
+      })
+    }
+  } finally {
+    await db.destroy()
+  }
+})
