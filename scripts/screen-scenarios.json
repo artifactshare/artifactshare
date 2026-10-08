@@ -6,6 +6,7 @@
   "home/first-file",
   "recent/content-rich",
   "viewer/bridge-attribution",
+  "viewer/csp-diagnostics",
   "viewer/revisit-context",
   "viewer/access-requests",
   "viewer/link-suspended",

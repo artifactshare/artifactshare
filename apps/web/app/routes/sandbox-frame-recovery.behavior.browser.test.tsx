@@ -1,5 +1,5 @@
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
-import { act } from 'react'
+import { act, Profiler, type ProfilerOnRenderCallback } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SandboxFrame } from './a.$id/+components/sandbox-frame'
@@ -358,35 +358,38 @@ async function renderFrame(
   onAnchorCheckingChange?: (available: boolean) => void,
   canViewEnvironmentDiagnostics = false,
   siteNavigation = false,
+  onRender: ProfilerOnRenderCallback = () => {},
 ) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
     root?.render(
-      <SandboxFrame
-        renderType={siteNavigation ? 'static_site' : 'html'}
-        canViewEnvironmentDiagnostics={canViewEnvironmentDiagnostics}
-        onAnchorCheckingChange={onAnchorCheckingChange}
-        shareableId="abc123def4"
-        versionId="v1"
-        url={`${window.location.origin}/sandbox-frame-test?t=old`}
-        name="Recovery test"
-        mermaidEnabled={false}
-        textAnchorsEnabled={false}
-        linkNavigationMode={siteNavigation ? 'site' : 'document'}
-        bundlePaths={siteNavigation ? ['/next.html'] : []}
-        fallbackToIndex={false}
-        commentThreads={[]}
-        targetThreadId={null}
-        highlightThreadId={null}
-        followsAppTheme={false}
-        onTextSelection={() => {}}
-        onTextSelectionClear={() => {}}
-        onThreadSelect={() => {}}
-        onOutsidePointerDown={() => {}}
-        sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
-      />,
+      <Profiler id="sandbox-frame" onRender={onRender}>
+        <SandboxFrame
+          renderType={siteNavigation ? 'static_site' : 'html'}
+          canViewEnvironmentDiagnostics={canViewEnvironmentDiagnostics}
+          onAnchorCheckingChange={onAnchorCheckingChange}
+          shareableId="abc123def4"
+          versionId="v1"
+          url={`${window.location.origin}/sandbox-frame-test?t=old`}
+          name="Recovery test"
+          mermaidEnabled={false}
+          textAnchorsEnabled={false}
+          linkNavigationMode={siteNavigation ? 'site' : 'document'}
+          bundlePaths={siteNavigation ? ['/next.html'] : []}
+          fallbackToIndex={false}
+          commentThreads={[]}
+          targetThreadId={null}
+          highlightThreadId={null}
+          followsAppTheme={false}
+          onTextSelection={() => {}}
+          onTextSelectionClear={() => {}}
+          onThreadSelect={() => {}}
+          onOutsidePointerDown={() => {}}
+          sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        />
+      </Profiler>,
     )
   })
   return host
@@ -536,10 +539,16 @@ test.each([false, true])(
       'fetch',
       vi.fn(() => new Promise<Response>(() => {})),
     )
-    const host = await renderFrame(undefined, privileged, true)
+    const onRender = vi.fn()
+    const host = await renderFrame(undefined, privileged, true, onRender)
     const frame = host.querySelector('iframe')!
-    const report = async (sourceFile: string | null, sample: string) => {
-      await act(async () => {
+    const report = (
+      sourceFile: string | null,
+      sample: string,
+      blockedURI = 'eval',
+      directive = 'script-src',
+    ) => {
+      act(() => {
         window.dispatchEvent(
           new MessageEvent('message', {
             origin: window.location.origin,
@@ -547,8 +556,8 @@ test.each([false, true])(
             data: {
               source: 'artifactshare',
               kind: 'csp-violation',
-              directive: 'script-src',
-              blockedURI: 'eval',
+              directive,
+              blockedURI,
               sourceFile,
               lineNumber: 1,
               sample,
@@ -558,23 +567,39 @@ test.each([false, true])(
         )
       })
     }
-    await report(null, '<img src=x onerror=alert(1)>')
+    onRender.mockClear()
+    for (let index = 0; index < 100; index++) {
+      report(null, '<img src=x onerror=alert(1)>')
+    }
+    // Hidden reports must never update frame state; the privileged case is
+    // the positive control proving these messages reached the frame listener.
+    expect(onRender.mock.calls.length > 0).toBe(privileged)
     expect(host.querySelector('aside') !== null).toBe(privileged)
     expect(host.textContent?.includes('browser environment')).toBe(privileged)
     expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
       privileged,
     )
     if (privileged) expect(host.textContent).not.toContain('Security blocked')
-    await report(
-      `${window.location.origin}/index.html`,
-      'inline-positive-control',
-    )
+    report(`${window.location.origin}/index.html`, 'inline-positive-control')
     expect(host.textContent).toContain('Security blocked 1 resource')
-    await report('https://cdn.jsdelivr.net/app.js', 'cdn-positive-control')
+    report('https://cdn.jsdelivr.net/app.js', 'cdn-positive-control')
     expect(host.textContent).toContain('Security blocked 2 resources')
     expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
       privileged,
     )
+    report(null, 'parser-image', 'https://example.com/a.png', 'img-src')
+    report('', 'parser-frame', 'https://example.com/frame.html', 'frame-src')
+    expect(host.textContent).toContain('Security blocked 4 resources')
+    expect(host.textContent).toContain('parser-image')
+    expect(host.textContent).toContain('parser-frame')
+    report(
+      null,
+      'extension-resource',
+      'chrome-extension://abc/a.png',
+      'img-src',
+    )
+    expect(host.textContent).toContain('Security blocked 4 resources')
+    expect(host.textContent?.includes('extension-resource')).toBe(privileged)
     expect(host.querySelector('aside img')).toBeNull()
     for (const summary of host.querySelectorAll('aside summary'))
       await act(async () => (summary as HTMLElement).click())
