@@ -411,7 +411,7 @@ function supportedStandaloneFile(file: SnapshotFile): boolean {
 }
 
 function supportedStaticSitePath(path: string): boolean {
-  return /\.(?:html?|css|js|json|xml|webmanifest|map|data|rsc|meta|md|markdown|txt|svg|png|jpe?g|gif|webp|avif|mp4|ico|woff2?)$/iu.test(
+  return /\.(?:html?|css|js|json|xml|webmanifest|map|data|wasm|parquet|rsc|meta|md|markdown|txt|svg|png|jpe?g|gif|webp|avif|mp4|ico|woff2?)$/iu.test(
     path,
   )
 }

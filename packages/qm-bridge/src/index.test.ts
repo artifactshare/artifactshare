@@ -471,6 +471,50 @@ describe('bridge orchestration', () => {
     expect(credentialProvider).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['engine.wasm', 'data/rows.parquet'],
+    ['engine.WASM', 'data/rows.PARQUET'],
+  ])('accepts static-site assets %s and %s', async (wasmPath, parquetPath) => {
+    const client = createFakeBridgeClient(success('private'))
+    const files = [
+      {
+        path: 'index.html',
+        media_type: 'text/html',
+        bytes: new TextEncoder().encode('<h1>Dashboard</h1>'),
+      },
+      {
+        path: wasmPath,
+        media_type: 'application/wasm',
+        bytes: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]),
+      },
+      {
+        path: parquetPath,
+        media_type: 'application/octet-stream',
+        bytes: new Uint8Array([80, 65, 82, 49, 0, 255]),
+      },
+    ]
+    const result = await publishTrusted({
+      intent: {
+        operation: 'publish',
+        requested_audience: 'private',
+        content: { kind: 'static_site', files },
+      },
+      context: context(),
+      policy: createBridgePolicy(config()),
+      client,
+      credentialProvider: async () => ({ bearer_token: 'secret' }),
+      clock: () => new Date(now),
+    })
+    expect(result.ok).toBe(true)
+    expect(client.calls).toHaveLength(1)
+    expect(client.calls[0]?.request.files).toHaveLength(files.length)
+    expect(client.calls[0]?.request.files).toEqual(
+      expect.arrayContaining(
+        files.map((file) => expect.objectContaining(file)),
+      ),
+    )
+  })
+
   it('rejects an empty static site before credential access', async () => {
     const credentialProvider = vi.fn(async () => ({ bearer_token: 'secret' }))
     const result = await publishTrusted({

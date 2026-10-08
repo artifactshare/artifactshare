@@ -1,3 +1,4 @@
+import { staticSiteWasm } from './app/test/static-site-wasm-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
 import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
@@ -26,7 +27,7 @@ export default defineConfig({
     browser: {
       enabled: true,
       provider: playwright(),
-      commands: { selectAnchorText },
+      commands: { selectAnchorText, staticSiteWasm },
       headless: true,
       instances: [
         { browser: 'chromium' },

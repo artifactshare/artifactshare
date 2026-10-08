@@ -20,6 +20,8 @@ const STATIC_SITE_ALLOWED_EXTENSIONS = [
   '.webmanifest',
   '.map',
   '.data',
+  '.wasm',
+  '.parquet',
   '.rsc',
   '.meta',
   '.svg',

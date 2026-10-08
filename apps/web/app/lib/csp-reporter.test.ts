@@ -30,13 +30,61 @@ import {
 } from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
 import { installMermaidResults } from '../../../../packages/viewer-kit/src/reporter/mermaid.js'
 
+import { installCspViolations } from '../../../../packages/viewer-kit/src/reporter/csp-violations.js'
+
 function state() {
   return createReporterState(window)
 }
 afterEach(() => {
   document.body.innerHTML = ''
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
+
+test.each(['error', 'unhandledrejection'])(
+  'CSP reporter does not infer violations from %s error messages',
+  (kind) => {
+    vi.useFakeTimers()
+    const ctx = state()
+    const post = vi.spyOn(ctx.primordials, 'savedPostMessage')
+    const events = new EventTarget()
+    const documentEvents = new EventTarget()
+    vi.spyOn(ctx.win as EventTarget, 'addEventListener').mockImplementation(
+      events.addEventListener.bind(events),
+    )
+    vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
+      documentEvents.addEventListener.bind(documentEvents),
+    )
+    installCspViolations(ctx)
+    const error = new EvalError(
+      'Refused to evaluate because unsafe-eval is blocked by Content Security Policy',
+    )
+    events.dispatchEvent(
+      Object.assign(new Event(kind), { error, reason: error }),
+    )
+    vi.runAllTimers()
+    expect(post).not.toHaveBeenCalled()
+
+    documentEvents.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+      }),
+    )
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      ctx.primordials.savedParent,
+      {
+        source: 'artifactshare',
+        kind: 'csp-violation',
+        directive: 'script-src',
+        blockedURI: 'eval',
+        sourceFile: null,
+        lineNumber: null,
+      },
+      '*',
+    )
+  },
+)
 
 describe('isSandboxMessage', () => {
   test('rejects untrusted frame control messages', () => {

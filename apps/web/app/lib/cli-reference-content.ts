@@ -227,7 +227,7 @@ const EN: CliReferenceContent = {
     },
     basics: {
       title: 'Basic operations',
-      body: 'Use share for a file, folder, or static site; update to keep the same URL; open or artifacts get to read; download to save locally; comments for review; projects for organization; profiles and config for accounts and settings; and skills for agent setup.',
+      body: "Use share for a file, folder, or static site; update to keep the same URL; open or artifacts get to read; download to save locally; comments for review; projects for organization; profiles and config for accounts and settings; and skills for agent setup. Static sites support WebAssembly and same-origin or blob workers. For DuckDB-WASM, getJsDelivrBundles() selects jsDelivr assets: a blob worker uses importScripts() to load the worker script, then fetches and compiles the .wasm file. For same-origin data/*.parquet files, build an absolute URL in the page with new URL('data/rows.parquet', location.href).href and pass it to DuckDB-WASM's registerFileURL() before querying the registered file with SQL. Relative URLs cannot be resolved inside its blob worker. Folder uploads accept .wasm and .parquet within the existing file count, per-file size, total size and path limits. JavaScript eval and new Function remain blocked; existing network allowlists still apply. Single-file HTML and Markdown policies are unchanged.",
     },
     commands: {
       title: 'Command reference',
@@ -291,7 +291,7 @@ const JA: CliReferenceContent = {
     },
     basics: {
       title: '基本操作',
-      body: 'ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。',
+      body: "ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。 静的サイトでは WebAssembly と同一オリジン・blob の worker を使えます。DuckDB-WASM の getJsDelivrBundles() で jsDelivr の資産を選び、blob worker の importScripts() で worker スクリプトを読み込み、.wasm を取得してコンパイルします。同一オリジンの data/*.parquet は、ページ側で new URL('data/rows.parquet', location.href).href を使って絶対 URL にし、DuckDB-WASM の registerFileURL() に渡してから登録したファイルを SQL で読み取ります。blob worker 内では相対 URL を解決できません。フォルダ内の .wasm と .parquet はアップロード可能で、既存のファイル数、ファイル単体・合計サイズ、パスの制限が適用されます。JavaScript の eval と new Function は引き続き禁止され、通信先も既存の許可リストに限られます。単一ファイルの HTML・Markdown のポリシーは変わりません。",
     },
     commands: {
       title: 'コマンドリファレンス',

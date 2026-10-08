@@ -2,6 +2,8 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import {
+  ACCEPTED_FILE_UPLOAD_TYPES,
+  ACCEPTED_SITE_UPLOAD_TYPES,
   filterUploadFiles,
   isStaticSiteUpload,
   uploadPathsForFiles,
@@ -76,6 +78,34 @@ describe('UploadArtifactDialog upload validation', () => {
     appendSlackNotificationPreference(form, true)
     expect(form.get('slack_notify')).toBe('false')
   })
+
+  test.each(['wasm', 'WASM', 'parquet', 'PARQUET'])(
+    'accepts %s only in folders with an entrypoint',
+    (extension) => {
+      expect(ACCEPTED_SITE_UPLOAD_TYPES.split(',')).toContain(
+        `.${extension.toLowerCase()}`,
+      )
+      expect(ACCEPTED_FILE_UPLOAD_TYPES.split(',')).not.toContain(
+        `.${extension.toLowerCase()}`,
+      )
+      const asset = new File(
+        [new Uint8Array([0, 255])],
+        `data/file.${extension}`,
+        { type: 'text/html' },
+      )
+      const index = new File(['<p>Dashboard</p>'], 'index.html')
+      expect(validateFiles([index, asset], t)).toBeNull()
+      expect(
+        validateFiles([new File(['binary'], `file.${extension}`)], t),
+      ).toBe('upload.error.unsupported')
+      expect(validateFiles([asset], t, { staticSite: true })).toBe(
+        'upload.error.missingEntrypoint',
+      )
+      expect(validateFiles([index, new File(['no'], 'data/file.exe')], t)).toBe(
+        'upload.error.unsupportedBundleType',
+      )
+    },
+  )
 
   test('accepts a multi-file static site bundle with an entrypoint', () => {
     expect(

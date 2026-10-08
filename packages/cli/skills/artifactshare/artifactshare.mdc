@@ -127,3 +127,21 @@ Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
 
 Owners with unrestricted credentials can use `edit <target> --retain-versions N` to keep the latest N versions, or `--retain-versions all` to clear the limit. Setting or lowering retention prunes older published versions immediately; the response includes `retain_versions` and `deleted_versions`. Comments and surviving version numbers remain. Agent-preset credentials cannot change retention.
+
+
+## Static-site scripts and data
+
+Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.
+DuckDB-WASM can load from jsDelivr: its `getJsDelivrBundles()` setup uses a blob
+worker to `importScripts()` the CDN worker and fetch its `.wasm` file. The existing
+script CDNs are allowed inside blob workers; JavaScript `eval` and `new Function`
+remain blocked in the page and its blob workers.
+
+Keep data such as `data/*.parquet` in the shared folder. In the page, build an
+absolute same-origin URL with `new URL('data/rows.parquet', location.href).href`
+and pass it to DuckDB-WASM's `registerFileURL()` before querying the registered
+file with SQL. Relative URLs cannot be resolved inside its blob worker.
+Static-site binary assets support HTTP byte ranges. To refresh data while keeping
+the same share URL, replace the data locally and update the folder as a new
+version; each version retains its own isolated origin. Single-file HTML and
+Markdown have different script policies; these permissions apply to folder shares.

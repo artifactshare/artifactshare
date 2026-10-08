@@ -1076,6 +1076,20 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Security-Policy')).toContain(
       'frame-ancestors https://localhost:5173',
     )
+    const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(cspDirective(csp, 'script-src')).toBe(
+      `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${externalCspSources}`,
+    )
+    expect(cspDirective(csp, 'worker-src')).toBe("worker-src 'self' blob:")
+    expect(cspDirective(csp, 'connect-src')).toBe(
+      `connect-src 'self' ${externalCspSources} https://www.tiktok.com`,
+    )
+    expect(cspDirective(csp, 'img-src')).toBe("img-src 'self' data: blob:")
+    expect(cspDirective(csp, 'sandbox')).toBe(
+      'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
+    )
+    expect(csp).not.toContain("'unsafe-eval'")
+
     expect(response.headers.get('Content-Security-Policy')).toContain(
       `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
@@ -2319,6 +2333,8 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'unsafe-inline' 'unsafe-eval' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
+    expect(csp).not.toContain("'wasm-unsafe-eval'")
+    expect(cspDirective(csp, 'worker-src')).toBeUndefined()
     expect(cspDirective(csp, 'style-src')).toBe(
       `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
@@ -2454,6 +2470,8 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'script-src')).toBe(
       `script-src 'sha256-${VIOLATION_REPORTER_SHA256}'`,
     )
+    expect(csp).not.toContain("'wasm-unsafe-eval'")
+    expect(cspDirective(csp, 'worker-src')).toBeUndefined()
     expect(response.headers.get('Permissions-Policy')).toBe(
       expectedPermissionsPolicy,
     )
@@ -2497,6 +2515,56 @@ describe('handleArtifactSandboxRequest', () => {
     expect(body).toContain('を通す')
     expect(body).not.toContain('譌')
     expect(body).not.toContain('繧')
+  })
+
+  test.each([
+    'text/javascript',
+    'application/javascript',
+    'application/ecmascript',
+    'text/ecmascript',
+    'application/x-javascript',
+    'text/x-javascript',
+    'application/x-ecmascript',
+    'text/x-ecmascript',
+    'text/javascript1.5',
+    'text/jscript',
+    'text/livescript',
+    'Text/JavaScript; Charset=UTF-8',
+    'application/wasm',
+    'application/octet-stream',
+  ])('serves %s assets with worker CSP only for JavaScript', async (mime) => {
+    const isScript = !['application/wasm', 'application/octet-stream'].includes(
+      mime,
+    )
+    const path = isScript ? '/worker.js' : '/fixture.wasm'
+    await dbRef
+      .current!.updateTable('version_files')
+      .set({ path, mime_type: mime })
+      .where('id', '=', 'vf-css')
+      .execute()
+    const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
+    storageMock.getArtifact
+      .mockResolvedValueOnce(storedArtifact('<p>Dashboard</p>', 'text/html'))
+      .mockResolvedValueOnce({
+        body: new Response(bytes).body,
+        size: bytes.length,
+        httpMetadata: { contentType: mime },
+      })
+    const token = await entrypointToken()
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+    )
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}${path}`, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe(mime)
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+    expect(response.headers.get('Content-Security-Policy')).toBe(
+      isScript ? entry.headers.get('Content-Security-Policy') : null,
+    )
   })
 
   test('does not send document CSP on static-site assets', async () => {

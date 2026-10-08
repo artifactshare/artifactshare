@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Document static-site WebAssembly and worker support, including DuckDB-WASM from jsDelivr, in the bundled agent instructions.
+
 ## 0.15.0 - 2026-10-08
 
 - Add owner-only `edit --retain-versions N` (or `all`) to prune old versions, release storage, and preserve version numbers.

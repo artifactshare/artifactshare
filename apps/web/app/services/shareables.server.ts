@@ -2526,6 +2526,9 @@ export function staticSiteMimeType(path: string): string | null {
       return 'application/manifest+json; charset=utf-8'
     case '.map':
       return 'application/json; charset=utf-8'
+    case '.wasm':
+      return 'application/wasm'
+    case '.parquet':
     case '.data':
       return 'application/octet-stream'
     case '.rsc':
