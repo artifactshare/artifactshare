@@ -20,6 +20,15 @@ export function installCspViolations(ctx: ReporterState) {
     }
     if (event.disposition === 'enforce' || event.disposition === 'report')
       message.disposition = event.disposition
+    // The document can parse before the parent hydrates. Its first valid
+    // ready-check confirms that the parent has installed its message listener.
+    if (ctx.readyChallenge === '') {
+      if (ctx.pendingCspViolationCount < 100) {
+        ctx.pendingCspViolations[ctx.pendingCspViolationCount] = message
+        ctx.pendingCspViolationCount += 1
+      }
+      return
+    }
     send(ctx, message)
   })
 }

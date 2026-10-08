@@ -5,7 +5,7 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
-- Internal: shared sandbox reporter includes bounded diagnostic samples and CSP disposition.
+- Internal: shared sandbox reporter includes bounded diagnostic samples and CSP disposition, and buffers early diagnostics until the parent readiness check.
 
 - Explain DuckDB-WASM runtime extension loading and the optional bundled extension repository in the bundled skill and Cursor rule.
 

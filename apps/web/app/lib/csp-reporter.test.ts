@@ -55,6 +55,7 @@ test.each(['error', 'unhandledrejection'])(
     vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
       documentEvents.addEventListener.bind(documentEvents),
     )
+    ctx.readyChallenge = 'synthetic-challenge'
     installCspViolations(ctx)
     const error = new EvalError(
       'Refused to evaluate because unsafe-eval is blocked by Content Security Policy',
@@ -559,6 +560,7 @@ test.each([0, 80, 81, 200])(
     vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
       events.addEventListener.bind(events),
     )
+    ctx.readyChallenge = 'synthetic-challenge'
     installCspViolations(ctx)
     for (const disposition of ['enforce', 'report']) {
       events.dispatchEvent(
@@ -581,3 +583,94 @@ test.each([0, 80, 81, 200])(
     }
   },
 )
+
+test('buffers parse-time diagnostics until the first valid parent check, then sends once', () => {
+  const ctx = state()
+  const post = vi
+    .spyOn(ctx.primordials, 'savedPostMessage')
+    .mockImplementation(() => {})
+  const events = new EventTarget()
+  vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
+    events.addEventListener.bind(events),
+  )
+  installCspViolations(ctx)
+  const report = (sample: string) =>
+    events.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        sample,
+        disposition: 'enforce',
+      }),
+    )
+  report('before hydration')
+  expect(post).not.toHaveBeenCalled()
+  const data = {
+    ...SANDBOX_READY_CHECK_MESSAGE,
+    challenge: 'synthetic-challenge',
+  }
+  onReadyCheck(ctx, new MessageEvent('message', { source: null, data }))
+  onReadyCheck(
+    ctx,
+    new MessageEvent('message', {
+      source: window,
+      data: { ...data, challenge: '' },
+    }),
+  )
+  expect(post).not.toHaveBeenCalled()
+  onReadyCheck(ctx, new MessageEvent('message', { source: window, data }))
+  expect(post).toHaveBeenCalledExactlyOnceWith(
+    ctx.primordials.savedParent,
+    {
+      ...validCspReport,
+      sample: 'before hydration',
+      disposition: 'enforce',
+    },
+    '*',
+  )
+  expect(ctx.pendingCspViolationCount).toBe(0)
+  expect(Object.keys(ctx.pendingCspViolations)).toHaveLength(0)
+  onReadyCheck(ctx, new MessageEvent('message', { source: window, data }))
+  expect(post).toHaveBeenCalledTimes(1)
+  report('after hydration')
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(post.mock.calls[1][1]).toMatchObject({ sample: 'after hydration' })
+})
+
+test('bounds diagnostics while waiting for a parent and releases the queue', () => {
+  const ctx = state()
+  const post = vi
+    .spyOn(ctx.primordials, 'savedPostMessage')
+    .mockImplementation(() => {})
+  const events = new EventTarget()
+  vi.spyOn(ctx.doc as EventTarget, 'addEventListener').mockImplementation(
+    events.addEventListener.bind(events),
+  )
+  installCspViolations(ctx)
+  for (let index = 0; index < 150; index++) {
+    events.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        sample: `early-${index}`,
+      }),
+    )
+  }
+  expect(post).not.toHaveBeenCalled()
+  expect(ctx.pendingCspViolationCount).toBe(100)
+  onReadyCheck(
+    ctx,
+    new MessageEvent('message', {
+      source: window,
+      data: {
+        ...SANDBOX_READY_CHECK_MESSAGE,
+        challenge: 'synthetic-challenge',
+      },
+    }),
+  )
+  expect(post).toHaveBeenCalledTimes(100)
+  expect(post.mock.calls[0][1]).toMatchObject({ sample: 'early-0' })
+  expect(post.mock.calls[99][1]).toMatchObject({ sample: 'early-99' })
+  expect(ctx.pendingCspViolationCount).toBe(0)
+  expect(Object.keys(ctx.pendingCspViolations)).toHaveLength(0)
+})

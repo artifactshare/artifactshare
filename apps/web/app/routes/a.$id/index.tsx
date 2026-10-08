@@ -45,6 +45,7 @@ export const screen = {
       id: 'csp-environment-owner',
       description: 'オーナーに閲覧環境の診断グループと説明を表示する状態',
       setup: {
+        auth: 'team-owner',
         scenario: 'viewer/csp-diagnostics',
         scenarioArtifactIndex: 2,
         ready: {

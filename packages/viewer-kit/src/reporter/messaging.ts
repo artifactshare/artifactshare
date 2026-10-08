@@ -46,6 +46,11 @@ export function onReadyCheck(ctx: ReporterState, event: MessageEvent) {
     return
   if (typeof message.challenge !== 'string' || !message.challenge) return
   ctx.readyChallenge = message.challenge
+  for (let index = 0; index < ctx.pendingCspViolationCount; index++) {
+    send(ctx, ctx.pendingCspViolations[index])
+  }
+  ctx.pendingCspViolations = ctx.primordials.objectCreate(null)
+  ctx.pendingCspViolationCount = 0
   requestMermaidRendering(ctx)
   ready(ctx)
 }

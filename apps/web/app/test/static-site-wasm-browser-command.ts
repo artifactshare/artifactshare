@@ -113,11 +113,19 @@ export const staticSiteWasm = defineBrowserCommand(
         response.setHeader('Content-Type', 'text/html')
         response.end(`<!doctype html><script>
           window.reports = [];
+          window.reporterReady = new Promise(resolve => {
+            addEventListener('message', event => {
+              if (event.origin === location.origin &&
+                  event.source === document.querySelector('iframe').contentWindow &&
+                  event.data?.kind === 'ready' &&
+                  event.data.challenge === 'wasm-reporter-probe') resolve();
+            });
+          });
           addEventListener('message', event => {
             if (event.source === document.querySelector('iframe').contentWindow &&
                 event.data?.kind === 'csp-violation') reports.push(event.data);
           });
-        </script><iframe sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" src="/artifact.html"></iframe>`)
+        </script><iframe sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads" src="/artifact.html" onload="this.contentWindow.postMessage({ source: 'artifactshare-parent', kind: 'ready-check', challenge: 'wasm-reporter-probe' }, location.origin)"></iframe>`)
       } else if (path === '/artifact.html') {
         await send(
           contentResponse(
@@ -150,6 +158,17 @@ export const staticSiteWasm = defineBrowserCommand(
       <script>${reporter}</script>
       <script>
         (async () => {
+          let readyTimeout;
+          try {
+            await Promise.race([
+              parent.reporterReady,
+              new Promise((_, reject) => {
+                readyTimeout = setTimeout(() => reject(new Error('reporter ready-check unanswered')), 1000);
+              }),
+            ]);
+          } finally {
+            clearTimeout(readyTimeout);
+          }
           const serviceWorker = { supported: 'serviceWorker' in navigator, rejected: false, registrations: -1, controlled: false };
           if (serviceWorker.supported) {
             try { await navigator.serviceWorker.register('/sw.js'); }

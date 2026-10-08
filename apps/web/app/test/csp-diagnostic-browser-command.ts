@@ -23,14 +23,7 @@ export const cspDiagnostic = defineBrowserCommand(
         if (url === `${viewerOrigin}/viewer`) {
           await route.fulfill({
             contentType: 'text/html',
-            body: `<!doctype html><link rel="icon" href="data:,"><script>
-            window.reports = [];
-            addEventListener('message', event => {
-              if (event.origin === '${sandboxOrigin}' &&
-                  event.source === document.querySelector('iframe').contentWindow &&
-                  event.data?.kind === 'csp-violation') reports.push(event.data);
-            });
-          </script><iframe src="${sandboxOrigin}/artifact.html"></iframe>`,
+            body: `<!doctype html><link rel="icon" href="data:,"><iframe src="${sandboxOrigin}/artifact.html"></iframe>`,
           })
         } else if (url === `${sandboxOrigin}/artifact.html`) {
           await route.fulfill({
@@ -51,6 +44,28 @@ export const cspDiagnostic = defineBrowserCommand(
       const viewer = await context.newPage()
       viewer.on('pageerror', (error) => errors.push(error.message))
       await viewer.goto(`${viewerOrigin}/viewer`, { timeout: 3000 })
+      // Model a server-rendered viewer whose JS hydrates after the iframe has
+      // finished parsing. No parent listener or ready-check exists before load.
+      await viewer.evaluate((origin) => {
+        const reports: CspViolationMessage[] = []
+        Object.assign(window, { reports })
+        window.addEventListener('message', (event) => {
+          if (
+            event.origin === origin &&
+            event.source === document.querySelector('iframe')!.contentWindow &&
+            event.data?.kind === 'csp-violation'
+          )
+            reports.push(event.data)
+        })
+        document.querySelector('iframe')!.contentWindow!.postMessage(
+          {
+            source: 'artifactshare-parent',
+            kind: 'ready-check',
+            challenge: 'synthetic-challenge',
+          },
+          origin,
+        )
+      }, sandboxOrigin)
       await viewer.waitForFunction(
         () => (window as unknown as { reports: unknown[] }).reports.length > 0,
         undefined,

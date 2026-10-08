@@ -1,13 +1,18 @@
-import { CspBanner, type ViolationEntry } from './csp-banner'
+import { CspBanner } from './csp-banner'
+import { retainCspViolation } from './csp-violation-retention'
 import { classifyCspViolation } from '~/lib/csp-violation-classification'
 import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
-import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
+import type {
+  AnchorResolutionMessage,
+  CspViolationMessage,
+} from '~/lib/csp-reporter'
 import { toast } from 'sonner'
 import { IconCheck, IconFile, IconPlugConnected } from '@tabler/icons-react'
 import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -145,10 +150,18 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 export function SandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
-  const visibleViolations = controller.violations.filter(
-    (v) =>
-      v.classification === 'artifact' || props.canViewEnvironmentDiagnostics,
-  )
+  const sandboxOrigin = new URL(controller.frameUrl).origin
+  const visibleViolations = controller.violations.flatMap((violation) => {
+    const classification = classifyCspViolation(
+      violation.sourceFile,
+      sandboxOrigin,
+      props.renderType,
+      violation.blockedURI,
+    )
+    return classification === 'artifact' || props.canViewEnvironmentDiagnostics
+      ? [{ ...violation, classification }]
+      : []
+  })
 
   return (
     <ViewerBodySurface>
@@ -341,7 +354,6 @@ function SandboxState({
 
 function useSandboxFrameController({
   renderType,
-  canViewEnvironmentDiagnostics,
   shareableId,
   versionId,
   url,
@@ -365,7 +377,9 @@ function useSandboxFrameController({
   lowTrust = false,
 }: SandboxFrameProps) {
   const { locale, t } = useT()
-  const [violations, setViolations] = useState<ViolationEntry[]>([])
+  const [violations, setViolations] = useState<
+    Array<CspViolationMessage & { id: string }>
+  >([])
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'resuming' | 'blocked' | 'paused'
   >('loading')
@@ -773,97 +787,81 @@ function useSandboxFrameController({
     sendHighlights()
   }, [clearReadyFallback, requestFrameReady, sendHighlights])
 
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const message = sandboxMessageFromFrame(
-        event,
-        trustedMessageOrigin,
-        frameRef.current?.contentWindow,
+  const handleFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const message = sandboxMessageFromFrame(
+      event,
+      trustedMessageOrigin,
+      frameRef.current?.contentWindow,
+    )
+    if (!message) return
+    if (message.kind === 'csp-violation') {
+      // Keep early reports without letting environment noise evict artifact reports.
+      const entry = { ...message, id: crypto.randomUUID() }
+      setViolations((prev) =>
+        retainCspViolation(prev, entry, trustedMessageOrigin, renderType),
       )
-      if (!message) return
-      if (message.kind === 'csp-violation') {
-        const classification = classifyCspViolation(
-          message.sourceFile,
-          trustedMessageOrigin,
-          renderType,
-          message.blockedURI,
-        )
-        if (classification === 'environment' && !canViewEnvironmentDiagnostics)
-          return
-        setViolations((prev) => [
-          ...prev,
-          {
-            ...message,
-            id: crypto.randomUUID(),
-            classification,
-          },
-        ])
-      } else if (message.kind === 'ready') {
-        securityTokenRef.current = acceptSandboxToken(
-          securityTokenRef.current,
-          securityChallengeRef.current,
-          message.challenge,
-          message.token,
-        )
-        frameRef.current?.contentWindow?.postMessage(
-          sandboxExternalLinkPolicyMessage(lowTrust ? 'parent' : 'direct'),
-          trustedMessageOrigin,
-        )
-        markFrameReadyFromMessage()
-        clearReadyFallback()
-      } else if (message.kind === 'anchor-resolutions') {
-        handleAnchorResolutions(message)
-      } else if (message.kind === 'text-selection') {
-        handleTextSelectionMessage(message)
-      } else if (message.kind === 'text-selection-cleared') {
-        handleTextSelectionClearedMessage()
-      } else if (message.kind === 'comment-thread-selected') {
-        handleThreadSelectedMessage(message.threadId, message.rect)
-      } else if (message.kind === 'comment-outside-pointer-down') {
-        handleOutsidePointerDownMessage()
-      } else if (message.kind === 'link-clicked') {
-        handleLinkClickedMessage(message)
-      } else if (message.kind === 'mermaid-render-request') {
+    } else if (message.kind === 'ready') {
+      securityTokenRef.current = acceptSandboxToken(
+        securityTokenRef.current,
+        securityChallengeRef.current,
+        message.challenge,
+        message.token,
+      )
+      frameRef.current?.contentWindow?.postMessage(
+        sandboxExternalLinkPolicyMessage(lowTrust ? 'parent' : 'direct'),
+        trustedMessageOrigin,
+      )
+      markFrameReadyFromMessage()
+      clearReadyFallback()
+    } else if (message.kind === 'anchor-resolutions') {
+      handleAnchorResolutions(message)
+    } else if (message.kind === 'text-selection') {
+      handleTextSelectionMessage(message)
+    } else if (message.kind === 'text-selection-cleared') {
+      handleTextSelectionClearedMessage()
+    } else if (message.kind === 'comment-thread-selected') {
+      handleThreadSelectedMessage(message.threadId, message.rect)
+    } else if (message.kind === 'comment-outside-pointer-down') {
+      handleOutsidePointerDownMessage()
+    } else if (message.kind === 'link-clicked') {
+      handleLinkClickedMessage(message)
+    } else if (message.kind === 'mermaid-render-request') {
+      if (
+        !mermaidEnabled ||
+        message.renderToken !== securityChallengeRef.current ||
+        mermaidRenderChallengeRef.current === message.renderToken
+      ) {
+        return
+      }
+      mermaidRenderChallengeRef.current = message.renderToken
+      const sourceWindow = event.source
+      void renderMermaidRequest(message).then((results) => {
+        const frameWindow = frameRef.current?.contentWindow
         if (
-          !mermaidEnabled ||
-          message.renderToken !== securityChallengeRef.current ||
-          mermaidRenderChallengeRef.current === message.renderToken
+          !frameWindow ||
+          results.length === 0 ||
+          sourceWindow !== frameWindow
         ) {
           return
         }
-        mermaidRenderChallengeRef.current = message.renderToken
-        const sourceWindow = event.source
-        void renderMermaidRequest(message).then((results) => {
-          const frameWindow = frameRef.current?.contentWindow
-          if (
-            !frameWindow ||
-            results.length === 0 ||
-            sourceWindow !== frameWindow
-          ) {
-            return
-          }
-          frameWindow.postMessage(
-            {
-              source: 'artifactshare-parent',
-              kind: 'mermaid-rendered',
-              renderToken: message.renderToken,
-              results,
-            },
-            trustedMessageOrigin,
-          )
-        })
-      }
+        frameWindow.postMessage(
+          {
+            source: 'artifactshare-parent',
+            kind: 'mermaid-rendered',
+            renderToken: message.renderToken,
+            results,
+          },
+          trustedMessageOrigin,
+        )
+      })
     }
+  })
+  useLayoutEffect(() => {
+    // Subscribe during commit, before the iframe can report while parsing.
+    const onMessage = (event: MessageEvent) => handleFrameMessage(event)
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [
-    canViewEnvironmentDiagnostics,
-    clearReadyFallback,
-    lowTrust,
-    mermaidEnabled,
-    trustedMessageOrigin,
-    renderType,
-  ])
+  }, [])
 
   const reportAnchorChecking = useEffectEvent((available: boolean) => {
     onAnchorCheckingChange?.(available)
