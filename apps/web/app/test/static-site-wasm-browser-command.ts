@@ -199,3 +199,147 @@ declare module 'vitest/browser' {
     }>
   }
 }
+
+// Context routing observes Chromium worker fetches at the real HTTPS origin.
+// The existing loopback WASM command above retains all-engine coverage.
+export const staticSiteExtensions = defineBrowserCommand(async ({ page }) => {
+  const context = await page.context().browser()!.newContext()
+  const extensionUrl =
+    'https://extensions.duckdb.org/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm'
+  let fulfilledRequests = 0
+  let blockedRequests = 0
+  let origin = ''
+  let blockedOrigin = ''
+  const worker = () => `
+    (async () => {
+      const response = await fetch('${extensionUrl}');
+      if (!response.ok) throw new Error('Extension HTTP ' + response.status);
+      const bytes = Array.from(new Uint8Array(await response.arrayBuffer()));
+      let networkBlocked = false;
+      try { await fetch('${blockedOrigin}/worker-fetch'); } catch { networkBlocked = true; }
+      postMessage({ bytes, networkBlocked });
+    })().catch(error => postMessage({ error: String(error) }));
+  `
+  const blockedServer = createServer((_request, response) => {
+    blockedRequests += 1
+    response.writeHead(200, { 'Access-Control-Allow-Origin': '*' })
+    response.end('reachable')
+  })
+  const fixtureServer = createServer(async (request, response) => {
+    const path = new URL(request.url ?? '/', origin).pathname
+    let asset: Response
+    if (path === '/worker.js') {
+      asset = staticSiteAssetResponse(worker(), 'text/javascript', origin)
+    } else if (path === '/') {
+      asset = contentResponse(
+        `<!doctype html><body><script>
+          (async () => {
+            const runWorker = url => new Promise((resolve, reject) => {
+              const worker = new Worker(url);
+              const finish = (error, result) => {
+                clearTimeout(timer);
+                worker.terminate();
+                if (error) reject(error); else resolve(result);
+              };
+              const timer = setTimeout(() => finish(new Error('Worker timed out')), 5000);
+              worker.onmessage = event => finish(null, event.data);
+              worker.onerror = event => finish(new Error(event.message || 'Worker failed'));
+            });
+            const local = await runWorker('/worker.js');
+            const url = URL.createObjectURL(new Blob([${JSON.stringify(worker())}], { type: 'text/javascript' }));
+            let blob;
+            try { blob = await runWorker(url); } finally { URL.revokeObjectURL(url); }
+            document.body.dataset.result = JSON.stringify({ local, blob });
+          })().catch(error => { document.body.dataset.result = JSON.stringify({ error: String(error) }); });
+        </script></body>`,
+        'text/html',
+        artifactContentSecurityPolicy('static_site', origin),
+      )
+    } else {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(asset.status, Object.fromEntries(asset.headers))
+    response.end(Buffer.from(await asset.arrayBuffer()))
+  })
+  try {
+    for (const server of [blockedServer, fixtureServer]) {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+    }
+    const address = fixtureServer.address()
+    const blockedAddress = blockedServer.address()
+    if (
+      !address ||
+      typeof address === 'string' ||
+      !blockedAddress ||
+      typeof blockedAddress === 'string'
+    )
+      throw new Error('Missing extension fixture port')
+    origin = `http://127.0.0.1:${address.port}`
+    blockedOrigin = `http://127.0.0.1:${blockedAddress.port}`
+    await context.route('**/*', async (route) => {
+      const url = route.request().url()
+      if (url === extensionUrl) {
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'Content-Type': 'application/wasm',
+            'Access-Control-Allow-Origin': '*',
+          },
+          body: Buffer.from([68, 85, 67, 75]),
+        })
+        fulfilledRequests += 1
+      } else if ([origin, blockedOrigin].includes(new URL(url).origin)) {
+        // The negative control must reach its server if CSP permits it.
+        await route.continue()
+      } else {
+        await route.abort()
+      }
+    })
+    const artifact = await context.newPage()
+    await artifact.goto(origin, { timeout: 15000 })
+    await artifact.waitForFunction(
+      () => Boolean(document.body.dataset.result),
+      undefined,
+      { timeout: 15000 },
+    )
+    const result: {
+      error?: string
+      local: ExtensionWorkerResult
+      blob: ExtensionWorkerResult
+    } = await artifact.evaluate(() => JSON.parse(document.body.dataset.result!))
+    return { ...result, fulfilledRequests, blockedRequests }
+  } finally {
+    // Closing the dedicated context removes routing, pages and workers even on failure.
+    try {
+      await context.close()
+    } finally {
+      for (const server of [fixtureServer, blockedServer]) {
+        if (!server.listening) continue
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+        })
+      }
+    }
+  }
+})
+
+type ExtensionWorkerResult = {
+  error?: string
+  bytes: number[]
+  networkBlocked: boolean
+}
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    staticSiteExtensions: () => Promise<{
+      error?: string
+      local: ExtensionWorkerResult
+      blob: ExtensionWorkerResult
+      fulfilledRequests: number
+      blockedRequests: number
+    }>
+  }
+}

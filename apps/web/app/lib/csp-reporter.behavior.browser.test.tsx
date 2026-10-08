@@ -1476,3 +1476,16 @@ test('static sites run WASM and workers without notices while blocked JavaScript
       .map((report) => new URL(report.blockedURI).origin),
   ).toContain(result.blockedOrigin)
 })
+
+test.skipIf(server.browser !== 'chromium')(
+  'static-site workers fetch DuckDB extensions but reject unlisted origins',
+  async () => {
+    const result = await server.commands.staticSiteExtensions()
+    expect(result.error).toBeUndefined()
+    for (const worker of [result.local, result.blob]) {
+      expect(worker).toEqual({ bytes: [68, 85, 67, 75], networkBlocked: true })
+    }
+    expect(result.fulfilledRequests).toBe(2)
+    expect(result.blockedRequests).toBe(0)
+  },
+)

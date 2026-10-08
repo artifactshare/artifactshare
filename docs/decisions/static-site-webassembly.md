@@ -21,7 +21,8 @@ registered by the site (allowed by `worker-src 'self'`) can answer requests with
 synthetic responses that carry no CSP. SVG or XML files opened as documents are
 also served without the static-site CSP. Closing these paths is separate work.
 
-No connect, image, frame, or media origins change. Frame ancestors, iframe
+`https://extensions.duckdb.org` is the sole added `connect-src` origin, appended
+after the existing sources. Image, frame, and media origins remain unchanged. Frame ancestors, iframe
 sandbox permissions, version-scoped origins, and access checks stay unchanged.
 The reporter continues to forward native CSP violations: permitted operations
 produce no notices, and blocked eval remains reportable.
@@ -39,6 +40,29 @@ under CSP. Worker requests do not rely on Playwright page-route interception,
 which is not reliable across all browser engines. Negative controls cover eval,
 Function construction, and unlisted script and connection origins without public
 internet access.
+
+A separate Chromium test intercepts the exact HTTPS extension URL with
+BrowserContext routing and supplies synthetic bytes without public network
+access. Both worker forms must receive those bytes and reject a reachable,
+CORS-compatible unlisted loopback endpoint with zero requests reaching it.
+Unexpected external requests are aborted; loopback requests pass through.
+This exact-origin probe is skipped in Firefox and WebKit; the loopback WASM
+coverage above continues to run in all three engines.
+
+DuckDB-WASM loads runtime extensions such as `parquet` and `json` from
+`https://extensions.duckdb.org/<duckdb-version>/<wasm_eh|wasm_mvp>/<name>.duckdb_extension.wasm`.
+Static-site `connect-src` permits that origin: blob workers inherit the page's
+policy, and same-origin JavaScript workers carry it. This permission covers
+extension fetching, not arbitrary network origins.
+
+To avoid the external extension request, bundle every needed extension matching
+the DuckDB engine version and selected WASM platform. Preserve the repository's
+version/platform layout, for example
+`extensions/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm`. In the page, compute
+`new URL('extensions/', location.href).href` and use that absolute same-origin
+repository URL in `SET custom_extension_repository = '<absolute same-origin repository URL>'`
+before any extension loads or queries. This avoids requests to the extension
+host; jsDelivr core bundles still require CDN requests.
 
 The eval and Function probes run as separate inline scripts with uncaught
 EvalErrors observed by an error listener in every engine. Chromium and Firefox

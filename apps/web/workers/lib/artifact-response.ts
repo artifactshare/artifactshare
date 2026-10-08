@@ -70,7 +70,7 @@ export function artifactContentSecurityPolicy(
             "img-src 'self' data: blob:",
             "font-src 'self' data: https://fonts.gstatic.com",
             `media-src ${MEDIA_CSP_SOURCES}`,
-            `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES}`,
+            `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES} https://extensions.duckdb.org`,
             `frame-src ${EMBED_FRAME_CSP_SOURCES}`,
           ]
   return [
