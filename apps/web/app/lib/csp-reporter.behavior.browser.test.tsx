@@ -1514,3 +1514,22 @@ test('XML object embedding allows the asset ancestor and retains eval and networ
     controlRequests: 1,
   })
 })
+
+test.each(['enforce', 'report'])(
+  'generated reporter bounds samples and retains %s disposition',
+  async (disposition) => {
+    const doc = await fixture()
+    doc.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        sample: 'x'.repeat(90),
+        disposition,
+      }),
+    )
+    expect(await waitForMessage('csp-violation')).toMatchObject({
+      sample: 'x'.repeat(80),
+      disposition,
+    })
+  },
+)

@@ -73,6 +73,8 @@ function Harness({
       <div style={{ height: '100vh' }}>
         {sandboxUrl ? (
           <SandboxFrame
+            renderType="html"
+            canViewEnvironmentDiagnostics={false}
             shareableId="abc123def4"
             versionId="v1"
             url={sandboxUrl}

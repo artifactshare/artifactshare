@@ -1,3 +1,5 @@
+import { CspBanner, type ViolationEntry } from './csp-banner'
+import { classifyCspViolation } from '~/lib/csp-violation-classification'
 import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { toast } from 'sonner'
@@ -21,7 +23,6 @@ import {
   canUseOsHandler,
   createSandboxChallenge,
   ensureSandboxChallenge,
-  type CspViolationMessage,
   type LinkClickedMessage,
   type MermaidRenderRequestMessage,
   type TextSelectionMessage,
@@ -73,12 +74,6 @@ import {
   shouldStartLivenessProbe,
 } from '~/lib/sandbox-frame-state'
 
-// The version-scoped sandbox origin is the trust boundary for messages. The
-// source check keeps sibling frames on the same page from spoofing reports.
-interface ViolationEntry extends CspViolationMessage {
-  id: string
-}
-
 function addFrameOffset(
   rect: TextSelectionMessage['rect'],
   frameRect: DOMRect,
@@ -111,6 +106,8 @@ async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
 }
 
 type SandboxFrameProps = {
+  renderType: string | null
+  canViewEnvironmentDiagnostics: boolean
   shareableId: string
   versionId: string
   url: string
@@ -148,6 +145,10 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 export function SandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
+  const visibleViolations = controller.violations.filter(
+    (v) =>
+      v.classification === 'artifact' || props.canViewEnvironmentDiagnostics,
+  )
 
   return (
     <ViewerBodySurface>
@@ -180,8 +181,8 @@ export function SandboxFrame(props: SandboxFrameProps) {
         {controller.loadState === 'loading' ? <FrameLoading /> : null}
       </div>
       {children}
-      {controller.violations.length > 0 && (
-        <CspBanner violations={controller.violations} />
+      {visibleViolations.length > 0 && (
+        <CspBanner violations={visibleViolations} />
       )}
       <ExternalLinkInterstitial
         action={controller.pendingExternalNavigation}
@@ -339,6 +340,7 @@ function SandboxState({
 }
 
 function useSandboxFrameController({
+  renderType,
   shareableId,
   versionId,
   url,
@@ -781,7 +783,15 @@ function useSandboxFrameController({
       if (message.kind === 'csp-violation') {
         setViolations((prev) => [
           ...prev,
-          { ...message, id: crypto.randomUUID() },
+          {
+            ...message,
+            id: crypto.randomUUID(),
+            classification: classifyCspViolation(
+              message.sourceFile,
+              trustedMessageOrigin,
+              renderType,
+            ),
+          },
         ])
       } else if (message.kind === 'ready') {
         securityTokenRef.current = acceptSandboxToken(
@@ -841,7 +851,13 @@ function useSandboxFrameController({
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [clearReadyFallback, lowTrust, mermaidEnabled, trustedMessageOrigin])
+  }, [
+    clearReadyFallback,
+    lowTrust,
+    mermaidEnabled,
+    trustedMessageOrigin,
+    renderType,
+  ])
 
   const reportAnchorChecking = useEffectEvent((available: boolean) => {
     onAnchorCheckingChange?.(available)
@@ -1068,33 +1084,5 @@ function FrameLoading() {
       />
       <span>{t('vw.frameLoading')}</span>
     </output>
-  )
-}
-
-function CspBanner({ violations }: { violations: ViolationEntry[] }) {
-  const { t, tPlural } = useT()
-  const count = violations.length
-  return (
-    <aside
-      className="text-foreground max-w-sandbox-toast-max border-border bg-card fixed right-4 bottom-4 z-50 rounded-[var(--r-md)] border px-3.5 py-2.5 text-sm shadow-[var(--shadow-lg)]"
-      role="status"
-    >
-      <span className="block font-medium">
-        {tPlural('csp.banner.summary', count)}
-      </span>
-      <details className="text-muted-foreground mt-1.5">
-        <summary className="cursor-pointer select-none">
-          {t('csp.banner.detailsSummary')}
-        </summary>
-        <ul className="mt-2 list-disc pl-4">
-          {violations.map((v) => (
-            <li key={v.id} className="my-0.5 break-all">
-              <code className="font-mono text-xs">{v.directive}</code> blocked{' '}
-              <code className="font-mono text-xs">{v.blockedURI}</code>
-            </li>
-          ))}
-        </ul>
-      </details>
-    </aside>
   )
 }

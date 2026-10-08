@@ -11,6 +11,7 @@
     "./markdown-autolink": "./src/markdown-autolink.ts",
     "./markdown-disclosure": "./src/markdown-disclosure.ts",
     "./csp-reporter": "./src/csp-reporter.ts",
+    "./script-policy-sources": "./src/script-policy-sources.ts",
     "./inject": "./src/inject.ts",
     "./reporter/anchor-engine": "./src/reporter/anchor-engine.ts"
   },

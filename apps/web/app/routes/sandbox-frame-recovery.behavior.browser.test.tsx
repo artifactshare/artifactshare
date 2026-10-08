@@ -356,6 +356,8 @@ async function expectFrameState(host: HTMLElement, expected: string) {
 
 async function renderFrame(
   onAnchorCheckingChange?: (available: boolean) => void,
+  canViewEnvironmentDiagnostics = false,
+  siteNavigation = false,
 ) {
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -363,6 +365,8 @@ async function renderFrame(
   await act(async () => {
     root?.render(
       <SandboxFrame
+        renderType={siteNavigation ? 'static_site' : 'html'}
+        canViewEnvironmentDiagnostics={canViewEnvironmentDiagnostics}
         onAnchorCheckingChange={onAnchorCheckingChange}
         shareableId="abc123def4"
         versionId="v1"
@@ -370,8 +374,8 @@ async function renderFrame(
         name="Recovery test"
         mermaidEnabled={false}
         textAnchorsEnabled={false}
-        linkNavigationMode="document"
-        bundlePaths={[]}
+        linkNavigationMode={siteNavigation ? 'site' : 'document'}
+        bundlePaths={siteNavigation ? ['/next.html'] : []}
         fallbackToIndex={false}
         commentThreads={[]}
         targetThreadId={null}
@@ -523,3 +527,74 @@ describe('waitForRealTaskCondition', () => {
     }
   })
 })
+
+test.each([false, true])(
+  'CSP diagnostics visibility with editor permission %s',
+  async (privileged) => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    const host = await renderFrame(undefined, privileged, true)
+    const frame = host.querySelector('iframe')!
+    const report = async (sourceFile: string | null, sample: string) => {
+      await act(async () => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: window.location.origin,
+            source: frame.contentWindow,
+            data: {
+              source: 'artifactshare',
+              kind: 'csp-violation',
+              directive: 'script-src',
+              blockedURI: 'eval',
+              sourceFile,
+              lineNumber: 1,
+              sample,
+              disposition: 'enforce',
+            },
+          }),
+        )
+      })
+    }
+    await report(null, '<img src=x onerror=alert(1)>')
+    expect(host.querySelector('aside') !== null).toBe(privileged)
+    expect(host.textContent?.includes('browser environment')).toBe(privileged)
+    expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
+      privileged,
+    )
+    if (privileged) expect(host.textContent).not.toContain('Security blocked')
+    await report(
+      `${window.location.origin}/index.html`,
+      'inline-positive-control',
+    )
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    await report('https://cdn.jsdelivr.net/app.js', 'cdn-positive-control')
+    expect(host.textContent).toContain('Security blocked 2 resources')
+    expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
+      privileged,
+    )
+    expect(host.querySelector('aside img')).toBeNull()
+    for (const summary of host.querySelectorAll('aside summary'))
+      await act(async () => (summary as HTMLElement).click())
+    expect(host.textContent).toContain('Sample: inline-positive-control')
+    const nextUrl = `${window.location.origin}/next.html`
+    expect(frame.src).not.toBe(nextUrl)
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          source: frame.contentWindow,
+          data: {
+            source: 'artifactshare',
+            kind: 'link-clicked',
+            href: nextUrl,
+          },
+        }),
+      )
+    })
+    expect(frame.src).toBe(nextUrl)
+    expect(host.querySelector('aside')).toBeNull()
+  },
+)

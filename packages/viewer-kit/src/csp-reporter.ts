@@ -87,6 +87,8 @@ export interface CspViolationMessage {
   directive: string
   blockedURI: string
   sourceFile: string | null
+  sample?: string
+  disposition?: 'enforce' | 'report'
   lineNumber: number | null
 }
 
@@ -196,8 +198,23 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   if (v.source !== 'artifactshare') return false
+  if (v.kind === 'csp-violation') {
+    return (
+      typeof v.directive === 'string' &&
+      typeof v.blockedURI === 'string' &&
+      (v.sourceFile === null || typeof v.sourceFile === 'string') &&
+      (v.lineNumber === null ||
+        (typeof v.lineNumber === 'number' &&
+          Number.isFinite(v.lineNumber) &&
+          v.lineNumber >= 0)) &&
+      (v.sample === undefined ||
+        (typeof v.sample === 'string' && v.sample.length <= 80)) &&
+      (v.disposition === undefined ||
+        v.disposition === 'enforce' ||
+        v.disposition === 'report')
+    )
+  }
   if (
-    v.kind === 'csp-violation' ||
     v.kind === 'text-selection-cleared' ||
     v.kind === 'comment-outside-pointer-down'
   ) {
