@@ -146,8 +146,10 @@ extension fetching, not arbitrary network origins.
 To avoid the external extension request, bundle every needed extension matching
 the DuckDB engine version and selected WASM platform. Preserve the repository's
 version/platform layout, for example
-`extensions/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm`. In the page, compute
-`new URL('extensions/', location.href).href` and use that absolute same-origin
+`extensions/v1.4.3/wasm_eh/parquet.duckdb_extension.wasm` for `@duckdb/duckdb-wasm@1.32.0`.
+The folder must match the engine version the page loads, which `SELECT version()`
+reports, so pin the package version. In the page, compute
+`new URL('extensions', location.href).href` (no trailing slash; DuckDB appends `/<version>/...`) and use that absolute same-origin
 repository URL in `SET custom_extension_repository = '<absolute same-origin repository URL>'`
 before any extension loads or queries. This avoids requests to the extension
 host; jsDelivr core bundles still require CDN requests.
