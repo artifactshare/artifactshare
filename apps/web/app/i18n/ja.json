@@ -803,6 +803,7 @@
   "csp.banner.environmentSummaryOne": "閲覧環境による違反 1 件",
   "csp.banner.environmentSummaryOther": "閲覧環境による違反 {n} 件",
   "csp.banner.environmentNote": "これらはファイルではなく、拡張機能やセキュリティソフトなどの閲覧環境が原因で発生した可能性があります。",
+  "csp.banner.blockedResource": "{directive} が {uri} を止めました",
   "csp.banner.sampleLabel": "サンプル",
   "csp.banner.detailsSummary": "止めた内容",
   "menu.language": "言語",

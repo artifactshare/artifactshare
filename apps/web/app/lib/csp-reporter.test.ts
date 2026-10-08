@@ -573,7 +573,7 @@ test.each([0, 80, 81, 200])(
         ctx.primordials.savedParent,
         {
           ...validCspReport,
-          sample: 'x'.repeat(Math.min(length, 80)),
+          ...(length > 0 ? { sample: 'x'.repeat(Math.min(length, 80)) } : {}),
           disposition,
         },
         '*',

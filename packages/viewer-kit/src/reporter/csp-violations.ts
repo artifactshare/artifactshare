@@ -11,7 +11,7 @@ export function installCspViolations(ctx: ReporterState) {
       sourceFile: event.sourceFile || null,
       lineNumber: event.lineNumber || null,
     }
-    if (typeof event.sample === 'string') {
+    if (typeof event.sample === 'string' && event.sample.length > 0) {
       // Indexing preserves the 80 UTF-16-unit bound without calling authored methods.
       let sample = ''
       for (let index = 0; index < event.sample.length && index < 80; index++)

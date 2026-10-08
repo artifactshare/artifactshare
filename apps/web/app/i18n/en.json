@@ -803,6 +803,7 @@
   "csp.banner.environmentSummaryOne": "1 browser environment violation",
   "csp.banner.environmentSummaryOther": "{n} browser environment violations",
   "csp.banner.environmentNote": "These were probably caused by your browser environment, such as an extension or security software, rather than the file.",
+  "csp.banner.blockedResource": "{directive} blocked {uri}",
   "csp.banner.sampleLabel": "Sample",
   "csp.banner.detailsSummary": "What was blocked",
   "menu.language": "Language",
