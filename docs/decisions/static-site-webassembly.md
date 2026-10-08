@@ -8,10 +8,16 @@ The static-site `script-src` includes `wasm-unsafe-eval` and the existing script
 CDN origins. Blob workers inherit this policy, and their `importScripts()` uses
 `script-src`, not the document's `script-src-elem`. `worker-src 'self' blob:`
 allows worker creation. JavaScript `eval` and `new Function` remain blocked in
-the document and workers. JavaScript asset responses carry the static-site CSP
-so same-origin worker files enforce the same restrictions. MIME matching ignores
+documents served with the static-site CSP and their blob workers. JavaScript
+files served from a static site carry that CSP, so a worker started from a
+same-origin script file keeps the eval and network limits. MIME matching ignores
 case and charset parameters and covers JavaScript MIME variants. Asset bytes
 and range handling are unchanged; other binary responses receive no CSP.
+
+This change does not close two existing paths that predate it. A service worker
+registered by the site (allowed by `worker-src 'self'`) can answer requests with
+synthetic responses that carry no CSP. SVG or XML files opened as documents are
+also served without the static-site CSP. Closing these paths is separate work.
 
 No connect, image, frame, or media origins change. Frame ancestors, iframe
 sandbox permissions, version-scoped origins, and access checks stay unchanged.
