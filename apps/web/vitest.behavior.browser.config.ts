@@ -1,5 +1,6 @@
 import {
   staticSiteExtensions,
+  staticSiteXmlEmbedding,
   staticSiteWasm,
 } from './app/test/static-site-wasm-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
@@ -30,7 +31,12 @@ export default defineConfig({
     browser: {
       enabled: true,
       provider: playwright(),
-      commands: { selectAnchorText, staticSiteWasm, staticSiteExtensions },
+      commands: {
+        selectAnchorText,
+        staticSiteWasm,
+        staticSiteExtensions,
+        staticSiteXmlEmbedding,
+      },
       headless: true,
       instances: [
         { browser: 'chromium' },

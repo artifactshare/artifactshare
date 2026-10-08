@@ -5,6 +5,7 @@ import {
   artifactContentSecurityPolicy,
   contentResponse,
   staticSiteAssetResponse,
+  staticSiteServiceWorkerRefusal,
 } from '../../workers/lib/artifact-response'
 
 // Serve worker requests over loopback: page.route cannot reliably fulfill
@@ -12,7 +13,9 @@ import {
 // is checked against the response's script-src/connect-src in bundle-sandbox.test.
 export const staticSiteWasm = defineBrowserCommand(
   async ({ page }, reporter: string) => {
-    const artifact = await page.context().newPage()
+    const context = await page.context().browser()!.newContext()
+    const artifact = await context.newPage()
+    const serviceWorkerRequests: { header: string; status: number }[] = []
     const wasm = [0, 97, 115, 109, 1, 0, 0, 0]
     const worker = (origin: string) => `
       (async () => {
@@ -49,7 +52,52 @@ export const staticSiteWasm = defineBrowserCommand(
         response.writeHead(asset.status, Object.fromEntries(asset.headers))
         response.end(Buffer.from(await asset.arrayBuffer()))
       }
-      if (path === '/fixture.wasm') {
+      const refusal = staticSiteServiceWorkerRefusal(
+        new Request(origin + path, {
+          headers: new Headers(
+            Object.entries(request.headers).flatMap(([key, value]) =>
+              value === undefined
+                ? []
+                : [[key, Array.isArray(value) ? value.join(', ') : value]],
+            ),
+          ),
+        }),
+      )
+      if (refusal) {
+        serviceWorkerRequests.push({
+          header: String(request.headers['service-worker']),
+          status: refusal.status,
+        })
+        await send(refusal)
+      } else if (path === '/sw.js') {
+        await send(
+          staticSiteAssetResponse(
+            "self.addEventListener('fetch', () => {});",
+            'text/javascript',
+            origin,
+          ),
+        )
+      } else if (path === '/evil.svg' || path === '/evil.xml') {
+        const script = `
+          document.documentElement.setAttribute('data-marker', 'executed');
+          (async () => {
+            let evalBlocked = false;
+            try { eval('1'); } catch (error) { evalBlocked = error instanceof EvalError; }
+            let networkBlocked = false;
+            try { await fetch('${blockedOrigin}/xml-fetch'); } catch { networkBlocked = true; }
+            document.documentElement.setAttribute('data-result', JSON.stringify({ evalBlocked, networkBlocked }));
+          })();
+        `
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><rect width="24" height="16" fill="red"/><script><![CDATA[${script}]]></script></svg>`
+        const xml = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>XML</title></head><body><script><![CDATA[${script}]]></script></body></html>`
+        await send(
+          staticSiteAssetResponse(
+            path.endsWith('.svg') ? svg : xml,
+            path.endsWith('.svg') ? 'image/svg+xml' : 'application/xml',
+            origin,
+          ),
+        )
+      } else if (path === '/fixture.wasm') {
         await send(
           staticSiteAssetResponse(
             new Response(new Uint8Array(wasm)).body,
@@ -102,6 +150,20 @@ export const staticSiteWasm = defineBrowserCommand(
       <script>${reporter}</script>
       <script>
         (async () => {
+          const serviceWorker = { supported: 'serviceWorker' in navigator, rejected: false, registrations: -1, controlled: false };
+          if (serviceWorker.supported) {
+            try { await navigator.serviceWorker.register('/sw.js'); }
+            catch { serviceWorker.rejected = true; }
+            serviceWorker.registrations = (await navigator.serviceWorker.getRegistrations()).length;
+            serviceWorker.controlled = navigator.serviceWorker.controller !== null;
+          }
+          const svgImage = await new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+            img.onerror = () => resolve(false);
+            img.src = '/evil.svg';
+            document.body.appendChild(img);
+          });
           const bytes = new Uint8Array(${JSON.stringify(wasm)});
           await WebAssembly.compile(bytes);
           await WebAssembly.instantiate(bytes);
@@ -148,22 +210,61 @@ export const staticSiteWasm = defineBrowserCommand(
           });
           blocked.push(scriptBlocked);
           await new Promise(resolve => setTimeout(resolve, 100));
-          document.body.dataset.result = JSON.stringify({ local, blob, allowedReports, blocked, reports });
+          document.body.dataset.result = JSON.stringify({ local, blob, allowedReports, blocked, reports, serviceWorker, svgImage });
         })().catch(error => { document.body.dataset.result = JSON.stringify({ error: String(error) }); });
       </script>
     </body>`
-      await artifact.goto(origin)
+      await context.route('**/*', async (route) => {
+        if (
+          [origin, blockedOrigin].includes(
+            new URL(route.request().url()).origin,
+          )
+        )
+          await route.continue()
+        else await route.abort()
+      })
+      await artifact.goto(origin, { timeout: 15000 })
       const content = artifact
         .frames()
         .find((frame) => frame.url().endsWith('/artifact.html'))
       if (!content) throw new Error('Static-site frame did not load')
-      await content.waitForFunction(() => Boolean(document.body.dataset.result))
+      await content.waitForFunction(
+        () => Boolean(document.body.dataset.result),
+        undefined,
+        { timeout: 15000 },
+      )
       const result = await content.evaluate(() =>
         JSON.parse(document.body.dataset.result!),
       )
-      return { ...result, blockedOrigin, blockedRequests }
+      const xmlResults = []
+      for (const path of ['/evil.svg', '/evil.xml']) {
+        await content.evaluate((target) => {
+          location.href = target
+        }, path)
+        await content.waitForURL(origin + path, { timeout: 15000 })
+        await content.waitForFunction(
+          () => document.documentElement.hasAttribute('data-result'),
+          undefined,
+          { timeout: 15000 },
+        )
+        xmlResults.push(
+          await content.evaluate(() => ({
+            marker: document.documentElement.getAttribute('data-marker'),
+            ...JSON.parse(
+              document.documentElement.getAttribute('data-result')!,
+            ),
+          })),
+        )
+      }
+      return {
+        ...result,
+        blockedOrigin,
+        blockedRequests,
+        serviceWorkerRequests,
+        xmlResults,
+      }
     } finally {
-      await artifact.close()
+      await context.close()
       for (const server of [fixtureServer, blockedServer]) {
         if (!server.listening) continue
         server.closeAllConnections()
@@ -179,6 +280,19 @@ declare module 'vitest/browser' {
   interface BrowserCommands {
     staticSiteWasm: (reporter: string) => Promise<{
       error?: string
+      serviceWorker: {
+        supported: boolean
+        rejected: boolean
+        registrations: number
+        controlled: boolean
+      }
+      serviceWorkerRequests: { header: string; status: number }[]
+      svgImage: boolean
+      xmlResults: {
+        marker: string
+        evalBlocked: boolean
+        networkBlocked: boolean
+      }[]
       blockedOrigin: string
       blockedRequests: number
       local: {
@@ -340,6 +454,150 @@ declare module 'vitest/browser' {
       blob: ExtensionWorkerResult
       fulfilledRequests: number
       blockedRequests: number
+    }>
+  }
+}
+
+// Isolate XML frame-ancestors from the parent's separate object-src restriction.
+// The host is intentionally unpoliced: production static-site HTML still denies
+// objects via default-src 'none'. The SVG uses the complete production policy.
+export const staticSiteXmlEmbedding = defineBrowserCommand(async ({ page }) => {
+  const context = await page.context().browser()!.newContext()
+  let assetOrigin = ''
+  let viewerOrigin = ''
+  let blockedRequests = 0
+  let controlRequests = 0
+  const viewerServer = createServer((request, response) => {
+    if (request.url === '/blocked' || request.url === '/control') {
+      if (request.url === '/blocked') blockedRequests += 1
+      else controlRequests += 1
+      response.writeHead(200, { 'Access-Control-Allow-Origin': '*' })
+      response.end('reachable')
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'text/html' })
+    response.end(
+      `<!doctype html><iframe src="${assetOrigin}/host.html"></iframe>`,
+    )
+  })
+  const assetServer = createServer(async (request, response) => {
+    let asset: Response
+    if (request.url === '/chart.svg') {
+      asset = staticSiteAssetResponse(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16">
+          <rect width="24" height="16" fill="red"/>
+          <script><![CDATA[
+            document.documentElement.setAttribute('data-marker', 'executed');
+            (async () => {
+              let evalBlocked = false;
+              try { eval('1'); } catch (error) { evalBlocked = error instanceof EvalError; }
+              let networkBlocked = false;
+              try { await fetch('${viewerOrigin}/blocked'); } catch { networkBlocked = true; }
+              document.documentElement.setAttribute('data-result', JSON.stringify({ evalBlocked, networkBlocked }));
+            })();
+          ]]></script>
+        </svg>`,
+        'image/svg+xml',
+        viewerOrigin,
+      )
+    } else if (request.url === '/host.html') {
+      asset = contentResponse(
+        `<!doctype html><body><script>
+          (async () => {
+            // Prove the unlisted origin is reachable before the SVG probes it.
+            const control = await fetch('${viewerOrigin}/control');
+            if (await control.text() !== 'reachable') throw new Error('Control failed');
+            const object = document.createElement('object');
+            object.type = 'image/svg+xml';
+            object.data = '/chart.svg';
+            object.width = '24';
+            object.height = '16';
+            document.body.appendChild(object);
+          })();
+        </script></body>`,
+        'text/html',
+        null,
+      )
+    } else {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(asset.status, Object.fromEntries(asset.headers))
+    response.end(Buffer.from(await asset.arrayBuffer()))
+  })
+  try {
+    for (const server of [viewerServer, assetServer]) {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+    }
+    const viewerAddress = viewerServer.address()
+    const assetAddress = assetServer.address()
+    if (
+      !viewerAddress ||
+      typeof viewerAddress === 'string' ||
+      !assetAddress ||
+      typeof assetAddress === 'string'
+    )
+      throw new Error('Missing XML embedding fixture ports')
+    viewerOrigin = `http://127.0.0.1:${viewerAddress.port}`
+    assetOrigin = `http://127.0.0.1:${assetAddress.port}`
+    await context.route('**/*', async (route) => {
+      if (
+        [viewerOrigin, assetOrigin].includes(
+          new URL(route.request().url()).origin,
+        )
+      )
+        await route.continue()
+      else await route.abort()
+    })
+    const viewer = await context.newPage()
+    await viewer.goto(viewerOrigin, { timeout: 15000 })
+    const host = viewer
+      .frames()
+      .find((frame) => frame.url() === `${assetOrigin}/host.html`)
+    if (!host) throw new Error('XML object host did not load')
+    await host.waitForFunction(
+      () => {
+        const doc = document.querySelector('object')?.contentDocument
+        return doc?.documentElement.hasAttribute('data-result')
+      },
+      undefined,
+      { timeout: 15000 },
+    )
+    const result = await host.evaluate(() => {
+      const doc = document.querySelector('object')!.contentDocument!
+      const rect = doc.querySelector('rect')!.getBoundingClientRect()
+      return {
+        marker: doc.documentElement.getAttribute('data-marker'),
+        rendered: rect.width > 0 && rect.height > 0,
+        ...JSON.parse(doc.documentElement.getAttribute('data-result')!),
+      }
+    })
+    return { ...result, blockedRequests, controlRequests }
+  } finally {
+    try {
+      await context.close()
+    } finally {
+      for (const server of [viewerServer, assetServer]) {
+        if (!server.listening) continue
+        server.closeAllConnections()
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+        })
+      }
+    }
+  }
+})
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    staticSiteXmlEmbedding: () => Promise<{
+      marker: string
+      rendered: boolean
+      evalBlocked: boolean
+      networkBlocked: boolean
+      blockedRequests: number
+      controlRequests: number
     }>
   }
 }

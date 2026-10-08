@@ -3,6 +3,7 @@ import {
   artifactContentSecurityPolicy,
   contentResponse,
   staticSiteAssetResponse,
+  staticSiteServiceWorkerRefusal,
   CSP_HEADER,
   ROBOTS_HEADER,
   ROBOTS_VALUE,
@@ -730,6 +731,9 @@ async function serveBundleFile(
   request: Request,
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
+  const refusal = staticSiteServiceWorkerRefusal(request, responseDomain)
+  if (refusal) return refusal
+
   const transformsDocument =
     file.mime_type === null ||
     isHtmlContent(file.mime_type) ||

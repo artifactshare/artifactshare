@@ -9,21 +9,33 @@ CDN origins. Blob workers inherit this policy. The existing CDN origins appear
 in both `script-src` and `script-src-elem`, so worker `importScripts()` calls are
 allowed whichever directive an engine applies. `script-src-elem` also lists the
 social embed script hosts; no new origin is added. `worker-src 'self' blob:`
-allows worker creation. JavaScript `eval` and `new Function` remain blocked in
+allows ordinary dedicated and blob worker creation; service-worker script fetches are refused. JavaScript `eval` and `new Function` remain blocked in
 documents served with the static-site CSP and their blob workers. JavaScript
 files served from a static site carry that CSP, so a worker started from a
 same-origin script file keeps the eval and network limits. MIME matching ignores
 case and charset parameters and covers JavaScript MIME variants. Asset bytes
-and range handling are unchanged; other binary responses receive no CSP.
+and range handling are unchanged. XML document responses (application/xml,
+text/xml, and all +xml types, including SVG and XHTML) also carry the policy.
+Only XML responses add `'self'` to `frame-ancestors`, retaining the supplied
+viewer, link-viewer, and embed origins. This permits a same-origin intermediate
+ancestor when the parent permits embedding. It does not relax the parent's
+`object-src` or `frame-src`: static-site HTML still blocks objects through
+`default-src 'none'` and does not permit same-origin child frames.
+Other binary responses, including PNG and WASM, receive no CSP.
 
-This change does not close two existing paths that predate it. A service worker
-registered by the site (allowed by `worker-src 'self'`) can answer requests with
-synthetic responses that carry no CSP. SVG or XML files opened as documents are
-also served without the static-site CSP. Closing these paths is separate work.
+Static-site asset requests with a `Service-Worker: script` header (ignoring
+case and surrounding whitespace) receive an empty 403 before body or range
+processing. This prevents new registrations and update fetches from installing
+scripts that could synthesize policy-free responses. It does not remove existing
+registrations or retroactively control cached synthetic responses. XML documents
+retain their bytes and content types and now enforce the static-site policy when
+navigated to. SVG still renders as an image; image embedding does not apply the
+response CSP. Authorization and single-document HTML/Markdown are unchanged.
 
 `https://extensions.duckdb.org` is the sole added `connect-src` origin, appended
-after the existing sources. Image, frame, and media origins remain unchanged. Frame ancestors, iframe
-sandbox permissions, version-scoped origins, and access checks stay unchanged.
+after the existing sources. Image, frame, and media origins remain unchanged.
+Only XML response frame ancestors change. Iframe sandbox permissions,
+version-scoped origins, and access checks stay unchanged.
 The reporter continues to forward native CSP violations: permitted operations
 produce no notices, and blocked eval remains reportable.
 
@@ -90,3 +102,13 @@ supplies only the harness origin as the frame ancestor. Both worker forms must
 reject eval, Function construction, and fetches to the blocked loopback origin.
 Multipart API tests call the real upload session's `addFile` method and verify
 stored bytes and MIME metadata; only publication is stubbed in those route tests.
+
+Deterministic regression probes exercise service-worker refusal and XML document
+eval/network blocking over loopback, with a reachable CORS-enabled negative
+control and SVG image rendering. Handler tests cover all bundle access paths,
+normalized headers, and byte ranges without reading rejected script bodies.
+
+An additional loopback object probe isolates XML `frame-ancestors` using an
+unrestricted host page beneath a different viewer origin. The embedded SVG must
+render and execute a benign marker while eval and unlisted-origin fetches remain
+blocked. This probe does not assert that static-site HTML permits objects.
