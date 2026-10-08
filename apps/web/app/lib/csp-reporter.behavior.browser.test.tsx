@@ -1519,6 +1519,23 @@ test('XML object embedding allows the asset ancestor and retains eval and networ
   })
 })
 
+test.each([undefined, '', 'diagnostic sample'])(
+  'generated reporter omits absent or empty samples (%j)',
+  async (sample) => {
+    const doc = await fixture()
+    doc.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        ...(sample === undefined ? {} : { sample }),
+      }),
+    )
+    const report = await waitForMessage('csp-violation')
+    if (sample) expect(report).toHaveProperty('sample', sample)
+    else expect(report).not.toHaveProperty('sample')
+  },
+)
+
 test.each(['enforce', 'report'])(
   'generated reporter bounds samples and retains %s disposition',
   async (disposition) => {

@@ -48,10 +48,23 @@ export function CspBanner({ violations }: { violations: ViolationEntry[] }) {
               <ul className="mt-2 list-disc pl-4">
                 {entries.map((v) => (
                   <li key={v.id} className="my-0.5 break-all">
-                    <code className="font-mono text-xs">{v.directive}</code>{' '}
-                    blocked{' '}
-                    <code className="font-mono text-xs">{v.blockedURI}</code>
-                    {v.sample !== undefined && (
+                    {t('csp.banner.blockedResource', {
+                      directive: '{directive}',
+                      uri: '{uri}',
+                    })
+                      .split(/(\{directive\}|\{uri\})/g)
+                      .map((part, index) =>
+                        part === '{directive}' || part === '{uri}' ? (
+                          <code key={index} className="font-mono text-xs">
+                            {part === '{directive}'
+                              ? v.directive
+                              : v.blockedURI}
+                          </code>
+                        ) : (
+                          part
+                        ),
+                      )}
+                    {v.sample && (
                       <div>
                         {t('csp.banner.sampleLabel')}:{' '}
                         <code className="font-mono text-xs whitespace-pre-wrap">

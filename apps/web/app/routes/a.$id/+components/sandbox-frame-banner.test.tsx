@@ -33,6 +33,47 @@ describe.each(['en', 'ja'] as const)('CSP groups in %s', (locale) => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(html).not.toContain('<script>')
   })
+  test.each([undefined, '', 'diagnostic sample'])(
+    'only renders a sample label and code for a nonempty sample (%j)',
+    (sample) => {
+      state.locale = locale
+      const messages = locale === 'en' ? en : ja
+      const html = renderToStaticMarkup(
+        <CspBanner
+          violations={[{ ...report, sample, classification: 'artifact' }]}
+        />,
+      )
+      expect(html.includes(messages['csp.banner.sampleLabel'])).toBe(
+        Boolean(sample),
+      )
+      expect(html.includes('whitespace-pre-wrap')).toBe(Boolean(sample))
+      if (sample) expect(html).toContain(sample)
+    },
+  )
+  test('localizes the blocked resource sentence and keeps diagnostic values as escaped code', () => {
+    state.locale = locale
+    const html = renderToStaticMarkup(
+      <CspBanner
+        violations={[
+          {
+            ...report,
+            directive: '<script-src>',
+            blockedURI: '<img src=x>',
+            classification: 'artifact',
+          },
+        ]}
+      />,
+    )
+    const directive =
+      '<code class="font-mono text-xs">&lt;script-src&gt;</code>'
+    const uri = '<code class="font-mono text-xs">&lt;img src=x&gt;</code>'
+    expect(html).toContain(
+      locale === 'ja'
+        ? `${directive} が ${uri} を止めました`
+        : `${directive} blocked ${uri}`,
+    )
+    expect(html).not.toContain('<img')
+  })
   test('mixed streams have separate counts and artifact-only reports keep their summary', () => {
     state.locale = locale
     const messages = locale === 'en' ? en : ja

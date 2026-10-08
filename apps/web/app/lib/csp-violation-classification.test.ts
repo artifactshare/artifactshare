@@ -44,6 +44,13 @@ describe('CSP source attribution', () => {
     'data:text/javascript,alert(1)',
     `blob:${origin}/abc`,
     'file:///app.js',
+    'webkit-masked-url://hidden/',
+    'custom:script',
+    'data',
+    'blob',
+    'eval',
+    'wasm-eval',
+    'inline',
     'https://example.com/app.js',
     'https://artifactshare.com/app.js',
     'https://site123abc-v2.sandbox.artifactshare.com/app.js',
@@ -63,12 +70,11 @@ describe('CSP resource attribution when the initiating source is absent', () => 
     'https://example.com/a.png',
     'http://example.com/frame.html',
     `${origin}/a.png`,
-    'data:image/png;base64,AA==',
-    `blob:${origin}/abc`,
-    'file:///a.png',
+    'data',
+    'blob',
   ])('attributes the blocked resource %s to the artifact', (blockedURI) => {
     for (const source of [null, '']) {
-      for (const renderType of ['html', 'md', 'static_site']) {
+      for (const renderType of ['html', 'md', 'static_site', null, 'unknown']) {
         expect(
           classifyCspViolation(source, origin, renderType, blockedURI),
         ).toBe('artifact')
@@ -84,25 +90,37 @@ describe('CSP resource attribution when the initiating source is absent', () => 
     'not a URL',
     '/a.png',
     '//example.com/a.png',
-    'chrome-extension://abc/a.png',
-    'moz-extension://abc/frame.html',
+    'https://',
+    'chrome-extension://abc/app.js',
+    'moz-extension://abc/app.js',
     'safari-web-extension://abc/app.js',
-    'CHROME-EXTENSION://abc/a.png',
-  ])(
-    'keeps unattributable execution or extension resource %s in the environment',
-    (blockedURI) => {
-      for (const source of [null, '']) {
-        expect(classifyCspViolation(source, origin, 'html', blockedURI)).toBe(
-          'environment',
-        )
+    'CHROME-EXTENSION://abc/app.js',
+    'webkit-masked-url:',
+    'webkit-masked-url://hidden/',
+    'custom:script',
+    'file:///a.png',
+    'data:',
+    'blob:',
+    'data:image/png;base64,AA==',
+    `blob:${origin}/abc`,
+    'DATA',
+    'BLOB',
+  ])('keeps other blocked values %s in the environment', (blockedURI) => {
+    for (const source of [null, '']) {
+      for (const renderType of ['html', 'md', 'static_site', null, 'unknown']) {
+        expect(
+          classifyCspViolation(source, origin, renderType, blockedURI),
+        ).toBe('environment')
       }
-    },
-  )
+    }
+  })
 
   test.each([
     'https://example.com/a.png',
-    'chrome-extension://abc/a.png',
+    'data',
+    'blob',
     'eval',
+    'webkit-masked-url:',
   ])('keeps a nonempty source authoritative when blocking %s', (blockedURI) => {
     expect(
       classifyCspViolation(`${origin}/index.html`, origin, 'html', blockedURI),
@@ -115,19 +133,20 @@ describe('CSP resource attribution when the initiating source is absent', () => 
         blockedURI,
       ),
     ).toBe('artifact')
+    for (const source of [
+      'chrome-extension://abc/app.js',
+      'https://example.com/app.js',
+      'malformed',
+    ]) {
+      expect(classifyCspViolation(source, origin, 'html', blockedURI)).toBe(
+        'environment',
+      )
+    }
     expect(
       classifyCspViolation(
-        'chrome-extension://abc/app.js',
+        'https://cdn.jsdelivr.net/app.js',
         origin,
-        'html',
-        blockedURI,
-      ),
-    ).toBe('environment')
-    expect(
-      classifyCspViolation(
-        'https://example.com/app.js',
-        origin,
-        'html',
+        'md',
         blockedURI,
       ),
     ).toBe('environment')

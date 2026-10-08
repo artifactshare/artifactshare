@@ -18,17 +18,13 @@ export function classifyCspViolation(
 ): 'artifact' | 'environment' {
   try {
     if (!sourceFile) {
-      // Parser-initiated resource loads may omit their source in browser reports.
-      // Execution keywords (eval, wasm-eval, inline) and empty/malformed values
-      // are not absolute URLs and fall through to environment in the catch.
+      // Parser-initiated loads can omit their source. Browsers redact data/blob
+      // resource URLs to these exact scheme names in violation reports.
+      if (blockedURI === 'data' || blockedURI === 'blob') return 'artifact'
       const blocked = new URL(blockedURI)
-      return [
-        'chrome-extension:',
-        'moz-extension:',
-        'safari-web-extension:',
-      ].includes(blocked.protocol)
-        ? 'environment'
-        : 'artifact'
+      return blocked.protocol === 'http:' || blocked.protocol === 'https:'
+        ? 'artifact'
+        : 'environment'
     }
     const source = new URL(sourceFile)
     if (source.protocol !== 'https:' && source.protocol !== 'http:')

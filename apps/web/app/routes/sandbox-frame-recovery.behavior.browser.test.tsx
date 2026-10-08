@@ -580,6 +580,24 @@ test.each([false, true])(
       privileged,
     )
     if (privileged) expect(host.textContent).not.toContain('Security blocked')
+    for (const blockedURI of [
+      'eval',
+      'wasm-eval',
+      'inline',
+      '',
+      'chrome-extension://abc/app.js',
+      'moz-extension://abc/app.js',
+      'safari-web-extension://abc/app.js',
+      'webkit-masked-url://hidden/',
+      'custom:script',
+    ]) {
+      report(null, 'unattributed-resource', blockedURI)
+      expect(host.querySelector('aside') !== null).toBe(privileged)
+      expect(host.textContent?.includes('unattributed-resource')).toBe(
+        privileged,
+      )
+      expect(host.textContent).not.toContain('Security blocked')
+    }
     report(`${window.location.origin}/index.html`, 'inline-positive-control')
     expect(host.textContent).toContain('Security blocked 1 resource')
     report('https://cdn.jsdelivr.net/app.js', 'cdn-positive-control')
@@ -588,17 +606,22 @@ test.each([false, true])(
       privileged,
     )
     report(null, 'parser-image', 'https://example.com/a.png', 'img-src')
-    report('', 'parser-frame', 'https://example.com/frame.html', 'frame-src')
-    expect(host.textContent).toContain('Security blocked 4 resources')
+    report('', 'parser-frame', 'http://example.com/frame.html', 'frame-src')
     expect(host.textContent).toContain('parser-image')
     expect(host.textContent).toContain('parser-frame')
+    expect(host.textContent).toContain('Security blocked 4 resources')
+    report(null, 'parser-data', 'data', 'img-src')
+    report('', 'parser-blob', 'blob', 'frame-src')
+    expect(host.textContent).toContain('parser-data')
+    expect(host.textContent).toContain('parser-blob')
+    expect(host.textContent).toContain('Security blocked 6 resources')
     report(
       null,
       'extension-resource',
       'chrome-extension://abc/a.png',
       'img-src',
     )
-    expect(host.textContent).toContain('Security blocked 4 resources')
+    expect(host.textContent).toContain('Security blocked 6 resources')
     expect(host.textContent?.includes('extension-resource')).toBe(privileged)
     expect(host.querySelector('aside img')).toBeNull()
     for (const summary of host.querySelectorAll('aside summary'))
