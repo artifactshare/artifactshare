@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "package_version": "0.14.0",
+  "package_version": "0.15.0",
   "commands": [
     {
       "path": "",
@@ -806,5 +806,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-07"
+  "generated_date": "2026-10-08"
 }
