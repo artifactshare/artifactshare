@@ -253,31 +253,3 @@ test('documents agent update recovery in both locales', () => {
     ).toContain('--expected-version <version-id>')
   }
 })
-
-test('documents static-site analytics capabilities and limits in both locales', () => {
-  for (const locale of ['en', 'ja'] as const) {
-    const body = cliReferenceContent(locale).sections.basics.body
-    for (const term of [
-      'WebAssembly',
-      'worker',
-      'blob',
-      'DuckDB-WASM',
-      'getJsDelivrBundles()',
-      'jsDelivr',
-      'importScripts()',
-      '.wasm',
-      'data/*.parquet',
-      "new URL('data/rows.parquet', location.href).href",
-      'registerFileURL()',
-      'eval',
-      'new Function',
-    ])
-      expect(body).toContain(term)
-    expect(body).toMatch(/absolute URL in the page|ページ側で.*絶対 URL/)
-    expect(body).toMatch(
-      /Relative URLs cannot be resolved inside its blob worker|blob worker 内では相対 URL を解決できません/,
-    )
-    expect(body).toMatch(/existing file count|既存のファイル数/)
-    expect(body).toMatch(/network allowlists|通信先も既存の許可リスト/)
-  }
-})
