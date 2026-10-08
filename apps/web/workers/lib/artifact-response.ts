@@ -118,6 +118,31 @@ function isJavaScriptContent(contentType: string): boolean {
   )
 }
 
+// Service workers can synthesize responses without the artifact policy.
+export function staticSiteServiceWorkerRefusal(
+  request: Request,
+  responseDomain?: { domain: string },
+): Response | null {
+  if (request.headers.get('Service-Worker')?.trim().toLowerCase() !== 'script')
+    return null
+  return contentResponse(
+    null,
+    'text/plain; charset=utf-8',
+    null,
+    { status: 403 },
+    responseDomain,
+  )
+}
+
+function isXmlContent(contentType: string): boolean {
+  const essence = contentType.split(';', 1)[0].trim().toLowerCase()
+  return (
+    essence === 'application/xml' ||
+    essence === 'text/xml' ||
+    essence.endsWith('+xml')
+  )
+}
+
 export function staticSiteAssetResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
@@ -128,7 +153,7 @@ export function staticSiteAssetResponse(
   return contentResponse(
     body,
     contentType,
-    isJavaScriptContent(contentType)
+    isJavaScriptContent(contentType) || isXmlContent(contentType)
       ? artifactContentSecurityPolicy('static_site', frameAncestors)
       : null,
     init,

@@ -1443,6 +1443,20 @@ test('static sites run WASM and workers without notices while blocked JavaScript
     VIOLATION_REPORTER_SCRIPT_BODY,
   )
   expect(result.error).toBeUndefined()
+  expect(result.serviceWorker).toEqual({
+    supported: true,
+    rejected: true,
+    registrations: 0,
+    controlled: false,
+  })
+  expect(result.serviceWorkerRequests).toEqual([
+    { header: 'script', status: 403 },
+  ])
+  expect(result.svgImage).toBe(true)
+  expect(result.xmlResults).toEqual([
+    { marker: 'executed', evalBlocked: true, networkBlocked: true },
+    { marker: 'executed', evalBlocked: true, networkBlocked: true },
+  ])
   expect(result.local).toEqual({
     wasm: 'worker-wasm',
     evalBlocked: true,

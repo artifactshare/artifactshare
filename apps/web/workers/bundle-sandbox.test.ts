@@ -164,10 +164,15 @@ const baselineMarkdownCsp = [
   ...baselineTail,
 ].join('; ')
 
-function expectStaticSiteCsp(csp: string) {
+function expectStaticSiteCsp(csp: string, ancestor = 'https://localhost:5173') {
   const extensionOrigin = 'https://extensions.duckdb.org'
   expect(csp.split(extensionOrigin)).toHaveLength(2)
-  expect(csp.replace(` ${extensionOrigin}`, '')).toBe(baselineStaticSiteCsp)
+  expect(csp.replace(` ${extensionOrigin}`, '')).toBe(
+    baselineStaticSiteCsp.replace(
+      'frame-ancestors https://localhost:5173',
+      `frame-ancestors ${ancestor}`,
+    ),
+  )
   expect(cspDirective(csp, 'connect-src')).toBe(
     `connect-src 'self' ${externalCspSources} ${socialEmbedConnectCspSources} ${extensionOrigin}`,
   )
@@ -1591,6 +1596,58 @@ describe('handleArtifactSandboxRequest', () => {
     expect(rangeHeaders.get('Range')).toBe('bytes=2-18446744073709551615')
   })
 
+  test.each([undefined, 'bytes=2-5', 'bytes=10-20'])(
+    'preserves XML asset headers and bytes for range %s',
+    async (range) => {
+      await dbRef
+        .current!.updateTable('version_files')
+        .set({ mime_type: 'application/octet-stream' })
+        .where('id', '=', 'vf-video')
+        .execute()
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      // The effective R2 metadata, not the DB MIME, determines XML protection.
+      const bytes = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+      const body = range === 'bytes=2-5' ? bytes.slice(2, 6) : bytes
+      storageMock.getArtifact.mockImplementation(async () => ({
+        ...storedBinaryArtifact(body, 'Application/Xml; Charset=UTF-8'),
+        size: 10,
+      }))
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/demo.mp4`, {
+          headers: range ? { Range: range } : {},
+        }),
+      )
+      if (range === 'bytes=10-20') {
+        expect(response.status).toBe(416)
+        expect(response.headers.get('Content-Range')).toBe('bytes */10')
+        expect(response.headers.get('Content-Security-Policy')).toBeNull()
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+        return
+      }
+      expect(response.status).toBe(range ? 206 : 200)
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(body)
+      expect(response.headers.get('Content-Type')).toBe(
+        'Application/Xml; Charset=UTF-8',
+      )
+      expect(response.headers.get('Cache-Control')).toBe(
+        'private, no-store, no-transform',
+      )
+      expect(response.headers.get('Accept-Ranges')).toBe('bytes')
+      expect(response.headers.get('Content-Length')).toBe(String(body.length))
+      expect(response.headers.get('Content-Range')).toBe(
+        range ? 'bytes 2-5/10' : null,
+      )
+      expectStaticSiteCsp(
+        response.headers.get('Content-Security-Policy')!,
+        'https://abc123def4.localhost:5173',
+      )
+    },
+  )
+
   test('ignores byte ranges for transformed static-site documents', async () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
@@ -2592,44 +2649,148 @@ describe('handleArtifactSandboxRequest', () => {
     'text/jscript',
     'text/livescript',
     'Text/JavaScript; Charset=UTF-8',
+    'image/svg+xml',
+    'application/xml',
+    'text/xml',
+    'application/xhtml+xml',
+    'application/rss+xml',
+    'Application/Problem+XML; Charset=UTF-8',
+    'text/css',
+    'image/png',
     'application/wasm',
     'application/octet-stream',
-  ])('serves %s assets with worker CSP only for JavaScript', async (mime) => {
-    const isScript = !['application/wasm', 'application/octet-stream'].includes(
-      mime,
-    )
-    const path = isScript ? '/worker.js' : '/fixture.wasm'
-    await dbRef
-      .current!.updateTable('version_files')
-      .set({ path, mime_type: mime })
-      .where('id', '=', 'vf-css')
-      .execute()
-    const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
-    storageMock.getArtifact
-      .mockResolvedValueOnce(storedArtifact('<p>Dashboard</p>', 'text/html'))
-      .mockResolvedValueOnce({
-        body: new Response(bytes).body,
-        size: bytes.length,
-        httpMetadata: { contentType: mime },
-      })
-    const token = await entrypointToken()
-    const entry = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
-    )
-    const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}${path}`, {
-        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
-      }),
-    )
-    expect(response.status).toBe(200)
-    if (isScript)
-      expectStaticSiteCsp(response.headers.get('Content-Security-Policy') ?? '')
-    expect(response.headers.get('Content-Type')).toBe(mime)
-    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
-    expect(response.headers.get('Content-Security-Policy')).toBe(
-      isScript ? entry.headers.get('Content-Security-Policy') : null,
-    )
-  })
+  ])(
+    'serves %s assets with CSP for scripts and XML documents',
+    async (mime) => {
+      const isScript = ![
+        'text/css',
+        'image/png',
+        'application/wasm',
+        'application/octet-stream',
+      ].includes(mime)
+      const path = isScript ? '/worker.js' : '/fixture.wasm'
+      await dbRef
+        .current!.updateTable('version_files')
+        .set({ path, mime_type: mime })
+        .where('id', '=', 'vf-css')
+        .execute()
+      const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
+      storageMock.getArtifact
+        .mockResolvedValueOnce(storedArtifact('<p>Dashboard</p>', 'text/html'))
+        .mockResolvedValueOnce({
+          body: new Response(bytes).body,
+          size: bytes.length,
+          httpMetadata: { contentType: mime },
+        })
+      const token = await entrypointToken()
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}${path}`, {
+          headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+        }),
+      )
+      expect(response.status).toBe(200)
+      if (isScript)
+        expectStaticSiteCsp(
+          response.headers.get('Content-Security-Policy') ?? '',
+        )
+      expect(response.headers.get('Content-Type')).toBe(mime)
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+      expect(response.headers.get('Content-Security-Policy')).toBe(
+        isScript ? entry.headers.get('Content-Security-Policy') : null,
+      )
+    },
+  )
+
+  test.each(['authenticated', 'anonymous-link', 'anonymous-cookie'] as const)(
+    'refuses service-worker scripts before body or range reads via %s',
+    async (access) => {
+      await dbRef
+        .current!.updateTable('version_files')
+        .set({ path: '/worker.js', mime_type: 'text/javascript' })
+        .where('id', '=', 'vf-css')
+        .execute()
+      await dbRef
+        .current!.updateTable('versions')
+        .set({ fallback_to_index: 1 })
+        .where('id', '=', 'v-bundle')
+        .execute()
+      if (access !== 'authenticated') {
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      }
+      storageMock.getArtifact.mockImplementation(async () =>
+        storedArtifact('postMessage(1)', 'text/javascript'),
+      )
+      storageMock.headArtifact.mockResolvedValue(
+        storedHeadArtifact('postMessage(1)', 'text/javascript'),
+      )
+      let cookie = ''
+      if (access !== 'anonymous-link') {
+        const token =
+          access === 'authenticated'
+            ? await entrypointToken()
+            : await anonymousEntrypointToken()
+        const entry = await handleArtifactSandboxRequest(
+          new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        )
+        cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      }
+      storageMock.getArtifact.mockClear()
+      for (const range of [undefined, 'bytes=0-3', 'bytes=999-']) {
+        const headers = new Headers({
+          Cookie: cookie,
+          'sErViCe-WoRkEr': ' ScRiPt ',
+        })
+        if (range) headers.set('Range', range)
+        const response = await handleArtifactSandboxRequest(
+          new Request(`${sandboxOrigin()}/worker.js`, { headers }),
+        )
+        expect(response.status).toBe(403)
+        expect((await response.arrayBuffer()).byteLength).toBe(0)
+      }
+      // The guard covers documents and SPA fallbacks as well as script MIME.
+      for (const path of ['/index.html', '/projects/alpha']) {
+        if (access === 'anonymous-cookie') {
+          storageMock.headArtifact.mockImplementation(async (_bucket, key) =>
+            key.endsWith('/index.html')
+              ? storedHeadArtifact('<p>Entry</p>', 'text/html')
+              : null,
+          )
+        }
+        const response = await handleArtifactSandboxRequest(
+          new Request(`${sandboxOrigin()}${path}`, {
+            headers: { Cookie: cookie, 'Service-Worker': 'script' },
+          }),
+        )
+        expect(response.status).toBe(403)
+        expect((await response.arrayBuffer()).byteLength).toBe(0)
+      }
+      storageMock.headArtifact.mockResolvedValue(
+        storedHeadArtifact('postMessage(1)', 'text/javascript'),
+      )
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/worker.js`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe('postMessage(1)')
+      expect(response.headers.get('Content-Type')).toBe('text/javascript')
+      expectStaticSiteCsp(
+        response.headers.get('Content-Security-Policy')!,
+        access === 'authenticated'
+          ? 'https://localhost:5173'
+          : 'https://abc123def4.localhost:5173',
+      )
+    },
+  )
 
   test('does not send document CSP on static-site assets', async () => {
     storageMock.getArtifact
@@ -2661,7 +2822,9 @@ describe('handleArtifactSandboxRequest', () => {
 
   test('rejects static-site asset requests without a bundle cookie', async () => {
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`),
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { 'Service-Worker': 'script' },
+      }),
     )
 
     expect(response.status).toBe(401)
@@ -2940,7 +3103,9 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`),
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { 'Service-Worker': 'script' },
+      }),
     )
 
     expect(response.status).toBe(401)
@@ -3006,7 +3171,9 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`),
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { 'Service-Worker': 'script' },
+      }),
     )
 
     expect(response.status).toBe(401)
@@ -3024,7 +3191,9 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`),
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { 'Service-Worker': 'script' },
+      }),
     )
 
     expect(response.status).toBe(401)
