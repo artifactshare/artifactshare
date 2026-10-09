@@ -1752,3 +1752,52 @@ test('Markdown CSP executes the regenerated reporter while blocking authored scr
     ),
   ).toBe(true)
 })
+
+test.each(
+  (['pushState', 'replaceState'] as const).flatMap((method) =>
+    (['prototype', 'instance', 'assignment'] as const).map((target) => ({
+      method,
+      target,
+    })),
+  ),
+)(
+  'history $method chains a later $target patch without recursion',
+  async ({ method, target }) => {
+    // Use a document URL: srcdoc resolves fragments against the runner URL,
+    // which native history methods cannot install on an about:srcdoc document.
+    await fixture('<h1>History</h1>', true, true)
+    const win = frame!.contentWindow!
+    const prototype = Object.getPrototypeOf(win.history) as History
+    const original = win.history[method]
+    const result = { patched: true }
+    const patch = vi.fn(function (
+      this: History,
+      ...args: Parameters<History['pushState']>
+    ) {
+      Reflect.apply(original, this, args)
+      return result
+    })
+    if (target === 'assignment') prototype[method] = win.history[method]
+    else if (target === 'instance') win.history[method] = patch
+    else prototype[method] = patch
+    const state = { filter: 1 }
+    expect(win.history[method](state, '', '#patched')).toBe(
+      target === 'assignment' ? undefined : result,
+    )
+    if (target !== 'assignment') {
+      expect(patch).toHaveBeenCalledExactlyOnceWith(state, '', '#patched')
+      expect(patch.mock.contexts[0]).toBe(win.history)
+    }
+    expect(Object.hasOwn(win.history, method)).toBe(target === 'instance')
+    expect(win.history.state).toEqual(state)
+    expect(win.location.hash).toBe('#patched')
+    await waitForMessage('hash-changed', (m) => m.hash === '#patched')
+    const error = new Error('router failure')
+    const patchTarget = target === 'instance' ? win.history : prototype
+    patchTarget[method] = () => {
+      throw error
+    }
+    expect(() => win.history[method](null, '', '#failed')).toThrow(error)
+    expect(win.location.hash).toBe('#patched')
+  },
+)

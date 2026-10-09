@@ -26,8 +26,10 @@ export function installHashTracking(ctx: ReporterState) {
 }
 
 function wrapHistory(ctx: ReporterState, method: 'pushState' | 'replaceState') {
-  const original = ctx.win.history[method]
-  ctx.win.history[method] = function (
+  const prototype = ctx.primordials.getPrototypeOf(ctx.win.history) as History
+  const original = prototype[method]
+  // Capture once so authored patches can chain through this wrapper safely.
+  prototype[method] = function (
     this: History,
     ...args: Parameters<History['pushState']>
   ) {

@@ -154,6 +154,19 @@ test.each(
     expect(markup.match(/<iframe[^>]+>/)?.[0]).toContain('data-src=')
     expect(markup.match(/<iframe[^>]+>/)?.[0]).not.toMatch(/\ssrc=/)
     expect(markup).toContain('</iframe><script>')
+    const fallback = markup.match(/<noscript>([\s\S]*?)<\/noscript>/)?.[1]
+    expect(fallback).toBeDefined()
+    const fallbackDocument = new DOMParser().parseFromString(
+      fallback!,
+      'text/html',
+    )
+    const fallbackFrame = fallbackDocument.querySelector('iframe')!
+    expect(fallbackFrame.getAttribute('src')).toBe(url)
+    expect(fallbackFrame.title).toBe(frameProps.name)
+    expect(fallbackFrame.getAttribute('sandbox')).toBe(
+      frameProps.sandboxPermissions,
+    )
+    expect(fallbackFrame.referrerPolicy).toBe('no-referrer')
     const host = document.createElement('div')
     document.body.appendChild(host)
     // Contextual fragments execute their parser-created script on insertion.

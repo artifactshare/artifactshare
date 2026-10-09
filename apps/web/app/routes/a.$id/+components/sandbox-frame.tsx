@@ -212,6 +212,16 @@ export function SandboxFrame(props: SandboxFrameProps) {
             __html: VIEWER_FRAME_BOOTSTRAP_SCRIPT,
           }}
         />
+        <noscript>
+          <iframe
+            title={name}
+            src={props.url.split('#')[0]}
+            allow="fullscreen; clipboard-write"
+            sandbox={sandboxPermissions}
+            referrerPolicy="no-referrer"
+            className={`absolute inset-0 z-10 ${sandboxFrameSurfaceClassName(props.followsAppTheme)}`}
+          />
+        </noscript>
         {controller.loadState === 'loading' ? <FrameLoading /> : null}
       </div>
       {children}

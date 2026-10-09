@@ -127,6 +127,7 @@ export function capturePrimordials(win: ReporterWindow) {
   return {
     savedParent,
     reflectApply,
+    getPrototypeOf: win.Object.getPrototypeOf,
     savedPostMessage,
     savedAddEventListener,
     trustedGetter,

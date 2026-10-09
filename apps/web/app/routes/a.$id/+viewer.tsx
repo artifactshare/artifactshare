@@ -1,4 +1,5 @@
 import { viewerReturnPath } from '~/lib/viewer-hash'
+import { useHydrated } from '~/hooks/use-hydrated'
 import { useViewerHash } from '~/hooks/use-viewer-hash'
 import { useEffect, useState } from 'react'
 import {
@@ -136,6 +137,8 @@ export default function ViewerRoute({
 }: {
   loaderData: LoaderData
 }) {
+  const hydrated = useHydrated()
+  const [clientMounted] = useState(hydrated)
   const location = useLocation()
   const navigate = useNavigate()
   const params = new URLSearchParams(location.search)
@@ -165,7 +168,8 @@ export default function ViewerRoute({
   ])
 
   // Defer a client-created frame until the router owns the restored fragment.
-  if (callbackHash !== null && typeof window !== 'undefined') return null
+  // Hydrated SSR content stays mounted while the callback query is cleaned up.
+  if (callbackHash !== null && clientMounted) return null
   return <ViewerContent loaderData={loaderData} />
 }
 

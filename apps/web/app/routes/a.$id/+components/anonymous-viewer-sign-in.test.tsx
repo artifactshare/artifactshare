@@ -11,7 +11,8 @@ import {
   useNavigate,
 } from 'react-router'
 import Viewer from '../+viewer'
-import { signIn } from '~/lib/auth-client'
+import { PermissionDenied } from './permission-denied'
+import { signIn, signOut } from '~/lib/auth-client'
 import { viewerSignInHref } from '~/hooks/use-viewer-hash'
 import { describe, expect, test, vi } from 'vitest'
 import { AnonymousViewerSignInControl } from './anonymous-viewer-sign-in'
@@ -83,12 +84,16 @@ test('scripted sign-in reads the fragment at activation and keeps the trusted ap
 
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
+  useFetcher: () => ({ state: 'idle' }),
   useRouteLoaderData: () => ({
     locale: 'en',
     analyticsConsent: { shouldLoadAnalytics: false },
   }),
 }))
-vi.mock('~/lib/auth-client', () => ({ signIn: { social: vi.fn() } }))
+vi.mock('~/lib/auth-client', () => ({
+  signIn: { social: vi.fn() },
+  signOut: vi.fn(),
+}))
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -265,6 +270,100 @@ test('client callback restoration updates the router even when preauth has no fr
     expect(window.location.search + window.location.hash).toBe(
       '?version=v1#restored',
     )
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
+})
+
+test('switch account retains the share query and live fragment in next', async () => {
+  const previousUrl = window.location.href
+  window.history.replaceState(
+    null,
+    '',
+    '/a/abc123def4?version=v1&comment=c1#filter',
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <MemoryRouter>
+            <PermissionDenied
+              variant="external"
+              artifactId="abc123def4"
+              user={{
+                id: 'u1',
+                email: 'viewer@example.test',
+                name: null,
+                image: null,
+                initial: 'V',
+              }}
+              emailVerified
+              requestStatus={null}
+            />
+          </MemoryRouter>
+        </TooltipProvider>,
+      ),
+    )
+    const button = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Switch account',
+    )!
+    expect(button).toBeDefined()
+    await act(async () => button.click())
+    expect(signOut).toHaveBeenCalled()
+    const destination = new URL(window.location.href)
+    expect(destination.pathname).toBe('/')
+    expect(destination.searchParams.get('next')).toBe(
+      '/a/abc123def4?version=v1&comment=c1&as_hash=%23filter',
+    )
+    expect(destination.hash).toBe('')
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
+})
+
+test('callback SSR and hydration retain the same viewer content before query cleanup', async () => {
+  const previousUrl = window.location.href
+  const callback = '/a/abc123def4?version=v1&as_hash=%23restored'
+  window.history.replaceState(null, '', callback)
+  const view = (
+    <TooltipProvider>
+      <MemoryRouter initialEntries={[callback]}>
+        <Viewer
+          loaderData={{
+            kind: 'preauth',
+            canonicalUrl: 'https://example.test/a/abc123def4?version=v1',
+            artifact: {
+              id: 'abc123def4',
+              name: null,
+              derivedTitle: null,
+              titleOverride: null,
+              description: null,
+            },
+          }}
+        />
+      </MemoryRouter>
+    </TooltipProvider>
+  )
+  const host = document.createElement('div')
+  host.innerHTML = renderToStaticMarkup(view)
+  document.body.appendChild(host)
+  const heading = host.querySelector('h1')
+  expect(heading).not.toBeNull()
+  const onRecoverableError = vi.fn()
+  let root!: ReturnType<typeof hydrateRoot>
+  try {
+    await act(async () => {
+      root = hydrateRoot(host, view, { onRecoverableError })
+    })
+    expect(host.querySelector('h1')).toBe(heading)
+    expect(onRecoverableError).not.toHaveBeenCalled()
   } finally {
     await act(async () => root.unmount())
     host.remove()

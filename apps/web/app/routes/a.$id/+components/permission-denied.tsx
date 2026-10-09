@@ -1,3 +1,4 @@
+import { viewerReturnPath } from '~/lib/viewer-hash'
 import { useFetcher } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { useT } from '~/hooks/use-t'
@@ -77,7 +78,11 @@ export function PermissionDenied(props: PermissionDeniedProps) {
         variant="outline"
         onClick={async () => {
           await signOut()
-          window.location.href = `/?next=${encodeURIComponent(`/a/${artifactId}`)}`
+          const returnPath = viewerReturnPath(
+            `/a/${artifactId}${window.location.search}`,
+            window.location.hash,
+          )
+          window.location.href = `/?next=${encodeURIComponent(returnPath)}`
         }}
       >
         {t('denied.switch')}

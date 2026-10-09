@@ -1493,7 +1493,7 @@ test('generated lifecycle retains native persisted state and otherwise performs 
     const win = {
       parent: { postMessage() {} },
       Reflect,
-      history: { pushState() {}, replaceState() {} },
+      history: Object.create({ pushState() {}, replaceState() {} }),
       Function,
       Object,
       Array,
@@ -1623,7 +1623,8 @@ test('generated history wrappers preserve invocation and contain reporting failu
     location.hash = args[2] ?? ''
     return result
   }
-  const history = { pushState: original, replaceState: original }
+  const prototype = { pushState: original, replaceState: original }
+  const history = Object.create(prototype)
   const location = { hash: '#initial', pathname: '/index.html' }
   const listeners = new Map()
   let reportFails = false
@@ -1633,6 +1634,7 @@ test('generated history wrappers preserve invocation and contain reporting failu
     win: { history, location },
     primordials: {
       reflectApply: Reflect.apply,
+      getPrototypeOf: Object.getPrototypeOf,
       objectCreate: Object.create,
       objectKeys: Object.keys,
       savedParent: {},
@@ -1691,6 +1693,44 @@ test('generated history wrappers preserve invocation and contain reporting failu
     reportFails = true
     assert.equal(history[method](null, '', '#quiet'), result)
     reportFails = false
+  }
+  for (const method of ['pushState', 'replaceState']) {
+    const wrapped = history[method]
+    for (const target of [prototype, history]) {
+      const captured = history[method]
+      const patchedResult = {}
+      const hash = `#${method}-${target === prototype ? 'prototype' : 'instance'}`
+      let patchedCalls = 0
+      target[method] = function (...args) {
+        patchedCalls++
+        assert.equal(this, history)
+        assert.deepEqual(args, [data, 'title', hash, 'extra'])
+        assert.equal(Reflect.apply(captured, this, args), result)
+        return patchedResult
+      }
+      const count = messages.length
+      assert.equal(history[method](data, 'title', hash, 'extra'), patchedResult)
+      assert.equal(patchedCalls, 1)
+      assert.equal(messages.length, count + 1)
+      assert.equal(messages.at(-1).hash, hash)
+      assert.equal(messages.at(-1).token, ctx.documentToken)
+      delete history[method]
+      prototype[method] = wrapped
+    }
+    prototype[method] = history[method]
+    const hash = `#${method}-assigned`
+    const count = messages.length
+    assert.equal(history[method](data, '', hash), result)
+    assert.equal(messages.length, count + 1)
+    assert.equal(messages.at(-1).hash, hash)
+    assert.equal(Object.hasOwn(history, method), false)
+    prototype[method] = original
+    const replacedCount = messages.length
+    assert.equal(history[method](data, '', '#replaced-entirely'), result)
+    assert.equal(messages.length, replacedCount)
+    listeners.get('hashchange')()
+    assert.equal(messages.at(-1).hash, '#replaced-entirely')
+    prototype[method] = wrapped
   }
   location.hash = ''
   listeners.get('hashchange')()
