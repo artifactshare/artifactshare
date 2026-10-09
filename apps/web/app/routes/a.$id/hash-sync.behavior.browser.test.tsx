@@ -125,6 +125,7 @@ async function report(
       }),
     )
   })
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 250)))
 }
 
 test.each(
@@ -214,7 +215,7 @@ test.each(['/a/abc123def4?comment=s1', '/?access-request=s1'])(
     expect(window.history.length).toBe(length)
     expect(
       new URL(host.querySelector('a')!.href).searchParams.get('next'),
-    ).toBe('/a/abc123def4#changed')
+    ).toBe('/a/abc123def4?as_hash=%23changed')
     await report(frame, token)
     expect(replace).toHaveBeenCalledTimes(1)
     for (const patch of [
@@ -442,7 +443,138 @@ test.each(['html', 'md', 'static_site'])(
     // Change the actual document hash so repeated ready snapshots agree with
     // the positive control. Let the real reporter attach its current token.
     await reportFromRetry('test-set-hash', retryToken, '#accepted')
-    expect(window.location.hash).toBe('#accepted')
+    await vi.waitFor(() => expect(window.location.hash).toBe('#accepted'))
   },
   15000,
+)
+
+test.each(['', '#new'])(
+  'explicit entrypoint navigation preserves its destination fragment %s on refresh',
+  async (hash) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          sandboxUrl: 'https://example.test/index.html?t=new',
+          renderType: 'static_site',
+        }),
+      ),
+    )
+    window.history.replaceState(null, '', '#old')
+    const url = new URL(
+      (await refreshSandboxFrameUrl(
+        'abc123def4',
+        'v1',
+        'https://example.test/index.html?q=1' + hash,
+        { navigation: true },
+      ))!,
+    )
+    expect(url.hash).toBe(hash)
+    expect(url.searchParams.get('as_next')).toBe('/index.html?q=1' + hash)
+  },
+)
+
+test('SSR sign-in return restores the fragment before the first document script', async () => {
+  const url = await server.commands.sandboxHashDocument(
+    `<!doctype html><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script><script>parent.postMessage({kind:'first-script',hash:location.hash},'*')</script>`,
+    true,
+  )
+  const view = <SandboxFrame {...props({ url })} />
+  const markup = renderToString(view)
+  // Set the callback URL after serialization: only the parser bootstrap can restore it.
+  window.history.replaceState(
+    { retained: true },
+    '',
+    '/?version=v1&as_hash=%23q%3Dabc',
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  host.appendChild(document.createRange().createContextualFragment(markup))
+  await vi.waitFor(() =>
+    expect(
+      messages.find((e) => e.data?.kind === 'first-script')?.data.hash,
+    ).toBe('#q=abc'),
+  )
+  expect(
+    window.location.pathname + window.location.search + window.location.hash,
+  ).toBe('/?version=v1#q=abc')
+  expect(window.history.state).toEqual({ retained: true })
+  await act(async () => {
+    root = hydrateRoot(host, view)
+  })
+  await ready(host)
+  expect(await server.commands.sandboxHashDocumentLoads()).toBe(1)
+})
+
+test.each(['load', 'link'])(
+  'accepted frame bursts flush on %s and later stale reports are rejected',
+  async (transition) => {
+    window.history.replaceState({ retained: true }, '', '#initial')
+    documentUrl()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    await act(async () => {
+      root = createRoot(host)
+      root.render(
+        <SandboxFrame
+          {...props({
+            renderType: 'static_site',
+            linkNavigationMode: 'site',
+            bundlePaths: ['/next.html'],
+          })}
+        />,
+      )
+    })
+    const { frame, token } = await ready(host)
+    const replace = vi.spyOn(window.history, 'replaceState')
+    const dispatch = (hash: string) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          source: frame.contentWindow,
+          data: {
+            source: 'artifactshare',
+            kind: 'hash-changed',
+            path: '/index.html',
+            token,
+            hash,
+          },
+        }),
+      )
+    await act(async () => {
+      for (let i = 0; i < 250; i++) dispatch('#step=' + i)
+    })
+    expect(replace).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(window.location.hash).toBe('#step=249'))
+    expect(replace).toHaveBeenCalledTimes(1)
+    // Keep the old document from accepting another ready challenge. A listener
+    // dies with that document; restoring a WindowProxy spy after navigation can
+    // fail Firefox's cross-origin property checks.
+    frame.contentWindow!.addEventListener(
+      'message',
+      (event) => event.stopImmediatePropagation(),
+      { capture: true },
+    )
+    await act(async () => {
+      dispatch('#accepted')
+      if (transition === 'load') frame.dispatchEvent(new Event('load'))
+      else
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: window.location.origin,
+            source: frame.contentWindow,
+            data: {
+              source: 'artifactshare',
+              kind: 'link-clicked',
+              href: window.location.origin + '/next.html',
+            },
+          }),
+        )
+      expect(window.location.hash).toBe('#accepted')
+      dispatch('#stale')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(window.location.hash).toBe('#accepted')
+    expect(replace).toHaveBeenCalledTimes(2)
+  },
 )

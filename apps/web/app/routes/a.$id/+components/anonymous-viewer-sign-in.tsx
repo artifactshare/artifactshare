@@ -1,3 +1,4 @@
+import type { ComponentPropsWithRef } from 'react'
 import { useViewerHash, viewerSignInHref } from '~/hooks/use-viewer-hash'
 import { Button } from '~/components/ui/button'
 
@@ -38,7 +39,15 @@ export function AnonymousViewerSignInControl({
   )
 }
 
-function ViewerSignInLink({ href, label }: { href: string; label: string }) {
+function ViewerSignInLink({
+  href,
+  label,
+  ...props
+}: ComponentPropsWithRef<'a'> & { href: string; label: string }) {
   const hash = useViewerHash()
-  return <a href={viewerSignInHref(href, hash)}>{label}</a>
+  return (
+    <a {...props} href={viewerSignInHref(href, hash)}>
+      {label}
+    </a>
+  )
 }

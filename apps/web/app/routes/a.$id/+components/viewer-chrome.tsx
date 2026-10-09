@@ -209,6 +209,7 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
       {
         pathname: location.pathname,
         search: params.size > 0 ? `?${params.toString()}` : '',
+        hash: window.location.hash,
       },
       { replace: true },
     )

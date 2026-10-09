@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { viewerReturnPath } from '~/lib/viewer-hash'
 import { safeInternalNext } from '~/lib/safe-next'
 
 const subscribe = (notify: () => void) => {
@@ -25,6 +26,6 @@ export function viewerSignInHref(href: string, hash: string) {
   const url = new URL(href, 'https://example.test')
   if (!url.searchParams.has('next')) return href
   const next = safeInternalNext(url.searchParams.get('next'))
-  url.searchParams.set('next', next.split('#')[0] + hash)
+  url.searchParams.set('next', viewerReturnPath(next, hash))
   return href.startsWith('/') ? url.pathname + url.search : url.href
 }

@@ -77,6 +77,8 @@ vi.mock('~/hooks/use-t', () => ({
 }))
 
 let mockLocationState: unknown = null
+let mockLocationSearch = ''
+const mockNavigate = vi.fn()
 
 vi.mock('react-router', () => ({
   Link: ({
@@ -99,15 +101,23 @@ vi.mock('react-router', () => ({
   ),
   useLocation: () => ({
     pathname: '/a/artifact',
-    search: '',
+    search: mockLocationSearch,
     state: mockLocationState,
   }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({
-  AvatarMenu: () => <button type="button">Account</button>,
+  AvatarMenu: ({
+    onAccessRequestDismiss,
+  }: {
+    onAccessRequestDismiss?: () => void
+  }) => (
+    <button type="button" onClick={onAccessRequestDismiss}>
+      Account
+    </button>
+  ),
 }))
 
 vi.mock('~/components/ui/dropdown-menu', () => ({
@@ -894,3 +904,44 @@ test.each(['private', 'link'] as const)(
     }
   },
 )
+
+test('access-request dismissal through ViewerChrome preserves the live fragment', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const previousUrl = window.location.href
+  mockLocationSearch = '?access-request=s1&panel=comments'
+  try {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <ViewerChrome
+            artifact={artifact}
+            user={{
+              id: 'u1',
+              email: 'owner@example.com',
+              name: 'Owner',
+              image: null,
+              initial: 'O',
+            }}
+            renderType="html"
+          />
+        </TooltipProvider>,
+      ),
+    )
+    window.history.replaceState(null, '', '#live')
+    const account = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Account',
+    )!
+    await act(async () => account.click())
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      { pathname: '/a/artifact', search: '?panel=comments', hash: '#live' },
+      { replace: true },
+    )
+  } finally {
+    mockLocationSearch = ''
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
+})

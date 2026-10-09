@@ -1,3 +1,8 @@
+import {
+  createViewerHashSync,
+  restoreViewerHash,
+  VIEWER_FRAME_BOOTSTRAP_SCRIPT,
+} from '~/lib/viewer-hash'
 import { useHydrated } from '~/hooks/use-hydrated'
 import { CspBanner } from './csp-banner'
 import { retainCspViolation } from './csp-violation-retention'
@@ -157,9 +162,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
   // unrelated renders must never spend its one-time delivery token again.
   const [clientMounted] = useState(hydrated)
   const frameSrc =
-    clientMounted ||
-    controller.frameSourceChanged ||
-    controller.frameInstance !== 0
+    clientMounted || controller.frameSourceChanged
       ? controller.frameUrl
       : undefined
   const sandboxOrigin = new URL(controller.frameUrl).origin
@@ -207,8 +210,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
         />
         <script
           dangerouslySetInnerHTML={{
-            __html:
-              "{const f=document.currentScript.previousElementSibling;if(!f.hasAttribute('src'))f.src=f.dataset.src+window.location.hash}",
+            __html: VIEWER_FRAME_BOOTSTRAP_SCRIPT,
           }}
         />
         {controller.loadState === 'loading' ? <FrameLoading /> : null}
@@ -416,11 +418,14 @@ function useSandboxFrameController({
       changed: true,
     }),
     url,
-    (initial) => ({
-      url:
-        initial + (typeof window === 'undefined' ? '' : window.location.hash),
-      changed: false,
-    }),
+    (initial) => {
+      if (typeof window !== 'undefined') restoreViewerHash()
+      return {
+        url:
+          initial + (typeof window === 'undefined' ? '' : window.location.hash),
+        changed: false,
+      }
+    },
   )
   const frameUrl = frameSource.url
   const [probeCycle, restartProbeCycle] = useReducer(
@@ -444,6 +449,8 @@ function useSandboxFrameController({
   const focusRetryFailureRef = useRef(false)
   const securityChallengeRef = useRef<string | null>(null)
   const securityTokenRef = useRef<string | null>(null)
+  const [hashSync] = useState(createViewerHashSync)
+  useEffect(() => () => hashSync.clear(), [hashSync])
   const mermaidRenderChallengeRef = useRef<string | null>(null)
   const trustedMessageOrigin = new URL(url).origin
   const commentLabels = useMemo(
@@ -583,6 +590,7 @@ function useSandboxFrameController({
             shareableId,
             versionId,
             frameUrl,
+            { getHash: hashSync.latest },
           )
           if (
             !shouldAcceptNavigationResult(
@@ -624,7 +632,7 @@ function useSandboxFrameController({
         window.clearTimeout(timeout)
       }
     },
-    [frameUrl, reportBlock, shareableId, versionId],
+    [frameUrl, hashSync, reportBlock, shareableId, versionId],
   )
 
   const markFrameReadyFromMessage = useEffectEvent(() => {
@@ -697,6 +705,7 @@ function useSandboxFrameController({
       })
       if (action.kind === 'allow-frame') {
         securityTokenRef.current = null
+        hashSync.flush()
         securityChallengeRef.current = createSandboxChallenge()
         onFramePathChange?.(
           normalizeStaticSiteFramePath(new URL(action.url).pathname),
@@ -713,20 +722,20 @@ function useSandboxFrameController({
           setFrameUrl(action.url)
           return
         }
-        void refreshSandboxFrameUrl(shareableId, versionId, action.url).then(
-          (nextFrameUrl) => {
-            if (navigationId !== frameNavigationIdRef.current) return
-            if (!nextFrameUrl) {
-              toast(t('toast.linkRecoveryFailed'))
-              return
-            }
-            staticSiteAuthRef.current = Date.now()
-            clearReadyFallback()
-            setViolations([])
-            setLoadState('loading')
-            setFrameUrl(nextFrameUrl)
-          },
-        )
+        void refreshSandboxFrameUrl(shareableId, versionId, action.url, {
+          navigation: true,
+        }).then((nextFrameUrl) => {
+          if (navigationId !== frameNavigationIdRef.current) return
+          if (!nextFrameUrl) {
+            toast(t('toast.linkRecoveryFailed'))
+            return
+          }
+          staticSiteAuthRef.current = Date.now()
+          clearReadyFallback()
+          setViolations([])
+          setLoadState('loading')
+          setFrameUrl(nextFrameUrl)
+        })
       } else if (action.kind === 'open-app') {
         window.open(action.url, '_blank', 'noopener,noreferrer')
       } else if (action.kind === 'open-external') {
@@ -811,13 +820,14 @@ function useSandboxFrameController({
   const handleFrameLoad = useCallback(() => {
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
+    hashSync.flush()
     // A destination confirmed from a previous document must not survive it.
     setPendingExternalNavigation(null)
     mermaidRenderChallengeRef.current = null
     requestFrameReady()
     clearReadyFallback()
     sendHighlights()
-  }, [clearReadyFallback, requestFrameReady, sendHighlights])
+  }, [clearReadyFallback, hashSync, requestFrameReady, sendHighlights])
 
   const handleFrameMessage = useEffectEvent((event: MessageEvent) => {
     const message = sandboxMessageFromFrame(
@@ -857,14 +867,7 @@ function useSandboxFrameController({
           normalizeStaticSiteFramePath(entrypointPath ?? '/index.html')
       )
         return
-      if (message.hash !== window.location.hash) {
-        window.history.replaceState(
-          window.history.state,
-          '',
-          message.hash || window.location.pathname + window.location.search,
-        )
-        window.dispatchEvent(new Event('artifactshare:hash-changed'))
-      }
+      hashSync.accept(message.hash)
     } else if (message.kind === 'anchor-resolutions') {
       handleAnchorResolutions(message)
     } else if (message.kind === 'text-selection') {
@@ -1051,7 +1054,9 @@ function useSandboxFrameController({
       automaticRecoveryAttemptsRef.current = 0
       setRetryFailed(false)
       setLoadState('resuming')
-      void refreshSandboxFrameUrl(shareableId, versionId, frameUrl).then(
+      void refreshSandboxFrameUrl(shareableId, versionId, frameUrl, {
+        getHash: hashSync.latest,
+      }).then(
         (nextFrameUrl) => {
           if (generation !== frameNavigationIdRef.current) return
           if (!nextFrameUrl) {
@@ -1085,6 +1090,7 @@ export async function refreshSandboxFrameUrl(
   shareableId: string,
   versionId: string,
   targetUrl: string,
+  options: { navigation?: boolean; getHash?: () => string } = {},
 ): Promise<string | null> {
   let result: {
     response: Response
@@ -1122,13 +1128,15 @@ export async function refreshSandboxFrameUrl(
   if (typeof body?.sandboxUrl !== 'string') return null
   const nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
-  entrypointUrl.hash = window.location.hash
+  entrypointUrl.hash = options.navigation
+    ? nextUrl.hash
+    : (options.getHash?.() ?? window.location.hash)
   if (body.renderType === 'static_site') {
     if (
       normalizeStaticSiteFramePath(nextUrl.pathname) ===
       normalizeStaticSiteFramePath(entrypointUrl.pathname)
     ) {
-      nextUrl.hash = window.location.hash
+      nextUrl.hash = entrypointUrl.hash
     } else {
       // Redirects without a fragment inherit the request fragment. Keep a
       // subpage's destination independent of the entrypoint's outer hash.

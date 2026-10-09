@@ -1,3 +1,4 @@
+import { viewerReturnPath } from '~/lib/viewer-hash'
 import { useViewerHash } from '~/hooks/use-viewer-hash'
 import { useState } from 'react'
 import { isRouteErrorResponse, Link, useRouteLoaderData } from 'react-router'
@@ -252,7 +253,7 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
   const hash = useViewerHash()
   const returnUrl = new URL(canonicalUrl)
   const returnPath = `${returnUrl.pathname}${returnUrl.search}`
-  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(returnPath + hash)}`
+  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(viewerReturnPath(returnPath, hash))}`
   return (
     <Stack gap="0" align="center" justify="center" asChild>
       <main className={preauthMainClassName}>

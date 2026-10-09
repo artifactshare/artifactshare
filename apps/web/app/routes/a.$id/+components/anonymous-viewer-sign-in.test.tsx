@@ -23,6 +23,8 @@ describe('AnonymousViewerSignInControl', () => {
     )
 
     expect(html).toContain(`href="${href}"`)
+    expect(html).toContain('text-foreground hover:bg-accent')
+    expect(html).toContain('data-slot="button"')
   })
 
   test('uses scripted navigation when analytics is disabled', () => {
@@ -66,7 +68,7 @@ test('scripted sign-in reads the fragment at activation and keeps the trusted ap
     expect(url.pathname).toBe('/sign-in')
     expect(url.hash).toBe('')
     expect(url.searchParams.get('next')).toBe(
-      '/a/abc123def4?version=v1#from=2026-07-11&media=video',
+      '/a/abc123def4?version=v1&as_hash=%23from%3D2026-07-11%26media%3Dvideo',
     )
   } finally {
     vi.unstubAllGlobals()
@@ -105,7 +107,7 @@ test('hydrated consent-enabled sign-in anchors encode the fragment inside next',
     const link = host.querySelector('a')!
     expect(new URL(link.href).origin).toBe('https://example.test')
     expect(new URL(link.href).searchParams.get('next')).toBe(
-      '/a/abc123def4#q=abc',
+      '/a/abc123def4?as_hash=%23q%3Dabc',
     )
     expect(new URL(link.href).hash).toBe('')
     await act(async () => {
@@ -113,7 +115,7 @@ test('hydrated consent-enabled sign-in anchors encode the fragment inside next',
       window.dispatchEvent(new Event('artifactshare:hash-changed'))
     })
     expect(new URL(link.href).searchParams.get('next')).toBe(
-      '/a/abc123def4#latest',
+      '/a/abc123def4?as_hash=%23latest',
     )
   } finally {
     await act(async () => root.unmount())
@@ -154,7 +156,7 @@ test('preauth email and both providers keep the canonical path/query with the cl
       'a[href*="method=email"]',
     )!
     expect(new URL(email.href).searchParams.get('next')).toBe(
-      '/a/abc123def4?version=v1#initial',
+      '/a/abc123def4?version=v1&as_hash=%23initial',
     )
     window.history.replaceState(null, '', '#activated')
     const providers = Array.from(host.querySelectorAll('button')).filter(
@@ -165,10 +167,13 @@ test('preauth email and both providers keep the canonical path/query with the cl
     expect(providers).toHaveLength(2)
     for (const button of providers) {
       await act(async () => button.click())
+      expect(
+        vi.mocked(signIn.social).mock.calls.at(-1)?.[0].callbackURL,
+      ).not.toContain('#')
       expect(vi.mocked(signIn.social).mock.calls.at(-1)?.[0]).toMatchObject({
-        callbackURL: '/a/abc123def4?version=v1#activated',
+        callbackURL: '/a/abc123def4?version=v1&as_hash=%23activated',
         errorCallbackURL:
-          '/sign-in?next=%2Fa%2Fabc123def4%3Fversion%3Dv1%23activated',
+          '/sign-in?next=%2Fa%2Fabc123def4%3Fversion%3Dv1%26as_hash%3D%2523activated',
       })
     }
   } finally {
@@ -186,5 +191,5 @@ test('fragment return targets preserve internal-path validation', () => {
     ),
   )
   expect(url.origin).toBe('https://example.test')
-  expect(url.searchParams.get('next')).toBe('/#q')
+  expect(url.searchParams.get('next')).toBe('/?as_hash=%23q')
 })
