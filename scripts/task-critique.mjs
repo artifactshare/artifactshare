@@ -294,7 +294,7 @@ function validateInputs(
     if (!Array.isArray(screenManifest) || screenManifest.length === 0)
       throw new Error('Screen capture manifest entries are required.')
     const validatedImages = []
-    for (const entry of screenManifest) {
+    for (const [index, entry] of screenManifest.entries()) {
       for (const field of [
         'screen',
         'state',
@@ -310,7 +310,7 @@ function validateInputs(
             !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(value))
         )
           throw new Error(
-            `Screen capture ${field} must contain only lowercase letters, digits, or hyphens, start with a letter or digit, and be 1–64 characters long.`,
+            `Screen capture root ${JSON.stringify(screenRoot)}, entry ${index + 1}, file ${JSON.stringify(entry.file)}: ${field} must contain only lowercase letters, digits, or hyphens, start with a letter or digit, and be 1–64 characters long.`,
           )
       }
       const label = `${entry.screen ?? '<screen>'}/${entry.state ?? '<state>'}/${entry.viewport ?? '<viewport>'}`
@@ -433,10 +433,13 @@ function screenImageLabels(input) {
 
 function promptFor(layer, input) {
   const common = commonPrompt(input)
+  const imageKinds = input.imagePaths.length
+    ? 'walkthrough and standalone screen'
+    : 'standalone screen'
   if (layer.id === 'visual' || input.screenOnly)
-    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nVisual layer: inspect every ${input.screenOnly ? 'standalone screen' : 'walkthrough and standalone screen'} PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
+    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nVisual layer: inspect every ${imageKinds} PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
   if (layer.id === 'combined')
-    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
+    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nCombined visual and task critique: inspect every attached ${imageKinds} PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
 }
 

@@ -1303,6 +1303,14 @@ for (const walkthrough of [false, true]) {
           assert.match(prompt, /Evidence JSON: .*evidence.json/)
           assert.equal(prompt.includes('1-start-desktop.png'), !copyOnly)
           assert.equal(prompt.includes('Walkthrough PNG files:'), !copyOnly)
+          assert.equal(
+            prompt.includes(
+              'inspect every walkthrough and standalone screen PNG',
+            ),
+            !copyOnly && provider === 'claude',
+          )
+          if (copyOnly)
+            assert.match(prompt, /inspect every standalone screen PNG/)
         }
         if (provider === 'codex') {
           const attachments = call.args.flatMap((arg, index) =>
@@ -1323,16 +1331,30 @@ for (const walkthrough of [false, true]) {
 test('copy-only selects crops per root and retains legacy manual crops', (t) => {
   const f = screenOnlyFixture(t)
   const sections = addSectionCaptures(join(f.repo, 'sections'), f.head)
-  const input = validateInputs(
-    parseArgs([...f.argv, '--screen-root', 'sections', '--copy-only']),
-    { repo: f.repo, head: f.head },
-  )
-  assert.deepEqual(input.screenImagePaths, [
-    ...f.entries.map((entry) => realpathSync(join(f.root, entry.file))),
-    ...sections.entries
-      .slice(1)
-      .map((entry) => realpathSync(join(f.repo, 'sections', entry.file))),
-  ])
+  const roots = [
+    { name: 'screens', entries: f.entries, root: f.root },
+    {
+      name: 'sections',
+      entries: sections.entries.slice(1),
+      root: join(f.repo, 'sections'),
+    },
+  ]
+  for (const ordered of [roots, [...roots].reverse()]) {
+    const options = parseArgs([...f.argv, '--copy-only'])
+    options.screenRoots = ordered.map(({ name }) => name)
+    const input = validateInputs(options, { repo: f.repo, head: f.head })
+    const expected = ordered.flatMap(({ entries, root }) =>
+      entries.map((entry) => realpathSync(join(root, entry.file))),
+    )
+    assert.deepEqual(input.screenImagePaths, expected)
+    const prompt = promptFor({ id: 'visual' }, input)
+    for (const path of expected) assert.ok(prompt.includes(path))
+    assert.ok(!prompt.includes(sections.entries[0].file))
+    assert.doesNotMatch(
+      prompt,
+      /Walkthrough PNG files:|inspect every walkthrough/,
+    )
+  }
 })
 
 test('all section and excluded context entries are validated before provider calls', async (t) => {
@@ -1387,7 +1409,19 @@ test('all section and excluded context entries are validated before provider cal
             run: () => assert.fail('invalid input reached provider'),
             stdout: { write: () => {} },
           }),
-          expected,
+          (error) => {
+            assert.match(error.message, expected)
+            if (expected.source.includes('must contain')) {
+              assert.ok(
+                error.message.includes(JSON.stringify(realpathSync(f.root))),
+              )
+              assert.ok(error.message.includes(`entry ${index + 1}`))
+              assert.ok(
+                error.message.includes(JSON.stringify(entries[index].file)),
+              )
+            }
+            return true
+          },
         )
       }
     }
@@ -1430,4 +1464,118 @@ test('legacy labels omit absent theme and locale fields', (t) => {
   const prompt = promptFor({ id: 'visual' }, input)
   assert.match(prompt, /viewer\/ready\/desktop \[screen context\]/)
   assert.doesNotMatch(prompt, /undefined/)
+})
+
+test('legacy manual crops accept all present labels without a section', (t) => {
+  const f = screenOnlyFixture(t)
+  for (const entry of f.entries) {
+    entry.theme = 'light'
+    entry.locale = 'en'
+  }
+  f.save()
+  const input = validateInputs(parseArgs([...f.argv, '--copy-only']), {
+    repo: f.repo,
+    head: f.head,
+  })
+  assert.deepEqual(
+    input.screenImagePaths,
+    f.entries.map((entry) => realpathSync(join(f.root, entry.file))),
+  )
+  assert.match(
+    promptFor({ id: 'visual' }, input),
+    /viewer\/ready\/desktop\/light\/en \[screen context\]/,
+  )
+})
+
+test('copy-only provider instructions match selected images across mixed roots', async (t) => {
+  const f = fixture()
+  t.after(() => rmSync(f.repo, { recursive: true, force: true }))
+  const crops = addSectionCaptures(join(f.repo, 'sections'), f.head)
+  const legacy = addSectionCaptures(join(f.repo, 'legacy'), f.head)
+  legacy.entries.splice(1)
+  legacy.save()
+  const calls = []
+  await main({
+    argv: [
+      '--walkthrough-root',
+      'captures',
+      '--screen-root',
+      'sections',
+      '--screen-root',
+      'legacy',
+      '--source',
+      'source.tsx',
+      '--copy-only',
+    ],
+    repo: f.repo,
+    exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+    stdout: { write: () => {} },
+    run: (command, args) => {
+      calls.push({ command, args })
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          is_error: false,
+          subtype: 'success',
+          result: 'Complete',
+          permission_denials: [],
+        }),
+      }
+    },
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].command, 'claude')
+  const prompt = calls[0].args[calls[0].args.indexOf('-p') + 1]
+  for (const entry of crops.entries.slice(1)) {
+    assert.ok(
+      prompt.includes(realpathSync(join(f.repo, 'sections', entry.file))),
+    )
+    assert.ok(prompt.includes(`[section: ${entry.section}]`))
+  }
+  assert.ok(
+    prompt.includes(
+      realpathSync(join(f.repo, 'legacy', legacy.entries[0].file)),
+    ),
+  )
+  assert.ok(
+    !prompt.includes(
+      realpathSync(join(f.repo, 'sections', crops.entries[0].file)),
+    ),
+  )
+  assert.match(prompt, /Evidence JSON: .*evidence.json/)
+  assert.doesNotMatch(prompt, /1-start-desktop\.png|Walkthrough PNG files:/)
+  assert.match(
+    prompt,
+    /Visual layer: inspect every standalone screen PNG plus relevant source/,
+  )
+  assert.doesNotMatch(prompt, /inspect every walkthrough/)
+})
+
+test('label errors locate an invalid entry in the second capture root', (t) => {
+  const f = screenOnlyFixture(t)
+  const root = join(f.repo, 'sections')
+  const { entries, save } = addSectionCaptures(root, f.head)
+  entries[2].section = '-recovery'
+  save()
+  assert.throws(
+    () =>
+      validateInputs(
+        parseArgs([...f.argv, '--screen-root', 'sections', '--copy-only']),
+        { repo: f.repo, head: f.head },
+      ),
+    (error) => {
+      assert.ok(
+        error.message.includes(`root ${JSON.stringify(realpathSync(root))}`),
+      )
+      assert.ok(error.message.includes('entry 3'))
+      assert.ok(
+        error.message.includes(`file ${JSON.stringify(entries[2].file)}`),
+      )
+      assert.match(
+        error.message,
+        /section must contain only lowercase letters, digits, or hyphens/,
+      )
+      return true
+    },
+  )
 })

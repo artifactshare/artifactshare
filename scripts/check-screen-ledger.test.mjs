@@ -905,6 +905,10 @@ test('static optional sections validate and propagate checker errors', () => {
     undefined,
     [],
     [{ id: 'introduction', selector: '#introduction' }],
+    ['a', '0', `a${'b-0'.repeat(21)}`].map((id) => ({
+      id,
+      selector: '#introduction',
+    })),
   ]) {
     const source = typedScreenSource.replace(
       "id: 'profile',",
@@ -925,9 +929,19 @@ test('static optional sections validate and propagate checker errors', () => {
     [[]],
     ['entry'],
     [{}],
-    ...[undefined, '', 'Upper', 'has space', '../escape', 'a/b', 42].map(
-      (id) => [{ id, selector: '#ok' }],
-    ),
+    ...[
+      undefined,
+      '',
+      'Upper',
+      'has space',
+      '../escape',
+      'a/b',
+      42,
+      '-',
+      '-introduction',
+      'a'.repeat(65),
+      'a'.repeat(200_000),
+    ].map((id) => [{ id, selector: '#ok' }]),
     ...[undefined, null, 42, '', ' \n\t'].map((selector) => [
       { id: 'introduction', selector },
     ]),
@@ -967,4 +981,35 @@ test('CLI guide declares four ordered sections for both locale routes', () => {
       selector: `#${id}`,
     })),
   )
+})
+
+test('section declarations reject IDs that critique cannot label', async (t) => {
+  for (const id of [
+    '-',
+    '-introduction',
+    'a'.repeat(65),
+    'a'.repeat(200_000),
+  ]) {
+    await t.test(
+      `rejects ${id.length > 64 ? `${id.length} characters` : id}`,
+      () => {
+        const source = typedScreenSource.replace(
+          "id: 'profile',",
+          `id: 'profile', sections: ${JSON.stringify([{ id, selector: '#introduction' }])},`,
+        )
+        assert.throws(
+          () => validateLedger([readScreenSpec(source)]),
+          /invalid section id for profile\/section 1/,
+        )
+        assert.deepEqual(
+          checkScreenLedger({
+            excludedRoutes: [],
+            loadRouteTree: () => routeTree,
+            readRouteSource: () => source,
+          }),
+          ['invalid section id for profile/section 1'],
+        )
+      },
+    )
+  }
 })

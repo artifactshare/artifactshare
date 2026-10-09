@@ -201,7 +201,10 @@ export function validateLedger(
         const label = `${screen.id}/section ${index + 1}`
         if (!section || typeof section !== 'object' || Array.isArray(section))
           throw new Error(`invalid section for ${label}`)
-        if (typeof section.id !== 'string' || !/^[a-z0-9-]+$/u.test(section.id))
+        if (
+          typeof section.id !== 'string' ||
+          !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(section.id)
+        )
           throw new Error(`invalid section id for ${label}`)
         if (sectionIds.has(section.id))
           throw new Error(`duplicate section id: ${screen.id}/${section.id}`)

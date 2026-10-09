@@ -106,7 +106,7 @@ pnpm screens:capture -- --all --audit-gaps
 
 ## Readable section crops
 
-A screen may declare ordered `sections: [{ id: 'introduction', selector: '#introduction' }]` metadata. IDs must be unique within the screen and match `^[a-z0-9-]+$`; selectors must be nonblank. Omitted or empty lists keep the existing full-page-only behavior.
+A screen may declare ordered `sections: [{ id: 'introduction', selector: '#introduction' }]` metadata. IDs must be unique within the screen and match `^[a-z0-9][a-z0-9-]{0,63}$` (1–64 lowercase letters, digits, or hyphens, starting with a letter or digit); selectors must be nonblank. Omitted or empty lists keep the existing full-page-only behavior.
 
 After each successful full-page capture, the harness captures each element's width and top, capped at two viewport heights (1800 CSS pixels on desktop, 1688 on mobile), without scaling text. Clips use document coordinates, including scroll offsets, without scrolling targets under sticky navigation or mutating the page. Missing, ambiguous, invisible, and zero-area targets fail individually; the full-page image and remaining crops survive, and the command returns nonzero after writing output.
 
