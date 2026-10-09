@@ -2018,6 +2018,7 @@ function useViewerShellController({
   const replaceMode: 'single' | 'static_site' =
     renderType === 'static_site' ? 'static_site' : 'single'
   const frameTitle = displayTitle(artifact)
+  const viewerRef = useRef<HTMLDivElement | null>(null)
   const historyReturnFocusRef = useRef<HTMLElement | null>(null)
   const accessRequestId = new URLSearchParams(routerLocation.search).get(
     'access-request',
@@ -2415,8 +2416,18 @@ function useViewerShellController({
     handleFiles(dataTransfer.files)
   }
 
+  const showLatestVersion = () => {
+    // The notice button disappears, and the frame remounts on refresh.
+    // Keep focus on the viewer that survives both updates.
+    if (!canViewHistory) viewerRef.current?.focus({ preventScroll: true })
+    latestVersion.clearNewerVersion()
+    revalidator.revalidate()
+  }
+
   return {
     artifact: artifactForChrome,
+    viewerRef,
+    showLatestVersion,
     user,
     renderType,
     sandboxUrl,
@@ -2484,6 +2495,8 @@ export function mergeLiveViewCount(
 
 function ViewerShellView({
   artifact,
+  viewerRef,
+  showLatestVersion,
   user,
   renderType,
   sandboxUrl,
@@ -2508,7 +2521,6 @@ function ViewerShellView({
   textAnchorsEnabled,
   commentsEnabled,
   newThreadComposerEnabled,
-  revalidator,
   replaceMode,
   viewerListAvailable,
   viewerList,
@@ -2526,7 +2538,13 @@ function ViewerShellView({
   const collapseToggleRef = useRef<HTMLButtonElement | null>(null)
 
   return (
-    <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
+    <div
+      ref={viewerRef}
+      role="region"
+      aria-label={frameTitle}
+      tabIndex={-1}
+      className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none"
+    >
       <ViewerChrome
         artifact={artifact}
         user={user}
@@ -2666,10 +2684,7 @@ function ViewerShellView({
         replaceMode={replaceMode}
         uploading={state.uploading}
         hasNewerVersion={latestVersion.hasNewerVersion}
-        onShowLatest={() => {
-          latestVersion.clearNewerVersion()
-          revalidator.revalidate()
-        }}
+        onShowLatest={showLatestVersion}
         onOpenHistory={(returnFocusTo) => {
           historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
           closeAccessRequests()

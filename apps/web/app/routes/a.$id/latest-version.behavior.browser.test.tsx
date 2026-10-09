@@ -129,6 +129,8 @@ async function visibility() {
 
 test('anonymous link checks only current-version, shows an update, and refreshes without history access', async () => {
   const networkLog = vi.spyOn(console, 'info')
+  // Focus returns to the stable viewer shell; a blank sandbox would also
+  // trigger unrelated recovery requests when the polling timer advances.
   await mount()
   await bodyRead(1)
   expect(
@@ -182,7 +184,14 @@ test('anonymous link checks only current-version, shows an update, and refreshes
   )
   expect(button).toBeDefined()
   expect(button!.closest('[hidden], [aria-hidden="true"]')).toBeNull()
+  button!.focus()
+  expect(document.activeElement).toBe(button)
   await act(async () => button!.click())
+  const viewer = host.querySelector<HTMLElement>(
+    '[role="region"][tabindex="-1"]',
+  )
+  expect(viewer).not.toBeNull()
+  expect(document.activeElement).toBe(viewer)
   expect(revalidate).toHaveBeenCalledOnce()
   expect(notice()).toBe(false)
   expect(
@@ -195,6 +204,7 @@ test('anonymous link checks only current-version, shows an update, and refreshes
   await act(async () => setArtifact({ ...artifact, currentVersionId: 'v2' }))
   await bodyRead(3)
   expect(notice()).toBe(false)
+  expect(document.activeElement).toBe(viewer)
 })
 
 test('anonymous update announcements remain accessible with chrome collapsed', async () => {
@@ -266,6 +276,18 @@ test('history viewers keep the visible update sentence accessible', async () => 
   )!
   expect(sentence).toBeDefined()
   expect(sentence.closest('[hidden], [aria-hidden="true"]')).toBeNull()
+  const viewer = host.querySelector<HTMLElement>(
+    '[role="region"][tabindex="-1"]',
+  )!
+  expect(viewer).not.toBeNull()
+  const focusViewer = vi.spyOn(viewer, 'focus')
+  const showLatest = Array.from(host.querySelectorAll('button')).find(
+    (entry) => entry.textContent === 'Show latest',
+  )!
+  expect(showLatest).toBeDefined()
+  await act(async () => showLatest.click())
+  expect(focusViewer).not.toHaveBeenCalled()
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
 })
 
 test.each([
