@@ -1359,6 +1359,10 @@ test('all section and excluded context entries are validated before provider cal
             'en\n',
             '<instructions>',
             'a/b',
+            '-',
+            '-introduction',
+            'a'.repeat(65),
+            'a'.repeat(200_000),
           ].map((value) => [
             { [field]: value },
             new RegExp(
@@ -1387,6 +1391,33 @@ test('all section and excluded context entries are validated before provider cal
         )
       }
     }
+  }
+})
+
+test('manifest labels accept one through 64 filename-safe characters', (t) => {
+  const f = screenOnlyFixture(t)
+  const { entries, save } = addSectionCaptures(f.root, f.head)
+  for (const value of ['a', '0', `a${'b-0'.repeat(21)}`]) {
+    for (const field of [
+      'screen',
+      'state',
+      'viewport',
+      'theme',
+      'locale',
+      'section',
+    ]) {
+      entries[1][field] = value
+    }
+    save()
+    const input = validateInputs(parseArgs(f.argv), {
+      repo: f.repo,
+      head: f.head,
+    })
+    assert.ok(
+      promptFor({ id: 'visual' }, input).includes(
+        `${Array(5).fill(value).join('/')} [section: ${value}]`,
+      ),
+    )
   }
 })
 

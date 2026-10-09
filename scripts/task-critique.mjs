@@ -306,10 +306,11 @@ function validateInputs(
         const value = entry[field]
         if (
           value !== undefined &&
-          (typeof value !== 'string' || !value || /[^a-z0-9-]/u.test(value))
+          (typeof value !== 'string' ||
+            !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(value))
         )
           throw new Error(
-            `Screen capture ${field} must contain only lowercase letters, digits, or hyphens.`,
+            `Screen capture ${field} must contain only lowercase letters, digits, or hyphens, start with a letter or digit, and be 1–64 characters long.`,
           )
       }
       const label = `${entry.screen ?? '<screen>'}/${entry.state ?? '<state>'}/${entry.viewport ?? '<viewport>'}`
