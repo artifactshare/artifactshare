@@ -1721,7 +1721,7 @@ function parseJson(value: string): unknown {
 }
 
 function useLatestVersionNotice({
-  lookupUrl,
+  lookupUrl: requestedLookupUrl,
   currentVersionId,
   liveAvailable,
 }: {
@@ -1729,6 +1729,12 @@ function useLatestVersionNotice({
   currentVersionId: string | null
   liveAvailable: boolean
 }) {
+  const [anonymousLookupDenied, setAnonymousLookupDenied] = useState(false)
+  const isAnonymousLookup = requestedLookupUrl?.endsWith('/current-version')
+  const lookupUrl =
+    isAnonymousLookup && anonymousLookupDenied ? null : requestedLookupUrl
+  // Authenticated pointer updates must not reset the polling cadence or cooldown.
+  const anonymousVersionId = isAnonymousLookup ? currentVersionId : null
   const lookupUrlRef = useLatestRef(lookupUrl)
   const currentVersionIdRef = useLatestRef(currentVersionId)
   const liveAvailableRef = useLatestRef(liveAvailable)
@@ -1857,6 +1863,19 @@ function useLatestVersionNotice({
             cfRay: cfRayFrom(response),
           })
         }
+        if (
+          response?.status === 404 &&
+          url.endsWith('/current-version') &&
+          seq === latestCheckSeqRef.current &&
+          url === lookupUrlRef.current &&
+          !controller.signal.aborted
+        ) {
+          // A revoked anonymous link stays disabled until the page is reopened.
+          lookupUrlRef.current = null
+          latestCheckSeqRef.current += 1
+          clearLatestVersionRetry()
+          setAnonymousLookupDenied(true)
+        }
         return
       }
       const body = result?.body ?? null
@@ -1876,6 +1895,9 @@ function useLatestVersionNotice({
 
   useEffect(() => {
     latestCheckStartedAtRef.current = 0
+  }, [lookupUrl, anonymousVersionId])
+
+  useEffect(() => {
     latestCheckSeqRef.current += 1
     clearLatestVersionRetry()
     abortLatestVersionCheck()
@@ -1907,7 +1929,7 @@ function useLatestVersionNotice({
   }, [abortLatestVersionCheck, clearLatestVersionRetry, liveAvailable])
 
   useEffect(() => {
-    if (!lookupUrl || !currentVersionId || liveAvailable) return
+    if (!lookupUrl || liveAvailable) return
     void checkLatestVersion({ kind: 'fallback' })
     const interval = window.setInterval(() => {
       void checkLatestVersion({ kind: 'fallback' })
@@ -1922,7 +1944,7 @@ function useLatestVersionNotice({
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [checkLatestVersion, liveAvailable, lookupUrl, currentVersionId])
+  }, [checkLatestVersion, liveAvailable, lookupUrl, anonymousVersionId])
 
   return {
     hasNewerVersion: notice.hasNewerVersion,

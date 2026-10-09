@@ -723,6 +723,18 @@ describe('app worker viewer rate limit', () => {
     '/a/share123',
     '/a/share123/og-image',
     '/api/shareables/abc123def4/current-version',
+    '/api/shareables/abc123def4/current-version/_.data',
+    '/API/Shareables/abc123def4/CURRENT-VERSION/_.data',
+    '/api/shareables/abc123def4/current-version///_.data',
+    '/API/Shareables/abc123def4/CURRENT-VERSION',
+    '/api/shareables/abc123def4/current-version///',
+    '/api/shareables/abc123def4/current-version.data',
+    '/api/shareables/abc123def4/current-version/.data',
+    '/api/shareables/abc123def4/current-version//.data',
+    '/api/shareables/abc123def4/Current-Version',
+    '/api/shareables/abc123def4/current-version/',
+    '/api//shareables//abc123def4//%63urrent-version//.data',
+    '/API/Shareables/abc123def4/CURRENT-VERSION.data',
   ])('rejects %s before the application handler', async (pathname) => {
     const limit = vi.fn().mockResolvedValue({ success: false })
     const response = await app.fetch(

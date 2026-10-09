@@ -235,3 +235,99 @@ test('becoming ineligible clears a pending cooldown retry', async () => {
   expect(lookup).toHaveBeenCalledOnce()
   expect(notice()).toBe(false)
 })
+
+test('anonymous 404 stops interval, visibility, and pending retry checks for the page lifetime', async () => {
+  let resolve!: (response: Response) => void
+  lookup.mockImplementationOnce(
+    () =>
+      new Promise<Response>((done) => {
+        resolve = done
+      }),
+  )
+  const log = vi.spyOn(console, 'info')
+  const clearInterval = vi.spyOn(window, 'clearInterval')
+  const removeListener = vi.spyOn(document, 'removeEventListener')
+  await mount()
+  await visibility()
+  await act(async () => resolve(new Response('Not found', { status: 404 })))
+  await act(async () => {
+    await waitForRealTaskCondition(
+      () => log.mock.calls.some(([, event]) => event?.status === 404),
+      'anonymous denied response',
+    )
+  })
+  expect(clearInterval).toHaveBeenCalled()
+  expect(
+    removeListener.mock.calls.some(([name]) => name === 'visibilitychange'),
+  ).toBe(true)
+  await visibility()
+  await act(async () => vi.advanceTimersByTimeAsync(600_000))
+  await act(async () => setArtifact({ ...artifact, linkSuspended: true }))
+  await act(async () => setArtifact({ ...artifact, currentVersionId: 'v2' }))
+  await visibility()
+  await act(async () => vi.advanceTimersByTimeAsync(600_000))
+  expect(lookup).toHaveBeenCalledOnce()
+  expect(notice()).toBe(false)
+})
+
+test('signed-in 404 retains fallback polling', async () => {
+  lookup.mockResolvedValueOnce(new Response('Not found', { status: 404 }))
+  await mount({}, true)
+  await act(async () => vi.advanceTimersByTimeAsync(300_000))
+  await bodyRead(1)
+  expect(lookup).toHaveBeenCalledTimes(2)
+  expect(
+    lookup.mock.calls.every(([url]) => String(url).endsWith('/versions')),
+  ).toBe(true)
+})
+
+test('signed-in pointer updates preserve the cooldown and original interval', async () => {
+  await mount({}, true)
+  await bodyRead(1)
+  await act(async () => vi.advanceTimersByTimeAsync(10_000))
+  currentVersionId = 'v2'
+  await act(async () => setArtifact({ ...artifact, currentVersionId }))
+  expect(lookup).toHaveBeenCalledOnce()
+  await visibility()
+  await act(async () => vi.advanceTimersByTimeAsync(19_999))
+  expect(lookup).toHaveBeenCalledOnce()
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  await bodyRead(2)
+  expect(notice()).toBe(false)
+  await act(async () => vi.advanceTimersByTimeAsync(270_000))
+  await bodyRead(3)
+  expect(lookup).toHaveBeenCalledTimes(3)
+  expect(notice()).toBe(false)
+})
+
+test('signed-in pointer updates abort and invalidate pending responses without restarting polling', async () => {
+  let resolve!: (response: Response) => void
+  lookup.mockImplementationOnce(
+    () =>
+      new Promise<Response>((done) => {
+        resolve = done
+      }),
+  )
+  await mount({}, true)
+  const signal = lookup.mock.calls[0]![1].signal as AbortSignal
+  await act(async () => vi.advanceTimersByTimeAsync(10_000))
+  currentVersionId = 'v2'
+  await act(async () => setArtifact({ ...artifact, currentVersionId }))
+  expect(lookup).toHaveBeenCalledOnce()
+  // The fetch mock deliberately completes despite cancellation.
+  await act(async () => resolve(versionResponse('v1')))
+  await bodyRead(1)
+  expect(notice()).toBe(false)
+  expect(signal.aborted).toBe(true)
+  await visibility()
+  await act(async () => vi.advanceTimersByTimeAsync(19_999))
+  expect(lookup).toHaveBeenCalledOnce()
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  await bodyRead(2)
+  expect(notice()).toBe(false)
+  currentVersionId = 'v3'
+  await act(async () => vi.advanceTimersByTimeAsync(270_000))
+  await bodyRead(3)
+  expect(lookup).toHaveBeenCalledTimes(3)
+  expect(notice()).toBe(true)
+})

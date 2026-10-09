@@ -5,13 +5,14 @@ export interface ViewerRateLimiter {
 const RETRY_AFTER_SECONDS = 60
 
 export function isViewerRateLimitedPath(request: Request): boolean {
-  let segments: string[]
+  let pathname: string
   try {
-    segments = new URL(request.url).pathname.split('/')
+    pathname = new URL(request.url).pathname
   } catch {
     return false
   }
-  if (segments.at(-1) === '') segments.pop()
+  const segments = pathname.split('/')
+  while (segments.at(-1) === '') segments.pop()
   if (request.method === 'POST') {
     if (
       segments[0] !== '' ||
@@ -27,15 +28,31 @@ export function isViewerRateLimitedPath(request: Request): boolean {
     )
   }
   if (request.method !== 'GET' && request.method !== 'HEAD') return false
+  // Strip the single-fetch suffix before normalizing route segments, just as
+  // routing does for both current-version.data and current-version/.data.
+  const routePathname = pathname.endsWith('.data')
+    ? pathname.slice(0, -'.data'.length)
+    : pathname
+  const routeSegments = routePathname
+    .split('/')
+    .filter(Boolean)
+    .map(decodeSegment)
+  // Single fetch uses _.data when the page URL ends with a slash.
+  if (pathname.endsWith('.data') && routeSegments.at(-1) === '_') {
+    routeSegments.pop()
+  }
   if (
-    segments.length === 5 &&
-    segments[0] === '' &&
-    decodeSegment(segments[1]) === 'api' &&
-    decodeSegment(segments[2]) === 'shareables' &&
-    segments[3] &&
-    decodeSegment(segments[4]) === 'current-version'
+    routeSegments.length === 4 &&
+    routeSegments[0]?.toLowerCase() === 'api' &&
+    routeSegments[1]?.toLowerCase() === 'shareables' &&
+    routeSegments[2] &&
+    routeSegments[3]?.toLowerCase() === 'current-version'
   )
     return true
+  if (decodeSegment(segments.at(-1))?.toLowerCase() === '_.data') {
+    segments.pop()
+    while (segments.at(-1) === '') segments.pop()
+  }
   if (segments[0] !== '' || decodeSegment(segments[1]) !== 'a') return false
   if (!segments[2]) return false
   return (

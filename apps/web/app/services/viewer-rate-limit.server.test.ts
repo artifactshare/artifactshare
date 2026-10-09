@@ -71,6 +71,20 @@ describe('checkViewerRateLimit', () => {
 
 describe('isViewerRateLimitedPath', () => {
   test.each([
+    ['GET', '/api/shareables/abc123def4/current-version'],
+    ['GET', '/api/shareables/abc123def4/current-version/_.data'],
+    ['HEAD', '/API/Shareables/abc123def4/CURRENT-VERSION/_.data'],
+    ['GET', '/api/shareables/abc123def4/current-version///_.data'],
+    ['GET', '/api/shareables/abc123def4/current-version///'],
+    ['HEAD', '/API/Shareables/abc123def4/Current-Version/'],
+    ['GET', '/api/shareables/abc123def4/current-version.data'],
+    ['GET', '/api/shareables/abc123def4/current-version/.data'],
+    ['HEAD', '/api/shareables/abc123def4/current-version//.data'],
+    ['GET', '/api/shareables/abc123def4/Current-Version'],
+    ['GET', '/api/shareables/abc123def4/current-version/'],
+    ['GET', '/api//shareables//abc123def4//%63urrent-version//.data'],
+    ['HEAD', '/API/SHAREABLES/abc123def4/CURRENT-VERSION.data'],
+    ['GET', '/%61pi/shareables/abc123def4/%63urrent-version'],
     ['GET', '/a/example'],
     ['HEAD', '/a/example'],
     ['GET', '/a/example/og-image'],
@@ -90,6 +104,12 @@ describe('isViewerRateLimitedPath', () => {
   })
 
   test.each([
+    ['POST', '/api/shareables/abc123def4/current-version'],
+    ['GET', '/api/shareables/abc123def4/current-version/extra'],
+    ['GET', '/api/shareables/abc123def4/current-version/extra/_.data'],
+    ['POST', '/api/shareables/abc123def4/current-version/_.data'],
+    ['GET', '/api/shareables/abc123def4/current-version.data/extra'],
+    ['GET', '/api/shareables/abc123def4/versions'],
     ['POST', '/a/example'],
     ['GET', '/api/shareables/example/report'],
     ['POST', '/api/shareables/example/report/extra'],
