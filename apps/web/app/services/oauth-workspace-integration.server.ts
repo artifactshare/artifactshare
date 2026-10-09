@@ -1,3 +1,4 @@
+import { physicalVersionBytes } from './physical-storage.server'
 import {
   LINK_SHARING_PLAN_DEFAULTS,
   linkExpiryStartingColumns,
@@ -592,13 +593,14 @@ export async function applyOAuthWorkspaceIntegration(
       (SELECT COUNT(*) FROM shareables
        WHERE workspace_id = ${sourceWorkspaceId}
          AND id IN (${shareableIdList})) != ${current.shareables.length}
-      OR COALESCE((
-        SELECT SUM(versions.size_bytes)
-        FROM versions
-        INNER JOIN shareables ON shareables.id = versions.shareable_id
-        WHERE shareables.id IN (${shareableIdList})
-          AND shareables.workspace_id = ${sourceWorkspaceId}
-      ), 0) != ${current.storageBytes}
+      OR ${physicalVersionBytes(
+        db
+          .selectFrom('versions')
+          .select('id')
+          .where(
+            sql<boolean>`shareable_id IN (SELECT id FROM shareables WHERE id IN (${shareableIdList}) AND workspace_id = ${sourceWorkspaceId})`,
+          ),
+      )} != ${current.storageBytes}
   `
   if (targetWasCreated) {
     queries.push(
@@ -1297,12 +1299,17 @@ async function buildPlan(
   const storageRow =
     shareableRows.length > 0
       ? await db
-          .selectFrom('versions')
-          .select(({ fn }) => fn.sum<number>('size_bytes').as('bytes'))
-          .where(
-            'shareable_id',
-            'in',
-            shareableRows.map((row) => row.id),
+          .selectNoFrom(
+            physicalVersionBytes(
+              db
+                .selectFrom('versions')
+                .select('id')
+                .where(
+                  'shareable_id',
+                  'in',
+                  shareableRows.map((row) => row.id),
+                ),
+            ).as('bytes'),
           )
           .executeTakeFirst()
       : undefined

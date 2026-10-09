@@ -2906,7 +2906,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(consumeJtiMock).not.toHaveBeenCalled()
   })
 
-  test('serves anonymous link assets from the bundle cookie without touching D1', async () => {
+  test('serves anonymous link assets from the bundle cookie through the version manifest', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
       .current!.updateTable('shareables')
@@ -2931,9 +2931,6 @@ describe('handleArtifactSandboxRequest', () => {
     expect(entrypoint.status).toBe(200)
     expect(cookie).toContain('as_bnd=')
 
-    // A cookie-authorized asset only needs the signed bundle identity and R2;
-    // making the DB unavailable proves the hot path does not regress to D1.
-    dbRef.current = null
     const asset = await handleArtifactSandboxRequest(
       new Request(`https://${host}/style.css`, {
         headers: { Cookie: cookie ?? '' },
@@ -2942,17 +2939,13 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(asset.status).toBe(200)
     await expect(asset.text()).resolves.toBe('body{}')
-    expect(storageMock.headArtifact).toHaveBeenCalledWith(
-      {},
-      'ws-a/abc123def4/v-bundle/style.css',
-    )
     expect(storageMock.getArtifact).toHaveBeenLastCalledWith(
       {},
       'ws-a/abc123def4/v-bundle/style.css',
     )
   })
 
-  test('uses the upload-time R2 prefix after a workspace migration', async () => {
+  test('uses stored manifest keys after a workspace migration', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
       .current!.insertInto('workspaces')
@@ -3000,7 +2993,6 @@ describe('handleArtifactSandboxRequest', () => {
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
 
-    dbRef.current = null
     const asset = await handleArtifactSandboxRequest(
       new Request(`https://${host}/style.css`, {
         headers: { Cookie: cookie ?? '' },
@@ -3008,13 +3000,9 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     expect(asset.status).toBe(200)
-    expect(storageMock.headArtifact).toHaveBeenCalledWith(
-      {},
-      'ws-a/abc123def4/v-bundle/style.css',
-    )
   })
 
-  test('keeps index fallback for anonymous bundle cookies without touching D1', async () => {
+  test('keeps index fallback for anonymous bundle cookies through the version manifest', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
       .current!.updateTable('shareables')
@@ -3050,7 +3038,6 @@ describe('handleArtifactSandboxRequest', () => {
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
 
-    dbRef.current = null
     const asset = await handleArtifactSandboxRequest(
       new Request(`https://${host}/projects/alpha`, {
         headers: { Cookie: cookie ?? '' },
@@ -3059,16 +3046,123 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(asset.status).toBe(200)
     await expect(asset.text()).resolves.toContain('Fallback')
-    expect(storageMock.headArtifact).toHaveBeenNthCalledWith(
-      1,
-      {},
-      'ws-a/abc123def4/v-bundle/projects/alpha',
+  })
+
+  test('anonymous cookies serve immutable inherited manifests, replacements and deletions, and recheck access', async () => {
+    envMock.APP_ENV = 'production'
+    const db = dbRef.current!
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    await db
+      .insertInto('version_files')
+      .values({
+        id: 'vf-data',
+        version_id: 'v-bundle',
+        path: '/data/a.parquet',
+        r2_key: 'ws-a/abc123def4/v-bundle/data/a.parquet',
+        mime_type: 'application/octet-stream',
+        size_bytes: 20,
+        sha256: 'sha-data',
+        scan_flags: null,
+        created_at: '2026-05-22T00:00:00.000Z',
+      })
+      .execute()
+    storageMock.getArtifact.mockImplementation(async (_bucket, key: string) =>
+      storedArtifact(key, 'text/plain'),
     )
-    expect(storageMock.headArtifact).toHaveBeenNthCalledWith(
-      2,
-      {},
+    // The deleted file still exists in R2 for the old version.
+    storageMock.headArtifact.mockResolvedValue(
+      storedHeadArtifact('old object', 'video/mp4'),
+    )
+    const oldHost = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const oldEntry = await handleArtifactSandboxRequest(
+      new Request(`https://${oldHost}/?t=${await anonymousEntrypointToken()}`),
+    )
+    expect(oldEntry.status).toBe(200)
+    const oldCookie = oldEntry.headers.get('Set-Cookie')!.split(';')[0]
+    await seedStaticSiteVersion(db, {
+      versionId: 'v-inherited',
+      entrypointPath: '/index.html',
+      entrypointR2Key: 'ws-a/abc123def4/v-bundle/index.html',
+      fallbackToIndex: true,
+      files: [
+        {
+          id: 'inherited-index',
+          path: '/index.html',
+          r2Key: 'ws-a/abc123def4/v-bundle/index.html',
+          mimeType: 'text/html',
+        },
+        {
+          id: 'inherited-css',
+          path: '/style.css',
+          r2Key: 'ws-a/abc123def4/v-bundle/style.css',
+          mimeType: 'text/css',
+        },
+        {
+          id: 'replaced-data',
+          path: '/data/a.parquet',
+          r2Key: 'ws-a/abc123def4/v-inherited/data/a.parquet',
+          mimeType: 'application/octet-stream',
+        },
+      ],
+    })
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: 'v-inherited' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const token = await signSandboxToken(
+      {
+        uid: null,
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-inherited',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'j-inherited',
+      },
+      'test-secret',
+    )
+    const host = `${sandboxVersionLabel('abc123def4', 'v-inherited')}.artifactshare.link`
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`https://${host}/?t=${token}`),
+    )
+    expect(entry.status).toBe(200)
+    expect(await entry.text()).toContain('ws-a/abc123def4/v-bundle/index.html')
+    const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+    const requestAsset = (path: string, old = false) =>
+      handleArtifactSandboxRequest(
+        new Request(`https://${old ? oldHost : host}${path}`, {
+          headers: { Cookie: old ? oldCookie : cookie },
+        }),
+      )
+    expect(await (await requestAsset('/index.html')).text()).toContain(
       'ws-a/abc123def4/v-bundle/index.html',
     )
+    expect(await (await requestAsset('/style.css')).text()).toBe(
+      'ws-a/abc123def4/v-bundle/style.css',
+    )
+    expect(await (await requestAsset('/data/a.parquet')).text()).toBe(
+      'ws-a/abc123def4/v-inherited/data/a.parquet',
+    )
+    expect((await requestAsset('/demo.mp4')).status).toBe(404)
+    expect(await (await requestAsset('/data/a.parquet', true)).text()).toBe(
+      'ws-a/abc123def4/v-bundle/data/a.parquet',
+    )
+    expect(await (await requestAsset('/demo.mp4', true)).text()).toBe(
+      'ws-a/abc123def4/v-bundle/demo.mp4',
+    )
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    expect((await requestAsset('/index.html')).status).toBe(401)
+    expect(storageMock.headArtifact).not.toHaveBeenCalled()
   })
 
   test('stops serving an anonymous bundle cookie after its ten-minute TTL', async () => {

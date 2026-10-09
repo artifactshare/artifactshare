@@ -140,6 +140,71 @@ async function seedShareableWithVersion(
 
 const fakeBucket = {} as R2Bucket
 
+test('reconciliation counts distinct physical static-site objects plus ordinary versions', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    await seedWorkspaceAndUser(db, { userId: 'u1', storageUsedBytes: 30 })
+    for (const [shareableId, versionId] of [
+      ['s1', 'v1'],
+      ['s2', 'v2'],
+      ['s3', 'v3'],
+    ]) {
+      await seedShareableWithVersion(db, {
+        userId: 'u1',
+        shareableId,
+        versionId,
+        r2Key: versionId,
+        sizeBytes: 10,
+      })
+    }
+    await db
+      .updateTable('versions')
+      .set({ artifact_kind: 'static_site', size_bytes: 20 })
+      .where('id', 'in', ['v1', 'v2'])
+      .execute()
+    for (const versionId of ['v1', 'v2']) {
+      for (const key of ['shared-index', 'shared-data']) {
+        await db
+          .insertInto('version_files')
+          .values({
+            id: `${versionId}-${key}`,
+            version_id: versionId,
+            path: `/${key}`,
+            r2_key: key,
+            size_bytes: 10,
+            sha256: 'hash',
+            mime_type: 'text/html',
+            created_at: QUOTA_GRACE_BEFORE,
+          })
+          .execute()
+      }
+    }
+    await reconcileQuota(db, NOW)
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', 'ws-u1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 30 })
+    await db
+      .updateTable('workspaces')
+      .set({ storage_used_bytes: 99, storage_updated_at: QUOTA_GRACE_BEFORE })
+      .where('id', '=', 'ws-u1')
+      .execute()
+    await reconcileQuota(db, NOW)
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', 'ws-u1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 30 })
+  } finally {
+    await db.destroy()
+  }
+})
+
 describe('reconcileQuota', () => {
   let db: Kysely<DB>
 

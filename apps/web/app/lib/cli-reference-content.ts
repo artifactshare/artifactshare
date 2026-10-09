@@ -227,7 +227,7 @@ const EN: CliReferenceContent = {
     },
     basics: {
       title: 'Basic operations',
-      body: 'Use share for a file, folder, or static site; update to keep the same URL; open or artifacts get to read; download to save locally; comments for review; projects for organization; profiles and config for accounts and settings; and skills for agent setup.',
+      body: 'Use share for a file, folder, or static site; update to keep the same URL; open or artifacts get to read; download to save locally; comments for review; projects for organization; profiles and config for accounts and settings; and skills for agent setup. REST API only: POST /api/shareables/:id/versions?artifact_kind=static_site accepts base_version=v1 and repeated delete_path values, for example delete_path=old.js&delete_path=data/old.parquet. Sent files replace matching paths; remaining files are inherited. The base must be current (409 version_conflict otherwise) and supplies the expected version, including for agents. An explicit expected_version must match it. Deletion requires a base; sending and deleting the same path is invalid. A delete-only update must retain index.html or index.md. Version bytes describe the complete file list; workspace quota counts unique stored objects. CLI update has no inheritance flags.',
     },
     commands: {
       title: 'Command reference',
@@ -291,7 +291,7 @@ const JA: CliReferenceContent = {
     },
     basics: {
       title: '基本操作',
-      body: 'ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。',
+      body: 'ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。REST API の POST /api/shareables/:id/versions?artifact_kind=static_site では、base_version=v1 と繰り返しの delete_path（例: delete_path=old.js&delete_path=data/old.parquet）を指定できます。送信したファイルを差し替え、残りを継承します。基準は現在の公開バージョンに限り、古い場合は 409 version_conflict を返します。基準はエージェントの更新にも必要な期待バージョンを兼ね、expected_version を併記する場合は一致が必要です。削除には基準の指定が必要で、同じパスの送信と削除はできません。削除だけの更新でも index.html または index.md を残してください。バージョンのサイズはファイル一覧の合計、保存容量は重複を除いた実体の合計です。CLI update に継承用のオプションはありません。',
     },
     commands: {
       title: 'コマンドリファレンス',

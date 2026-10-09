@@ -94,3 +94,31 @@ bridge publishing, and MCP update inputs do not accept them.
 ### Quoted comment positions
 
 Quoted comments are resolved in the viewer using the exact quote and surrounding context, never the nearest repeated words. `--quote-before` and `--quote-after` accept up to 400 characters per side; preserve spaces next to the quote. Creation does not search the artifact. Optional `anchor.position_state` is `unchecked` until that version is viewed, then `attached` or `needs-check`. Only `attached` maps to `anchor.state: attached`; both other states map to `orphaned`. Older responses may omit `position_state`. Local preview uses the same strict resolution on every reload and preserves the original quote when its position needs checking.
+
+### API-only static-site inheritance
+
+`POST /api/shareables/:id/versions?artifact_kind=static_site` accepts one
+`base_version` and repeated `delete_path` query parameters. For example,
+`?artifact_kind=static_site&base_version=v1&delete_path=data/old.parquet&delete_path=old.js`
+with multipart `file` parts for `data/a.parquet` replaces that data file, removes
+the two listed paths, and inherits all other files without copying their objects.
+The base must be the current published version; a stale base returns HTTP 409
+`version_conflict`. It also supplies the expected version for agent credentials.
+If `expected_version` is supplied, it must equal the base (otherwise HTTP 400
+`validation-failed`). Neither parameter changes write permissions.
+
+Deletion paths use the same normalization and validation as uploaded paths.
+Sending and deleting the same path is invalid. A case-only addition requires
+explicitly deleting the old spelling. An absent deletion path is harmless.
+A base permits zero sent files, provided the resulting manifest still includes
+`index.html` or `index.md`. Entrypoint precedence, file-count, total-size, and
+case-collision checks apply to the complete resulting manifest. Without a base,
+the existing full replacement behavior applies. Empty or repeated bases,
+deletion without a base, and inheritance parameters on other artifact kinds
+return HTTP 400 `validation-failed`.
+
+Version size is the logical sum of that version's files. Workspace quota counts
+physical objects once across retained versions; only sent files add bytes.
+Pruning keeps objects referenced by remaining versions. Version URLs retain
+immutable manifests. This is a REST API feature: there are no CLI `update`
+flags, MCP inputs, or bridge inputs for inheritance.

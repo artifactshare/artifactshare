@@ -1,3 +1,7 @@
+import {
+  objectIsReferenced,
+  releasedObjectBytes,
+} from './physical-storage.server'
 import { env } from 'cloudflare:workers'
 import { sql, type Kysely } from 'kysely'
 import { runD1BatchWithResults } from '~/lib/d1-batch.server'
@@ -55,7 +59,7 @@ export async function pruneVersions(
       db
         .updateTable('workspaces')
         .set({
-          storage_used_bytes: sql<number>`MAX(storage_used_bytes - COALESCE((SELECT SUM(size_bytes) FROM versions WHERE id IN (${eligible})), 0), 0)`,
+          storage_used_bytes: sql<number>`MAX(storage_used_bytes - ${releasedObjectBytes(eligible)}, 0)`,
           storage_updated_at: nowIso(),
         })
         .where(
@@ -85,7 +89,8 @@ export async function pruneVersions(
     await Promise.all(
       pendingKeys.slice(offset, offset + 8).map(async (key) => {
         try {
-          await deleteArtifact(env.BUCKET, key)
+          if (!(await objectIsReferenced(db, key)))
+            await deleteArtifact(env.BUCKET, key)
         } catch (err) {
           console.error('r2_orphan_after_version_retention', {
             shareable_id: shareableId,

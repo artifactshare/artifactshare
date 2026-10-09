@@ -35,6 +35,148 @@ describe('OAuth workspace integration', () => {
     return fixture.db
   }
 
+  test.each([false, true])(
+    'preview and transfer use physical bytes (changed before batch: %s)',
+    async (changed) => {
+      const db = setup()
+      await seedWorkspace(db, { id: 'ws-personal', name: 'Personal' })
+      await seedWorkspace(db, { id: 'ws-org', name: 'Organization' })
+      await seedUser(db, 'u1', 'author@example.com', 'ws-personal')
+      await seedClaim(db, 'example.com', 'ws-org')
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          id: 'c1',
+          workspace_id: 'ws-personal',
+          kind: 'inbox',
+          owner_user_id: 'u1',
+          created_by_id: 'u1',
+          name: 'Home',
+          created_at: NOW,
+          updated_at: NOW,
+        })
+        .execute()
+      await db
+        .insertInto('shareables')
+        .values({
+          id: 's1',
+          workspace_id: 'ws-personal',
+          owner_user_id: 'u1',
+          name: 'Site',
+          artifact_kind: 'static_site',
+          visibility: 'private',
+          current_version_id: 'v2',
+          container_id: 'c1',
+          created_at: NOW,
+          updated_at: NOW,
+        })
+        .execute()
+      for (const id of ['v1', 'v2', 'v3']) {
+        await db
+          .insertInto('versions')
+          .values({
+            id,
+            shareable_id: 's1',
+            artifact_kind: id === 'v3' ? 'html_page' : 'static_site',
+            status: 'published',
+            entrypoint_path: '/index.html',
+            r2_key: id === 'v3' ? 'html' : 'shared-index',
+            size_bytes: id === 'v3' ? 10 : 20,
+            sha256: 'hash',
+            created_by_id: 'u1',
+            created_at: NOW,
+            published_at: NOW,
+          })
+          .execute()
+        if (id === 'v3') continue
+        for (const key of ['shared-index', `data-${id}`]) {
+          await db
+            .insertInto('version_files')
+            .values({
+              id: `${id}-${key}`,
+              version_id: id,
+              path: `/${key}`,
+              r2_key: key,
+              size_bytes: 10,
+              sha256: 'hash',
+              mime_type: 'text/html',
+              created_at: NOW,
+            })
+            .execute()
+        }
+      }
+      await db
+        .updateTable('workspaces')
+        .set({ storage_used_bytes: 40 })
+        .where('id', '=', 'ws-personal')
+        .execute()
+      const plan = await planOAuthWorkspaceIntegration(db, {
+        domain: 'example.com',
+        email: 'author@example.com',
+        source: 'google_hd',
+      })
+      expect(plan.executable).toBe(true)
+      expect(plan.storageBytes).toBe(40)
+      if (changed) {
+        // Change only physical file bytes BEFORE the sequential batch. Logical version totals stay fixed.
+        await expect(
+          applyOAuthWorkspaceIntegration(
+            db,
+            plan,
+            {
+              confirmShareables: [
+                {
+                  id: 's1',
+                  before: 'ws-personal:private',
+                  after: 'ws-org:private',
+                },
+              ],
+            },
+            {
+              batch: async (...queries) => {
+                await db
+                  .updateTable('version_files')
+                  .set({ size_bytes: 20 })
+                  .where('id', '=', 'v2-data-v2')
+                  .execute()
+                for (const query of queries) await query.execute()
+              },
+            },
+          ),
+        ).rejects.toThrow('NOT NULL constraint failed: audit_events.action')
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .select(['id', 'storage_used_bytes'])
+            .where('id', 'in', ['ws-personal', 'ws-org'])
+            .orderBy('id')
+            .execute(),
+        ).toEqual([
+          { id: 'ws-org', storage_used_bytes: 0 },
+          { id: 'ws-personal', storage_used_bytes: 40 },
+        ])
+        return
+      }
+      const result = await applyOAuthWorkspaceIntegration(db, plan, {
+        confirmShareables: [
+          { id: 's1', before: 'ws-personal:private', after: 'ws-org:private' },
+        ],
+      })
+      expect(result.kind).toBe('applied')
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select(['id', 'storage_used_bytes'])
+          .where('id', 'in', ['ws-personal', 'ws-org'])
+          .orderBy('id')
+          .execute(),
+      ).toEqual([
+        { id: 'ws-org', storage_used_bytes: 40 },
+        { id: 'ws-personal', storage_used_bytes: 0 },
+      ])
+    },
+  )
+
   test('plans and applies an empty personal workspace without changing visibility', async () => {
     const db = setup()
     await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })

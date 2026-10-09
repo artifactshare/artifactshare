@@ -45,6 +45,8 @@ export async function runStaticSiteVersionUpload(
     waitUntil?: (promise: Promise<unknown>) => void
     authority?: CliAuthority | null
     label?: string
+    baseVersionId?: string
+    deletePaths?: string[]
     expectedCurrentVersionId?: string
     agentProfileId?: string | null
   } = {},
@@ -55,6 +57,8 @@ export async function runStaticSiteVersionUpload(
     shareableId,
     options.touchArtifactKeyId ?? null,
     {
+      baseVersionId: options.baseVersionId,
+      deletePaths: options.deletePaths,
       ...(options.label !== undefined ? { label: options.label } : {}),
       ...(options.waitUntil ? { waitUntil: options.waitUntil } : {}),
       ...(options.authority ? { authority: options.authority } : {}),
@@ -66,7 +70,7 @@ export async function runStaticSiteVersionUpload(
         : {}),
     },
   )
-  if (begun.kind !== 'ok') return staticSiteSessionBeginResponse(begun)
+  if (begun.kind !== 'ok') return staticSiteSessionBeginResponse(request, begun)
   const { session } = begun
 
   try {
@@ -101,7 +105,7 @@ export async function runStaticSiteVersionUpload(
     throw error
   }
 
-  if (session.fileCount === 0) {
+  if (session.fileCount === 0 && !options.baseVersionId) {
     await session.abort()
     return errorResponse('missing-file', 'File is required.', 400)
   }
@@ -122,9 +126,13 @@ export async function runStaticSiteVersionUpload(
 }
 
 function staticSiteSessionBeginResponse(
+  request: Request,
   result: Exclude<StaticSiteBundleVersionUploadSessionResult, { kind: 'ok' }>,
 ): Response {
   switch (result.kind) {
+    case 'version-conflict':
+    case 'validation-failed':
+      return staticSiteBundleResponse(request, result)
     case 'not-found':
       return errorResponse('not-found', 'Shareable not found.', 404)
     case 'copy-forbidden':

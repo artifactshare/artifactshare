@@ -4373,6 +4373,481 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  async function seedBaseFiles(paths = ['/index.html']) {
+    for (const [index, path] of paths.entries()) {
+      await db
+        .insertInto('version_files')
+        .values({
+          id: `base-file-${index}`,
+          version_id: 'bv1',
+          path,
+          r2_key: `ws-a/bundle1/bv1${path}`,
+          size_bytes: 10,
+          mime_type: path.endsWith('.html')
+            ? 'text/html'
+            : 'application/octet-stream',
+          sha256: `hash-${index}`,
+          scan_flags: 'base-flags',
+          created_at: '2026-09-01',
+        })
+        .execute()
+    }
+    await db
+      .updateTable('versions')
+      .set({ size_bytes: paths.length * 10 })
+      .where('id', '=', 'bv1')
+      .execute()
+    await db
+      .updateTable('workspaces')
+      .set({ storage_used_bytes: paths.length * 10 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+  }
+
+  async function inherit(
+    options: { baseVersionId?: string; deletePaths?: string[] } = {},
+  ) {
+    const begun = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      OWNER,
+      'bundle1',
+      null,
+      { baseVersionId: 'bv1', ...options },
+    )
+    if (begun.kind !== 'ok') throw new Error(`expected session: ${begun.kind}`)
+    return begun.session
+  }
+
+  test('inherits ten UI objects and metadata, writing and reserving only replacement data', async () => {
+    await seedBaseFiles([
+      '/index.html',
+      ...Array.from({ length: 9 }, (_, i) => `/ui/${i}.js`),
+      '/data/a.parquet',
+    ])
+    const session = await inherit()
+    expect(
+      await session.addFile(
+        siteFile('/data/a.parquet', 7, 'application/octet-stream'),
+      ),
+    ).toEqual({ kind: 'ok' })
+    let statements: Array<{ sql: string; params: unknown[] }> = []
+    sqliteRef.beforeNextBatch = async (stmts) => {
+      statements = stmts
+    }
+    expect(await session.commitVersion()).toMatchObject({
+      kind: 'ok',
+      number: 2,
+    })
+    const files = await db
+      .selectFrom('version_files')
+      .selectAll()
+      .where('version_id', '=', session.versionId)
+      .execute()
+    expect(files).toHaveLength(11)
+    expect(files.filter((file) => file.path !== '/data/a.parquet')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: '/index.html',
+          r2_key: 'ws-a/bundle1/bv1/index.html',
+          size_bytes: 10,
+          sha256: 'hash-0',
+          mime_type: 'text/html',
+          scan_flags: 'base-flags',
+        }),
+      ]),
+    )
+    expect(files.find((file) => file.path === '/data/a.parquet')?.r2_key).toBe(
+      `${session.r2Prefix}data/a.parquet`,
+    )
+    expect(storageMock.putArtifact).toHaveBeenCalledTimes(1)
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 117 })
+    const expectedHash = Buffer.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(
+            files
+              .map((file) => `${file.path}\0${file.size_bytes}\0${file.sha256}`)
+              .sort()
+              .join('\n'),
+          ),
+        ),
+      ),
+    ).toString('base64url')
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['r2_key', 'size_bytes', 'sha256'])
+        .where('id', '=', session.versionId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      r2_key: 'ws-a/bundle1/bv1/index.html',
+      size_bytes: 107,
+      sha256: expectedHash,
+    })
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', 'bundle1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ name: 'Old Site', derived_title: 'Old Site' })
+    const inherited = statements.find((statement) =>
+      statement.sql.includes('randomblob'),
+    )
+    expect(inherited?.sql).toMatch(/insert into "version_files".*select/i)
+    expect(inherited?.sql).toContain('current_version_id')
+    expect(inherited?.params).not.toContain('base-flags')
+  })
+
+  test('delete-only updates exclude over 100 normalized paths without copying or reserving bytes', async () => {
+    const paths = Array.from({ length: 120 }, (_, i) => `/data/${i}.json`)
+    await seedBaseFiles(['/index.html', ...paths])
+    const session = await inherit({ deletePaths: [...paths, './data/0.json'] })
+    expect((await session.commitVersion()).kind).toBe('ok')
+    expect(
+      await db
+        .selectFrom('version_files')
+        .select('path')
+        .where('version_id', '=', session.versionId)
+        .execute(),
+    ).toEqual([{ path: '/index.html' }])
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 1210 })
+    expect(
+      await db
+        .selectFrom('version_files')
+        .select('id')
+        .where('version_id', '=', 'bv1')
+        .execute(),
+    ).toHaveLength(121)
+  })
+
+  test('rejects overlap, missing resulting entrypoint, and case-only collisions', async () => {
+    await seedBaseFiles(['/index.html', '/App.js'])
+    const overlap = await inherit({ deletePaths: ['App.js'] })
+    expect(
+      await overlap.addFile(siteFile('/App.js', 1, 'text/javascript')),
+    ).toEqual({ kind: 'validation-failed' })
+    await overlap.abort()
+    const missing = await inherit({ deletePaths: ['index.html'] })
+    expect(await missing.commitVersion()).toEqual({
+      kind: 'missing-entrypoint',
+    })
+    const collision = await inherit()
+    await collision.addFile(siteFile('/app.js', 1, 'text/javascript'))
+    expect(await collision.commitVersion()).toEqual({
+      kind: 'duplicate-path',
+      path: '/app.js',
+    })
+    const renamed = await inherit({ deletePaths: ['App.js'] })
+    await renamed.addFile(siteFile('/app.js', 1, 'text/javascript'))
+    expect((await renamed.commitVersion()).kind).toBe('ok')
+  })
+
+  test('rejects stale bases and compensates only sent bytes when the publish guard loses', async () => {
+    await seedBaseFiles()
+    expect(
+      await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { baseVersionId: 'missing' },
+      ),
+    ).toEqual({ kind: 'version-conflict', currentVersionId: 'bv1' })
+    const session = await inherit()
+    await session.addFile(siteFile('/data.json', 7, 'application/json'))
+    // This changes the pointer BEFORE the sequential batch, not concurrently.
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ current_version_id: null })
+        .where('id', '=', 'bundle1')
+        .execute()
+    }
+    expect(await session.commitVersion()).toEqual({
+      kind: 'version-conflict',
+      currentVersionId: null,
+    })
+    expect(
+      await db
+        .selectFrom('version_files')
+        .select('id')
+        .where('version_id', '=', session.versionId)
+        .execute(),
+    ).toEqual([])
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('id')
+        .where('id', '=', session.versionId)
+        .execute(),
+    ).toEqual([])
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 10 })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalledWith(
+      expect.anything(),
+      session.r2Prefix,
+    )
+    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+  })
+
+  test('checks resulting size again inside publication and leaves no partial manifest', async () => {
+    await seedBaseFiles()
+    const session = await inherit()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('version_files')
+        .set({ size_bytes: 26 * 1024 * 1024 })
+        .where('version_id', '=', 'bv1')
+        .execute()
+    }
+    expect(await session.commitVersion()).toMatchObject({ kind: 'too-large' })
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('id')
+        .where('id', '=', session.versionId)
+        .execute(),
+    ).toEqual([])
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select('current_version_id')
+        .where('id', '=', 'bundle1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ current_version_id: 'bv1' })
+  })
+
+  test.each(['versions', 'version_files'] as const)(
+    'artifact deletion preserves keys referenced by another artifact through %s',
+    async (reference) => {
+      await seedBaseFiles(['/index.html', '/data.json'])
+      await seedShareableWithVersions(db, {
+        shareableId: 'other-site',
+        artifactKind: reference === 'versions' ? 'html_page' : 'static_site',
+        versions: [
+          {
+            id: 'other-v1',
+            r2Key:
+              reference === 'versions'
+                ? 'ws-a/bundle1/bv1/index.html'
+                : 'other.html',
+            sizeBytes: 10,
+          },
+        ],
+      })
+      if (reference === 'version_files') {
+        await db
+          .insertInto('version_files')
+          .values({
+            id: 'other-f1',
+            version_id: 'other-v1',
+            path: '/index.html',
+            r2_key: 'ws-a/bundle1/bv1/index.html',
+            size_bytes: 10,
+            sha256: 'hash-0',
+            mime_type: 'text/html',
+            created_at: '2026-09-01',
+          })
+          .execute()
+      }
+      expect(await deleteShareable(db, OWNER, 'bundle1')).toEqual({
+        kind: 'ok',
+      })
+      expect(
+        storageMock.deleteArtifact.mock.calls.map((call) => call[1]),
+      ).toEqual(['ws-a/bundle1/bv1/data.json'])
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select('storage_used_bytes')
+          .where('id', '=', OWNER.workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ storage_used_bytes: 10 })
+      expect(
+        await db
+          .selectFrom('versions')
+          .select('id')
+          .where('id', '=', 'other-v1')
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ id: 'other-v1' })
+    },
+  )
+
+  test('delete-only inheritance can reduce retained storage when the workspace is already over quota', async () => {
+    await seedBaseFiles(['/index.html', '/data.json'])
+    await db
+      .updateTable('workspaces')
+      .set({ storage_quota_bytes: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const session = await inherit({ deletePaths: ['/data.json'] })
+    expect((await session.commitVersion()).kind).toBe('ok')
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('inheritance parameters on a non-static artifact are validation errors', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'html_page' })
+      .where('id', '=', 'bundle1')
+      .execute()
+    expect(
+      await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { baseVersionId: 'bv1' },
+      ),
+    ).toEqual({ kind: 'validation-failed' })
+    expect(
+      await beginStaticSiteBundleVersionUploadSession(db, OWNER, 'bundle1'),
+    ).toEqual({ kind: 'copy-forbidden' })
+  })
+
+  test('resulting file-count limits include inherited files, and deletions free manifest slots', async () => {
+    await seedBaseFiles([
+      '/index.html',
+      ...Array.from({ length: 49 }, (_, i) => `/data/${i}.json`),
+    ])
+    const over = await inherit()
+    await over.addFile(siteFile('/added.json', 1, 'application/json'))
+    expect(await over.commitVersion()).toEqual({
+      kind: 'too-many-files',
+      limit: 50,
+    })
+    const fits = await inherit({ deletePaths: ['/data/0.json'] })
+    await fits.addFile(siteFile('/added.json', 1, 'application/json'))
+    expect((await fits.commitVersion()).kind).toBe('ok')
+    expect(
+      await db
+        .selectFrom('version_files')
+        .select('id')
+        .where('version_id', '=', fits.versionId)
+        .execute(),
+    ).toHaveLength(50)
+  })
+
+  test('a sent entrypoint updates the title while an inherited markdown entrypoint keeps it', async () => {
+    await seedBaseFiles(['/index.md', '/data.json'])
+    const markdown = await inherit()
+    expect((await markdown.commitVersion()).kind).toBe('ok')
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['entrypoint_path', 'fallback_to_index'])
+        .where('id', '=', markdown.versionId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ entrypoint_path: '/index.md', fallback_to_index: 0 })
+    const html = await inherit({ baseVersionId: markdown.versionId })
+    await html.addFile(
+      siteTextFile('/index.html', '<title>Updated Site</title>', 'text/html'),
+    )
+    expect((await html.commitVersion()).kind).toBe('ok')
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['name', 'derived_title'])
+        .where('id', '=', 'bundle1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ name: 'Updated Site', derived_title: 'Updated Site' })
+    expect(
+      await db
+        .selectFrom('versions')
+        .select(['entrypoint_path', 'fallback_to_index'])
+        .where('id', '=', html.versionId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ entrypoint_path: '/index.html', fallback_to_index: 1 })
+  })
+
+  test.each([
+    '../secret.json',
+    'data/file?query',
+    '',
+    'a/'.repeat(11) + 'data.json',
+    'a'.repeat(257),
+  ])('rejects malformed deletion %s before writing R2', async (path) => {
+    expect(
+      await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        { baseVersionId: 'bv1', deletePaths: [path] },
+      ),
+    ).toEqual({ kind: 'validation-failed' })
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('retain-one publication preserves inherited objects and releases only replaced data', async () => {
+    await seedBaseFiles(['/index.html', '/data.json'])
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', 'bundle1')
+      .execute()
+    const session = await inherit()
+    await session.addFile(siteFile('/data.json', 7, 'application/json'))
+    expect((await session.commitVersion()).kind).toBe('ok')
+    expect(
+      storageMock.deleteArtifact.mock.calls.map((call) => call[1]),
+    ).toEqual(['ws-a/bundle1/bv1/data.json'])
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 17 })
+    expect(
+      await db
+        .selectFrom('version_files')
+        .select('r2_key')
+        .where('version_id', '=', session.versionId)
+        .where('path', '=', '/index.html')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ r2_key: 'ws-a/bundle1/bv1/index.html' })
+  })
+
+  test('artifact deletion releases shared entrypoints once', async () => {
+    await seedBaseFiles(['/index.html', '/data.json'])
+    const session = await inherit()
+    expect((await session.commitVersion()).kind).toBe('ok')
+    expect(await deleteShareable(db, OWNER, 'bundle1')).toEqual({ kind: 'ok' })
+    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(2)
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ storage_used_bytes: 0 })
+    expect(await deleteShareable(db, OWNER, 'bundle1')).toEqual({
+      kind: 'not-found',
+    })
+    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(2)
+  })
+
   test('returns its committed number when another publish prunes it before the batch returns', async () => {
     await db
       .updateTable('shareables')
