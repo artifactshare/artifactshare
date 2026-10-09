@@ -3,6 +3,7 @@ import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, expect, test, vi } from 'vitest'
 import { server } from 'vitest/browser'
+import { toast } from 'sonner'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '~/lib/csp-reporter'
 import {
   SandboxFrame,
@@ -11,6 +12,7 @@ import {
 import { AnonymousViewerSignInControl } from './+components/anonymous-viewer-sign-in'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+vi.mock('sonner', () => ({ toast: vi.fn() }))
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
   return { useT: () => bindI18n('en') }
@@ -265,6 +267,52 @@ test.each(['/index.html', '/start.html'])(
     )
     await report(frame, token, { path: entrypointPath, hash: '#returned' })
     expect(window.location.hash).toBe('#returned')
+  },
+)
+
+test.each(['network error', 'non-success response'])(
+  'failed link refresh preserves the current document hash sync: %s',
+  async (failure) => {
+    window.history.replaceState(null, '', '#entry')
+    documentUrl()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    await act(async () => {
+      root = createRoot(host)
+      root.render(
+        <SandboxFrame
+          {...props({
+            renderType: 'static_site',
+            linkNavigationMode: 'site',
+            bundlePaths: ['/index.html', '/other.html'],
+          })}
+        />,
+      )
+    })
+    const { frame, token } = await ready(host)
+    const src = frame.src
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60 * 1000)
+    const fetch = vi.fn(async () => {
+      if (failure === 'network error') throw new TypeError('Failed to fetch')
+      return new Response('', { status: 503 })
+    })
+    vi.stubGlobal('fetch', fetch)
+    vi.mocked(toast).mockClear()
+    await report(frame, token, {
+      kind: 'link-clicked',
+      href: new URL('/other.html', window.location.origin).href,
+    })
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(1))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('iframe')).toBe(frame)
+    expect(frame.src).toBe(src)
+    expect(
+      host
+        .querySelector('[data-sandbox-state]')
+        ?.getAttribute('data-sandbox-state'),
+    ).toBe('ready')
+    await report(frame, token, { hash: '#after-failed-refresh' })
+    expect(window.location.hash).toBe('#after-failed-refresh')
   },
 )
 

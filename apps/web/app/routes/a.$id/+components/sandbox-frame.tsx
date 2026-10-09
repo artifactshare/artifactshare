@@ -704,9 +704,6 @@ function useSandboxFrameController({
         mode: linkNavigationMode,
       })
       if (action.kind === 'allow-frame') {
-        securityTokenRef.current = null
-        hashSync.flush()
-        securityChallengeRef.current = createSandboxChallenge()
         onFramePathChange?.(
           normalizeStaticSiteFramePath(new URL(action.url).pathname),
         )
@@ -716,6 +713,9 @@ function useSandboxFrameController({
         const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
         const needsRefresh = Date.now() - lastStaticSiteAuthAt > 9 * 60 * 1000
         if (!needsRefresh) {
+          securityTokenRef.current = null
+          hashSync.flush()
+          securityChallengeRef.current = createSandboxChallenge()
           clearReadyFallback()
           setViolations([])
           setLoadState('loading')
@@ -730,6 +730,11 @@ function useSandboxFrameController({
             toast(t('toast.linkRecoveryFailed'))
             return
           }
+          // The current document remains active when refresh fails. Invalidate
+          // its handshake only once the replacement navigation can proceed.
+          securityTokenRef.current = null
+          hashSync.flush()
+          securityChallengeRef.current = createSandboxChallenge()
           staticSiteAuthRef.current = Date.now()
           clearReadyFallback()
           setViolations([])
