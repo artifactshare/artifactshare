@@ -27,6 +27,15 @@ export function isViewerRateLimitedPath(request: Request): boolean {
     )
   }
   if (request.method !== 'GET' && request.method !== 'HEAD') return false
+  if (
+    segments.length === 5 &&
+    segments[0] === '' &&
+    decodeSegment(segments[1]) === 'api' &&
+    decodeSegment(segments[2]) === 'shareables' &&
+    segments[3] &&
+    decodeSegment(segments[4]) === 'current-version'
+  )
+    return true
   if (segments[0] !== '' || decodeSegment(segments[1]) !== 'a') return false
   if (!segments[2]) return false
   return (

@@ -199,6 +199,44 @@ describe('app worker link-domain routing', () => {
     expect(forwarded?.headers.has('cookie')).toBe(false)
   })
 
+  test.each([
+    ['GET', 'abc123def4', 200],
+    ['HEAD', 'abc123def4', 200],
+    ['GET', 'link123abc', 404],
+    ['POST', 'abc123def4', 404],
+    ['DELETE', 'abc123def4', 404],
+  ])(
+    'current-version %s for %s returns %s on a link host',
+    async (method, id, status) => {
+      const response = await app.fetch(
+        workerRequest(
+          `https://abc123def4.artifactshare.link/api/shareables/${id}/current-version`,
+          {
+            method,
+            headers: {
+              cookie: 'better-auth.session_token=session',
+              authorization: 'Bearer token',
+            },
+          },
+        ),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+      expect(response.status).toBe(status)
+      if (status === 200) {
+        const forwarded = requestHandlerMock.mock.calls.at(-1)![0]!
+        expect(new URL(forwarded.url).pathname).toBe(
+          `/api/shareables/${id}/current-version`,
+        )
+        expect(forwarded.method).toBe(method)
+        expect(forwarded.headers.has('cookie')).toBe(false)
+        expect(forwarded.headers.has('authorization')).toBe(false)
+      } else {
+        expect(requestHandlerMock).not.toHaveBeenCalled()
+      }
+    },
+  )
+
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
       '/api/shareables/abc123def4/versions?version=1',
@@ -681,28 +719,29 @@ describe('app worker workflow spike route', () => {
 })
 
 describe('app worker viewer rate limit', () => {
-  test.each(['/a/share123', '/a/share123/og-image'])(
-    'rejects %s before the application handler',
-    async (pathname) => {
-      const limit = vi.fn().mockResolvedValue({ success: false })
-      const response = await app.fetch(
-        workerRequest(`https://artifactshare.com${pathname}`, {
-          headers: { 'cf-connecting-ip': '203.0.113.10' },
-        }),
-        {
-          ...productionEnv({ maintenance: false }),
-          VIEWER_RATELIMIT: { limit },
-        } as unknown as Cloudflare.Env,
-        executionContext(),
-      )
+  test.each([
+    '/a/share123',
+    '/a/share123/og-image',
+    '/api/shareables/abc123def4/current-version',
+  ])('rejects %s before the application handler', async (pathname) => {
+    const limit = vi.fn().mockResolvedValue({ success: false })
+    const response = await app.fetch(
+      workerRequest(`https://artifactshare.com${pathname}`, {
+        headers: { 'cf-connecting-ip': '203.0.113.10' },
+      }),
+      {
+        ...productionEnv({ maintenance: false }),
+        VIEWER_RATELIMIT: { limit },
+      } as unknown as Cloudflare.Env,
+      executionContext(),
+    )
 
-      expect(response.status).toBe(429)
-      expect(requestHandlerMock).not.toHaveBeenCalled()
-      expect(limit).toHaveBeenCalledWith({ key: '203.0.113.10' })
-    },
-  )
+    expect(response.status).toBe(429)
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+    expect(limit).toHaveBeenCalledWith({ key: '203.0.113.10' })
+  })
 
-  test.each(['/', '/_.data'])(
+  test.each(['/', '/_.data', '/api/shareables/abc123def4/current-version'])(
     'rate limits the per-ID viewer path %s',
     async (path) => {
       const limit = vi.fn().mockResolvedValue({ success: false })
