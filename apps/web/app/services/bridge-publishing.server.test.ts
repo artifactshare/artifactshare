@@ -43,8 +43,10 @@ const bucket = vi.hoisted(() => ({
       uploaded: new Date(),
     }
   }),
-  delete: vi.fn(async (key: string) => {
-    bucketState.delete(key)
+  delete: vi.fn(async (keys: string | string[]) => {
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      bucketState.delete(key)
+    }
   }),
   list: vi.fn(async () => ({ objects: [], truncated: false })),
 }))
@@ -1750,6 +1752,7 @@ describe('bridge file publishing', () => {
       expect(first.kind).toBe('ok')
       if (first.kind !== 'ok') return
 
+      const [firstKey] = bucketState.keys()
       sqlite
         .prepare('UPDATE shareables SET retain_versions = ? WHERE id = ?')
         .run(retain, first.result.artifact.id)
@@ -1788,6 +1791,9 @@ describe('bridge file publishing', () => {
       ).toEqual({ count: failPruning ? 2 : (retain ?? 2) })
       expect(bucketState.size).toBe(failPruning ? 2 : (retain ?? 2))
       if (retain === 1 && !failPruning) {
+        expect(bucket.delete).toHaveBeenCalledExactlyOnceWith([firstKey])
+        expect(bucketState.has(firstKey!)).toBe(false)
+        expect([...bucketState.values()]).toEqual([nextBody])
         expect(
           sqlite
             .prepare('SELECT id FROM versions WHERE id = ?')

@@ -1,5 +1,6 @@
 import {
-  objectIsReferenced,
+  OBJECT_REFERENCE_CHUNK,
+  unreferencedObjectKeys,
   releasedObjectBytes,
 } from './physical-storage.server'
 import { pruneVersionsAfterPublish } from './version-retention.server'
@@ -53,6 +54,7 @@ import {
   artifactContentType,
   artifactR2Key,
   deleteArtifactsByPrefix,
+  deleteArtifacts,
   deleteArtifact,
   putArtifact,
 } from './storage.server'
@@ -1294,22 +1296,19 @@ export async function deleteShareable(
       ...versionFiles.map((f) => f.r2_key),
     ]),
   )
-  for (const keys of chunkArray(allKeys, 8)) {
-    const deleteResults = await Promise.allSettled(
-      keys.map(async (key) => {
-        if (!(await objectIsReferenced(db, key)))
-          await deleteArtifact(env.BUCKET, key)
-      }),
-    )
-    deleteResults.forEach((result, index) => {
-      if (result.status === 'rejected') {
+  for (const keys of chunkArray(allKeys, OBJECT_REFERENCE_CHUNK)) {
+    try {
+      const unreferenced = await unreferencedObjectKeys(db, keys)
+      await deleteArtifacts(env.BUCKET, unreferenced)
+    } catch (err) {
+      for (const key of keys) {
         console.error('r2_orphan_after_delete', {
           shareable_id: shareableId,
-          r2_key: keys[index],
-          err: result.reason,
+          r2_key: key,
+          err,
         })
       }
-    })
+    }
   }
 
   return { kind: 'ok' }

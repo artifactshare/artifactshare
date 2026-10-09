@@ -1107,3 +1107,18 @@ it('static-site inheritance query requires a single nonempty base and matching e
     false,
   )
 })
+
+it.each(['', '   '])(
+  'treats empty expected_version %j as absent with or without a base',
+  (expected_version) => {
+    for (const base_version of [undefined, 'v1']) {
+      expect(
+        ArtifactVersionUpdateQuerySchema.parse({
+          artifact_kind: 'static_site',
+          base_version,
+          expected_version,
+        }),
+      ).toMatchObject({ expected_version: undefined, base_version })
+    }
+  },
+)

@@ -13,6 +13,7 @@ const storageMock = vi.hoisted(() => ({
   putArtifact: vi.fn(),
   getArtifact: vi.fn(),
   deleteArtifact: vi.fn(),
+  deleteArtifacts: vi.fn(),
   deleteArtifactsByPrefix: vi.fn(),
   headArtifact: vi.fn(),
   artifactR2Key: vi.fn(
@@ -593,6 +594,7 @@ describe('uploadShareable', () => {
     artifactLiveMock.getByName.mockClear()
     artifactLiveMock.notifyVersionChanged.mockClear()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -3013,6 +3015,7 @@ describe('StaticSiteBundleUploadSession', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -4258,6 +4261,7 @@ describe('generateUniqueShareableId', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -4353,6 +4357,7 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db, { storageUsedBytes: 100 })
@@ -4674,7 +4679,7 @@ describe('StaticSiteBundleVersionUploadSession', () => {
         kind: 'ok',
       })
       expect(
-        storageMock.deleteArtifact.mock.calls.map((call) => call[1]),
+        storageMock.deleteArtifacts.mock.calls.flatMap((call) => call[1]),
       ).toEqual(['ws-a/bundle1/bv1/data.json'])
       expect(
         await db
@@ -4810,7 +4815,7 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     await session.addFile(siteFile('/data.json', 7, 'application/json'))
     expect((await session.commitVersion()).kind).toBe('ok')
     expect(
-      storageMock.deleteArtifact.mock.calls.map((call) => call[1]),
+      storageMock.deleteArtifacts.mock.calls.flatMap((call) => call[1]),
     ).toEqual(['ws-a/bundle1/bv1/data.json'])
     expect(
       await db
@@ -4834,7 +4839,11 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     const session = await inherit()
     expect((await session.commitVersion()).kind).toBe('ok')
     expect(await deleteShareable(db, OWNER, 'bundle1')).toEqual({ kind: 'ok' })
-    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(2)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledTimes(1)
+    expect(storageMock.deleteArtifacts.mock.calls[0]?.[1]).toEqual([
+      'ws-a/bundle1/bv1/index.html',
+      'ws-a/bundle1/bv1/data.json',
+    ])
     expect(
       await db
         .selectFrom('workspaces')
@@ -4845,7 +4854,7 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     expect(await deleteShareable(db, OWNER, 'bundle1')).toEqual({
       kind: 'not-found',
     })
-    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(2)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledTimes(1)
   })
 
   test('returns its committed number when another publish prunes it before the batch returns', async () => {
@@ -4968,9 +4977,9 @@ describe('StaticSiteBundleVersionUploadSession', () => {
           .execute(),
       ).toEqual([{ number }])
       for (const key of previousKeys)
-        expect(storageMock.deleteArtifact).toHaveBeenCalledWith(
+        expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(
           expect.anything(),
-          key,
+          expect.arrayContaining([key]),
         )
       previousKeys = (
         await db
@@ -5346,6 +5355,7 @@ describe('createVersion', () => {
     artifactLiveMock.getByName.mockClear()
     artifactLiveMock.notifyVersionChanged.mockClear()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -5497,7 +5507,7 @@ describe('createVersion', () => {
         ).toEqual({ storage_used_bytes: file.size })
         current = result.versionId
       }
-      expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(3)
+      expect(storageMock.deleteArtifacts).toHaveBeenCalledTimes(3)
     },
   )
 
@@ -5906,6 +5916,7 @@ describe('cross-workspace owner operations', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -7507,6 +7518,7 @@ describe('deleteShareable', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db, { storageUsedBytes: 3500 })
@@ -7527,7 +7539,7 @@ describe('deleteShareable', () => {
 
   test('commits the D1 batch first, then deletes R2 objects, and decrements storage_used_bytes', async () => {
     let rowGoneAtR2Delete: boolean | null = null
-    storageMock.deleteArtifact.mockImplementation(async () => {
+    storageMock.deleteArtifacts.mockImplementation(async () => {
       if (rowGoneAtR2Delete === null) {
         const row = await db
           .selectFrom('shareables')
@@ -7542,7 +7554,7 @@ describe('deleteShareable', () => {
 
     expect(result).toEqual({ kind: 'ok' })
     expect(rowGoneAtR2Delete).toBe(true)
-    expect(storageMock.deleteArtifact).toHaveBeenCalledTimes(2)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledTimes(1)
 
     const workspace = await db
       .selectFrom('workspaces')
@@ -7556,7 +7568,7 @@ describe('deleteShareable', () => {
     const result = await deleteShareable(db, OWNER, 'missing')
 
     expect(result).toEqual({ kind: 'not-found' })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
 
     const workspace = await db
       .selectFrom('workspaces')
@@ -7603,7 +7615,7 @@ describe('deleteShareable', () => {
     expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
       [],
     )
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('returns delete-failed and skips cleanup when the atomic batch throws', async () => {
@@ -7619,7 +7631,7 @@ describe('deleteShareable', () => {
         .where('id', '=', 'share1')
         .executeTakeFirst(),
     ).resolves.toEqual({ id: 'share1' })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('refuses deletion when ownership transfers before the batch', async () => {
@@ -7650,7 +7662,7 @@ describe('deleteShareable', () => {
       storage_used_bytes: 3500,
       storage_updated_at: '2026-05-22T00:00:00.000Z',
     })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('refuses deletion when a bot owner is stopped before the batch', async () => {
@@ -7703,7 +7715,7 @@ describe('deleteShareable', () => {
       storage_used_bytes: 3500,
       storage_updated_at: '2026-05-22T00:00:00.000Z',
     })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('deletes both versions.r2_key and version_files.r2_key for a static_site bundle', async () => {
@@ -7790,7 +7802,7 @@ describe('deleteShareable', () => {
     const result = await deleteShareable(db, OWNER, 'bundle1')
 
     expect(result).toEqual({ kind: 'ok' })
-    const deletedKeys = storageMock.deleteArtifact.mock.calls.map(
+    const deletedKeys = storageMock.deleteArtifacts.mock.calls.flatMap(
       (call) => call[1],
     )
     expect(deletedKeys.sort()).toEqual([
@@ -7801,9 +7813,11 @@ describe('deleteShareable', () => {
   })
 
   test('R2 delete failures are tolerated (best-effort, logged) and D1 still removes the row', async () => {
-    storageMock.deleteArtifact.mockImplementation(async (key: string) => {
-      if (key.includes('/v1/')) throw new Error('R2 down')
-    })
+    storageMock.deleteArtifacts.mockImplementation(
+      async (_bucket, keys: string[]) => {
+        if (keys.some((key) => key.includes('/v1/'))) throw new Error('R2 down')
+      },
+    )
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const result = await deleteShareable(db, OWNER, 'share1')
@@ -7894,9 +7908,9 @@ describe('deleteShareable', () => {
     })
 
     expect(result).toEqual({ kind: 'ok' })
-    expect(storageMock.deleteArtifact).toHaveBeenCalledWith(
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledWith(
       expect.anything(),
-      `${EXT_WS}/poster-share/v1/poster.html`,
+      [`${EXT_WS}/poster-share/v1/poster.html`],
     )
     const remaining = await db
       .selectFrom('shareables')
@@ -7967,7 +7981,7 @@ describe('deleteShareable', () => {
     expect(await db.selectFrom('audit_events').selectAll().execute()).toEqual(
       [],
     )
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('manager deletion is refused when an individual grant is removed before the batch', async () => {
@@ -8010,7 +8024,7 @@ describe('deleteShareable', () => {
         .where('id', '=', 'manager-private-race')
         .executeTakeFirst(),
     ).resolves.toEqual({ id: 'manager-private-race' })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('manager deletion is refused when project visibility is lost before the batch', async () => {
@@ -8047,7 +8061,7 @@ describe('deleteShareable', () => {
       id: 'manager-visibility-race',
       visibility: 'private',
     })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
   })
 
   test('manager cannot delete another poster private shareable', async () => {
@@ -8160,7 +8174,7 @@ describe('deleteShareable', () => {
     const result = await deleteShareable(db, OWNER, uploaded.id)
 
     expect(result).toEqual({ kind: 'not-found' })
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
 
     const events = await db.selectFrom('audit_events').select('id').execute()
     expect(events).toHaveLength(0)
@@ -8242,7 +8256,7 @@ describe('deleteShareable', () => {
       .where('id', '=', 'opt-in-required')
       .executeTakeFirst()
     expect(remaining?.id).toBe('opt-in-required')
-    expect(storageMock.deleteArtifact).not.toHaveBeenCalled()
+    expect(storageMock.deleteArtifacts).not.toHaveBeenCalled()
     const events = await db.selectFrom('audit_events').select('id').execute()
     expect(events).toHaveLength(0)
   })
@@ -8259,6 +8273,7 @@ describe('stable keys (publish --key)', () => {
     sqliteRef.beforeNextBatch = null
     nanoidMock.reset()
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seed(db)
@@ -8660,6 +8675,7 @@ describe('member removal credential blocking', () => {
       'version4',
     )
     storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
     storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
     await seedTeamWorkspaceForRemoval(db)

@@ -1,5 +1,6 @@
 import {
-  objectIsReferenced,
+  OBJECT_REFERENCE_CHUNK,
+  unreferencedObjectKeys,
   releasedObjectBytes,
 } from './physical-storage.server'
 import { env } from 'cloudflare:workers'
@@ -7,7 +8,7 @@ import { sql, type Kysely } from 'kysely'
 import { runD1BatchWithResults } from '~/lib/d1-batch.server'
 import { nowIso } from '~/lib/datetime'
 import type { DB } from '~/types/db'
-import { deleteArtifact } from './storage.server'
+import { deleteArtifacts } from './storage.server'
 
 // Re-evaluated inside the atomic batch: concurrent publishes/settings changes
 // cannot make a current version eligible or release the same quota twice.
@@ -84,23 +85,34 @@ export async function pruneVersions(
       if (deleted.has(file.version_id)) keys.add(file.r2_key)
   }
   const pendingKeys = [...keys]
-  // Cap in-flight deletes even when retention is first enabled on a long history.
-  for (let offset = 0; offset < pendingKeys.length; offset += 8) {
-    await Promise.all(
-      pendingKeys.slice(offset, offset + 8).map(async (key) => {
-        try {
-          if (!(await objectIsReferenced(db, key)))
-            await deleteArtifact(env.BUCKET, key)
-        } catch (err) {
+  const chunks: string[][] = []
+  for (
+    let offset = 0;
+    offset < pendingKeys.length;
+    offset += OBJECT_REFERENCE_CHUNK
+  ) {
+    chunks.push(pendingKeys.slice(offset, offset + OBJECT_REFERENCE_CHUNK))
+  }
+  // Each worker finishes reference checking and deletion before its next chunk.
+  const cleanupWorkers = Array.from({ length: 8 }, () => Promise.resolve())
+  chunks.forEach((chunk, index) => {
+    const worker = index % cleanupWorkers.length
+    cleanupWorkers[worker] = cleanupWorkers[worker].then(async () => {
+      try {
+        const unreferenced = await unreferencedObjectKeys(db, chunk)
+        await deleteArtifacts(env.BUCKET, unreferenced)
+      } catch (err) {
+        for (const key of chunk) {
           console.error('r2_orphan_after_version_retention', {
             shareable_id: shareableId,
             r2_key: key,
             err,
           })
         }
-      }),
-    )
-  }
+      }
+    })
+  })
+  await Promise.all(cleanupWorkers)
   return deletedCount
 }
 

@@ -362,7 +362,10 @@ export const VersionLabelInputSchema = z
 export const ArtifactVersionUpdateQuerySchema = z
   .object({
     label: VersionLabelInputSchema.optional(),
-    expected_version: z.string().optional(),
+    expected_version: z
+      .string()
+      .transform((value) => value.trim() || undefined)
+      .optional(),
     artifact_kind: z.literal('static_site').optional(),
     base_version: z.string().trim().min(1).optional(),
     delete_path: z.array(z.string().min(1)).max(1000).optional(),

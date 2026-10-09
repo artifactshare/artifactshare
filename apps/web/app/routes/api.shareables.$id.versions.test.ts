@@ -68,7 +68,7 @@ function actionArgs(form: FormData) {
   )
 }
 
-function actionArgsFor(url: string, form: FormData, id = 's1') {
+function actionArgsFor(url: string, form: FormData | undefined, id = 's1') {
   return {
     request: new Request(url, {
       method: 'POST',
@@ -185,40 +185,45 @@ describe('/api/shareables/:id/versions', () => {
     )
   })
 
-  test('passes base as expected version and repeated deletions to a zero-file session', async () => {
-    beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
-      kind: 'ok',
-      session: {
-        fileCount: 0,
-        addFile: vi.fn(),
-        abort: vi.fn(),
-        commitVersion: vi.fn().mockResolvedValue({
-          kind: 'ok',
-          id: 's1',
-          versionId: 'v2',
-          number: 2,
+  test.each([undefined, new FormData()])(
+    'passes base and deletions to a zero-file session with body %s',
+    async (body) => {
+      beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          fileCount: 0,
+          addFile: vi.fn(),
+          abort: vi.fn(),
+          commitVersion: vi.fn().mockResolvedValue({
+            kind: 'ok',
+            id: 's1',
+            versionId: 'v2',
+            number: 2,
+          }),
+        },
+      })
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site&base_version=v1&delete_path=a.js&delete_path=b.js',
+          body,
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        's1',
+        null,
+        expect.objectContaining({
+          baseVersionId: 'v1',
+          expectedCurrentVersionId: 'v1',
+          deletePaths: ['a.js', 'b.js'],
         }),
-      },
-    })
-    const response = await action(
-      actionArgsFor(
-        'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site&base_version=v1&delete_path=a.js&delete_path=b.js',
-        new FormData(),
-      ),
-    )
-    expect(response.status).toBe(200)
-    expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      's1',
-      null,
-      expect.objectContaining({
-        baseVersionId: 'v1',
-        expectedCurrentVersionId: 'v1',
-        deletePaths: ['a.js', 'b.js'],
-      }),
-    )
-  })
+      )
+    },
+  )
 
   test.each([
     ['single-file', null],

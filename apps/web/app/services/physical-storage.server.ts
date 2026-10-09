@@ -16,16 +16,21 @@ export function releasedObjectBytes(
       AND NOT EXISTS (SELECT 1 FROM versions v WHERE v.r2_key = o.r2_key AND v.id NOT IN (SELECT id FROM removed)))`
 }
 
-export async function objectIsReferenced(db: Kysely<DB>, key: string) {
-  const result = await db
-    .selectNoFrom(
-      sql<number>`(
-    EXISTS (SELECT 1 FROM version_files WHERE r2_key = ${key}) OR
-    EXISTS (SELECT 1 FROM versions WHERE r2_key = ${key})
-  )`.as('referenced'),
+// Each key is bound once per reference table, leaving at most 100 bindings.
+export const OBJECT_REFERENCE_CHUNK = 50
+
+export async function unreferencedObjectKeys(db: Kysely<DB>, keys: string[]) {
+  if (keys.length === 0) return []
+  const rows = await db
+    .selectFrom('version_files')
+    .select('r2_key')
+    .where('r2_key', 'in', keys)
+    .union(
+      db.selectFrom('versions').select('r2_key').where('r2_key', 'in', keys),
     )
-    .executeTakeFirstOrThrow()
-  return Boolean(result.referenced)
+    .execute()
+  const referenced = new Set(rows.map((row) => row.r2_key))
+  return keys.filter((key) => !referenced.has(key))
 }
 
 // Callers scope versions explicitly, including their own publication policy.

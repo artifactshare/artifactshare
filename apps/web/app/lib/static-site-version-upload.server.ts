@@ -74,23 +74,24 @@ export async function runStaticSiteVersionUpload(
   const { session } = begun
 
   try {
-    await parseFormData(
-      request,
-      {
-        maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
-        maxFileSize: MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
-        maxParts: MAX_STATIC_SITE_UPLOAD_PARTS,
-        maxTotalSize: MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
-      },
-      async (file) => {
-        if (file.fieldName !== 'file') return file
-        const result = await session.addFile(file)
-        if (result.kind !== 'ok') {
-          throw new StaticSiteUpdateRejected(result)
-        }
-        return null
-      },
-    )
+    if (request.body !== null || !options.baseVersionId)
+      await parseFormData(
+        request,
+        {
+          maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
+          maxFileSize: MAX_STATIC_SITE_UPLOAD_FILE_BYTES,
+          maxParts: MAX_STATIC_SITE_UPLOAD_PARTS,
+          maxTotalSize: MAX_STATIC_SITE_UPLOAD_TOTAL_BYTES,
+        },
+        async (file) => {
+          if (file.fieldName !== 'file') return file
+          const result = await session.addFile(file)
+          if (result.kind !== 'ok') {
+            throw new StaticSiteUpdateRejected(result)
+          }
+          return null
+        },
+      )
   } catch (error) {
     if (error instanceof StaticSiteUpdateRejected) {
       await session.abort()
