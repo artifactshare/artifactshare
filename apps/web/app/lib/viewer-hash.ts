@@ -11,11 +11,11 @@ export function viewerReturnPath(path: string, hash: string) {
 
 // Keep this literal identical in server/client builds so hydration does not
 // compare differently minified function sources. The client mount path below
-// applies the same restoration before choosing src.
+// receives the restored fragment before choosing src.
 export const VIEWER_FRAME_BOOTSTRAP_SCRIPT =
   "{const u=new URL(window.location.href),h=u.searchParams.get('as_hash');if(h!==null){u.searchParams.delete('as_hash');if(h.startsWith('#')&&h.length<=2048)u.hash=h;window.history.replaceState(window.history.state,'',u.pathname+u.search+u.hash)}const f=document.currentScript.previousElementSibling;if(!f.hasAttribute('src'))f.src=f.dataset.src+window.location.hash}"
 
-// Run before choosing src so authored scripts see the restored fragment first.
+// Run at app entry before the router reads the browser location.
 export function restoreViewerHash() {
   const url = new URL(window.location.href)
   const hash = url.searchParams.get('as_hash')
@@ -29,21 +29,36 @@ export function restoreViewerHash() {
   )
 }
 
+let activeHashSync: { latest: () => string } | undefined
+
+export function latestViewerHash() {
+  return activeHashSync?.latest() ?? window.location.hash
+}
+
 /** Bound outer history writes while retaining the most recently accepted state. */
 export function createViewerHashSync() {
-  let pending: string | null = null
+  let pending: { hash: string; path: string } | null = null
+  const currentPath = () => window.location.pathname + window.location.search
+  const notify = () =>
+    window.dispatchEvent(new Event('artifactshare:hash-changed'))
   let timer: ReturnType<typeof setTimeout> | undefined
   const clear = () => {
     clearTimeout(timer)
     timer = undefined
     pending = null
+    if (activeHashSync === sync) activeHashSync = undefined
+    notify()
   }
   const flush = () => {
     clearTimeout(timer)
     timer = undefined
-    const next = pending
-    if (next === null || next === window.location.hash) {
-      pending = null
+    const next = pending?.hash
+    if (
+      !pending ||
+      pending.path !== currentPath() ||
+      next === window.location.hash
+    ) {
+      clear()
       return
     }
     try {
@@ -52,22 +67,25 @@ export function createViewerHashSync() {
         '',
         next || window.location.pathname + window.location.search,
       )
-      pending = null
-      window.dispatchEvent(new Event('artifactshare:hash-changed'))
+      clear()
     } catch {
       // Retain a denied write and retry at the same bounded rate, even if no
       // further report arrives. New reports replace pending; clear cancels it.
       if (pending !== null) timer = setTimeout(flush, 200)
     }
   }
-  return {
+  const sync = {
     clear,
     flush,
-    latest: () => pending ?? window.location.hash,
+    latest: () =>
+      pending?.path === currentPath() ? pending.hash : window.location.hash,
     accept(hash: string) {
-      pending = hash
+      pending = { hash, path: currentPath() }
+      activeHashSync = sync
+      notify()
       if (timer !== undefined) return
       timer = setTimeout(flush, 200)
     },
   }
+  return sync
 }

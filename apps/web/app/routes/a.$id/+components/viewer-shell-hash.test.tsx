@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { createViewerHashSync } from '~/lib/viewer-hash'
 import { ViewerShell, type ViewerShellArtifact } from './viewer-shell'
 
 const navigation = vi.hoisted(() => ({
@@ -56,15 +57,26 @@ const previousUrl = window.location.href
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 afterEach(() => {
   vi.unstubAllGlobals()
-  navigation.navigate.mockClear()
+  navigation.navigate.mockReset()
+  vi.useRealTimers()
   window.history.replaceState(null, '', previousUrl)
 })
 
-test.each(['comment', 'access-request'])(
-  '%s query cleanup reads the live hash and preserves other parameters',
-  async (parameter) => {
+test.each([
+  { parameter: 'comment', pending: false },
+  { parameter: 'access-request', pending: false },
+  { parameter: 'comment', pending: true },
+  { parameter: 'access-request', pending: true },
+])(
+  '$parameter query cleanup preserves the latest hash and other parameters (pending: $pending)',
+  async ({ parameter, pending }) => {
+    vi.useFakeTimers()
+    const hashSync = createViewerHashSync()
     navigation.location.search = `?${parameter}=s1&version=v1`
-    window.history.replaceState(null, '', '/#live')
+    window.history.replaceState(null, '', `/${navigation.location.search}#live`)
+    navigation.navigate.mockImplementation(({ pathname, search, hash }) => {
+      window.history.replaceState(null, '', pathname + search + hash)
+    })
     vi.stubGlobal(
       'fetch',
       vi.fn(() => new Promise<Response>(() => {})),
@@ -73,6 +85,7 @@ test.each(['comment', 'access-request'])(
     document.body.appendChild(host)
     const root = createRoot(host)
     try {
+      if (pending && parameter === 'comment') hashSync.accept('#accepted')
       await act(async () =>
         root.render(
           <ViewerShell
@@ -86,17 +99,29 @@ test.each(['comment', 'access-request'])(
       )
       if (parameter === 'access-request') {
         window.history.replaceState(null, '', '#at-close')
+        if (pending) hashSync.accept('#accepted')
         await act(async () => host.querySelector('button')!.click())
       }
       expect(navigation.navigate).toHaveBeenCalledWith(
         {
           pathname: '/a/abc123def4',
           search: '?version=v1',
-          hash: parameter === 'comment' ? '#live' : '#at-close',
+          hash: pending
+            ? '#accepted'
+            : parameter === 'comment'
+              ? '#live'
+              : '#at-close',
         },
         { replace: true, preventScrollReset: true },
       )
+      await act(async () => vi.advanceTimersByTime(200))
+      expect(window.location.pathname).toBe('/a/abc123def4')
+      expect(window.location.search).toBe('?version=v1')
+      expect(window.location.hash).toBe(
+        pending ? '#accepted' : parameter === 'comment' ? '#live' : '#at-close',
+      )
     } finally {
+      hashSync.clear()
       await act(async () => root.unmount())
       host.remove()
     }

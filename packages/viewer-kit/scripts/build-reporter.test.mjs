@@ -1662,6 +1662,21 @@ test('generated history wrappers preserve invocation and contain reporting failu
   assert.equal(messages[1].path, '/index.html')
   assert.equal(messages[1].token, ctx.documentToken)
   for (const method of ['pushState', 'replaceState']) {
+    for (let i = 0; i < 10; i++) history[method]({ scroll: i }, '', '#early')
+  }
+  listeners.get('hashchange')()
+  assert.equal(messages.length, 2, 'unchanged hash and path do not notify')
+  location.pathname = '/other.html'
+  history.replaceState(null, '', '#early')
+  assert.equal(messages.length, 3, 'path changes still notify')
+  assert.equal(messages.at(-1).path, '/other.html')
+  ready(ctx)
+  assert.deepEqual(
+    messages.slice(-2).map((m) => m.kind),
+    ['ready', 'hash-changed'],
+  )
+
+  for (const method of ['pushState', 'replaceState']) {
     assert.equal(history[method](data, '', '#next'), result)
     const count = messages.length
     assert.throws(

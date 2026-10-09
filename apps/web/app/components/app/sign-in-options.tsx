@@ -1,4 +1,4 @@
-import { viewerReturnPath } from '~/lib/viewer-hash'
+import { latestViewerHash, viewerReturnPath } from '~/lib/viewer-hash'
 import { Stack } from '~/components/layout/stack'
 import { authProviderButtonClassName } from './auth-styles'
 import { GoogleMark } from './google-mark'
@@ -46,7 +46,7 @@ export function SignInOptions({
 
   const startSignIn = (provider: 'google' | 'microsoft') => {
     const callback = includeViewerHash
-      ? viewerReturnPath(resolveCallback(), window.location.hash)
+      ? viewerReturnPath(resolveCallback(), latestViewerHash())
       : resolveCallback()
     trackEvent(ANALYTICS_EVENTS.signUpStart, {
       [ANALYTICS_PARAMS.method]: provider,

@@ -1,9 +1,15 @@
 // @vitest-environment happy-dom
+import { createViewerHashSync } from '~/lib/viewer-hash'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, type ReactElement } from 'react'
 import { createRoot, hydrateRoot } from 'react-dom/client'
 import { TooltipProvider } from '~/components/ui/tooltip'
-import { MemoryRouter } from 'react-router'
+import {
+  BrowserRouter,
+  MemoryRouter,
+  useLocation,
+  useNavigate,
+} from 'react-router'
 import Viewer from '../+viewer'
 import { signIn } from '~/lib/auth-client'
 import { viewerSignInHref } from '~/hooks/use-viewer-hash'
@@ -89,6 +95,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 test('hydrated consent-enabled sign-in anchors encode the fragment inside next', async () => {
   const host = document.createElement('div')
   document.body.appendChild(host)
+  const sync = createViewerHashSync()
   const previousUrl = window.location.href
   window.history.replaceState(null, '', '/#q=abc')
   const view = (
@@ -111,13 +118,14 @@ test('hydrated consent-enabled sign-in anchors encode the fragment inside next',
     )
     expect(new URL(link.href).hash).toBe('')
     await act(async () => {
-      window.history.replaceState(null, '', '#latest')
-      window.dispatchEvent(new Event('artifactshare:hash-changed'))
+      sync.accept('#latest')
     })
+    expect(window.location.hash).toBe('#q=abc')
     expect(new URL(link.href).searchParams.get('next')).toBe(
       '/a/abc123def4?as_hash=%23latest',
     )
   } finally {
+    sync.clear()
     await act(async () => root.unmount())
     host.remove()
     window.history.replaceState(null, '', previousUrl)
@@ -192,4 +200,74 @@ test('fragment return targets preserve internal-path validation', () => {
   )
   expect(url.origin).toBe('https://example.test')
   expect(url.searchParams.get('next')).toBe('/?as_hash=%23q')
+})
+
+test('client callback restoration updates the router even when preauth has no frame', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const previousUrl = window.location.href
+  window.history.replaceState(
+    null,
+    '',
+    '/a/abc123def4?version=v1&as_hash=%23restored',
+  )
+  function RouterLocation() {
+    const location = useLocation()
+    const navigate = useNavigate()
+    return (
+      <button
+        data-location={location.search + location.hash}
+        onClick={() =>
+          void navigate({ search: location.search, hash: location.hash })
+        }
+      >
+        Navigate again
+      </button>
+    )
+  }
+  try {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <BrowserRouter>
+            <RouterLocation />
+            <Viewer
+              loaderData={{
+                kind: 'preauth',
+                canonicalUrl: 'https://example.test/a/abc123def4?version=v1',
+                artifact: {
+                  id: 'abc123def4',
+                  name: null,
+                  derivedTitle: null,
+                  titleOverride: null,
+                  description: null,
+                },
+              }}
+            />
+          </BrowserRouter>
+        </TooltipProvider>,
+      ),
+    )
+    expect(host.querySelector('iframe')).toBeNull()
+    const again = host.querySelector<HTMLButtonElement>('[data-location]')!
+    expect(again.dataset.location).toBe('?version=v1#restored')
+    expect(window.location.search + window.location.hash).toBe(
+      '?version=v1#restored',
+    )
+    const email = host.querySelector<HTMLAnchorElement>(
+      'a[href*="method=email"]',
+    )!
+    expect(new URL(email.href).searchParams.get('next')).toBe(
+      '/a/abc123def4?version=v1&as_hash=%23restored',
+    )
+    await act(async () => again.click())
+    expect(window.location.search + window.location.hash).toBe(
+      '?version=v1#restored',
+    )
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
 })

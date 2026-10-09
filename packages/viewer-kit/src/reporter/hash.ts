@@ -1,13 +1,18 @@
 import { send } from './messaging.js'
 import type { ReporterState } from './state.js'
 
-export function reportHash(ctx: ReporterState) {
+export function reportHash(ctx: ReporterState, force = false) {
   try {
     if (ctx.readyChallenge && ctx.documentToken) {
+      const hash = ctx.win.location.hash
+      const path = ctx.win.location.pathname
+      if (!force && ctx.lastHash === hash && ctx.lastHashPath === path) return
+      ctx.lastHash = hash
+      ctx.lastHashPath = path
       send(ctx, {
         kind: 'hash-changed',
-        hash: ctx.win.location.hash,
-        path: ctx.win.location.pathname,
+        hash,
+        path,
         token: ctx.documentToken,
       })
     }

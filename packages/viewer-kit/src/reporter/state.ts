@@ -74,6 +74,8 @@ export function createReporterState(
     primordials,
     documentToken: '',
     readyChallenge: '',
+    lastHash: null as string | null,
+    lastHashPath: null as string | null,
     pendingCspViolations: primordials.objectCreate(null) as Record<
       number,
       Record<string, unknown>

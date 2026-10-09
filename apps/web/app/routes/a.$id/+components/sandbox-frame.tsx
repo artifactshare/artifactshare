@@ -1,6 +1,5 @@
 import {
   createViewerHashSync,
-  restoreViewerHash,
   VIEWER_FRAME_BOOTSTRAP_SCRIPT,
 } from '~/lib/viewer-hash'
 import { useHydrated } from '~/hooks/use-hydrated'
@@ -419,7 +418,6 @@ function useSandboxFrameController({
     }),
     url,
     (initial) => {
-      if (typeof window !== 'undefined') restoreViewerHash()
       return {
         url:
           initial + (typeof window === 'undefined' ? '' : window.location.hash),

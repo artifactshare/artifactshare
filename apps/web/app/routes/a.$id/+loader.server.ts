@@ -78,6 +78,7 @@ import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { Route } from './+types/index'
 
 interface ArtifactSummary {
+  entrypointPath?: string | null
   id: string
   storageKey: string
   name: string
@@ -1064,6 +1065,7 @@ async function buildLinkAnonymousResponse(
   const baseArtifact = {
     id: shareable.id,
     storageKey,
+    entrypointPath: shareable.entrypoint_path,
     name: fileName,
     derivedTitle: shareable.derived_title,
     titleOverride: shareable.title_override,

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { viewerReturnPath } from '~/lib/viewer-hash'
+import { latestViewerHash, viewerReturnPath } from '~/lib/viewer-hash'
 import { safeInternalNext } from '~/lib/safe-next'
 
 const subscribe = (notify: () => void) => {
@@ -13,7 +13,7 @@ const subscribe = (notify: () => void) => {
     window.removeEventListener('popstate', notify)
   }
 }
-const snapshot = () => window.location.hash
+const snapshot = latestViewerHash
 const serverSnapshot = () => ''
 
 // Hydrated links support normal activation and opening in a new tab.

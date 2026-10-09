@@ -1,3 +1,4 @@
+import { latestViewerHash } from '~/lib/viewer-hash'
 import type { ComponentPropsWithRef } from 'react'
 import { useViewerHash, viewerSignInHref } from '~/hooks/use-viewer-hash'
 import { Button } from '~/components/ui/button'
@@ -31,7 +32,7 @@ export function AnonymousViewerSignInControl({
       // A previously loaded Google linker can keep decorating anchors after
       // consent is withdrawn, so navigate without exposing an href to it.
       onClick={() =>
-        window.location.assign(viewerSignInHref(href, window.location.hash))
+        window.location.assign(viewerSignInHref(href, latestViewerHash()))
       }
     >
       {label}

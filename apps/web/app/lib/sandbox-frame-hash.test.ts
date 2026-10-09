@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import {
   createViewerHashSync,
+  latestViewerHash,
   restoreViewerHash,
   viewerReturnPath,
   VIEWER_FRAME_BOOTSTRAP_SCRIPT,
@@ -135,7 +136,7 @@ test.each(['#final', ''])(
       expect(replace).toHaveBeenCalledTimes(attempt)
       expect(window.location.hash).toBe('#old')
       expect(sync.latest()).toBe(hash)
-      expect(dispatch).not.toHaveBeenCalled()
+      expect(dispatch).toHaveBeenCalledTimes(1)
     }
     vi.advanceTimersByTime(199)
     expect(replace).toHaveBeenCalledTimes(2)
@@ -144,7 +145,7 @@ test.each(['#final', ''])(
     expect(window.location.pathname + window.location.search).toBe('/?keep=1')
     expect(window.history.state).toEqual({ retained: true })
     expect(window.history.length).toBe(length)
-    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatch).toHaveBeenCalledTimes(2)
     expect(dispatch.mock.calls[0][0].type).toBe('artifactshare:hash-changed')
     vi.advanceTimersByTime(1000)
     expect(replace).toHaveBeenCalledTimes(3)
@@ -213,4 +214,43 @@ test('auth transport escapes fragment punctuation including asterisks', () => {
   window.history.replaceState(null, '', callback)
   restoreViewerHash()
   expect(window.location.hash).toBe(hash)
+})
+
+test.each(['/other?keep=1', '/a/abc123def4?keep=2'])(
+  'discards pending fragments after navigating to %s',
+  (destination) => {
+    vi.useFakeTimers()
+    window.history.replaceState(null, '', '/a/abc123def4?keep=1#old')
+    const sync = createViewerHashSync()
+    sync.accept('#pending')
+    expect(latestViewerHash()).toBe('#pending')
+    window.history.replaceState({ next: true }, '', destination + '#new-route')
+    expect(latestViewerHash()).toBe('#new-route')
+    const replace = vi.spyOn(window.history, 'replaceState')
+    vi.advanceTimersByTime(1000)
+    expect(replace).not.toHaveBeenCalled()
+    expect(window.location.hash).toBe('#new-route')
+    expect(window.history.state).toEqual({ next: true })
+  },
+)
+
+test('app entry restores callback fragments before hydration without a frame', async () => {
+  window.history.replaceState(
+    { retained: true },
+    '',
+    '/a/abc123def4?as_hash=%23restored',
+  )
+  const hydrate = vi.fn(() => {
+    expect(
+      window.location.pathname + window.location.search + window.location.hash,
+    ).toBe('/a/abc123def4#restored')
+  })
+  vi.doMock('react-dom/client', () => ({ hydrateRoot: hydrate }))
+  try {
+    await import('../entry.client')
+    expect(hydrate).toHaveBeenCalledTimes(1)
+    expect(window.history.state).toEqual({ retained: true })
+  } finally {
+    vi.doUnmock('react-dom/client')
+  }
 })

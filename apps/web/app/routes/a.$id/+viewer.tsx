@@ -1,7 +1,13 @@
 import { viewerReturnPath } from '~/lib/viewer-hash'
 import { useViewerHash } from '~/hooks/use-viewer-hash'
-import { useState } from 'react'
-import { isRouteErrorResponse, Link, useRouteLoaderData } from 'react-router'
+import { useEffect, useState } from 'react'
+import {
+  isRouteErrorResponse,
+  Link,
+  useRouteLoaderData,
+  useLocation,
+  useNavigate,
+} from 'react-router'
 import { Button } from '~/components/ui/button'
 import { Empty, EmptyContent } from '~/components/ui/empty'
 import { AgentDisclosure } from '~/components/app/agent-disclosure'
@@ -130,6 +136,40 @@ export default function ViewerRoute({
 }: {
   loaderData: LoaderData
 }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const params = new URLSearchParams(location.search)
+  const callbackHash = params.get('as_hash')
+  params.delete('as_hash')
+  const search = params.toString()
+  useEffect(() => {
+    if (callbackHash === null) return
+    void navigate(
+      {
+        pathname: location.pathname,
+        search: search ? '?' + search : '',
+        hash:
+          callbackHash.startsWith('#') && callbackHash.length <= 2048
+            ? callbackHash
+            : location.hash,
+      },
+      { replace: true, preventScrollReset: true, state: location.state },
+    )
+  }, [
+    callbackHash,
+    location.pathname,
+    location.hash,
+    location.state,
+    navigate,
+    search,
+  ])
+
+  // Defer a client-created frame until the router owns the restored fragment.
+  if (callbackHash !== null && typeof window !== 'undefined') return null
+  return <ViewerContent loaderData={loaderData} />
+}
+
+function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
   const rootData = useRouteLoaderData<{
     analyticsConsent?: AnalyticsConsentResolution
   }>('root')

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { createViewerHashSync } from '~/lib/viewer-hash'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   act,
@@ -871,6 +872,7 @@ test.each(['private', 'link'] as const)(
     const root = createRoot(host)
     const previousUrl = window.location.href
     const previousState = window.history.state
+    const sync = createViewerHashSync()
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     try {
       window.history.replaceState(null, '', '/a/abc123def4#initial')
@@ -886,7 +888,8 @@ test.each(['private', 'link'] as const)(
           </TooltipProvider>,
         ),
       )
-      window.history.replaceState(null, '', '#current')
+      await act(async () => sync.accept('#current'))
+      expect(window.location.hash).toBe('#initial')
       const button = host.querySelector<HTMLButtonElement>(
         '[aria-label="Copy URL"]',
       )!
@@ -898,6 +901,7 @@ test.each(['private', 'link'] as const)(
           : 'https://artifactshare.com/a/abc123def4#current',
       )
     } finally {
+      sync.clear()
       await act(async () => root.unmount())
       host.remove()
       window.history.replaceState(previousState, '', previousUrl)

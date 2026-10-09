@@ -32,7 +32,7 @@ export function ready(ctx: ReporterState) {
       challenge: ctx.readyChallenge,
       token: ctx.documentToken,
     })
-    reportHash(ctx)
+    reportHash(ctx, true)
   }
 }
 

@@ -1692,6 +1692,41 @@ test('reports fragments only after ready, then tracks anchors and both history m
   ).toBeUndefined()
   await waitForMessage('hash-changed', (m) => m.hash === '#replaced')
   expect(win.history.state).toEqual({ filter: 2 })
+  const unchangedStart = messages.length
+  for (let i = 0; i < 10; i++) {
+    win.history.replaceState({ scroll: i }, '')
+    win.history.pushState({ scroll: i }, '', '#replaced')
+  }
+  // The readiness retry timer also sends snapshots. Use an explicit probe as
+  // a delivery fence for the preceding history calls instead of counting all
+  // snapshots after an arbitrary delay.
+  const challenge = 'unchanged-history-snapshot'
+  await probeReporter(challenge)
+  const ready = await waitForMessage(
+    'ready',
+    (message) => message.challenge === challenge,
+    unchangedStart,
+  )
+  const snapshot = await waitForMessage(
+    'hash-changed',
+    () => true,
+    messages.indexOf(ready) + 1,
+  )
+  expect(snapshot.hash).toBe('#replaced')
+  expect(snapshot.path).toBe(win.location.pathname)
+  expect(snapshot.token).toBe(initial.token)
+  for (
+    let index = unchangedStart;
+    index <= messages.indexOf(snapshot);
+    index++
+  ) {
+    if (messages[index].kind !== 'hash-changed') continue
+    // Only a ready response may resend an unchanged snapshot. An extra report
+    // from either history wrapper would have no preceding ready response.
+    expect(messages[index - 1].kind).toBe('ready')
+    expect(messages[index].hash).toBe('#replaced')
+    expect(messages[index].token).toBe(messages[index - 1].token)
+  }
   expect(() =>
     win.history.replaceState.call({} as History, null, '', '#invalid'),
   ).toThrow()
