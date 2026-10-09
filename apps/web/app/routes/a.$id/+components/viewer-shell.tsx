@@ -1721,14 +1721,21 @@ function parseJson(value: string): unknown {
 }
 
 function useLatestVersionNotice({
-  artifactId,
+  lookupUrl: requestedLookupUrl,
   currentVersionId,
   liveAvailable,
 }: {
-  artifactId: string
+  lookupUrl: string | null
   currentVersionId: string | null
   liveAvailable: boolean
 }) {
+  const [anonymousLookupDenied, setAnonymousLookupDenied] = useState(false)
+  const isAnonymousLookup = requestedLookupUrl?.endsWith('/current-version')
+  const lookupUrl =
+    isAnonymousLookup && anonymousLookupDenied ? null : requestedLookupUrl
+  // Authenticated pointer updates must not reset the polling cadence or cooldown.
+  const anonymousVersionId = isAnonymousLookup ? currentVersionId : null
+  const lookupUrlRef = useLatestRef(lookupUrl)
   const currentVersionIdRef = useLatestRef(currentVersionId)
   const liveAvailableRef = useLatestRef(liveAvailable)
   const latestCheckSeqRef = useRef(0)
@@ -1738,12 +1745,16 @@ function useLatestVersionNotice({
   const latestCheckRetryTimerRef = useRef<number | null>(null)
   const latestCheckRetryKindRef = useRef<LatestVersionCheckKind | null>(null)
   const [notice, setNotice] = useState(() => ({
+    lookupUrl,
     currentVersionId,
     hasNewerVersion: false,
   }))
 
-  if (notice.currentVersionId !== currentVersionId) {
-    setNotice({ currentVersionId, hasNewerVersion: false })
+  if (
+    notice.currentVersionId !== currentVersionId ||
+    notice.lookupUrl !== lookupUrl
+  ) {
+    setNotice({ lookupUrl, currentVersionId, hasNewerVersion: false })
   }
 
   const abortLatestVersionCheck = useCallback((kind?: 'fallback') => {
@@ -1767,7 +1778,7 @@ function useLatestVersionNotice({
   const markVersionChanged = useCallback(
     (nextVersionId: string) => {
       const current = currentVersionIdRef.current
-      if (!current) return
+      if (!current || !lookupUrlRef.current) return
       if (nextVersionId !== current) {
         latestCheckSeqRef.current += 1
       }
@@ -1777,7 +1788,7 @@ function useLatestVersionNotice({
           : previous,
       )
     },
-    [currentVersionIdRef],
+    [currentVersionIdRef, lookupUrlRef],
   )
 
   const checkLatestVersion = useCallback(
@@ -1786,7 +1797,8 @@ function useLatestVersionNotice({
         kind: 'fallback',
       },
     ) {
-      if (!currentVersionIdRef.current) return
+      const url = lookupUrlRef.current
+      if (!url || !currentVersionIdRef.current) return
       if (liveAvailableRef.current && options.kind !== 'reconcile') return
       const now = Date.now()
       const elapsed = now - latestCheckStartedAtRef.current
@@ -1824,7 +1836,7 @@ function useLatestVersionNotice({
       latestCheckKindRef.current = options.kind
       const result = await fetchJsonWithViewerTimeout<{
         currentVersionId?: unknown
-      }>(`/api/shareables/${encodeURIComponent(artifactId)}/versions`, {
+      }>(url, {
         headers: { accept: 'application/json' },
         signal: controller.signal,
       }).catch((error: unknown) => {
@@ -1851,15 +1863,29 @@ function useLatestVersionNotice({
             cfRay: cfRayFrom(response),
           })
         }
+        if (
+          response?.status === 404 &&
+          url.endsWith('/current-version') &&
+          seq === latestCheckSeqRef.current &&
+          url === lookupUrlRef.current &&
+          !controller.signal.aborted
+        ) {
+          // A revoked anonymous link stays disabled until the page is reopened.
+          lookupUrlRef.current = null
+          latestCheckSeqRef.current += 1
+          clearLatestVersionRetry()
+          setAnonymousLookupDenied(true)
+        }
         return
       }
       const body = result?.body ?? null
       if (typeof body?.currentVersionId !== 'string') return
-      if (seq !== latestCheckSeqRef.current) return
+      if (seq !== latestCheckSeqRef.current || url !== lookupUrlRef.current)
+        return
       markVersionChanged(body.currentVersionId)
     },
     [
-      artifactId,
+      lookupUrlRef,
       clearLatestVersionRetry,
       currentVersionIdRef,
       liveAvailableRef,
@@ -1869,14 +1895,23 @@ function useLatestVersionNotice({
 
   useEffect(() => {
     latestCheckStartedAtRef.current = 0
+  }, [lookupUrl, anonymousVersionId])
+
+  useEffect(() => {
     latestCheckSeqRef.current += 1
     clearLatestVersionRetry()
     abortLatestVersionCheck()
     return () => {
+      latestCheckSeqRef.current += 1
       clearLatestVersionRetry()
       abortLatestVersionCheck()
     }
-  }, [abortLatestVersionCheck, artifactId, clearLatestVersionRetry])
+  }, [
+    abortLatestVersionCheck,
+    lookupUrl,
+    currentVersionId,
+    clearLatestVersionRetry,
+  ])
 
   useEffect(() => {
     if (!liveAvailable) return
@@ -1894,7 +1929,7 @@ function useLatestVersionNotice({
   }, [abortLatestVersionCheck, clearLatestVersionRetry, liveAvailable])
 
   useEffect(() => {
-    if (liveAvailable) return
+    if (!lookupUrl || liveAvailable) return
     void checkLatestVersion({ kind: 'fallback' })
     const interval = window.setInterval(() => {
       void checkLatestVersion({ kind: 'fallback' })
@@ -1909,7 +1944,7 @@ function useLatestVersionNotice({
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [checkLatestVersion, liveAvailable])
+  }, [checkLatestVersion, liveAvailable, lookupUrl, anonymousVersionId])
 
   return {
     hasNewerVersion: notice.hasNewerVersion,
@@ -1983,6 +2018,7 @@ function useViewerShellController({
   const replaceMode: 'single' | 'static_site' =
     renderType === 'static_site' ? 'static_site' : 'single'
   const frameTitle = displayTitle(artifact)
+  const viewerRef = useRef<HTMLDivElement | null>(null)
   const historyReturnFocusRef = useRef<HTMLElement | null>(null)
   const accessRequestId = new URLSearchParams(routerLocation.search).get(
     'access-request',
@@ -2027,7 +2063,15 @@ function useViewerShellController({
     artifactSupportsComments(renderType)
   const [liveConnected, setLiveConnected] = useState(false)
   const latestVersion = useLatestVersionNotice({
-    artifactId: artifact.id,
+    lookupUrl:
+      !isHistoricalVersion &&
+      artifact.currentVersionId &&
+      (user ||
+        (artifact.visibility === 'link' &&
+          !artifact.linkExpired &&
+          !artifact.linkSuspended))
+        ? `/api/shareables/${encodeURIComponent(artifact.id)}/${user ? 'versions' : 'current-version'}`
+        : null,
     currentVersionId: isHistoricalVersion
       ? null
       : (artifact.currentVersionId ?? null),
@@ -2372,8 +2416,18 @@ function useViewerShellController({
     handleFiles(dataTransfer.files)
   }
 
+  const showLatestVersion = () => {
+    // The notice button disappears, and the frame remounts on refresh.
+    // Keep focus on the viewer that survives both updates.
+    if (!canViewHistory) viewerRef.current?.focus({ preventScroll: true })
+    latestVersion.clearNewerVersion()
+    revalidator.revalidate()
+  }
+
   return {
     artifact: artifactForChrome,
+    viewerRef,
+    showLatestVersion,
     user,
     renderType,
     sandboxUrl,
@@ -2441,6 +2495,8 @@ export function mergeLiveViewCount(
 
 function ViewerShellView({
   artifact,
+  viewerRef,
+  showLatestVersion,
   user,
   renderType,
   sandboxUrl,
@@ -2465,7 +2521,6 @@ function ViewerShellView({
   textAnchorsEnabled,
   commentsEnabled,
   newThreadComposerEnabled,
-  revalidator,
   replaceMode,
   viewerListAvailable,
   viewerList,
@@ -2483,7 +2538,13 @@ function ViewerShellView({
   const collapseToggleRef = useRef<HTMLButtonElement | null>(null)
 
   return (
-    <div className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none">
+    <div
+      ref={viewerRef}
+      role="region"
+      aria-label={frameTitle}
+      tabIndex={-1}
+      className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none"
+    >
       <ViewerChrome
         artifact={artifact}
         user={user}
@@ -2614,29 +2675,25 @@ function ViewerShellView({
       ) : (
         children
       )}
-      {canViewHistory ? (
-        <VersionWidget
-          hidden={state.chromeCollapsed}
-          versions={artifact.versions ?? []}
-          canReplaceFile={canReplaceFile}
-          onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
-          replaceMode={replaceMode}
-          uploading={state.uploading}
-          hasNewerVersion={latestVersion.hasNewerVersion}
-          onShowLatest={() => {
-            latestVersion.clearNewerVersion()
-            revalidator.revalidate()
-          }}
-          onOpenHistory={(returnFocusTo) => {
-            historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
-            closeAccessRequests()
-            dispatch({ type: 'history-open-changed', open: true })
-            comments.changePanelOpen(false)
-          }}
-          revisitContext={artifact.revisitContext}
-          onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
-        />
-      ) : null}
+      <VersionWidget
+        canViewHistory={canViewHistory}
+        hidden={state.chromeCollapsed}
+        versions={artifact.versions ?? []}
+        canReplaceFile={canReplaceFile}
+        onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
+        replaceMode={replaceMode}
+        uploading={state.uploading}
+        hasNewerVersion={latestVersion.hasNewerVersion}
+        onShowLatest={showLatestVersion}
+        onOpenHistory={(returnFocusTo) => {
+          historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+          closeAccessRequests()
+          dispatch({ type: 'history-open-changed', open: true })
+          comments.changePanelOpen(false)
+        }}
+        revisitContext={artifact.revisitContext}
+        onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
+      />
       {canViewHistory ? (
         <HistoryPanel
           retainVersions={artifact.retainVersions}

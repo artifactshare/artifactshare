@@ -387,6 +387,8 @@ function linkDomainRequest(
     (request.method === 'POST' &&
       (url.pathname === reportPath || url.pathname === `${reportPath}.data`)) ||
     url.pathname === `/api/shareables/${encodedId}/versions` ||
+    ((request.method === 'GET' || request.method === 'HEAD') &&
+      url.pathname === `/api/shareables/${encodedId}/current-version`) ||
     allowedManifest ||
     (request.method === 'POST' &&
       (url.pathname === '/set-analytics-consent' ||

@@ -59,7 +59,7 @@ vi.mock('~/lib/upload-permission-response.server', () => ({
     ),
 }))
 
-import { action, middleware } from './api.shareables.$id.versions'
+import { action, loader, middleware } from './api.shareables.$id.versions'
 
 function actionArgs(form: FormData) {
   return actionArgsFor(
@@ -134,6 +134,48 @@ describe('/api/shareables/:id/versions', () => {
       hd: 'example.com',
     })
   })
+
+  test.each([
+    ['u1', 'abc123def4', 200],
+    ['u2', 'abc123def4', 404],
+    ['u1', 'link123abc', 404],
+    ['u1', 'invalid/id', 404],
+  ])(
+    'signed-in lookup for %s on %s retains status %s and response shape',
+    async (userId, id, status) => {
+      const { db, sqlite } = createMigratedInMemoryDb()
+      onTestFinished(() => db.destroy())
+      seedWorkspace(sqlite)
+      seedUser(sqlite, 'u1')
+      seedUser(sqlite, 'u2')
+      sqlite.exec(`
+      INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, name, created_at, updated_at)
+      VALUES ('c1', 'ws1', 'inbox', 'u1', 'Inbox', '2026-01-01', '2026-01-01');
+      INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, current_version_id, created_at, updated_at, container_id)
+      VALUES ('abc123def4', 'ws1', 'u1', 'Report', 'html_page', 'private', 'v1', '2026-01-01', '2026-01-01', 'c1');
+      INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at)
+      VALUES ('v1', 'abc123def4', 'html_page', 'published', '/index.html', 'test/index.html', 1, 'test', 'u1', '2026-01-01', '2026-01-01');
+    `)
+      createDbMock.mockReturnValue(db)
+      requireUserMock.mockReturnValue({
+        id: userId,
+        email: `${userId}@example.com`,
+        emailVerified: true,
+        workspaceId: 'ws1',
+        hd: 'example.com',
+      })
+      const response = await loader({
+        context: new Map(),
+        params: { id },
+      } as never)
+      expect(response.status).toBe(status)
+      expect(await response.json()).toEqual(
+        status === 200
+          ? { id: 'abc123def4', currentVersionId: 'v1' }
+          : { error: { code: 'not-found', message: 'Shareable not found.' } },
+      )
+    },
+  )
 
   test.each([
     'artifact_kind=static_site&base_version=',

@@ -220,6 +220,38 @@ describe('HistoryPanel', () => {
     )
   })
 
+  test.each([
+    { hidden: false, hasNewerVersion: false, asideHidden: true },
+    { hidden: false, hasNewerVersion: true, asideHidden: false },
+    { hidden: true, hasNewerVersion: true, asideHidden: true },
+  ])('anonymous version landmark visibility: %j', (props) => {
+    const html = renderToStaticMarkup(
+      <VersionWidget
+        versions={[]}
+        canViewHistory={false}
+        hidden={props.hidden}
+        hasNewerVersion={props.hasNewerVersion}
+        onOpenHistory={() => {}}
+      />,
+    )
+
+    expect(html.includes('<aside hidden=""')).toBe(props.asideHidden)
+    const [liveRegion, aside] = html.split('<aside')
+    expect(liveRegion).toContain('role="status"')
+    expect(liveRegion).not.toContain('hidden=')
+    if (props.hasNewerVersion) {
+      expect(liveRegion).toContain('A new version is available')
+      expect(aside).toContain(
+        '<span aria-hidden="true">A new version is available</span>',
+      )
+      expect(aside).toMatch(/<button\b[^>]*>Show latest<\/button>/)
+      expect(aside!.match(/<button\b[^>]*>/)?.[0]).not.toContain('aria-hidden')
+    } else {
+      expect(html).not.toContain('A new version is available')
+      expect(aside).not.toContain('<button')
+    }
+  })
+
   test('version widget labels the displayed historical version', () => {
     const html = renderToStaticMarkup(
       <VersionWidget

@@ -23,6 +23,7 @@ import { VersionRows } from './version-rows'
 interface VersionWidgetProps {
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
+  canViewHistory?: boolean
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
   replaceMode?: 'single' | 'static_site'
@@ -41,6 +42,7 @@ interface VersionWidgetProps {
 export function VersionWidget({
   hidden = false,
   versions,
+  canViewHistory = true,
   canReplaceFile = false,
   onSubmit,
   replaceMode = 'single',
@@ -131,6 +133,32 @@ export function VersionWidget({
     }
   }, [closePopover, hidden, open])
 
+  if (!canViewHistory) {
+    return (
+      <>
+        <div
+          className="sr-only"
+          role="status"
+          aria-label={t('vw.activityStatus')}
+        >
+          {hasNewerVersion ? t('history.updateAvailable') : null}
+        </div>
+        <aside
+          hidden={hidden || !hasNewerVersion}
+          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel) rounded-[var(--r-md)]"
+          aria-label={t('vw.activityStatus')}
+        >
+          {hasNewerVersion ? (
+            <VersionUpdateNotice
+              onShowLatest={onShowLatest}
+              announceSeparately
+            />
+          ) : null}
+        </aside>
+      </>
+    )
+  }
+
   return (
     <aside
       ref={rootRef}
@@ -174,16 +202,7 @@ export function VersionWidget({
             {t('history.viewAll')}
           </button>
           {hasNewerVersion ? (
-            <div className="min-h-version-row border-border flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
-              <span>{t('history.updateAvailable')}</span>
-              <button
-                type="button"
-                className="bg-primary text-primary-foreground h-control-sm cursor-pointer rounded-[var(--r-sm)] border-0 px-2 text-sm font-semibold"
-                onClick={onShowLatest}
-              >
-                {t('history.showLatest')}
-              </button>
-            </div>
+            <VersionUpdateNotice onShowLatest={onShowLatest} />
           ) : null}
           {canReplaceFile ? (
             <ReplaceVersionDropzone
@@ -281,5 +300,29 @@ export function VersionWidget({
         ) : null}
       </button>
     </aside>
+  )
+}
+
+function VersionUpdateNotice({
+  onShowLatest,
+  announceSeparately = false,
+}: {
+  onShowLatest?: () => void
+  announceSeparately?: boolean
+}) {
+  const { t } = useT()
+  return (
+    <div className="min-h-version-row border-border flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
+      <span aria-hidden={announceSeparately || undefined}>
+        {t('history.updateAvailable')}
+      </span>
+      <button
+        type="button"
+        className="bg-primary text-primary-foreground h-control-sm cursor-pointer rounded-[var(--r-sm)] border-0 px-2 text-sm font-semibold"
+        onClick={onShowLatest}
+      >
+        {t('history.showLatest')}
+      </button>
+    </div>
   )
 }
