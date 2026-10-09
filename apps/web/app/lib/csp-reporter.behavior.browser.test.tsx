@@ -98,6 +98,8 @@ async function fixture(
   await loaded
   if (objectUrl) URL.revokeObjectURL(objectUrl)
   if (handshake) await probeReporter()
+  // Focus the browsing context before tests focus elements inside it in Firefox.
+  frame.focus()
   return frame.contentDocument!
 }
 

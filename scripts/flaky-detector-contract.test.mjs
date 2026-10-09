@@ -1,5 +1,3 @@
-import { spawnSync } from 'node:child_process'
-import { PIN } from './ci/replace-webkit-libsoup.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
@@ -79,15 +77,15 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
   )
 })
 
-test('browser installation and one WebKit workaround precede suite execution', () => {
+test('browser installation precedes suite execution', () => {
   const index = (command) => steps.findIndex((step) => step.run === command)
   const install = index(
     'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
   )
-  const workaround = index('node scripts/ci/replace-webkit-libsoup.mjs')
   const run = index('node scripts/ci/flaky-runs.mjs run')
-  assert.ok(install >= 0 && workaround > install && run > workaround)
-  assert.equal(steps[workaround].if, "matrix.project == 'webkit'")
+  assert.ok(install >= 0 && run > install)
+  assert.equal(steps[install]['continue-on-error'], undefined)
+  assert.equal(steps[run]['continue-on-error'], undefined)
   assert.equal(steps[install].if, "matrix.suite == 'behavior-browser'")
   assert.ok(index('pnpm --filter @artifactshare/contract build') < run)
   assert.ok(index('pnpm fixtures:build') < run)
@@ -136,70 +134,9 @@ test('overlapping detector runs are independent rather than replacing pending ru
   )
 })
 
-test('libsoup cache is pin-derived, exact, restored before use and independently verified', () => {
-  const lane = steps
-  const key = lane.find((step) => step.id === 'webkit-libsoup-cache-key')
-  const cache = lane.find((step) => step.uses?.startsWith('actions/cache@'))
-  const patch = lane.find(
-    (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
-  )
-  assert.ok(key && cache && patch)
-  assert.equal(
-    cache.uses,
-    'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
-  )
-  assert.equal(key.if, "matrix.project == 'webkit'")
-  assert.equal(cache.if, "matrix.project == 'webkit'")
-  assert.equal(patch.if, "matrix.project == 'webkit'")
-  assert.equal(cache['continue-on-error'], undefined)
-  assert.equal(key['continue-on-error'], undefined)
-  assert.equal(patch['continue-on-error'], undefined)
-  assert.deepEqual(cache.with, {
-    path: '${{ runner.temp }}/webkit-libsoup-cache',
-    key: '${{ steps.webkit-libsoup-cache-key.outputs.key }}',
-  })
-  assert.equal(patch.env.WEBKIT_LIBSOUP_CACHE_DIR, cache.with.path)
-  const setup = lane.findIndex((step) =>
-    step.uses?.startsWith('actions/setup-node@'),
-  )
-  const install = lane.findIndex((step) =>
-    step.run?.includes('playwright install'),
-  )
-  assert.ok(setup < lane.indexOf(key))
-  assert.ok(lane.indexOf(key) < lane.indexOf(cache))
-  assert.ok(lane.indexOf(cache) < install)
-  assert.ok(install < lane.indexOf(patch))
-  assert.doesNotMatch(JSON.stringify(lane), /cache-hit|restore-keys/)
-  assert.match(
-    key.run,
-    /import \{ PIN \} from '\.\/scripts\/ci\/replace-webkit-libsoup\.mjs'/,
-  )
-  const lines = key.run.trim().split('\n')
-  assert.equal(
-    lines[0],
-    `node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"`,
-  )
-  assert.equal(lines.at(-1), 'NODE')
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '-e', lines.slice(1, -1).join('\n')],
-    { encoding: 'utf8' },
-  )
-  assert.equal(result.status, 0, result.stderr)
-  assert.equal(
-    result.stdout.trim(),
-    `key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map((library) => library.replacement).join('-')}`,
-  )
-})
-
-test('detector and CI share the exact cache key formula and directory', () => {
-  const browser = ci.jobs['browser-validation'].steps
-  assert.equal(
-    steps.find((step) => step.id === 'webkit-libsoup-cache-key').run,
-    browser.find((step) => step.id === 'webkit-libsoup-cache-key').run,
-  )
-  assert.deepEqual(
-    steps.find((step) => step.uses?.startsWith('actions/cache@')).with,
-    browser.find((step) => step.uses?.startsWith('actions/cache@')).with,
+test('every flaky detector job uses stock Playwright libraries', () => {
+  assert.doesNotMatch(
+    JSON.stringify(workflow),
+    /replace-webkit-libsoup|webkit-libsoup|WEBKIT_LIBSOUP_CACHE_DIR/i,
   )
 })
