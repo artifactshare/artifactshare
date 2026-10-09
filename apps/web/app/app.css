@@ -99,6 +99,8 @@
   --spacing-timeline-top: 52px;
   --spacing-timeline-top-sm: 18px;
   --spacing-version-fab-bottom: 18px;
+  /* Keeps the sandbox CSP banner above the version chip. */
+  --spacing-sandbox-banner-bottom: 72px;
   --spacing-badge-max: 100px;
   --spacing-presence-max: 74px;
   --spacing-popover-thread-max: 238px;

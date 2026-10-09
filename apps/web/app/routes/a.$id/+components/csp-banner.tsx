@@ -23,7 +23,7 @@ export function CspBanner({ violations }: { violations: ViolationEntry[] }) {
   const { t, tPlural } = useT()
   return (
     <aside
-      className="text-foreground max-w-sandbox-toast-max border-border bg-card fixed right-4 bottom-4 left-4 z-50 max-h-96 overflow-y-auto rounded-[var(--r-md)] border px-3.5 py-2.5 text-sm shadow-[var(--shadow-lg)] sm:left-auto"
+      className="text-foreground max-w-sandbox-toast-max border-border bg-card bottom-sandbox-banner-bottom fixed right-4 left-4 z-50 max-h-96 overflow-y-auto rounded-[var(--r-md)] border px-3.5 py-2.5 text-sm shadow-[var(--shadow-lg)] sm:left-auto"
       role="status"
     >
       {groups.map((group) => {
@@ -38,7 +38,7 @@ export function CspBanner({ violations }: { violations: ViolationEntry[] }) {
             </span>
             {group.kind === 'environment' && (
               <p className="text-muted-foreground mt-1.5">
-                {t('csp.banner.environmentNote')}
+                {tPlural('csp.banner.environmentNote', entries.length)}
               </p>
             )}
             <details className="text-muted-foreground mt-1.5">

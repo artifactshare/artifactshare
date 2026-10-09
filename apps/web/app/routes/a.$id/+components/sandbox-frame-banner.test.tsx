@@ -27,11 +27,28 @@ describe.each(['en', 'ja'] as const)('CSP groups in %s', (locale) => {
       <CspBanner violations={[{ ...report, classification: 'environment' }]} />,
     )
     expect(html).toContain(messages['csp.banner.environmentSummaryOne'])
-    expect(html).toContain(messages['csp.banner.environmentNote'])
+    expect(html).toContain(messages['csp.banner.environmentNoteOne'])
     expect(html).not.toContain(messages['csp.banner.summaryOne'])
     expect(html).not.toContain(messages['csp.banner.fileGroup'] + '</summary>')
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(html).not.toContain('<script>')
+  })
+
+  test('environment note and summary follow the violation count', () => {
+    state.locale = locale
+    const messages = locale === 'en' ? en : ja
+    const html = renderToStaticMarkup(
+      <CspBanner
+        violations={[
+          { ...report, classification: 'environment' },
+          { ...report, id: '2', classification: 'environment' },
+        ]}
+      />,
+    )
+    expect(html).toContain(
+      messages['csp.banner.environmentSummaryOther'].replace('{n}', '2'),
+    )
+    expect(html).toContain(messages['csp.banner.environmentNoteOther'])
   })
   test.each([undefined, '', 'diagnostic sample'])(
     'only renders a sample label and code for a nonempty sample (%j)',
@@ -89,7 +106,7 @@ describe.each(['en', 'ja'] as const)('CSP groups in %s', (locale) => {
     expect(html).toContain(messages['csp.banner.summaryOne'])
     expect(html).toContain(messages['csp.banner.environmentSummaryOne'])
     const ownOnly = renderToStaticMarkup(<CspBanner violations={[artifact]} />)
-    expect(ownOnly).not.toContain(messages['csp.banner.environmentNote'])
+    expect(ownOnly).not.toContain(messages['csp.banner.environmentNoteOne'])
     expect(ownOnly).toContain(messages['csp.banner.summaryOne'])
   })
 })
