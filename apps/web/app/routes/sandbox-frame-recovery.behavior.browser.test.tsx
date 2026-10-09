@@ -406,7 +406,9 @@ async function renderFrame(
       </Profiler>
     )
     if (options.beforeHydrate) {
-      host.innerHTML = renderToString(view)
+      host.replaceChildren(
+        document.createRange().createContextualFragment(renderToString(view)),
+      )
       options.beforeHydrate(host)
       root = hydrateRoot(host, view)
     } else {

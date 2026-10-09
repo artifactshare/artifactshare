@@ -1,3 +1,4 @@
+import { installHashTracking } from './hash.js'
 import { installCspViolations } from './csp-violations.js'
 import { installCodeCopy, updateMarkdownToc } from './toc.js'
 import { installMessageListener, readEventValue, ready } from './messaging.js'
@@ -36,6 +37,7 @@ export function installReporter(win: ReporterWindow) {
   } catch (e) {
     ctx.documentToken = ''
   }
+  installHashTracking(ctx)
   installAnchorObserver(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)

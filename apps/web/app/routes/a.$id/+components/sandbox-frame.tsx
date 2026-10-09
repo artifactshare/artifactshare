@@ -1,3 +1,4 @@
+import { useHydrated } from '~/hooks/use-hydrated'
 import { CspBanner } from './csp-banner'
 import { retainCspViolation } from './csp-violation-retention'
 import { classifyCspViolation } from '~/lib/csp-violation-classification'
@@ -111,6 +112,7 @@ async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
 }
 
 type SandboxFrameProps = {
+  entrypointPath?: string | null
   renderType: string | null
   canViewEnvironmentDiagnostics: boolean
   shareableId: string
@@ -150,6 +152,16 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 export function SandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
+  const hydrated = useHydrated()
+  // An SSR instance leaves src owned by its bootstrap script. Hydration and
+  // unrelated renders must never spend its one-time delivery token again.
+  const [clientMounted] = useState(hydrated)
+  const frameSrc =
+    clientMounted ||
+    controller.frameSourceChanged ||
+    controller.frameInstance !== 0
+      ? controller.frameUrl
+      : undefined
   const sandboxOrigin = new URL(controller.frameUrl).origin
   const visibleViolations = controller.violations.flatMap((violation) => {
     const classification = classifyCspViolation(
@@ -184,12 +196,20 @@ export function SandboxFrame(props: SandboxFrameProps) {
           key={controller.frameInstance}
           ref={controller.frameRef}
           title={name}
-          src={controller.frameUrl}
+          data-src={controller.frameUrl.split('#')[0]}
+          src={frameSrc}
+          suppressHydrationWarning
           allow="fullscreen; clipboard-write"
           sandbox={sandboxPermissions}
           referrerPolicy="no-referrer"
           className={`${sandboxFrameSurfaceClassName(props.followsAppTheme)} ${controller.loadState !== 'ready' && controller.loadState !== 'loading' ? 'hidden' : ''}`}
           onLoad={controller.handleFrameLoad}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "{const f=document.currentScript.previousElementSibling;if(!f.hasAttribute('src'))f.src=f.dataset.src+window.location.hash}",
+          }}
         />
         {controller.loadState === 'loading' ? <FrameLoading /> : null}
       </div>
@@ -354,6 +374,7 @@ function SandboxState({
 
 function useSandboxFrameController({
   renderType,
+  entrypointPath,
   shareableId,
   versionId,
   url,
@@ -389,10 +410,19 @@ function useSandboxFrameController({
       ReturnType<typeof classifyViewerLinkNavigation>,
       { kind: 'open-external' }
     > | null>(null)
-  const [frameUrl, setFrameUrl] = useReducer(
-    (_current: string, next: string) => next,
+  const [frameSource, setFrameUrl] = useReducer(
+    (_current: { url: string; changed: boolean }, next: string) => ({
+      url: next,
+      changed: true,
+    }),
     url,
+    (initial) => ({
+      url:
+        initial + (typeof window === 'undefined' ? '' : window.location.hash),
+      changed: false,
+    }),
   )
+  const frameUrl = frameSource.url
   const [probeCycle, restartProbeCycle] = useReducer(
     (current: number) => current + 1,
     0,
@@ -666,6 +696,8 @@ function useSandboxFrameController({
         mode: linkNavigationMode,
       })
       if (action.kind === 'allow-frame') {
+        securityTokenRef.current = null
+        securityChallengeRef.current = createSandboxChallenge()
         onFramePathChange?.(
           normalizeStaticSiteFramePath(new URL(action.url).pathname),
         )
@@ -813,6 +845,26 @@ function useSandboxFrameController({
       )
       markFrameReadyFromMessage()
       clearReadyFallback()
+    } else if (message.kind === 'hash-changed') {
+      if (
+        !securityTokenRef.current ||
+        message.token !== securityTokenRef.current
+      )
+        return
+      if (
+        renderType === 'static_site' &&
+        normalizeStaticSiteFramePath(message.path) !==
+          normalizeStaticSiteFramePath(entrypointPath ?? '/index.html')
+      )
+        return
+      if (message.hash !== window.location.hash) {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          message.hash || window.location.pathname + window.location.search,
+        )
+        window.dispatchEvent(new Event('artifactshare:hash-changed'))
+      }
     } else if (message.kind === 'anchor-resolutions') {
       handleAnchorResolutions(message)
     } else if (message.kind === 'text-selection') {
@@ -987,6 +1039,7 @@ function useSandboxFrameController({
     loadState,
     retryFailed,
     frameUrl,
+    frameSourceChanged: frameSource.changed,
     frameInstance,
     isTransitioning,
     frameRef,
@@ -1028,7 +1081,7 @@ function useSandboxFrameController({
   }
 }
 
-async function refreshSandboxFrameUrl(
+export async function refreshSandboxFrameUrl(
   shareableId: string,
   versionId: string,
   targetUrl: string,
@@ -1069,7 +1122,18 @@ async function refreshSandboxFrameUrl(
   if (typeof body?.sandboxUrl !== 'string') return null
   const nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
+  entrypointUrl.hash = window.location.hash
   if (body.renderType === 'static_site') {
+    if (
+      normalizeStaticSiteFramePath(nextUrl.pathname) ===
+      normalizeStaticSiteFramePath(entrypointUrl.pathname)
+    ) {
+      nextUrl.hash = window.location.hash
+    } else {
+      // Redirects without a fragment inherit the request fragment. Keep a
+      // subpage's destination independent of the entrypoint's outer hash.
+      entrypointUrl.hash = nextUrl.hash
+    }
     entrypointUrl.searchParams.set(
       'as_next',
       `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`,

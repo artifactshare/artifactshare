@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 42
+version: 43
 managed: true
 -->
 
@@ -128,6 +128,7 @@ bridge publishing, and MCP update inputs do not accept them.
 
 Owners with unrestricted credentials can use `edit <target> --retain-versions N` to keep the latest N versions, or `--retain-versions all` to clear the limit. Setting or lowering retention prunes older published versions immediately; the response includes `retain_versions` and `deleted_versions`. Comments and surviving version numbers remain. Agent-preset credentials cannot change retention.
 
+The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
 
 ## Static-site scripts and data
 

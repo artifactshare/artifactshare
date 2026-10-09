@@ -1279,7 +1279,7 @@ function ViewerActions({
                     artifactId,
                     currentVisibility ?? 'private',
                     appOrigin,
-                  ),
+                  ) + window.location.hash,
                 translator,
                 {
                   paused: linkSuspended,

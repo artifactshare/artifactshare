@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
+import { isSandboxMessage } from '@artifactshare/viewer-kit/csp-reporter'
 import { renderPreviewShell } from './shell.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
 import { createPreviewStore } from './store.js'
@@ -67,6 +68,25 @@ test('an unchanged page keeps saved legacy annotations attached without offering
         post.mock.calls.some(([message]) => message.kind === 'verify-anchors'),
       ).toBe(true),
     )
+    const previewUrl = window.location.href
+    const frameUrl = frame.src
+    const snapshot = {
+      source: 'artifactshare',
+      kind: 'hash-changed',
+      token: 'a'.repeat(64),
+      hash: '#browser-only',
+      path: '/index.html',
+    }
+    expect(isSandboxMessage(snapshot)).toBe(true)
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: window.location.origin,
+        data: snapshot,
+      }),
+    )
+    expect(window.location.href).toBe(previewUrl)
+    expect(frame.src).toBe(frameUrl)
     const request = post.mock.calls.find(
       ([message]) => message.kind === 'verify-anchors',
     )![0]

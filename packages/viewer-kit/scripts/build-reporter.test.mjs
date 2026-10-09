@@ -215,6 +215,9 @@ test('security paths reject iterable syntax and uncaptured Object/Array calls', 
     'createMessagePayload',
     'send',
     'ready',
+    'reportHash',
+    'installHashTracking',
+    'wrapHistory',
     'onReadyCheck',
     'installMessageListener',
     'readEventValue',
@@ -1489,6 +1492,8 @@ test('generated lifecycle retains native persisted state and otherwise performs 
     }
     const win = {
       parent: { postMessage() {} },
+      Reflect,
+      history: { pushState() {}, replaceState() {} },
       Function,
       Object,
       Array,
@@ -1598,4 +1603,88 @@ test('generated lifecycle retains native persisted state and otherwise performs 
       mode === 'true' || mode === 'captured-listener' ? 1 : 0,
     )
   }
+})
+
+test('generated history wrappers preserve invocation and contain reporting failures', async () => {
+  const { body } = await renderReporter()
+  const expose = body.replace(
+    'installReporter(window);',
+    'return [installHashTracking, ready];',
+  )
+  const [installHashTracking, ready] = new Function('return ' + expose)()
+  const messages = []
+  const calls = []
+  const result = {}
+  const failure = new Error('native failure')
+  const original = function (...args) {
+    if (this !== history) throw failure
+    calls.push(args)
+    if (args[0] === 'fail') throw failure
+    location.hash = args[2] ?? ''
+    return result
+  }
+  const history = { pushState: original, replaceState: original }
+  const location = { hash: '#initial', pathname: '/index.html' }
+  const listeners = new Map()
+  let reportFails = false
+  const ctx = {
+    documentToken: '',
+    readyChallenge: '',
+    win: { history, location },
+    primordials: {
+      reflectApply: Reflect.apply,
+      objectCreate: Object.create,
+      objectKeys: Object.keys,
+      savedParent: {},
+      savedPostMessage(_receiver, message) {
+        if (reportFails) throw new Error('notification failure')
+        messages.push(message)
+      },
+      addEventListener(_target, name, listener) {
+        listeners.set(name, listener)
+      },
+    },
+  }
+  installHashTracking(ctx)
+  const data = { nested: 'value' }
+  assert.equal(history.pushState(data, 'unused', '#early', 'extra'), result)
+  assert.equal(calls[0][0], data)
+  assert.deepEqual(calls[0], [data, 'unused', '#early', 'extra'])
+  assert.equal(messages.length, 0)
+  ctx.documentToken = 'a'.repeat(64)
+  ctx.readyChallenge = 'challenge'
+  ready(ctx)
+  assert.deepEqual(
+    messages.map((m) => m.kind),
+    ['ready', 'hash-changed'],
+  )
+  assert.equal(messages[1].hash, '#early')
+  assert.equal(messages[1].path, '/index.html')
+  assert.equal(messages[1].token, ctx.documentToken)
+  for (const method of ['pushState', 'replaceState']) {
+    assert.equal(history[method](data, '', '#next'), result)
+    const count = messages.length
+    assert.throws(
+      () => history[method].call({}, data, '', '#wrong'),
+      (error) => error === failure,
+    )
+    assert.throws(
+      () => history[method]('fail', '', '#wrong'),
+      (error) => error === failure,
+    )
+    assert.equal(messages.length, count)
+    reportFails = true
+    assert.equal(history[method](null, '', '#quiet'), result)
+    reportFails = false
+  }
+  location.hash = ''
+  listeners.get('hashchange')()
+  assert.equal(messages.at(-1).hash, '')
+  Object.defineProperty(location, 'hash', {
+    set() {},
+    get() {
+      throw new Error('unavailable location')
+    },
+  })
+  assert.equal(history.replaceState(null, '', '#quiet'), result)
 })

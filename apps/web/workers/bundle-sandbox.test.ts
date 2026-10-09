@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Kysely } from 'kysely'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '../app/test/sqlite-fixture'
@@ -2631,6 +2632,15 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const body = await response.text()
     expect(body).toContain('<h1 id="hello">Hello</h1>')
+    const reporter = Array.from(
+      body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),
+    )
+      .map((match) => match[1])
+      .find((script) => script.includes('function reportHash('))
+    expect(reporter).toBeDefined()
+    expect(createHash('sha256').update(reporter!).digest('base64')).toBe(
+      VIOLATION_REPORTER_SHA256,
+    )
     expect(body).toContain(
       '&lt;iframe src=&quot;https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ&quot; allow=&quot;fullscreen&quot;&gt;&lt;/iframe&gt;',
     )

@@ -8,6 +8,8 @@ description: Share, update, find, read, comment on, and organize HTML or Markdow
 Use the connected Artifact Share MCP tools for live data and changes. Do not
 claim that an operation succeeded unless the tool result confirms it.
 
+The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
+
 ## Choose the workflow
 
 - For a new artifact, call `share_artifact` with complete HTML or Markdown

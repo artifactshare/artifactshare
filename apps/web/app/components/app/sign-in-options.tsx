@@ -21,11 +21,13 @@ import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
  */
 export function SignInOptions({
   callbackURL,
+  includeViewerHash = false,
   disabled,
   regressionPrimary,
   errorCallbackURL,
 }: {
   callbackURL?: string
+  includeViewerHash?: boolean
   disabled?: boolean
   regressionPrimary?: string
   errorCallbackURL?: string
@@ -42,7 +44,8 @@ export function SignInOptions({
       : '/')
 
   const startSignIn = (provider: 'google' | 'microsoft') => {
-    const callback = resolveCallback()
+    const callback =
+      resolveCallback() + (includeViewerHash ? window.location.hash : '')
     trackEvent(ANALYTICS_EVENTS.signUpStart, {
       [ANALYTICS_PARAMS.method]: provider,
     })

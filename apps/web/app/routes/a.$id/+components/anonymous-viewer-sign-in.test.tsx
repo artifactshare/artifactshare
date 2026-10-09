@@ -1,5 +1,12 @@
+// @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactElement } from 'react'
+import { act, type ReactElement } from 'react'
+import { createRoot, hydrateRoot } from 'react-dom/client'
+import { TooltipProvider } from '~/components/ui/tooltip'
+import { MemoryRouter } from 'react-router'
+import Viewer from '../+viewer'
+import { signIn } from '~/lib/auth-client'
+import { viewerSignInHref } from '~/hooks/use-viewer-hash'
 import { describe, expect, test, vi } from 'vitest'
 import { AnonymousViewerSignInControl } from './anonymous-viewer-sign-in'
 
@@ -38,4 +45,146 @@ describe('AnonymousViewerSignInControl', () => {
       vi.unstubAllGlobals()
     }
   })
+})
+
+test('scripted sign-in reads the fragment at activation and keeps the trusted app origin', () => {
+  const href =
+    'https://example.test/sign-in?next=%2Fa%2Fabc123def4%3Fversion%3Dv1'
+  const control = AnonymousViewerSignInControl({
+    href,
+    label: 'Sign in',
+    shouldLoadAnalytics: false,
+  }) as ReactElement<{ onClick: () => void }>
+  const assign = vi.fn()
+  vi.stubGlobal('window', {
+    location: { hash: '#from=2026-07-11&media=video', assign },
+  })
+  try {
+    control.props.onClick()
+    const url = new URL(assign.mock.calls[0][0])
+    expect(url.origin).toBe('https://example.test')
+    expect(url.pathname).toBe('/sign-in')
+    expect(url.hash).toBe('')
+    expect(url.searchParams.get('next')).toBe(
+      '/a/abc123def4?version=v1#from=2026-07-11&media=video',
+    )
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+vi.mock('react-router', async (original) => ({
+  ...(await original<typeof import('react-router')>()),
+  useRouteLoaderData: () => ({
+    locale: 'en',
+    analyticsConsent: { shouldLoadAnalytics: false },
+  }),
+}))
+vi.mock('~/lib/auth-client', () => ({ signIn: { social: vi.fn() } }))
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+test('hydrated consent-enabled sign-in anchors encode the fragment inside next', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const previousUrl = window.location.href
+  window.history.replaceState(null, '', '/#q=abc')
+  const view = (
+    <AnonymousViewerSignInControl
+      href="https://example.test/sign-in?next=%2Fa%2Fabc123def4"
+      label="Sign in"
+      shouldLoadAnalytics
+    />
+  )
+  host.innerHTML = renderToStaticMarkup(view)
+  let root!: ReturnType<typeof hydrateRoot>
+  try {
+    await act(async () => {
+      root = hydrateRoot(host, view)
+    })
+    const link = host.querySelector('a')!
+    expect(new URL(link.href).origin).toBe('https://example.test')
+    expect(new URL(link.href).searchParams.get('next')).toBe(
+      '/a/abc123def4#q=abc',
+    )
+    expect(new URL(link.href).hash).toBe('')
+    await act(async () => {
+      window.history.replaceState(null, '', '#latest')
+      window.dispatchEvent(new Event('artifactshare:hash-changed'))
+    })
+    expect(new URL(link.href).searchParams.get('next')).toBe(
+      '/a/abc123def4#latest',
+    )
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
+})
+
+test('preauth email and both providers keep the canonical path/query with the client fragment', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const previousUrl = window.location.href
+  window.history.replaceState(null, '', '/#initial')
+  try {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <MemoryRouter>
+            <Viewer
+              loaderData={{
+                kind: 'preauth',
+                canonicalUrl: 'https://example.test/a/abc123def4?version=v1',
+                artifact: {
+                  id: 'abc123def4',
+                  name: null,
+                  derivedTitle: null,
+                  titleOverride: null,
+                  description: null,
+                },
+              }}
+            />
+          </MemoryRouter>
+        </TooltipProvider>,
+      ),
+    )
+    const email = host.querySelector<HTMLAnchorElement>(
+      'a[href*="method=email"]',
+    )!
+    expect(new URL(email.href).searchParams.get('next')).toBe(
+      '/a/abc123def4?version=v1#initial',
+    )
+    window.history.replaceState(null, '', '#activated')
+    const providers = Array.from(host.querySelectorAll('button')).filter(
+      (button) =>
+        button.textContent?.includes('Google') ||
+        button.textContent?.includes('Microsoft'),
+    )
+    expect(providers).toHaveLength(2)
+    for (const button of providers) {
+      await act(async () => button.click())
+      expect(vi.mocked(signIn.social).mock.calls.at(-1)?.[0]).toMatchObject({
+        callbackURL: '/a/abc123def4?version=v1#activated',
+        errorCallbackURL:
+          '/sign-in?next=%2Fa%2Fabc123def4%3Fversion%3Dv1%23activated',
+      })
+    }
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
+})
+
+test('fragment return targets preserve internal-path validation', () => {
+  const url = new URL(
+    viewerSignInHref(
+      'https://example.test/sign-in?next=%2F%2Fexample.com',
+      '#q',
+    ),
+  )
+  expect(url.origin).toBe('https://example.test')
+  expect(url.searchParams.get('next')).toBe('/#q')
 })

@@ -5,6 +5,9 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Update bundled CLI skill and Cursor instructions to explain browser share-page fragments, filtered Copy links, and the static-site entrypoint restriction.
+- Bundle the shared reporter fragment messages for the next CLI release; local preview continues to ignore them.
+
 ## 0.15.1 - 2026-10-09
 
 - Document API-only static-site inheritance, base-version conflicts, repeated deletion paths, and physical storage accounting in the bundled instructions.

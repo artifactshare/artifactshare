@@ -1,3 +1,4 @@
+import { useViewerHash } from '~/hooks/use-viewer-hash'
 import { useState } from 'react'
 import { isRouteErrorResponse, Link, useRouteLoaderData } from 'react-router'
 import { Button } from '~/components/ui/button'
@@ -248,9 +249,10 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
   const { t } = useT()
   const cliCommand = buildPreauthCliOpenCommand(canonicalUrl)
   const [agentHelpOpen, setAgentHelpOpen] = useState(false)
+  const hash = useViewerHash()
   const returnUrl = new URL(canonicalUrl)
   const returnPath = `${returnUrl.pathname}${returnUrl.search}`
-  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(returnPath)}`
+  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(returnPath + hash)}`
   return (
     <Stack gap="0" align="center" justify="center" asChild>
       <main className={preauthMainClassName}>
@@ -262,7 +264,7 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
           <Stack gap="12">
             <p className={preauthSubClassName}>{t('lp.invite.sub')}</p>
             <AuthBlock>
-              <SignInOptions callbackURL={returnPath} />
+              <SignInOptions callbackURL={returnPath} includeViewerHash />
               <Link to={signInHref} className={authEmailLinkClassName}>
                 {t('signin.email.toggle')}
                 <LastUsedBadge method="email" />

@@ -4,7 +4,11 @@ import { classifyCspViolation } from './csp-violation-classification'
 import { isSandboxMessage } from './csp-reporter'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
-import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
+import {
+  VIOLATION_REPORTER_SCRIPT_BODY,
+  VIOLATION_REPORTER_SHA256,
+  canUseOsHandler,
+} from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
   buildPrintDocument,
@@ -73,6 +77,7 @@ async function probeReporter(challenge?: string) {
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
   handshake = true,
+  documentNavigation = false,
 ) {
   messages = []
   readyEvents = []
@@ -80,12 +85,18 @@ async function fixture(
   frame?.remove()
   frame = document.createElement('iframe')
   frame.style.cssText = 'width:800px;height:600px;border:0'
-  frame.srcdoc = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const html = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const objectUrl = documentNavigation
+    ? URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    : null
+  if (objectUrl) frame.src = objectUrl
+  else frame.srcdoc = html
   const loaded = new Promise<void>((resolve) =>
     frame?.addEventListener('load', () => resolve(), { once: true }),
   )
   document.body.appendChild(frame)
   await loaded
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
   if (handshake) await probeReporter()
   return frame.contentDocument!
 }
@@ -1619,6 +1630,7 @@ test.each([
   async ({ index, classification, directive }) => {
     const result = await server.commands.cspDiagnostic(
       injectReadyReporter(CSP_DIAGNOSTIC_BODIES[index]),
+      VIOLATION_REPORTER_SHA256,
     )
     expect(result.errors).toEqual([])
     expect(result.unexpectedRequests).toEqual([])
@@ -1645,3 +1657,63 @@ test.each([
   },
   10000,
 )
+
+test('reports fragments only after ready, then tracks anchors and both history methods', async () => {
+  const doc = await fixture(
+    '<a href="#heading">Contents</a><h2 id="heading">Heading</h2>',
+    false,
+    true,
+  )
+  const win = frame!.contentWindow!
+  win.location.hash = '#before-ready'
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  expect(messages.filter((m) => m.kind === 'hash-changed')).toHaveLength(0)
+  await probeReporter()
+  const initial = await waitForMessage('hash-changed')
+  expect(initial.hash).toBe('#before-ready')
+  expect(initial.path).toBe(win.location.pathname)
+  expect(initial.token).toMatch(/^[a-f0-9]{64}$/)
+  expect(Object.keys(initial).sort()).toEqual([
+    'hash',
+    'kind',
+    'path',
+    'source',
+    'token',
+  ])
+  expect(messages.findIndex((m) => m.kind === 'ready')).toBeLessThan(
+    messages.indexOf(initial),
+  )
+  doc.querySelector('a')!.click()
+  await waitForMessage('hash-changed', (m) => m.hash === '#heading')
+  expect(win.history.pushState({ filter: 1 }, '', '#pushed')).toBeUndefined()
+  await waitForMessage('hash-changed', (m) => m.hash === '#pushed')
+  expect(
+    win.history.replaceState({ filter: 2 }, '', '#replaced'),
+  ).toBeUndefined()
+  await waitForMessage('hash-changed', (m) => m.hash === '#replaced')
+  expect(win.history.state).toEqual({ filter: 2 })
+  expect(() =>
+    win.history.replaceState.call({} as History, null, '', '#invalid'),
+  ).toThrow()
+  expect(() =>
+    win.history.pushState(null, '', 'https://example.com/'),
+  ).toThrow()
+  expect(win.location.hash).toBe('#replaced')
+})
+
+test('Markdown CSP executes the regenerated reporter while blocking authored scripts', async () => {
+  const result = await server.commands.cspDiagnostic(
+    injectReadyReporter(
+      '<!doctype html><html><head></head><body><h1>Heading</h1><script>window.untrusted = true</script></body></html>',
+    ),
+    VIOLATION_REPORTER_SHA256,
+    'md',
+  )
+  expect(
+    result.reports.some(
+      (report) =>
+        report.directive === 'script-src-elem' &&
+        report.blockedURI === 'inline',
+    ),
+  ).toBe(true)
+})

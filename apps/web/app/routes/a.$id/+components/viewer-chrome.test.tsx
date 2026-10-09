@@ -1,5 +1,13 @@
+// @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AnchorHTMLAttributes, ComponentProps, ReactNode } from 'react'
+import {
+  act,
+  type AnchorHTMLAttributes,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
+import { createRoot } from 'react-dom/client'
+import { copyShareUrl } from '~/lib/clipboard'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
@@ -10,6 +18,8 @@ import {
   historicalViewerShareUrl,
   ViewerChrome,
 } from './viewer-chrome'
+
+vi.mock('~/lib/clipboard', () => ({ copyShareUrl: vi.fn() }))
 
 vi.mock('~/hooks/use-hydrated', () => ({
   useHydrated: () => true,
@@ -842,3 +852,45 @@ describe.each([
     }
   })
 })
+
+test.each(['private', 'link'] as const)(
+  'latest-version Copy link reads the live hash for %s sharing',
+  async (visibility) => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const previousUrl = window.location.href
+    const previousState = window.history.state
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    try {
+      window.history.replaceState(null, '', '/a/abc123def4#initial')
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <ViewerChrome
+              artifact={{ ...artifact, id: 'abc123def4', visibility }}
+              user={null}
+              renderType="html"
+              appOrigin="https://artifactshare.com"
+            />
+          </TooltipProvider>,
+        ),
+      )
+      window.history.replaceState(null, '', '#current')
+      const button = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy URL"]',
+      )!
+      expect(button).not.toBeNull()
+      await act(async () => button.click())
+      expect(vi.mocked(copyShareUrl).mock.calls.at(-1)?.[0]).toBe(
+        visibility === 'link'
+          ? 'https://abc123def4.artifactshare.link/#current'
+          : 'https://artifactshare.com/a/abc123def4#current',
+      )
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      window.history.replaceState(previousState, '', previousUrl)
+    }
+  },
+)
