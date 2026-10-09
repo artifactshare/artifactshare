@@ -78,6 +78,12 @@ export function staticSiteBundleResponse(
         ...responseExtraOkFields,
       })
     }
+    case 'validation-failed':
+      return errorResponse(
+        'validation-failed',
+        'Invalid inheritance paths or base version.',
+        400,
+      )
     case 'too-many-files':
       return errorResponse(
         'too-many-files',

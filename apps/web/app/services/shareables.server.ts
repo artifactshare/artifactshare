@@ -1,3 +1,8 @@
+import {
+  OBJECT_REFERENCE_CHUNK,
+  unreferencedObjectKeys,
+  releasedObjectBytes,
+} from './physical-storage.server'
 import { pruneVersionsAfterPublish } from './version-retention.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
@@ -49,6 +54,7 @@ import {
   artifactContentType,
   artifactR2Key,
   deleteArtifactsByPrefix,
+  deleteArtifacts,
   deleteArtifact,
   putArtifact,
 } from './storage.server'
@@ -118,6 +124,8 @@ type ArtifactLiveBinding = {
 }
 
 type BackgroundTaskOptions = {
+  baseVersionId?: string
+  deletePaths?: string[]
   label?: string
   waitUntil?: (promise: Promise<unknown>) => void
   authority?: CliAuthority | null
@@ -297,6 +305,7 @@ export type GrantLookupResult =
   | { kind: 'not-found' }
 
 export type UploadStaticSiteBundleResult =
+  | { kind: 'validation-failed' }
   | {
       kind: 'ok'
       id: string
@@ -327,6 +336,7 @@ export type UploadStaticSiteBundleResult =
   | LinkSharingWriteFailure
 
 export type UpdateStaticSiteBundleResult =
+  | { kind: 'validation-failed' }
   | { kind: 'ok'; id: string; versionId: string; number: number }
   | { kind: 'not-found' }
   | { kind: 'invalid-container' }
@@ -351,6 +361,8 @@ export type StaticSiteBundleUploadSessionResult =
   | { kind: 'id-exhausted' }
 
 export type StaticSiteBundleVersionUploadSessionResult =
+  | { kind: 'validation-failed' }
+  | { kind: 'version-conflict'; currentVersionId: string | null }
   | { kind: 'ok'; session: StaticSiteBundleUploadSession }
   | { kind: 'not-found' }
   | { kind: 'copy-forbidden' }
@@ -833,7 +845,13 @@ export async function beginStaticSiteBundleVersionUploadSession(
   )
   if (!shareable) return { kind: 'not-found' }
   if (shareable.artifact_kind !== 'static_site') {
-    return { kind: 'copy-forbidden' }
+    return {
+      kind:
+        options?.baseVersionId !== undefined ||
+        options?.deletePaths !== undefined
+          ? 'validation-failed'
+          : 'copy-forbidden',
+    }
   }
   const externalPosting = await checkExternalVersionUploadAllowed(
     db,
@@ -855,6 +873,61 @@ export async function beginStaticSiteBundleVersionUploadSession(
     (await isWorkspaceAccessRevoked(db, accounting.workspaceId, user.id))
   ) {
     return { kind: 'workspace-access-revoked' }
+  }
+
+  const baseVersionId = options?.baseVersionId ?? null
+  const deletePaths = new Set<string>()
+  if (baseVersionId !== null && !baseVersionId.trim())
+    return { kind: 'validation-failed' }
+  if (
+    (options?.deletePaths && !baseVersionId) ||
+    (baseVersionId &&
+      options?.expectedCurrentVersionId !== undefined &&
+      options.expectedCurrentVersionId !== baseVersionId) ||
+    (options?.deletePaths?.length ?? 0) > MAX_STATIC_SITE_FILES * 20
+  )
+    return { kind: 'validation-failed' }
+  for (const raw of options?.deletePaths ?? []) {
+    const path = normalizeBundlePath(raw)
+    if (
+      !raw ||
+      validateBundlePath(raw).kind === 'blocked' ||
+      validatePreparedStaticSitePath(path, new Set())
+    )
+      return { kind: 'validation-failed' }
+    deletePaths.add(path)
+  }
+  let baseFiles: UploadedStaticSiteFile[] = []
+  if (baseVersionId) {
+    const base = await db
+      .selectFrom('versions')
+      .select('id')
+      .where('id', '=', baseVersionId)
+      .where('shareable_id', '=', shareableId)
+      .where('status', '=', 'published')
+      .where('artifact_kind', '=', 'static_site')
+      .executeTakeFirst()
+    if (baseVersionId !== shareable.current_version_id || !base) {
+      return {
+        kind: 'version-conflict',
+        currentVersionId: shareable.current_version_id,
+      }
+    }
+    baseFiles = (
+      await db
+        .selectFrom('version_files')
+        .selectAll()
+        .where('version_id', '=', baseVersionId)
+        .execute()
+    ).map((file) => ({
+      id: file.id,
+      path: file.path,
+      r2Key: file.r2_key,
+      mimeType: file.mime_type,
+      sizeBytes: file.size_bytes,
+      sha256: file.sha256,
+      derivedTitle: null,
+    }))
   }
 
   const workspaceRow = await db
@@ -883,9 +956,13 @@ export async function beginStaticSiteBundleVersionUploadSession(
       ),
       {
         kind: 'version',
+        baseVersionId,
+        baseFiles,
+        deletePaths,
         label: options?.label ?? null,
         touchArtifactKeyId,
         expectedCurrentVersionId:
+          baseVersionId ??
           options?.expectedCurrentVersionId ??
           (options?.authority?.kind === 'agent' ||
           shareable.owner_user_id !== user.id
@@ -1132,9 +1209,9 @@ export async function deleteShareable(
   // fails after R2 succeeds — surface a delete-failed error while content is
   // already gone.
   //
-  // Use a SUM(versions WHERE shareable_id=X) subquery for the storage debit
+  // Compute newly unreferenced object bytes in the deletion batch
   // rather than the pre-fetched totalSize, so concurrent deletes for the
-  // same shareable can't double-debit: the second batch sees SUM=0 (cascade
+  // same shareable can't double-debit: the second batch sees no rows (cascade
   // already cleared versions) and subtracts nothing. The delete-event insert is
   // likewise gated on the shareable still existing (INSERT ... SELECT WHERE
   // id = X), so a concurrent delete that already removed the row yields no
@@ -1151,7 +1228,7 @@ export async function deleteShareable(
     db
       .updateTable('workspaces')
       .set({
-        storage_used_bytes: sql<number>`MAX(storage_used_bytes - COALESCE((SELECT SUM(size_bytes) FROM versions WHERE shareable_id = ${shareableId}), 0), 0)`,
+        storage_used_bytes: sql<number>`MAX(storage_used_bytes - ${releasedObjectBytes(db.selectFrom('versions').select('id').where('shareable_id', '=', shareableId))}, 0)`,
         storage_updated_at: now,
       })
       .where(
@@ -1219,18 +1296,20 @@ export async function deleteShareable(
       ...versionFiles.map((f) => f.r2_key),
     ]),
   )
-  const deleteResults = await Promise.allSettled(
-    allKeys.map((key) => deleteArtifact(env.BUCKET, key)),
-  )
-  deleteResults.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      console.error('r2_orphan_after_delete', {
-        shareable_id: shareableId,
-        r2_key: allKeys[index],
-        err: result.reason,
-      })
+  for (const keys of chunkArray(allKeys, OBJECT_REFERENCE_CHUNK)) {
+    try {
+      const unreferenced = await unreferencedObjectKeys(db, keys)
+      await deleteArtifacts(env.BUCKET, unreferenced)
+    } catch (err) {
+      for (const key of keys) {
+        console.error('r2_orphan_after_delete', {
+          shareable_id: shareableId,
+          r2_key: key,
+          err,
+        })
+      }
     }
-  })
+  }
 
   return { kind: 'ok' }
 }
@@ -1671,6 +1750,7 @@ type UploadedStaticSiteFile = {
 }
 
 type StaticSiteAddFileResult =
+  | { kind: 'validation-failed' }
   | { kind: 'ok' }
   | { kind: 'too-many-files'; limit: number }
   | { kind: 'too-large'; limitBytes: number }
@@ -1692,6 +1772,9 @@ type StaticSiteBundleUploadTarget =
     }
   | {
       kind: 'version'
+      baseVersionId: string | null
+      baseFiles: UploadedStaticSiteFile[]
+      deletePaths: ReadonlySet<string>
       label: string | null
       touchArtifactKeyId: string | null
       expectedCurrentVersionId: string | null
@@ -1762,6 +1845,8 @@ export class StaticSiteBundleUploadSession {
     }
 
     const path = normalizeBundlePath(rawPath)
+    if (this.target.kind === 'version' && this.target.deletePaths.has(path))
+      return { kind: 'validation-failed' }
     const pathProblem = validatePreparedStaticSitePath(
       path,
       this.#seenPathsLower,
@@ -2128,18 +2213,67 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'not-found' }
     }
 
-    const entrypointFile = this.entrypointFile()
+    if (
+      versionTarget.baseVersionId &&
+      writable.current_version_id !== versionTarget.baseVersionId
+    ) {
+      await this.abortUploadedFiles()
+      return {
+        kind: 'version-conflict',
+        currentVersionId: writable.current_version_id,
+      }
+    }
+    const exclusions = JSON.stringify([
+      ...versionTarget.deletePaths,
+      ...this.files.map((file) => file.path),
+    ])
+    const manifest = [
+      ...versionTarget.baseFiles.filter(
+        (file) =>
+          !versionTarget.deletePaths.has(file.path) &&
+          !this.files.some((sent) => sent.path === file.path),
+      ),
+      ...this.files,
+    ]
+    const logicalBytes = manifest.reduce(
+      (total, file) => total + file.sizeBytes,
+      0,
+    )
+    const seen = new Set<string>()
+    for (const file of manifest) {
+      if (seen.has(file.path.toLowerCase())) {
+        await this.abortUploadedFiles()
+        return { kind: 'duplicate-path', path: file.path }
+      }
+      seen.add(file.path.toLowerCase())
+    }
+    if (
+      manifest.length > MAX_STATIC_SITE_FILES ||
+      logicalBytes > MAX_STATIC_SITE_TOTAL_BYTES
+    ) {
+      await this.abortUploadedFiles()
+      return manifest.length > MAX_STATIC_SITE_FILES
+        ? { kind: 'too-many-files', limit: MAX_STATIC_SITE_FILES }
+        : { kind: 'too-large', limitBytes: MAX_STATIC_SITE_TOTAL_BYTES }
+    }
+    // These expressions are evaluated again by D1, inside the publish batch.
+    const inheritedCount = sql<number>`(SELECT COUNT(*) FROM version_files WHERE version_id = ${versionTarget.baseVersionId} AND path NOT IN (SELECT value FROM json_each(${exclusions})))`
+    const inheritedBytes = sql<number>`(SELECT COALESCE(SUM(size_bytes), 0) FROM version_files WHERE version_id = ${versionTarget.baseVersionId} AND path NOT IN (SELECT value FROM json_each(${exclusions})))`
+    const entrypointFile = this.entrypointFile(manifest)
     if (!entrypointFile) {
       await this.abortUploadedFiles()
       return { kind: 'missing-entrypoint' }
     }
 
-    const reserved = await reserveQuota(
-      this.db,
-      this.accounting.workspaceId,
-      this.#totalSizeBytes,
-      this.now,
-    )
+    const reserved =
+      versionTarget.baseVersionId !== null && this.#totalSizeBytes === 0
+        ? 'ok'
+        : await reserveQuota(
+            this.db,
+            this.accounting.workspaceId,
+            this.#totalSizeBytes,
+            this.now,
+          )
     if (reserved === 'over-quota') {
       await this.abortUploadedFiles()
       return { kind: 'quota-exceeded' }
@@ -2153,7 +2287,7 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
-    const sha256 = await this.computeBundleSha256()
+    const sha256 = await this.computeBundleSha256(manifest)
     const versionFileRows = this.versionFileRows()
     const fallbackToIndex =
       staticSiteEntrypointKind(entrypointFile.path) === 'html' ? 1 : 0
@@ -2187,7 +2321,7 @@ export class StaticSiteBundleUploadSession {
               sql<'published'>`'published'`.as('status'),
               sql<string>`${entrypointFile.path}`.as('entrypoint_path'),
               sql<string>`${entrypointFile.r2Key}`.as('r2_key'),
-              sql<number>`${this.#totalSizeBytes}`.as('size_bytes'),
+              sql<number>`${logicalBytes}`.as('size_bytes'),
               sql<string>`${sha256}`.as('sha256'),
               sql<number>`${fallbackToIndex}`.as('fallback_to_index'),
               sql<string>`${this.user.id}`.as('created_by_id'),
@@ -2201,6 +2335,12 @@ export class StaticSiteBundleUploadSession {
             .where('id', '=', this.shareableId)
             .where('workspace_id', '=', this.accounting.workspaceId)
             .where('artifact_kind', '=', 'static_site')
+            .where(
+              sql<boolean>`${inheritedCount} + ${this.files.length} <= ${MAX_STATIC_SITE_FILES}`,
+            )
+            .where(
+              sql<boolean>`${inheritedBytes} + ${this.#totalSizeBytes} <= ${MAX_STATIC_SITE_TOTAL_BYTES}`,
+            )
             .where(
               writableShareableSql(
                 this.user,
@@ -2216,26 +2356,137 @@ export class StaticSiteBundleUploadSession {
               ),
             ),
         ),
+      this.db
+        .insertInto('version_files')
+        .columns([
+          'id',
+          'version_id',
+          'path',
+          'r2_key',
+          'size_bytes',
+          'sha256',
+          'mime_type',
+          'scan_flags',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('version_files as base')
+            .select([
+              sql<string>`lower(hex(randomblob(16)))`.as('id'),
+              sql<string>`${this.versionId}`.as('version_id'),
+              'base.path',
+              'base.r2_key',
+              'base.size_bytes',
+              'base.sha256',
+              'base.mime_type',
+              'base.scan_flags',
+              sql<string>`${this.now}`.as('created_at'),
+            ])
+            .where('base.version_id', '=', versionTarget.baseVersionId ?? '')
+            .where(
+              sql<boolean>`base.path NOT IN (SELECT value FROM json_each(${exclusions}))`,
+            )
+            .where(
+              eb.exists(
+                eb
+                  .selectFrom('versions')
+                  .select('id')
+                  .where('id', '=', this.versionId),
+              ),
+            )
+            .where(
+              eb.exists(
+                eb
+                  .selectFrom('shareables')
+                  .select('id')
+                  .where('id', '=', this.shareableId)
+                  .where('workspace_id', '=', this.accounting.workspaceId)
+                  .where('artifact_kind', '=', 'static_site')
+                  .where(
+                    'current_version_id',
+                    '=',
+                    versionTarget.baseVersionId ?? '',
+                  )
+                  .where(
+                    writableShareableSql(
+                      this.user,
+                      versionTarget.authority,
+                      'version',
+                    ),
+                  ),
+              ),
+            ),
+        ),
       ...chunkArray(versionFileRows, VERSION_FILE_INSERT_CHUNK_SIZE).map(
-        (rows) => this.db.insertInto('version_files').values(rows),
+        (rows) =>
+          this.db
+            .insertInto('version_files')
+            .columns([
+              'id',
+              'version_id',
+              'path',
+              'r2_key',
+              'mime_type',
+              'size_bytes',
+              'sha256',
+              'scan_flags',
+              'created_at',
+            ])
+            .expression((eb) =>
+              eb
+                .selectFrom(sql`json_each(${JSON.stringify(rows)})`.as('sent'))
+                .select([
+                  sql<string>`json_extract(sent.value, '$.id')`.as('id'),
+                  sql<string>`${this.versionId}`.as('version_id'),
+                  sql<string>`json_extract(sent.value, '$.path')`.as('path'),
+                  sql<string>`json_extract(sent.value, '$.r2_key')`.as(
+                    'r2_key',
+                  ),
+                  sql<string>`json_extract(sent.value, '$.mime_type')`.as(
+                    'mime_type',
+                  ),
+                  sql<number>`json_extract(sent.value, '$.size_bytes')`.as(
+                    'size_bytes',
+                  ),
+                  sql<string>`json_extract(sent.value, '$.sha256')`.as(
+                    'sha256',
+                  ),
+                  sql<null>`NULL`.as('scan_flags'),
+                  sql<string>`${this.now}`.as('created_at'),
+                ])
+                .where(
+                  eb.exists(
+                    eb
+                      .selectFrom('versions')
+                      .select('id')
+                      .where('id', '=', this.versionId),
+                  ),
+                ),
+            ),
       ),
       this.db
         .updateTable('shareables')
         .set({
           ...(versionTarget.authority?.kind === 'agent' ||
-          versionTarget.preserveArtifactIdentity
+          versionTarget.preserveArtifactIdentity ||
+          !this.files.includes(entrypointFile)
             ? {}
             : {
                 name:
                   entrypointFile.derivedTitle ?? entrypointFile.path.slice(1),
               }),
           artifact_kind: 'static_site',
-          ...(versionTarget.preserveArtifactIdentity
+          ...(versionTarget.preserveArtifactIdentity ||
+          !this.files.includes(entrypointFile)
             ? {}
             : { derived_title: entrypointFile.derivedTitle }),
           current_version_id: this.versionId,
           updated_at: this.now,
         })
+        .where(
+          sql<boolean>`EXISTS (SELECT 1 FROM versions WHERE id = ${this.versionId})`,
+        )
         .where('id', '=', this.shareableId)
         .where('workspace_id', '=', this.accounting.workspaceId)
         .where('artifact_kind', '=', 'static_site')
@@ -2368,6 +2619,16 @@ export class StaticSiteBundleUploadSession {
           }
         }
       }
+      const limits = await this.db
+        .selectNoFrom([inheritedCount.as('count'), inheritedBytes.as('bytes')])
+        .executeTakeFirstOrThrow()
+      if (Number(limits.count) + this.files.length > MAX_STATIC_SITE_FILES)
+        return { kind: 'too-many-files', limit: MAX_STATIC_SITE_FILES }
+      if (
+        Number(limits.bytes) + this.#totalSizeBytes >
+        MAX_STATIC_SITE_TOTAL_BYTES
+      )
+        return { kind: 'too-large', limitBytes: MAX_STATIC_SITE_TOTAL_BYTES }
       return { kind: 'storage-failed' }
     }
 
@@ -2396,18 +2657,18 @@ export class StaticSiteBundleUploadSession {
     await compensateStaticSiteR2(this.r2Prefix, this.shareableId)
   }
 
-  private entrypointFile() {
+  private entrypointFile(files = this.files) {
     return (
-      this.files.find((file) => file.path.toLowerCase() === '/index.html') ??
-      this.files.find((file) => file.path.toLowerCase() === '/index.md') ??
+      files.find((file) => file.path.toLowerCase() === '/index.html') ??
+      files.find((file) => file.path.toLowerCase() === '/index.md') ??
       null
     )
   }
 
-  private async computeBundleSha256(): Promise<string> {
+  private async computeBundleSha256(files = this.files): Promise<string> {
     return await computeFileSha256(
       new TextEncoder().encode(
-        this.files
+        files
           .map((file) => `${file.path}\0${file.sizeBytes}\0${file.sha256}`)
           .sort()
           .join('\n'),

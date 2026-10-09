@@ -34,7 +34,7 @@ import * as access from '../app/modules/access'
 import { createDb } from '../app/services/db.server'
 import { checkAnonymousLinkAccess } from '../app/services/link-sharing.server'
 import { consumeJti } from '../app/services/sandbox-jti.server'
-import { getArtifact, headArtifact } from '../app/services/storage.server'
+import { getArtifact } from '../app/services/storage.server'
 import { viewerAccessAllowed } from '../app/services/access.server'
 import type { DB } from '../app/types/db'
 import {
@@ -51,8 +51,8 @@ import {
 } from '../app/lib/sandbox-block-report'
 
 const COOKIE_NAME = 'as_bnd'
-// Anonymous link bundle grants may outlive a visibility change by this bounded
-// interval; the next entrypoint or expired-cookie asset request rechecks D1.
+// Cookies bound token lifetime; every asset request rechecks D1 access and
+// resolves the immutable version manifest, including inherited object keys.
 const COOKIE_TTL_SECONDS = 10 * 60
 const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
@@ -64,13 +64,11 @@ interface BundleCookiePayload {
   vid: string
   exp: number
   fallbackToIndex?: boolean
-  r2Prefix?: string
 }
 
 type AnonymousBundleCookiePayload = BundleCookiePayload & {
   uid: null
   fallbackToIndex: boolean
-  r2Prefix: string
 }
 
 type SandboxIdentity = NonNullable<
@@ -153,7 +151,7 @@ export async function handleArtifactSandboxRequest(
           anonymousResponseDomain(identity),
         )
       }
-      return await serveAnonymousCookieBundleAsset(
+      return await serveBundleAsset(
         cookie,
         path,
         request,
@@ -286,12 +284,7 @@ async function handleEntrypointRequest(
       )
     }
     const response = await serveEntrypoint(entrypoint, false, responseDomain)
-    if (
-      !response.ok ||
-      entrypoint.renderType !== 'static_site' ||
-      !entrypoint.r2Prefix
-    )
-      return response
+    if (!response.ok || entrypoint.renderType !== 'static_site') return response
     response.headers.append(
       'Set-Cookie',
       await bundleCookieFor(payload, entrypoint),
@@ -399,7 +392,6 @@ interface Entrypoint {
   r2Key: string
   contentType: string | null
   fallbackToIndex: boolean
-  r2Prefix: string | null
 }
 
 async function publishedEntrypoint(
@@ -437,7 +429,6 @@ async function publishedEntrypoint(
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
       fallbackToIndex: false,
-      r2Prefix: null,
     }
   }
 
@@ -449,24 +440,12 @@ async function publishedEntrypoint(
     .where('r2_key', '=', payload.fid)
     .executeTakeFirst()
   if (!file) return null
-  const r2Prefix = staticSiteR2PrefixFromEntrypoint(file.r2_key, path)
-  if (!r2Prefix) return null
   return {
     renderType: 'static_site',
     r2Key: file.r2_key,
     contentType: file.mime_type,
     fallbackToIndex: Number(version.fallback_to_index) === 1,
-    r2Prefix,
   }
-}
-
-function staticSiteR2PrefixFromEntrypoint(
-  r2Key: string,
-  path: string,
-): string | null {
-  const suffix = path.slice(1)
-  if (!suffix || !r2Key.endsWith(suffix)) return null
-  return r2Key.slice(0, -suffix.length)
 }
 
 async function bundleCookieFor(
@@ -481,9 +460,7 @@ async function bundleCookieFor(
     exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
   }
   if (payload.uid === null) {
-    if (!entrypoint.r2Prefix) throw new Error('Missing static-site R2 prefix')
     cookiePayload.fallbackToIndex = entrypoint.fallbackToIndex
-    cookiePayload.r2Prefix = entrypoint.r2Prefix
   }
   const value = await signBundleCookie(cookiePayload, env.BETTER_AUTH_SECRET)
   return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`
@@ -618,52 +595,10 @@ async function serveBundleAsset(
   return await serveBundleFile(fallback, request, responseDomain)
 }
 
-async function serveAnonymousCookieBundleAsset(
-  bundle: AnonymousBundleCookiePayload,
-  path: string,
-  request: Request,
-  responseDomain: SandboxResponseDomain,
-): Promise<Response> {
-  const candidates = [
-    { path, key: `${bundle.r2Prefix}${path.slice(1)}` },
-    ...(!hasFileExtension(path) && bundle.fallbackToIndex
-      ? [{ path: '/index.html', key: `${bundle.r2Prefix}index.html` }]
-      : []),
-  ]
-
-  for (const candidate of candidates) {
-    const object = await headArtifact(env.BUCKET, candidate.key)
-    if (!object) continue
-    return await serveBundleFile(
-      {
-        r2_key: candidate.key,
-        mime_type: object.httpMetadata?.contentType ?? null,
-        size_bytes: object.size,
-      },
-      request,
-      responseDomain,
-    )
-  }
-
-  return deniedResponse(
-    'bundle_file_missing',
-    'This artifact is unavailable.',
-    404,
-    { aid: bundle.aid, vid: bundle.vid, path },
-    responseDomain,
-  )
-}
-
 function isAnonymousBundleCookie(
   payload: BundleCookiePayload,
 ): payload is AnonymousBundleCookiePayload {
-  return (
-    payload.uid === null &&
-    typeof payload.fallbackToIndex === 'boolean' &&
-    typeof payload.r2Prefix === 'string' &&
-    payload.r2Prefix.length > 0 &&
-    payload.r2Prefix.endsWith('/')
-  )
+  return payload.uid === null && typeof payload.fallbackToIndex === 'boolean'
 }
 
 async function authenticatedSandboxAccess(

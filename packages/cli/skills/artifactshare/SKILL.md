@@ -598,3 +598,31 @@ Static-site binary assets support HTTP byte ranges. To refresh data while keepin
 the same share URL, replace the data locally and update the folder as a new
 version; each version retains its own isolated origin. Single-file HTML and
 Markdown have different script policies; these permissions apply to folder shares.
+
+### API-only static-site inheritance
+
+`POST /api/shareables/:id/versions?artifact_kind=static_site` accepts one
+`base_version` and repeated `delete_path` query parameters. For example,
+`?artifact_kind=static_site&base_version=v1&delete_path=data/old.parquet&delete_path=old.js`
+with multipart `file` parts for `data/a.parquet` replaces that data file, removes
+the two listed paths, and inherits all other files without copying their objects.
+The base must be the current published version; a stale base returns HTTP 409
+`version_conflict`. It also supplies the expected version for agent credentials.
+If `expected_version` is supplied, it must equal the base (otherwise HTTP 400
+`validation-failed`). Neither parameter changes write permissions.
+
+Deletion paths use the same normalization and validation as uploaded paths.
+Sending and deleting the same path is invalid. A case-only addition requires
+explicitly deleting the old spelling. An absent deletion path is harmless.
+A base permits zero sent files, provided the resulting manifest still includes
+`index.html` or `index.md`. Entrypoint precedence, file-count, total-size, and
+case-collision checks apply to the complete resulting manifest. Without a base,
+the existing full replacement behavior applies. Empty or repeated bases,
+deletion without a base, and inheritance parameters on other artifact kinds
+return HTTP 400 `validation-failed`.
+
+Version size is the logical sum of that version's files. Workspace quota counts
+physical objects once across retained versions; only sent files add bytes.
+Pruning keeps objects referenced by remaining versions. Version URLs retain
+immutable manifests. This is a REST API feature: there are no CLI `update`
+flags, MCP inputs, or bridge inputs for inheritance.

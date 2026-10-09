@@ -1080,3 +1080,45 @@ describe('version retention edit contract', () => {
     },
   )
 })
+
+it('static-site inheritance query requires a single nonempty base and matching expectation', () => {
+  expect(
+    ArtifactVersionUpdateQuerySchema.parse({
+      artifact_kind: 'static_site',
+      base_version: 'v1',
+      delete_path: ['data/old.parquet', 'old.js'],
+    }),
+  ).toMatchObject({ base_version: 'v1' })
+  for (const input of [
+    { base_version: 'v1' },
+    { artifact_kind: 'static_site', base_version: '' },
+    { artifact_kind: 'static_site', base_version: ['v1', 'v2'] },
+    { artifact_kind: 'static_site', delete_path: ['old.js'] },
+    {
+      artifact_kind: 'static_site',
+      base_version: 'v1',
+      expected_version: 'v2',
+    },
+  ])
+    expect(ArtifactVersionUpdateQuerySchema.safeParse(input).success).toBe(
+      false,
+    )
+  expect(ArtifactVersionUpdateFormSchema.safeParse({ file: [] }).success).toBe(
+    false,
+  )
+})
+
+it.each(['', '   '])(
+  'treats empty expected_version %j as absent with or without a base',
+  (expected_version) => {
+    for (const base_version of [undefined, 'v1']) {
+      expect(
+        ArtifactVersionUpdateQuerySchema.parse({
+          artifact_kind: 'static_site',
+          base_version,
+          expected_version,
+        }),
+      ).toMatchObject({ expected_version: undefined, base_version })
+    }
+  },
+)

@@ -359,11 +359,44 @@ export const VersionLabelInputSchema = z
   .pipe(VersionLabelSchema)
 
 /** Query parameters used by the multipart replacement endpoint. */
-export const ArtifactVersionUpdateQuerySchema = z.object({
-  label: VersionLabelInputSchema.optional(),
-  expected_version: z.string().optional(),
-  artifact_kind: z.literal('static_site').optional(),
-})
+export const ArtifactVersionUpdateQuerySchema = z
+  .object({
+    label: VersionLabelInputSchema.optional(),
+    expected_version: z
+      .string()
+      .transform((value) => value.trim() || undefined)
+      .optional(),
+    artifact_kind: z.literal('static_site').optional(),
+    base_version: z.string().trim().min(1).optional(),
+    delete_path: z.array(z.string().min(1)).max(1000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.base_version !== undefined || value.delete_path !== undefined) &&
+      value.artifact_kind !== 'static_site'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Inheritance requires a static site.',
+      })
+    }
+    if (value.delete_path !== undefined && !value.base_version) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Deletion requires a base version.',
+      })
+    }
+    if (
+      value.base_version &&
+      value.expected_version !== undefined &&
+      value.expected_version.trim() !== value.base_version
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Expected version must match the base.',
+      })
+    }
+  })
 export type ArtifactVersionUpdateQuery = z.infer<
   typeof ArtifactVersionUpdateQuerySchema
 >

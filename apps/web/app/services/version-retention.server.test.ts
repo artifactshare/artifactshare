@@ -64,7 +64,7 @@ test('retention removes old versions and quota, preserves numbers, and clears to
   expect(
     sqlite.prepare('SELECT storage_used_bytes AS bytes FROM workspaces').get(),
   ).toEqual({ bytes: 20 })
-  expect(deleteObject.mock.calls.flat()).toEqual(['key1', 'key2'])
+  expect(deleteObject.mock.calls.flat(2)).toEqual(['key1', 'key2'])
   sqlite.exec('UPDATE shareables SET retain_versions = 1')
   expect(await pruneVersions(db, 's1')).toBe(1)
   expect(await pruneVersions(db, 's1')).toBe(0)
@@ -138,7 +138,7 @@ test('rechecks changed current pointers before deleting objects or releasing quo
   expect(sqlite.prepare('SELECT id FROM versions').all()).toEqual([
     { id: 'v1' },
   ])
-  expect(deleteObject.mock.calls.flat()).not.toContain('key1')
+  expect(deleteObject.mock.calls.flat(2)).not.toContain('key1')
   expect(
     sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
   ).toEqual({ storage_used_bytes: 10 })
@@ -168,16 +168,16 @@ test('protects versions referenced as current by any artifact', async () => {
     { id: 'v1' },
     { id: 'v4' },
   ])
-  expect(deleteObject.mock.calls.flat()).not.toContain('key1')
+  expect(deleteObject.mock.calls.flat(2)).not.toContain('key1')
 })
 
 test('large histories are pruned in bounded batches and quota is released once', async () => {
   const insert =
     sqlite.prepare(`INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at)
     VALUES (?, 's1', 'html_page', 'published', '/index.html', ?, 10, 'hash', 'u1', '2026-09-05', '2026-09-05')`)
-  for (let n = 5; n <= 205; n++) insert.run(`v${n}`, `key${n}`)
+  for (let n = 5; n <= 505; n++) insert.run(`v${n}`, `key${n}`)
   sqlite.exec(
-    "UPDATE shareables SET retain_versions = 2, current_version_id = 'v205'; UPDATE workspaces SET storage_used_bytes = 2050",
+    "UPDATE shareables SET retain_versions = 2, current_version_id = 'v505'; UPDATE workspaces SET storage_used_bytes = 5050",
   )
   let active = 0
   let peak = 0
@@ -187,16 +187,23 @@ test('large histories are pruned in bounded batches and quota is released once',
     await new Promise((resolve) => setTimeout(resolve, 0))
     active--
   })
-  expect(await pruneVersions(db, 's1')).toBe(203)
-  expect(peak).toBeGreaterThan(0)
+  const referenceLookups = vi.spyOn(db, 'selectFrom')
+  expect(await pruneVersions(db, 's1')).toBe(503)
+  expect(
+    referenceLookups.mock.calls.filter(([table]) => table === 'version_files'),
+  ).toHaveLength(18)
+  referenceLookups.mockRestore()
+  expect(new Set(deleteObject.mock.calls.flat(2)).size).toBe(503)
+  expect(peak).toBeGreaterThan(1)
   expect(peak).toBeLessThanOrEqual(8)
   expect(
     sqlite.prepare('SELECT number FROM versions ORDER BY number').all(),
-  ).toEqual([{ number: 204 }, { number: 205 }])
+  ).toEqual([{ number: 504 }, { number: 505 }])
   expect(
     sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
   ).toEqual({ storage_used_bytes: 20 })
-  expect(deleteObject).toHaveBeenCalledTimes(203)
+  expect(await pruneVersions(db, 's1')).toBe(0)
+  expect(deleteObject).toHaveBeenCalledTimes(11)
 })
 
 test('home, project and revisit numbers survive pruning, and a deleted revisit boundary falls back', async () => {
@@ -252,4 +259,56 @@ test('a post-publication lookup failure is logged without rejecting committed su
     lookup.mockRestore()
     log.mockRestore()
   }
+})
+
+test('shared file and entrypoint references survive pruning and are debited once across batches', async () => {
+  sqlite.exec(`
+    UPDATE versions SET artifact_kind = 'static_site', r2_key = 'shared-index', size_bytes = 20;
+    UPDATE shareables SET artifact_kind = 'static_site', retain_versions = 1;
+    UPDATE workspaces SET storage_used_bytes = 50;
+  `)
+  const insertFile = sqlite.prepare(
+    `INSERT INTO version_files (id, version_id, path, r2_key, size_bytes, sha256, mime_type, created_at) VALUES (?, ?, ?, ?, 10, 'hash', 'text/html', '2026-09-01')`,
+  )
+  for (let i = 1; i <= 4; i++) {
+    insertFile.run(`index-${i}`, `v${i}`, '/index.html', 'shared-index')
+    insertFile.run(`data-${i}`, `v${i}`, '/data.json', `data-${i}`)
+  }
+  // More than one pruning batch, all sharing the same physical entrypoint.
+  for (let i = 5; i <= 90; i++) {
+    sqlite
+      .prepare(
+        `INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES (?, 's1', 'static_site', 'published', '/index.html', 'shared-index', 10, 'hash', 'u1', '2026-09-01', '2026-09-01')`,
+      )
+      .run(`v${i}`)
+    insertFile.run(`index-${i}`, `v${i}`, '/index.html', 'shared-index')
+  }
+  expect(await pruneVersions(db, 's1')).toBe(89)
+  expect(
+    sqlite.prepare('SELECT storage_used_bytes AS bytes FROM workspaces').get(),
+  ).toEqual({ bytes: 20 })
+  expect(deleteObject.mock.calls.flat(2).sort()).toEqual([
+    'data-1',
+    'data-2',
+    'data-3',
+  ])
+  expect(await pruneVersions(db, 's1')).toBe(0)
+  expect(
+    sqlite
+      .prepare(
+        'SELECT r2_key FROM version_files WHERE version_id = ? ORDER BY path',
+      )
+      .all('v4'),
+  ).toEqual([{ r2_key: 'data-4' }, { r2_key: 'shared-index' }])
+})
+
+test('remaining versions-only references protect objects even without a file row', async () => {
+  sqlite.exec(`UPDATE versions SET r2_key = 'shared' WHERE id IN ('v1', 'v4');
+    UPDATE workspaces SET storage_used_bytes = 30;
+    UPDATE shareables SET retain_versions = 1;`)
+  expect(await pruneVersions(db, 's1')).toBe(3)
+  expect(deleteObject.mock.calls.flat(2).sort()).toEqual(['key2', 'key3'])
+  expect(
+    sqlite.prepare('SELECT storage_used_bytes AS bytes FROM workspaces').get(),
+  ).toEqual({ bytes: 10 })
 })

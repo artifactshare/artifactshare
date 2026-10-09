@@ -12,6 +12,18 @@ import {
 
 describe('CLI reference content', () => {
   test.each(['en', 'ja'] as const)(
+    'keeps the %s deletion example short while documenting repetition',
+    (locale) => {
+      const body = cliReferenceContent(locale).sections.basics.body
+      expect(body).toContain('delete_path=data/old.parquet')
+      expect(body).not.toMatch(/delete_path=[^\s）]+&delete_path=/)
+      expect(body).toContain(
+        locale === 'en' ? 'repeated delete_path' : '繰り返しの delete_path',
+      )
+    },
+  )
+
+  test.each(['en', 'ja'] as const)(
     'documents token import for CI in the %s introduction',
     (locale) => {
       const content = cliReferenceContent(locale)

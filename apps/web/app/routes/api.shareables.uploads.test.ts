@@ -1054,6 +1054,9 @@ describe('/api/shareables/uploads', () => {
       1024 * 1024,
       {
         kind: 'version',
+        baseVersionId: null,
+        baseFiles: [],
+        deletePaths: new Set(),
         label: null,
         touchArtifactKeyId: null,
         expectedCurrentVersionId: null,

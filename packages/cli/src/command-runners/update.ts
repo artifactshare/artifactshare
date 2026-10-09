@@ -129,8 +129,10 @@ export async function runUpdate(
   const upload = await prepareUploadPayload(targetPath, fileStat)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
-  const updateQuery: ArtifactVersionUpdateQuery =
-    label.data !== undefined ? { label: label.data } : {}
+  const updateQuery: Pick<
+    ArtifactVersionUpdateQuery,
+    'label' | 'artifact_kind' | 'expected_version'
+  > = label.data !== undefined ? { label: label.data } : {}
   if (upload.payload.kind === 'static_site') {
     updateQuery.artifact_kind = 'static_site'
   }

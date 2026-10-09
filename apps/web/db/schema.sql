@@ -878,7 +878,7 @@ CREATE INDEX bridge_dm_artifacts_authority_requester
 -- ────────────────────────────────────────────────
 -- version_files
 -- static_site bundle のファイル一覧。1 version = 複数 row。
--- path は `/` 始まり、r2_key は <workspaceId>/<shareableId>/<versionId>/<path 先頭/除去> のフル key。
+-- path は `/` 始まり。r2_key は送信時のフル key を保持し、継承したファイルでは旧バージョンの key を参照する。
 -- scan_flags は {"warnings":[...]} 形式の JSON。
 -- ────────────────────────────────────────────────
 
@@ -894,6 +894,7 @@ CREATE TABLE version_files (
   created_at  TEXT NOT NULL,
   UNIQUE (version_id, path)
 );
+CREATE INDEX idx_version_files_r2_key ON version_files(r2_key);
 CREATE INDEX version_files_version_id ON version_files(version_id);
 
 -- ────────────────────────────────────────────────

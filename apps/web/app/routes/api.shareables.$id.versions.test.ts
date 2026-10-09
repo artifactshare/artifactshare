@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 
 const putBundleFileMock = vi.hoisted(() => vi.fn())
 
+const authorityMock = vi.hoisted(() => vi.fn())
+
 const publishMock = vi.hoisted(() => vi.fn())
 const publishPrincipalMock = vi.hoisted(() => vi.fn())
 const beginStaticSiteBundleVersionUploadSessionMock = vi.hoisted(() => vi.fn())
@@ -27,7 +29,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   ctxContext: ctxContextMock,
-  getCliAuthority: () => null,
+  getCliAuthority: authorityMock,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
@@ -66,7 +68,7 @@ function actionArgs(form: FormData) {
   )
 }
 
-function actionArgsFor(url: string, form: FormData, id = 's1') {
+function actionArgsFor(url: string, form: FormData | undefined, id = 's1') {
   return {
     request: new Request(url, {
       method: 'POST',
@@ -83,6 +85,7 @@ async function json(response: Response) {
 
 describe('/api/shareables/:id/versions', () => {
   beforeEach(() => {
+    authorityMock.mockReset().mockReturnValue(null)
     publishMock.mockReset()
     publishPrincipalMock.mockReset().mockReturnValue({
       kind: 'human',
@@ -131,6 +134,96 @@ describe('/api/shareables/:id/versions', () => {
       hd: 'example.com',
     })
   })
+
+  test.each([
+    'artifact_kind=static_site&base_version=',
+    'artifact_kind=static_site&base_version=v1&base_version=v1',
+    'artifact_kind=static_site&base_version=v1&expected_version=v2',
+    'artifact_kind=static_site&delete_path=old.js',
+    'base_version=v1',
+    'artifact_kind=html_page&base_version=v1',
+  ])(
+    'rejects invalid inheritance query %s before starting upload',
+    async (query) => {
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/s1/versions?${query}`,
+          new FormData(),
+        ),
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'validation-failed' },
+      })
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).not.toHaveBeenCalled()
+    },
+  )
+
+  test('a base satisfies the agent expectation requirement but does not bypass authorization', async () => {
+    authorityMock.mockReturnValue({ kind: 'agent', agentProfileId: 'ag1' })
+    beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+      kind: 'not-found',
+    })
+    const response = await action(
+      actionArgsFor(
+        'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site&base_version=v1',
+        new FormData(),
+      ),
+    )
+    expect(response.status).toBe(404)
+    expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      's1',
+      null,
+      expect.objectContaining({
+        expectedCurrentVersionId: 'v1',
+        authority: { kind: 'agent', agentProfileId: 'ag1' },
+      }),
+    )
+  })
+
+  test.each([undefined, new FormData()])(
+    'passes base and deletions to a zero-file session with body %s',
+    async (body) => {
+      beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          fileCount: 0,
+          addFile: vi.fn(),
+          abort: vi.fn(),
+          commitVersion: vi.fn().mockResolvedValue({
+            kind: 'ok',
+            id: 's1',
+            versionId: 'v2',
+            number: 2,
+          }),
+        },
+      })
+      const response = await action(
+        actionArgsFor(
+          'https://artifactshare.test/api/shareables/s1/versions?artifact_kind=static_site&base_version=v1&delete_path=a.js&delete_path=b.js',
+          body,
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        's1',
+        null,
+        expect.objectContaining({
+          baseVersionId: 'v1',
+          expectedCurrentVersionId: 'v1',
+          deletePaths: ['a.js', 'b.js'],
+        }),
+      )
+    },
+  )
 
   test.each([
     ['single-file', null],
@@ -461,6 +554,9 @@ describe('/api/shareables/:id/versions', () => {
       1024 * 1024,
       {
         kind: 'version',
+        baseVersionId: null,
+        baseFiles: [],
+        deletePaths: new Set(),
         label: null,
         touchArtifactKeyId: null,
         expectedCurrentVersionId: null,

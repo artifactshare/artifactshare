@@ -81,11 +81,16 @@ export async function reconcileQuota(
       COALESCE(a.actual, 0) AS actual
     FROM workspaces w
     LEFT JOIN (
-      SELECT s.workspace_id, SUM(v.size_bytes) AS actual
-      FROM versions v
-      INNER JOIN shareables s ON s.id = v.shareable_id
-      WHERE v.status = 'published'
-      GROUP BY s.workspace_id
+      SELECT workspace_id, SUM(size_bytes) AS actual FROM (
+        SELECT DISTINCT s.workspace_id, f.r2_key, f.size_bytes
+        FROM version_files f JOIN versions v ON v.id = f.version_id
+        JOIN shareables s ON s.id = v.shareable_id
+        WHERE v.status = 'published' AND v.artifact_kind = 'static_site'
+        UNION ALL
+        SELECT s.workspace_id, v.r2_key, v.size_bytes
+        FROM versions v JOIN shareables s ON s.id = v.shareable_id
+        WHERE v.status = 'published' AND v.artifact_kind != 'static_site'
+      ) GROUP BY workspace_id
     ) a ON a.workspace_id = w.id
     WHERE w.storage_updated_at < ${graceCutoffIso}
   `.execute(db)

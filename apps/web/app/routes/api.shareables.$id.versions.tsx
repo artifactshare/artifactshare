@@ -116,9 +116,20 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       400,
     )
   }
+  const bases = searchParams.getAll('base_version')
+  if (bases.length > 1)
+    return errorResponse(
+      'validation-failed',
+      'Base version must be specified only once.',
+      400,
+    )
   const rawKindHint = searchParams.get('artifact_kind')
   const parsedQuery = ArtifactVersionUpdateQuerySchema.safeParse({
     label: labels[0],
+    base_version: bases[0],
+    delete_path: searchParams.has('delete_path')
+      ? searchParams.getAll('delete_path')
+      : undefined,
     expected_version: searchParams.get('expected_version') ?? undefined,
     // Unknown hints historically fell through to the single-file path. Keep
     // that compatibility while asserting recognized query fields through the
@@ -131,7 +142,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return errorResponse('validation-failed', 'Invalid version query.', 400)
   }
   const expectedCurrentVersionId =
-    parsedQuery.data.expected_version?.trim() || null
+    parsedQuery.data.base_version ??
+    (parsedQuery.data.expected_version?.trim() || null)
   if (authority?.kind === 'agent' && !expectedCurrentVersionId)
     return errorResponse(
       'expected-version-required',
@@ -149,6 +161,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     return contractVersionResponse(
       await runStaticSiteVersionUpload(db, request, user, id, {
         waitUntil,
+        baseVersionId: parsedQuery.data.base_version,
+        deletePaths: parsedQuery.data.delete_path,
         ...(parsedQuery.data.label !== undefined
           ? { label: parsedQuery.data.label }
           : {}),
