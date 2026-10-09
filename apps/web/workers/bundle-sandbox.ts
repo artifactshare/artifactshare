@@ -283,7 +283,10 @@ async function handleEntrypointRequest(
         responseDomain,
       )
     }
-    if (entrypoint.renderType === 'static_site') {
+    if (
+      entrypoint.renderType === 'static_site' &&
+      (identity.domain === 'link' || !isProduction(env))
+    ) {
       const redirectTarget = sameOriginRedirectTarget(url)
       if (redirectTarget) {
         const response = contentResponse(

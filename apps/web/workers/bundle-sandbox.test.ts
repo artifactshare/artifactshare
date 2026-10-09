@@ -1917,12 +1917,6 @@ describe('handleArtifactSandboxRequest', () => {
         'https://abc123def4.artifactshare.link',
       ],
       [
-        'production',
-        'sandbox.artifactshare.com',
-        'same-site',
-        'https://artifactshare.com https://www.artifactshare.com',
-      ],
-      [
         'development',
         'sandbox.localhost:5174',
         'cross-origin',
@@ -1965,13 +1959,6 @@ describe('handleArtifactSandboxRequest', () => {
           fallbackToIndex: false,
         })
 
-        // Production sandbox hosts do not accept anonymous cookies; that boundary is unchanged.
-        if (
-          environment === 'production' &&
-          suffix === 'sandbox.artifactshare.com'
-        )
-          return
-
         // The target need not exist when redirecting; follow-up delivery uses the manifest.
         await dbRef
           .current!.insertInto('version_files')
@@ -2007,6 +1994,35 @@ describe('handleArtifactSandboxRequest', () => {
         expect(consumeJtiMock).not.toHaveBeenCalled()
       },
     )
+
+    test('serves the anonymous entrypoint for a valid target on a production sandbox host', async () => {
+      envMock.APP_ENV = 'production'
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<body>Entrypoint</body>', 'text/html'),
+      )
+      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.artifactshare.com`
+      const token = await anonymousEntrypointToken()
+      const target = '/docs/intro.html?tab=one#top'
+      const response = await handleArtifactSandboxRequest(
+        new Request(
+          `${origin}/index.html?t=${token}&as_next=${encodeURIComponent(target)}`,
+        ),
+      )
+      expect(response.status).toBe(200)
+      await expect(response.text()).resolves.toContain('Entrypoint')
+      expect(response.headers.get('Location')).toBeNull()
+      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+      expectAnonymousPolicy(response, 'same-site')
+      expectStaticSiteCsp(
+        response.headers.get('Content-Security-Policy')!,
+        'https://artifactshare.com https://www.artifactshare.com',
+      )
+      expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
+        {},
+        'ws-a/abc123def4/v-bundle/index.html',
+      )
+      expect(consumeJtiMock).not.toHaveBeenCalled()
+    })
 
     test.each([
       undefined,
