@@ -97,7 +97,7 @@ export function downloadFileUrl(
   const encodedPath = filePath
     .split('/')
     .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
+    .map((segment) => encodeURIComponent(segment).replace(/\./g, '%2E'))
     .join('/')
   return apiUrl(
     `/api/cli/artifacts/${encodeURIComponent(artifactId)}/download/${encodedPath}`,

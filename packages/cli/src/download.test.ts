@@ -1,7 +1,15 @@
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import type { ServerResponse } from 'node:http'
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { Buffer } from 'node:buffer'
@@ -24,6 +32,16 @@ function writeJson(response: ServerResponse, body: unknown, status = 200) {
   response.statusCode = status
   response.setHeader('content-type', 'application/json')
   response.end(JSON.stringify(body))
+}
+
+function writeTruncatedBody(response: ServerResponse) {
+  // Send valid success headers, then close before the declared body completes.
+  response.writeHead(200, {
+    'content-type': 'application/octet-stream',
+    'content-length': '100',
+    connection: 'close',
+  })
+  response.end('partial')
 }
 
 function mockDeviceCode(response: ServerResponse) {
@@ -215,7 +233,7 @@ test('download --json completes after pending device auth approval', async () =>
         })
         return
       }
-      if (url === '/api/cli/artifacts/abc123def4/download/index.md') {
+      if (url === '/api/cli/artifacts/abc123def4/download/index%2Emd') {
         response.setHeader('content-type', 'text/markdown')
         response.end(body)
         return
@@ -305,13 +323,15 @@ test('download --json saves manifest files to the output directory', async () =>
         )
         return
       }
-      if (request.url === '/api/cli/artifacts/abc123def4/download/index.html') {
+      if (
+        request.url === '/api/cli/artifacts/abc123def4/download/index%2Ehtml'
+      ) {
         response.setHeader('content-type', 'text/html')
         response.end(indexBody)
         return
       }
       if (
-        request.url === '/api/cli/artifacts/abc123def4/download/assets/app.js'
+        request.url === '/api/cli/artifacts/abc123def4/download/assets/app%2Ejs'
       ) {
         response.setHeader('content-type', 'text/javascript')
         response.end(appBody)
@@ -354,11 +374,11 @@ test('download --json saves manifest files to the output directory', async () =>
     { method: 'GET', url: '/api/cli/artifacts/abc123def4/download' },
     {
       method: 'GET',
-      url: '/api/cli/artifacts/abc123def4/download/index.html',
+      url: '/api/cli/artifacts/abc123def4/download/index%2Ehtml',
     },
     {
       method: 'GET',
-      url: '/api/cli/artifacts/abc123def4/download/assets/app.js',
+      url: '/api/cli/artifacts/abc123def4/download/assets/app%2Ejs',
     },
   ])
 })
@@ -537,7 +557,9 @@ test('download cleans temporary files when a later file fetch fails', async () =
         )
         return
       }
-      if (request.url === '/api/cli/artifacts/abc123def4/download/index.html') {
+      if (
+        request.url === '/api/cli/artifacts/abc123def4/download/index%2Ehtml'
+      ) {
         response.setHeader('content-type', 'text/html')
         response.end(indexBody)
         return
@@ -873,7 +895,7 @@ function projectServerHandler(options: ProjectServerOptions) {
       return
     }
     const fileMatch = url.pathname.match(
-      /^\/api\/cli\/artifacts\/([^/]+)\/download\/index\.md$/,
+      /^\/api\/cli\/artifacts\/([^/]+)\/download\/index%2Emd$/,
     )
     if (fileMatch) {
       const id = fileMatch[1]!
@@ -1403,3 +1425,272 @@ test('download --project-id rejects a symlinked output directory', async () => {
 
   assert.equal(await pathExists(join(real, 'index.json')), false)
 })
+
+const dataPath = '/data/AA から BB CC_dd.data'
+
+function mixedSiteManifest() {
+  const contents = new Map([
+    ['/index.html', Buffer.from('<h1>Data</h1>')],
+    [dataPath, Buffer.from([0, 255, 1, 128, 10])],
+  ])
+  return {
+    contents,
+    manifest: {
+      id: 'site123abc',
+      share_url: 'https://artifactshare.test/a/site123abc',
+      version_id: 'ver999',
+      artifact_kind: 'static_site',
+      files: [...contents].map(([path, bytes]) => ({
+        path,
+        size_bytes: bytes.length,
+        content_type: path.endsWith('.html')
+          ? 'text/html'
+          : 'application/octet-stream',
+        sha256: createHash('sha256').update(bytes).digest('base64url'),
+      })),
+      total_size_bytes: [...contents.values()].reduce(
+        (sum, bytes) => sum + bytes.length,
+        0,
+      ),
+    },
+  }
+}
+
+test('downloads mixed static-site bytes with encoded dots and original filenames', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-data-'))
+  const output = join(root, 'out')
+  const { contents, manifest } = mixedSiteManifest()
+  const urls: string[] = []
+  await withServer(
+    (request, response) => {
+      const url = request.url ?? ''
+      if (url === '/api/cli/artifacts/site123abc/download') {
+        writeJson(response, manifest)
+        return
+      }
+      urls.push(url)
+      const path =
+        '/' +
+        url.split('/download/')[1]!.split('/').map(decodeURIComponent).join('/')
+      const bytes = contents.get(path)
+      if (!bytes || url.endsWith('.data')) {
+        writeJson(response, { error: { code: 'not-found' } }, 404)
+        return
+      }
+      response.end(bytes)
+    },
+    async (baseUrl) => {
+      const payload = expectSuccess(
+        await runAsync(
+          [
+            'download',
+            'site123abc',
+            '--output',
+            output,
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        ),
+        'download',
+      )
+      assert.equal(payload.data.files.count, contents.size)
+      assert.equal(
+        payload.data.files.total_size_bytes,
+        manifest.total_size_bytes,
+      )
+      assert.equal(payload.data.artifact.kind, 'static_site')
+      assert.equal(payload.data.version.id, 'ver999')
+    },
+  )
+  assert.deepEqual(urls, [
+    '/api/cli/artifacts/site123abc/download/index%2Ehtml',
+    '/api/cli/artifacts/site123abc/download/data/AA%20%E3%81%8B%E3%82%89%20BB%20CC_dd%2Edata',
+  ])
+  for (const [path, bytes] of contents) {
+    assert.deepEqual(await readFile(join(output, path)), bytes)
+  }
+})
+
+for (const failure of [
+  { status: 404, apiCode: 'not-found', code: 'service_error', notFound: true },
+  { status: 409, apiCode: 'not-found', code: 'service_error', notFound: true },
+  {
+    status: 500,
+    apiCode: 'storage-failed',
+    code: 'service_error',
+    notFound: false,
+  },
+  {
+    status: 409,
+    apiCode: 'source-unavailable',
+    code: 'source_unavailable',
+    notFound: false,
+  },
+  { status: 0, apiCode: '', code: 'network_failed', notFound: false },
+  { status: 200, apiCode: '', code: 'network_failed', notFound: false },
+]) {
+  for (const json of [false, true]) {
+    test(`file failure ${failure.status}/${failure.apiCode} names the file in ${json ? 'JSON' : 'human'} output and preserves --force output`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'artifactshare-file-failure-'))
+      const output = join(root, 'out')
+      await mkdir(output)
+      await writeFile(join(output, 'original.txt'), 'keep me')
+      const { contents, manifest } = mixedSiteManifest()
+      await withServer(
+        (request, response) => {
+          if (request.url === '/api/cli/artifacts/site123abc/download') {
+            writeJson(response, manifest)
+          } else if (request.url?.endsWith('/index%2Ehtml')) {
+            response.end(contents.get('/index.html'))
+          } else if (!failure.status) {
+            request.socket.destroy()
+          } else if (failure.status === 200) {
+            writeTruncatedBody(response)
+          } else {
+            writeJson(
+              response,
+              {
+                error: {
+                  code: failure.apiCode,
+                  message: failure.notFound
+                    ? 'Artifact not found.'
+                    : 'Source request failed.',
+                },
+              },
+              failure.status,
+            )
+          }
+        },
+        async (baseUrl) => {
+          const result = await runAsync(
+            [
+              'download',
+              'site123abc',
+              '--output',
+              output,
+              '--force',
+              '--base-url',
+              baseUrl,
+              ...(json ? ['--json'] : []),
+            ],
+            { ARTIFACTSHARE_TOKEN: 'test-token' },
+          )
+          assert.equal(result.status, 1)
+          if (json) {
+            const { error } = expectFailure(result, {
+              command: 'download',
+              code: failure.code,
+            })
+            for (const field of ['message', 'why', 'hint'])
+              assert.ok(error[field].includes(dataPath))
+            if (failure.notFound) {
+              assert.deepEqual(error.details, {
+                status: failure.status,
+                api_code: failure.apiCode,
+              })
+              // Keep the existing mapper's recovery metadata for file 404/409.
+              assert.equal(error.agent_recoverable, false)
+              assert.equal(error.requires_human, true)
+              assert.deepEqual(error.recovery, { kind: 'change_input' })
+            }
+            if (failure.code === 'source_unavailable') {
+              assert.equal(error.agent_recoverable, true)
+              assert.equal(error.requires_human, false)
+              assert.deepEqual(error.recovery, { kind: 'retry_later' })
+            }
+            if (failure.code === 'network_failed') {
+              assert.equal(error.agent_recoverable, true)
+              assert.equal(error.requires_human, false)
+              assert.deepEqual(error.recovery, { kind: 'retry_later' })
+            }
+          } else {
+            assert.ok(result.stderr.includes(dataPath))
+          }
+          assert.doesNotMatch(
+            result.stdout + result.stderr,
+            /target_not_found|Artifact not found|Artifact target was not found|test-token/,
+          )
+        },
+      )
+      assert.equal(
+        await readFile(join(output, 'original.txt'), 'utf8'),
+        'keep me',
+      )
+      assert.deepEqual(await readdir(output), ['original.txt'])
+      assert.deepEqual(await readdir(root), ['out'])
+    })
+  }
+}
+
+test('manifest 404 still reports target_not_found', async () => {
+  await withServer(
+    (_request, response) =>
+      writeJson(
+        response,
+        { error: { code: 'not-found', message: 'Artifact not found.' } },
+        404,
+      ),
+    async (baseUrl) => {
+      expectFailure(
+        await runAsync(
+          ['download', 'site123abc', '--base-url', baseUrl, '--json'],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        ),
+        { command: 'download', code: 'target_not_found' },
+      )
+    },
+  )
+})
+
+for (const failure of ['HTTP', 'network', 'body'] as const) {
+  test(`project download retains partial results and names the failed file (${failure})`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-project-file-'))
+    const output = join(root, 'out')
+    const handler = projectServerHandler({
+      entries: [projectEntry('site123abc'), projectEntry('abc123def4')],
+    })
+    await withServer(
+      (request, response) => {
+        if (request.url === '/api/cli/artifacts/site123abc/download') {
+          writeJson(response, mixedSiteManifest().manifest)
+        } else if (
+          request.url?.startsWith('/api/cli/artifacts/site123abc/download/')
+        ) {
+          if (request.url.endsWith('index%2Ehtml'))
+            response.end(mixedSiteManifest().contents.get('/index.html'))
+          else if (failure === 'network') request.socket.destroy()
+          else if (failure === 'body') writeTruncatedBody(response)
+          else
+            writeJson(
+              response,
+              { error: { code: 'not-found', message: 'Artifact not found.' } },
+              404,
+            )
+        } else handler(request, response)
+      },
+      async (baseUrl) => {
+        const result = await runProjectDownloadCli(baseUrl, output)
+        assert.equal(result.status, 1)
+        const payload = JSON.parse(result.stdout)
+        assert.equal(payload.ok, true)
+        assert.equal(payload.data.failed, 1)
+        assert.equal(payload.data.ok, 1)
+        assert.ok(payload.data.failures[0].reason.includes(dataPath))
+      },
+    )
+    const index = await readIndexJson(output)
+    assert.equal(index.artifacts[0]!.status, 'failed')
+    assert.ok(index.artifacts[0]!.reason?.includes(dataPath))
+    assert.equal(index.artifacts[1]!.status, 'ok')
+    assert.deepEqual((await readdir(output)).sort(), [
+      'abc123def4',
+      'index.json',
+    ])
+    assert.equal(
+      await readFile(join(output, 'abc123def4/index.md'), 'utf8'),
+      '# abc123def4',
+    )
+  })
+}

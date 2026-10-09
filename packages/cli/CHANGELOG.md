@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Fix complete downloads of static sites with dotted filenames, including `.data`, and identify the file when a download fails.
+
 - Update bundled CLI skill and Cursor instructions to explain browser share-page fragments, filtered Copy links, and the static-site entrypoint restriction.
 - Bundle the shared reporter fragment messages for the next CLI release; local preview continues to ignore them.
 
