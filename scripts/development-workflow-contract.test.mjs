@@ -119,7 +119,6 @@ test('documents changed browser repetitions without altering required-check poli
     '150-minute job timeout',
     'uses `always()`',
     'Only browsers required by the plan are installed',
-    'skips libsoup cache-key, cache, and replacement steps when WebKit is absent',
     'passes/requested repetitions',
     'all-skipped',
     'Setup failures are explicit',
@@ -143,4 +142,16 @@ test('queue rebuild confirms removal and monitoring requires manual recovery', (
   ])
     assert.ok(workflow.includes(phrase), phrase)
   assert.doesNotMatch(workflow, /`--disable-auto` then `--auto`/u)
+})
+
+test('browser guidance retains stderr without obsolete library replacement instructions', () => {
+  assert.doesNotMatch(
+    workflow,
+    /libsoup|WEBKIT_LIBSOUP_CACHE_DIR|r2359|1\.63\.0/iu,
+  )
+  assert.match(workflow, /DEBUG=pw:browser/u)
+  assert.match(
+    workflow,
+    /installs the Playwright browsers matching the workspace dependency/u,
+  )
 })

@@ -1,4 +1,3 @@
-import { PIN } from './ci/replace-webkit-libsoup.mjs'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -679,6 +678,47 @@ test('visual gate uses exact Linux Compose baselines', () => {
   const webPackage = JSON.parse(
     fs.readFileSync('apps/web/package.json', 'utf8'),
   )
+  assert.equal(webPackage.devDependencies.playwright, '1.64.0')
+  const compose = YAML.parse(visualCompose, { merge: true })
+  assert.deepEqual(Object.keys(compose.services), ['visual', 'visual-update'])
+  for (const service of Object.values(compose.services)) {
+    assert.equal(
+      service.image,
+      `mcr.microsoft.com/playwright:v${webPackage.devDependencies.playwright}-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f`,
+    )
+    assert.equal(service.platform, 'linux/amd64')
+    assert.equal(service.ipc, 'host')
+    assert.equal(service.working_dir, '/workspace')
+    assert.deepEqual(service.entrypoint, ['bash', '-lc'])
+    assert.deepEqual(service.environment, {
+      CI: 'true',
+      PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright',
+      VISUAL_FAULT: '${VISUAL_FAULT:-}',
+      VITEST_TEST_NAME: '${VITEST_TEST_NAME:-}',
+    })
+    assert.deepEqual(service.volumes, [
+      { type: 'bind', source: '.', target: '/workspace' },
+      ...[
+        ['playwright-pnpm-store', '/pnpm/store'],
+        ['playwright-root-node-modules', '/workspace/node_modules'],
+        ['playwright-web-node-modules', '/workspace/apps/web/node_modules'],
+        ['playwright-cli-node-modules', '/workspace/packages/cli/node_modules'],
+        [
+          'playwright-fixtures-node-modules',
+          '/workspace/tools/static-site-fixtures/node_modules',
+        ],
+      ].map(([source, target]) => ({ type: 'volume', source, target })),
+    ])
+    assert.deepEqual(service.command, [
+      'npm install --global --prefix /opt/toolchain node@24.21.0 pnpm@12.4.1 && ' +
+        'export PATH=/opt/toolchain/bin:$$PATH && node --version && pnpm --version && ' +
+        'pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile --ignore-scripts && ' +
+        'pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run ' +
+        (service === compose.services.visual
+          ? '$${VITEST_TEST_NAME:+--testNamePattern "$${VITEST_TEST_NAME}"}'
+          : '--update'),
+    ])
+  }
   assert.match(webPackage.scripts['test:visual-browser'], /docker compose/u)
 })
 
@@ -745,91 +785,33 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
   )
 })
 
-test('browser libsoup workaround is mandatory, ordered, isolated, and retains browser stderr', () => {
+test('browser installation precedes execution and retains browser stderr', () => {
   const browser = parsedWorkflow.jobs['browser-validation']
-  const command = 'node scripts/ci/replace-webkit-libsoup.mjs'
-  const index = browser.steps.findIndex((step) => step.run === command)
-  assert.ok(index > 0)
-  assert.equal(
-    browser.steps[index - 1].run,
-    'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
+  const index = browser.steps.findIndex(
+    (step) =>
+      step.run ===
+      'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
   )
+  assert.ok(index > 0)
   assert.equal(browser.steps[index + 1].run, 'pnpm test:behavior-browser')
   assert.deepEqual(browser.steps[index + 1].env, { DEBUG: 'pw:browser' })
-  for (const step of browser.steps.slice(index - 1, index + 2)) {
+  for (const step of browser.steps.slice(index, index + 2)) {
     assert.equal(step['continue-on-error'], undefined)
     assert.equal(step.if, undefined)
   }
   assert.equal(browser['continue-on-error'], undefined)
   assert.equal(browser.env?.DEBUG, undefined)
   assert.equal(parsedWorkflow.env?.DEBUG, undefined)
-  const occurrences = Object.entries(parsedWorkflow.jobs).flatMap(
-    ([name, job]) =>
-      (job.steps ?? []).filter((step) => step.run === command).map(() => name),
-  )
-  assert.deepEqual(occurrences, [
-    'changed-browser-repetitions',
-    'browser-validation',
-  ])
   for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
     if (!['browser-validation', 'changed-browser-repetitions'].includes(name))
       assert.doesNotMatch(JSON.stringify(job), /pw:browser/)
   }
 })
 
-test('libsoup cache is pin-derived, exact, restored before use and independently verified', () => {
-  const lane = parsedWorkflow.jobs['browser-validation'].steps
-  const key = lane.find((step) => step.id === 'webkit-libsoup-cache-key')
-  const cache = lane.find((step) => step.uses?.startsWith('actions/cache@'))
-  const patch = lane.find(
-    (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
-  )
-  assert.ok(key && cache && patch)
-  assert.equal(
-    cache.uses,
-    'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
-  )
-  assert.equal(key.if, undefined)
-  assert.equal(cache.if, undefined)
-  assert.equal(patch.if, undefined)
-  assert.equal(cache['continue-on-error'], undefined)
-  assert.equal(key['continue-on-error'], undefined)
-  assert.equal(patch['continue-on-error'], undefined)
-  assert.deepEqual(cache.with, {
-    path: '${{ runner.temp }}/webkit-libsoup-cache',
-    key: '${{ steps.webkit-libsoup-cache-key.outputs.key }}',
-  })
-  assert.equal(patch.env.WEBKIT_LIBSOUP_CACHE_DIR, cache.with.path)
-  const setup = lane.findIndex((step) =>
-    step.uses?.startsWith('actions/setup-node@'),
-  )
-  const install = lane.findIndex((step) =>
-    step.run?.includes('playwright install'),
-  )
-  assert.ok(setup < lane.indexOf(key))
-  assert.ok(lane.indexOf(key) < lane.indexOf(cache))
-  assert.ok(lane.indexOf(cache) < install)
-  assert.ok(install < lane.indexOf(patch))
-  assert.doesNotMatch(JSON.stringify(lane), /cache-hit|restore-keys/)
-  assert.match(
-    key.run,
-    /import \{ PIN \} from '\.\/scripts\/ci\/replace-webkit-libsoup\.mjs'/,
-  )
-  const lines = key.run.trim().split('\n')
-  assert.equal(
-    lines[0],
-    `node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"`,
-  )
-  assert.equal(lines.at(-1), 'NODE')
-  const result = spawnSync(
-    process.execPath,
-    ['--input-type=module', '-e', lines.slice(1, -1).join('\n')],
-    { encoding: 'utf8' },
-  )
-  assert.equal(result.status, 0, result.stderr)
-  assert.equal(
-    result.stdout.trim(),
-    `key=webkit-libsoup-linux-ubuntu-24.04-v1-${PIN.sha256}-${PIN.libraries.map((library) => library.replacement).join('-')}`,
+test('every public CI job uses stock Playwright libraries', () => {
+  assert.doesNotMatch(
+    JSON.stringify(parsedWorkflow),
+    /replace-webkit-libsoup|webkit-libsoup|WEBKIT_LIBSOUP_CACHE_DIR/i,
   )
 })
 
@@ -874,31 +856,9 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
     lane.steps.indexOf(plan) + 1,
   ))
     assert.match(step.if, /steps\.select\.outputs\.has_files == 'true'/)
-  const browser = parsedWorkflow.jobs['browser-validation'].steps
-  const key = lane.steps.find((step) => step.id === 'webkit-libsoup-cache-key')
-  const cache = lane.steps.find((step) =>
-    step.uses?.startsWith('actions/cache@'),
-  )
   const install = lane.steps.find((step) =>
     step.run?.includes('playwright install'),
   )
-  const patch = lane.steps.find(
-    (step) => step.run === 'node scripts/ci/replace-webkit-libsoup.mjs',
-  )
-  for (const step of [key, cache, patch]) {
-    assert.match(step.if, /steps\.plan\.outputs\.has_webkit == 'true'/)
-    const { if: condition, ...rest } = step
-    assert.ok(condition)
-    assert.deepEqual(
-      rest,
-      browser.find(
-        (original) =>
-          original.name === step.name &&
-          original.run === step.run &&
-          original.uses === step.uses,
-      ),
-    )
-  }
   assert.match(install.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
   assert.equal(
     install.env.BROWSER_PROJECTS,
@@ -907,11 +867,9 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.match(install.run, /read -r -a projects/)
   assert.ok(install.run.includes('--with-deps "${projects[@]}"'))
   assert.doesNotMatch(install.run, /chromium firefox webkit/)
-  assert.ok(lane.steps.indexOf(plan) < lane.steps.indexOf(key))
-  assert.ok(lane.steps.indexOf(key) < lane.steps.indexOf(cache))
-  assert.ok(lane.steps.indexOf(cache) < lane.steps.indexOf(install))
-  assert.equal(lane.steps.indexOf(patch), lane.steps.indexOf(install) + 1)
+  assert.ok(lane.steps.indexOf(plan) < lane.steps.indexOf(install))
   const repeat = lane.steps.find((step) => step.id === 'repeat')
+  assert.equal(lane.steps.indexOf(repeat), lane.steps.indexOf(install) + 1)
   assert.equal(repeat['timeout-minutes'], 120)
   assert.equal(repeat.env.DEBUG, 'pw:browser')
   assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)

@@ -92,7 +92,7 @@
     "axe-core": "4.13.0",
     "happy-dom": "20.14.5",
     "msw": "2.15.0",
-    "playwright": "1.63.0",
+    "playwright": "1.64.0",
     "react-router-auto-routes": "1.0.0",
     "shadcn": "4.21.0",
     "tailwindcss": "4.3.3",
