@@ -246,6 +246,12 @@ test('rejects output roots overlapping a registered worktree before removal or c
   )
 })
 
+function cropDirectory(t) {
+  const outDir = mkdtempSync(join(tmpdir(), 'screen-crops-'))
+  t.after(() => rmSync(outDir, { recursive: true, force: true }))
+  return outDir
+}
+
 function sectionPage({ height = 900, targets = {}, failFull = false } = {}) {
   const shots = []
   const queries = []
@@ -302,7 +308,8 @@ function captureEntry(viewport = 'desktop', theme = 'light', locale = 'en') {
   }
 }
 
-test('captures full-page then four bounded crops for all eight guide combinations', async () => {
+test('captures full-page then four bounded crops for all eight guide combinations', async (t) => {
+  const outDir = cropDirectory(t)
   const sections = ['introduction', 'basics', 'commands', 'recovery'].map(
     (id) => ({ id, selector: `#${id}` }),
   )
@@ -328,7 +335,7 @@ test('captures full-page then four bounded crops for all eight guide combination
           page,
           entry,
           sections,
-          outDir: '/tmp/crops',
+          outDir,
           afterFullCapture: () => {
             audits++
             return { gapAudit }
@@ -337,7 +344,7 @@ test('captures full-page then four bounded crops for all eight guide combination
         assert.equal(audits, 1)
         assert.deepEqual(entries[0], { ...entry, gapAudit })
         assert.deepEqual(page.shots[0], {
-          path: join('/tmp/crops', entry.file),
+          path: join(outDir, entry.file),
           fullPage: true,
         })
         assert.deepEqual(
@@ -354,7 +361,7 @@ test('captures full-page then four bounded crops for all eight guide combination
             section: section.id,
           })
           assert.deepEqual(page.shots[index + 1], {
-            path: join('/tmp/crops', file),
+            path: join(outDir, file),
             fullPage: true,
             clip: {
               x: 25,
@@ -382,13 +389,14 @@ for (const [reason, target] of [
   ['invisible', { visible: false }],
   ['positive-area', { box: { x: 0, y: 0, width: 0, height: 20 } }],
 ]) {
-  test(`section failure (${reason}) preserves full-page and subsequent crops without retry`, async () => {
+  test(`section failure (${reason}) preserves full-page and subsequent crops without retry`, async (t) => {
+    const outDir = cropDirectory(t)
     const page = sectionPage({ targets: { '#missing': target } })
     const messages = []
     const entries = await captureScreenImages({
       page,
       entry: captureEntry(),
-      outDir: '/tmp/crops',
+      outDir,
       sections: [
         { id: 'missing', selector: '#missing' },
         { id: 'recovery', selector: '#recovery' },
@@ -416,7 +424,8 @@ for (const [reason, target] of [
   })
 }
 
-test('omitted and empty sections preserve full-page calls and manifest shape', async () => {
+test('omitted and empty sections preserve full-page calls and manifest shape', async (t) => {
+  const outDir = cropDirectory(t)
   for (const sections of [undefined, []]) {
     const page = sectionPage()
     const entry = captureEntry()
@@ -425,24 +434,25 @@ test('omitted and empty sections preserve full-page calls and manifest shape', a
         page,
         entry,
         sections,
-        outDir: '/tmp/crops',
+        outDir,
       }),
       [entry],
     )
     assert.deepEqual(page.queries, [])
     assert.deepEqual(page.shots, [
-      { path: join('/tmp/crops', entry.file), fullPage: true },
+      { path: join(outDir, entry.file), fullPage: true },
     ])
   }
 })
 
-test('full-page failure never attempts sections', async () => {
+test('full-page failure never attempts sections', async (t) => {
+  const outDir = cropDirectory(t)
   const page = sectionPage({ failFull: true })
   await assert.rejects(
     captureScreenImages({
       page,
       entry: captureEntry(),
-      outDir: '/tmp/crops',
+      outDir,
       sections: [{ id: 'intro', selector: '#intro' }],
     }),
     /full-page failed/,

@@ -295,6 +295,23 @@ function validateInputs(
       throw new Error('Screen capture manifest entries are required.')
     const validatedImages = []
     for (const entry of screenManifest) {
+      for (const field of [
+        'screen',
+        'state',
+        'viewport',
+        'theme',
+        'locale',
+        'section',
+      ]) {
+        const value = entry[field]
+        if (
+          value !== undefined &&
+          (typeof value !== 'string' || !value || /[^a-z0-9-]/u.test(value))
+        )
+          throw new Error(
+            `Screen capture ${field} must contain only lowercase letters, digits, or hyphens.`,
+          )
+      }
       const label = `${entry.screen ?? '<screen>'}/${entry.state ?? '<state>'}/${entry.viewport ?? '<viewport>'}`
       if (entry.status !== 'success')
         throw new Error(`${label}: successful screen capture required.`)
@@ -302,11 +319,6 @@ function validateInputs(
         throw new Error(
           `${label}: screen capture HEAD must match reviewed HEAD.`,
         )
-      if (
-        entry.section !== undefined &&
-        (typeof entry.section !== 'string' || !entry.section.trim())
-      )
-        throw new Error(`${label}: section must be a nonblank string.`)
       validatedImages.push({
         ...entry,
         path: validateImagePath(screenRoot, entry.file, label),
@@ -387,7 +399,9 @@ function commonPrompt(input) {
           `Tasks: ${input.selected.join(', ')}`,
           `Accepted behavior: ${(input.acceptedBehavior ?? []).join(' | ') || 'none recorded'}`,
           `Evidence JSON: ${input.evidencePaths.join(', ')}`,
-          `Walkthrough PNG files: ${input.imagePaths.join(', ')}`,
+          ...(input.imagePaths.length
+            ? [`Walkthrough PNG files: ${input.imagePaths.join(', ')}`]
+            : []),
         ]),
     ...(input.screenOnly && input.scopeJudgment
       ? [`Scope judgment: ${input.scopeJudgment}`]
@@ -410,7 +424,7 @@ function screenImageLabels(input) {
     input.screenImages
       .map(
         (entry) =>
-          `${entry.screen}/${entry.state}/${entry.viewport}/${entry.theme}/${entry.locale} [${entry.section === undefined ? 'full-page context' : `section: ${entry.section}`}]: ${entry.path}`,
+          `${[entry.screen, entry.state, entry.viewport, entry.theme, entry.locale].filter((value) => value !== undefined).join('/')} [${entry.section === undefined ? 'screen context' : `section: ${entry.section}`}]: ${entry.path}`,
       )
       .join('\n') || 'none supplied'
   )
