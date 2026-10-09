@@ -1,3 +1,7 @@
+import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
+import { CSP_DIAGNOSTIC_BODIES } from '../services/dev-csp-diagnostic-fixtures'
+import { classifyCspViolation } from './csp-violation-classification'
+import { isSandboxMessage } from './csp-reporter'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
 import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
@@ -68,6 +72,7 @@ async function probeReporter(challenge?: string) {
 
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
+  handshake = true,
 ) {
   messages = []
   readyEvents = []
@@ -81,7 +86,7 @@ async function fixture(
   )
   document.body.appendChild(frame)
   await loaded
-  await probeReporter()
+  if (handshake) await probeReporter()
   return frame.contentDocument!
 }
 
@@ -262,6 +267,43 @@ test('both streams finish when the clock crosses in the shared checking callback
 })
 
 describe('CSP reporter runtime behavior', () => {
+  test('buffers violations before ready-check and delivers them exactly once after it', async () => {
+    const doc = await fixture('<p>Early violation</p>', false)
+    doc.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        sourceFile: 'https://sandbox.example.com/artifact.html',
+        lineNumber: 7,
+        sample: 'early diagnostic',
+        disposition: 'enforce',
+      }),
+    )
+    // A message from the same frame drains any report already posted by the
+    // synchronous listener without sending the ready-check that flushes it.
+    const marker = doc.createElement('script')
+    marker.textContent = `parent.postMessage({ kind: 'violation-dispatched' }, '*')`
+    doc.body.appendChild(marker)
+    await waitForMessage('violation-dispatched')
+    expect(
+      messages.filter((message) => message.kind === 'csp-violation'),
+    ).toEqual([])
+
+    await probeReporter('first-ready-check')
+    expect(await waitForMessage('csp-violation')).toMatchObject({
+      directive: 'script-src',
+      blockedURI: 'eval',
+      sourceFile: 'https://sandbox.example.com/artifact.html',
+      lineNumber: 7,
+      sample: 'early diagnostic',
+      disposition: 'enforce',
+    })
+    await probeReporter('second-ready-check')
+    expect(
+      messages.filter((message) => message.kind === 'csp-violation'),
+    ).toHaveLength(1)
+  })
+
   test('readiness replies identify the artifact frame as their sender', async () => {
     await fixture('<p>Frame identity</p>')
     const challenge = 'frame-identity-probe'
@@ -1438,6 +1480,24 @@ test('a covered resolved comment retains verified ranges for jump without painti
   expect(doc.querySelector('[data-thread-id="resolved"]')).toBeNull()
 })
 
+test.each([
+  { name: 'absent reporter', reporter: '' },
+  {
+    name: 'mismatched ready reply',
+    reporter: `addEventListener('message', event => {
+      if (event.data?.kind === 'ready-check') {
+        parent.postMessage({ kind: 'ready', challenge: 'wrong-challenge' }, '*');
+      }
+    });`,
+  },
+])('static-site harness diagnoses $name', async ({ reporter }) => {
+  const result = await server.commands.staticSiteWasm(reporter)
+  expect(result.error).toBe('Error: reporter ready-check unanswered')
+  expect(result.local).toBeUndefined()
+  expect(result.blob).toBeUndefined()
+  expect(result.blockedRequests).toBe(0)
+})
+
 test('static sites run WASM and workers without notices while blocked JavaScript is reported', async () => {
   const result = await server.commands.staticSiteWasm(
     VIOLATION_REPORTER_SCRIPT_BODY,
@@ -1514,3 +1574,74 @@ test('XML object embedding allows the asset ancestor and retains eval and networ
     controlRequests: 1,
   })
 })
+
+test.each([undefined, '', 'diagnostic sample'])(
+  'generated reporter omits absent or empty samples (%j)',
+  async (sample) => {
+    const doc = await fixture()
+    doc.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        ...(sample === undefined ? {} : { sample }),
+      }),
+    )
+    const report = await waitForMessage('csp-violation')
+    if (sample) expect(report).toHaveProperty('sample', sample)
+    else expect(report).not.toHaveProperty('sample')
+  },
+)
+
+test.each(['enforce', 'report'])(
+  'generated reporter bounds samples and retains %s disposition',
+  async (disposition) => {
+    const doc = await fixture()
+    doc.dispatchEvent(
+      Object.assign(new Event('securitypolicyviolation'), {
+        effectiveDirective: 'script-src',
+        blockedURI: 'eval',
+        sample: 'x'.repeat(90),
+        disposition,
+      }),
+    )
+    expect(await waitForMessage('csp-violation')).toMatchObject({
+      sample: 'x'.repeat(80),
+      disposition,
+    })
+  },
+)
+
+test.each([
+  { index: 0, classification: 'artifact', directive: 'connect-src' },
+  { index: 1, classification: 'environment', directive: 'script-src' },
+] as const)(
+  'viewer capture seed preserves a parse-time $classification report until the parent hydrates',
+  async ({ index, classification, directive }) => {
+    const result = await server.commands.cspDiagnostic(
+      injectReadyReporter(CSP_DIAGNOSTIC_BODIES[index]),
+    )
+    expect(result.errors).toEqual([])
+    expect(result.unexpectedRequests).toEqual([])
+    expect(result.reports.length).toBeGreaterThan(0)
+    for (const report of result.reports) {
+      expect(isSandboxMessage(report)).toBe(true)
+      expect(report.directive).toBe(directive)
+      expect(
+        classifyCspViolation(report.sourceFile, result.sandboxOrigin, 'html'),
+      ).toBe(classification)
+    }
+    if (classification === 'environment') {
+      expect(result.reports[0]).toMatchObject({
+        blockedURI: 'eval',
+        sourceFile: null,
+        sample: 'environment diagnostic example',
+        disposition: 'enforce',
+      })
+    } else {
+      expect(new URL(result.reports[0].blockedURI).origin).toBe(
+        'https://example.com',
+      )
+    }
+  },
+  10000,
+)

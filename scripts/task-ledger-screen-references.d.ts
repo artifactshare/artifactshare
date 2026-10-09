@@ -95,6 +95,8 @@ export type TaskLedgerScreenReference =
   | 'viewer/comments-open'
   | 'viewer/comments-position-check'
   | 'viewer/comments-position-checking'
+  | 'viewer/csp-artifact'
+  | 'viewer/csp-environment-owner'
   | 'viewer/default'
   | 'viewer/free-owner-visibility-dialog'
   | 'viewer/history-open'

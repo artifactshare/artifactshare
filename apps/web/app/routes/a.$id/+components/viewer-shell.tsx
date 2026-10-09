@@ -1970,6 +1970,11 @@ function useViewerShellController({
   if (state.artifactId !== artifact.id) {
     dispatch({ type: 'artifact-changed', artifactId: artifact.id })
   }
+  const diagnosticsAccess: 'editor' | 'viewer' =
+    user !== null &&
+    (artifact.canChangeVisibility === true || artifact.canReplaceFile === true)
+      ? 'editor'
+      : 'viewer'
   const canReplaceFile = user !== null && artifact.canReplaceFile === true
   const isHistoricalVersion = artifact.isHistoricalVersion === true
   const canReplaceCurrentFile = canReplaceFile && !isHistoricalVersion
@@ -2377,6 +2382,7 @@ function useViewerShellController({
     linkSafety,
     state,
     dispatch,
+    diagnosticsAccess,
     canReplaceFile: canReplaceCurrentFile,
     canViewHistory,
     isHistoricalVersion,
@@ -2441,6 +2447,7 @@ function ViewerShellView({
   state,
   dispatch,
   canReplaceFile,
+  diagnosticsAccess,
   canViewHistory,
   isHistoricalVersion,
   exportActions,
@@ -2542,6 +2549,8 @@ function ViewerShellView({
       ) : null}
       {sandboxUrl ? (
         <SandboxFrame
+          renderType={renderType}
+          canViewEnvironmentDiagnostics={diagnosticsAccess === 'editor'}
           key={`${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`}
           shareableId={artifact.id}
           versionId={

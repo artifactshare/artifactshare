@@ -72,8 +72,22 @@ vi.mock('./comment-panel', () => ({
 }))
 
 vi.mock('./sandbox-frame', () => ({
-  SandboxFrame: ({ children }: { children?: ReactNode }) => (
-    <div data-testid="sandbox-frame">{children}</div>
+  SandboxFrame: ({
+    children,
+    canViewEnvironmentDiagnostics,
+    renderType,
+  }: {
+    children?: ReactNode
+    canViewEnvironmentDiagnostics: boolean
+    renderType: string
+  }) => (
+    <div
+      data-testid="sandbox-frame"
+      data-diagnostics={String(canViewEnvironmentDiagnostics)}
+      data-render-type={renderType}
+    >
+      {children}
+    </div>
   ),
 }))
 
@@ -315,9 +329,11 @@ describe('viewer list wiring in ViewerShell', () => {
 
   function renderShell({
     artifact = artifactFixture(),
+    viewer = user as typeof user | null,
     initialEntry = `/a/${artifact.id}`,
   }: {
     artifact?: ViewerShellArtifact
+    viewer?: typeof user | null
     initialEntry?: string
   } = {}) {
     const Stub = createRoutesStub([
@@ -337,7 +353,7 @@ describe('viewer list wiring in ViewerShell', () => {
             Component: () => (
               <ViewerShell
                 artifact={artifact}
-                user={user}
+                user={viewer}
                 renderType="html"
                 sandboxUrl="https://sandbox.example/frame"
                 bundlePaths={[]}
@@ -351,6 +367,30 @@ describe('viewer list wiring in ViewerShell', () => {
       root.render(<Stub initialEntries={[initialEntry]} />)
     })
   }
+
+  it.each([
+    { signedIn: false, owner: false, editor: false, expected: false },
+    { signedIn: false, owner: true, editor: true, expected: false },
+    { signedIn: true, owner: false, editor: false, expected: false },
+    { signedIn: true, owner: true, editor: false, expected: true },
+    { signedIn: true, owner: false, editor: true, expected: true },
+  ])(
+    'wires raw diagnostics permissions on historical versions: %j',
+    async ({ signedIn, owner, editor, expected }) => {
+      await renderShell({
+        viewer: signedIn ? user : null,
+        artifact: {
+          ...artifactFixture(),
+          isHistoricalVersion: true,
+          canChangeVisibility: owner,
+          canReplaceFile: editor,
+        },
+      })
+      const frame = container.querySelector('[data-testid="sandbox-frame"]')!
+      expect(frame.getAttribute('data-diagnostics')).toBe(String(expected))
+      expect(frame.getAttribute('data-render-type')).toBe('html')
+    },
+  )
 
   function entryButton(): HTMLButtonElement {
     const button = container.querySelector<HTMLButtonElement>(

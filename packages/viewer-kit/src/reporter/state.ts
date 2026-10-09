@@ -74,6 +74,11 @@ export function createReporterState(
     primordials,
     documentToken: '',
     readyChallenge: '',
+    pendingCspViolations: primordials.objectCreate(null) as Record<
+      number,
+      Record<string, unknown>
+    >,
+    pendingCspViolationCount: 0,
     externalLinkPolicyMode: 'parent',
     pendingLinkClicks: new win.WeakMap<Event, PendingLinkClick>(),
     highlightNames: [] as string[],

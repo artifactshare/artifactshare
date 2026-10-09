@@ -1,3 +1,4 @@
+import { VIOLATION_REPORTER_SCRIPT_BODY } from '@artifactshare/viewer-kit/csp-reporter'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -218,7 +219,7 @@ describe('startPreviewServer', () => {
     expect(shell).toContain('/artifact')
     const artifact = await (await fetch(`${origin(context)}/artifact`)).text()
     expect(artifact).toContain('<h1>Hello</h1>')
-    expect(artifact).toContain('securitypolicyviolation')
+    expect(artifact).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
   })
 
   it('runs the draft -> submit -> next -> done -> annotations flow', async () => {
@@ -530,7 +531,7 @@ describe('markdown rendering', () => {
       expect(response.headers.get('content-type')).toContain('text/html')
       const html = await response.text()
       expect(html).toContain('Title')
-      expect(html).toContain('securitypolicyviolation')
+      expect(html).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
     } finally {
       await context.server.close()
       rmSync(context.dir, { recursive: true, force: true })
@@ -562,7 +563,7 @@ describe('stripMetaCsp', () => {
       expect(html.toLowerCase()).not.toContain(
         'content-security-policy" content',
       )
-      expect(html).toContain('securitypolicyviolation')
+      expect(html).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
       expect(html).toContain('ok')
     } finally {
       await context.server.close()

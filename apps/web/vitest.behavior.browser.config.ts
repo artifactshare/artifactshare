@@ -1,3 +1,4 @@
+import { cspDiagnostic } from './app/test/csp-diagnostic-browser-command'
 import {
   staticSiteExtensions,
   staticSiteXmlEmbedding,
@@ -36,6 +37,7 @@ export default defineConfig({
         staticSiteWasm,
         staticSiteExtensions,
         staticSiteXmlEmbedding,
+        cspDiagnostic,
       },
       headless: true,
       instances: [

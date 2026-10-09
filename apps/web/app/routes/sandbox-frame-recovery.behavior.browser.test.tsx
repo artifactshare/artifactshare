@@ -1,6 +1,7 @@
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { act, Profiler, type ProfilerOnRenderCallback } from 'react'
+import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SandboxFrame } from './a.$id/+components/sandbox-frame'
 
@@ -356,34 +357,61 @@ async function expectFrameState(host: HTMLElement, expected: string) {
 
 async function renderFrame(
   onAnchorCheckingChange?: (available: boolean) => void,
+  canViewEnvironmentDiagnostics = false,
+  siteNavigation = false,
+  onRender: ProfilerOnRenderCallback = () => {},
+  options: {
+    host?: HTMLElement
+    renderType?: string | null
+    beforeHydrate?: (host: HTMLElement) => void
+  } = {},
 ) {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  root = createRoot(host)
+  const host = options.host ?? document.createElement('div')
+  if (!options.host) {
+    document.body.appendChild(host)
+    if (!options.beforeHydrate) root = createRoot(host)
+  }
   await act(async () => {
-    root?.render(
-      <SandboxFrame
-        onAnchorCheckingChange={onAnchorCheckingChange}
-        shareableId="abc123def4"
-        versionId="v1"
-        url={`${window.location.origin}/sandbox-frame-test?t=old`}
-        name="Recovery test"
-        mermaidEnabled={false}
-        textAnchorsEnabled={false}
-        linkNavigationMode="document"
-        bundlePaths={[]}
-        fallbackToIndex={false}
-        commentThreads={[]}
-        targetThreadId={null}
-        highlightThreadId={null}
-        followsAppTheme={false}
-        onTextSelection={() => {}}
-        onTextSelectionClear={() => {}}
-        onThreadSelect={() => {}}
-        onOutsidePointerDown={() => {}}
-        sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
-      />,
+    const view = (
+      <Profiler id="sandbox-frame" onRender={onRender}>
+        <SandboxFrame
+          renderType={
+            options.renderType === undefined
+              ? siteNavigation
+                ? 'static_site'
+                : 'html'
+              : options.renderType
+          }
+          canViewEnvironmentDiagnostics={canViewEnvironmentDiagnostics}
+          onAnchorCheckingChange={onAnchorCheckingChange}
+          shareableId="abc123def4"
+          versionId="v1"
+          url={`${window.location.origin}/sandbox-frame-test?t=old`}
+          name="Recovery test"
+          mermaidEnabled={false}
+          textAnchorsEnabled={false}
+          linkNavigationMode={siteNavigation ? 'site' : 'document'}
+          bundlePaths={siteNavigation ? ['/next.html'] : []}
+          fallbackToIndex={false}
+          commentThreads={[]}
+          targetThreadId={null}
+          highlightThreadId={null}
+          followsAppTheme={false}
+          onTextSelection={() => {}}
+          onTextSelectionClear={() => {}}
+          onThreadSelect={() => {}}
+          onOutsidePointerDown={() => {}}
+          sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        />
+      </Profiler>
     )
+    if (options.beforeHydrate) {
+      host.innerHTML = renderToString(view)
+      options.beforeHydrate(host)
+      root = hydrateRoot(host, view)
+    } else {
+      root?.render(view)
+    }
   })
   return host
 }
@@ -523,3 +551,319 @@ describe('waitForRealTaskCondition', () => {
     }
   })
 })
+
+test.each([false, true])(
+  'CSP diagnostics visibility with editor permission %s',
+  async (privileged) => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    const onRender = vi.fn()
+    const host = await renderFrame(undefined, privileged, true, onRender)
+    const frame = host.querySelector('iframe')!
+    const report = (
+      sourceFile: string | null,
+      sample: string,
+      blockedURI = 'eval',
+      directive = 'script-src',
+    ) => {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: window.location.origin,
+            source: frame.contentWindow,
+            data: {
+              source: 'artifactshare',
+              kind: 'csp-violation',
+              directive,
+              blockedURI,
+              sourceFile,
+              lineNumber: 1,
+              sample,
+              disposition: 'enforce',
+            },
+          }),
+        )
+      })
+    }
+    onRender.mockClear()
+    for (let index = 0; index < 100; index++) {
+      report(null, '<img src=x onerror=alert(1)>')
+    }
+    // Retain hidden reports for later permission changes, without rendering them.
+    expect(onRender.mock.calls.length).toBeGreaterThan(0)
+    expect(host.querySelector('aside') !== null).toBe(privileged)
+    expect(host.textContent?.includes('browser environment')).toBe(privileged)
+    expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
+      privileged,
+    )
+    if (privileged) expect(host.textContent).not.toContain('Security blocked')
+    for (const blockedURI of [
+      'eval',
+      'wasm-eval',
+      'inline',
+      '',
+      'chrome-extension://abc/app.js',
+      'moz-extension://abc/app.js',
+      'safari-web-extension://abc/app.js',
+      'webkit-masked-url://hidden/',
+      'custom:script',
+    ]) {
+      report(null, 'unattributed-resource', blockedURI)
+      expect(host.querySelector('aside') !== null).toBe(privileged)
+      expect(host.textContent?.includes('unattributed-resource')).toBe(
+        privileged,
+      )
+      expect(host.textContent).not.toContain('Security blocked')
+    }
+    report(`${window.location.origin}/index.html`, 'inline-positive-control')
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    report('https://cdn.jsdelivr.net/app.js', 'cdn-positive-control')
+    expect(host.textContent).toContain('Security blocked 2 resources')
+    expect(host.textContent?.includes('<img src=x onerror=alert(1)>')).toBe(
+      privileged,
+    )
+    report(null, 'parser-image', 'https://example.com/a.png', 'img-src')
+    report('', 'parser-frame', 'http://example.com/frame.html', 'frame-src')
+    expect(host.textContent).toContain('parser-image')
+    expect(host.textContent).toContain('parser-frame')
+    expect(host.textContent).toContain('Security blocked 4 resources')
+    report(null, 'parser-data', 'data', 'img-src')
+    report('', 'parser-blob', 'blob', 'frame-src')
+    expect(host.textContent).toContain('parser-data')
+    expect(host.textContent).toContain('parser-blob')
+    expect(host.textContent).toContain('Security blocked 6 resources')
+    report(
+      null,
+      'extension-resource',
+      'chrome-extension://abc/a.png',
+      'img-src',
+    )
+    expect(host.textContent).toContain('Security blocked 6 resources')
+    expect(host.textContent?.includes('extension-resource')).toBe(privileged)
+    expect(host.querySelector('aside img')).toBeNull()
+    for (const summary of host.querySelectorAll('aside summary'))
+      await act(async () => (summary as HTMLElement).click())
+    expect(host.textContent).toContain('Sample: inline-positive-control')
+    const nextUrl = `${window.location.origin}/next.html`
+    expect(frame.src).not.toBe(nextUrl)
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          source: frame.contentWindow,
+          data: {
+            source: 'artifactshare',
+            kind: 'link-clicked',
+            href: nextUrl,
+          },
+        }),
+      )
+    })
+    expect(frame.src).toBe(nextUrl)
+    expect(host.querySelector('aside')).toBeNull()
+  },
+)
+
+test('retains early CSP reports across load and settled diagnostics props with a bounded history', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>(() => {})),
+  )
+  const host = await renderFrame(undefined, false, false, undefined, {
+    renderType: null,
+  })
+  const frame = host.querySelector('iframe')!
+  const report = (sourceFile: string | null, sample: string) => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: {
+          source: 'artifactshare',
+          kind: 'csp-violation',
+          directive: 'script-src',
+          blockedURI: 'eval',
+          sourceFile,
+          lineNumber: 1,
+          sample,
+        },
+      }),
+    )
+  }
+  await act(async () => {
+    report('https://cdn.jsdelivr.net/app.js', 'early-cdn')
+    for (let index = 0; index < 110; index++)
+      report(null, `environment-${index}`)
+  })
+  expect(host.querySelector('aside')).toBeNull()
+  await act(async () => {
+    report(window.location.origin, 'early-inline')
+    for (let index = 110; index < 220; index++)
+      report(null, `environment-${index}`)
+  })
+  expect(host.textContent).toContain('Security blocked 1 resource')
+  // Loading the document must not clear diagnostics emitted during parsing.
+  await act(async () => frame.dispatchEvent(new Event('load')))
+  const removed = vi.spyOn(window as Window, 'removeEventListener')
+  try {
+    await renderFrame(undefined, false, false, undefined, {
+      host,
+      renderType: 'html',
+    })
+    expect(host.querySelector('iframe')).toBe(frame)
+    expect(host.textContent).toContain('Security blocked 2 resources')
+    expect(host.textContent).toContain('early-cdn')
+    expect(host.textContent).not.toContain('environment-')
+    await renderFrame(undefined, true, false, undefined, {
+      host,
+      renderType: 'html',
+    })
+    expect(host.textContent).toContain('browser environment')
+    expect(host.textContent).toContain('environment-219')
+    expect(host.textContent).not.toContain('environment-0')
+    expect(host.querySelectorAll('aside li')).toHaveLength(102)
+    expect(
+      removed.mock.calls.filter(([type]) => type === 'message'),
+    ).toHaveLength(0)
+    await renderFrame(undefined, false, false, undefined, {
+      host,
+      renderType: 'markdown',
+    })
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    expect(host.textContent).toContain('early-inline')
+    expect(host.textContent).not.toContain('early-cdn')
+    expect(host.textContent).not.toContain('browser environment')
+  } finally {
+    removed.mockRestore()
+  }
+})
+
+test('accepts a parse-time report before passive effects run', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Promise<Response>(() => {})),
+  )
+  const host = await renderFrame(undefined, false, false, (_id, phase) => {
+    if (phase !== 'mount') return
+    const frame = document.querySelector('iframe')!
+    // Profiler runs during commit, before the passive message subscription.
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: {
+          source: 'artifactshare',
+          kind: 'csp-violation',
+          directive: 'connect-src',
+          blockedURI: 'https://example.com/blocked',
+          sourceFile: window.location.origin,
+          lineNumber: 1,
+          sample: 'during-parse',
+        },
+      }),
+    )
+  })
+  expect(host.textContent).toContain('Security blocked 1 resource')
+  expect(host.textContent).toContain('during-parse')
+})
+
+test.each([false, true])(
+  'SSR starts the document immediately and accepts diagnostics after hydration (owner %s)',
+  async (privileged) => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    let serverFrame: HTMLIFrameElement | null = null
+    let delivered = false
+    const host = await renderFrame(
+      undefined,
+      privileged,
+      false,
+      () => {
+        const frame = document.querySelector('iframe')!
+        if (!frame.hasAttribute('src') || delivered) return
+        delivered = true
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: window.location.origin,
+            source: frame.contentWindow,
+            data: {
+              source: 'artifactshare',
+              kind: 'csp-violation',
+              directive: 'script-src',
+              blockedURI: 'eval',
+              sourceFile: privileged ? null : window.location.origin,
+              lineNumber: 1,
+              sample: 'first-document-report',
+            },
+          }),
+        )
+      },
+      {
+        beforeHydrate: (serverHost) => {
+          serverFrame = serverHost.querySelector('iframe')
+          expect(serverFrame).not.toBeNull()
+          expect(serverFrame!.getAttribute('src')).toBe(
+            `${window.location.origin}/sandbox-frame-test?t=old`,
+          )
+          expect(serverHost.querySelector('aside')).toBeNull()
+        },
+      },
+    )
+    expect(host.querySelector('iframe')).toBe(serverFrame)
+    expect(delivered).toBe(true)
+    expect(host.textContent).toContain('first-document-report')
+    expect(host.textContent?.includes('browser environment')).toBe(privileged)
+    expect(host.textContent?.includes('Security blocked 1 resource')).toBe(
+      !privileged,
+    )
+  },
+)
+
+test.each([false, true])(
+  'Markdown retains artifact diagnostics through CDN environment noise (owner %s)',
+  async (privileged) => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    const host = await renderFrame(undefined, privileged, false, undefined, {
+      renderType: 'markdown',
+    })
+    const frame = host.querySelector('iframe')!
+    await act(async () => {
+      for (let index = 0; index <= 200; index++) {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            origin: window.location.origin,
+            source: frame.contentWindow,
+            data: {
+              source: 'artifactshare',
+              kind: 'csp-violation',
+              directive: 'script-src',
+              blockedURI: 'eval',
+              lineNumber: 1,
+              sourceFile:
+                index === 0
+                  ? window.location.origin
+                  : 'https://cdn.jsdelivr.net/app.js',
+              sample: index === 0 ? 'inline-survives' : `cdn-noise-${index}`,
+            },
+          }),
+        )
+      }
+    })
+    expect(host.textContent).toContain('Security blocked 1 resource')
+    expect(host.textContent).toContain('inline-survives')
+    expect(host.textContent?.includes('cdn-noise-200')).toBe(privileged)
+    expect(host.querySelectorAll('aside li')).toHaveLength(privileged ? 101 : 1)
+  },
+)
