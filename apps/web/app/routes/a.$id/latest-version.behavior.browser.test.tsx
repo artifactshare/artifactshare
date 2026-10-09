@@ -95,6 +95,7 @@ afterEach(async () => {
 async function mount(
   patch: Partial<ViewerShellArtifact> = {},
   signedIn = false,
+  sandboxUrl: string | null = null,
 ) {
   function Harness() {
     const [value, update] = useState({ ...artifact, ...patch })
@@ -105,7 +106,7 @@ async function mount(
           artifact={value}
           user={signedIn ? user : null}
           renderType={null}
-          sandboxUrl={null}
+          sandboxUrl={sandboxUrl}
           bundlePaths={[]}
         />
       </TooltipProvider>
@@ -140,10 +141,27 @@ test('anonymous link checks only current-version, shows an update, and refreshes
     '/api/shareables/abc123def4/current-version',
   )
   expect(notice()).toBe(false)
+  const status = host.querySelector(
+    '[role="status"][aria-label="Activity and version status"]',
+  )
+  expect(status).not.toBeNull()
+  expect(status!.textContent).toBe('')
   currentVersionId = 'v2'
   await act(async () => vi.advanceTimersByTimeAsync(300_000))
   await bodyRead(2)
   expect(notice()).toBe(true)
+  expect(
+    host.querySelector(
+      '[role="status"][aria-label="Activity and version status"]',
+    ),
+  ).toBe(status)
+  expect(status!.textContent).toContain('A new version is available')
+  expect(host.querySelector('aside[role="status"]')).toBeNull()
+  expect(
+    host
+      .querySelector('aside[aria-label="Activity and version status"]')!
+      .classList.contains('rounded-[var(--r-md)]'),
+  ).toBe(true)
   expect(
     lookup.mock.calls.every(([url]) =>
       String(url).endsWith('/current-version'),
@@ -157,9 +175,62 @@ test('anonymous link checks only current-version, shows an update, and refreshes
   await act(async () => button!.click())
   expect(revalidate).toHaveBeenCalledOnce()
   expect(notice()).toBe(false)
+  expect(
+    host.querySelector(
+      '[role="status"][aria-label="Activity and version status"]',
+    ),
+  ).toBe(status)
+  expect(status!.textContent).toBe('')
   await act(async () => setArtifact({ ...artifact, currentVersionId: 'v2' }))
   await bodyRead(3)
   expect(notice()).toBe(false)
+})
+
+test('anonymous update announcements remain accessible with chrome collapsed', async () => {
+  await mount({}, false, 'about:blank')
+  await bodyRead(1)
+  const status = host.querySelector<HTMLElement>(
+    '[role="status"][aria-label="Activity and version status"]',
+  )!
+  expect(status).not.toBeNull()
+  expect(status.textContent).toBe('')
+  const collapse = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="Collapse Artifact Share"]',
+  )!
+  expect(collapse).not.toBeNull()
+  await act(async () => collapse.click())
+  const aside = host.querySelector<HTMLElement>(
+    'aside[aria-label="Activity and version status"]',
+  )!
+  expect(aside.hidden).toBe(true)
+  expect(status.closest('[hidden], [aria-hidden="true"]')).toBeNull()
+  expect(getComputedStyle(status).display).not.toBe('none')
+  expect(getComputedStyle(status).visibility).not.toBe('hidden')
+  expect(getComputedStyle(status).visibility).not.toBe('collapse')
+  currentVersionId = 'v2'
+  await act(async () => vi.advanceTimersByTimeAsync(300_000))
+  await bodyRead(2)
+  expect(
+    host.querySelector(
+      '[role="status"][aria-label="Activity and version status"]',
+    ),
+  ).toBe(status)
+  expect(status.textContent).toBe('A new version is available')
+  expect(status.closest('[hidden], [aria-hidden="true"]')).toBeNull()
+  expect(aside.hidden).toBe(true)
+  expect(host.querySelector('aside[role="status"]')).toBeNull()
+  const expand = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="Show Artifact Share"]',
+  )!
+  expect(expand).not.toBeNull()
+  await act(async () => expand.click())
+  expect(aside.hidden).toBe(false)
+  expect(aside.textContent).toContain('A new version is available')
+  expect(
+    host.querySelector(
+      '[role="status"][aria-label="Activity and version status"]',
+    ),
+  ).toBe(status)
 })
 
 test('signed-in viewers retain the versions endpoint', async () => {

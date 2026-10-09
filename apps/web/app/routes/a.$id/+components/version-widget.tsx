@@ -134,15 +134,26 @@ export function VersionWidget({
   }, [closePopover, hidden, open])
 
   if (!canViewHistory) {
-    return hasNewerVersion ? (
-      <aside
-        hidden={hidden}
-        className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel)"
-        aria-label={t('vw.activityStatus')}
-      >
-        <VersionUpdateNotice onShowLatest={onShowLatest} />
-      </aside>
-    ) : null
+    return (
+      <>
+        <div
+          className="sr-only"
+          role="status"
+          aria-label={t('vw.activityStatus')}
+        >
+          {hasNewerVersion ? t('history.updateAvailable') : null}
+        </div>
+        <aside
+          hidden={hidden}
+          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel) rounded-[var(--r-md)]"
+          aria-label={t('vw.activityStatus')}
+        >
+          {hasNewerVersion ? (
+            <VersionUpdateNotice onShowLatest={onShowLatest} />
+          ) : null}
+        </aside>
+      </>
+    )
   }
 
   return (

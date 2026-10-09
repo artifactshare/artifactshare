@@ -2657,30 +2657,28 @@ function ViewerShellView({
       ) : (
         children
       )}
-      {canViewHistory || latestVersion.hasNewerVersion ? (
-        <VersionWidget
-          canViewHistory={canViewHistory}
-          hidden={state.chromeCollapsed}
-          versions={artifact.versions ?? []}
-          canReplaceFile={canReplaceFile}
-          onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
-          replaceMode={replaceMode}
-          uploading={state.uploading}
-          hasNewerVersion={latestVersion.hasNewerVersion}
-          onShowLatest={() => {
-            latestVersion.clearNewerVersion()
-            revalidator.revalidate()
-          }}
-          onOpenHistory={(returnFocusTo) => {
-            historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
-            closeAccessRequests()
-            dispatch({ type: 'history-open-changed', open: true })
-            comments.changePanelOpen(false)
-          }}
-          revisitContext={artifact.revisitContext}
-          onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
-        />
-      ) : null}
+      <VersionWidget
+        canViewHistory={canViewHistory}
+        hidden={state.chromeCollapsed}
+        versions={artifact.versions ?? []}
+        canReplaceFile={canReplaceFile}
+        onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
+        replaceMode={replaceMode}
+        uploading={state.uploading}
+        hasNewerVersion={latestVersion.hasNewerVersion}
+        onShowLatest={() => {
+          latestVersion.clearNewerVersion()
+          revalidator.revalidate()
+        }}
+        onOpenHistory={(returnFocusTo) => {
+          historyReturnFocusRef.current = returnFocusTo ?? getActiveElement()
+          closeAccessRequests()
+          dispatch({ type: 'history-open-changed', open: true })
+          comments.changePanelOpen(false)
+        }}
+        revisitContext={artifact.revisitContext}
+        onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
+      />
       {canViewHistory ? (
         <HistoryPanel
           retainVersions={artifact.retainVersions}
