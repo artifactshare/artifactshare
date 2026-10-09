@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile, lstat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { ARTIFACTS_LIST_RESPONSE_SCHEMA } from '@artifactshare/contract'
-import type { OutputMode, ParsedArgs } from '../types.js'
+import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import {
   apiUrl,
   baseUrlOf,
@@ -33,6 +33,24 @@ import {
 import { parseArtifactTarget } from '../shared.js'
 import { validationError } from '../errors.js'
 import { isRecord } from '../validators.js'
+
+function fileDownloadError(
+  error: CliError,
+  path: string,
+  notFound = false,
+): CliError {
+  const message = `Could not download file "${path}".`
+  return {
+    ...error,
+    message: notFound ? message : `${message} ${error.message}`,
+    why: notFound
+      ? `The artifact manifest was retrieved, but file "${path}" could not be fetched.`
+      : `File "${path}": ${error.why}`,
+    hint: notFound
+      ? `Retry the download. If it fails again, check file "${path}" in the artifact.`
+      : `File "${path}": ${error.hint}`,
+  }
+}
 
 type ProjectResult = {
   id: string
@@ -189,23 +207,33 @@ export async function runDownload(
       if ('networkError' in fileResponse) {
         return writeFailure(
           command,
-          networkError(fileResponse.networkError),
+          fileDownloadError(networkError(fileResponse.networkError), file.path),
           mode,
           1,
         )
       }
       if (!fileResponse.ok) {
+        const fileBody = await readJson(fileResponse)
+        const apiError = isRecord(fileBody) ? fileBody.error : undefined
+        const notFound =
+          fileResponse.status === 404 ||
+          apiError === 'not-found' ||
+          (isRecord(apiError) && apiError.code === 'not-found')
         return handleAuthenticatedCredentialFailure(
           command,
-          mapApiError(fileResponse.status, await readJson(fileResponse), {
-            authenticated: true,
-            artifactTarget: true,
-            baseUrl,
-            credentialSource: credential.source,
-            profile: credential.profile,
-            profileCredentialKind: credential.profileCredentialKind,
-            botProfile: credential.botProfile,
-          }),
+          fileDownloadError(
+            mapApiError(fileResponse.status, fileBody, {
+              authenticated: true,
+              ...(!notFound ? { artifactTarget: true } : {}),
+              baseUrl,
+              credentialSource: credential.source,
+              profile: credential.profile,
+              profileCredentialKind: credential.profileCredentialKind,
+              botProfile: credential.botProfile,
+            }),
+            file.path,
+            notFound,
+          ),
           credential,
           parsed.options,
           mode,
@@ -213,7 +241,18 @@ export async function runDownload(
           isRetry,
         )
       }
-      const bytes = Buffer.from(await fileResponse.arrayBuffer())
+      let fileBody: ArrayBuffer
+      try {
+        fileBody = await fileResponse.arrayBuffer()
+      } catch (error) {
+        return writeFailure(
+          command,
+          fileDownloadError(networkError(error), file.path),
+          mode,
+          1,
+        )
+      }
+      const bytes = Buffer.from(fileBody)
       const verified = verifyDownloadedBytes(file, bytes)
       if (verified.error) {
         return writeFailure(command, verified.error, mode, 1)
@@ -517,10 +556,23 @@ async function runProjectDownload(
           const fileResponse = await authFetch(
             downloadFileUrl(baseUrl, result.id, file.path),
           )
-          if ('networkError' in fileResponse) throw new Error('network failed')
+          if ('networkError' in fileResponse)
+            throw new Error(
+              `Could not download file "${file.path}": network failed`,
+            )
           if (!fileResponse.ok)
-            throw new Error(`file download failed (${fileResponse.status})`)
-          const bytes = Buffer.from(await fileResponse.arrayBuffer())
+            throw new Error(
+              `Could not download file "${file.path}" (${fileResponse.status})`,
+            )
+          let fileBody: ArrayBuffer
+          try {
+            fileBody = await fileResponse.arrayBuffer()
+          } catch {
+            throw new Error(
+              `Could not download file "${file.path}": network failed while reading response body`,
+            )
+          }
+          const bytes = Buffer.from(fileBody)
           const verified = verifyDownloadedBytes(file, bytes)
           if (verified.error) throw new Error(verified.error.message)
           await mkdir(dirname(file.targetPath), { recursive: true })

@@ -277,7 +277,10 @@ const refreshCases: RefreshCase[] = [
         join(workDir, 'downloaded'),
       ]),
     respond: (request) => {
-      if (request.url?.endsWith('/file.txt')) return FILE_TEXT
+      if (
+        request.url === `/api/cli/artifacts/${ARTIFACT_ID}/download/file%2Etxt`
+      )
+        return FILE_TEXT
       return jsonResponse({
         id: ARTIFACT_ID,
         share_url: `https://artifactshare.test/a/${ARTIFACT_ID}`,
@@ -595,6 +598,21 @@ for (const item of refreshCases) {
         }
 
         const payload = expectSuccess(result, item.command ?? item.name)
+        if (item.name === 'download') {
+          assert.equal(
+            await readFile(join(workDir, 'downloaded', 'file.txt'), 'utf8'),
+            FILE_TEXT,
+          )
+          const fileRequests = requests.filter((request) =>
+            request.url?.includes('/download/'),
+          )
+          assert.equal(fileRequests.length, 1)
+          assert.equal(
+            fileRequests[0]!.url,
+            `/api/cli/artifacts/${ARTIFACT_ID}/download/file%2Etxt`,
+          )
+          assert.equal(fileRequests[0]!.auth, `Bearer ${FRESH_TOKEN}`)
+        }
         if (item.name === 'whoami') {
           assert.equal(payload.data.session_expires_at, FRESH_EXPIRES_AT)
           assert.equal(

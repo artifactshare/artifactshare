@@ -167,6 +167,88 @@ describe('getCliDownloadFile', () => {
     getArtifactMock.mockReset()
   })
 
+  test('selects the exact Unicode .data path and version before reading storage', async () => {
+    const path = '/data/AA から BB CC_dd.data'
+    const key = `ws1/site123abc/ver999${path}`
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'site123abc',
+      workspaceId: 'ws1',
+      ownerUserId: 'u1',
+      visibility: 'private',
+      currentVersionId: 'ver999',
+      artifactKind: 'static_site',
+      entrypointPath: '/index.html',
+      r2Key: 'ws1/site123abc/ver999/index.html',
+      isTeamWorkspaceAdmin: false,
+    })
+    const bytes = new TextEncoder().encode('データ')
+    getArtifactMock.mockResolvedValue({
+      body: new Blob([bytes]).stream(),
+      size: bytes.length,
+    })
+    const predicates: Record<string, unknown> = {}
+    const recordPredicate = (
+      column: string,
+      operator: string,
+      value: unknown,
+    ) => {
+      expect(operator).toBe('=')
+      predicates[column] = value
+    }
+    const db = {
+      selectFrom: vi.fn(() => ({
+        select: () => ({
+          where: (column: string, operator: string, value: unknown) => {
+            recordPredicate(column, operator, value)
+            return {
+              where: (
+                pathColumn: string,
+                pathOperator: string,
+                pathValue: unknown,
+              ) => {
+                recordPredicate(pathColumn, pathOperator, pathValue)
+                return {
+                  executeTakeFirst: async () =>
+                    predicates.version_id === 'ver999' &&
+                    predicates.path === path
+                      ? {
+                          path,
+                          r2_key: key,
+                          size_bytes: bytes.length,
+                          mime_type: 'application/octet-stream',
+                          sha256: 'sha-data',
+                        }
+                      : undefined,
+                }
+              },
+            }
+          },
+        }),
+      })),
+    }
+    const result = await getCliDownloadFile(db as never, user, {
+      id: 'site123abc',
+      path,
+    })
+    expect(db.selectFrom).toHaveBeenCalledWith('version_files')
+    expect(predicates).toEqual({ version_id: 'ver999', path })
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') throw new Error('Expected selected file')
+    expect(result.file.path).toBe(path)
+    expect(
+      new Uint8Array(await new Response(result.object.body).arrayBuffer()),
+    ).toEqual(bytes)
+    expect(getArtifactMock).toHaveBeenCalledWith({}, key)
+    getArtifactMock.mockClear()
+    expect(
+      await getCliDownloadFile(db as never, user, {
+        id: 'site123abc',
+        path: path.slice(0, -5),
+      }),
+    ).toEqual({ kind: 'not-found' })
+    expect(getArtifactMock).not.toHaveBeenCalled()
+  })
+
   test('returns a static site file selected by manifest path', async () => {
     loadCommentAccessMock.mockResolvedValue({
       shareableId: 'site123abc',
