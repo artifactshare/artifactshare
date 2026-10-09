@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 42
+version: 43
 managed: true
 -->
 
@@ -41,6 +41,8 @@ enough to try `npm exec`. MCP OAuth is not CLI authentication: follow the CLI
 When passing paths or free-form text through a shell, quote them. Paths may
 contain `$`, spaces, `*`, or `?`; use single quotes such as
 `'apps/web/app/routes/a.$id/index.tsx'` so the shell does not expand them.
+
+The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
 
 ## Quick reference
 

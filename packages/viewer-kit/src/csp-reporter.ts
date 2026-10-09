@@ -182,7 +182,16 @@ interface ReadyMessage {
   token?: string
 }
 
+export interface HashChangedMessage {
+  source: 'artifactshare'
+  kind: 'hash-changed'
+  hash: string
+  path: string
+  token: string
+}
+
 export type SandboxMessage =
+  | HashChangedMessage
   | CspViolationMessage
   | ReadyMessage
   | TextSelectionMessage
@@ -198,6 +207,16 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   if (v.source !== 'artifactshare') return false
+  if (v.kind === 'hash-changed') {
+    return (
+      typeof v.token === 'string' &&
+      /^[a-f0-9]{64}$/.test(v.token) &&
+      typeof v.path === 'string' &&
+      typeof v.hash === 'string' &&
+      v.hash.length <= 2048 &&
+      (v.hash === '' || v.hash[0] === '#')
+    )
+  }
   if (v.kind === 'csp-violation') {
     return (
       typeof v.directive === 'string' &&

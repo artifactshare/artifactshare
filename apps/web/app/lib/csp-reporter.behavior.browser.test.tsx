@@ -4,7 +4,11 @@ import { classifyCspViolation } from './csp-violation-classification'
 import { isSandboxMessage } from './csp-reporter'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, server, userEvent } from 'vitest/browser'
-import { VIOLATION_REPORTER_SCRIPT_BODY, canUseOsHandler } from './csp-reporter'
+import {
+  VIOLATION_REPORTER_SCRIPT_BODY,
+  VIOLATION_REPORTER_SHA256,
+  canUseOsHandler,
+} from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
   buildPrintDocument,
@@ -73,6 +77,7 @@ async function probeReporter(challenge?: string) {
 async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
   handshake = true,
+  documentNavigation = false,
 ) {
   messages = []
   readyEvents = []
@@ -80,12 +85,18 @@ async function fixture(
   frame?.remove()
   frame = document.createElement('iframe')
   frame.style.cssText = 'width:800px;height:600px;border:0'
-  frame.srcdoc = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const html = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const objectUrl = documentNavigation
+    ? URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+    : null
+  if (objectUrl) frame.src = objectUrl
+  else frame.srcdoc = html
   const loaded = new Promise<void>((resolve) =>
     frame?.addEventListener('load', () => resolve(), { once: true }),
   )
   document.body.appendChild(frame)
   await loaded
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
   if (handshake) await probeReporter()
   return frame.contentDocument!
 }
@@ -1619,6 +1630,7 @@ test.each([
   async ({ index, classification, directive }) => {
     const result = await server.commands.cspDiagnostic(
       injectReadyReporter(CSP_DIAGNOSTIC_BODIES[index]),
+      VIOLATION_REPORTER_SHA256,
     )
     expect(result.errors).toEqual([])
     expect(result.unexpectedRequests).toEqual([])
@@ -1644,4 +1656,148 @@ test.each([
     }
   },
   10000,
+)
+
+test('reports fragments only after ready, then tracks anchors and both history methods', async () => {
+  const doc = await fixture(
+    '<a href="#heading">Contents</a><h2 id="heading">Heading</h2>',
+    false,
+    true,
+  )
+  const win = frame!.contentWindow!
+  win.location.hash = '#before-ready'
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  expect(messages.filter((m) => m.kind === 'hash-changed')).toHaveLength(0)
+  await probeReporter()
+  const initial = await waitForMessage('hash-changed')
+  expect(initial.hash).toBe('#before-ready')
+  expect(initial.path).toBe(win.location.pathname)
+  expect(initial.token).toMatch(/^[a-f0-9]{64}$/)
+  expect(Object.keys(initial).sort()).toEqual([
+    'hash',
+    'kind',
+    'path',
+    'source',
+    'token',
+  ])
+  expect(messages.findIndex((m) => m.kind === 'ready')).toBeLessThan(
+    messages.indexOf(initial),
+  )
+  doc.querySelector('a')!.click()
+  await waitForMessage('hash-changed', (m) => m.hash === '#heading')
+  expect(win.history.pushState({ filter: 1 }, '', '#pushed')).toBeUndefined()
+  await waitForMessage('hash-changed', (m) => m.hash === '#pushed')
+  expect(
+    win.history.replaceState({ filter: 2 }, '', '#replaced'),
+  ).toBeUndefined()
+  await waitForMessage('hash-changed', (m) => m.hash === '#replaced')
+  expect(win.history.state).toEqual({ filter: 2 })
+  const unchangedStart = messages.length
+  for (let i = 0; i < 10; i++) {
+    win.history.replaceState({ scroll: i }, '')
+    win.history.pushState({ scroll: i }, '', '#replaced')
+  }
+  // The readiness retry timer also sends snapshots. Use an explicit probe as
+  // a delivery fence for the preceding history calls instead of counting all
+  // snapshots after an arbitrary delay.
+  const challenge = 'unchanged-history-snapshot'
+  await probeReporter(challenge)
+  const ready = await waitForMessage(
+    'ready',
+    (message) => message.challenge === challenge,
+    unchangedStart,
+  )
+  const snapshot = await waitForMessage(
+    'hash-changed',
+    () => true,
+    messages.indexOf(ready) + 1,
+  )
+  expect(snapshot.hash).toBe('#replaced')
+  expect(snapshot.path).toBe(win.location.pathname)
+  expect(snapshot.token).toBe(initial.token)
+  for (
+    let index = unchangedStart;
+    index <= messages.indexOf(snapshot);
+    index++
+  ) {
+    if (messages[index].kind !== 'hash-changed') continue
+    // Only a ready response may resend an unchanged snapshot. An extra report
+    // from either history wrapper would have no preceding ready response.
+    expect(messages[index - 1].kind).toBe('ready')
+    expect(messages[index].hash).toBe('#replaced')
+    expect(messages[index].token).toBe(messages[index - 1].token)
+  }
+  expect(() =>
+    win.history.replaceState.call({} as History, null, '', '#invalid'),
+  ).toThrow()
+  expect(() =>
+    win.history.pushState(null, '', 'https://example.com/'),
+  ).toThrow()
+  expect(win.location.hash).toBe('#replaced')
+})
+
+test('Markdown CSP executes the regenerated reporter while blocking authored scripts', async () => {
+  const result = await server.commands.cspDiagnostic(
+    injectReadyReporter(
+      '<!doctype html><html><head></head><body><h1>Heading</h1><script>window.untrusted = true</script></body></html>',
+    ),
+    VIOLATION_REPORTER_SHA256,
+    'md',
+  )
+  expect(
+    result.reports.some(
+      (report) =>
+        report.directive === 'script-src-elem' &&
+        report.blockedURI === 'inline',
+    ),
+  ).toBe(true)
+})
+
+test.each(
+  (['pushState', 'replaceState'] as const).flatMap((method) =>
+    (['prototype', 'instance', 'assignment'] as const).map((target) => ({
+      method,
+      target,
+    })),
+  ),
+)(
+  'history $method chains a later $target patch without recursion',
+  async ({ method, target }) => {
+    // Use a document URL: srcdoc resolves fragments against the runner URL,
+    // which native history methods cannot install on an about:srcdoc document.
+    await fixture('<h1>History</h1>', true, true)
+    const win = frame!.contentWindow!
+    const prototype = Object.getPrototypeOf(win.history) as History
+    const original = win.history[method]
+    const result = { patched: true }
+    const patch = vi.fn(function (
+      this: History,
+      ...args: Parameters<History['pushState']>
+    ) {
+      Reflect.apply(original, this, args)
+      return result
+    })
+    if (target === 'assignment') prototype[method] = win.history[method]
+    else if (target === 'instance') win.history[method] = patch
+    else prototype[method] = patch
+    const state = { filter: 1 }
+    expect(win.history[method](state, '', '#patched')).toBe(
+      target === 'assignment' ? undefined : result,
+    )
+    if (target !== 'assignment') {
+      expect(patch).toHaveBeenCalledExactlyOnceWith(state, '', '#patched')
+      expect(patch.mock.contexts[0]).toBe(win.history)
+    }
+    expect(Object.hasOwn(win.history, method)).toBe(target === 'instance')
+    expect(win.history.state).toEqual(state)
+    expect(win.location.hash).toBe('#patched')
+    await waitForMessage('hash-changed', (m) => m.hash === '#patched')
+    const error = new Error('router failure')
+    const patchTarget = target === 'instance' ? win.history : prototype
+    patchTarget[method] = () => {
+      throw error
+    }
+    expect(() => win.history[method](null, '', '#failed')).toThrow(error)
+    expect(win.location.hash).toBe('#patched')
+  },
 )

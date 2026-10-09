@@ -67,6 +67,7 @@ import {
   type ArtifactType,
 } from '~/lib/artifact-type'
 import { linkNavigationModeFor } from '~/lib/viewer-navigation'
+import { latestViewerHash } from '~/lib/viewer-hash'
 import { type UserInfo } from '~/lib/user'
 import { filesFromDrop } from '~/lib/upload-drop-items'
 import {
@@ -2004,6 +2005,7 @@ function useViewerShellController({
     void navigate(
       {
         pathname: routerLocation.pathname,
+        hash: latestViewerHash(),
         search: params.size > 0 ? `?${params.toString()}` : '',
       },
       { replace: true, preventScrollReset: true },
@@ -2250,6 +2252,7 @@ function useViewerShellController({
     navigate(
       {
         pathname: routerLocation.pathname,
+        hash: latestViewerHash(),
         search: params.toString() ? `?${params.toString()}` : '',
       },
       { replace: true, preventScrollReset: true },
@@ -2549,6 +2552,7 @@ function ViewerShellView({
       ) : null}
       {sandboxUrl ? (
         <SandboxFrame
+          entrypointPath={artifact.entrypointPath}
           renderType={renderType}
           canViewEnvironmentDiagnostics={diagnosticsAccess === 'editor'}
           key={`${artifact.id}:${artifact.displayedVersionId ?? artifact.currentVersionId ?? ''}:${renderType ?? ''}`}

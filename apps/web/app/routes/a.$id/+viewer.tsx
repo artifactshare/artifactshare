@@ -1,5 +1,14 @@
-import { useState } from 'react'
-import { isRouteErrorResponse, Link, useRouteLoaderData } from 'react-router'
+import { viewerReturnPath } from '~/lib/viewer-hash'
+import { useHydrated } from '~/hooks/use-hydrated'
+import { useViewerHash } from '~/hooks/use-viewer-hash'
+import { useEffect, useState } from 'react'
+import {
+  isRouteErrorResponse,
+  Link,
+  useRouteLoaderData,
+  useLocation,
+  useNavigate,
+} from 'react-router'
 import { Button } from '~/components/ui/button'
 import { Empty, EmptyContent } from '~/components/ui/empty'
 import { AgentDisclosure } from '~/components/app/agent-disclosure'
@@ -128,6 +137,43 @@ export default function ViewerRoute({
 }: {
   loaderData: LoaderData
 }) {
+  const hydrated = useHydrated()
+  const [clientMounted] = useState(hydrated)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const params = new URLSearchParams(location.search)
+  const callbackHash = params.get('as_hash')
+  params.delete('as_hash')
+  const search = params.toString()
+  useEffect(() => {
+    if (callbackHash === null) return
+    void navigate(
+      {
+        pathname: location.pathname,
+        search: search ? '?' + search : '',
+        hash:
+          callbackHash.startsWith('#') && callbackHash.length <= 2048
+            ? callbackHash
+            : location.hash,
+      },
+      { replace: true, preventScrollReset: true, state: location.state },
+    )
+  }, [
+    callbackHash,
+    location.pathname,
+    location.hash,
+    location.state,
+    navigate,
+    search,
+  ])
+
+  // Defer a client-created frame until the router owns the restored fragment.
+  // Hydrated SSR content stays mounted while the callback query is cleaned up.
+  if (callbackHash !== null && clientMounted) return null
+  return <ViewerContent loaderData={loaderData} />
+}
+
+function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
   const rootData = useRouteLoaderData<{
     analyticsConsent?: AnalyticsConsentResolution
   }>('root')
@@ -248,9 +294,10 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
   const { t } = useT()
   const cliCommand = buildPreauthCliOpenCommand(canonicalUrl)
   const [agentHelpOpen, setAgentHelpOpen] = useState(false)
+  const hash = useViewerHash()
   const returnUrl = new URL(canonicalUrl)
   const returnPath = `${returnUrl.pathname}${returnUrl.search}`
-  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(returnPath)}`
+  const signInHref = `/sign-in?method=email&next=${encodeURIComponent(viewerReturnPath(returnPath, hash))}`
   return (
     <Stack gap="0" align="center" justify="center" asChild>
       <main className={preauthMainClassName}>
@@ -262,7 +309,7 @@ function PreauthFallback({ canonicalUrl }: { canonicalUrl: string }) {
           <Stack gap="12">
             <p className={preauthSubClassName}>{t('lp.invite.sub')}</p>
             <AuthBlock>
-              <SignInOptions callbackURL={returnPath} />
+              <SignInOptions callbackURL={returnPath} includeViewerHash />
               <Link to={signInHref} className={authEmailLinkClassName}>
                 {t('signin.email.toggle')}
                 <LastUsedBadge method="email" />

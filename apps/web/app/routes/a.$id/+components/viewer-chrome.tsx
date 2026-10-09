@@ -1,3 +1,4 @@
+import { latestViewerHash } from '~/lib/viewer-hash'
 import {
   IconChevronDown,
   IconChevronUp,
@@ -209,6 +210,7 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
       {
         pathname: location.pathname,
         search: params.size > 0 ? `?${params.toString()}` : '',
+        hash: latestViewerHash(),
       },
       { replace: true },
     )
@@ -1279,7 +1281,7 @@ function ViewerActions({
                     artifactId,
                     currentVisibility ?? 'private',
                     appOrigin,
-                  ),
+                  ) + latestViewerHash(),
                 translator,
                 {
                   paused: linkSuspended,

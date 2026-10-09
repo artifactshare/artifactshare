@@ -1,3 +1,6 @@
+import { latestViewerHash } from '~/lib/viewer-hash'
+import type { ComponentPropsWithRef } from 'react'
+import { useViewerHash, viewerSignInHref } from '~/hooks/use-viewer-hash'
 import { Button } from '~/components/ui/button'
 
 const className =
@@ -15,7 +18,7 @@ export function AnonymousViewerSignInControl({
   if (shouldLoadAnalytics) {
     return (
       <Button asChild variant="outline" size="default" className={className}>
-        <a href={href}>{label}</a>
+        <ViewerSignInLink href={href} label={label} />
       </Button>
     )
   }
@@ -28,9 +31,24 @@ export function AnonymousViewerSignInControl({
       className={className}
       // A previously loaded Google linker can keep decorating anchors after
       // consent is withdrawn, so navigate without exposing an href to it.
-      onClick={() => window.location.assign(href)}
+      onClick={() =>
+        window.location.assign(viewerSignInHref(href, latestViewerHash()))
+      }
     >
       {label}
     </Button>
+  )
+}
+
+function ViewerSignInLink({
+  href,
+  label,
+  ...props
+}: ComponentPropsWithRef<'a'> & { href: string; label: string }) {
+  const hash = useViewerHash()
+  return (
+    <a {...props} href={viewerSignInHref(href, hash)}>
+      {label}
+    </a>
   )
 }

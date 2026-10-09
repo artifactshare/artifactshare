@@ -1,6 +1,7 @@
 export type ReporterWindow = Window & typeof globalThis
 export function capturePrimordials(win: ReporterWindow) {
   const savedParent = win.parent
+  const reflectApply = win.Reflect.apply
   const savedPostMessage: (
     receiver: Window,
     message: Record<string, unknown>,
@@ -125,6 +126,8 @@ export function capturePrimordials(win: ReporterWindow) {
     win.Function.prototype.call.bind(win.Element.prototype.hasAttribute)
   return {
     savedParent,
+    reflectApply,
+    getPrototypeOf: win.Object.getPrototypeOf,
     savedPostMessage,
     savedAddEventListener,
     trustedGetter,

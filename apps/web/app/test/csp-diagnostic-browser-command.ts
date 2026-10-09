@@ -10,7 +10,12 @@ type DiagnosticResult = {
 }
 
 export const cspDiagnostic = defineBrowserCommand(
-  async ({ page }, html: string) => {
+  async (
+    { page },
+    html: string,
+    reporterSha256: string,
+    renderType: 'html' | 'md' = 'html',
+  ) => {
     const context = await page.context().browser()!.newContext()
     const sandboxOrigin = 'https://sandbox.example.com'
     const viewerOrigin = 'https://example.com'
@@ -30,8 +35,9 @@ export const cspDiagnostic = defineBrowserCommand(
             contentType: 'text/html',
             headers: {
               'Content-Security-Policy': artifactContentSecurityPolicy(
-                'html',
+                renderType,
                 viewerOrigin,
+                reporterSha256,
               ),
             },
             body: html,
@@ -83,6 +89,10 @@ export const cspDiagnostic = defineBrowserCommand(
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
-    cspDiagnostic: (html: string) => Promise<DiagnosticResult>
+    cspDiagnostic: (
+      html: string,
+      reporterSha256: string,
+      renderType?: 'html' | 'md',
+    ) => Promise<DiagnosticResult>
   }
 }

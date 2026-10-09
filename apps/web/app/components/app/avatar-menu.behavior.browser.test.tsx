@@ -31,6 +31,8 @@ vi.mock('~/hooks/use-t', async () => {
 })
 
 let root: Root | undefined
+const originalUrl = window.location.href
+const originalState = window.history.state
 
 afterEach(() => {
   root?.unmount()
@@ -38,6 +40,7 @@ afterEach(() => {
   document.body.replaceChildren()
   vi.unstubAllGlobals()
   navigateMock.mockReset()
+  window.history.replaceState(originalState, '', originalUrl)
 })
 
 describe('AvatarMenu access requests', () => {
@@ -271,7 +274,7 @@ describe('AvatarMenu access requests', () => {
 
       await page.getByRole('button', { name: '閉じる' }).click()
       expect(navigateMock).toHaveBeenCalledWith(
-        { pathname: '/a/fixture-viewer', search: '' },
+        { pathname: '/a/fixture-viewer', search: '', hash: '' },
         { replace: true },
       )
     },

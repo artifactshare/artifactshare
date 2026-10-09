@@ -170,3 +170,27 @@ test('CSP metadata still requires the exact origin and frame identity', () => {
     ),
   ).toBeNull()
 })
+
+test('hash reports require the current frame origin, source, and document token shape', () => {
+  const source = {} as Window
+  const data = {
+    source: 'artifactshare',
+    kind: 'hash-changed',
+    hash: '#q',
+    path: '/',
+    token: 'a'.repeat(64),
+  }
+  const event = { source, origin: 'https://example.test', data } as MessageEvent
+  expect(sandboxMessageFromFrame(event, event.origin, source)).toEqual(data)
+  expect(
+    sandboxMessageFromFrame(event, 'https://example.com', source),
+  ).toBeNull()
+  expect(sandboxMessageFromFrame(event, event.origin, {} as Window)).toBeNull()
+  expect(
+    sandboxMessageFromFrame(
+      { ...event, data: { ...data, token: undefined } } as MessageEvent,
+      event.origin,
+      source,
+    ),
+  ).toBeNull()
+})

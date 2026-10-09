@@ -1,3 +1,4 @@
+import { latestViewerHash, viewerReturnPath } from '~/lib/viewer-hash'
 import { Stack } from '~/components/layout/stack'
 import { authProviderButtonClassName } from './auth-styles'
 import { GoogleMark } from './google-mark'
@@ -21,11 +22,13 @@ import { captureAuthAttempt } from '~/lib/analytics/auth-attempt.client'
  */
 export function SignInOptions({
   callbackURL,
+  includeViewerHash = false,
   disabled,
   regressionPrimary,
   errorCallbackURL,
 }: {
   callbackURL?: string
+  includeViewerHash?: boolean
   disabled?: boolean
   regressionPrimary?: string
   errorCallbackURL?: string
@@ -42,7 +45,9 @@ export function SignInOptions({
       : '/')
 
   const startSignIn = (provider: 'google' | 'microsoft') => {
-    const callback = resolveCallback()
+    const callback = includeViewerHash
+      ? viewerReturnPath(resolveCallback(), latestViewerHash())
+      : resolveCallback()
     trackEvent(ANALYTICS_EVENTS.signUpStart, {
       [ANALYTICS_PARAMS.method]: provider,
     })

@@ -1,3 +1,4 @@
+import { reportHash } from './hash.js'
 import {
   READY_CHECK_MESSAGE_KIND,
   READY_CHECK_MESSAGE_SOURCE,
@@ -31,6 +32,7 @@ export function ready(ctx: ReporterState) {
       challenge: ctx.readyChallenge,
       token: ctx.documentToken,
     })
+    reportHash(ctx, true)
   }
 }
 

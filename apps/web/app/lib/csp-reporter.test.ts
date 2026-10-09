@@ -674,3 +674,31 @@ test('bounds diagnostics while waiting for a parent and releases the queue', () 
   expect(ctx.pendingCspViolationCount).toBe(0)
   expect(Object.keys(ctx.pendingCspViolations)).toHaveLength(0)
 })
+
+describe('hash-changed contract', () => {
+  const message = {
+    source: 'artifactshare',
+    kind: 'hash-changed',
+    token: 'a'.repeat(64),
+    path: '/index.html',
+    hash: '#q=abc',
+  }
+  test.each(['', '#', '#' + 'a'.repeat(2047)])(
+    'accepts bounded fragment %s',
+    (hash) => {
+      expect(isSandboxMessage({ ...message, hash })).toBe(true)
+    },
+  )
+  test.each([
+    { hash: '#' + 'a'.repeat(2048) },
+    { hash: 'q=abc' },
+    { hash: null },
+    { hash: 1 },
+    { token: undefined },
+    { token: 'a'.repeat(63) },
+    { token: 'A'.repeat(64) },
+    { path: undefined },
+  ])('rejects malformed reports %j', (patch) => {
+    expect(isSandboxMessage({ ...message, ...patch })).toBe(false)
+  })
+})

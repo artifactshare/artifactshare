@@ -1,3 +1,7 @@
+import {
+  sandboxHashDocument,
+  sandboxHashDocumentLoads,
+} from './app/test/sandbox-hash-browser-command'
 import { cspDiagnostic } from './app/test/csp-diagnostic-browser-command'
 import {
   staticSiteExtensions,
@@ -38,6 +42,8 @@ export default defineConfig({
         staticSiteExtensions,
         staticSiteXmlEmbedding,
         cspDiagnostic,
+        sandboxHashDocument,
+        sandboxHashDocumentLoads,
       },
       headless: true,
       instances: [
@@ -50,6 +56,7 @@ export default defineConfig({
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
             'app/routes/a.$id/viewer-revisit.behavior.browser.test.tsx',
+            'app/routes/a.$id/hash-sync.behavior.browser.test.tsx',
           ],
         },
         {
@@ -60,6 +67,7 @@ export default defineConfig({
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
             'app/routes/a.$id/viewer-revisit.behavior.browser.test.tsx',
+            'app/routes/a.$id/hash-sync.behavior.browser.test.tsx',
           ],
         },
       ],

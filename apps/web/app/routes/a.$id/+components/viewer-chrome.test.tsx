@@ -1,5 +1,14 @@
+// @vitest-environment happy-dom
+import { createViewerHashSync } from '~/lib/viewer-hash'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AnchorHTMLAttributes, ComponentProps, ReactNode } from 'react'
+import {
+  act,
+  type AnchorHTMLAttributes,
+  type ComponentProps,
+  type ReactNode,
+} from 'react'
+import { createRoot } from 'react-dom/client'
+import { copyShareUrl } from '~/lib/clipboard'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
@@ -10,6 +19,8 @@ import {
   historicalViewerShareUrl,
   ViewerChrome,
 } from './viewer-chrome'
+
+vi.mock('~/lib/clipboard', () => ({ copyShareUrl: vi.fn() }))
 
 vi.mock('~/hooks/use-hydrated', () => ({
   useHydrated: () => true,
@@ -67,6 +78,8 @@ vi.mock('~/hooks/use-t', () => ({
 }))
 
 let mockLocationState: unknown = null
+let mockLocationSearch = ''
+const mockNavigate = vi.fn()
 
 vi.mock('react-router', () => ({
   Link: ({
@@ -89,15 +102,23 @@ vi.mock('react-router', () => ({
   ),
   useLocation: () => ({
     pathname: '/a/artifact',
-    search: '',
+    search: mockLocationSearch,
     state: mockLocationState,
   }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
 
 vi.mock('~/components/app/avatar-menu', () => ({
-  AvatarMenu: () => <button type="button">Account</button>,
+  AvatarMenu: ({
+    onAccessRequestDismiss,
+  }: {
+    onAccessRequestDismiss?: () => void
+  }) => (
+    <button type="button" onClick={onAccessRequestDismiss}>
+      Account
+    </button>
+  ),
 }))
 
 vi.mock('~/components/ui/dropdown-menu', () => ({
@@ -841,4 +862,90 @@ describe.each([
       ).toHaveLength(0)
     }
   })
+})
+
+test.each(['private', 'link'] as const)(
+  'latest-version Copy link reads the live hash for %s sharing',
+  async (visibility) => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const previousUrl = window.location.href
+    const previousState = window.history.state
+    const sync = createViewerHashSync()
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    try {
+      window.history.replaceState(null, '', '/a/abc123def4#initial')
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <ViewerChrome
+              artifact={{ ...artifact, id: 'abc123def4', visibility }}
+              user={null}
+              renderType="html"
+              appOrigin="https://artifactshare.com"
+            />
+          </TooltipProvider>,
+        ),
+      )
+      await act(async () => sync.accept('#current'))
+      expect(window.location.hash).toBe('#initial')
+      const button = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy URL"]',
+      )!
+      expect(button).not.toBeNull()
+      await act(async () => button.click())
+      expect(vi.mocked(copyShareUrl).mock.calls.at(-1)?.[0]).toBe(
+        visibility === 'link'
+          ? 'https://abc123def4.artifactshare.link/#current'
+          : 'https://artifactshare.com/a/abc123def4#current',
+      )
+    } finally {
+      sync.clear()
+      await act(async () => root.unmount())
+      host.remove()
+      window.history.replaceState(previousState, '', previousUrl)
+    }
+  },
+)
+
+test('access-request dismissal through ViewerChrome preserves the live fragment', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const previousUrl = window.location.href
+  mockLocationSearch = '?access-request=s1&panel=comments'
+  try {
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <ViewerChrome
+            artifact={artifact}
+            user={{
+              id: 'u1',
+              email: 'owner@example.com',
+              name: 'Owner',
+              image: null,
+              initial: 'O',
+            }}
+            renderType="html"
+          />
+        </TooltipProvider>,
+      ),
+    )
+    window.history.replaceState(null, '', '#live')
+    const account = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Account',
+    )!
+    await act(async () => account.click())
+    expect(mockNavigate).toHaveBeenLastCalledWith(
+      { pathname: '/a/artifact', search: '?panel=comments', hash: '#live' },
+      { replace: true },
+    )
+  } finally {
+    mockLocationSearch = ''
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(null, '', previousUrl)
+  }
 })

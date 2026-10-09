@@ -1474,11 +1474,18 @@ describe('/a/:id loader', () => {
 
   test.each([
     { plan: 'plus', eventCount: null, linkCount: null, lowTrust: false },
+    {
+      plan: 'plus',
+      eventCount: null,
+      linkCount: null,
+      lowTrust: false,
+      staticSite: true,
+    },
     { plan: 'free', eventCount: 1, linkCount: 4, lowTrust: true },
     { plan: 'free', eventCount: 5, linkCount: 1, lowTrust: false },
   ])(
     'keeps the explicit current version available to anonymous $plan link viewers',
-    async ({ plan, eventCount, linkCount, lowTrust }) => {
+    async ({ plan, eventCount, linkCount, lowTrust, staticSite = false }) => {
       const shareable = {
         id: 'link123abc',
         workspace_id: 'ws1',
@@ -1497,8 +1504,8 @@ describe('/a/:id loader', () => {
         r2_key: 'artifacts/link123abc/v1/index.html',
         entrypoint_path: '/demo.html',
         fallback_to_index: 0,
-        version_artifact_kind: 'html_page',
-        artifact_kind: 'html_page',
+        version_artifact_kind: staticSite ? 'static_site' : 'html_page',
+        artifact_kind: staticSite ? 'static_site' : 'html_page',
         container_id: null,
         return_project_kind: null,
         return_project_base_visibility: null,
@@ -1515,6 +1522,7 @@ describe('/a/:id loader', () => {
           const count = boundedCountQuery++ === 0 ? eventCount : linkCount
           return shareableQuery({ count })
         }
+        if (table === 'version_files') return versionFilesQuery()
         if (table === 'events') return chain({})
         if (table === 'shareables') {
           shareableQueryCount += 1
@@ -1547,8 +1555,9 @@ describe('/a/:id loader', () => {
         context,
       } as never)
 
-      expect(result.kind).toBe('ok')
-      if (result.kind !== 'ok') return
+      expect(result.kind).toBe(staticSite ? 'static_site' : 'ok')
+      if (result.kind !== 'ok' && result.kind !== 'static_site') return
+      expect(result.artifact.entrypointPath).toBe('/demo.html')
       expect(result.linkSafety).toEqual({ lowTrust })
       expect(shareableQueryCount).toBe(plan === 'free' ? 2 : 1)
       expect(boundedCountQuery).toBe(plan === 'free' ? 2 : 0)
