@@ -15,6 +15,12 @@ export const screen = {
   metric: 'CLI利用による作成を増やす',
   role: 'CLIの使い方を案内する',
   primaryAction: 'ガイドを読む',
+  sections: [
+    { id: 'introduction', selector: '#introduction' },
+    { id: 'basics', selector: '#basics' },
+    { id: 'commands', selector: '#commands' },
+    { id: 'recovery', selector: '#recovery' },
+  ],
   states: [
     {
       id: 'default',

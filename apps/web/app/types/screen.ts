@@ -51,6 +51,11 @@ export type ScreenState = {
   setup: ScreenSetup
 }
 
+export type ScreenSection = {
+  id: string
+  selector: string
+}
+
 export type ScreenSpec = {
   id: string
   route: Record<string, string>
@@ -60,6 +65,7 @@ export type ScreenSpec = {
   role: string
   primaryAction: string
   states: ScreenState[]
+  sections?: ScreenSection[]
   captureConcurrency?: number
   ready?: ScreenReady
 }

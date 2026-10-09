@@ -193,6 +193,25 @@ export function validateLedger(
       )
         throw new Error(`ready timeout must be positive for ${screen.id}`)
     }
+    if (screen.sections !== undefined) {
+      if (!Array.isArray(screen.sections))
+        throw new Error(`sections must be an array for ${screen.id}`)
+      const sectionIds = new Set()
+      for (const [index, section] of screen.sections.entries()) {
+        const label = `${screen.id}/section ${index + 1}`
+        if (!section || typeof section !== 'object' || Array.isArray(section))
+          throw new Error(`invalid section for ${label}`)
+        if (typeof section.id !== 'string' || !/^[a-z0-9-]+$/u.test(section.id))
+          throw new Error(`invalid section id for ${label}`)
+        if (sectionIds.has(section.id))
+          throw new Error(`duplicate section id: ${screen.id}/${section.id}`)
+        sectionIds.add(section.id)
+        if (typeof section.selector !== 'string' || !section.selector.trim())
+          throw new Error(
+            `section selector required for ${screen.id}/${section.id}`,
+          )
+      }
+    }
     const stateIds = new Set()
     for (const state of screen.states) {
       if (stateIds.has(state.id))

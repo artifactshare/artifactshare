@@ -104,6 +104,26 @@ pnpm screens:capture -- --all --audit-gaps
 
 `SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
 
+## Readable section crops
+
+A screen may declare ordered `sections: [{ id: 'introduction', selector: '#introduction' }]` metadata. IDs must be unique within the screen and match `^[a-z0-9-]+$`; selectors must be nonblank. Omitted or empty lists keep the existing full-page-only behavior.
+
+After each successful full-page capture, the harness captures each element's width and top, capped at two viewport heights (1800 CSS pixels on desktop, 1688 on mobile), without scaling text. Clips use document coordinates, including scroll offsets, without scrolling targets under sticky navigation or mutating the page. Missing, ambiguous, invisible, and zero-area targets fail individually; the full-page image and remaining crops survive, and the command returns nonzero after writing output.
+
+Crop filenames append `--section-<id>.png` to the existing `<screen>--<state>--<viewport>--<theme>--<locale>` stem. Additive manifest entries carry `section` and the same capture metadata, including HEAD; failures carry the section ID and selector details. The browsing index labels each section separately.
+
+`guides-cli` declares `introduction`, `basics`, `commands`, and `recovery`, using the matching element IDs in both locales. Its default matrix produces 8 full-page images and 32 crops. The introduction crop excludes the page hero; the full-page image supplies that context. Long sections show only their first two viewport heights.
+
+Normal critique receives full-page images and labelled crops. `--copy-only` selects crops from each root containing section entries and excludes walkthrough PNGs when section crops are supplied; task/evidence context remains available. Roots without section entries retain legacy manual-crop selection. Every manifest entry is validated before selection, including excluded full-page images.
+
+Reuse the generated root directly, without a hand-written manifest (after capture at the final clean commit):
+
+```sh
+pnpm screens:capture -- --screen guides-cli --label guides-cli
+pnpm critique:tasks -- --screen-root "$capture_output_root/guides-cli" --scope-judgment "Guide capture material changed; recover-interrupted-publish references this screen but has an existing walkthrough gap. No registered walkthrough is affected; this review makes no task-completion claim." --source 'apps/web/app/routes/_public/($locale)/guides.cli.tsx' --source apps/web/app/components/app/cli-reference-page.tsx
+pnpm critique:tasks -- --screen-root "$capture_output_root/guides-cli" --scope-judgment "Guide capture material changed; recover-interrupted-publish has an existing walkthrough gap and no registered walkthrough is affected." --source 'apps/web/app/routes/_public/($locale)/guides.cli.tsx' --source apps/web/app/components/app/cli-reference-page.tsx --copy-only
+```
+
 ## Matrix and output
 
 Each selected ledger entry expands across its declared locales and states, desktop and mobile viewports, and light and dark themes. Scenario state is seeded once before parallel capture so browser jobs do not race through sign-in or data creation.

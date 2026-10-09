@@ -268,7 +268,8 @@ function validateInputs(
     for (const choice of currentTask.acceptedBehavior ?? [])
       acceptedBehavior.push(`${taskId}: ${choice}`)
   }
-  const screenImagePaths = []
+  const screenImages = []
+  let hasSections = false
   for (const item of options.screenRoots ?? []) {
     const screenRootCandidate = resolve(canonicalRepo, item)
     const screenRoot = existsSync(screenRootCandidate)
@@ -292,6 +293,7 @@ function validateInputs(
     const screenManifest = JSON.parse(readFileSync(screenManifestPath, 'utf8'))
     if (!Array.isArray(screenManifest) || screenManifest.length === 0)
       throw new Error('Screen capture manifest entries are required.')
+    const validatedImages = []
     for (const entry of screenManifest) {
       const label = `${entry.screen ?? '<screen>'}/${entry.state ?? '<state>'}/${entry.viewport ?? '<viewport>'}`
       if (entry.status !== 'success')
@@ -300,8 +302,26 @@ function validateInputs(
         throw new Error(
           `${label}: screen capture HEAD must match reviewed HEAD.`,
         )
-      screenImagePaths.push(validateImagePath(screenRoot, entry.file, label))
+      if (
+        entry.section !== undefined &&
+        (typeof entry.section !== 'string' || !entry.section.trim())
+      )
+        throw new Error(`${label}: section must be a nonblank string.`)
+      validatedImages.push({
+        ...entry,
+        path: validateImagePath(screenRoot, entry.file, label),
+      })
     }
+    const rootHasSections = validatedImages.some(
+      (entry) => entry.section !== undefined,
+    )
+    hasSections ||= rootHasSections
+    screenImages.push(
+      ...validatedImages.filter(
+        (entry) =>
+          !options.copyOnly || !rootHasSections || entry.section !== undefined,
+      ),
+    )
   }
   return {
     root,
@@ -311,8 +331,9 @@ function validateInputs(
     acceptedBehavior,
     sourcePaths,
     evidencePaths,
-    imagePaths,
-    screenImagePaths,
+    imagePaths: options.copyOnly && hasSections ? [] : imagePaths,
+    screenImagePaths: screenImages.map((entry) => entry.path),
+    screenImages,
   }
 }
 
@@ -382,12 +403,25 @@ function commonPrompt(input) {
   ].join('\n')
 }
 
+function screenImageLabels(input) {
+  if (!input.screenImages)
+    return (input.screenImagePaths ?? []).join(', ') || 'none supplied'
+  return (
+    input.screenImages
+      .map(
+        (entry) =>
+          `${entry.screen}/${entry.state}/${entry.viewport}/${entry.theme}/${entry.locale} [${entry.section === undefined ? 'full-page context' : `section: ${entry.section}`}]: ${entry.path}`,
+      )
+      .join('\n') || 'none supplied'
+  )
+}
+
 function promptFor(layer, input) {
   const common = commonPrompt(input)
   if (layer.id === 'visual' || input.screenOnly)
-    return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nVisual layer: inspect every ${input.screenOnly ? 'standalone screen' : 'walkthrough and standalone screen'} PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
+    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nVisual layer: inspect every ${input.screenOnly ? 'standalone screen' : 'walkthrough and standalone screen'} PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.`
   if (layer.id === 'combined')
-    return `${common}\nStandalone screen PNG files: ${(input.screenImagePaths ?? []).join(', ') || 'none supplied'}\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
+    return `${common}\nStandalone screen PNG files: ${screenImageLabels(input)}\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.`
   return `${common}\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.`
 }
 
