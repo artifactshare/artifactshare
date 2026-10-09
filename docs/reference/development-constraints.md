@@ -27,6 +27,12 @@
 - **人が判断する現行規則**：client code から server-only module を import しません。loader、action、middleware では正規化済みの `url` を使い、生の受信 URL が必要な場合だけ `request.url` を使います。hydration 前後で DOM 構造を変える場合は hydration gate を設けます。CLI が呼ぶ API route では Bearer token 対応 middleware を使います。「表示されないこと」を確認する test では、条件を反転した負の対照も実行します。fake timers 下では `Response` の `text()`、`json()`、`arrayBuffer()` が microtask だけで完了すると仮定しません。body の読み取りには実 task が必要な場合があるため、`apps/web/app/test/wait-for-real-task-condition.ts` の共有 helper で観測可能な結果を待ちます。 `act` の外で render した後は、操作対象の要素が存在するまで待つか、`apps/web/app/test/browser-layout.ts` を使ってから操作します。query で取得した要素の `click()`、`focus()`、`dispatchEvent()` を optional chaining で呼び出してはいけません。
 - **復元しない事項**：機械検査へ置き換わった token 値や DOM 断片の一覧は復元しません。
 
+## Tests
+
+- **機械検査で強制済み**：Public CI の `changed-browser-repetitions` job（check 名 `Changed browser behavior repetitions`）と `Flaky detector` workflow（`.github/workflows/flaky-detector.yml`）が反復実行で不安定なテストを検出します。詳細は `docs/development-workflow.md` を参照します。
+- **人が判断する現行規則**：sheet や dialog の開閉後に focus や open 状態を検証する前に、mount または unmount と開閉アニメーションの完了を待ちます。`[data-slot="sheet-content"]` の出現や消失など、観測可能な条件で待ち、固定時間の sleep は使いません。CI runner はローカルの約2倍の時間がかかる場合を見込み、`vi.waitFor` と重い fixture（大きな文書、多数のコメント、migration を再適用する D1 reset）を使うテストには明示的な timeout を設定し、`vi.waitFor` の1秒を含む既定値に依存しません。既存の D1 suite は `apps/web/app/test/vitest.d1.config.ts` で test と hook の timeout をともに30秒に設定しています。sub-pixel の layout 値は根拠を明記した許容誤差で比較し、一時ディレクトリはテストごとに固有のものを使います。browser test では iframe 自体に focus を当ててから内部要素に focus を当てます。Firefox では frame の browsing context に focus がないと、内部要素の `focus()` 後も `<body>` に focus が残る場合があるためです。
+- **復元しない事項**：現行実装に該当がないテスト手順や、`docs/development-workflow.md` が担う反復検査の詳細はここへ復元しません。
+
 ## Workers
 
 - **機械検査で強制済み**：request entrypoint と lazy initialization の契約は、`apps/web/workers/app.test.ts` が検査します。
