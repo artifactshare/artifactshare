@@ -11,6 +11,12 @@ import {
 } from './cli-reference-content'
 
 describe('CLI reference content', () => {
+  test('explains fragment delivery and sharing filtered views or headings', () => {
+    expect(cliReferenceContent('en').sections.basics.body).toContain(
+      'Browser share pages pass their URL fragment (#) to HTML, Markdown, and static-site frames, follow changes inside them, and include it in Copy link for sharing filtered views or headings.',
+    )
+  })
+
   test.each(['en', 'ja'] as const)(
     'keeps the %s deletion example short while documenting repetition',
     (locale) => {
