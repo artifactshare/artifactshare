@@ -561,9 +561,10 @@ test('resolution messages are chunked for more than 100 comments', async () => {
       expect(batches.map((m) => m.results.length)).toEqual([100, 100, 5])
       expect(new Set(batches.map((m) => m.generation)).size).toBe(3)
     },
-    { timeout: 10000 },
+    // 205 highlights take about 9 s locally and roughly twice that on CI runners.
+    { timeout: 25000 },
   )
-}, 15000)
+}, 30000)
 
 test.each([false, true])(
   'inserting text between painted pieces clears before debounce (queued: %s)',
