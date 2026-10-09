@@ -41,7 +41,7 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 import { staticSiteAssetResponse } from './lib/artifact-response'
 import { signSandboxToken } from '../app/lib/sandbox-token'
 import { sandboxVersionLabel } from '../app/lib/hosts'
-import { encodeBase64Url } from '../app/lib/base64url'
+import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
 import { hmacSha256 } from '../app/lib/hmac'
 import {
   VIOLATION_REPORTER_SHA256,
@@ -1882,6 +1882,350 @@ describe('handleArtifactSandboxRequest', () => {
     )
     expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  describe('anonymous token navigation', () => {
+    beforeEach(async () => {
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+    })
+
+    function expectAnonymousPolicy(response: Response, corp = 'cross-origin') {
+      expect(response.headers.get('Cache-Control')).toBe(
+        'private, no-store, no-transform',
+      )
+      expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(corp)
+      expect(response.headers.get('Cross-Origin-Opener-Policy')).toBe(
+        'same-origin',
+      )
+      expect(response.headers.get('Permissions-Policy')).toBe(
+        expectedPermissionsPolicy,
+      )
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
+      expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow')
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    }
+
+    test.each([
+      [
+        'production',
+        'artifactshare.link',
+        'cross-origin',
+        'https://abc123def4.artifactshare.link',
+      ],
+      [
+        'development',
+        'sandbox.localhost:5174',
+        'cross-origin',
+        'https://abc123def4.localhost:5173',
+      ],
+    ])(
+      'redirects an anonymous target with the %s %s response policy',
+      async (environment, suffix, corp, ancestor) => {
+        envMock.APP_ENV = environment
+        const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.${suffix}`
+        const target = '/docs/intro.html?tab=one#top'
+        const token = await anonymousEntrypointToken()
+        const response = await handleArtifactSandboxRequest(
+          new Request(
+            `${origin}/index.html?t=${token}&as_next=${encodeURIComponent(target)}`,
+          ),
+        )
+        expect(response.status).toBe(302)
+        expect(response.headers.get('Location')).toBe(target)
+        await expect(response.text()).resolves.toBe('')
+        expectAnonymousPolicy(response, corp)
+        expectStaticSiteCsp(
+          response.headers.get('Content-Security-Policy')!,
+          ancestor,
+        )
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+        expect(consumeJtiMock).not.toHaveBeenCalled()
+        const cookie = response.headers.get('Set-Cookie')!.split(';')[0]
+        expect(cookie).toMatch(/^as_bnd=/)
+        const [body, signature] = cookie.slice('as_bnd='.length).split('.')
+        expect(signature).toBe(
+          encodeBase64Url(await hmacSha256('test-secret', body)),
+        )
+        expect(
+          JSON.parse(new TextDecoder().decode(decodeBase64Url(body))),
+        ).toMatchObject({
+          uid: null,
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fallbackToIndex: false,
+        })
+
+        // The target need not exist when redirecting; follow-up delivery uses the manifest.
+        await dbRef
+          .current!.insertInto('version_files')
+          .values({
+            id: 'vf-intro',
+            version_id: 'v-bundle',
+            path: '/docs/intro.html',
+            r2_key: 'ws-a/abc123def4/v-bundle/docs/intro.html',
+            mime_type: 'text/html',
+            size_bytes: 20,
+            sha256: 'sha-intro',
+            scan_flags: null,
+            created_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<body>Target page</body>', 'text/html'),
+        )
+        storageMock.headArtifact.mockResolvedValue(
+          storedHeadArtifact('<body>Target page</body>', 'text/html'),
+        )
+        const page = await handleArtifactSandboxRequest(
+          new Request(new URL(target, origin), {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(page.status).toBe(200)
+        await expect(page.text()).resolves.toContain('Target page')
+        expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
+          {},
+          'ws-a/abc123def4/v-bundle/docs/intro.html',
+        )
+        expect(consumeJtiMock).not.toHaveBeenCalled()
+      },
+    )
+
+    test('serves the anonymous entrypoint for a valid target on a production sandbox host', async () => {
+      envMock.APP_ENV = 'production'
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<body>Entrypoint</body>', 'text/html'),
+      )
+      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.artifactshare.com`
+      const token = await anonymousEntrypointToken()
+      const target = '/docs/intro.html?tab=one#top'
+      const response = await handleArtifactSandboxRequest(
+        new Request(
+          `${origin}/index.html?t=${token}&as_next=${encodeURIComponent(target)}`,
+        ),
+      )
+      expect(response.status).toBe(200)
+      await expect(response.text()).resolves.toContain('Entrypoint')
+      expect(response.headers.get('Location')).toBeNull()
+      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+      expectAnonymousPolicy(response, 'same-site')
+      expectStaticSiteCsp(
+        response.headers.get('Content-Security-Policy')!,
+        'https://artifactshare.com https://www.artifactshare.com',
+      )
+      expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
+        {},
+        'ws-a/abc123def4/v-bundle/index.html',
+      )
+      expect(consumeJtiMock).not.toHaveBeenCalled()
+    })
+
+    test.each([
+      undefined,
+      '',
+      `${sandboxOrigin()}/docs/intro.html`,
+      'https://example.com/',
+      '//example.com/',
+      '/\\example.com/',
+      '/bad%ZZ',
+      '/download.exe',
+    ])(
+      'serves the anonymous entrypoint for unusable as_next %s',
+      async (target) => {
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<body>Entrypoint</body>', 'text/html'),
+        )
+        const url = new URL(`${sandboxOrigin()}/index.html`)
+        url.searchParams.set('t', await anonymousEntrypointToken())
+        if (target !== undefined) url.searchParams.set('as_next', target)
+        const response = await handleArtifactSandboxRequest(new Request(url))
+        expect(response.status).toBe(200)
+        await expect(response.text()).resolves.toContain('Entrypoint')
+        expect(response.headers.get('Location')).toBeNull()
+        expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+        expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
+          {},
+          'ws-a/abc123def4/v-bundle/index.html',
+        )
+      },
+    )
+
+    test('encodes an anonymous non-ASCII target', async () => {
+      const token = await anonymousEntrypointToken()
+      const response = await handleArtifactSandboxRequest(
+        new Request(
+          `${sandboxOrigin()}/index.html?t=${token}&as_next=${encodeURIComponent('/概要.html')}`,
+        ),
+      )
+      expect(response.status).toBe(302)
+      expect(response.headers.get('Location')).toBe('/%E6%A6%82%E8%A6%81.html')
+      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    })
+
+    test('does not issue a cookie when fallback entrypoint storage is missing', async () => {
+      storageMock.getArtifact.mockResolvedValue(null)
+      const token = await anonymousEntrypointToken()
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      )
+      expect(response.status).toBe(404)
+      expect(response.headers.get('Set-Cookie')).toBeNull()
+      expect(response.headers.get('Location')).toBeNull()
+    })
+
+    test.each(['html', 'md'] as const)(
+      'ignores as_next for anonymous %s documents',
+      async (renderType) => {
+        const artifactKind =
+          renderType === 'html' ? 'html_page' : 'markdown_page'
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ artifact_kind: artifactKind })
+          .where('id', '=', 'abc123def4')
+          .execute()
+        await dbRef
+          .current!.updateTable('versions')
+          .set({ artifact_kind: artifactKind })
+          .where('id', '=', 'v-bundle')
+          .execute()
+        const token = await signSandboxToken(
+          {
+            uid: null,
+            wid: 'ws-a',
+            aid: 'abc123def4',
+            vid: 'v-bundle',
+            fid: 'ws-a/abc123def4/v-bundle/index.html',
+            mt: null,
+            t: renderType,
+            jti: 'j-anon',
+          },
+          'test-secret',
+        )
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact(
+            renderType === 'html'
+              ? '<body>Original document</body>'
+              : '# Original document',
+            renderType === 'html' ? 'text/html' : 'text/markdown',
+          ),
+        )
+        const response = await handleArtifactSandboxRequest(
+          new Request(
+            `${sandboxOrigin()}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html`,
+          ),
+        )
+        expect(response.status).toBe(200)
+        await expect(response.text()).resolves.toContain(
+          renderType === 'html'
+            ? '<body>Original document</body>'
+            : '<h1 id="original-document">Original document</h1>',
+        )
+        expect(response.headers.get('Location')).toBeNull()
+        expect(response.headers.get('Set-Cookie')).toBeNull()
+        expectAnonymousPolicy(response)
+        expect(response.headers.get('Content-Security-Policy')).toBe(
+          (renderType === 'html'
+            ? baselineHtmlCsp
+            : baselineMarkdownCsp
+          ).replace(
+            'https://localhost:5173',
+            'https://abc123def4.localhost:5173',
+          ),
+        )
+        expect(consumeJtiMock).not.toHaveBeenCalled()
+      },
+    )
+
+    test.each([
+      'private',
+      'suspended',
+      'policy-disabled',
+      'stale',
+      'unpublished',
+      'mismatched',
+    ] as const)(
+      'rejects anonymous navigation when %s before redirecting',
+      async (condition) => {
+        envMock.APP_ENV = 'production'
+        const db = dbRef.current!
+        if (condition === 'private')
+          await db
+            .updateTable('shareables')
+            .set({ visibility: 'private' })
+            .where('id', '=', 'abc123def4')
+            .execute()
+        if (condition === 'suspended')
+          await db
+            .updateTable('shareables')
+            .set({
+              link_suspended_at: '2026-09-08T00:00:00.000Z',
+              link_suspended_reason: 'review',
+            })
+            .where('id', '=', 'abc123def4')
+            .execute()
+        if (condition === 'policy-disabled')
+          await db
+            .updateTable('workspaces')
+            .set({ link_sharing_enabled: 0 })
+            .where('id', '=', 'ws-a')
+            .execute()
+        if (condition === 'stale')
+          await db
+            .updateTable('shareables')
+            .set({ current_version_id: null })
+            .where('id', '=', 'abc123def4')
+            .execute()
+        if (condition === 'unpublished')
+          await db
+            .updateTable('versions')
+            .set({ status: 'uploading' })
+            .where('id', '=', 'v-bundle')
+            .execute()
+        if (condition === 'mismatched')
+          await db
+            .updateTable('version_files')
+            .set({ r2_key: 'ws-a/abc123def4/v-bundle/other.html' })
+            .where('path', '=', '/index.html')
+            .execute()
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+          const token = await anonymousEntrypointToken()
+          const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+          const response = await handleArtifactSandboxRequest(
+            new Request(
+              `https://${host}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html`,
+            ),
+          )
+          expect(response.status).toBe(401)
+          await expect(response.text()).resolves.toBe('Invalid token')
+          expect(response.headers.get('Location')).toBeNull()
+          expect(response.headers.get('Set-Cookie')).toBeNull()
+          expectAnonymousPolicy(response)
+          expect(response.headers.get('Content-Security-Policy')).toContain(
+            'frame-ancestors https://abc123def4.artifactshare.link',
+          )
+          expect(storageMock.getArtifact).not.toHaveBeenCalled()
+          expect(consumeJtiMock).not.toHaveBeenCalled()
+          expect(warning).toHaveBeenCalledWith(
+            'sandbox_denied',
+            expect.objectContaining({
+              reason: ['private', 'suspended', 'policy-disabled'].includes(
+                condition,
+              )
+                ? 'anon_not_link'
+                : 'anon_version_mismatch',
+            }),
+          )
+        } finally {
+          warning.mockRestore()
+        }
+      },
+    )
   })
 
   test('encodes non-ASCII redirect paths for the Location header', async () => {
