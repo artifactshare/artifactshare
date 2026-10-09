@@ -146,6 +146,11 @@ test('anonymous link checks only current-version, shows an update, and refreshes
   )
   expect(status).not.toBeNull()
   expect(status!.textContent).toBe('')
+  const aside = host.querySelector<HTMLElement>(
+    'aside[aria-label="Activity and version status"]',
+  )!
+  expect(aside.hidden).toBe(true)
+  expect(status!.closest('[hidden], [aria-hidden="true"]')).toBeNull()
   currentVersionId = 'v2'
   await act(async () => vi.advanceTimersByTimeAsync(300_000))
   await bodyRead(2)
@@ -156,6 +161,10 @@ test('anonymous link checks only current-version, shows an update, and refreshes
     ),
   ).toBe(status)
   expect(status!.textContent).toContain('A new version is available')
+  expect(aside.hidden).toBe(false)
+  const visibleSentence = aside.querySelector('span')!
+  expect(visibleSentence.textContent).toBe('A new version is available')
+  expect(visibleSentence.getAttribute('aria-hidden')).toBe('true')
   expect(host.querySelector('aside[role="status"]')).toBeNull()
   expect(
     host
@@ -172,6 +181,7 @@ test('anonymous link checks only current-version, shows an update, and refreshes
     (entry) => entry.textContent === 'Show latest',
   )
   expect(button).toBeDefined()
+  expect(button!.closest('[hidden], [aria-hidden="true"]')).toBeNull()
   await act(async () => button!.click())
   expect(revalidate).toHaveBeenCalledOnce()
   expect(notice()).toBe(false)
@@ -181,6 +191,7 @@ test('anonymous link checks only current-version, shows an update, and refreshes
     ),
   ).toBe(status)
   expect(status!.textContent).toBe('')
+  expect(aside.hidden).toBe(true)
   await act(async () => setArtifact({ ...artifact, currentVersionId: 'v2' }))
   await bodyRead(3)
   expect(notice()).toBe(false)
@@ -237,6 +248,24 @@ test('signed-in viewers retain the versions endpoint', async () => {
   await mount({}, true)
   await bodyRead(1)
   expect(lookup.mock.calls[0]![0]).toBe('/api/shareables/abc123def4/versions')
+})
+
+test('history viewers keep the visible update sentence accessible', async () => {
+  await mount({ canViewHistory: true }, true)
+  await bodyRead(1)
+  currentVersionId = 'v2'
+  await act(async () => vi.advanceTimersByTimeAsync(300_000))
+  await bodyRead(2)
+  const toggle = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="Version status: v-, new version available"]',
+  )!
+  expect(toggle).not.toBeNull()
+  await act(async () => toggle.click())
+  const sentence = Array.from(host.querySelectorAll('span')).find(
+    (entry) => entry.textContent === 'A new version is available',
+  )!
+  expect(sentence).toBeDefined()
+  expect(sentence.closest('[hidden], [aria-hidden="true"]')).toBeNull()
 })
 
 test.each([

@@ -144,12 +144,15 @@ export function VersionWidget({
           {hasNewerVersion ? t('history.updateAvailable') : null}
         </div>
         <aside
-          hidden={hidden}
+          hidden={hidden || !hasNewerVersion}
           className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel) rounded-[var(--r-md)]"
           aria-label={t('vw.activityStatus')}
         >
           {hasNewerVersion ? (
-            <VersionUpdateNotice onShowLatest={onShowLatest} />
+            <VersionUpdateNotice
+              onShowLatest={onShowLatest}
+              announceSeparately
+            />
           ) : null}
         </aside>
       </>
@@ -300,11 +303,19 @@ export function VersionWidget({
   )
 }
 
-function VersionUpdateNotice({ onShowLatest }: { onShowLatest?: () => void }) {
+function VersionUpdateNotice({
+  onShowLatest,
+  announceSeparately = false,
+}: {
+  onShowLatest?: () => void
+  announceSeparately?: boolean
+}) {
   const { t } = useT()
   return (
     <div className="min-h-version-row border-border flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
-      <span>{t('history.updateAvailable')}</span>
+      <span aria-hidden={announceSeparately || undefined}>
+        {t('history.updateAvailable')}
+      </span>
       <button
         type="button"
         className="bg-primary text-primary-foreground h-control-sm cursor-pointer rounded-[var(--r-sm)] border-0 px-2 text-sm font-semibold"
