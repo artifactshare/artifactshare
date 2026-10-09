@@ -283,6 +283,23 @@ async function handleEntrypointRequest(
         responseDomain,
       )
     }
+    if (entrypoint.renderType === 'static_site') {
+      const redirectTarget = sameOriginRedirectTarget(url)
+      if (redirectTarget) {
+        const response = contentResponse(
+          null,
+          'text/plain; charset=utf-8',
+          artifactCsp('static_site', false, responseDomain),
+          { status: 302, headers: new Headers({ Location: redirectTarget }) },
+          responseDomain,
+        )
+        response.headers.append(
+          'Set-Cookie',
+          await bundleCookieFor(payload, entrypoint),
+        )
+        return response
+      }
+    }
     const response = await serveEntrypoint(entrypoint, false, responseDomain)
     if (!response.ok || entrypoint.renderType !== 'static_site') return response
     response.headers.append(
