@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.15.1 - 2026-10-09
+
 - Document API-only static-site inheritance, base-version conflicts, repeated deletion paths, and physical storage accounting in the bundled instructions.
 
 - Internal: shared sandbox reporter includes bounded diagnostic samples and CSP disposition, and buffers early diagnostics until the parent readiness check.
