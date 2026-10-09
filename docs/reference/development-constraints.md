@@ -30,7 +30,7 @@
 ## Tests
 
 - **機械検査で強制済み**：Public CI の `changed-browser-repetitions` job（check 名 `Changed browser behavior repetitions`）と `Flaky detector` workflow（`.github/workflows/flaky-detector.yml`）が反復実行で不安定なテストを検出します。詳細は `docs/development-workflow.md` を参照します。
-- **人が判断する現行規則**：sheet や dialog の開閉後に focus や open 状態を検証する前に、mount または unmount と開閉アニメーションの完了を待ちます。`[data-slot="sheet-content"]` の出現や消失など、観測可能な条件で待ち、固定時間の sleep は使いません。CI runner はローカルの約2倍の時間がかかる場合を見込み、`vi.waitFor` と重い fixture（大きな文書、多数のコメント、migration を再適用する D1 reset）を使うテストには明示的な timeout を設定し、`vi.waitFor` の1秒を含む既定値に依存しません。既存の D1 suite は `apps/web/app/test/vitest.d1.config.ts` で test と hook の timeout をともに30秒に設定しています。sub-pixel の layout 値は根拠を明記した許容誤差で比較し、一時ディレクトリはテストごとに固有のものを使います。browser test では iframe 自体に focus を当ててから内部要素に focus を当てます。Firefox では frame の browsing context に focus がないと、内部要素の `focus()` 後も `<body>` に focus が残る場合があるためです。
+- **人が判断する現行規則**：sheet や dialog の開閉後に focus や open 状態を検証する前に、mount または unmount と開閉アニメーションの完了を待ちます。`[data-slot="sheet-content"]` の出現や消失など、観測可能な条件で待ち、固定時間の sleep は使いません。`vi.waitFor` で重い処理（大きな文書、多数のコメント、migration を再適用する D1 reset）や既定の1秒を超える可能性がある条件を待つ場合は、CI runner がローカルの約2倍の時間を要することを見込んだ明示的な timeout を設定します。短時間で成立する条件では既定値を使えます。重い fixture を使うテストにも明示的な timeout を設定し、CI での所要時間を見込んで既定値に依存しません。D1 suite の test と hook の timeout は `apps/web/app/test/vitest.d1.config.ts` を参照します。sub-pixel の layout 値は根拠を明記した許容誤差で比較し、一時ディレクトリはテストごとに固有のものを使います。browser test では iframe 自体に focus を当ててから内部要素に focus を当てます。Firefox では frame の browsing context に focus がないと、内部要素の `focus()` 後も `<body>` に focus が残る場合があるためです。
 - **復元しない事項**：現行実装に該当がないテスト手順や、`docs/development-workflow.md` が担う反復検査の詳細はここへ復元しません。
 
 ## Workers
