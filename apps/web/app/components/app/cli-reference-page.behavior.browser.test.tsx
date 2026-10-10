@@ -48,9 +48,11 @@ async function mount(locale: 'en' | 'ja', width: number, theme: string) {
   )
   await waitForBrowserLayout()
   const paragraphs = [
-    host.querySelector<HTMLParagraphElement>('#introduction p:last-child')!,
+    host.querySelector<HTMLParagraphElement>(
+      '#introduction [data-cli-option-list]',
+    )!,
     ...host.querySelectorAll<HTMLParagraphElement>(
-      '#commands article > p:last-child',
+      '#commands article > [data-cli-option-list]',
     ),
   ]
   const options = [
@@ -176,6 +178,22 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       },
     )
   }
+
+  test('keeps generated edit help separate from the option list', async () => {
+    const lists = await mount(locale, 390, 'light')
+    const edit = lists.find(
+      ({ paragraph }) =>
+        paragraph.parentElement?.querySelector('h3')?.textContent === 'edit',
+    )
+    expect(edit).toBeDefined()
+    expect(edit!.paragraph.textContent).toBe(edit!.options.join(' · '))
+    const help = edit!.paragraph.nextElementSibling
+    expect(help?.textContent).toContain('private, workspace, project, or link')
+    expect(help?.textContent).toContain(
+      'project requires placement in a project',
+    )
+    expect(help?.hasAttribute('data-cli-option-list')).toBe(false)
+  })
 
   test('negative control detects split flags in plain section body text', async () => {
     await mount(locale, 390, 'light')

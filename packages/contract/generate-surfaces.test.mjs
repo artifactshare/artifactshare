@@ -969,3 +969,57 @@ test('generated CLI update surface includes the update-only label option', () =>
   const share = surface.commands.find((command) => command.path === 'share')
   assert.doesNotMatch(JSON.stringify(share), /--label/)
 })
+
+test('edit reference includes visibility help from the built command surface', async () => {
+  const visibilityHelp =
+    '--visibility <visibility> private, workspace, project, or link (project requires placement in a project)'
+  const surface = await generateSurface({
+    run: (args) =>
+      args.length
+        ? `USAGE:\n  artifactshare edit <OPTIONS>\n\nOPTIONS:\n  ${visibilityHelp}\n`
+        : 'USAGE:\n  artifactshare <OPTIONS>\n\nCOMMANDS:\n  edit <OPTIONS>\n',
+  })
+  assert.deepEqual(
+    surface.commands.find(({ path }) => path === 'edit').option_help,
+    [visibilityHelp],
+  )
+})
+
+test('edit catalog lists all visibility values and distinguishes combined writes', () => {
+  const catalog = readFileSync(
+    new URL('../../docs/reference/cli-command-catalog.md', import.meta.url),
+    'utf8',
+  )
+  const row = catalog
+    .split('\n')
+    .find((line) => line.startsWith('| `edit <target>`'))
+  assert.ok(row)
+  assert.ok(row.includes('--visibility private\\|workspace\\|project\\|link'))
+  const description = catalog.match(/^- `edit <target>`:.*(?:\n {2}.+)*/m)?.[0]
+  assert.ok(description)
+  assert.match(
+    description,
+    /`--visibility project`.*移動、タイトル、共有設定をまとめて保存/,
+  )
+  assert.match(description, /逐次適用する場合.*ロールバックしない/)
+})
+
+test('Cursor edit guidance lists visibility values once and retains placement requirements', () => {
+  const rule = readFileSync(
+    new URL('../cli/skills/artifactshare/artifactshare.mdc', import.meta.url),
+    'utf8',
+  )
+  const guidance = rule
+    .split('\n')
+    .find((line) => line.startsWith('- Change post-share settings'))
+  assert.ok(guidance)
+  assert.equal(
+    guidance.match(/--visibility private\|workspace\|project\|link/g)?.length,
+    1,
+  )
+  assert.match(
+    guidance,
+    /Project visibility requires the artifact to be in a project after the edit/,
+  )
+  assert.match(guidance, /--project-id <id>/)
+})

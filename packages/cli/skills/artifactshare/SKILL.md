@@ -279,6 +279,7 @@ project management.
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title 'New title' --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility project --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --home --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
 ```
@@ -312,8 +313,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   `error.hint` for when to retry, and honor the returned retry duration. Retry
   the link publication later instead of retrying immediately with unchanged
   input.
-- Moving a `project` visibility artifact home makes it `private`, because home
-  has no project audience.
+- edit accepts --visibility private|workspace|project|link. Project visibility requires the artifact to be in a project after the edit; use --project-id <id> in the same request if needed. An explicit --visibility project at home (including --home) is refused without changes. Moving a project-visible artifact home makes it private only when project visibility is not explicitly requested.
 - The older `move` command remains available for placement-only automation, but
   prefer `edit` for new flows.
 - `artifacts delete <artifact-id-or-url>` is an alias of `delete`; both return JSON `command: "delete"`. Keep using top-level `delete` in deletion workflows.

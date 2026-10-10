@@ -498,7 +498,8 @@ const editDefinition = define({
     visibility: {
       type: 'string',
       toKebab: true,
-      description: 'private, workspace, or link',
+      description:
+        'private, workspace, project, or link (project requires placement in a project)',
     },
     linkExpiresAt: {
       type: 'string',
@@ -542,6 +543,7 @@ const editDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --title "Launch plan" --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --visibility private --grant-email viewer@example.com --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare edit https://artifactshare.com/a/abc123def4 --project-id prj123 --json
+  npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --project-id prj1 --visibility project --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --home --json
 
 Link sharing accepts --visibility link with either --link-expires-at <RFC3339 UTC> or --no-link-expiry. These expiry options are mutually exclusive.

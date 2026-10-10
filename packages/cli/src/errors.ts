@@ -442,6 +442,19 @@ export function mapApiError(
       recovery: { kind: 'run_command', command: PROJECTS_LIST_COMMAND },
     })
   }
+  if (options.editSettings && apiCode === 'invalid-visibility') {
+    return cliError({
+      code: 'validation_failed',
+      message:
+        apiMessage ??
+        'Project visibility requires the artifact to be in a project.',
+      why: 'Project visibility requires project placement after the edit.',
+      hint: 'Use edit <id> --project-id <id> --visibility project, or move <id> --project-id <id> and retry --visibility project.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'change_input' },
+    })
+  }
   if (options.editSettings && apiCode === 'workspace-unavailable') {
     return cliError({
       code: 'workspace_unavailable',

@@ -103,6 +103,18 @@ import {
   toMcpCommentThread,
 } from './tools.server'
 
+test('edit_artifact maps a project placement refusal', () => {
+  const result = editShareError({ kind: 'invalid-visibility' })
+  expect(result.isError).toBe(true)
+  const content = result.content[0]
+  if (content?.type !== 'text') throw new Error('expected error text')
+  expect(JSON.parse(content.text).error).toMatchObject({
+    code: 'invalid-visibility',
+    recoverable_by: 'agent',
+    message: 'Project visibility requires the artifact to be in a project.',
+  })
+})
+
 test('edit_artifact preserves the link publication retry contract', () => {
   const result = editShareError({
     kind: 'link-publish-rate-limited',

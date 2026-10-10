@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { writeFailure } from './output.js'
 import {
   collectBody,
   expectFailure,
@@ -216,7 +217,7 @@ test('edit rejects conflicting destinations before auth', () => {
 
 test('edit rejects unsupported visibility before auth', () => {
   const result = run(
-    ['edit', 'abc123def4', '--visibility', 'project', '--json'],
+    ['edit', 'abc123def4', '--visibility', 'unsupported', '--json'],
     { ARTIFACTSHARE_TOKEN: '' },
   )
 
@@ -514,3 +515,148 @@ for (const option of ['0', '-1', '1.5', 'invalid', '9007199254740992']) {
     expectFailure(result, { command: 'edit', code: 'validation_failed' })
   })
 }
+
+test.each([false, true])(
+  'edit sends project visibility with explicit placement %s',
+  async (move) => {
+    let body: unknown
+    await withServer(
+      async (request, response) => {
+        body = JSON.parse(await collectBody(request))
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            artifact: {
+              id: 'abc123def4',
+              url: 'https://artifactshare.test/a/abc123def4',
+            },
+            title: 'Report',
+            destination: { type: 'project', project_id: 'prj1' },
+            share: { visibility: 'project' },
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'edit',
+            'abc123def4',
+            '--visibility',
+            ' project ',
+            ...(move ? ['--project-id', 'prj1'] : []),
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const payload = expectSuccess(result, 'edit')
+        assert.equal(payload.data.share.visibility, 'project')
+        assert.deepEqual(payload.data.artifact, {
+          id: 'abc123def4',
+          url: 'https://artifactshare.test/a/abc123def4',
+        })
+      },
+    )
+    assert.deepEqual(body, {
+      visibility: 'project',
+      ...(move ? { destination: { project_id: 'prj1' } } : {}),
+    })
+  },
+)
+
+test.each([false, true])(
+  'edit explains project placement refusal in JSON mode %s',
+  async (json) => {
+    await withServer(
+      async (request, response) => {
+        assert.deepEqual(JSON.parse(await collectBody(request)), {
+          visibility: 'project',
+        })
+        response.statusCode = 400
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            error: {
+              code: 'invalid-visibility',
+              message:
+                'Project visibility requires the artifact to be in a project.',
+            },
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'edit',
+            'abc123def4',
+            '--visibility',
+            'project',
+            '--base-url',
+            baseUrl,
+            ...(json ? ['--json'] : []),
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        assert.equal(result.status, 1)
+        if (json) {
+          const payload = expectFailure(result, {
+            command: 'edit',
+            code: 'validation_failed',
+          })
+          assert.match(payload.error.why, /requires project placement/)
+          assert.match(payload.error.hint, /edit <id> --project-id <id>/)
+          assert.match(payload.error.hint, /move <id> --project-id <id>/)
+          assert.deepEqual(payload.error.recovery, { kind: 'change_input' })
+          assert.equal(payload.error.agent_recoverable, true)
+          assert.equal(payload.error.requires_human, false)
+        } else {
+          assert.match(result.stderr, /requires.*project/)
+          assert.match(result.stderr, /edit <id> --project-id <id>/)
+        }
+      },
+    )
+  },
+)
+
+test('non-edit invalid visibility retains generic recovery', () => {
+  const error = mapApiError(400, { error: { code: 'invalid-visibility' } })
+  assert.equal(error.code, 'validation_failed')
+  assert.equal(
+    error.hint,
+    'Check the path, file types, and visibility options, then retry.',
+  )
+})
+
+test('project placement refusal includes recovery in human output', () => {
+  const stderr = vi
+    .spyOn(process.stderr, 'write')
+    .mockImplementation(() => true)
+  const previousExitCode = process.exitCode
+  try {
+    writeFailure(
+      'edit',
+      mapApiError(
+        400,
+        { error: { code: 'invalid-visibility' } },
+        { editSettings: true },
+      ),
+      { json: false },
+      1,
+    )
+    assert.equal(process.exitCode, 1)
+    const text = stderr.mock.calls.map(([chunk]) => chunk).join('')
+    assert.match(
+      text,
+      /Project visibility requires the artifact to be in a project/,
+    )
+    assert.match(
+      text,
+      /Hint: Use edit <id> --project-id <id> --visibility project/,
+    )
+    assert.match(text, /move <id> --project-id <id>/)
+  } finally {
+    stderr.mockRestore()
+    process.exitCode = previousExitCode
+  }
+})

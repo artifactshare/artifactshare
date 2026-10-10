@@ -94,6 +94,12 @@ export function cliEditErrorResponse(
   switch (result.kind) {
     case 'not-found':
       return errorResponse('not-found', 'Shareable not found.', 404)
+    case 'invalid-visibility':
+      return errorResponse(
+        'invalid-visibility',
+        'Project visibility requires the artifact to be in a project.',
+        400,
+      )
     case 'invalid-destination':
       return errorResponse('invalid-destination', 'Invalid destination.', 400)
     case 'bot-home-unavailable':

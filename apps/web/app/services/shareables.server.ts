@@ -475,6 +475,7 @@ export type EditShareableSettingsResult =
     }
   | { kind: 'not-found' }
   | { kind: 'invalid-destination' }
+  | { kind: 'invalid-visibility' }
   | { kind: 'bot-home-unavailable' }
   | { kind: 'workspace-unavailable' }
   | { kind: 'too-many-grants'; limit: number }
@@ -562,8 +563,50 @@ export async function commitDialogChanges(
   shareableId: string,
   payload: CommitDialogChangesPayload,
 ): Promise<CommitDialogChangesResult> {
+  const result = await commitSharingChanges(db, user, shareableId, payload)
+  if (
+    result.kind === 'invalid-visibility' ||
+    result.kind === 'invalid-destination'
+  )
+    return { kind: 'commit-failed' }
+  return result
+}
+
+async function commitSharingChanges(
+  db: Kysely<DB>,
+  user: Parameters<typeof commitDialogChanges>[1],
+  shareableId: string,
+  payload: CommitDialogChangesPayload,
+  projectEdit?: { title?: string; projectId?: string },
+): Promise<
+  | CommitDialogChangesResult
+  | { kind: 'invalid-visibility' }
+  | { kind: 'invalid-destination' }
+> {
   const owned = await findOwnedShareableForGrants(db, user, shareableId)
   if (!owned) return { kind: 'not-found' }
+
+  // CLI edits require the requested audience to survive the commit's fresh
+  // placement read. Dialog callers retain their existing coercion behavior.
+  let containerKind = owned.container_kind
+  if (projectEdit?.projectId !== undefined) {
+    const project = await db
+      .selectFrom('artifact_containers')
+      .select('kind')
+      .where('id', '=', projectEdit.projectId)
+      .where('workspace_id', '=', owned.workspace_id)
+      .where('kind', '=', 'project')
+      .where('archived_at', 'is', null)
+      .executeTakeFirst()
+    if (!project) return { kind: 'invalid-destination' }
+    containerKind = project.kind
+  }
+  if (
+    projectEdit !== undefined &&
+    payload.visibility === 'project' &&
+    containerKind !== 'project'
+  )
+    return { kind: 'invalid-visibility' }
 
   const now = nowIso()
 
@@ -571,7 +614,7 @@ export async function commitDialogChanges(
   if (newVisibility === 'workspace' && !isOrgWorkspace(user)) {
     return { kind: 'workspace-unavailable' }
   }
-  newVisibility = visibilityForContainer(newVisibility, owned.container_kind)
+  newVisibility = visibilityForContainer(newVisibility, containerKind)
   const linkWrite = await resolveLinkSharingWrite(db, {
     workspaceId: owned.workspace_id,
     shareableId,
@@ -609,8 +652,20 @@ export async function commitDialogChanges(
     newVisibility === 'link' &&
     (newVisibility !== owned.visibility ||
       linkWrite.linkExpiresAt !== owned.link_expires_at)
+  const projectMutationPredicate =
+    projectEdit === undefined
+      ? null
+      : visibilityChangePredicate(
+          sql<boolean>`shareables.id = ${shareableId}`,
+          sql<boolean>`shareables.owner_user_id = ${user.id}`,
+          sql<boolean>`shareables.workspace_id = ${owned.workspace_id}`,
+          sql<boolean>`NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}`,
+          projectEdit.projectId === undefined
+            ? sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = shareables.container_id AND kind = 'project')`
+            : sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${projectEdit.projectId} AND workspace_id = shareables.workspace_id AND kind = 'project' AND archived_at IS NULL)`,
+        )
   const attemptValues =
-    writesLinkVisibility || addEmails.length > 0
+    writesLinkVisibility || addEmails.length > 0 || projectMutationPredicate
       ? await linkPublicationAttemptValues(db, {
           workspaceId: owned.workspace_id,
           shareableId,
@@ -623,17 +678,44 @@ export async function commitDialogChanges(
       db.insertInto('link_publication_attempts').values({
         ...attemptValues,
         limit_applies: writesLinkVisibility ? attemptValues.limit_applies : 0,
-        consumed: writesLinkVisibility ? 0 : 1,
+        consumed: projectMutationPredicate
+          ? sql<number>`EXISTS (SELECT 1 FROM shareables WHERE ${projectMutationPredicate})`
+          : writesLinkVisibility
+            ? 0
+            : 1,
       }),
+    )
+    if (projectMutationPredicate) {
+      // The existing sharing-batch assertion aborts and rolls back when final
+      // placement or ownership no longer permits this edit. Run it before any
+      // settings, placement, pins, events, or grants change in the same batch.
+      queries.push(
+        deleteUnconsumedLinkPublicationAttemptQuery(
+          db,
+          owned.workspace_id,
+          shareableId,
+        ),
+      )
+    }
+  }
+  if (projectEdit?.projectId !== undefined) {
+    queries.push(
+      db
+        .deleteFrom('project_pins')
+        .where('shareable_id', '=', shareableId)
+        .where(
+          sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE id = ${shareableId} AND container_id IS NOT ${projectEdit.projectId})`,
+        ),
     )
   }
   if (
+    projectMutationPredicate ||
     newVisibility !== owned.visibility ||
     linkWrite.linkExpiresAt !== owned.link_expires_at
   ) {
-    const visibilityPredicate = visibilityChangePredicate(
-      sql<boolean>`id = ${shareableId}`,
-    )
+    const visibilityPredicate =
+      projectMutationPredicate ??
+      visibilityChangePredicate(sql<boolean>`id = ${shareableId}`)
     const visibilityEvent = visibilityChangedEvent(db, {
       actorUserId: user.id,
       to: newVisibility,
@@ -648,6 +730,17 @@ export async function commitDialogChanges(
           visibility: newVisibility,
           link_expires_at: linkWrite.linkExpiresAt,
           updated_at: now,
+          ...(projectEdit?.projectId !== undefined
+            ? { container_id: projectEdit.projectId }
+            : {}),
+          ...(projectEdit?.title !== undefined
+            ? {
+                title_override:
+                  projectEdit.title
+                    .trim()
+                    .slice(0, MAX_TITLE_OVERRIDE_LENGTH) || null,
+              }
+            : {}),
         })
         .where(visibilityPredicate),
     )
@@ -712,6 +805,13 @@ export async function commitDialogChanges(
         })
       }
       if (isLinkPublicationError(err, 'link publication mutation missing')) {
+        if (projectEdit) {
+          if (!(await findOwnedShareableForGrants(db, user, shareableId)))
+            return { kind: 'not-found' }
+          return projectEdit.projectId === undefined
+            ? { kind: 'invalid-visibility' }
+            : { kind: 'invalid-destination' }
+        }
         return { kind: 'commit-failed' }
       }
       if (
@@ -3756,6 +3856,9 @@ export async function editShareableSettings(
         .where('id', '=', current.owner_user_id)
         .executeTakeFirst()
       if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
+      // Refuse explicit project visibility before creating an owner home.
+      if (payload.visibility === 'project')
+        return { kind: 'invalid-visibility' }
       targetContainerId = await getOrCreateInboxContainerId(
         db,
         current.workspace_id,
@@ -3776,6 +3879,9 @@ export async function editShareableSettings(
       targetContainerId = project.id
       targetContainerKind = project.kind
     }
+
+    if (payload.visibility === 'project' && targetContainerKind !== 'project')
+      return { kind: 'invalid-visibility' }
 
     let finalVisibility = current.visibility
     if (
@@ -3964,7 +4070,8 @@ export async function editShareableSettings(
     }
   }
 
-  if (payload.destination !== undefined) {
+  const projectEdit = payload.visibility === 'project'
+  if (!projectEdit && payload.destination !== undefined) {
     const moved = await moveShareableContainer(
       db,
       user,
@@ -3975,7 +4082,7 @@ export async function editShareableSettings(
     if (moved.kind !== 'ok') return moved
   }
 
-  if (payload.title !== undefined) {
+  if (!projectEdit && payload.title !== undefined) {
     const titleOverride =
       payload.title.trim().slice(0, MAX_TITLE_OVERRIDE_LENGTH) || null
     const renamed = await updateShareableMetadata(
@@ -3991,12 +4098,26 @@ export async function editShareableSettings(
   }
 
   if (wantsShareChange) {
-    const shared = await commitDialogChanges(db, user, shareableId, {
-      visibility: payload.visibility,
-      linkExpiresAt: payload.linkExpiresAt,
-      addEmails: payload.addEmails,
-      removeEmails: payload.removeEmails,
-    })
+    const shared = await commitSharingChanges(
+      db,
+      user,
+      shareableId,
+      {
+        visibility: payload.visibility,
+        linkExpiresAt: payload.linkExpiresAt,
+        addEmails: payload.addEmails,
+        removeEmails: payload.removeEmails,
+      },
+      projectEdit
+        ? {
+            title: payload.title,
+            projectId:
+              payload.destination?.type === 'project'
+                ? payload.destination.projectId
+                : undefined,
+          }
+        : undefined,
+    )
     if (shared.kind !== 'ok') return shared
   }
 

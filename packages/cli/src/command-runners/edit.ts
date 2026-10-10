@@ -123,12 +123,13 @@ function buildEditPayload(
     if (
       visibility !== 'private' &&
       visibility !== 'workspace' &&
+      visibility !== 'project' &&
       visibility !== 'link'
     ) {
       return {
         error: validationError(
-          '--visibility must be private, workspace, or link.',
-          'Retry with --visibility private, --visibility workspace, or --visibility link.',
+          '--visibility must be private, workspace, project, or link.',
+          'Retry with --visibility private, --visibility workspace, --visibility project, or --visibility link.',
         ),
       }
     }

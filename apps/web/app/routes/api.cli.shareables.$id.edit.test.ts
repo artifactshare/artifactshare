@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import {
+  associateD1Database,
+  d1DatabaseFor,
+} from '~/lib/d1-database-registry.server'
+import type { D1BatchSqliteRef } from '~/test/d1-batch-mock'
+import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 
 vi.mock('cloudflare:workers', () => ({
@@ -218,8 +224,15 @@ describe('/api/cli/shareables/:id/edit', () => {
 
 describe('owner version retention API', () => {
   let fixture: ReturnType<typeof createMigratedInMemoryDb>
+  let sqliteRef: D1BatchSqliteRef
   beforeEach(() => {
-    fixture = createMigratedInMemoryDb()
+    sqliteRef = {
+      current: null as
+        | ReturnType<typeof createMigratedInMemoryDb>['sqlite']
+        | null,
+    }
+    fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = fixture.sqlite
     createDbMock.mockReturnValue(fixture.db)
     authorityMock.mockReturnValue({ kind: 'unrestricted' })
     requireUserMock.mockReturnValue({
@@ -263,6 +276,276 @@ describe('owner version retention API', () => {
         { method: 'POST', body: JSON.stringify({ retain_versions }) },
       ),
     } as never)
+
+  async function useRealEdit() {
+    const actual = await vi.importActual<
+      typeof import('~/services/shareables.server')
+    >('~/services/shareables.server')
+    editShareableSettingsMock.mockImplementation(actual.editShareableSettings)
+    fixture.sqlite.exec(
+      `INSERT INTO artifact_containers (id, workspace_id, kind, created_by_id, name, created_at, updated_at) VALUES ('prj1', 'ws1', 'project', 'u1', 'Project', '2026-09-01', '2026-09-01');`,
+    )
+    return actual
+  }
+
+  function editRequest(body: object) {
+    return action({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
+    } as never)
+  }
+
+  function snapshot() {
+    const tables = fixture.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+      )
+      .all() as { name: string }[]
+    return tables.map(({ name }) => ({
+      name,
+      rows: fixture.sqlite
+        .prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`)
+        .all(),
+    }))
+  }
+
+  test.each([false, true])(
+    'refuses project visibility outside a project without any writes (explicit home: %s)',
+    async (home) => {
+      await useRealEdit()
+      fixture.sqlite.exec(
+        "UPDATE shareables SET visibility = 'workspace', retain_versions = 3; INSERT INTO shareable_grants (shareable_id, granted_email, granted_by, granted_at) VALUES ('abc123def4', 'viewer@example.com', 'u1', '2026-09-01');",
+      )
+      if (home) {
+        fixture.sqlite.exec(
+          "UPDATE shareables SET container_id = 'prj1'; DELETE FROM artifact_containers WHERE id = 'c1'; INSERT INTO project_pins (container_id, shareable_id, pinned_by_user_id, created_at) VALUES ('prj1', 'abc123def4', 'u1', '2026-09-01');",
+        )
+      }
+      const before = snapshot()
+      const response = await editRequest({
+        visibility: 'project',
+        ...(home ? { destination: 'home' } : {}),
+        title: 'Changed',
+        add_emails: ['new@example.com'],
+        remove_emails: ['viewer@example.com'],
+        retain_versions: 1,
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'invalid-visibility' },
+      })
+      expect(snapshot()).toEqual(before)
+    },
+  )
+
+  test.each(['workspace', 'project'])(
+    'refuses a concurrent move home after the commit read from %s without partial edits',
+    async (visibility) => {
+      const service = await useRealEdit()
+      fixture.sqlite
+        .prepare(
+          "UPDATE shareables SET container_id = 'prj1', visibility = ?, retain_versions = 3",
+        )
+        .run(visibility)
+      fixture.sqlite.exec(
+        "INSERT INTO shareable_grants (shareable_id, granted_email, granted_by, granted_at) VALUES ('abc123def4', 'viewer@example.com', 'u1', '2026-09-01'); INSERT INTO project_pins (container_id, shareable_id, pinned_by_user_id, created_at) VALUES ('prj1', 'abc123def4', 'u1', '2026-09-01');",
+      )
+      let afterConcurrentMove: ReturnType<typeof snapshot> | undefined
+      sqliteRef.beforeNextBatch = async () => {
+        expect(
+          await service.moveShareableContainer(
+            fixture.db,
+            { id: 'u1', workspaceId: 'ws1' },
+            'abc123def4',
+            { type: 'inbox' },
+          ),
+        ).toMatchObject({ kind: 'ok' })
+        afterConcurrentMove = snapshot()
+      }
+      const response = await editRequest({
+        visibility: 'project',
+        title: 'Changed',
+        add_emails: ['new@example.com'],
+        remove_emails: ['viewer@example.com'],
+        retain_versions: 1,
+      })
+      expect(afterConcurrentMove).toBeDefined()
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'invalid-visibility' },
+      })
+      expect(snapshot()).toEqual(afterConcurrentMove)
+    },
+  )
+
+  test('sets project visibility even if a concurrent move resets visibility before the destination move', async () => {
+    const service = await useRealEdit()
+    fixture.sqlite.exec(
+      "UPDATE shareables SET container_id = 'prj1', visibility = 'project'; INSERT INTO artifact_containers (id, workspace_id, kind, created_by_id, name, created_at, updated_at) VALUES ('project-a', 'ws1', 'project', 'u1', 'Destination', '2026-09-01', '2026-09-01');",
+    )
+    const versions = fixture.sqlite.prepare('SELECT * FROM versions').all()
+    let movedHome = false
+    sqliteRef.beforeNextBatch = async () => {
+      expect(
+        await service.moveShareableContainer(
+          fixture.db,
+          { id: 'u1', workspaceId: 'ws1' },
+          'abc123def4',
+          { type: 'inbox' },
+        ),
+      ).toMatchObject({ kind: 'ok', visibility: 'private' })
+      movedHome = true
+    }
+    const response = await editRequest({
+      destination: { project_id: 'project-a' },
+      visibility: 'project',
+      title: 'Changed',
+    })
+    expect(movedHome).toBe(true)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      destination: { type: 'project', project_id: 'project-a' },
+      share: { visibility: 'project' },
+    })
+    expect(
+      fixture.sqlite
+        .prepare(
+          'SELECT id, container_id, visibility, title_override FROM shareables',
+        )
+        .get(),
+    ).toEqual({
+      id: 'abc123def4',
+      container_id: 'project-a',
+      visibility: 'project',
+      title_override: 'Changed',
+    })
+    expect(fixture.sqlite.prepare('SELECT * FROM versions').all()).toEqual(
+      versions,
+    )
+  })
+
+  test('refuses a destination archived just before the batch without partial edits', async () => {
+    await useRealEdit()
+    let afterArchive: ReturnType<typeof snapshot> | undefined
+    sqliteRef.beforeNextBatch = () => {
+      fixture.sqlite.exec(
+        "UPDATE artifact_containers SET archived_at = '2026-09-02' WHERE id = 'prj1'",
+      )
+      afterArchive = snapshot()
+    }
+    const response = await editRequest({
+      destination: { project_id: 'prj1' },
+      visibility: 'project',
+      title: 'Changed',
+      add_emails: ['new@example.com'],
+      retain_versions: 1,
+    })
+    expect(afterArchive).toBeDefined()
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid-destination' },
+    })
+    expect(snapshot()).toEqual(afterArchive)
+  })
+
+  test('refuses project visibility when the commit reads a concurrent move home', async () => {
+    await useRealEdit()
+    fixture.sqlite.exec(
+      "UPDATE shareables SET container_id = 'prj1', visibility = 'workspace', retain_versions = 3; INSERT INTO shareable_grants (shareable_id, granted_email, granted_by, granted_at) VALUES ('abc123def4', 'viewer@example.com', 'u1', '2026-09-01');",
+    )
+    let commitPlacementReads = 0
+    const concurrentDb = fixture.db.withPlugin({
+      transformQuery: ({ node }) => node,
+      async transformResult({ result }) {
+        return {
+          ...result,
+          rows: result.rows.map((row) => {
+            // Only the commit's owner/grants lookup has this projection.
+            // Earlier placement validation still observes the real project.
+            if (
+              Object.keys(row).length === 5 &&
+              'id' in row &&
+              'workspace_id' in row &&
+              'visibility' in row &&
+              'link_expires_at' in row &&
+              'container_kind' in row
+            ) {
+              commitPlacementReads++
+              return { ...row, container_kind: 'inbox' }
+            }
+            return row
+          }),
+        }
+      },
+    })
+    const database = d1DatabaseFor(fixture.db)
+    if (!database) throw new Error('Expected D1 batch fixture')
+    associateD1Database(concurrentDb, database)
+    createDbMock.mockReturnValue(concurrentDb)
+    const before = snapshot()
+    const response = await editRequest({
+      visibility: 'project',
+      title: 'Changed',
+      add_emails: ['new@example.com'],
+      remove_emails: ['viewer@example.com'],
+      retain_versions: 1,
+    })
+    expect(commitPlacementReads).toBe(1)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid-visibility' },
+    })
+    expect(snapshot()).toEqual(before)
+  })
+
+  test.each(['private', 'link', 'home'] as const)(
+    'sets project visibility from %s while preserving identity and versions',
+    async (initial) => {
+      await useRealEdit()
+      if (initial !== 'home') {
+        fixture.sqlite
+          .prepare(
+            "UPDATE shareables SET container_id = 'prj1', visibility = ?",
+          )
+          .run(initial)
+      }
+      const versions = fixture.sqlite.prepare('SELECT * FROM versions').all()
+      const response = await editRequest({
+        visibility: 'project',
+        title: 'Changed',
+        ...(initial === 'home' ? { destination: { project_id: 'prj1' } } : {}),
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        artifact: {
+          id: 'abc123def4',
+          url: 'https://artifactshare.test/a/abc123def4',
+        },
+        destination: { type: 'project', project_id: 'prj1' },
+        share: { visibility: 'project' },
+      })
+      expect(
+        fixture.sqlite
+          .prepare(
+            'SELECT id, container_id, visibility, title_override, current_version_id FROM shareables',
+          )
+          .get(),
+      ).toEqual({
+        id: 'abc123def4',
+        container_id: 'prj1',
+        visibility: 'project',
+        current_version_id: 'v3',
+        title_override: 'Changed',
+      })
+      expect(fixture.sqlite.prepare('SELECT * FROM versions').all()).toEqual(
+        versions,
+      )
+    },
+  )
 
   test('sets, lowers and clears retention, reporting only versions actually deleted', async () => {
     for (const [retain, deleted] of [
