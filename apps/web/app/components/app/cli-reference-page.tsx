@@ -187,7 +187,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                               surfaceCommand.option_help?.map((help) => (
                                 <p
                                   key={help}
-                                  className="text-muted-foreground m-0 text-xs break-words"
+                                  className="text-muted-foreground mt-[var(--spacing-2)] mb-0 text-xs break-words"
                                 >
                                   <SectionBody text={help} />
                                 </p>

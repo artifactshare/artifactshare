@@ -185,6 +185,13 @@ test.each(['en', 'ja'] as const)(
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html).toContain('private, workspace, project, or link')
     expect(html).toContain('project requires placement in a project')
+    const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
+    expect(editCard).toContain(
+      'data-cli-option-list="true" class="text-muted-foreground m-0 text-xs break-words"',
+    )
+    expect(editCard).toMatch(
+      /<p class="text-muted-foreground mt-\[var\(--spacing-2\)\] mb-0 text-xs break-words">[^<]*<span[^>]*>--visibility<\/span>/,
+    )
     expect(html).toContain(
       locale === 'en'
         ? 'requires the artifact to be in a project after the edit'
