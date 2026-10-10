@@ -1989,6 +1989,13 @@ export function editShareError(
   >,
 ): ToolTextResult {
   switch (result.kind) {
+    case 'invalid-visibility':
+      return toolError({
+        code: 'invalid-visibility',
+        message: 'Project visibility requires the artifact to be in a project.',
+        recoverable_by: 'agent',
+        hint: 'Move the artifact to a project before selecting project visibility.',
+      })
     case 'not-found':
       return artifactNotFoundError()
     case 'bot-artifact-grant-unsupported':

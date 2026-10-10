@@ -332,6 +332,9 @@
         "--revoke-email",
         "--project-id",
         "--home"
+      ],
+      "option_help": [
+        "--visibility <visibility> private, workspace, project, or link (project requires placement in a project)"
       ]
     },
     {

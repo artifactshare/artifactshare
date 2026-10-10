@@ -275,3 +275,10 @@ test('label is an update-only option and empty values fail before authentication
     )
   }
 })
+
+test('edit help documents project visibility and its placement requirement', () => {
+  const result = run(['edit', '--help'])
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /private, workspace, project, or link/)
+  assert.match(result.stdout, /project requires placement in a project/)
+})

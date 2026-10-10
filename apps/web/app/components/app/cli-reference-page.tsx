@@ -116,7 +116,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <p>
                       <strong>{content.commandOptionsLabel}</strong>
                     </p>
-                    <p>
+                    <p data-cli-option-list>
                       <OptionList options={CLI_REFERENCE_ENTRY_POINT.options} />
                     </p>
                   </GuideProse>
@@ -177,9 +177,21 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                             <p className="text-foreground mt-[var(--spacing-3)] mb-1 text-xs font-semibold">
                               {content.commandOptionsLabel}
                             </p>
-                            <p className="text-muted-foreground m-0 text-xs break-words">
+                            <p
+                              data-cli-option-list
+                              className="text-muted-foreground m-0 text-xs break-words"
+                            >
                               <OptionList options={surfaceCommand.options} />
                             </p>
+                            {'option_help' in surfaceCommand &&
+                              surfaceCommand.option_help?.map((help) => (
+                                <p
+                                  key={help}
+                                  className="text-muted-foreground m-0 text-xs break-words"
+                                >
+                                  <SectionBody text={help} />
+                                </p>
+                              ))}
                           </article>
                         )
                       })}

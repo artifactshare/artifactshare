@@ -787,7 +787,7 @@ describe('@artifactshare/contract', () => {
       }),
     ).toMatchObject({ destination: { type: 'home' } })
     expect(() =>
-      CLI_EDIT_REQUEST_SCHEMA.parse({ visibility: 'project' }),
+      CLI_EDIT_REQUEST_SCHEMA.parse({ visibility: 'unsupported' }),
     ).toThrow()
     expect(() => ProjectEditRequestSchema.parse({})).toThrow()
     expect(
@@ -1122,3 +1122,22 @@ it.each(['', '   '])(
     }
   },
 )
+
+it.each(['private', 'workspace', 'project', 'link'])(
+  'accepts edit visibility %s with any syntactic destination',
+  (visibility) => {
+    for (const destination of [undefined, 'home', { project_id: 'prj1' }]) {
+      const input = {
+        visibility,
+        ...(destination === undefined ? {} : { destination }),
+      }
+      expect(CLI_EDIT_REQUEST_SCHEMA.parse(input)).toEqual(input)
+    }
+  },
+)
+it('rejects unsupported visibility and empty edits', () => {
+  expect(
+    CLI_EDIT_REQUEST_SCHEMA.safeParse({ visibility: 'unsupported' }).success,
+  ).toBe(false)
+  expect(CLI_EDIT_REQUEST_SCHEMA.safeParse({}).success).toBe(false)
+})

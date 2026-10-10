@@ -271,3 +271,17 @@ test('documents agent update recovery in both locales', () => {
     ).toContain('--expected-version <version-id>')
   }
 })
+
+test.each(['en', 'ja'] as const)(
+  'documents edit project visibility in %s',
+  (locale) => {
+    const body = cliReferenceContent(locale).sections.destinations.body
+    expect(body).toContain('edit')
+    expect(body).toContain('--visibility private|workspace|project|link')
+    expect(body).toContain(
+      locale === 'en'
+        ? 'requires the artifact to be in a project after the edit'
+        : '編集後の保存先がプロジェクトであることが必要',
+    )
+  },
+)

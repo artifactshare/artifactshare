@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- `edit` now accepts `--visibility project`, including when moving into a project in the same request. Edits requesting project visibility at home are refused without changes and explain how to select a project.
+
 ## 0.15.2 - 2026-10-10
 
 - Fix complete downloads of static sites with dotted filenames, including `.data`, and identify the file when a download fails.

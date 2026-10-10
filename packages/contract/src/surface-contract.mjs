@@ -176,3 +176,6 @@ export const MCP_OPENAPI_METADATA = {
       'View, share, update, and permanently delete Artifact Share files; manage projects and comments',
   },
 }
+
+// Option explanations displayed alongside the generated command reference.
+export const CLI_REFERENCE_OPTION_HELP = { edit: ['--visibility'] }

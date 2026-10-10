@@ -102,11 +102,11 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
           surface.commands.find((command) => command.path === path)!.options,
       ),
     ]
-    const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
-      .map((match) => match[1])
-      .filter((paragraph) =>
-        /^<span class="whitespace-nowrap">[^<]+<\/span>( · |$)/.test(paragraph),
-      )
+    const paragraphs = [
+      ...html.matchAll(
+        /<p\b[^>]*data-cli-option-list="true"[^>]*>([\s\S]*?)<\/p>/g,
+      ),
+    ].map((match) => match[1])
     expect(paragraphs).toHaveLength(lists.length)
     lists.forEach((options, index) => {
       expect(paragraphs[index]).toBe(
@@ -175,6 +175,20 @@ test.each(['en', 'ja'] as const)(
       locale === 'en'
         ? 'Upload a new version behind an existing share URL. Profiles logged in with login --preset agent must also pass --expected-version (see Failures and recovery).'
         : '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+    )
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'renders edit project visibility help in %s',
+  (locale) => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    expect(html).toContain('private, workspace, project, or link')
+    expect(html).toContain('project requires placement in a project')
+    expect(html).toContain(
+      locale === 'en'
+        ? 'requires the artifact to be in a project after the edit'
+        : '編集後の保存先がプロジェクトであることが必要',
     )
   },
 )

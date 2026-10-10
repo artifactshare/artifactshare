@@ -6902,6 +6902,68 @@ describe('cross-workspace owner operations', () => {
     ).toEqual({ kind: 'not-found' })
   })
 
+  test('explicit project visibility requires final project placement, while placement-only home moves stay private', async () => {
+    await seedProjectContainer(db)
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('report.html', '<p>Report</p>'),
+      'workspace',
+    )
+    if (uploaded.kind !== 'ok') throw new Error('expected upload')
+    const before = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', uploaded.id)
+      .executeTakeFirstOrThrow()
+    expect(
+      await editShareableSettings(db, OWNER, uploaded.id, {
+        visibility: 'project',
+        title: 'Changed',
+      }),
+    ).toEqual({ kind: 'invalid-visibility' })
+    expect(
+      await db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', uploaded.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(before)
+    expect(
+      await editShareableSettings(db, OWNER, uploaded.id, {
+        destination: { type: 'project', projectId: 'missing' },
+        visibility: 'project',
+      }),
+    ).toEqual({ kind: 'invalid-destination' })
+    expect(
+      await editShareableSettings(db, OWNER, uploaded.id, {
+        destination: { type: 'project', projectId: 'project-a' },
+        visibility: 'project',
+      }),
+    ).toMatchObject({
+      kind: 'ok',
+      shareable: {
+        id: uploaded.id,
+        projectId: 'project-a',
+        visibility: 'project',
+      },
+    })
+    expect(
+      await editShareableSettings(db, OWNER, uploaded.id, {
+        destination: { type: 'inbox' },
+        visibility: 'project',
+      }),
+    ).toEqual({ kind: 'invalid-visibility' })
+    expect(
+      await editShareableSettings(db, OWNER, uploaded.id, {
+        destination: { type: 'inbox' },
+      }),
+    ).toMatchObject({
+      kind: 'ok',
+      shareable: { id: uploaded.id, projectId: null, visibility: 'private' },
+    })
+  })
+
   test('commits a publication-capable mixed edit in one batch', async () => {
     await seedProjectContainer(db)
     await db

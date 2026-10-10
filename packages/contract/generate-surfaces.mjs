@@ -36,6 +36,7 @@ const CLI_PACKAGE_VERSION = JSON.parse(
 const {
   CLI_AGENT_COMMANDS,
   CLI_QUICK_REFERENCE,
+  CLI_REFERENCE_OPTION_HELP,
   CLI_README_COMMANDS,
   MCP_OPENAPI_METADATA,
 } = await import('./src/surface-contract.mjs')
@@ -654,13 +655,26 @@ export async function generateSurface({
     seen.add(path)
     const help = await helpRunner(path ? path.split(' ') : [])
     const parsed = parseHelp(help)
+    const optionHelp = (CLI_REFERENCE_OPTION_HELP[path] ?? []).map((option) => {
+      const line = sectionLines(help, 'OPTIONS').find((candidate) =>
+        candidate.trimStart().startsWith(`${option} `),
+      )
+      if (!line)
+        throw new Error(`Missing reference option help: ${path} ${option}`)
+      return line.trim().replace(/\s{2,}/g, ' ')
+    })
     const children = await Promise.all(
       commandPathsFromHelp(help).map((child) =>
         visit(path ? `${path} ${child}` : child),
       ),
     )
     return [
-      { path, usage: parsed.usage, options: parsed.options },
+      {
+        path,
+        usage: parsed.usage,
+        options: parsed.options,
+        ...(optionHelp.length ? { option_help: optionHelp } : {}),
+      },
       ...children.flat(),
     ]
   }

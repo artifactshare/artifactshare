@@ -969,3 +969,18 @@ test('generated CLI update surface includes the update-only label option', () =>
   const share = surface.commands.find((command) => command.path === 'share')
   assert.doesNotMatch(JSON.stringify(share), /--label/)
 })
+
+test('edit reference includes visibility help from the built command surface', async () => {
+  const visibilityHelp =
+    '--visibility <visibility> private, workspace, project, or link (project requires placement in a project)'
+  const surface = await generateSurface({
+    run: (args) =>
+      args.length
+        ? `USAGE:\n  artifactshare edit <OPTIONS>\n\nOPTIONS:\n  ${visibilityHelp}\n`
+        : 'USAGE:\n  artifactshare <OPTIONS>\n\nCOMMANDS:\n  edit <OPTIONS>\n',
+  })
+  assert.deepEqual(
+    surface.commands.find(({ path }) => path === 'edit').option_help,
+    [visibilityHelp],
+  )
+})
