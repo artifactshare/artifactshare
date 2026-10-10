@@ -52,6 +52,14 @@ export async function runEdit(
         {
           artifactTarget: true,
           editSettings: true,
+          ...(payload.body.visibility === 'project'
+            ? {
+                projectVisibilityEdit: {
+                  artifactId: target.artifactId,
+                  visibilityOnly: Object.keys(payload.body).length === 1,
+                },
+              }
+            : {}),
           credentialSource: current.source,
           profile: current.profile,
           profileCredentialKind: current.profileCredentialKind,
@@ -61,7 +69,10 @@ export async function runEdit(
       return edited.error ? { error: edited.error } : { data: edited.body }
     },
   )
-  if (result.error) return writeFailure(command, result.error, mode, 1)
+  if (result.error) {
+    const error = result.error
+    return writeFailure(command, error, mode, 1)
+  }
 
   const data = parseEditData(result.data)
   if (!data) {
@@ -123,12 +134,13 @@ function buildEditPayload(
     if (
       visibility !== 'private' &&
       visibility !== 'workspace' &&
+      visibility !== 'project' &&
       visibility !== 'link'
     ) {
       return {
         error: validationError(
-          '--visibility must be private, workspace, or link.',
-          'Retry with --visibility private, --visibility workspace, or --visibility link.',
+          '--visibility must be private, workspace, project, or link.',
+          'Retry with --visibility private, --visibility workspace, --visibility project, or --visibility link.',
         ),
       }
     }

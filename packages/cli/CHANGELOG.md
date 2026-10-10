@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Allow `edit --visibility project` to open an existing artifact to its project without re-sharing or changing its URL, with project-placement guidance for validation failures.
+
 ## 0.15.2 - 2026-10-10
 
 - Fix complete downloads of static sites with dotted filenames, including `.data`, and identify the file when a download fails.

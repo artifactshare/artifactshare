@@ -50,6 +50,17 @@ export function mapApiError(
   options: ApiErrorOptions = {},
 ): CliError {
   const { code: apiCode, message: apiMessage } = apiError(body)
+  // Generic payload refusals identify visibility only when it is the sole edit.
+  // Explicit visibility codes remain actionable even in a mixed edit.
+  const projectEdit = options.projectVisibilityEdit
+  const projectVisibilityHint =
+    options.editSettings &&
+    status === 400 &&
+    projectEdit &&
+    (apiCode === 'invalid-visibility' ||
+      (apiCode === 'validation-failed' && projectEdit.visibilityOnly))
+      ? ` Project visibility requires the artifact to be in a project. Use edit ${projectEdit.artifactId} --project-id <id> or move ${projectEdit.artifactId} --project-id <id>, then retry edit ${projectEdit.artifactId} --visibility project.`
+      : ''
   if (status === 401) {
     if (!options.authenticated) {
       return authRequiredError(options.baseUrl ?? DEFAULT_BASE_URL)
@@ -511,7 +522,9 @@ export function mapApiError(
       code: 'validation_failed',
       message: apiMessage ?? 'The upload input is invalid.',
       why: 'The file, directory, or share options failed server-side validation.',
-      hint: 'Check the path, file types, and visibility options, then retry.',
+      hint:
+        'Check the path, file types, and visibility options, then retry.' +
+        projectVisibilityHint,
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },
@@ -538,7 +551,7 @@ export function mapApiError(
       code: 'validation_failed',
       message: apiMessage ?? 'The request input is invalid.',
       why: 'Artifact Share rejected the request as invalid.',
-      hint: 'Check the command input and retry.',
+      hint: 'Check the command input and retry.' + projectVisibilityHint,
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },

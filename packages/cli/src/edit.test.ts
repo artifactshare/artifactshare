@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { writeFailure } from './output.js'
 import {
   collectBody,
   expectFailure,
@@ -216,11 +217,18 @@ test('edit rejects conflicting destinations before auth', () => {
 
 test('edit rejects unsupported visibility before auth', () => {
   const result = run(
-    ['edit', 'abc123def4', '--visibility', 'project', '--json'],
+    ['edit', 'abc123def4', '--visibility', 'public', '--json'],
     { ARTIFACTSHARE_TOKEN: '' },
   )
 
-  expectFailure(result, { command: 'edit', code: 'validation_failed' })
+  const payload = expectFailure(result, {
+    command: 'edit',
+    code: 'validation_failed',
+  })
+  assert.equal(
+    payload.error.message,
+    '--visibility must be private, workspace, project, or link.',
+  )
 })
 
 test('edit rejects --title without a value before auth', () => {
@@ -514,3 +522,170 @@ for (const option of ['0', '-1', '1.5', 'invalid', '9007199254740992']) {
     expectFailure(result, { command: 'edit', code: 'validation_failed' })
   })
 }
+
+test('edit project visibility reaches authentication', () => {
+  expectFailure(
+    run(['edit', 'abc123def4', '--visibility', 'project', '--json'], {
+      ARTIFACTSHARE_TOKEN: '',
+      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    }),
+    { command: 'edit', code: 'auth_required' },
+  )
+})
+
+test.each([
+  { projectId: undefined, visibility: 'project', project: 'prj1' },
+  { projectId: 'prj1', visibility: 'project', project: 'prj1' },
+  { projectId: undefined, visibility: 'private', project: null },
+])(
+  'edit project visibility confirms $visibility with destination $projectId',
+  async ({ projectId, visibility, project }) => {
+    const bodies: unknown[] = []
+    const confirmed = {
+      artifact: {
+        id: 'abc123def4',
+        url: 'https://artifactshare.test/a/abc123def4',
+      },
+      title: 'Report',
+      destination: { type: project ? 'project' : 'home', project_id: project },
+      share: { visibility, link_expires_at: null },
+    }
+    await withServer(
+      async (request, response) => {
+        assert.equal(request.url, '/api/cli/shareables/abc123def4/edit')
+        assert.equal(request.headers.authorization, 'Bearer test-token')
+        bodies.push(JSON.parse(await collectBody(request)))
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(confirmed))
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'edit',
+            'abc123def4',
+            '--visibility',
+            ' project ',
+            ...(projectId ? ['--project-id', projectId] : []),
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        assert.deepEqual(expectSuccess(result, 'edit').data, confirmed)
+      },
+    )
+    assert.deepEqual(bodies, [
+      {
+        visibility: 'project',
+        ...(projectId ? { destination: { project_id: projectId } } : {}),
+      },
+    ])
+  },
+)
+
+test.each([
+  ['validation-failed', 'Invalid edit payload.', true, undefined],
+  ['invalid-visibility', 'Unsupported visibility.', true, undefined],
+  ['validation-failed', 'Invalid edit payload.', false, 'title'],
+  ['invalid-visibility', 'Unsupported visibility.', true, 'title'],
+  ['validation-failed', 'Invalid edit payload.', false, 'destination'],
+  ['invalid-grants', 'Invalid email address.', false, undefined],
+  [
+    'invalid-destination',
+    'Project visibility requires a project.',
+    false,
+    undefined,
+  ],
+  ['link-expiry-invalid', 'Synthetic settings refusal.', false, undefined],
+  ['forbidden', 'Project visibility is forbidden.', false, undefined],
+  ['not-found', 'Synthetic settings refusal.', false, undefined],
+  ['service-error', 'Synthetic settings refusal.', false, undefined],
+] as const)(
+  'edit project visibility preserves the %s mapping for %s',
+  async (code, message, hasPlacementHint, otherEdit) => {
+    const status =
+      code === 'forbidden'
+        ? 403
+        : code === 'not-found'
+          ? 404
+          : code === 'service-error'
+            ? 502
+            : 400
+    const extraBody =
+      otherEdit === 'title'
+        ? { title: 'Renamed' }
+        : otherEdit === 'destination'
+          ? { destination: { project_id: 'prj1' } }
+          : {}
+    const extraArgs =
+      otherEdit === 'title'
+        ? ['--title', 'Renamed']
+        : otherEdit === 'destination'
+          ? ['--project-id', 'prj1']
+          : []
+    const serverBody = { error: { code, message } }
+    const mapped = mapApiError(status, serverBody, {
+      artifactTarget: true,
+      editSettings: true,
+    })
+    let requests = 0
+    await withServer(
+      async (request, response) => {
+        requests++
+        assert.deepEqual(JSON.parse(await collectBody(request)), {
+          visibility: 'project',
+          ...extraBody,
+        })
+        response.statusCode = status
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(serverBody))
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'edit',
+            'abc123def4',
+            '--visibility',
+            'project',
+            ...extraArgs,
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const payload = expectFailure(result, {
+          command: 'edit',
+          code: mapped.code,
+        })
+        const { hint, ...fields } = payload.error
+        const { hint: originalHint, ...originalFields } = mapped
+        assert.deepEqual(fields, originalFields)
+        assert.ok(hint.startsWith(originalHint))
+        if (hasPlacementHint) {
+          assert.match(hint, /requires the artifact to be in a project/)
+          assert.match(hint, /edit abc123def4 --project-id <id>/)
+          assert.match(hint, /move abc123def4 --project-id <id>/)
+          assert.match(hint, /then retry edit abc123def4 --visibility project/)
+          const stderr = vi
+            .spyOn(process.stderr, 'write')
+            .mockImplementation(() => true)
+          const previousExitCode = process.exitCode
+          try {
+            writeFailure('edit', payload.error, { json: false }, 1)
+            assert.equal(process.exitCode, 1)
+            assert.ok(stderr.mock.calls.join('').includes(message))
+            assert.ok(stderr.mock.calls.join('').includes(hint))
+          } finally {
+            stderr.mockRestore()
+            process.exitCode = previousExitCode
+          }
+        } else {
+          assert.equal(hint, originalHint)
+        }
+      },
+    )
+    assert.equal(requests, 1)
+  },
+)

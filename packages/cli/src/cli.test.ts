@@ -275,3 +275,16 @@ test('label is an update-only option and empty values fail before authentication
     )
   }
 })
+
+test('edit help documents project visibility and placement', () => {
+  const result = run(['edit', '--help'])
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /private, workspace, project, or link/)
+  assert.match(result.stdout, /Project visibility requires project placement/)
+  assert.match(result.stdout, /edit <target> --project-id <id>/)
+  assert.match(result.stdout, /move <target> --project-id <id>/)
+  assert.match(
+    result.stdout,
+    /When project visibility is requested for an artifact at home, the server stores private/,
+  )
+})

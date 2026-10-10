@@ -269,6 +269,10 @@ export type ApiErrorOptions = {
   credentialSource?: CredentialSource
   profileCredentialKind?: ProfileCredentialKind | undefined
   editSettings?: boolean
+  projectVisibilityEdit?: {
+    artifactId: string
+    visibilityOnly: boolean
+  }
   profile?: string | undefined
   projectTarget?: boolean
 }

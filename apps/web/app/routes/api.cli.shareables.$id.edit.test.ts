@@ -104,6 +104,60 @@ describe('/api/cli/shareables/:id/edit', () => {
     })
   })
 
+  test.each([false, true])(
+    'forwards project visibility with placement %s',
+    async (withDestination) => {
+      editShareableSettingsMock.mockResolvedValue({
+        kind: 'ok',
+        shareable: {
+          id: 'abc123def4',
+          title: 'Report',
+          visibility: 'project',
+          projectId: 'prj1',
+        },
+      })
+      const response = await action({
+        context: new Map(),
+        params: { id: 'abc123def4' },
+        request: new Request(
+          'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              visibility: 'project',
+              ...(withDestination
+                ? { destination: { project_id: 'prj1' } }
+                : {}),
+            }),
+          },
+        ),
+      } as never)
+      expect(response.status).toBe(200)
+      expect(editShareableSettingsMock).toHaveBeenCalledTimes(1)
+      expect(editShareableSettingsMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ id: 'u1' }),
+        'abc123def4',
+        expect.objectContaining({
+          visibility: 'project',
+          ...(withDestination
+            ? { destination: { type: 'project', projectId: 'prj1' } }
+            : {}),
+        }),
+        null,
+      )
+      expect(await response.json()).toEqual({
+        artifact: {
+          id: 'abc123def4',
+          url: 'https://artifactshare.test/a/abc123def4',
+        },
+        title: 'Report',
+        destination: { type: 'project', project_id: 'prj1' },
+        share: { visibility: 'project' },
+      })
+    },
+  )
+
   test('returns home destination for unfiled artifacts', async () => {
     editShareableSettingsMock.mockResolvedValue({
       kind: 'ok',

@@ -163,3 +163,39 @@ test('preserves update version conflict recovery', () => {
     'Read the current version, reapply your changes, and retry with its version id.',
   )
 })
+
+test.each([
+  ['validation-failed', 'Invalid edit payload.', true, true],
+  ['invalid-visibility', 'Unsupported visibility.', true, true],
+  ['validation-failed', 'Invalid edit payload.', false, false],
+  ['invalid-visibility', 'Unsupported visibility.', false, true],
+  ['invalid-grants', 'Invalid email address.', true, false],
+  ['workspace-unavailable', 'Workspace unavailable.', true, false],
+  ['invalid-destination', 'Invalid destination.', true, false],
+  ['link-expiry-invalid', 'Invalid expiry.', true, false],
+] as const)(
+  'project visibility edit recovery for %s: %s (visibility only: %s)',
+  (code, message, visibilityOnly, hasPlacementHint) => {
+    const body = { error: { code, message } }
+    const options = { artifactTarget: true, editSettings: true }
+    const original = mapApiError(400, body, options)
+    const mapped = mapApiError(400, body, {
+      ...options,
+      projectVisibilityEdit: { artifactId: 'abc123def4', visibilityOnly },
+    })
+    const { hint, ...fields } = mapped
+    const { hint: originalHint, ...originalFields } = original
+    assert.deepEqual(fields, originalFields)
+    assert.equal(mapped.message, message)
+    if (hasPlacementHint) {
+      assert.equal(mapped.code, 'validation_failed')
+      assert.ok(hint.startsWith(originalHint))
+      assert.match(hint, /edit abc123def4 --project-id <id>/)
+      assert.match(hint, /move abc123def4 --project-id <id>/)
+      assert.match(hint, /then retry edit abc123def4 --visibility project/)
+      assert.doesNotMatch(originalHint, /Project visibility requires/)
+    } else {
+      assert.equal(hint, originalHint)
+    }
+  },
+)

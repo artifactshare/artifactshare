@@ -867,6 +867,7 @@ export type ProjectEditResponse = z.infer<typeof ProjectEditResponseSchema>
 export const CliEditableVisibilitySchema = z.enum([
   'private',
   'workspace',
+  'project',
   'link',
 ])
 export type CliEditableVisibility = z.infer<typeof CliEditableVisibilitySchema>

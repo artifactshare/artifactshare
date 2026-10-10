@@ -498,7 +498,7 @@ const editDefinition = define({
     visibility: {
       type: 'string',
       toKebab: true,
-      description: 'private, workspace, or link',
+      description: 'private, workspace, project, or link',
     },
     linkExpiresAt: {
       type: 'string',
@@ -545,6 +545,8 @@ const editDefinition = define({
   npm exec --yes --package=@artifactshare/cli -- artifactshare edit abc123def4 --home --json
 
 Link sharing accepts --visibility link with either --link-expires-at <RFC3339 UTC> or --no-link-expiry. These expiry options are mutually exclusive.
+
+Project visibility requires project placement: use edit <target> --project-id <id> or move <target> --project-id <id>, then retry --visibility project. You can also combine --project-id <id> --visibility project in one edit. When project visibility is requested for an artifact at home, the server stores private; check the confirmed visibility.
 
 Edit changes artifact settings without adding a new version. Use update to replace content.
 Move remains available for placement-only automation; edit is the main command for post-share settings.

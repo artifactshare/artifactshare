@@ -272,13 +272,17 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <ar
 
 ## Organize and settings
 
-Use `edit` for post-share changes. Use `projects list/create/edit` for
+Use `edit` for post-share changes.
+
+`edit <target> --visibility private|workspace|project|link` changes sharing without changing the artifact ID or URL or adding a version. Project visibility requires the artifact to be in a project. Use `edit <target> --project-id <id>` or `move <target> --project-id <id>`, then retry `edit <target> --visibility project`; you can also combine placement and visibility in one edit. When `project` visibility is requested for an artifact at home, the server stores `private`; check the confirmed visibility in the result.
+
+Use `projects list/create/edit` for
 project management.
 
 ```bash
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title 'New title' --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --visibility project --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --home --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
 ```

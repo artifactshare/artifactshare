@@ -271,3 +271,26 @@ test('documents agent update recovery in both locales', () => {
     ).toContain('--expected-version <version-id>')
   }
 })
+
+test.each(['en', 'ja'] as const)(
+  'documents edit visibility and recovery in %s',
+  (locale) => {
+    const { destinations, recovery } = cliReferenceContent(locale).sections
+    expect(destinations.body).toContain('edit')
+    expect(destinations.body).toContain(
+      '--visibility private|workspace|project|link',
+    )
+    expect(destinations.body).toContain('edit <target> --project-id <id>')
+    expect(destinations.body).toContain(
+      locale === 'en'
+        ? 'When project visibility is requested for an artifact at home, the server stores private'
+        : 'home の成果物に project を指定した場合は、サーバーが private として保存',
+    )
+    expect(recovery.body).toContain('edit <target> --project-id <id>')
+    expect(recovery.body).toContain('move <target> --project-id <id>')
+    expect(recovery.body).toContain('edit <target> --visibility project')
+    expect(
+      surface.commands.find((command) => command.path === 'edit')?.options,
+    ).toContain('--visibility')
+  },
+)
