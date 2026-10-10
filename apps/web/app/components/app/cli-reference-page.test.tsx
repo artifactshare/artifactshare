@@ -71,12 +71,17 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
     ]
     expect(nodes).toHaveLength(commands.length + 1)
     nodes.forEach((node, index) => {
-      const classes = node[1].split(/\s+/)
+      const classes = node[1].replaceAll('&amp;', '&').split(/\s+/)
       expect(classes).toContain('whitespace-pre-wrap')
       expect(classes).toContain('[overflow-wrap:anywhere]')
       expect(classes).not.toContain('whitespace-pre')
       expect(classes).not.toContain('break-all')
       expect(classes).not.toContain('overflow-x-auto')
+      if (index === 0) {
+        expect(classes).toContain('[&&]:p-[var(--spacing-2)]')
+      } else {
+        expect(classes).not.toContain('[&&]:p-[var(--spacing-2)]')
+      }
       expect(node[2].replace(/<[^>]+>/g, '')).toBe(
         renderToStaticMarkup(<>{usages[index]}</>),
       )

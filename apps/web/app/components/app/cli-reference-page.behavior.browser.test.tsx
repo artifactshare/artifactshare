@@ -172,6 +172,18 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
         ]
         const nodes = usageNodes()
         expect(nodes).toHaveLength(content.commands.length + 1)
+        const commandStyle = getComputedStyle(nodes[1])
+        for (const side of [
+          'paddingTop',
+          'paddingRight',
+          'paddingBottom',
+          'paddingLeft',
+        ] as const) {
+          expect(parseFloat(commandStyle[side])).toBeGreaterThan(0)
+          expect(getComputedStyle(nodes[0])[side], side).toBe(
+            commandStyle[side],
+          )
+        }
         nodes.forEach((code, index) => {
           expect(code.textContent).toBe(usages[index])
           expect(getComputedStyle(code).whiteSpace).toBe('pre-wrap')

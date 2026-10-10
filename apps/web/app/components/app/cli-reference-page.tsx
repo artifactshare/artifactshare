@@ -111,7 +111,9 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <p>
                       <strong>{content.commandUsageLabel}</strong>
                     </p>
-                    <code className={usageClassName}>
+                    <code
+                      className={`${usageClassName} [&&]:p-[var(--spacing-2)]`}
+                    >
                       <WrappableCodeText
                         text={cliReferenceUsage(
                           CLI_REFERENCE_ENTRY_POINT.path,
