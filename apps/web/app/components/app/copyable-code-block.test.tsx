@@ -26,10 +26,9 @@ describe('CopyableCodeBlock', () => {
       )
 
       expect(html).toContain('<button')
-      expect(html).toContain(
-        '<pre data-gap-audit-allow-touch="true" tabindex="-1"',
-      )
-      expect(html.match(/tabindex="-1"/g) ?? []).toHaveLength(2)
+      const pre = html.match(/<pre[^>]*>/)![0]
+      expect(pre.includes('tabindex="-1"')).toBe(!wrap)
+      expect(html.match(/tabindex="-1"/g) ?? []).toHaveLength(wrap ? 1 : 2)
     },
   )
 })
@@ -52,11 +51,18 @@ test.each([undefined, false, true])(
     const pre = html.match(/<pre[^>]*class="([^"]*)"/)![1].split(/\s+/)
     const rendered = html.match(/<code class="([^"]*)">([\s\S]*?)<\/code>/)!
     const classes = rendered[1].split(/\s+/)
-    expect(rendered[2]).toBe(renderToStaticMarkup(<>{code}</>))
+    expect(rendered[2].replace(/<[^>]+>/g, '')).toBe(
+      renderToStaticMarkup(<>{code}</>),
+    )
     expect(classes).toContain(wrap ? 'whitespace-pre-wrap' : 'whitespace-pre')
     expect(classes.includes('whitespace-pre')).toBe(!wrap)
     expect(classes.includes('[overflow-wrap:anywhere]')).toBe(Boolean(wrap))
     expect(pre.includes('overflow-x-auto')).toBe(!wrap)
-    expect(html).toContain('tabindex="0"')
+    expect(html.match(/<pre[^>]*>/)![0].includes('tabindex=')).toBe(!wrap)
+    if (wrap) {
+      expect(rendered[2]).toContain(
+        '<span class="inline-block max-w-full [overflow-wrap:anywhere]">--expected-version</span>',
+      )
+    }
   },
 )

@@ -76,7 +76,10 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
       expect(classes).toContain('[overflow-wrap:anywhere]')
       expect(classes).not.toContain('whitespace-pre')
       expect(classes).not.toContain('break-all')
-      expect(node[2]).toBe(renderToStaticMarkup(<>{usages[index]}</>))
+      expect(classes).not.toContain('overflow-x-auto')
+      expect(node[2].replace(/<[^>]+>/g, '')).toBe(
+        renderToStaticMarkup(<>{usages[index]}</>),
+      )
     })
     const examples = commands.filter((command) => command.example)
     const blocks = [

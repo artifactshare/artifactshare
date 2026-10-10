@@ -178,6 +178,9 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
           expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
           expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
           expectCodeFits(code, code)
+          for (const flag of usages[index].match(/--[\w-]+/g) ?? []) {
+            expect(optionRects(code, flag), flag).toHaveLength(1)
+          }
         })
         const examples = content.commands.filter((command) => command.example)
         const blocks = [
@@ -191,6 +194,11 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
           expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
           expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
           expectCodeFits(code, pre)
+          expect(pre.hasAttribute('tabindex')).toBe(false)
+          for (const flag of examples[index].example!.match(/--[\w-]+/g) ??
+            []) {
+            expect(optionRects(code, flag), flag).toHaveLength(1)
+          }
           const wrapper = pre.parentElement!
           const button = wrapper.querySelector('button')!
           button.click()
@@ -328,7 +336,11 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       [usage, usage],
       [example, pre],
     ]) {
-      code.textContent = token
+      const span = [...code.children].find(
+        (child) => child.textContent === token,
+      )!
+      expect(span).toBeDefined()
+      code.replaceChildren(span.cloneNode(true))
       container.style.width = '12ch'
     }
     await waitForBrowserLayout()
@@ -352,6 +364,8 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       [example, pre],
     ]) {
       expectCodeFits(code, container)
+      const originalText = code.textContent
+      code.textContent = originalText
       code.style.whiteSpace = 'pre'
       code.style.overflowWrap = 'normal'
       container.style.overflowX = 'auto'
@@ -363,6 +377,27 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
     ]) {
       expect(container.scrollWidth).toBeGreaterThan(container.clientWidth + 1)
       expect(() => expectCodeFits(code, container)).toThrow()
+    }
+  })
+
+  test('negative control detects hyphenated flag splits in plain wrapped code', async () => {
+    await mount(locale, 390, 'light')
+    const usage = usageNodes()[0]
+    const pre = document.querySelector<HTMLPreElement>('#commands article pre')!
+    const example = pre.querySelector('code')!
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      // At this width the full flag fits, but only its prefix fits after "npm ".
+      code.textContent = 'npm --expected-version --visibility'
+      container.style.boxSizing = 'content-box'
+      container.style.width = '20ch'
+    }
+    await waitForBrowserLayout()
+    for (const code of [usage, example]) {
+      expectCodeFits(code, code === usage ? usage : pre)
+      expect(optionRects(code, '--expected-version').length).toBeGreaterThan(1)
     }
   })
 

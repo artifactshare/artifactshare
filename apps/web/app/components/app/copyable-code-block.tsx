@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react'
+import { WrappableCodeText } from './wrappable-code-text'
 import { useCopyState } from '~/hooks/use-copy-state'
 import { Button } from '~/components/ui/button'
 import {
@@ -65,6 +66,26 @@ export function CopyableCodeBlock({
         ? labels.failed
         : labels.copy
 
+  const preClassName = cn(
+    'text-foreground m-0 font-mono',
+    wrap ? 'min-w-0' : 'overflow-x-auto',
+    compact
+      ? 'px-[var(--spacing-3)] py-[var(--spacing-2)] text-xs leading-(--lh-loose)'
+      : copyableCodePreDefaultClassName,
+  )
+  const content = (
+    <code
+      className={cn(
+        '[font:inherit]',
+        wrap
+          ? '[overflow-wrap:anywhere] whitespace-pre-wrap'
+          : 'whitespace-pre',
+      )}
+    >
+      {children ?? (wrap ? <WrappableCodeText text={code} /> : code)}
+    </code>
+  )
+
   return (
     <div
       className={cn(
@@ -117,33 +138,21 @@ export function CopyableCodeBlock({
           {label}
         </span>
       ) : null}
-      {/* Horizontal code scrolling requires focus on the scroll container;
-          axe flags a focusable copy button alone as insufficient.
-          Wrapped blocks retain the same focus and tab-order behavior. */}
-      {/* react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex */}
-      <pre
-        // the filename tab sits flush on the code area by design
-        data-gap-audit-allow-touch
-        tabIndex={copyTabIndex ?? 0}
-        className={cn(
-          'text-foreground m-0 font-mono',
-          wrap ? 'min-w-0' : 'overflow-x-auto',
-          compact
-            ? 'px-[var(--spacing-3)] py-[var(--spacing-2)] text-xs leading-(--lh-loose)'
-            : copyableCodePreDefaultClassName,
-        )}
-      >
-        <code
-          className={cn(
-            '[font:inherit]',
-            wrap
-              ? '[overflow-wrap:anywhere] whitespace-pre-wrap'
-              : 'whitespace-pre',
-          )}
+      {wrap ? (
+        <pre data-gap-audit-allow-touch className={preClassName}>
+          {content}
+        </pre>
+      ) : (
+        // Horizontal scrolling needs keyboard focus on the scroll container.
+        // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex
+        <pre
+          data-gap-audit-allow-touch
+          tabIndex={copyTabIndex ?? 0}
+          className={preClassName}
         >
-          {children ?? code}
-        </code>
-      </pre>
+          {content}
+        </pre>
+      )}
     </div>
   )
 }
