@@ -485,8 +485,84 @@ export function pathFor(screen, locale, seeds, state) {
     .replace('{seed:update}', seeds.update)
 }
 
-function fileName(screen, state, viewport, theme, locale) {
-  return `${screen.id}--${state.id}--${viewport}--${theme}--${locale}.png`
+export function fileName(screen, state, viewport, theme, locale, section) {
+  return `${screen.id}--${state.id}--${viewport}--${theme}--${locale}${section === undefined ? '' : `--section-${section}`}.png`
+}
+
+/** Full-page failure propagates; crop failures remain individual manifest entries. */
+export async function captureScreenImages({
+  page,
+  outDir,
+  entry,
+  sections = [],
+  afterFullCapture = () => ({}),
+  reportFailure = (message) => console.error(message),
+}) {
+  await page.screenshot({ path: join(outDir, entry.file), fullPage: true })
+  const full = { ...entry, ...(await afterFullCapture()) }
+  const entries = [full]
+  for (const section of sections) {
+    const { file: _file, ...metadata } = full
+    try {
+      const target = page.locator(section.selector)
+      const count = await target.count()
+      if (count !== 1) throw new Error(`expected one element, found ${count}`)
+      if (!(await target.isVisible())) throw new Error('element is invisible')
+      const box = await target.boundingBox()
+      if (!box || box.width <= 0 || box.height <= 0)
+        throw new Error('element has no positive-area bounding box')
+      // boundingBox is viewport-relative. Clip in document coordinates without
+      // scrolling the target under sticky navigation or changing page styles.
+      const scroll = await page.evaluate(() => ({
+        x: window.scrollX,
+        y: window.scrollY,
+      }))
+      const clip = {
+        x: box.x + scroll.x,
+        y: box.y + scroll.y,
+        width: box.width,
+        height: Math.min(box.height, 2 * page.viewportSize().height),
+      }
+      const file = fileName(
+        { id: full.screen },
+        { id: full.state },
+        full.viewport,
+        full.theme,
+        full.locale,
+        section.id,
+      )
+      await page.screenshot({ path: join(outDir, file), fullPage: true, clip })
+      entries.push({ ...metadata, file, section: section.id })
+    } catch (error) {
+      const failure = captureFailure(
+        new CaptureFailure(
+          'section_capture_failure',
+          `section ${section.id}: ${error instanceof Error ? error.message : String(error)}`,
+          { condition: `section: ${section.id}`, selector: section.selector },
+        ),
+      )
+      entries.push({
+        ...metadata,
+        status: 'failed',
+        section: section.id,
+        failure,
+      })
+      reportFailure(
+        `capture failed: ${full.screen}/${full.state}/${full.viewport}/${full.theme}/${full.locale}/section-${section.id} [${failure.kind}]: ${failure.message}`,
+      )
+    }
+  }
+  return entries
+}
+
+function escapeHtml(value) {
+  return value.replace(
+    /[&<>"']/gu,
+    (char) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        char
+      ],
+  )
 }
 
 export async function captureScreens({
@@ -574,7 +650,6 @@ async function captureScreensLocked({
     throw error
   }
   const manifest = []
-  let failures = 0
   let retried = 0
   const gapFailures = []
   // Data-mutating states run after every ordinary capture, so their seeds
@@ -695,45 +770,46 @@ async function captureScreensLocked({
         await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
-      await page.screenshot({
-        path: join(outDir, file),
-        fullPage: true,
-      })
-      const findings = auditGaps
-        ? await page.evaluate(auditGapsBrowser, {
-            rootSelector: 'body',
-            minGap: 4,
-          })
-        : []
-      if (findings.length)
-        gapFailures.push({
+      const entries = await captureScreenImages({
+        page,
+        outDir,
+        sections: screen.sections,
+        entry: {
+          order,
+          status: 'success',
           screen: screen.id,
           state: state.id,
           viewport,
           theme,
           locale,
-          findings,
-        })
-      manifest.push({
-        order,
-        status: 'success',
-        screen: screen.id,
-        state: state.id,
-        viewport,
-        theme,
-        locale,
-        file,
-        url: url.toString(),
-        ...(attempt ? { attempts: attempt + 1 } : {}),
-        ...(auditGaps
-          ? {
-              gapAudit: {
-                result: findings.length ? 'failed' : 'passed',
-                findings,
-              },
-            }
-          : {}),
+          file,
+          url: url.toString(),
+          ...(attempt ? { attempts: attempt + 1 } : {}),
+        },
+        afterFullCapture: async () => {
+          if (!auditGaps) return {}
+          const findings = await page.evaluate(auditGapsBrowser, {
+            rootSelector: 'body',
+            minGap: 4,
+          })
+          if (findings.length)
+            gapFailures.push({
+              screen: screen.id,
+              state: state.id,
+              viewport,
+              theme,
+              locale,
+              findings,
+            })
+          return {
+            gapAudit: {
+              result: findings.length ? 'failed' : 'passed',
+              findings,
+            },
+          }
+        },
       })
+      manifest.push(...entries)
     } catch (error) {
       const failure = captureFailure(error)
       if (shouldRetryCapture(failure, attempt, retries, beforeInteractions)) {
@@ -743,7 +819,6 @@ async function captureScreensLocked({
           `capture retry ${attempt + 1}/${retries}: ${screen.id}/${state.id}/${viewport}/${theme}/${locale} [${failure.kind}]: ${failure.message}`,
         )
       } else {
-        failures++
         const diagnosticFile = file.replace(/\.png$/, '--failed.png')
         let savedDiagnostic = false
         if (page)
@@ -815,6 +890,28 @@ async function captureScreensLocked({
   // Parallel workers finish in nondeterministic order; restore ledger order.
   if (cleanCaptureHead() !== head)
     throw new Error('HEAD or worktree changed during screen capture.')
+  return writeCaptureReviewOutput({
+    manifest,
+    head,
+    selected,
+    outDir,
+    label,
+    retried,
+    gapFailures,
+  })
+}
+
+/** Persist successes and individual failures before reporting a failed run. */
+export async function writeCaptureReviewOutput({
+  manifest,
+  head,
+  selected,
+  outDir,
+  label,
+  retried = 0,
+  gapFailures = [],
+}) {
+  const failures = manifest.filter((entry) => entry.status === 'failed').length
   manifest.sort((a, b) => a.order - b.order)
   for (const entry of manifest) {
     delete entry.order
@@ -831,7 +928,9 @@ async function captureScreensLocked({
           .filter((item) => item.screen === screen.id)
           .map((item) => {
             const file = item.file ?? item.diagnosticFile
-            const displayLabel = `${item.state} · ${item.viewport} · ${item.theme} · ${item.locale}`
+            const displayLabel = escapeHtml(
+              `${item.state} · ${item.viewport} · ${item.theme} · ${item.locale}${item.section === undefined ? '' : ` · section: ${item.section}`}`,
+            )
             if (!file)
               return `<article><span>${displayLabel} · failed: ${item.failure.kind}</span></article>`
             return `<a href="${file}"><img src="${file}" loading="lazy"><span>${displayLabel}${item.status === 'failed' ? ` · failed: ${item.failure.kind}` : ''}</span></a>`

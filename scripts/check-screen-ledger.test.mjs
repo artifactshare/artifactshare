@@ -899,3 +899,117 @@ test('captures project activity with representative feed events', () => {
     },
   )
 })
+
+test('static optional sections validate and propagate checker errors', () => {
+  for (const sections of [
+    undefined,
+    [],
+    [{ id: 'introduction', selector: '#introduction' }],
+    ['a', '0', `a${'b-0'.repeat(21)}`].map((id) => ({
+      id,
+      selector: '#introduction',
+    })),
+  ]) {
+    const source = typedScreenSource.replace(
+      "id: 'profile',",
+      `id: 'profile', ${sections === undefined ? '' : `sections: ${JSON.stringify(sections)},`}`,
+    )
+    const screen = readScreenSpec(source)
+    assert.deepEqual(screen.sections, sections)
+    assert.equal(validateLedger([screen]), true)
+    if (sections?.length)
+      assert.equal(validateLedger([screen, { ...screen, id: 'other' }]), true)
+  }
+  const invalid = [
+    null,
+    {},
+    'sections',
+    1,
+    [null],
+    [[]],
+    ['entry'],
+    [{}],
+    ...[
+      undefined,
+      '',
+      'Upper',
+      'has space',
+      '../escape',
+      'a/b',
+      42,
+      '-',
+      '-introduction',
+      'a'.repeat(65),
+      'a'.repeat(200_000),
+    ].map((id) => [{ id, selector: '#ok' }]),
+    ...[undefined, null, 42, '', ' \n\t'].map((selector) => [
+      { id: 'introduction', selector },
+    ]),
+    [
+      { id: 'intro', selector: '#one' },
+      { id: 'intro', selector: '#two' },
+    ],
+  ]
+  for (const sections of invalid) {
+    const source = typedScreenSource.replace(
+      "id: 'profile',",
+      `id: 'profile', sections: ${JSON.stringify(sections)},`,
+    )
+    assert.throws(
+      () => validateLedger([readScreenSpec(source)]),
+      /section.*profile/,
+    )
+    const errors = checkScreenLedger({
+      excludedRoutes: [],
+      loadRouteTree: () => routeTree,
+      readRouteSource: () => source,
+    })
+    assert.equal(errors.length, 1)
+    assert.match(errors[0], /section.*profile/)
+  }
+})
+
+test('CLI guide declares four ordered sections for both locale routes', () => {
+  const screen = ledgerScreens.find(
+    (candidate) => candidate.id === 'guides-cli',
+  )
+  assert.deepEqual(screen.route, { en: '/guides/cli', ja: '/ja/guides/cli' })
+  assert.deepEqual(
+    screen.sections,
+    ['introduction', 'basics', 'commands', 'recovery'].map((id) => ({
+      id,
+      selector: `#${id}`,
+    })),
+  )
+})
+
+test('section declarations reject IDs that critique cannot label', async (t) => {
+  for (const id of [
+    '-',
+    '-introduction',
+    'a'.repeat(65),
+    'a'.repeat(200_000),
+  ]) {
+    await t.test(
+      `rejects ${id.length > 64 ? `${id.length} characters` : id}`,
+      () => {
+        const source = typedScreenSource.replace(
+          "id: 'profile',",
+          `id: 'profile', sections: ${JSON.stringify([{ id, selector: '#introduction' }])},`,
+        )
+        assert.throws(
+          () => validateLedger([readScreenSpec(source)]),
+          /invalid section id for profile\/section 1/,
+        )
+        assert.deepEqual(
+          checkScreenLedger({
+            excludedRoutes: [],
+            loadRouteTree: () => routeTree,
+            readRouteSource: () => source,
+          }),
+          ['invalid section id for profile/section 1'],
+        )
+      },
+    )
+  }
+})
