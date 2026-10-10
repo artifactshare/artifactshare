@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.15.2 - 2026-10-10
+
 - Fix complete downloads of static sites with dotted filenames, including `.data`, and identify the file when a download fails.
 
 - Update bundled CLI skill and Cursor instructions to explain browser share-page fragments, filtered Copy links, and the static-site entrypoint restriction.
