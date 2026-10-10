@@ -8,7 +8,9 @@ import {
   CLI_REFERENCE_ENTRY_POINT,
   CLI_REFERENCE_SECTION_IDS,
   cliReferenceContent,
+  cliReferenceUsage,
 } from '~/lib/cli-reference-content'
+import { writeClipboardText } from '~/lib/clipboard'
 import surface from '~/lib/cli-reference-surface.generated.json'
 import { waitForBrowserLayout } from '~/test/browser-layout'
 import { CliReferencePage } from './cli-reference-page'
@@ -19,9 +21,12 @@ vi.mock('~/hooks/use-t', () => ({
   useT: () => bindI18n(context.locale),
 }))
 
+vi.mock('~/lib/clipboard', () => ({ writeClipboardText: vi.fn() }))
+
 let root: Root | undefined
 afterEach(() => {
   root?.unmount()
+  vi.mocked(writeClipboardText).mockReset()
   document.body.replaceChildren()
   document.documentElement.classList.remove('dark')
 })
@@ -86,8 +91,162 @@ function optionRects(paragraph: HTMLElement, option: string) {
   throw new Error('Missing option: ' + option)
 }
 
+function usageNodes() {
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      '#introduction code, #commands article > code',
+    ),
+  ]
+}
+
+function textRects(code: HTMLElement) {
+  const rects: DOMRect[] = []
+  const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    // pre-wrap may hang trailing spaces outside the line; measure visible tokens.
+    for (const match of node.textContent!.matchAll(/\S+/g)) {
+      const range = document.createRange()
+      range.setStart(node, match.index)
+      range.setEnd(node, match.index + match[0].length)
+      rects.push(...range.getClientRects())
+    }
+    node = walker.nextNode()
+  }
+  expect(rects.length).toBeGreaterThan(0)
+  return rects
+}
+
+function expectCodeFits(code: HTMLElement, container: HTMLElement) {
+  // Examples scroll at the pre; Usage code is itself a block container.
+  expect(container.scrollWidth).toBeLessThanOrEqual(container.clientWidth + 1)
+  const bounds = container.getBoundingClientRect()
+  const style = getComputedStyle(container)
+  const left =
+    bounds.left +
+    parseFloat(style.borderLeftWidth) +
+    parseFloat(style.paddingLeft)
+  const right =
+    bounds.right -
+    parseFloat(style.borderRightWidth) -
+    parseFloat(style.paddingRight)
+  const top =
+    bounds.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
+  const bottom =
+    bounds.bottom -
+    parseFloat(style.borderBottomWidth) -
+    parseFloat(style.paddingBottom)
+  // Permit one CSS pixel for font metrics and subpixel rounding.
+  for (const rect of textRects(code)) {
+    expect(rect.left).toBeGreaterThanOrEqual(left - 1)
+    expect(rect.right).toBeLessThanOrEqual(right + 1)
+    expect(rect.top).toBeGreaterThanOrEqual(top - 1)
+    expect(rect.bottom).toBeLessThanOrEqual(bottom + 1)
+  }
+}
+
 describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
   for (const theme of ['light', 'dark']) {
+    test.each([390, 1440])(
+      `wraps every Usage and Example and copies original text at %ipx in ${theme}`,
+      async (width) => {
+        await mount(locale, width, theme)
+        vi.mocked(writeClipboardText).mockResolvedValue(true)
+        const content = cliReferenceContent(locale)
+        // Japanese inherits the app's phrase-aware breaks when supported.
+        const expectedWordBreak =
+          locale === 'ja' && CSS.supports('word-break', 'auto-phrase')
+            ? 'auto-phrase'
+            : 'normal'
+        const usages = [
+          cliReferenceUsage(
+            CLI_REFERENCE_ENTRY_POINT.path,
+            CLI_REFERENCE_ENTRY_POINT.usage,
+          ),
+          ...content.commands.map(({ path }) =>
+            cliReferenceUsage(
+              path,
+              surface.commands.find((command) => command.path === path)!.usage,
+            ),
+          ),
+        ]
+        const nodes = usageNodes()
+        expect(nodes).toHaveLength(content.commands.length + 1)
+        const commandStyle = getComputedStyle(nodes[1])
+        for (const side of [
+          'paddingTop',
+          'paddingRight',
+          'paddingBottom',
+          'paddingLeft',
+        ] as const) {
+          expect(parseFloat(commandStyle[side])).toBeGreaterThan(0)
+          expect(getComputedStyle(nodes[0])[side], side).toBe(
+            commandStyle[side],
+          )
+        }
+        nodes.forEach((code, index) => {
+          expect(code.textContent).toBe(usages[index])
+          expect(getComputedStyle(code).whiteSpace).toBe('pre-wrap')
+          expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
+          expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
+          expectCodeFits(code, code)
+          for (const flag of usages[index].match(/--[\w-]+/g) ?? []) {
+            expect(optionRects(code, flag), flag).toHaveLength(1)
+          }
+        })
+        const examples = content.commands.filter((command) => command.example)
+        const blocks = [
+          ...document.querySelectorAll<HTMLPreElement>('#commands article pre'),
+        ]
+        expect(blocks).toHaveLength(examples.length)
+        for (const [index, pre] of blocks.entries()) {
+          const code = pre.querySelector('code')!
+          expect(code.textContent).toBe(examples[index].example)
+          expect(getComputedStyle(code).whiteSpace).toBe('pre-wrap')
+          expect(getComputedStyle(code).overflowWrap).toBe('anywhere')
+          expect(getComputedStyle(code).wordBreak).toBe(expectedWordBreak)
+          expectCodeFits(code, pre)
+          expect(pre.hasAttribute('tabindex')).toBe(false)
+          for (const flag of examples[index].example!.match(/--[\w-]+/g) ??
+            []) {
+            expect(optionRects(code, flag), flag).toHaveLength(1)
+          }
+          const wrapper = pre.parentElement!
+          const button = wrapper.querySelector('button')!
+          button.click()
+          await vi.waitFor(() => {
+            expect(writeClipboardText).toHaveBeenNthCalledWith(
+              index + 1,
+              examples[index].example,
+            )
+            expect(button.getAttribute('aria-label')).toBe(
+              content.copyLabels.copied,
+            )
+            expect(wrapper.querySelector('[role="status"]')?.textContent).toBe(
+              content.copyLabels.copied,
+            )
+          })
+        }
+        expect(writeClipboardText).toHaveBeenCalledTimes(examples.length)
+        expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+          window.innerWidth + 1,
+        )
+        if (width === 390) {
+          for (const path of ['append', 'update']) {
+            const index =
+              content.commands.findIndex((command) => command.path === path) + 1
+            expect(
+              new Set(
+                textRects(nodes[index]).map((rect) => Math.round(rect.top)),
+              ).size,
+            ).toBeGreaterThan(1)
+            // Ordinary tokens stay intact when they fit the available line.
+            expect(optionRects(nodes[index], '<OPTIONS>')).toHaveLength(1)
+          }
+        }
+      },
+    )
+
     test.each([390, 1440])(
       `keeps section headings stronger than command headings at %ipx in ${theme}`,
       async (width) => {
@@ -178,6 +337,81 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
       },
     )
   }
+
+  test('wraps an oversized existing token in narrow Usage and Example containers', async () => {
+    await mount(locale, 390, 'light')
+    const usage = usageNodes()[0]
+    const pre = document.querySelector<HTMLPreElement>('#commands article pre')!
+    const example = pre.querySelector('code')!
+    const token = 'artifactshare'
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      const span = [...code.children].find(
+        (child) => child.textContent === token,
+      )!
+      expect(span).toBeDefined()
+      code.replaceChildren(span.cloneNode(true))
+      container.style.width = '12ch'
+    }
+    await waitForBrowserLayout()
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      expect(code.textContent).toBe(token)
+      expectCodeFits(code, container)
+      expect(textRects(code).length).toBeGreaterThan(1)
+    }
+  })
+
+  test('negative control detects original non-wrapping Usage and Example overflow', async () => {
+    await mount(locale, 390, 'light')
+    const usage = usageNodes()[0]
+    const pre = document.querySelector<HTMLPreElement>('#commands article pre')!
+    const example = pre.querySelector('code')!
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      expectCodeFits(code, container)
+      const originalText = code.textContent
+      code.textContent = originalText
+      code.style.whiteSpace = 'pre'
+      code.style.overflowWrap = 'normal'
+      container.style.overflowX = 'auto'
+    }
+    await waitForBrowserLayout()
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      expect(container.scrollWidth).toBeGreaterThan(container.clientWidth + 1)
+      expect(() => expectCodeFits(code, container)).toThrow()
+    }
+  })
+
+  test('negative control detects hyphenated flag splits in plain wrapped code', async () => {
+    await mount(locale, 390, 'light')
+    const usage = usageNodes()[0]
+    const pre = document.querySelector<HTMLPreElement>('#commands article pre')!
+    const example = pre.querySelector('code')!
+    for (const [code, container] of [
+      [usage, usage],
+      [example, pre],
+    ]) {
+      // At this width the full flag fits, but only its prefix fits after "npm ".
+      code.textContent = 'npm --expected-version --visibility'
+      container.style.boxSizing = 'content-box'
+      container.style.width = '20ch'
+    }
+    await waitForBrowserLayout()
+    for (const code of [usage, example]) {
+      expectCodeFits(code, code === usage ? usage : pre)
+      expect(optionRects(code, '--expected-version').length).toBeGreaterThan(1)
+    }
+  })
 
   test('keeps generated edit help separate from the option list', async () => {
     const lists = await mount(locale, 390, 'light')

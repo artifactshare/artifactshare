@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react'
+import { WrappableCodeText } from './wrappable-code-text'
 import { useCopyState } from '~/hooks/use-copy-state'
 import { Button } from '~/components/ui/button'
 import {
@@ -42,6 +43,7 @@ export function CopyableCodeBlock({
   labels,
   children,
   compact = false,
+  wrap = false,
   copyTabIndex,
   className,
   copyButtonVariant,
@@ -51,6 +53,7 @@ export function CopyableCodeBlock({
   labels: CopyableCodeLabels
   children?: ReactNode
   compact?: boolean
+  wrap?: boolean
   copyTabIndex?: number
   className?: string
   copyButtonVariant?: 'default' | 'ghost'
@@ -62,6 +65,26 @@ export function CopyableCodeBlock({
       : state === 'failed'
         ? labels.failed
         : labels.copy
+
+  const preClassName = cn(
+    'text-foreground m-0 font-mono',
+    wrap ? 'min-w-0' : 'overflow-x-auto',
+    compact
+      ? 'px-[var(--spacing-3)] py-[var(--spacing-2)] text-xs leading-(--lh-loose)'
+      : copyableCodePreDefaultClassName,
+  )
+  const content = (
+    <code
+      className={cn(
+        '[font:inherit]',
+        wrap
+          ? '[overflow-wrap:anywhere] whitespace-pre-wrap'
+          : 'whitespace-pre',
+      )}
+    >
+      {children ?? (wrap ? <WrappableCodeText text={code} /> : code)}
+    </code>
+  )
 
   return (
     <div
@@ -115,24 +138,21 @@ export function CopyableCodeBlock({
           {label}
         </span>
       ) : null}
-      {/* Horizontal code scrolling requires focus on the scroll container;
-          axe flags a focusable copy button alone as insufficient. */}
-      {/* react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex */}
-      <pre
-        // the filename tab sits flush on the code area by design
-        data-gap-audit-allow-touch
-        tabIndex={copyTabIndex ?? 0}
-        className={cn(
-          'text-foreground m-0 overflow-x-auto font-mono',
-          compact
-            ? 'px-[var(--spacing-3)] py-[var(--spacing-2)] text-xs leading-(--lh-loose)'
-            : copyableCodePreDefaultClassName,
-        )}
-      >
-        <code className="whitespace-pre [font:inherit]">
-          {children ?? code}
-        </code>
-      </pre>
+      {wrap ? (
+        <pre data-gap-audit-allow-touch className={preClassName}>
+          {content}
+        </pre>
+      ) : (
+        // Horizontal scrolling needs keyboard focus on the scroll container.
+        // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex
+        <pre
+          data-gap-audit-allow-touch
+          tabIndex={copyTabIndex ?? 0}
+          className={preClassName}
+        >
+          {content}
+        </pre>
+      )}
     </div>
   )
 }
