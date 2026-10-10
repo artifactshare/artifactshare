@@ -9,4 +9,5 @@ export type PendingTextAnchor = Pick<
   | 'textEnd'
   | 'cssPath'
   | 'rect'
+  | 'openComposer'
 >

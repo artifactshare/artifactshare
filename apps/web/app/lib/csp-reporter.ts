@@ -442,6 +442,52 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     document.head.appendChild(style);
   }
 
+  function commentPickQuotedText(element) {
+    var attr = element.getAttribute('data-comment-pick');
+    var source = attr != null && String(attr).trim() !== '' ? attr : (element.textContent || '');
+    return String(source).trim();
+  }
+
+  function isCommentPickTarget(target) {
+    return target && target.closest ? target.closest('[data-comment-pick]') : null;
+  }
+
+  function sendCommentPick(element) {
+    if (!textAnchorsEnabled) return;
+    if (!element || !anchorRoot().contains(element)) return;
+    var quotedText = commentPickQuotedText(element);
+    if (!quotedText) return;
+    var range = document.createRange();
+    range.selectNodeContents(element);
+    var rawStart = textOffset(range.startContainer, range.startOffset);
+    var elementText = element.textContent || '';
+    var idx = elementText.indexOf(quotedText);
+    var start = idx >= 0 ? rawStart + idx : rawStart;
+    if (idx < 0) {
+      var bodyIndex = anchorTextContent().indexOf(quotedText);
+      if (bodyIndex >= 0) start = bodyIndex;
+    }
+    var end = start + quotedText.length;
+    var bodyText = anchorTextContent();
+    var rect = element.getBoundingClientRect();
+    send({
+      kind: 'text-selection',
+      quotedText: quotedText,
+      prefixText: bodyText.slice(Math.max(0, start - 120), start).trim(),
+      suffixText: bodyText.slice(end, Math.min(bodyText.length, end + 120)).trim(),
+      textStart: start,
+      textEnd: end,
+      cssPath: cssPath(element),
+      rect: {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      },
+      openComposer: true,
+    });
+  }
+
   function sendSelection() {
     if (!textAnchorsEnabled) return;
     var selection = getSelection();
@@ -1352,7 +1398,7 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
       target &&
       target.closest &&
       target.closest(
-        '.ash-comment-highlight, .ash-comment-highlight-badge, [data-code-copy]',
+        '.ash-comment-highlight, .ash-comment-highlight-badge, [data-code-copy], [data-comment-pick]',
       )
     ) {
       return;
@@ -1399,14 +1445,33 @@ export const VIOLATION_REPORTER_SCRIPT_BODY = `(function () {
     }
   });
 
-  document.addEventListener('mouseup', function () {
+  document.addEventListener('mouseup', function (event) {
+    if (isCommentPickTarget(event.target)) return;
     setTimeout(sendSelection, 0);
   });
-  document.addEventListener('keyup', function () {
+  document.addEventListener('keyup', function (event) {
+    if (isCommentPickTarget(event.target)) return;
     setTimeout(sendSelection, 0);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var pick = isCommentPickTarget(event.target);
+    if (!pick) return;
+    var tag = pick.nodeName && pick.nodeName.toLowerCase();
+    if (tag === 'button' || tag === 'input' || (pick.getAttribute && pick.getAttribute('role') === 'button')) {
+      return;
+    }
+    if (event.key === ' ') event.preventDefault();
+    sendCommentPick(pick);
   });
   document.addEventListener('click', function (event) {
     var target = event.target;
+    var pick = target && target.closest && target.closest('[data-comment-pick]');
+    if (pick) {
+      event.preventDefault();
+      sendCommentPick(pick);
+      return;
+    }
     var button = target && target.closest && target.closest('[data-code-copy]');
     if (!button) return;
     var block = button.closest('.md-code-block');
@@ -1480,7 +1545,7 @@ export const VIOLATION_REPORTER_TAG = `<script>${VIOLATION_REPORTER_SCRIPT_BODY}
 // string. If the body changes, the drift test in csp-reporter.test.ts
 // fails and prints the new value to paste here.
 export const VIOLATION_REPORTER_SHA256 =
-  '2Y57uZ71Y1As4iQEAJ3ZK8aNWDY/lePuTsVVqw+ut2M='
+  'A9PBZBMd9oQ5y4d/YwAm9NpzpDl7FMgZq0RKKBM9OCs='
 
 export interface CspViolationMessage {
   source: 'artifactshare'
@@ -1506,6 +1571,7 @@ export interface TextSelectionMessage {
     width: number
     height: number
   }
+  openComposer?: boolean
 }
 
 export interface TextSelectionClearedMessage {

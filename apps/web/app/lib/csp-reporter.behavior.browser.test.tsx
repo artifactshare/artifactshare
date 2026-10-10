@@ -336,4 +336,42 @@ describe('CSP reporter runtime behavior', () => {
     expect(badge.style.left).not.toBe(before)
     expect(selected()).toBeUndefined()
   })
+
+  test('data-comment-pick click sends one text-selection with the attribute text', async () => {
+    const doc = await fixture(
+      '<p>Intro</p><button type="button" class="pick" data-comment-pick="Section heading">Pick</button>',
+    )
+    await applyHighlights([])
+    messages = []
+    doc.querySelector<HTMLButtonElement>('.pick')!.click()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const selections = messages.filter(
+      (message) => message.kind === 'text-selection',
+    )
+    expect(selections).toHaveLength(1)
+    expect(selections[0]?.quotedText).toBe('Section heading')
+    expect(selections[0]?.openComposer).toBe(true)
+  })
+
+  test('data-comment-pick click does not send when text anchors are disabled', async () => {
+    const doc = await fixture(
+      '<button type="button" class="pick" data-comment-pick="Section heading">Pick</button>',
+    )
+    frame!.contentWindow!.postMessage(
+      {
+        source: 'artifactshare-parent',
+        kind: 'comment-highlights',
+        textAnchorsEnabled: false,
+        highlights: [],
+      },
+      '*',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    messages = []
+    doc.querySelector<HTMLButtonElement>('.pick')!.click()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(
+      messages.filter((message) => message.kind === 'text-selection'),
+    ).toHaveLength(0)
+  })
 })

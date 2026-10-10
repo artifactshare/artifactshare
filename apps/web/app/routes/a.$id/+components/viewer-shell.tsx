@@ -622,6 +622,9 @@ function useViewerComments({
   const startTextSelection = useCallback((anchor: PendingTextAnchor) => {
     returnFocusRef.current = null
     dispatchComment({ type: 'text-selection-started', anchor })
+    if (anchor.openComposer) {
+      dispatchComment({ type: 'pending-composer-opened' })
+    }
   }, [])
 
   const openPendingComposer = useCallback(() => {

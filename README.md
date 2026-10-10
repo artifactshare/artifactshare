@@ -10,6 +10,12 @@ This repository is source-available. You may study, modify, and self-host Artifa
 
 The npm package through version 0.9.0 remains licensed under Apache-2.0. The repository and CLI from version 0.10.0 onward are covered by the source-available license. Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.
 
+## HTML comment pick
+
+Put `data-comment-pick` on a button or other control to open a comment on that heading.
+The attribute value is the quoted text; if it is empty, the control's own text is used.
+This does nothing unless text comments are enabled for the file.
+
 ## Repository layout
 
 - `apps/web/` — the React Router application and Cloudflare Workers

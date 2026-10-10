@@ -502,6 +502,7 @@ function useSandboxFrameController({
         rect: frameRect
           ? addFrameOffset(message.rect, frameRect)
           : message.rect,
+        openComposer: message.openComposer === true,
       })
     },
   )
