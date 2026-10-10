@@ -42,6 +42,7 @@ export function CopyableCodeBlock({
   labels,
   children,
   compact = false,
+  wrap = false,
   copyTabIndex,
   className,
   copyButtonVariant,
@@ -51,6 +52,7 @@ export function CopyableCodeBlock({
   labels: CopyableCodeLabels
   children?: ReactNode
   compact?: boolean
+  wrap?: boolean
   copyTabIndex?: number
   className?: string
   copyButtonVariant?: 'default' | 'ghost'
@@ -116,20 +118,29 @@ export function CopyableCodeBlock({
         </span>
       ) : null}
       {/* Horizontal code scrolling requires focus on the scroll container;
-          axe flags a focusable copy button alone as insufficient. */}
+          axe flags a focusable copy button alone as insufficient.
+          Wrapped blocks retain the same focus and tab-order behavior. */}
       {/* react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex */}
       <pre
         // the filename tab sits flush on the code area by design
         data-gap-audit-allow-touch
         tabIndex={copyTabIndex ?? 0}
         className={cn(
-          'text-foreground m-0 overflow-x-auto font-mono',
+          'text-foreground m-0 font-mono',
+          wrap ? 'min-w-0' : 'overflow-x-auto',
           compact
             ? 'px-[var(--spacing-3)] py-[var(--spacing-2)] text-xs leading-(--lh-loose)'
             : copyableCodePreDefaultClassName,
         )}
       >
-        <code className="whitespace-pre [font:inherit]">
+        <code
+          className={cn(
+            '[font:inherit]',
+            wrap
+              ? '[overflow-wrap:anywhere] whitespace-pre-wrap'
+              : 'whitespace-pre',
+          )}
+        >
           {children ?? code}
         </code>
       </pre>

@@ -107,7 +107,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <p>
                       <strong>{content.commandUsageLabel}</strong>
                     </p>
-                    <code className="bg-muted block min-w-0 overflow-x-auto rounded-[var(--r-sm)] p-[var(--spacing-2)] text-xs whitespace-pre">
+                    <code className="bg-muted block min-w-0 overflow-x-auto rounded-[var(--r-sm)] p-[var(--spacing-2)] text-xs [overflow-wrap:anywhere] whitespace-pre-wrap">
                       {cliReferenceUsage(
                         CLI_REFERENCE_ENTRY_POINT.path,
                         CLI_REFERENCE_ENTRY_POINT.usage,
@@ -162,6 +162,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                             </p>
                             {command.example && (
                               <CopyableCodeBlock
+                                wrap
                                 code={command.example}
                                 name={content.commandExampleLabel}
                                 labels={content.copyLabels}
@@ -171,7 +172,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                             <p className="text-foreground mt-[var(--spacing-3)] mb-1 text-xs font-semibold">
                               {content.commandUsageLabel}
                             </p>
-                            <code className="bg-muted block min-w-0 overflow-x-auto rounded-[var(--r-sm)] p-[var(--spacing-2)] text-xs whitespace-pre">
+                            <code className="bg-muted block min-w-0 overflow-x-auto rounded-[var(--r-sm)] p-[var(--spacing-2)] text-xs [overflow-wrap:anywhere] whitespace-pre-wrap">
                               {usage}
                             </code>
                             <p className="text-foreground mt-[var(--spacing-3)] mb-1 text-xs font-semibold">

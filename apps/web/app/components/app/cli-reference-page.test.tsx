@@ -5,6 +5,7 @@ import {
   CLI_REFERENCE_ENTRY_POINT,
   CLI_REFERENCE_SECTION_IDS,
   cliReferenceContent,
+  cliReferenceUsage,
 } from '~/lib/cli-reference-content'
 import surface from '~/lib/cli-reference-surface.generated.json'
 
@@ -39,7 +40,9 @@ vi.mock('./guide-toc', () => ({
   GuideTocMobile: () => null,
 }))
 vi.mock('./copyable-code-block', () => ({
-  CopyableCodeBlock: ({ code }: { code: string }) => <pre>{code}</pre>,
+  CopyableCodeBlock: ({ code, wrap }: { code: string; wrap?: boolean }) => (
+    <pre data-wrap={wrap}>{code}</pre>
+  ),
 }))
 vi.mock('~/components/layout/stack', () => ({
   Stack: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -48,6 +51,45 @@ vi.mock('~/components/layout/stack', () => ({
 import { CliReferencePage } from './cli-reference-page'
 
 describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
+  test('wraps both Usage locations and opts every unchanged Example into wrapping', () => {
+    const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
+    const commands = cliReferenceContent(locale).commands
+    const usages = [
+      cliReferenceUsage(
+        CLI_REFERENCE_ENTRY_POINT.path,
+        CLI_REFERENCE_ENTRY_POINT.usage,
+      ),
+      ...commands.map(({ path }) =>
+        cliReferenceUsage(
+          path,
+          surface.commands.find((command) => command.path === path)!.usage,
+        ),
+      ),
+    ]
+    const nodes = [
+      ...html.matchAll(/<code class="([^"]*)">([\s\S]*?)<\/code>/g),
+    ]
+    expect(nodes).toHaveLength(commands.length + 1)
+    nodes.forEach((node, index) => {
+      const classes = node[1].split(/\s+/)
+      expect(classes).toContain('whitespace-pre-wrap')
+      expect(classes).toContain('[overflow-wrap:anywhere]')
+      expect(classes).not.toContain('whitespace-pre')
+      expect(classes).not.toContain('break-all')
+      expect(node[2]).toBe(renderToStaticMarkup(<>{usages[index]}</>))
+    })
+    const examples = commands.filter((command) => command.example)
+    const blocks = [
+      ...html.matchAll(/<pre data-wrap="true">([\s\S]*?)<\/pre>/g),
+    ]
+    expect(blocks).toHaveLength(examples.length)
+    blocks.forEach((block, index) => {
+      expect(block[1]).toBe(
+        renderToStaticMarkup(<>{examples[index].example}</>),
+      )
+    })
+  })
+
   test('preserves section anchors and heading labels', () => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect([...html.matchAll(/<h2\b/g)]).toHaveLength(
