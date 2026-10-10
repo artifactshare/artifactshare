@@ -984,3 +984,42 @@ test('edit reference includes visibility help from the built command surface', a
     [visibilityHelp],
   )
 })
+
+test('edit catalog lists all visibility values and distinguishes combined writes', () => {
+  const catalog = readFileSync(
+    new URL('../../docs/reference/cli-command-catalog.md', import.meta.url),
+    'utf8',
+  )
+  const row = catalog
+    .split('\n')
+    .find((line) => line.startsWith('| `edit <target>`'))
+  assert.ok(row)
+  assert.ok(row.includes('--visibility private\\|workspace\\|project\\|link'))
+  const description = catalog.match(/^- `edit <target>`:.*(?:\n {2}.+)*/m)?.[0]
+  assert.ok(description)
+  assert.match(
+    description,
+    /`--visibility project`.*移動、タイトル、共有設定をまとめて保存/,
+  )
+  assert.match(description, /逐次適用する場合.*ロールバックしない/)
+})
+
+test('Cursor edit guidance lists visibility values once and retains placement requirements', () => {
+  const rule = readFileSync(
+    new URL('../cli/skills/artifactshare/artifactshare.mdc', import.meta.url),
+    'utf8',
+  )
+  const guidance = rule
+    .split('\n')
+    .find((line) => line.startsWith('- Change post-share settings'))
+  assert.ok(guidance)
+  assert.equal(
+    guidance.match(/--visibility private\|workspace\|project\|link/g)?.length,
+    1,
+  )
+  assert.match(
+    guidance,
+    /Project visibility requires the artifact to be in a project after the edit/,
+  )
+  assert.match(guidance, /--project-id <id>/)
+})
