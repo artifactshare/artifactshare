@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import type { Kysely } from 'kysely'
 import { beforeEach, describe, expect, expectTypeOf, test, vi } from 'vitest'
 import type { DB } from '~/types/db'
@@ -62,6 +63,40 @@ describe('publish', () => {
       .mockReset()
       .mockResolvedValue({ kind: 'upload-failed' })
   })
+
+  test.each(['human', 'bot'] as const)(
+    'does not select a principal for unknown %s authority',
+    (kind) => {
+      expect(
+        publishPrincipal({ ...user, kind }, {
+          kind: 'unknown',
+        } as unknown as CliAuthority),
+      ).toBeNull()
+    },
+  )
+
+  test.each(['human', 'agent', 'bot', 'bootstrap', 'bridge'] as const)(
+    'rejects a forged %s principal before publishing',
+    async (kind) => {
+      const result = await publish({
+        db,
+        actor: { kind, user, authority: { kind: 'unknown' } },
+        target: { kind: 'create' },
+        destination: { kind: 'inbox' },
+        content: {
+          kind: 'file',
+          path: 'index.html',
+          bytes: new TextEncoder().encode('<p>test</p>'),
+        },
+        notify: { slack: false },
+      } as unknown as Parameters<typeof publish>[0])
+      expect(result).toEqual({ kind: 'forbidden' })
+      expect(uploadShareableMock).not.toHaveBeenCalled()
+      expect(createVersionMock).not.toHaveBeenCalled()
+      expect(appendShareableMock).not.toHaveBeenCalled()
+      expect(executeBridgePublishIntentMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('delegates a file-create intent without changing the existing upload contract', async () => {
     const bytes = new TextEncoder().encode('<p>hello</p>')

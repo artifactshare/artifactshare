@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -4378,6 +4379,71 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('denies unknown static-site authority before creating a session or writing blobs', async () => {
+    const before = await db.selectFrom('versions').selectAll().execute()
+    expect(
+      await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        'bundle1',
+        null,
+        {
+          authority: { kind: 'unknown' } as unknown as CliAuthority,
+        },
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      before,
+    )
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('static-site commit SQL rejects authority that becomes unknown after lookup', async () => {
+    const authority: CliAuthority = { kind: 'unrestricted' }
+    const before = await db.selectFrom('versions').selectAll().execute()
+    const begun = await beginStaticSiteBundleVersionUploadSession(
+      db,
+      OWNER,
+      'bundle1',
+      null,
+      { authority },
+    )
+    if (begun.kind !== 'ok') throw new Error('Expected upload session')
+    expect(
+      await begun.session.addFile(siteFile('/index.html', 10, 'text/html')),
+    ).toEqual({ kind: 'ok' })
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    const digestSpy = vi
+      .spyOn(crypto.subtle, 'digest')
+      .mockImplementationOnce(async (...args) => {
+        Object.assign(authority, { kind: 'unknown' })
+        return digest(...args)
+      })
+    let deniedSql = false
+    sqliteRef.beforeNextBatch = async (statements) => {
+      deniedSql = statements.some((statement) =>
+        statement.sql.includes('0 = 1'),
+      )
+    }
+    try {
+      expect((await begun.session.commitVersion()).kind).not.toBe('ok')
+    } finally {
+      digestSpy.mockRestore()
+    }
+    expect(deniedSql).toBe(true)
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      before,
+    )
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select('current_version_id')
+        .where('id', '=', 'bundle1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ current_version_id: 'bv1' })
+    expect(storageMock.deleteArtifactsByPrefix).toHaveBeenCalled()
+  })
+
   async function seedBaseFiles(paths = ['/index.html']) {
     for (const [index, path] of paths.entries()) {
       await db
@@ -5371,6 +5437,85 @@ describe('createVersion', () => {
     await db.destroy()
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
+  })
+
+  test('denies unknown authority before owner metadata, settings, version, and move changes', async () => {
+    const authority = { kind: 'unknown' } as unknown as CliAuthority
+    const before = await db.selectFrom('shareables').selectAll().execute()
+    const versions = await db.selectFrom('versions').selectAll().execute()
+    expect(
+      await updateShareableMetadata(db, OWNER, 'share1', {}, authority),
+    ).toEqual({ kind: 'not-found' })
+    expect(
+      await updateShareableMetadata(
+        db,
+        OWNER,
+        'share1',
+        { titleOverride: 'Changed' },
+        authority,
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(
+      await editShareableSettings(
+        db,
+        OWNER,
+        'share1',
+        { title: 'Changed' },
+        authority,
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(
+      await moveShareableContainer(
+        db,
+        OWNER,
+        'share1',
+        { type: 'inbox' },
+        authority,
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(
+      await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'share1',
+        file: htmlFile('index.html', '<p>Changed</p>'),
+        authority,
+      }),
+    ).toEqual({ kind: 'not-found' })
+    expect(await db.selectFrom('shareables').selectAll().execute()).toEqual(
+      before,
+    )
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      versions,
+    )
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('commit SQL denies authority that becomes unknown after the writable lookup', async () => {
+    const authority: CliAuthority = { kind: 'unrestricted' }
+    const before = await db.selectFrom('versions').selectAll().execute()
+    storageMock.putArtifact.mockImplementationOnce(async () => {
+      Object.assign(authority, { kind: 'unknown' })
+    })
+    const result = await createVersion({
+      db,
+      user: OWNER,
+      shareableId: 'share1',
+      file: htmlFile('index.html', '<p>Changed</p>'),
+      authority,
+    })
+    expect(result.kind).not.toBe('ok')
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      before,
+    )
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select('current_version_id')
+        .where('id', '=', 'share1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ current_version_id: 'v1' })
+    expect(storageMock.deleteArtifact).toHaveBeenCalled()
   })
 
   test('returns its committed number when another publish prunes it before the batch returns', async () => {

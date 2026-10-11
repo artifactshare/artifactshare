@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { seedWorkspace, seedUser } from '~/test/db-seed-fixture'
 import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
@@ -84,6 +85,36 @@ async function json(response: Response) {
 }
 
 describe('/api/shareables/:id/versions', () => {
+  test.each(['', '?artifact_kind=static_site'])(
+    'denies unknown authority before version upload %s',
+    async (query) => {
+      authorityMock.mockReturnValue({
+        kind: 'unknown',
+      } as unknown as CliAuthority)
+      const form = new FormData()
+      form.set(
+        'file',
+        new File(['<p>test</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const response = await action(
+        actionArgsFor(
+          `https://example.test/api/shareables/abc123def4/versions${query}`,
+          form,
+          'abc123def4',
+        ),
+      )
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'scope-denied' },
+      })
+      expect(publishMock).not.toHaveBeenCalled()
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).not.toHaveBeenCalled()
+      expect(putBundleFileMock).not.toHaveBeenCalled()
+    },
+  )
+
   beforeEach(() => {
     authorityMock.mockReset().mockReturnValue(null)
     publishMock.mockReset()

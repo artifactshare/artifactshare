@@ -1,3 +1,5 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import {
   ProjectEditRequestSchema,
   ProjectEditResponseSchema,
@@ -9,7 +11,7 @@ import {
   cliProjectResponse,
 } from '~/lib/project-actions-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
 import {
   editProjectContainerSettings,
@@ -24,6 +26,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
+  if (!allowsHumanCliMutation(getCliAuthority(context)))
+    return cliScopeDeniedResponse()
   const parsedParams = ProjectIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Project not found.', 404)

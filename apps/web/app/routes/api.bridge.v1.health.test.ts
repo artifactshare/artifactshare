@@ -1,3 +1,5 @@
+import * as authorityPolicy from '~/lib/cli-authority-policy'
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
@@ -17,7 +19,11 @@ vi.mock('~/services/bridge-authorities.server', () => ({
 
 import { loader } from './api.bridge.v1.health'
 
+// The compiler regression covers this shared guard; keep both routes using it.
+const bridgeGuardSpy = vi.spyOn(authorityPolicy, 'bridgeCliAuthority')
+
 beforeEach(() => {
+  bridgeGuardSpy.mockClear()
   getCliAuthorityMock.mockReset().mockReturnValue({
     kind: 'bridge',
     bridgeAuthorityId: 'bridge-1',
@@ -68,3 +74,24 @@ describe('/api/bridge/v1/health', () => {
     consoleError.mockRestore()
   })
 })
+
+test.each([null, 'unrestricted', 'bootstrap', 'agent', 'unknown'])(
+  'rejects %s before bridge execution',
+  async (kind) => {
+    getCliAuthorityMock.mockReturnValue(
+      kind === null ? null : ({ kind } as unknown as CliAuthority),
+    )
+    const request = new Request('https://example.test/api/bridge/v1/health')
+    const response = await loader({ context: new Map(), request } as never)
+    expect(bridgeGuardSpy).toHaveBeenCalledWith(kind === null ? null : { kind })
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'unsupported-authority',
+        message: 'This credential is not a bridge authority.',
+      },
+    })
+    expect(readLiveBridgeAuthorityMock).not.toHaveBeenCalled()
+    expect(request.bodyUsed).toBe(false)
+  },
+)

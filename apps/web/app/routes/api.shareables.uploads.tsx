@@ -1,3 +1,5 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -80,6 +82,8 @@ export async function action({ request, context }: Route.ActionArgs) {
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const db = createDb()
   const authority = getCliAuthority(context)
+  const agentAuthority = cliReadAuthority(authority)
+  if (agentAuthority === 'denied') return cliScopeDeniedResponse()
 
   const searchParams = new URL(request.url).searchParams
   const rawPublishKey = searchParams.get('publish_key')
@@ -187,10 +191,15 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const containerId = parseUploadContainerId(parsedForm.data.container_id)
   if (
-    authority?.kind === 'agent' &&
+    agentAuthority !== null &&
     (visibility === 'private' ||
       visibility === 'link' ||
-      !(await isAgentPublishableDestination(db, user, authority, containerId)))
+      !(await isAgentPublishableDestination(
+        db,
+        user,
+        agentAuthority,
+        containerId,
+      )))
   ) {
     return errorResponse(
       'forbidden',
@@ -227,7 +236,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
+      if (agentAuthority !== null && !expectedCurrentVersionId) {
         return errorResponse(
           'expected-version-required',
           'Agent updates require the current version id.',
@@ -607,10 +616,17 @@ async function uploadStaticSiteWithSession(
   expectedCurrentVersionId?: string | null,
   queryContainerId?: string,
 ): Promise<Response> {
+  const agentAuthority = cliReadAuthority(authority)
+  if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const containerId = parseUploadContainerId(queryContainerId)
   if (
-    authority?.kind === 'agent' &&
-    !(await isAgentPublishableDestination(db, user, authority, containerId))
+    agentAuthority !== null &&
+    !(await isAgentPublishableDestination(
+      db,
+      user,
+      agentAuthority,
+      containerId,
+    ))
   ) {
     return errorResponse(
       'forbidden',
@@ -654,7 +670,7 @@ async function uploadStaticSiteWithSession(
     const failure = keyResolutionFailureResponse(resolution)
     if (failure) return failure
     if (resolution.kind === 'update') {
-      if (authority?.kind === 'agent' && !expectedCurrentVersionId) {
+      if (agentAuthority !== null && !expectedCurrentVersionId) {
         return errorResponse(
           'expected-version-required',
           'Agent updates require the current version id.',
@@ -746,24 +762,29 @@ function publishPrincipal(
   user: PublishUser,
   authority: CliAuthority | null,
 ): Principal | null {
-  const kind = user.kind ?? 'human'
-  const publishUser = { ...user, kind }
-  if (kind === 'bot' && authority?.kind !== 'agent') return null
-  if (authority?.kind === 'agent') {
-    return kind === 'bot'
-      ? { kind: 'bot', user: { ...publishUser, kind: 'bot' }, authority }
-      : { kind: 'agent', user: publishUser, authority }
-  }
-  if (authority?.kind === 'bridge') {
-    return { kind: 'bridge', user: publishUser, authority }
-  }
-  if (authority?.kind === 'bootstrap') {
-    return { kind: 'bootstrap', user: publishUser, authority }
-  }
-  return {
-    kind: 'human',
-    user: { ...publishUser, kind: 'human' },
-    ...(authority ? { authority } : {}),
+  user = { ...user, kind: user.kind ?? 'human' }
+  if (!authority)
+    return user.kind === 'bot'
+      ? null
+      : { kind: 'human', user: { ...user, kind: 'human' } }
+  switch (authority.kind) {
+    case 'agent':
+      return user.kind === 'bot'
+        ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }
+        : { kind: 'agent', user, authority }
+    case 'bridge':
+      return user.kind === 'bot' ? null : { kind: 'bridge', user, authority }
+    case 'bootstrap':
+      return user.kind === 'bot' ? null : { kind: 'bootstrap', user, authority }
+    case 'unrestricted':
+      return user.kind === 'bot'
+        ? null
+        : { kind: 'human', user: { ...user, kind: 'human' }, authority }
+    default: {
+      const unexpected: never = authority
+      void unexpected
+      return null
+    }
   }
 }
 

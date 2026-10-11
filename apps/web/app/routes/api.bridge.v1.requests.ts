@@ -1,3 +1,4 @@
+import { bridgeCliAuthority } from '~/lib/cli-authority-policy'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -23,8 +24,8 @@ const MAX_CONTENT_BYTES = 26_214_400
 export const middleware = [requireBridgeBearerMiddleware]
 
 export async function action({ request, context }: Route.ActionArgs) {
-  const authority = getCliAuthority(context)
-  if (authority?.kind !== 'bridge') {
+  const authority = bridgeCliAuthority(getCliAuthority(context))
+  if (!authority) {
     return bridgeErrorResponse(
       'unsupported-authority',
       'This credential is not a bridge authority.',

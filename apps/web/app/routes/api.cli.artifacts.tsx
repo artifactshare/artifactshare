@@ -1,3 +1,5 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ArtifactsListQuerySchema,
   ArtifactsListResponseSchema,
@@ -30,10 +32,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     )
   }
   const { project_id: projectId, query, cursor } = queryParams.data
-  const authority = getCliAuthority(context)
+  const authority = cliReadAuthority(getCliAuthority(context))
+  if (authority === 'denied') return cliScopeDeniedResponse()
 
   return await withDb(async (db) => {
-    if (authority?.kind === 'agent') {
+    if (authority !== null) {
       const result = await listAgentReadableArtifacts(db, user, authority, {
         baseUrl: url.origin,
         projectId,

@@ -1,3 +1,6 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import {
   ArtifactIdParamsSchema,
   CliEditRequestSchema,
@@ -22,6 +25,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
+  if (cliReadAuthority(getCliAuthority(context)) === 'denied')
+    return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Shareable not found.', 404)
@@ -36,7 +41,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
   const authority = getCliAuthority(context)
   if (parsedBody.data.retain_versions !== undefined) {
-    if (authority !== null && authority.kind !== 'unrestricted') {
+    if (!allowsHumanCliMutation(authority)) {
       return errorResponse(
         'forbidden',
         'Version retention requires unrestricted owner credentials.',

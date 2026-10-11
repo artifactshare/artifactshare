@@ -1,3 +1,5 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ArtifactIdParamsSchema,
   DownloadManifestResponseSchema,
@@ -20,9 +22,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   }
   const { id } = parsedParams.data
   return await withDb(async (db) => {
-    const authority = getCliAuthority(context)
+    const authority = cliReadAuthority(getCliAuthority(context))
+    if (authority === 'denied') return cliScopeDeniedResponse()
     const agentRead =
-      authority?.kind === 'agent'
+      authority !== null
         ? await authorizeAgentArtifactRead(db, user, authority, id)
         : null
     if (agentRead?.kind === 'missing-viewer') {

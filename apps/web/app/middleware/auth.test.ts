@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { userContext } from './context'
 
@@ -142,6 +143,36 @@ describe('requireUserApiWithBearerMiddleware', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
+
+  test.each([
+    '/api/cli/artifacts',
+    '/api/cli/doctor',
+    '/api/cli/resolve',
+    '/api/bridge/v1/health',
+  ])(
+    'does not invoke the handler for unknown authority on %s',
+    async (path) => {
+      const context = createContext()
+      getSessionUserFromBearerMock.mockResolvedValue({ id: 'u1' })
+      resolveCliAuthorityBySessionTokenMock.mockResolvedValue({
+        kind: 'unknown',
+      } as unknown as CliAuthority)
+      const next = vi.fn()
+      const request = new Request(`https://example.test${path}`, {
+        headers: { Authorization: 'Bearer ass_test' },
+      })
+      const response = await Promise.resolve(
+        requireUserApiWithBearerMiddleware(createArgs(request, context), next),
+      ).catch((error: unknown) => error)
+      if (!(response instanceof Response))
+        throw new Error('Expected scope denial')
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'scope-denied' },
+      })
+      expect(next).not.toHaveBeenCalled()
+    },
+  )
 
   test('uses the existing cookie session without checking bearer auth', async () => {
     const context = createContext()

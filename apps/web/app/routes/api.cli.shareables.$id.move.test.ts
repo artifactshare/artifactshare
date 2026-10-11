@@ -1,3 +1,5 @@
+const authorityMock = vi.hoisted(() => vi.fn())
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -13,7 +15,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
-  getCliAuthority: () => null,
+  getCliAuthority: authorityMock,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
@@ -28,6 +30,7 @@ import { action, middleware } from './api.cli.shareables.$id.move'
 
 describe('/api/cli/shareables/:id/move', () => {
   beforeEach(() => {
+    authorityMock.mockReset().mockReturnValue(null)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     createDbMock.mockReset()
@@ -46,6 +49,32 @@ describe('/api/cli/shareables/:id/move', () => {
       visibility: 'project',
       projectAudienceMayChange: true,
     })
+  })
+
+  test('denies unknown authority before mutation', async () => {
+    authorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const request = new Request(
+      'https://example.test/api/cli/shareables/abc123def4/move',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          destination: { project_id: 'prj1' },
+        }),
+      },
+    )
+    const response = await action({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request,
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(moveShareableContainerMock).not.toHaveBeenCalled()
+    expect(request.bodyUsed).toBe(false)
   })
 
   test('moves a shareable into a project for the authenticated user', async () => {

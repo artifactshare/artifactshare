@@ -1,3 +1,5 @@
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -12,6 +14,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
+  getCliAuthority: getCliAuthorityMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
@@ -40,6 +43,7 @@ const activeProject = {
 
 describe('/api/cli/projects/:id', () => {
   beforeEach(() => {
+    getCliAuthorityMock.mockReset().mockReturnValue(null)
     requireUserMock.mockReset()
     createDbMock.mockReset()
     editProjectContainerSettingsMock.mockReset()
@@ -55,6 +59,26 @@ describe('/api/cli/projects/:id', () => {
       project: activeProject,
       audience: ['viewer@example.com'],
     })
+  })
+
+  test('denies an unknown authority for POST before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await action({
+      context: new Map(),
+      params: { id: 'prj1' },
+      request: new Request('https://example.test/api/cli/projects/prj1', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Project' }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(editProjectContainerSettingsMock).not.toHaveBeenCalled()
   })
 
   test('updates metadata and audience for the authenticated workspace', async () => {

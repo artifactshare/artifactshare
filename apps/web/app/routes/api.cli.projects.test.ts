@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -54,6 +55,44 @@ describe('/api/cli/projects', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: {},
+      request: new Request('https://example.test/api/cli/projects', {
+        method: 'GET',
+      }),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(listWorkspaceProjectsMock).not.toHaveBeenCalled()
+  })
+
+  test('denies an unknown authority for POST before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await action({
+      context: new Map(),
+      params: {},
+      request: new Request('https://example.test/api/cli/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Project' }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(createProjectContainerMock).not.toHaveBeenCalled()
   })
 
   test('returns the viewer-scoped workspace projects', async () => {

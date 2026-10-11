@@ -1,3 +1,6 @@
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ArtifactDeleteResponseSchema,
   ArtifactIdParamsSchema,
@@ -70,9 +73,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   const { offset, include } = parsedQuery.data
 
   return await withDb(async (db) => {
-    const authority = getCliAuthority(context)
+    const authority = cliReadAuthority(getCliAuthority(context))
+    if (authority === 'denied') return cliScopeDeniedResponse()
     const agentRead =
-      authority?.kind === 'agent'
+      authority !== null
         ? await authorizeAgentArtifactRead(db, user, authority, id)
         : null
     if (agentRead?.kind === 'missing-viewer') {
@@ -107,6 +111,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   }
 
   const user = requireUser(context)
+  if (!allowsHumanCliMutation(getCliAuthority(context)))
+    return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Artifact not found.', 404)

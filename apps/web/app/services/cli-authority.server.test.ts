@@ -43,6 +43,23 @@ describe('CLI authority resolution', () => {
     sqliteRef.current = null
   })
 
+  test.each([
+    "UPDATE cli_session_authorities SET kind = 'unknown'",
+    "UPDATE cli_session_authorities SET kind = 'bootstrap', preset = 'unknown', expires_at = '2099-01-01T00:00:00.000Z'",
+    "UPDATE cli_family_authorities SET preset = 'unknown'",
+  ])('denies malformed persisted authority: %s', async (mutation) => {
+    seedAgentAuthority(sqlite)
+    sqlite.exec('PRAGMA ignore_check_constraints = ON')
+    try {
+      sqlite.exec(mutation)
+    } finally {
+      sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+    }
+    await expect(
+      resolveCliAuthorityBySessionToken('ass_test'),
+    ).resolves.toBeNull()
+  })
+
   test('keeps a legacy session unrestricted during dual-write rollout', async () => {
     await expect(
       resolveCliAuthorityBySessionToken('ass_test'),

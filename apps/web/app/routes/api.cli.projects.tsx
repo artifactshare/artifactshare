@@ -1,3 +1,6 @@
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ProjectCreateRequestSchema,
   ProjectCreateResponseSchema,
@@ -24,8 +27,9 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const authority = getCliAuthority(context)
-  if (authority?.kind === 'agent') {
+  const authority = cliReadAuthority(getCliAuthority(context))
+  if (authority === 'denied') return cliScopeDeniedResponse()
+  if (authority !== null) {
     return Response.json(
       ProjectsListResponseSchema.parse({
         projects: [
@@ -66,6 +70,8 @@ export async function action({ request, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
+  if (!allowsHumanCliMutation(getCliAuthority(context)))
+    return cliScopeDeniedResponse()
   const body = await request.json().catch(() => null)
   const parsedBody = ProjectCreateRequestSchema.safeParse(
     body && typeof body === 'object' && !Array.isArray(body)

@@ -1,3 +1,4 @@
+import { bridgeCliAuthority } from '~/lib/cli-authority-policy'
 import { bridgeErrorResponse } from '~/lib/bridge-api.server'
 import { requireBridgeBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority } from '~/middleware/context'
@@ -8,8 +9,8 @@ import type { Route } from './+types/api.bridge.v1.health'
 export const middleware = [requireBridgeBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const authority = getCliAuthority(context)
-  if (authority?.kind !== 'bridge') {
+  const authority = bridgeCliAuthority(getCliAuthority(context))
+  if (!authority) {
     return bridgeErrorResponse(
       'unsupported-authority',
       'This credential is not a bridge authority.',

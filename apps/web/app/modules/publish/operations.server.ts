@@ -1,3 +1,4 @@
+import { cliWriteAuthority } from '~/lib/cli-authority-policy'
 import { pruneVersionsAfterPublish } from '~/services/version-retention.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
 import { sql } from 'kysely'
@@ -283,16 +284,16 @@ export async function createVersion(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const agentAuthority = cliWriteAuthority(authority)
+  if (agentAuthority === 'denied') return { kind: 'not-found' }
   const preserveArtifactIdentity =
     shareable.owner_user_id !== user.id &&
     shareable.workspace_id !== user.workspaceId
   const preserveName =
-    requestedPreserveName ||
-    authority?.kind === 'agent' ||
-    preserveArtifactIdentity
+    requestedPreserveName || agentAuthority !== null || preserveArtifactIdentity
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
-    (authority?.kind === 'agent' || shareable.owner_user_id !== user.id
+    (agentAuthority !== null || shareable.owner_user_id !== user.id
       ? (shareable.current_version_id ?? undefined)
       : undefined)
   if (shareable.artifact_kind === 'static_site') {
@@ -1103,16 +1104,18 @@ async function findWritableShareable(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return null
-  if (authority?.kind === 'agent') {
+  const writeAuthority = cliWriteAuthority(authority)
+  if (writeAuthority === 'denied') return null
+  if (writeAuthority) {
     if (
       !['workspace', 'project'].includes(shareable.visibility) ||
       shareable.container_kind !== 'project' ||
       shareable.container_archived_at !== null ||
-      shareable.container_id !== authority.projectId ||
+      shareable.container_id !== writeAuthority.projectId ||
       !(await isAgentPublishableDestination(
         db,
         { workspaceId: user.workspaceId, email: user.email ?? '' },
-        authority,
+        writeAuthority,
         shareable.container_id,
       ))
     ) {
@@ -1120,7 +1123,6 @@ async function findWritableShareable(
     }
     return shareable
   }
-  if (authority?.kind === 'bridge') return null
   if (
     shareable.owner_user_id === user.id &&
     !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
@@ -1206,15 +1208,17 @@ function writableShareableSql(
   authority: CliAuthority | null,
   access: 'collaboration' | 'version' = 'collaboration',
 ): RawBuilder<boolean> {
-  if (authority?.kind === 'agent') {
+  const writeAuthority = cliWriteAuthority(authority)
+  if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
+  if (writeAuthority) {
     return sql<boolean>`
-      shareables.workspace_id = ${authority.workspaceId}
-      AND shareables.container_id = ${authority.projectId}
+      shareables.workspace_id = ${writeAuthority.workspaceId}
+      AND shareables.container_id = ${writeAuthority.projectId}
       AND shareables.visibility IN ('workspace', 'project')
       AND EXISTS (
         SELECT 1 FROM artifact_containers writable_project
         WHERE writable_project.id = shareables.container_id
-          AND writable_project.workspace_id = ${authority.workspaceId}
+          AND writable_project.workspace_id = ${writeAuthority.workspaceId}
           AND writable_project.kind = 'project'
           AND writable_project.archived_at IS NULL
           AND (
@@ -1228,7 +1232,6 @@ function writableShareableSql(
           )
       )`
   }
-  if (authority?.kind === 'bridge') return sql<boolean>`0 = 1`
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')
     : ''

@@ -1,3 +1,5 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   ArtifactIdParamsSchema,
   ArtifactVersionLookupResponseSchema,
@@ -107,6 +109,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const { id } = parsedParams.data
   const db = createDb()
   const authority = getCliAuthority(context)
+  const agentAuthority = cliReadAuthority(authority)
+  if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const searchParams = new URL(request.url).searchParams
   const labels = searchParams.getAll('label')
   if (labels.length > 1) {
@@ -144,7 +148,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const expectedCurrentVersionId =
     parsedQuery.data.base_version ??
     (parsedQuery.data.expected_version?.trim() || null)
-  if (authority?.kind === 'agent' && !expectedCurrentVersionId)
+  if (agentAuthority !== null && !expectedCurrentVersionId)
     return errorResponse(
       'expected-version-required',
       'Agent updates require the current version id.',
@@ -168,8 +172,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
           : {}),
         ...(authority ? { authority } : {}),
         ...(expectedCurrentVersionId ? { expectedCurrentVersionId } : {}),
-        ...(authority?.kind === 'agent'
-          ? { agentProfileId: authority.agentProfileId }
+        ...(agentAuthority !== null
+          ? { agentProfileId: agentAuthority.agentProfileId }
           : {}),
       }),
       parsedQuery.data.label ?? null,

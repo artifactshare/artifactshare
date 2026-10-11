@@ -1,4 +1,8 @@
 import {
+  isRecognizedCliPreset,
+  isRecognizedCliSessionKind,
+} from '~/lib/cli-authority-policy'
+import {
   sql,
   type Compilable,
   type ExpressionBuilder,
@@ -98,13 +102,20 @@ export async function issueCliRefreshCredential(
           'sessions.id',
         )
         .leftJoin(
+          'cli_family_authorities',
+          'cli_family_authorities.family_id',
+          'cli_session_authorities.family_id',
+        )
+        .leftJoin(
           'artifact_containers',
           'artifact_containers.id',
           'cli_session_authorities.project_id',
         )
         .select([
           'cli_session_authorities.kind',
+          'cli_session_authorities.session_id as authority_session_id',
           'cli_session_authorities.preset',
+          'cli_family_authorities.preset as family_preset',
           'cli_session_authorities.workspace_id',
           'cli_session_authorities.project_id',
           'cli_session_authorities.agent_profile_id',
@@ -116,6 +127,14 @@ export async function issueCliRefreshCredential(
         .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT)
         .executeTakeFirst()
     : null
+  if (
+    bootstrapAuthority?.authority_session_id != null &&
+    (!isRecognizedCliSessionKind(bootstrapAuthority.kind) ||
+      !isRecognizedCliPreset(bootstrapAuthority.preset) ||
+      (bootstrapAuthority.kind === 'family' &&
+        !isRecognizedCliPreset(bootstrapAuthority.family_preset)))
+  )
+    return null
   if (
     bootstrapAuthority?.kind === 'bootstrap' &&
     bootstrapAuthority.preset !== 'agent'
@@ -448,6 +467,25 @@ export async function issueCliRefreshCredential(
   return { refreshToken, expiresAt }
 }
 
+// Keep the source row invalid through the whole issuance batch: cleanup must
+// not erase an unknown authority and turn subsequent writes into legacy login.
+function recognizedSourceAuthoritySql() {
+  return sql<boolean>`NOT EXISTS (
+      SELECT 1 FROM cli_session_authorities source_authority
+      WHERE source_authority.session_id = sessions.id
+        AND NOT (
+          (source_authority.kind = 'bootstrap' AND source_authority.preset = 'agent')
+          OR (source_authority.kind = 'family'
+            AND source_authority.preset IN ('agent', 'unrestricted')
+            AND EXISTS (
+              SELECT 1 FROM cli_family_authorities source_family
+              WHERE source_family.family_id = source_authority.family_id
+                AND source_family.preset IN ('agent', 'unrestricted')
+            ))
+        )
+    )`
+}
+
 function verifiedCliDeviceSession<TB extends keyof DB>(
   eb: ExpressionBuilder<DB, TB>,
   token: string,
@@ -458,6 +496,7 @@ function verifiedCliDeviceSession<TB extends keyof DB>(
     .where(sql<boolean>`sessions.token = ${token}`)
     .where(sql<boolean>`sessions.user_id = ${userId}`)
     .where(sql<boolean>`sessions.user_agent = ${CLI_DEVICE_SESSION_USER_AGENT}`)
+    .where(recognizedSourceAuthoritySql())
 }
 
 function verifiedCliDeviceSessionQuery(
@@ -471,6 +510,7 @@ function verifiedCliDeviceSessionQuery(
     .where('sessions.token', '=', token)
     .where('sessions.user_id', '=', userId)
     .where('sessions.user_agent', '=', CLI_DEVICE_SESSION_USER_AGENT)
+    .where(recognizedSourceAuthoritySql())
 }
 
 export async function refreshCliSession(
@@ -547,7 +587,8 @@ export async function refreshCliSession(
         selectFrom('cli_family_authorities')
           .select('family_id')
           .where('family_id', '=', familyId)
-          .where('status', '=', 'active'),
+          .where('status', '=', 'active')
+          .where('preset', 'in', ['unrestricted', 'agent']),
       ),
     )
     // A stopped bot must never be able to mint a new credential or session:
@@ -663,6 +704,7 @@ export async function refreshCliSession(
         .where('sessions.id', '=', sessionId)
         .where('cli_family_authorities.family_id', '=', familyId)
         .where('cli_family_authorities.status', '=', 'active')
+        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
         .select([
           'sessions.id as session_id',
           'cli_family_authorities.family_id',
@@ -729,6 +771,7 @@ async function refreshLegacyCliSession(
     .where('cli_refresh_credentials.expires_at', '>', now)
     .where('cli_refresh_credentials.revoked_at', 'is', null)
     .where('cli_family_authorities.status', '=', 'active')
+    .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
     // Bot tokens must go through the rotation-consuming path; the legacy
     // route would let a leaked bot token mint sessions indefinitely without
     // consuming the family-root credential. Rejected as an ordinary invalid
@@ -774,6 +817,7 @@ async function refreshLegacyCliSession(
         .where('revoked_at', 'is', null)
         .where('expires_at', '>', now)
         .where('cli_family_authorities.status', '=', 'active')
+        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
         .select([
           eb.val(sessionId).as('id'),
           eb.val(row.user_id).as('user_id'),
@@ -831,6 +875,7 @@ async function refreshLegacyCliSession(
         .where('sessions.id', '=', sessionId)
         .where('cli_family_authorities.family_id', '=', row.family_id)
         .where('cli_family_authorities.status', '=', 'active')
+        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
         .select([
           'sessions.id as session_id',
           'cli_family_authorities.family_id',
@@ -1307,6 +1352,14 @@ async function readRotationReplay(
     .where('old.rotation_request_hash', '=', requestHash)
     .where('old.rotation_retry_until', '>', now)
     .where('next.revoked_at', 'is', null)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('cli_family_authorities')
+          .select('family_id')
+          .whereRef('family_id', '=', 'next.family_id')
+          .where('preset', 'in', ['unrestricted', 'agent']),
+      ),
+    )
     .executeTakeFirst()
   if (!row) return { kind: 'invalid' }
   return {

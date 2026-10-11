@@ -44,6 +44,174 @@ describe('cli-refresh-credentials service', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test.each([null, 'rotate', 'replay', 'interleaved', 'legacy-interleaved'])(
+    'rejects unknown family presets for %s without issuing records',
+    async (mode) => {
+      const issued = await issueCliRefreshCredential(db, 'u1')
+      if (mode === 'replay') {
+        expect(
+          (await refreshCliSession(db, issued.refreshToken, 'rotate', secret))
+            .kind,
+        ).toBe('ok')
+      }
+      const before = sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get()
+      const sessionsBefore = sqlite
+        .prepare('SELECT COUNT(*) AS count FROM sessions')
+        .get()
+      const corrupt = () => {
+        sqlite.exec('PRAGMA ignore_check_constraints = ON')
+        try {
+          sqlite.exec("UPDATE cli_family_authorities SET preset = 'unknown'")
+        } finally {
+          sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+        }
+      }
+      if (mode === 'interleaved' || mode === 'legacy-interleaved')
+        sqliteRef.beforeNextBatch = corrupt
+      else corrupt()
+      await expect(
+        refreshCliSession(
+          db,
+          issued.refreshToken,
+          mode === null || mode === 'legacy-interleaved' ? null : 'rotate',
+          secret,
+        ),
+      ).resolves.toEqual({ kind: 'invalid' })
+      expect(
+        sqlite
+          .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+          .get(),
+      ).toEqual(before)
+      expect(
+        sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get(),
+      ).toEqual(sessionsBefore)
+    },
+  )
+
+  test.each(['preflight', 'commit'])(
+    'rejects issuance from an unknown referenced family preset at %s',
+    async (stage) => {
+      const issued = await issueCliRefreshCredential(db, 'u1')
+      const refreshed = await refreshCliSession(
+        db,
+        issued.refreshToken,
+        'rotate',
+        secret,
+      )
+      expect(refreshed.kind).toBe('ok')
+      if (refreshed.kind !== 'ok') throw new Error('Expected a source session')
+      sqlite
+        .prepare(
+          "UPDATE sessions SET user_agent = 'artifactshare-cli-device' WHERE token = ?",
+        )
+        .run(refreshed.sessionToken)
+      const tables = [
+        'cli_refresh_credentials',
+        'cli_family_authorities',
+        'cli_session_authorities',
+        'cli_refresh_sessions',
+        'sessions',
+        'audit_events',
+      ]
+      const snapshot = () =>
+        tables.map((table) =>
+          sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+        )
+      const corrupt = () => {
+        sqlite.exec('PRAGMA ignore_check_constraints = ON')
+        try {
+          sqlite.exec("UPDATE cli_family_authorities SET preset = 'unknown'")
+        } finally {
+          sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+        }
+      }
+      let before: ReturnType<typeof snapshot>
+      if (stage === 'preflight') {
+        corrupt()
+        before = snapshot()
+      } else {
+        sqliteRef.beforeNextBatch = () => {
+          corrupt()
+          before = snapshot()
+        }
+      }
+      await expect(
+        issueCliRefreshCredential(db, 'u1', refreshed.sessionToken),
+      ).resolves.toBeNull()
+      expect(snapshot()).toEqual(before!)
+    },
+  )
+
+  test.each([
+    ['bootstrap', 'unknown'],
+    ['family', 'unknown'],
+    ['unknown', 'unrestricted'],
+  ])('rejects issuance from %s with preset %s', async (kind, preset) => {
+    sqlite.exec(`INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at)
+      VALUES ('s1', 'u1', 'ass_test', '2099-01-01T00:00:00.000Z', 'artifactshare-cli-device', '2026-01-01', '2026-01-01')`)
+    sqlite.exec('PRAGMA ignore_check_constraints = ON')
+    try {
+      sqlite
+        .prepare(`INSERT INTO cli_session_authorities (session_id, kind, preset, bearer_only, created_at)
+        VALUES ('s1', ?, ?, 1, '2026-01-01')`)
+        .run(kind, preset)
+    } finally {
+      sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+    }
+    await expect(
+      issueCliRefreshCredential(db, 'u1', 'ass_test'),
+    ).resolves.toBeNull()
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_family_authorities')
+        .get(),
+    ).toEqual({ count: 0 })
+  })
+
+  test('does not erase an invalid source row and mint a legacy authority during issuance', async () => {
+    await issueCliRefreshCredential(db, 'u1')
+    sqlite.exec(`INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at)
+      VALUES ('s1', 'u1', 'ass_test', '2099-01-01T00:00:00.000Z', 'artifactshare-cli-device', '2026-01-01', '2026-01-01')`)
+    sqlite.exec(`INSERT INTO cli_session_authorities (session_id, family_id, kind, preset, bearer_only, created_at)
+      SELECT 's1', family_id, 'family', 'unrestricted', 1, '2026-01-01' FROM cli_family_authorities`)
+    sqliteRef.beforeNextBatch = () => {
+      sqlite.exec('PRAGMA ignore_check_constraints = ON')
+      try {
+        sqlite.exec("UPDATE cli_session_authorities SET preset = 'unknown'")
+      } finally {
+        sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+      }
+    }
+    await expect(
+      issueCliRefreshCredential(db, 'u1', 'ass_test'),
+    ).resolves.toBeNull()
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_credentials')
+        .get(),
+    ).toEqual({ count: 1 })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_family_authorities')
+        .get(),
+    ).toEqual({ count: 1 })
+    expect(
+      sqlite.prepare('SELECT preset FROM cli_session_authorities').get(),
+    ).toEqual({ preset: 'unknown' })
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM cli_refresh_sessions')
+        .get(),
+    ).toEqual({ count: 0 })
+  })
+
   test('issues a refresh credential and stores only a hash', async () => {
     const issued = await issueCliRefreshCredential(db, 'u1')
     const row = readRefreshRow(sqlite)

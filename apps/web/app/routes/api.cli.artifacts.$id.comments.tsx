@@ -1,3 +1,4 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ArtifactIdParamsSchema,
   CommentActionResponseSchema,
@@ -43,9 +44,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   const { id } = parsedParams.data
   const url = new URL(request.url)
   return await withDb(async (db) => {
-    const authority = getCliAuthority(context)
+    const authority = cliReadAuthority(getCliAuthority(context))
+    if (authority === 'denied') return cliScopeDeniedResponse()
     const agentRead =
-      authority?.kind === 'agent'
+      authority !== null
         ? await authorizeAgentArtifactRead(db, user, authority, id)
         : null
     if (agentRead?.kind === 'missing-viewer') {
@@ -89,9 +91,10 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   const user = requireUser(context)
   const url = new URL(request.url)
   return await withDb(async (db) => {
-    const authority = getCliAuthority(context)
+    const authority = cliReadAuthority(getCliAuthority(context))
+    if (authority === 'denied') return cliScopeDeniedResponse()
     let agentReadAuthorization
-    if (authority?.kind === 'agent') {
+    if (authority !== null) {
       if (hasActionField(rawPayload)) return cliScopeDeniedResponse()
       const agentRead = await authorizeAgentArtifactRead(
         db,
@@ -187,8 +190,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
       id,
       commentPostInput(parsedPost.data),
       {
-        agentProfileId:
-          authority?.kind === 'agent' ? authority.agentProfileId : null,
+        agentProfileId: authority !== null ? authority.agentProfileId : null,
         agentReadAuthorization,
         waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
       },
