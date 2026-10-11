@@ -73,6 +73,9 @@
           },
           "409": {
             "description": "Concurrent change or source unavailable."
+          },
+          "415": {
+            "description": "JSON content type required."
           }
         }
       }

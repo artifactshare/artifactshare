@@ -1281,3 +1281,7 @@ it('publisher readback extends the legacy object without widening its shape', as
     }).success,
   ).toBe(false)
 })
+
+it('adoption documents JSON content type rejection', () => {
+  expect(CLI_API_ENDPOINTS.artifactAdopt.errorStatuses).toContain(415)
+})

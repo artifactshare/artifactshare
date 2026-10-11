@@ -201,6 +201,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                                 >
                                   <SectionBody
                                     text={cliReferenceOptionHelp(
+                                      surfaceCommand.path,
                                       help,
                                       content.locale,
                                     )}

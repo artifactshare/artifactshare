@@ -237,8 +237,8 @@ test.each(['en', 'ja'] as const)(
     expect(html).toContain('project requires placement in a project')
     expect(html).toContain(
       locale === 'en'
-        ? 'N or all. Keeps only the latest N versions and permanently deletes older ones.'
-        : 'N または all。最新の N 版だけを残し、古い版は元に戻せない形で削除します。',
+        ? 'N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
+        : 'N または all(持ち主のみ)。最新の N 版だけを残し、古い版は元に戻せない形で削除します。all で制限を外します。',
     )
     const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
     expect(editCard).toContain(

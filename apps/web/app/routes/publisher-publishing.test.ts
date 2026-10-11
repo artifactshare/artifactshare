@@ -142,6 +142,7 @@ function form(text = '<p>Report</p>') {
 }
 function args(path: string, body?: FormData, id?: string) {
   return {
+    url: new URL(`https://example.test${path}`),
     request: new Request(
       `https://example.test${path}`,
       body ? { method: 'POST', body } : {},
@@ -1475,4 +1476,28 @@ test('publisher edit uses the normalized public URL and shared edit response', a
     retain_versions: null,
     deleted_versions: 0,
   })
+})
+
+test.each([
+  'artifact_kind=static_site&artifact_kind=static_site',
+  'artifact_kind=static_site&artifact_kind=html_page',
+  'artifact_kind=html_page&artifact_kind=static_site',
+])('publisher rejects duplicate kind query as invalid: %s', async (query) => {
+  const created = await create()
+  const before = snapshot()
+  const response = await update(
+    args(
+      `/api/shareables/${created.id}/versions?${query}&expected_version=${created.versionId}`,
+      form(),
+      created.id,
+    ),
+  )
+  expect(response.status).toBe(400)
+  expect(await response.json()).toMatchObject({
+    error: {
+      code: 'validation-failed',
+      message: 'Invalid version query.',
+    },
+  })
+  expect(snapshot()).toEqual(before)
 })

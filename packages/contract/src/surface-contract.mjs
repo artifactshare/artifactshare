@@ -310,8 +310,16 @@ const pathId = { name: 'id', in: 'path', required: true, schema: restString }
  * @param {object} response
  * @param {object | null} request
  * @param {string[]} presets
+ * @param {object} [errors]
  */
-const restOperation = (summary, description, response, request, presets) => ({
+const restOperation = (
+  summary,
+  description,
+  response,
+  request,
+  presets,
+  errors = {},
+) => ({
   summary,
   description,
   security: restSecurity,
@@ -339,6 +347,7 @@ const restOperation = (summary, description, response, request, presets) => ({
     },
     405: { description: 'Method unavailable to this credential preset.' },
     409: { description: 'Concurrent change or source unavailable.' },
+    ...errors,
   },
 })
 export const REST_OPERATIONS = {
@@ -349,6 +358,7 @@ export const REST_OPERATIONS = {
       restRef('PublisherAdoptResponse'),
       restRef('PublisherAdoptRequest'),
       ['unrestricted', 'browser-session'],
+      { 415: { description: 'JSON content type required.' } },
     ),
   },
   '/api/cli/artifacts/{id}': {

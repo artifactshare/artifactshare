@@ -113,6 +113,9 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const agentAuthority = publisher ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const searchParams = new URL(request.url).searchParams
+  if (publisher && searchParams.getAll('artifact_kind').length > 1) {
+    return errorResponse('validation-failed', 'Invalid version query.', 400)
+  }
   if (
     publisher &&
     (!(
@@ -120,8 +123,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
       (searchParams.get('artifact_kind') === 'static_site' &&
         searchParams.get('base_version')?.trim())
     ) ||
-      searchParams.getAll('expected_version').length > 1 ||
-      searchParams.getAll('artifact_kind').length > 1)
+      searchParams.getAll('expected_version').length > 1)
   )
     return errorResponse(
       'expected-version-required',

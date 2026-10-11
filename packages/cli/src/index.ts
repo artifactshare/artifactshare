@@ -510,7 +510,7 @@ const editDefinition = define({
       type: 'string',
       toKebab: true,
       description:
-        'N or all. Keeps only the latest N versions and permanently deletes older ones.',
+        'N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.',
     },
     noLinkExpiry: {
       type: 'boolean',

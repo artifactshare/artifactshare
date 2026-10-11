@@ -18,7 +18,12 @@ import type { Route } from './+types/api.cli.artifacts.$id.download'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+export async function loader({
+  context,
+  params,
+  request,
+  url,
+}: Route.LoaderArgs) {
   const user = requireUser(context)
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
@@ -33,7 +38,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       if (row.artifact_kind === 'static_site') {
         const manifest = await getCliDownloadManifest(db, user, {
           id,
-          baseUrl: new URL(request.url).origin,
+          baseUrl: url.origin,
           publisherAuthority: resolved,
         })
         if (manifest.kind === 'ok')

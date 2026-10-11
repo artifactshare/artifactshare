@@ -27,6 +27,8 @@ vi.mock('~/services/cli-download.server', () => ({
   getPublisherDownloadFile: getPublisherDownloadFileMock,
 }))
 
+import { loadPublisherArtifact } from '~/services/publisher-scope.server'
+
 import { loader, middleware } from './api.cli.artifacts.$id.download'
 
 describe('/api/cli/artifacts/:id/download', () => {
@@ -100,16 +102,30 @@ describe('/api/cli/artifacts/:id/download', () => {
     expect(getCliDownloadManifestMock).not.toHaveBeenCalled()
   })
 
-  test.each(['sha-index', ''])(
+  test.each(['sha-index', '', 'publisher-static-site'])(
     'returns a download manifest preserving sha256=%j',
     async (sha256) => {
+      const publisher = sha256 === 'publisher-static-site'
+      const authority = {
+        kind: 'publisher',
+        familyId: 'family1',
+        workspaceId: 'ws1',
+        publisherClientId: 'client1',
+        publisherClientName: 'Reports',
+      }
+      if (publisher) {
+        getCliAuthorityMock.mockReturnValue(authority)
+        vi.mocked(loadPublisherArtifact).mockResolvedValueOnce({
+          artifact_kind: 'static_site',
+        } as never)
+      }
       getCliDownloadManifestMock.mockResolvedValue({
         kind: 'ok',
         data: {
           id: 'abc123def4',
           share_url: 'https://artifactshare.test/a/abc123def4',
           version_id: 'ver123',
-          artifact_kind: 'markdown_page',
+          artifact_kind: publisher ? 'static_site' : 'markdown_page',
           files: [
             {
               path: '/index.md',
@@ -123,10 +139,15 @@ describe('/api/cli/artifacts/:id/download', () => {
       })
 
       const response = await loader({
+        url: new URL(
+          'https://artifactshare.test/api/cli/artifacts/abc123def4/download',
+        ),
         context: new Map(),
         params: { id: 'abc123def4' },
         request: new Request(
-          'https://artifactshare.test/api/cli/artifacts/abc123def4/download',
+          publisher
+            ? 'http://internal.invalid/api/cli/artifacts/abc123def4/download'
+            : 'https://artifactshare.test/api/cli/artifacts/abc123def4/download',
         ),
       } as never)
       const body = (await response.json()) as {
@@ -154,6 +175,7 @@ describe('/api/cli/artifacts/:id/download', () => {
         {
           id: 'abc123def4',
           baseUrl: 'https://artifactshare.test',
+          ...(publisher ? { publisherAuthority: authority } : {}),
         },
       )
     },

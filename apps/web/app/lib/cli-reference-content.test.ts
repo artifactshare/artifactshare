@@ -7,6 +7,7 @@ import {
   CLI_REFERENCE_PUBLIC_COMMANDS,
   CLI_REFERENCE_SECTION_IDS,
   cliReferenceUsage,
+  cliReferenceOptionHelp,
   cliReferenceContent,
 } from './cli-reference-content'
 
@@ -300,9 +301,48 @@ test.each(['en', 'ja'] as const)(
       'POST/PATCH',
     ])
       expect(body).toContain(field)
-    expect(body).toContain(locale === 'en' ? 'metadata-only' : 'メタデータのみ')
+    expect(body).toContain(locale === 'en' ? 'metadata-only' : 'メタデータだけ')
     expect(body).toContain(
       locale === 'en' ? 'workflows are unsupported' : '対応していません',
     )
   },
 )
+
+test('publisher-specific download and read responses are explicitly scoped', () => {
+  const en = cliReferenceContent('en').sections.introduction.body
+  expect(en).toContain(
+    'With a publisher credential, the exact download endpoint returns source bytes',
+  )
+  expect(en).toContain(
+    'With a publisher credential, readback includes visibility',
+  )
+  const ja = cliReferenceContent('ja').sections.introduction.body
+  expect(ja).toContain(
+    'publisher の資格では、download は単一ファイルなら元データ',
+  )
+  expect(ja).toContain('publisher の資格では、個別アセットの取得はできません。')
+  expect(ja).toContain(
+    'publisher の資格では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します',
+  )
+  expect(ja).not.toContain('readback')
+})
+
+test('retention option localization is scoped to the edit command', () => {
+  const help =
+    '--retain-versions <retain-versions> N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
+  expect(
+    surface.commands.find((command) => command.path === 'edit')?.option_help,
+  ).toContain(help)
+  expect(cliReferenceOptionHelp('edit', help, 'ja')).toBe(
+    '--retain-versions <retain-versions> N または all(持ち主のみ)。最新の N 版だけを残し、古い版は元に戻せない形で削除します。all で制限を外します。',
+  )
+  expect(cliReferenceOptionHelp('edit', help, 'en')).toBe(help)
+  expect(cliReferenceOptionHelp('share', help, 'ja')).toBe(help)
+  expect(
+    cliReferenceOptionHelp(
+      'edit',
+      '--visibility <visibility> private or link',
+      'ja',
+    ),
+  ).toBe('--visibility <visibility> private or link')
+})

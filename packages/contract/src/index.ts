@@ -1201,7 +1201,7 @@ export const CLI_API_ENDPOINTS = {
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 404, 405, 409] as const,
+    errorStatuses: [400, 401, 403, 404, 405, 409, 415] as const,
   },
   publisherRetentionEdit: {
     path: '/api/cli/shareables/:id/edit',

@@ -990,7 +990,7 @@ test('edit reference includes visibility and retention help from the built comma
   const visibilityHelp =
     '--visibility <visibility> private, workspace, project, or link (project requires placement in a project)'
   const retentionHelp =
-    '--retain-versions <retain-versions> N or all. Keeps only the latest N versions and permanently deletes older ones.'
+    '--retain-versions <retain-versions> N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
   const surface = await generateSurface({
     run: (args) =>
       args.length
@@ -1044,6 +1044,7 @@ test('Cursor edit guidance lists visibility values once and retains placement re
 
 test('OpenAPI describes publisher REST operations separately from MCP OAuth', () => {
   const spec = generateOpenApiSurface()
+  assert.ok(spec.paths['/api/cli/artifacts/{id}/adopt'].post.responses[415])
   const expected = {
     '/api/cli/artifacts/{id}/adopt': ['post'],
     '/api/cli/artifacts/{id}': ['get', 'delete'],
