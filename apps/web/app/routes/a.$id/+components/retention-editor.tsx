@@ -253,12 +253,22 @@ export function RetentionEditor({
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('vw.retentionConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(
+                publisherManaged
+                  ? 'vw.retentionManagedConfirmTitle'
+                  : 'vw.retentionConfirmTitle',
+              )}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                preview?.count === 1
-                  ? 'vw.retentionConfirmOne'
-                  : 'vw.retentionConfirm',
+                publisherManaged
+                  ? preview?.count === 1
+                    ? 'vw.retentionManagedConfirmOne'
+                    : 'vw.retentionManagedConfirm'
+                  : preview?.count === 1
+                    ? 'vw.retentionConfirmOne'
+                    : 'vw.retentionConfirm',
                 { count: preview?.count ?? 0 },
               )}
             </AlertDialogDescription>

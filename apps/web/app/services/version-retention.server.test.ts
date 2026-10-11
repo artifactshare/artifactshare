@@ -759,3 +759,39 @@ test('clearing managed retention preserves every version', async () => {
     sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
   ).toEqual({ storage_used_bytes: 40 })
 })
+
+test.each(['v4', 'v1'])(
+  'unmanaged confirmation only invalidates foreign references when removals change (%s)',
+  async (currentId) => {
+    const preview = await previewRetention(db, 's1', 'u1', 1)
+    expect(preview!.count).toBe(3)
+    sqliteRef.beforeNextBatch = () => {
+      sqlite
+        .prepare(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+      VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', ?)`)
+        .run(currentId)
+    }
+    const saved = await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)
+    if (currentId === 'v4') {
+      expect(saved).toEqual({ retain_versions: 1, deleted_versions: 3 })
+      expect(
+        sqlite.prepare('SELECT id FROM versions ORDER BY id').all(),
+      ).toEqual([{ id: 'v4' }])
+      expect(
+        sqlite
+          .prepare('SELECT COUNT(*) AS count FROM version_retention_tombstones')
+          .get(),
+      ).toEqual({ count: 3 })
+    } else {
+      expect(saved).toBeNull()
+      expect(
+        sqlite
+          .prepare("SELECT retain_versions FROM shareables WHERE id = 's1'")
+          .get(),
+      ).toEqual({ retain_versions: null })
+      expect(
+        sqlite.prepare('SELECT COUNT(*) AS count FROM versions').get(),
+      ).toEqual({ count: 4 })
+    }
+  },
+)

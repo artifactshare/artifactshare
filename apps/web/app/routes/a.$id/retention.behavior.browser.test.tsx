@@ -155,6 +155,17 @@ test.each([false, true])(
     await vi.waitFor(() =>
       expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
     )
+    const confirmation = document.querySelector('[role="alertdialog"]')!
+    expect(confirmation.textContent).toContain(
+      publisherManaged
+        ? 'Remove older scheduled versions?'
+        : 'Remove older versions?',
+    )
+    expect(confirmation.textContent).toContain(
+      publisherManaged
+        ? '2 scheduled versions will be removed. All versions people added are kept. This cannot be undone.'
+        : '2 versions will be removed. This cannot be undone.',
+    )
     await page.getByRole('button', { name: 'Remove versions and save' }).click()
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
@@ -239,8 +250,12 @@ test.each([false, true])(
     await submit()
     await page.getByRole('button', { name: 'Remove versions and save' }).click()
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain(
-        '3 versions will be removed.',
+      expect(
+        document.querySelector('[role="alertdialog"]')?.textContent,
+      ).toContain(
+        publisherManaged
+          ? '3 scheduled versions will be removed. All versions people added are kept. This cannot be undone.'
+          : '3 versions will be removed. This cannot be undone.',
       ),
     )
     expect(state.revalidate).not.toHaveBeenCalled()
@@ -596,9 +611,14 @@ test.each(['failed', 'changed'] as const)(
   },
 )
 
-test.each(['en', 'ja'] as const)(
-  'managed %s editor wraps protection on mobile and confirms only scheduled removals',
-  async (locale) => {
+test.each([
+  ['en', 1],
+  ['en', 2],
+  ['ja', 1],
+  ['ja', 2],
+] as const)(
+  'managed %s editor wraps protection on mobile and confirms %s scheduled removals',
+  async (locale, count) => {
     state.locale = locale
     await page.viewport(390, 844)
     await mount(2, true, true)
@@ -609,7 +629,7 @@ test.each(['en', 'ja'] as const)(
     expect(host.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
-    fetchMock.mockResolvedValueOnce(preview(1))
+    fetchMock.mockResolvedValueOnce(preview(count))
     await page
       .getByRole('button', {
         name: locale === 'en' ? 'Save version setting' : '版数の設定を保存',
@@ -618,6 +638,17 @@ test.each(['en', 'ja'] as const)(
       .click()
     await vi.waitFor(() =>
       expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
+    )
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain(
+      locale === 'en'
+        ? 'Remove older scheduled versions?'
+        : '定期更新の古い版を削除しますか?',
+    )
+    expect(dialog.textContent).toContain(
+      locale === 'en'
+        ? `${count} scheduled ${count === 1 ? 'version' : 'versions'} will be removed. All versions people added are kept. This cannot be undone.`
+        : `定期更新の古い版を${count}件削除します。人が追加した版はすべて残します。この操作は取り消せません。`,
     )
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       retain_versions: 1,

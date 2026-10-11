@@ -1621,13 +1621,33 @@ test.each(['owner', 'readonly', 'unlimited'])(
           workspaceId,
           userId,
         )
-        expect(put.mock.calls.map(([key]) => key)).toEqual(
-          versions.map((v) => v.r2_key),
+        const basePut = vi.fn().mockResolvedValue(undefined)
+        await seedDevScreenArtifactBodies(
+          { put: basePut } as unknown as Pick<R2Bucket, 'put'>,
+          kind === 'readonly'
+            ? 'viewer/revisit-context'
+            : 'recent/content-rich',
+          workspaceId,
+          userId,
         )
-        for (const [index, [, body]] of put.mock.calls.entries())
-          expect(new TextEncoder().encode(body).byteLength).toBe(
-            versions[index].size_bytes,
+        expect(basePut.mock.calls.length).toBeGreaterThan(0)
+        expect(put.mock.calls.slice(0, basePut.mock.calls.length)).toEqual(
+          basePut.mock.calls,
+        )
+        const bodies = new Map(put.mock.calls.map(([key, body]) => [key, body]))
+        for (const version of versions) {
+          expect(bodies.has(version.r2_key)).toBe(true)
+          expect(
+            new TextEncoder().encode(bodies.get(version.r2_key)).byteLength,
+          ).toBe(version.size_bytes)
+          expect(bodies.get(version.r2_key)).toContain(
+            `version ${version.number}.`,
           )
+        }
+        for (const [key, body] of basePut.mock.calls) {
+          if (!versions.some((version) => version.r2_key === key))
+            expect(bodies.get(key)).toBe(body)
+        }
         if (kind === 'readonly')
           expect(await previewRetention(db, id, userId, 1)).toBeNull()
         expect(

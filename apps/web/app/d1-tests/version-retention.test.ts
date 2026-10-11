@@ -311,3 +311,25 @@ test('D1 publisher-guarded managed history spans batches within the binding budg
     await database.prepare('SELECT storage_used_bytes FROM workspaces').first(),
   ).toEqual({ storage_used_bytes: 30 })
 })
+
+test('D1 accepts unmanaged confirmation when a new foreign current reference leaves removals unchanged', async () => {
+  const db = createDb(database)
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  expect(preview!.count).toBe(1)
+  await database
+    .prepare(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+    VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v2')`)
+    .run()
+  expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
+    retain_versions: 1,
+    deleted_versions: 1,
+  })
+  expect(await database.prepare('SELECT id FROM versions').all()).toMatchObject(
+    { results: [{ id: 'v2' }] },
+  )
+  expect(
+    await database
+      .prepare('SELECT version_id FROM version_retention_tombstones')
+      .all(),
+  ).toMatchObject({ results: [{ version_id: 'v1' }] })
+})

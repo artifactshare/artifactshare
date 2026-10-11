@@ -114,6 +114,14 @@ export async function seedDevScreenArtifactBodies(
 ): Promise<void> {
   if (!bucket) return
   if (managedRetentionScenarios.has(scenario)) {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      scenario === 'viewer/retention-managed-readonly'
+        ? 'viewer/revisit-context'
+        : 'recent/content-rich',
+      workspaceId,
+      userId,
+    )
     const index = scenario === 'viewer/retention-managed-readonly' ? 1 : 21
     const shareableId = devShareableId(`${workspaceId}-${userId}-file-${index}`)
     await Promise.all(

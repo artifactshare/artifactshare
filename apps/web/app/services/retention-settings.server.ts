@@ -19,7 +19,7 @@ function ownerQuery(db: Kysely<DB>, id: string, ownerId: string) {
 }
 
 // A single SQL snapshot is also compared by the guarded UPDATE. It includes
-// unpublished rows and other files' current references, not just loader history.
+// unpublished rows and, for managed artifacts, other files' current references.
 function snapshot(id: string, proposed: number | null) {
   return sql<string>`json_object('file', id, 'owner', owner_user_id,
     'workspace', workspace_id, 'stored', retain_versions,
@@ -29,9 +29,10 @@ function snapshot(id: string, proposed: number | null) {
     'versions', (SELECT json_group_array(json_array(id, number, status, published_at, created_by_publisher_client_id))
       FROM (SELECT id, number, status, published_at, created_by_publisher_client_id FROM versions
         WHERE shareable_id = ${id} ORDER BY id)),
-    'references', (SELECT json_group_array(current_version_id)
+    'references', CASE WHEN created_by_publisher_client_id IS NOT NULL
+      OR assigned_publisher_client_id IS NOT NULL THEN (SELECT json_group_array(current_version_id)
       FROM (SELECT current_version_id FROM shareables
-        WHERE current_version_id IN (SELECT id FROM versions WHERE shareable_id = ${id}) ORDER BY current_version_id)),
+        WHERE current_version_id IN (SELECT id FROM versions WHERE shareable_id = ${id}) ORDER BY current_version_id)) ELSE NULL END,
     'eligible', (SELECT json_group_array(id) FROM (SELECT id FROM versions
       WHERE id IN ${candidates(id, proposed)} ORDER BY id)))`
 }

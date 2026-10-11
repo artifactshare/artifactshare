@@ -238,7 +238,7 @@ test.each(['en', 'ja'] as const)(
     expect(html).toContain(
       locale === 'en'
         ? 'N or all (owner only). Keeps the latest N versions; publisher-managed artifacts count only publisher versions and keep all versions people added. Older eligible versions are permanently deleted; all clears the limit.'
-        : 'N または all(持ち主のみ)。最新の N 版を残します。定期更新用クライアントが作成した、または割り当てられたファイルでは、定期更新の版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+        : 'N または all(持ち主のみ)。最新の N 版を残します。publisher の資格で作成した、またはそのクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
     )
     const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
     expect(editCard).toContain(
