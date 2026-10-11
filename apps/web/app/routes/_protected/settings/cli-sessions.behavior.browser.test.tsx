@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
 import { page } from 'vitest/browser'
 import { bindI18n } from '~/lib/i18n'
+import en from '~/i18n/en.json'
 import type { Locale } from '~/i18n/messages'
 import '~/app.css'
 
@@ -74,8 +75,8 @@ test.each(['light', 'dark'])(
       expect(label.scrollWidth).toBeGreaterThan(label.clientWidth)
       expect(getComputedStyle(label).textOverflow).toBe('ellipsis')
       const access = label.parentElement!.nextElementSibling as HTMLElement
-      expect(access.textContent).toContain(
-        'Access: Create files and update its own',
+      expect(access.textContent).toBe(
+        `${en['team.tokens.cli.preset']}: ${en['team.tokens.cli.preset.publisher']}`,
       )
       expect(getComputedStyle(access).whiteSpace).toBe('normal')
       expect(access.scrollWidth).toBeLessThanOrEqual(access.clientWidth)
