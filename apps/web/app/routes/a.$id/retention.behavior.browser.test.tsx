@@ -643,7 +643,7 @@ test.each([
     expect(dialog.textContent).toContain(
       locale === 'en'
         ? 'Remove older scheduled versions?'
-        : '定期更新の古い版を削除しますか?',
+        : '定期更新の古い版を削除しますか？',
     )
     expect(dialog.textContent).toContain(
       locale === 'en'
