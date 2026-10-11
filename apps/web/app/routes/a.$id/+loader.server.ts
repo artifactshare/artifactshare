@@ -1520,11 +1520,14 @@ async function loadHistoryVersions(
     scheduledUpdate: row.publisherClientId != null,
     sizeBytes: row.sizeBytes,
     isCurrent: row.id === currentVersionId,
-    createdByLabel: row.createdByAgentProfileId
-      ? 'Agent'
-      : (row.createdByName ??
-        (mayShowCreatorEmail ? row.createdByEmail : null) ??
-        'User'),
+    createdByLabel:
+      row.publisherClientId != null
+        ? null
+        : row.createdByAgentProfileId
+          ? 'Agent'
+          : (row.createdByName ??
+            (mayShowCreatorEmail ? row.createdByEmail : null) ??
+            'User'),
   }))
   if (versions.some((version) => version.id === displayedVersionId)) {
     return versions
@@ -1563,11 +1566,14 @@ async function loadHistoryVersions(
       scheduledUpdate: displayedRow.publisherClientId != null,
       sizeBytes: displayedRow.sizeBytes,
       isCurrent: displayedRow.id === currentVersionId,
-      createdByLabel: displayedRow.createdByAgentProfileId
-        ? 'Agent'
-        : (displayedRow.createdByName ??
-          (mayShowCreatorEmail ? displayedRow.createdByEmail : null) ??
-          'User'),
+      createdByLabel:
+        displayedRow.publisherClientId != null
+          ? null
+          : displayedRow.createdByAgentProfileId
+            ? 'Agent'
+            : (displayedRow.createdByName ??
+              (mayShowCreatorEmail ? displayedRow.createdByEmail : null) ??
+              'User'),
     },
   ]
 }

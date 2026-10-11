@@ -14,7 +14,7 @@ afterEach(() => {
 
 for (const density of ['panel', 'popover'] as const) {
   test.each(['en', 'ja'] as const)(
-    `${density} wraps labels and preserves scheduled attribution (%s)`,
+    `${density} wraps labels and hides personal attribution for scheduled rows (%s)`,
     async (locale) => {
       await page.viewport(375, 812)
       const host = document.createElement('div')
@@ -55,7 +55,7 @@ for (const density of ['panel', 'popover'] as const) {
       expect(links[1]!.textContent).toContain(
         bindI18n(locale).t('history.scheduledUpdate'),
       )
-      expect(links[1]!.textContent).toContain('Author')
+      expect(links[1]!.textContent).not.toContain('Author')
       expect(links[0]!.textContent).toContain('Human Author')
       expect(links[0]!.textContent).not.toContain(
         bindI18n(locale).t('history.scheduledUpdate'),

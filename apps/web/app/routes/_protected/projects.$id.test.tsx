@@ -833,7 +833,7 @@ test.each(['member', 'shared'] as const)(
       expect(markup(first)).toContain('/a/scheduled')
       expect(markup(first)).not.toContain('project.fileUpdated')
       expect(markup(first)).not.toContain('v1')
-      expect(markup(first)).not.toContain('history.dataUpdated')
+      expect(markup(first)).toContain('history.dataUpdated')
       const refreshAt = '2026-07-29T01:00:00Z'
       await publish(2, true, refreshAt)
       const refreshed = await loader(loaderArgs())
@@ -842,10 +842,14 @@ test.each(['member', 'shared'] as const)(
         latestPublishedAt: null,
         latestAuthorEmail: null,
       })
-      expect(markup(refreshed)).not.toContain('history.dataUpdated')
-      expect(markup(refreshed)).not.toContain(`dateTime="${refreshAt}"`)
+      expect(markup(refreshed)).toContain('history.dataUpdated')
+      expect(markup(refreshed)).toContain(`dateTime="${refreshAt}"`)
       expect(markup(refreshed)).toContain('/a/scheduled')
       await publish(3, false)
+      const humanOnly = await loader(loaderArgs())
+      expect(humanOnly.projectActivity.pins[0]?.dataUpdatedAt).toBeNull()
+      expect(markup(humanOnly)).not.toContain('history.dataUpdated')
+      expect(markup(humanOnly)).toContain('project.fileUpdated')
       await publish(4, true)
       const mixed = await loader(loaderArgs())
       expect(mixed.files.map((file) => file.id)).toEqual(['scheduled', 'other'])
@@ -860,7 +864,7 @@ test.each(['member', 'shared'] as const)(
         latestAuthorEmail: 'u1@example.com',
       })
       expect(markup(mixed)).toContain('project.fileUpdated')
-      expect(markup(mixed)).not.toContain('history.dataUpdated')
+      expect(markup(mixed)).toContain('history.dataUpdated')
       expect(markup(mixed)).toContain('v3')
       expect(markup(mixed)).not.toContain('v4')
       await db
@@ -875,7 +879,7 @@ test.each(['member', 'shared'] as const)(
         latestAuthorEmail: null,
       })
       expect(markup(pruned)).not.toContain('project.fileUpdated')
-      expect(markup(pruned)).not.toContain('history.dataUpdated')
+      expect(markup(pruned)).toContain('history.dataUpdated')
       expect(markup(pruned)).toContain('/a/scheduled')
     } finally {
       await db.destroy()

@@ -228,6 +228,7 @@ describe('project pins', () => {
           const initial = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
           expect(initial).toHaveLength(1)
           expect(initial[0]).toMatchObject({
+            dataUpdatedAt: publisherCreation ? '2026-01-02T00:00:00Z' : null,
             latestVersionNumber: publisherCreation ? 0 : 1,
             latestAuthorName: publisherCreation ? null : 'U',
             latestPublishedAt: publisherCreation
@@ -244,6 +245,7 @@ describe('project pins', () => {
       const rows = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
       expect(rows).toHaveLength(1)
       expect(rows[0]?.latestVersionNumber).toBe(2)
+      expect(rows[0]?.dataUpdatedAt).toBeNull()
       const human = await db
         .selectFrom('versions')
         .selectAll()
@@ -276,14 +278,30 @@ describe('project pins', () => {
       const mixed = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
       expect(mixed).toHaveLength(1)
       expect(mixed[0]).toMatchObject({
+        dataUpdatedAt: human.published_at,
         latestVersionNumber: 2,
         latestAuthorName: 'U',
         latestPublishedAt: human.published_at,
+      })
+      const refreshedAt = '2026-01-03T00:00:00Z'
+      await db
+        .updateTable('versions')
+        .set({ published_at: refreshedAt })
+        .where('id', '=', 'v3')
+        .execute()
+      expect(
+        (await listProjectPins(db, 'p1', sql<boolean>`1 = 1`))[0],
+      ).toMatchObject({
+        dataUpdatedAt: refreshedAt,
+        latestVersionNumber: 2,
+        latestPublishedAt: human.published_at,
+        latestAuthorName: 'U',
       })
       await db.deleteFrom('versions').where('id', '=', 'v2').execute()
       expect(
         (await listProjectPins(db, 'p1', sql<boolean>`1 = 1`))[0],
       ).toMatchObject({
+        dataUpdatedAt: refreshedAt,
         latestVersionNumber: publisherCreation ? 0 : 1,
         latestAuthorName: publisherCreation ? null : 'U',
         latestPublishedAt: publisherCreation ? null : human.published_at,
@@ -292,6 +310,7 @@ describe('project pins', () => {
       const pruned = await listProjectPins(db, 'p1', sql<boolean>`1 = 1`)
       expect(pruned).toHaveLength(1)
       expect(pruned[0]).toMatchObject({
+        dataUpdatedAt: refreshedAt,
         latestVersionNumber: 0,
         latestAuthorName: null,
         latestPublishedAt: null,

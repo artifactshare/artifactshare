@@ -20,6 +20,13 @@ export async function listProjectPins(
         sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' and v2.created_by_publisher_client_id is null order by v2.number desc, v2.id desc limit 1)`,
       ),
     )
+    .leftJoin('versions as newest', (join) =>
+      join.on(
+        'newest.id',
+        '=',
+        sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' order by v2.number desc, v2.id desc limit 1)`,
+      ),
+    )
     .leftJoin(
       'users as latestAuthors',
       'latestAuthors.id',
@@ -33,6 +40,13 @@ export async function listProjectPins(
       'shareables.artifact_kind as artifactKind',
       sql<number>`coalesce(latest.number, 0)`.as('latestVersionNumber'),
       'latest.published_at as latestPublishedAt',
+      // Freshness is independent of the human modification signal. Compare
+      // version numbers so publications sharing a timestamp remain distinct.
+      sql<
+        string | null
+      >`case when newest.number > coalesce(latest.number, 0) then newest.published_at else null end`.as(
+        'dataUpdatedAt',
+      ),
       'latestAuthors.name as latestAuthorName',
       'latestAuthors.email as latestAuthorEmail',
       'latestAuthors.image as latestAuthorImage',

@@ -424,7 +424,7 @@ test.each([true, false])(
 )
 
 test.each(['en', 'ja'] as const)(
-  '%s scheduled history preserves labels, links and attribution',
+  '%s scheduled history preserves labels and links without personal attribution',
   (locale) => {
     const html = renderToStaticMarkup(
       <VersionRows
@@ -437,13 +437,14 @@ test.each(['en', 'ja'] as const)(
             scheduledUpdate: true,
             label: 'Hourly report',
             createdAt: '2026-06-02T00:00:00.000Z',
-            createdByLabel: 'Author',
+            createdByLabel: 'Publisher Author',
             sizeBytes: 10,
             isCurrent: false,
             isDisplayed: true,
           },
           {
             id: 'human',
+            createdByLabel: 'Human Author',
             ordinal: 4,
             scheduledUpdate: false,
             createdAt: '2026-06-03T00:00:00.000Z',
@@ -458,7 +459,8 @@ test.each(['en', 'ja'] as const)(
       html.split(locale === 'en' ? 'Scheduled update' : '定期更新'),
     ).toHaveLength(2)
     expect(html).toContain('Hourly report')
-    expect(html).toContain('Author')
+    expect(html).not.toContain('Publisher Author')
+    expect(html).toContain('Human Author')
     expect(html).toContain('?version=machine')
     expect(html).toContain('aria-current="page"')
   },

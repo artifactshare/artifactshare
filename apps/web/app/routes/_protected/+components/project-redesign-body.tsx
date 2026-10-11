@@ -202,6 +202,23 @@ export function ProjectRedesignBody({
                       ) : null}
                     </div>
                   ) : null}
+                  {pinned.dataUpdatedAt ? (
+                    <div className="text-muted-foreground mt-2 text-xs">
+                      {t('history.dataUpdated')}{' '}
+                      <time
+                        dateTime={pinned.dataUpdatedAt}
+                        title={new Date(pinned.dataUpdatedAt).toLocaleString(
+                          locale,
+                          {
+                            timeZone: 'UTC',
+                            timeZoneName: 'short',
+                          },
+                        )}
+                      >
+                        {formatRelative(pinned.dataUpdatedAt, locale)}
+                      </time>
+                    </div>
+                  ) : null}
                 </div>
               )
             })}

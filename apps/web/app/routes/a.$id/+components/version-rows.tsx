@@ -67,7 +67,7 @@ export function VersionRows({
                 </div>
               ) : null}
               <div className="text-muted-foreground flex gap-1.5 text-xs">
-                {version.createdByLabel ? (
+                {!version.scheduledUpdate && version.createdByLabel ? (
                   <>
                     <span className="min-w-0 truncate">
                       {version.createdByLabel}

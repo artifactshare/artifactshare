@@ -458,7 +458,7 @@ describe('/a/:id loader', () => {
       ).toMatchObject({
         isDisplayed: true,
         scheduledUpdate: true,
-        createdByLabel: 'Scheduled Owner',
+        createdByLabel: null,
         isCurrent: false,
         label: 'Restructured',
       })
@@ -471,7 +471,8 @@ describe('/a/:id loader', () => {
           />,
         )
         expect(html).toContain(bindI18n(locale).t('history.scheduledUpdate'))
-        expect(html).toContain('Scheduled Owner')
+        expect(html).not.toContain('Scheduled Owner')
+        expect(html).toContain('Human Owner')
         expect(html).not.toContain('client1')
         expect(html).not.toContain('owner@example.com')
         expect(html).toContain('Human Owner')

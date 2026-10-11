@@ -1,3 +1,5 @@
+import { sql } from 'kysely'
+import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
 
@@ -1462,53 +1464,70 @@ test('scheduled viewer capture seeds mixed history, fresh data, and matching art
   }
 })
 
-test('scheduled project capture includes publisher-only refreshes and a preserved human update', async () => {
-  const { db } = createMigratedInMemoryDb()
-  try {
-    const scenario = 'project-detail/scheduled-pins'
-    const now = '2026-09-09T00:00:00.000Z'
-    expect(isScreenScenario(scenario)).toBe(true)
-    const { workspaceId } = await ensureDevScreenState(
-      db,
-      scenario,
-      now,
-      'team',
-    )
-    const userId = `${workspaceId}-user`
-    await db
-      .insertInto('users')
-      .values({
-        id: userId,
-        email: 'viewer@example.com',
-        name: 'Viewer',
-        email_verified: 1,
-        created_at: now,
-        updated_at: now,
-        workspace_id: workspaceId,
-      })
-      .execute()
-    await seedDevScreenState(db, scenario, workspaceId, userId, now)
-    const pins = await db
-      .selectFrom('project_pins')
-      .select('shareable_id')
-      .orderBy('shareable_id')
-      .execute()
-    expect(pins).toHaveLength(2)
-    for (let index = 0; index < pins.length; index++) {
-      const versions = await db
-        .selectFrom('versions')
-        .select(['number', 'created_by_publisher_client_id'])
-        .where('shareable_id', '=', pins[index]!.shareable_id)
-        .orderBy('number')
+test.each(['with-pins', 'scheduled-pins'] as const)(
+  'project capture %s distinguishes human updates from scheduled freshness',
+  async (state) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const scenario = `project-detail/${state}`
+      const now = '2026-09-09T00:00:00.000Z'
+      expect(isScreenScenario(scenario)).toBe(true)
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: 'viewer@example.com',
+          name: 'Viewer',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
         .execute()
-      expect(versions.map((version) => version.number)).toEqual([1, 2, 3])
-      expect(
-        versions.map((version) =>
-          Boolean(version.created_by_publisher_client_id),
-        ),
-      ).toEqual(index === 0 ? [true, true, true] : [true, false, true])
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      const pins = await db
+        .selectFrom('project_pins')
+        .select('shareable_id')
+        .orderBy('shareable_id')
+        .execute()
+      expect(pins).toHaveLength(2)
+      const cards = await listProjectPins(
+        db,
+        `${workspaceId}-container`,
+        sql<boolean>`1 = 1`,
+      )
+      expect(cards.map((card) => card.dataUpdatedAt)).toEqual(
+        state === 'scheduled-pins' ? [now, now] : [null, null],
+      )
+      for (let index = 0; index < pins.length; index++) {
+        const versions = await db
+          .selectFrom('versions')
+          .select(['number', 'created_by_publisher_client_id'])
+          .where('shareable_id', '=', pins[index]!.shareable_id)
+          .orderBy('number')
+          .execute()
+        expect(versions.map((version) => version.number)).toEqual([1, 2, 3])
+        expect(
+          versions.map((version) =>
+            Boolean(version.created_by_publisher_client_id),
+          ),
+        ).toEqual(
+          state === 'with-pins'
+            ? [false, false, false]
+            : index === 0
+              ? [true, true, true]
+              : [true, false, true],
+        )
+      }
+    } finally {
+      await db.destroy()
     }
-  } finally {
-    await db.destroy()
-  }
-})
+  },
+)

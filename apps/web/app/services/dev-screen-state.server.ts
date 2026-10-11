@@ -347,8 +347,9 @@ export async function seedDevScreenState(
       .execute()
     return seeded
   }
-  if (scenario === 'project-detail/scheduled-pins')
-    scenario = 'project-detail/with-pins'
+  const hasProjectPins =
+    scenario === 'project-detail/with-pins' ||
+    scenario === 'project-detail/scheduled-pins'
 
   const seedsRepresentativeFeed =
     scenario === 'home/content-rich' ||
@@ -592,7 +593,7 @@ export async function seedDevScreenState(
     scenario === 'viewer/csp-diagnostics' ||
     scenario === 'viewer/access-requests' ||
     scenario === 'project-detail/with-files' ||
-    scenario === 'project-detail/with-pins'
+    hasProjectPins
   ) {
     const representativeNames =
       scenario === 'viewer/csp-diagnostics'
@@ -640,7 +641,7 @@ export async function seedDevScreenState(
           : `${workspaceId}-${userId}-file-${index + 1}`,
       ),
     )
-    if (scenario === 'project-detail/with-pins') {
+    if (hasProjectPins) {
       await db
         .insertInto('publisher_clients')
         .values({
@@ -662,7 +663,7 @@ export async function seedDevScreenState(
             : index === 0
               ? 180
               : index * 26 * 60
-          : scenario === 'project-detail/with-pins'
+          : hasProjectPins
             ? (index + 1) * 26 * 60
             : index * 26 * 60
         const timestamp = new Date(
@@ -1136,12 +1137,14 @@ export async function seedDevScreenState(
             }
           }
         }
-        if (scenario === 'project-detail/with-pins' && index < 2) {
-          // Both pins start with publisher creation. One has only scheduled
-          // refreshes; the other has a human update before its latest refresh.
+        if (hasProjectPins && index < 2) {
+          // Scheduled pins cover publisher-only and mixed history; ordinary
+          // pins keep human publication metadata without a freshness line.
           const versionNumbers = [1, 2, 3]
           for (const number of versionNumbers) {
-            const scheduled = index === 0 || number !== 2
+            const scheduled =
+              scenario === 'project-detail/scheduled-pins' &&
+              (index === 0 || number !== 2)
             const versionId = `${shareableId}-scheduled-${number}`
             await db
               .insertInto('versions')
