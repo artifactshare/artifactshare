@@ -19,6 +19,7 @@ export { VersionWidget } from './version-widget'
 interface HistoryPanelProps {
   artifactId?: string
   canChangeRetention?: boolean
+  publisherManaged?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
@@ -36,6 +37,7 @@ interface HistoryPanelProps {
 export function HistoryPanel({
   versions,
   retainVersions,
+  publisherManaged,
   artifactId,
   canChangeRetention,
   open,
@@ -100,6 +102,7 @@ export function HistoryPanel({
         artifactId={artifactId}
         canChangeRetention={canChangeRetention}
         retainVersions={retainVersions}
+        publisherManaged={publisherManaged}
         versions={versions}
         canReplaceFile={canReplaceFile}
         active={active}
@@ -118,6 +121,7 @@ export function HistoryPanel({
 export function HistoryPanelBody({
   versions,
   retainVersions,
+  publisherManaged,
   artifactId,
   canChangeRetention,
   canReplaceFile,
@@ -132,6 +136,7 @@ export function HistoryPanelBody({
 }: {
   artifactId?: string
   canChangeRetention?: boolean
+  publisherManaged?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
@@ -152,13 +157,18 @@ export function HistoryPanelBody({
             key={artifactId}
             artifactId={artifactId}
             retainVersions={retainVersions ?? null}
+            publisherManaged={publisherManaged}
           />
         ) : retainVersions != null ? (
           <p className="text-muted-foreground m-0 text-xs">
             {t(
               retainVersions === 1
-                ? 'vw.retentionNoteOne'
-                : 'vw.retentionNoteOther',
+                ? publisherManaged
+                  ? 'vw.retentionManagedNoteOne'
+                  : 'vw.retentionNoteOne'
+                : publisherManaged
+                  ? 'vw.retentionManagedNoteOther'
+                  : 'vw.retentionNoteOther',
               { count: retainVersions },
             )}
           </p>

@@ -38,3 +38,43 @@ test.each([
     expect(html).toContain('aria-expanded="false"')
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'managed %s editor explains protection even when unlimited',
+  (locale) => {
+    routeData.locale = locale
+    for (const retainVersions of [null, 1, 2]) {
+      const html = renderToStaticMarkup(
+        <RetentionEditor
+          artifactId="s1"
+          retainVersions={retainVersions}
+          publisherManaged
+        />,
+      )
+      expect(html).toContain(
+        locale === 'en'
+          ? 'All versions people added are kept'
+          : '人が追加した版はすべて残します',
+      )
+      expect(html).toContain(
+        locale === 'en'
+          ? 'Keep the latest scheduled versions'
+          : '最新の定期更新の版を残す',
+      )
+      if (retainVersions !== null)
+        expect(html).toContain(
+          locale === 'en'
+            ? retainVersions === 1
+              ? 'Keeping the latest scheduled version.'
+              : 'Keeping the latest 2 scheduled versions.'
+            : `最新${retainVersions}件の定期更新の版`,
+        )
+    }
+    const unmanaged = renderToStaticMarkup(
+      <RetentionEditor artifactId="s1" retainVersions={1} />,
+    )
+    expect(unmanaged).not.toContain(
+      locale === 'en' ? 'All versions people added' : '人が追加した版',
+    )
+  },
+)

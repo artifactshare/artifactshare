@@ -285,8 +285,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
 ```
 
 - Owners with unrestricted credentials can set `edit <target> --retain-versions N`
-  to keep the latest N published versions, or `--retain-versions all` to keep all
-  future versions. Setting or lowering retention immediately deletes older
+  to keep the latest N eligible published versions, or `--retain-versions all` to keep all
+  future versions. For files created by or assigned to a publisher client, this counts only published publisher versions (including earlier clients) and keeps every version people added, even when an unrestricted owner changes the setting. Other files keep counting all published versions. The current version is always kept. Setting or lowering retention immediately deletes older eligible
   versions; the response reports `retain_versions` and `deleted_versions`.
   Owners can also use the file history panel, which confirms existing removals.
   Authorized viewers of versions removed by retention see an explanation and
@@ -652,6 +652,8 @@ Single-file versions require `expected_version`. Static-site versions accept
 `artifact_kind=static_site` with either `expected_version` for replacement or
 `base_version` for changed-files uploads and repeated `delete_path` removals.
 The base must be current. Version uploads preserve audience, location and retention.
+
+On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions.
 
 The exact `GET /api/cli/artifacts/:id/download` returns raw source bytes for
 single files and a JSON manifest with version id, paths and SHA-256 hashes for

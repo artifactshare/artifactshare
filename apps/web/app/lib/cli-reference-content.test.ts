@@ -329,12 +329,12 @@ test('publisher-specific download and read responses are explicitly scoped', () 
 
 test('retention option localization is scoped to the edit command', () => {
   const help =
-    '--retain-versions <retain-versions> N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
+    '--retain-versions <retain-versions> N or all (owner only). Keeps the latest N versions; publisher-managed artifacts count only publisher versions and keep all versions people added. Older eligible versions are permanently deleted; all clears the limit.'
   expect(
     surface.commands.find((command) => command.path === 'edit')?.option_help,
   ).toContain(help)
   expect(cliReferenceOptionHelp('edit', help, 'ja')).toBe(
-    '--retain-versions <retain-versions> N または all(持ち主のみ)。最新の N 版だけを残し、古い版は元に戻せない形で削除します。all で制限を外します。',
+    '--retain-versions <retain-versions> N または all(持ち主のみ)。最新の N 版を残します。定期更新用クライアントが作成した、または割り当てられたファイルでは、定期更新の版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
   )
   expect(cliReferenceOptionHelp('edit', help, 'en')).toBe(help)
   expect(cliReferenceOptionHelp('share', help, 'ja')).toBe(help)
@@ -346,3 +346,27 @@ test('retention option localization is scoped to the edit command', () => {
     ),
   ).toBe('--visibility <visibility> private or link')
 })
+
+test.each(['en', 'ja'] as const)(
+  'publisher retention guidance explains owner edits and historical clients in %s',
+  (locale) => {
+    const guidance = cliReferenceContent(locale).sections.introduction.body
+    const policy =
+      locale === 'en'
+        ? [
+            'On artifacts created by or assigned to a publisher client',
+            'including earlier clients',
+            'keeps every other version',
+            'This also applies to unrestricted owner edits.',
+            'Unmanaged artifacts continue to count all published versions.',
+          ]
+        : [
+            '定期更新用クライアントが作成した、または割り当てられたファイル',
+            '以前のクライアントによる版も含め',
+            '人が追加した版はすべて残します。',
+            'このルールは所有者が unrestricted 資格情報で設定するときも同じです。',
+            'それ以外のファイルでは、これまでどおりすべての公開版を数えます。',
+          ]
+    for (const explanation of policy) expect(guidance).toContain(explanation)
+  },
+)

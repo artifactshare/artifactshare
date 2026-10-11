@@ -230,15 +230,15 @@ test.each(['en', 'ja'] as const)(
 )
 
 test.each(['en', 'ja'] as const)(
-  'renders edit project visibility help in %s',
+  'renders edit project visibility and managed retention help in %s',
   (locale) => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html).toContain('private, workspace, project, or link')
     expect(html).toContain('project requires placement in a project')
     expect(html).toContain(
       locale === 'en'
-        ? 'N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
-        : 'N または all(持ち主のみ)。最新の N 版だけを残し、古い版は元に戻せない形で削除します。all で制限を外します。',
+        ? 'N or all (owner only). Keeps the latest N versions; publisher-managed artifacts count only publisher versions and keep all versions people added. Older eligible versions are permanently deleted; all clears the limit.'
+        : 'N または all(持ち主のみ)。最新の N 版を残します。定期更新用クライアントが作成した、または割り当てられたファイルでは、定期更新の版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
     )
     const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
     expect(editCard).toContain(

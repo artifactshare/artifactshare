@@ -2283,3 +2283,41 @@ test('retention committing during history loading still returns the removal expl
   })
   expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
 })
+
+test.each([
+  [null, null, false],
+  ['client1', null, true],
+  [null, 'client1', true],
+  ['client1', 'client2', true],
+] as const)(
+  'loader derives retention copy from creation %s and assignment %s',
+  async (created, assigned, managed) => {
+    vi.clearAllMocks()
+    isWorkspaceAccessRevokedMock.mockResolvedValue(false)
+    const { context } = setupHtmlShareable({
+      shareable: {
+        retain_versions: 2,
+        created_by_publisher_client_id: created,
+        assigned_publisher_client_id: assigned,
+      },
+    })
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+    expect(result).toMatchObject({
+      kind: 'ok',
+      artifact: { publisherManaged: managed, retainVersions: 2 },
+    })
+    expect(dbMock.selectFrom.mock.results[0].value.select).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'shareables.created_by_publisher_client_id',
+        'shareables.assigned_publisher_client_id',
+      ]),
+    )
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain('client1')
+    expect(serialized).not.toContain('client2')
+  },
+)

@@ -501,3 +501,261 @@ test('publication after preview cannot increase the browser-authorized removal s
     await db.selectFrom('version_retention_tombstones').selectAll().execute(),
   ).toEqual([])
 })
+
+function managedHistory(field = 'created_by_publisher_client_id') {
+  sqlite.exec(`INSERT INTO publisher_clients (id, workspace_id, user_id, name, created_at)
+    VALUES ('client1', 'ws1', 'u1', 'Scheduled reports', '2026-09-01'),
+      ('client2', 'ws1', 'u1', 'Earlier reports', '2026-09-01');
+    UPDATE shareables SET ${field} = 'client1', retain_versions = 1;
+    UPDATE versions SET created_by_publisher_client_id = 'client2' WHERE id = 'v2';
+    UPDATE versions SET created_by_publisher_client_id = 'client1' WHERE id = 'v4';`)
+}
+
+test.each(['created_by_publisher_client_id', 'assigned_publisher_client_id'])(
+  'managed retention counts only publisher versions through %s',
+  async (field) => {
+    managedHistory(field)
+    expect((await previewRetention(db, 's1', 'u1', 2))!.count).toBe(0)
+    expect((await previewRetention(db, 's1', 'u1', null))!.count).toBe(0)
+    const preview = await previewRetention(db, 's1', 'u1', 1)
+    expect(preview!.count).toBe(1)
+    expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
+      retain_versions: 1,
+      deleted_versions: 1,
+    })
+    expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+      ['v1', 'v3', 'v4'].map((id) => ({ id })),
+    )
+    expect(
+      sqlite
+        .prepare('SELECT version_id FROM version_retention_tombstones')
+        .all(),
+    ).toEqual([{ version_id: 'v2' }])
+    expect(
+      sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+    ).toEqual({ storage_used_bytes: 30 })
+    expect(deleteObject.mock.calls.flat(2)).toEqual(['key2'])
+  },
+)
+
+test.each(['v1', 'v2', 'v3', 'v4'])(
+  'managed current %s consumes no extra publisher slot',
+  async (current) => {
+    managedHistory()
+    sqlite.prepare('UPDATE shareables SET current_version_id = ?').run(current)
+    expect(await pruneVersions(db, 's1')).toBe(current === 'v2' ? 0 : 1)
+    expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+      (current === 'v2' ? ['v1', 'v2', 'v3', 'v4'] : ['v1', 'v3', 'v4']).map(
+        (id) => ({ id }),
+      ),
+    )
+  },
+)
+
+test('publisher attribution alone preserves unmanaged current-first selection', async () => {
+  managedHistory()
+  sqlite.exec(
+    "UPDATE shareables SET created_by_publisher_client_id = NULL, current_version_id = 'v1'",
+  )
+  expect(await pruneVersions(db, 's1')).toBe(3)
+  expect(sqlite.prepare('SELECT id FROM versions').all()).toEqual([
+    { id: 'v1' },
+  ])
+})
+
+test.each([
+  "UPDATE shareables SET assigned_publisher_client_id = 'client2'",
+  "UPDATE shareables SET created_by_publisher_client_id = 'client2'",
+  "UPDATE versions SET created_by_publisher_client_id = 'client1' WHERE id = 'v2'",
+  "UPDATE versions SET created_by_publisher_client_id = 'client2' WHERE id = 'v1'",
+])(
+  'attribution changes invalidate confirmation even with unchanged candidates: %s',
+  async (change) => {
+    managedHistory()
+    const preview = await previewRetention(db, 's1', 'u1', 1)
+    sqliteRef.beforeNextBatch = () => {
+      sqlite.exec(change)
+    }
+    expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toBeNull()
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM versions').get()).toEqual({
+      n: 4,
+    })
+  },
+)
+
+test.each(['management', 'version'])(
+  'rechecks %s protection inside deletion batch',
+  async (change) => {
+    managedHistory()
+    if (change === 'management')
+      sqlite.exec('UPDATE shareables SET created_by_publisher_client_id = NULL')
+    sqliteRef.beforeNextBatch = () => {
+      sqlite.exec(
+        change === 'management'
+          ? "UPDATE shareables SET assigned_publisher_client_id = 'client1'"
+          : "UPDATE versions SET created_by_publisher_client_id = NULL WHERE id = 'v2'",
+      )
+    }
+    expect(await pruneVersions(db, 's1')).toBe(change === 'management' ? 1 : 0)
+    expect(deleteObject.mock.calls.flat(2)).not.toContain('key1')
+    expect(deleteObject.mock.calls.flat(2)).not.toContain('key3')
+  },
+)
+
+test('managed drafts, unpublished rows and foreign current references remain', async () => {
+  managedHistory()
+  sqlite.exec(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+    VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v2');
+    UPDATE versions SET created_by_publisher_client_id = 'client1', status = 'draft', published_at = NULL WHERE id = 'v3';`)
+  expect(await pruneVersions(db, 's1')).toBe(0)
+  sqlite.exec('UPDATE versions SET created_by_publisher_client_id = NULL')
+  expect(await pruneVersions(db, 's1')).toBe(0)
+})
+
+test('managed history crosses publisher-guarded batches without releasing human or shared objects', async () => {
+  managedHistory()
+  sqlite.exec(`INSERT INTO cli_family_authorities (family_id, user_id, preset, workspace_id, publisher_client_id, status, created_at, updated_at) VALUES ('family1', 'u1', 'publisher', 'ws1', 'client1', 'active', '2026-09-01', '2026-09-01');
+    INSERT INTO cli_refresh_credentials (id, user_id, token_hash, family_id, expires_at, created_at) VALUES ('credential1', 'u1', 'test-hash', 'family1', '2099-01-01', '2026-09-01');`)
+  const insert =
+    sqlite.prepare(`INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_by_publisher_client_id, created_at, published_at)
+    VALUES (?, 's1', 'html_page', 'published', '/index.html', ?, 10, 'hash', 'u1', ?, '2026-09-05', '2026-09-05')`)
+  for (let n = 5; n <= 205; n++)
+    insert.run(
+      `v${n}`,
+      n % 2 ? 'key1' : 'shared-publisher',
+      n % 2 ? null : 'client1',
+    )
+  const file =
+    sqlite.prepare(`INSERT INTO version_files (id, version_id, path, r2_key, size_bytes, sha256, mime_type, created_at)
+    VALUES (?, ?, ?, ?, 10, 'hash', 'application/json', '2026-09-01')`)
+  file.run('human-file', 'v1', '/human.json', 'human-shared-file')
+  for (let n = 2; n < 204; n += 2) {
+    file.run(`human-${n}`, `v${n}`, '/human.json', 'human-shared-file')
+    file.run(`removed-${n}`, `v${n}`, '/removed.json', 'removed-shared-file')
+  }
+  sqlite.exec(
+    "UPDATE shareables SET retain_versions = 1, current_version_id = 'v205'; UPDATE workspaces SET storage_used_bytes = 70",
+  )
+  expect(
+    await pruneVersions(db, 's1', undefined, {
+      userId: 'u1',
+      authority: {
+        kind: 'publisher',
+        familyId: 'family1',
+        workspaceId: 'ws1',
+        publisherClientId: 'client1',
+        publisherClientName: 'Scheduled reports',
+      },
+    }),
+  ).toBe(101)
+  const remaining = sqlite
+    .prepare('SELECT id FROM versions ORDER BY number')
+    .all()
+  expect(remaining).toEqual(
+    [
+      'v1',
+      'v3',
+      ...Array.from({ length: 100 }, (_, i) => `v${5 + 2 * i}`),
+      'v204',
+      'v205',
+    ].map((id) => ({ id })),
+  )
+  expect(
+    sqlite
+      .prepare('SELECT COUNT(*) AS n FROM version_retention_tombstones')
+      .get(),
+  ).toEqual({ n: 101 })
+  expect(
+    sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+  ).toEqual({ storage_used_bytes: 40 })
+  expect(deleteObject.mock.calls.flat(2).sort()).toEqual([
+    'key2',
+    'key4',
+    'removed-shared-file',
+  ])
+  expect(
+    sqlite
+      .prepare("SELECT r2_key FROM version_files WHERE version_id = 'v1'")
+      .all(),
+  ).toEqual([{ r2_key: 'human-shared-file' }])
+})
+
+test('managed N greater than one ignores human slots and unpublished publisher rows', async () => {
+  managedHistory()
+  sqlite.exec(`UPDATE shareables SET assigned_publisher_client_id = 'client2', retain_versions = 2;
+    INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_by_publisher_client_id, created_at, published_at)
+      VALUES ('v5', 's1', 'html_page', 'published', '/index.html', 'key5', 10, 'hash', 'u1', 'client2', '2026-09-05', '2026-09-05'),
+      ('v6', 's1', 'html_page', 'published', '/index.html', 'key6', 10, 'hash', 'u1', NULL, '2026-09-06', '2026-09-06'),
+      ('v7', 's1', 'html_page', 'draft', '/index.html', 'key7', 10, 'hash', 'u1', 'client1', '2026-09-07', NULL),
+      ('v8', 's1', 'html_page', 'published', '/index.html', 'key8', 10, 'hash', 'u1', 'client1', '2026-09-08', NULL);
+    UPDATE shareables SET current_version_id = 'v6';
+    UPDATE workspaces SET storage_used_bytes = 80;`)
+  expect(await pruneVersions(db, 's1')).toBe(1)
+  expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+    ['v1', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'].map((id) => ({ id })),
+  )
+  expect(
+    sqlite.prepare('SELECT version_id FROM version_retention_tombstones').all(),
+  ).toEqual([{ version_id: 'v2' }])
+  expect(
+    sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+  ).toEqual({ storage_used_bytes: 70 })
+})
+
+test.each(['protect-version', 'protect-current', 'remove-management'] as const)(
+  'approved managed removal set cannot expand after accepted save: %s',
+  async (change) => {
+    managedHistory()
+    const preview = await previewRetention(db, 's1', 'u1', 1)
+    sqliteRef.afterNextBatch = () => {
+      sqlite.exec(
+        change === 'protect-version'
+          ? "UPDATE versions SET created_by_publisher_client_id = NULL WHERE id = 'v2'"
+          : change === 'protect-current'
+            ? "UPDATE shareables SET current_version_id = 'v2'"
+            : 'UPDATE shareables SET created_by_publisher_client_id = NULL',
+      )
+    }
+    expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
+      retain_versions: 1,
+      deleted_versions: change === 'remove-management' ? 1 : 0,
+    })
+    expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+      (change === 'remove-management'
+        ? ['v1', 'v3', 'v4']
+        : ['v1', 'v2', 'v3', 'v4']
+      ).map((id) => ({ id })),
+    )
+    expect(
+      sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+    ).toEqual({ storage_used_bytes: change === 'remove-management' ? 30 : 40 })
+  },
+)
+
+test('new foreign current references invalidate a managed preview even if removals are unchanged', async () => {
+  managedHistory()
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  sqliteRef.beforeNextBatch = () => {
+    sqlite.exec(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+    VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v4')`)
+  }
+  expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toBeNull()
+})
+
+test('clearing managed retention preserves every version', async () => {
+  managedHistory()
+  expect(await saveRetention(db, 's1', 'u1', null)).toEqual({
+    retain_versions: null,
+    deleted_versions: 0,
+  })
+  expect(await pruneVersions(db, 's1')).toBe(0)
+  expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+    ['v1', 'v2', 'v3', 'v4'].map((id) => ({ id })),
+  )
+  expect(
+    sqlite.prepare('SELECT version_id FROM version_retention_tombstones').all(),
+  ).toEqual([])
+  expect(
+    sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+  ).toEqual({ storage_used_bytes: 40 })
+})

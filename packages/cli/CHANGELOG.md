@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Preserve every version people added when applying retention to publisher-managed artifacts; update bundled retention guidance and CLI help.
+
 - Treat publisher versions as scheduled updates: preserve activity order and human update signals while displaying data freshness and scheduled history.
 
 - Extend server publisher permissions to static sites, manifest and metadata readback, retention and deletion of client-owned or owner-assigned artifacts. Add audited API-only adoption and update bundled documentation; publisher CLI workflows remain unsupported.

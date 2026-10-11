@@ -6,7 +6,11 @@ type HistoryProps = ComponentProps<typeof HistoryPanel>
 type ViewerHistoryPanelProps = {
   artifact: Pick<
     ViewerShellArtifact,
-    'id' | 'canChangeRetention' | 'retainVersions' | 'versions'
+    | 'id'
+    | 'canChangeRetention'
+    | 'retainVersions'
+    | 'publisherManaged'
+    | 'versions'
   >
   state: {
     historyOpen: boolean
@@ -41,6 +45,7 @@ export function ViewerHistoryPanel({
       artifactId={artifact.id}
       canChangeRetention={artifact.canChangeRetention}
       retainVersions={artifact.retainVersions}
+      publisherManaged={artifact.publisherManaged}
       versions={artifact.versions ?? []}
       open={state.historyOpen}
       onOpenChange={(open) => {

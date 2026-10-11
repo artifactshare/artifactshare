@@ -14,13 +14,16 @@ import {
   AlertDialogTitle,
 } from '~/components/ui/alert-dialog'
 import { useT } from '~/hooks/use-t'
+import { cn } from '~/lib/utils'
 
 type Preview = { count: number; proposed: number | null; snapshot: string }
 export function RetentionEditor({
   artifactId,
   retainVersions,
+  publisherManaged,
 }: {
   artifactId: string
+  publisherManaged?: boolean
   retainVersions: number | null
 }) {
   const { t } = useT()
@@ -103,13 +106,22 @@ export function RetentionEditor({
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-muted-foreground min-w-0 truncate text-sm">
+        <p
+          className={cn(
+            'text-muted-foreground min-w-0 text-sm',
+            !publisherManaged && 'truncate',
+          )}
+        >
           {retainVersions === null
             ? t('vw.retentionSummaryAll')
             : t(
                 retainVersions === 1
-                  ? 'vw.retentionNoteOne'
-                  : 'vw.retentionNoteOther',
+                  ? publisherManaged
+                    ? 'vw.retentionManagedNoteOne'
+                    : 'vw.retentionNoteOne'
+                  : publisherManaged
+                    ? 'vw.retentionManagedNoteOther'
+                    : 'vw.retentionNoteOther',
                 { count: retainVersions },
               )}
         </p>
@@ -141,6 +153,11 @@ export function RetentionEditor({
           <legend className="text-sm font-medium">
             {t('vw.retentionTitle')}
           </legend>
+          {publisherManaged ? (
+            <p className="text-muted-foreground text-sm">
+              {t('vw.retentionManagedProtection')}
+            </p>
+          ) : null}
           <RadioGroup
             aria-label={t('vw.retentionTitle')}
             value={limited ? 'limited' : 'all'}
@@ -155,13 +172,21 @@ export function RetentionEditor({
             </label>
             <label className="flex items-center gap-2 text-sm">
               <RadioGroupItem value="limited" data-retention-limited />
-              {t('vw.retentionLimited')}
+              {t(
+                publisherManaged
+                  ? 'vw.retentionManagedLimited'
+                  : 'vw.retentionLimited',
+              )}
             </label>
           </RadioGroup>
           {limited ? (
             <div className="flex flex-col gap-1">
               <label htmlFor={`${id}-count`} className="text-sm">
-                {t('vw.retentionCount')}
+                {t(
+                  publisherManaged
+                    ? 'vw.retentionManagedCount'
+                    : 'vw.retentionCount',
+                )}
               </label>
               <Input
                 id={`${id}-count`}

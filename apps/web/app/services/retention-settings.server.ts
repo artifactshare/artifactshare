@@ -23,10 +23,15 @@ function ownerQuery(db: Kysely<DB>, id: string, ownerId: string) {
 function snapshot(id: string, proposed: number | null) {
   return sql<string>`json_object('file', id, 'owner', owner_user_id,
     'workspace', workspace_id, 'stored', retain_versions,
+    'createdPublisher', created_by_publisher_client_id,
+    'assignedPublisher', assigned_publisher_client_id,
     'current', current_version_id, 'sequence', version_sequence, 'proposed', ${proposed},
-    'versions', (SELECT json_group_array(json_array(id, number, status, published_at))
-      FROM (SELECT id, number, status, published_at FROM versions
+    'versions', (SELECT json_group_array(json_array(id, number, status, published_at, created_by_publisher_client_id))
+      FROM (SELECT id, number, status, published_at, created_by_publisher_client_id FROM versions
         WHERE shareable_id = ${id} ORDER BY id)),
+    'references', (SELECT json_group_array(current_version_id)
+      FROM (SELECT current_version_id FROM shareables
+        WHERE current_version_id IN (SELECT id FROM versions WHERE shareable_id = ${id}) ORDER BY current_version_id)),
     'eligible', (SELECT json_group_array(id) FROM (SELECT id FROM versions
       WHERE id IN ${candidates(id, proposed)} ORDER BY id)))`
 }

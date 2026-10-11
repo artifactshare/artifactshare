@@ -29,7 +29,11 @@ interface VersionWidgetProps {
   displayedPublishedAt?: string | null
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
-  retention?: { limit: number | null; editable: boolean }
+  retention?: {
+    limit: number | null
+    editable: boolean
+    publisherManaged?: boolean
+  }
   canViewHistory?: boolean
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
@@ -202,8 +206,12 @@ export function VersionWidget({
             <p className="text-muted-foreground m-0 px-2 text-xs">
               {t(
                 retainVersions === 1
-                  ? 'vw.retentionNoteOne'
-                  : 'vw.retentionNoteOther',
+                  ? retention?.publisherManaged
+                    ? 'vw.retentionManagedNoteOne'
+                    : 'vw.retentionNoteOne'
+                  : retention?.publisherManaged
+                    ? 'vw.retentionManagedNoteOther'
+                    : 'vw.retentionNoteOther',
                 { count: retainVersions },
               )}
             </p>

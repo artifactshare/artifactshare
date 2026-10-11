@@ -483,3 +483,41 @@ test.each([true, false])(
     expect(html).not.toContain('hidden=""')
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'managed %s read-only history explains human preservation',
+  (locale) => {
+    for (const publisherManaged of [false, true]) {
+      const html = renderToStaticMarkup(
+        <HistoryPanelBody
+          retainVersions={2}
+          publisherManaged={publisherManaged}
+          versions={[]}
+          canReplaceFile={false}
+          active={false}
+          uploading={false}
+          inputRef={{ current: null }}
+          replaceMode="single"
+          setLocalDropActive={() => {}}
+          submitFiles={() => {}}
+          locale={locale}
+          t={bindI18n(locale).t}
+        />,
+      )
+      const protection =
+        locale === 'en'
+          ? 'All versions people added are kept.'
+          : '人が追加した版はすべて残します。'
+      expect(html.includes(protection)).toBe(publisherManaged)
+      expect(html).toContain(
+        locale === 'en'
+          ? publisherManaged
+            ? 'Keeping the latest 2 scheduled versions.'
+            : 'Keeping the latest 2 versions'
+          : publisherManaged
+            ? '最新2件の定期更新の版'
+            : '最新2件の版',
+      )
+    }
+  },
+)
