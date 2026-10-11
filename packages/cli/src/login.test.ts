@@ -724,3 +724,37 @@ function readPendingEvent(result: CliResult): {
     rest: { ...result, stderr: result.stderr.slice(newline + 1) },
   }
 }
+
+test('publisher login fails before sending a device request without downgrading a saved profile', async () => {
+  const configHome = await mkdtemp(
+    join(tmpdir(), 'artifactshare-publisher-login-'),
+  )
+  try {
+    const config = { profiles: { publisher: { preset: 'publisher' } } }
+    await writeFile(join(configHome, 'config.json'), JSON.stringify(config))
+    for (const extra of [[], ['--preset', 'publisher']]) {
+      const result = await runAsync(
+        [
+          'login',
+          '--profile',
+          'publisher',
+          '--allow-plaintext-token-store',
+          '--json',
+          ...extra,
+        ],
+        { ...loginEnv, ARTIFACTSHARE_CONFIG_HOME: configHome },
+      )
+      const payload = expectFailure(result, {
+        command: 'login',
+        code: 'validation_failed',
+      })
+      assert.match(payload.error.message, /Publisher login is not supported/)
+      assert.deepEqual(
+        JSON.parse(await readFile(join(configHome, 'config.json'), 'utf8')),
+        config,
+      )
+    }
+  } finally {
+    await rm(configHome, { recursive: true, force: true })
+  }
+})

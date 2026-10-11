@@ -1557,5 +1557,14 @@
   "preview.shareDialog.errorSelfUploadDisabled": "This account cannot upload its own files. Sign in with Google or Microsoft to share files.",
   "preview.shareDialog.errorWorkspaceAccessRevoked": "This account no longer has access to that workspace.",
   "preview.shareDialog.errorStorageLimit": "The workspace has reached its storage limit.",
-  "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available."
+  "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available.",
+  "device.publisher.capability": "Can create new private artifacts in your home and update only those artifacts.",
+  "device.publisher.choice": "Client identity",
+  "device.publisher.new": "Create a new client",
+  "device.publisher.continue": "Continue an existing client",
+  "device.publisher.client": "Existing client",
+  "device.publisher.select": "Select a client",
+  "device.publisher.duplicate": "This name already exists. Continue that client, or request login again with a different device_name.",
+  "device.publisher.nameHelp": "The requesting client supplies this name. To create another identity, request login with a different device_name. Only continuing an existing client restores access to its earlier files.",
+  "team.tokens.cli.preset": "Preset"
 }

@@ -10,6 +10,7 @@ import {
   DEVICE_TOKEN_RESPONSE_SCHEMA,
   OAuthErrorResponseSchema,
   CliWhoamiResponseSchema,
+  DoctorAuthoritySchema,
   type DeviceCodeResponse,
   type DeviceTokenResponse,
 } from '@artifactshare/contract'
@@ -59,6 +60,7 @@ import { isRecord } from '../validators.js'
 export type CliAuthorizationPreset = 'unrestricted' | 'agent'
 
 export type WhoamiProfile = {
+  preset?: CliAuthorizationPreset | 'publisher'
   email: string | null
   workspace_id: string | null
   hosted_domain: string | null
@@ -363,7 +365,12 @@ export function pendingDeviceAuthFromCode(
   return {
     base_url: baseUrl,
     profile,
-    preset: options.preset === 'agent' ? 'agent' : 'unrestricted',
+    preset:
+      options.preset === 'publisher'
+        ? 'publisher'
+        : options.preset === 'agent'
+          ? 'agent'
+          : 'unrestricted',
     device_code: code.device_code,
     verification_uri: code.verification_uri,
     verification_uri_complete: code.verification_uri_complete ?? null,
@@ -553,6 +560,23 @@ export async function verifyProfileTokenAccount(
   if (whoamiResult.error) {
     return { ok: false, error: whoamiResult.error }
   }
+  const auth =
+    isRecord(whoamiResult.body) && isRecord(whoamiResult.body.auth)
+      ? whoamiResult.body.auth
+      : null
+  if (
+    auth?.authority !== undefined &&
+    !DoctorAuthoritySchema.safeParse(auth.authority).success
+  ) {
+    return {
+      ok: false,
+      error: validationError(
+        'Token authority response was invalid.',
+        'Retry with a supported credential. The token has not been saved.',
+        'service_error',
+      ),
+    }
+  }
   const whoami = whoamiProfile(whoamiResult.body)
 
   const profiles = config.profiles ?? {}
@@ -644,9 +668,12 @@ export async function writeProfileConfig(
         workspace_id: whoami.workspace_id,
         token_store: tokenStore,
         preset:
-          options.preset === 'agent' || options.preset === 'unrestricted'
+          whoami.preset ??
+          (options.preset === 'publisher' ||
+          options.preset === 'agent' ||
+          options.preset === 'unrestricted'
             ? options.preset
-            : (currentProfile?.preset ?? 'unrestricted'),
+            : (currentProfile?.preset ?? 'unrestricted')),
         updated_at: new Date().toISOString(),
       },
     },
@@ -661,6 +688,14 @@ async function resolveAuthorizationPreset(
   | { error: CliError; value?: never }
 > {
   const requested = nonEmpty(options.preset)
+  const stored = (await readGlobalConfig())?.profiles?.[profile]?.preset
+  if (requested === 'publisher' || (!requested && stored === 'publisher'))
+    return {
+      error: validationError(
+        'Publisher login is not supported by this CLI.',
+        'Use the device API and explicitly continue your existing publisher client in the browser.',
+      ),
+    }
   if (requested && requested !== 'agent' && requested !== 'unrestricted') {
     return {
       error: validationError(
@@ -672,7 +707,13 @@ async function resolveAuthorizationPreset(
   if (requested === 'agent' || requested === 'unrestricted') {
     return { value: requested }
   }
-  const stored = (await readGlobalConfig())?.profiles?.[profile]?.preset
+  if (stored !== undefined && stored !== 'agent' && stored !== 'unrestricted')
+    return {
+      error: validationError(
+        'Unknown stored authorization preset.',
+        'Select a supported preset explicitly.',
+      ),
+    }
   return { value: stored ?? 'unrestricted' }
 }
 
@@ -719,6 +760,9 @@ export function whoamiProfile(body: unknown): WhoamiProfile {
   const contracted = CliWhoamiResponseSchema.safeParse(body)
   if (contracted.success) {
     return {
+      ...(contracted.data.auth?.authority
+        ? { preset: contracted.data.auth.authority.preset }
+        : {}),
       email: contracted.data.user.email,
       workspace_id: contracted.data.workspace.id,
       hosted_domain: contracted.data.workspace.hosted_domain,
@@ -728,7 +772,15 @@ export function whoamiProfile(body: unknown): WhoamiProfile {
   const user = record && isRecord(record.user) ? record.user : null
   const workspace =
     record && isRecord(record.workspace) ? record.workspace : null
+  const auth = record && isRecord(record.auth) ? record.auth : null
+  const authority = auth && isRecord(auth.authority) ? auth.authority : null
+  const preset = authority?.preset
   return {
+    ...(preset === 'publisher' ||
+    preset === 'agent' ||
+    preset === 'unrestricted'
+      ? { preset }
+      : {}),
     email: typeof user?.email === 'string' ? user.email : null,
     workspace_id: typeof workspace?.id === 'string' ? workspace.id : null,
     hosted_domain:

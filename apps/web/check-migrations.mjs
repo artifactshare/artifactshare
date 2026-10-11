@@ -80,6 +80,18 @@ const allowedLegacyForeignKeySetter = new Set([
 ])
 
 const allowedLegacyDrops = new Map([
+  [
+    '0112_publisher_clients.sql',
+    [
+      'cli_family_authorities',
+      'cli_session_authorities',
+      'deviceCode'.toLowerCase(),
+      'cli_family_authorities_tmp',
+      'cli_session_authorities_tmp',
+      'deviceCode_tmp'.toLowerCase(),
+      '_migration_0112_guard',
+    ],
+  ],
   // Rebuilds events to add payload and widen event-type/actor constraints.
   ['0100_link_share_safety_events.sql', ['events']],
   ['0103_publish_burst_trigger.sql', ['link_abuse_judgments']],

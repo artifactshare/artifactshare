@@ -106,3 +106,42 @@ test.each([
     ),
   ).toBe(false)
 })
+
+const publisher = {
+  kind: 'publisher' as const,
+  familyId: 'family-1',
+  workspaceId: 'ws1',
+  publisherClientId: 'client-1',
+  publisherClientName: 'Reports',
+}
+test.each([
+  ['GET', '/api/cli/whoami'],
+  ['GET', '/api/cli/doctor'],
+  ['POST', '/api/cli/auth/refresh-credentials'],
+  ['POST', '/api/shareables/uploads'],
+  ['POST', '/api/shareables/abc123def4/versions'],
+  ['GET', '/api/cli/artifacts/abc123def4/download'],
+])('publisher allows %s %s', (method, path) =>
+  expect(allowsCliOperation(publisher, method, path)).toBe(true),
+)
+test.each([
+  ['GET', '/api/cli/artifacts'],
+  ['GET', '/api/cli/artifacts/abc123def4'],
+  ['GET', '/api/cli/artifacts/abc123def4/download/index.html'],
+  ['GET', '/api/cli/artifacts/abc123def4/download/'],
+  ['POST', '/api/cli/artifacts/abc123def4/comments'],
+  ['GET', '/api/cli/artifacts/abc123def4/comments'],
+  ['POST', '/api/cli/artifacts/abc123def4/append'],
+  ['GET', '/api/cli/resolve'],
+  ['GET', '/api/cli/projects'],
+  ['POST', '/api/cli/projects'],
+  ['DELETE', '/api/shareables/abc123def4'],
+  ['PATCH', '/api/shareables/abc123def4'],
+  ['GET', '/api/shareables/abc123def4/versions'],
+  ['POST', '/api/cli/shareables/abc123def4/move'],
+  ['POST', '/api/cli/shareables/abc123def4/edit'],
+  ['POST', '/api/bridge/v1/requests'],
+  ['PUT', '/api/shareables/uploads'],
+])('publisher denies %s %s', (method, path) =>
+  expect(allowsCliOperation(publisher, method, path)).toBe(false),
+)

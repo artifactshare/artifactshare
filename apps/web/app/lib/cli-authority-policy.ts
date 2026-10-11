@@ -5,6 +5,8 @@ import type { CliAuthority } from '~/services/cli-authority.server'
 export function cliReadAuthority(authority: CliAuthority | null | undefined) {
   if (!authority) return null
   switch (authority.kind) {
+    case 'publisher':
+      return 'denied'
     case 'agent':
       return authority
     case 'unrestricted':
@@ -29,6 +31,7 @@ export function cliWriteAuthority(authority: CliAuthority | null | undefined) {
     case 'bootstrap':
       return null
     case 'bridge':
+    case 'publisher':
       return 'denied'
     default: {
       const unexpected: never = authority
@@ -50,6 +53,7 @@ export function allowsHumanCliMutation(
       return allowBootstrap
     case 'agent':
     case 'bridge':
+    case 'publisher':
       return false
     default: {
       const unexpected: never = authority
@@ -67,6 +71,7 @@ export function bridgeCliAuthority(authority: CliAuthority | null | undefined) {
     case 'unrestricted':
     case 'bootstrap':
     case 'agent':
+    case 'publisher':
       return null
     default: {
       const unexpected: never = authority
@@ -83,6 +88,7 @@ export function isRecognizedCliPreset(
   switch (preset) {
     case 'unrestricted':
     case 'agent':
+    case 'publisher':
       return true
     default: {
       const unexpected: never = preset

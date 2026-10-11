@@ -1,15 +1,20 @@
+import {
+  PublisherClientNameSchema,
+  PublisherApprovalChoiceSchema,
+} from '@artifactshare/contract'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
 import { nowIso } from '~/lib/datetime'
 
 export type DeviceAuthorizationIntent = {
-  preset: 'unrestricted' | 'agent'
+  preset: 'unrestricted' | 'agent' | 'publisher'
   deviceName: string | null
   projectSelector: string | null
 }
 
 export type StoredDeviceAuthorizationIntent = DeviceAuthorizationIntent & {
   selectedProjectId: string | null
+  selectedPublisherClientId?: string | null
 }
 
 export type FixedAgentApprovalProject = {
@@ -35,17 +40,26 @@ export function readDeviceAuthorizationIntent(
     return null
   }
   const record = payload as Record<string, unknown>
-  if (record.preset !== 'unrestricted' && record.preset !== 'agent') return null
+  if (
+    record.preset !== 'unrestricted' &&
+    record.preset !== 'agent' &&
+    record.preset !== 'publisher'
+  )
+    return null
   const hasProjectSelector = Object.hasOwn(record, 'project_selector')
   const projectSelector = hasProjectSelector
     ? normalizeProjectSelector(record.project_selector)
     : null
   if (hasProjectSelector && !projectSelector) return null
   if (record.preset !== 'agent' && projectSelector) return null
+  const publisherName = PublisherClientNameSchema.safeParse(record.device_name)
+  if (record.preset === 'publisher' && !publisherName.success) return null
   const deviceName =
-    typeof record.device_name === 'string'
-      ? record.device_name.trim().slice(0, 100) || null
-      : null
+    record.preset === 'publisher' && publisherName.success
+      ? publisherName.data
+      : typeof record.device_name === 'string'
+        ? record.device_name.trim().slice(0, 100) || null
+        : null
   return { preset: record.preset, deviceName, projectSelector }
 }
 
@@ -73,14 +87,15 @@ export async function loadDeviceAuthorizationIntent(
   deviceCode: string,
 ): Promise<StoredDeviceAuthorizationIntent | null> {
   const row = await env.DB.prepare(
-    `SELECT preset, deviceName, selectedProjectId, requestedProjectSelector
+    `SELECT preset, deviceName, selectedProjectId, selectedPublisherClientId, requestedProjectSelector
        FROM deviceCode
       WHERE deviceCode = ?`,
   )
     .bind(deviceCode)
     .first<{
-      preset: 'unrestricted' | 'agent' | null
+      preset: 'unrestricted' | 'agent' | 'publisher' | null
       deviceName: string | null
+      selectedPublisherClientId: string | null
       selectedProjectId: string | null
       requestedProjectSelector: string | null
     }>()
@@ -90,6 +105,9 @@ export async function loadDeviceAuthorizationIntent(
     deviceName: row.deviceName,
     projectSelector: row.requestedProjectSelector,
     selectedProjectId: row.selectedProjectId,
+    ...(row.preset === 'publisher'
+      ? { selectedPublisherClientId: row.selectedPublisherClientId }
+      : {}),
   }
 }
 
@@ -358,4 +376,130 @@ export async function clearAgentApprovalProject(input: {
   )
     .bind(input.userCode, input.userId)
     .run()
+}
+
+export async function isPublisherDeviceApproval(
+  userCode: string,
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    'SELECT preset FROM deviceCode WHERE userCode = ?',
+  )
+    .bind(userCode)
+    .first<{ preset: string }>()
+  return row?.preset === 'publisher'
+}
+
+export async function loadPublisherApprovalContext(
+  userCode: string,
+  userId: string,
+  workspaceId: string,
+) {
+  const intent = await env.DB.prepare(`SELECT deviceName FROM deviceCode
+    WHERE userCode = ? AND userId = ? AND preset = 'publisher' AND status = 'pending' AND expiresAt > ?
+    AND EXISTS (SELECT 1 FROM users WHERE id = ? AND workspace_id = ? AND kind = 'human')
+    AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = deviceCode.userId AND m.status = 'removed' AND m.workspace_id = (SELECT workspace_id FROM users WHERE id = deviceCode.userId))`)
+    .bind(userCode, userId, nowIso(), userId, workspaceId)
+    .first<{ deviceName: string }>()
+  if (!intent) return null
+  const clients = await env.DB.prepare(
+    'SELECT id, name FROM publisher_clients WHERE user_id = ? AND workspace_id = ? ORDER BY name',
+  )
+    .bind(userId, workspaceId)
+    .all<{ id: string; name: string }>()
+  return {
+    preset: 'publisher' as const,
+    requestedName: intent.deviceName,
+    clients: clients.results,
+  }
+}
+
+export async function selectPublisherApprovalClient(input: {
+  userCode: string
+  userId: string
+  workspaceId: string
+  choice: unknown
+}): Promise<boolean> {
+  const choice = PublisherApprovalChoiceSchema.safeParse(input.choice)
+  if (!choice.success) return false
+  const context = await loadPublisherApprovalContext(
+    input.userCode,
+    input.userId,
+    input.workspaceId,
+  )
+  if (!context) return false
+  const clientId =
+    choice.data.mode === 'create-new' ? nanoid() : choice.data.client_id
+  const statements = []
+  if (choice.data.mode === 'create-new') {
+    statements.push(
+      env.DB.prepare(`INSERT OR IGNORE INTO publisher_clients (id, user_id, workspace_id, name, created_at)
+      SELECT ?, ?, ?, deviceName, ? FROM deviceCode
+      WHERE userCode = ? AND userId = ? AND status = 'pending' AND preset = 'publisher'
+        AND selectedPublisherClientId IS NULL AND expiresAt > ?
+        AND EXISTS (SELECT 1 FROM users WHERE id = ? AND workspace_id = ? AND kind = 'human')`).bind(
+        clientId,
+        input.userId,
+        input.workspaceId,
+        nowIso(),
+        input.userCode,
+        input.userId,
+        nowIso(),
+        input.userId,
+        input.workspaceId,
+      ),
+    )
+  }
+  statements.push(
+    env.DB.prepare(`UPDATE deviceCode SET selectedPublisherClientId = ?
+    WHERE userCode = ? AND userId = ? AND status = 'pending' AND preset = 'publisher'
+      AND selectedPublisherClientId IS NULL AND expiresAt > ?
+      AND EXISTS (SELECT 1 FROM publisher_clients pc JOIN users u ON u.id = pc.user_id
+        WHERE pc.id = ? AND pc.user_id = ? AND pc.workspace_id = ? AND u.workspace_id = pc.workspace_id AND u.kind = 'human'
+          AND NOT EXISTS (SELECT 1 FROM workspace_members pm WHERE pm.user_id = u.id AND pm.workspace_id = pc.workspace_id AND pm.status = 'removed'))`).bind(
+      clientId,
+      input.userCode,
+      input.userId,
+      nowIso(),
+      clientId,
+      input.userId,
+      input.workspaceId,
+    ),
+  )
+  const results = await env.DB.batch(statements)
+  return results.at(-1)?.meta.changes === 1
+}
+
+export async function clearPublisherApprovalClient(
+  userCode: string,
+  userId: string,
+) {
+  await env.DB.prepare(`UPDATE deviceCode SET selectedPublisherClientId = NULL
+    WHERE userCode = ? AND userId = ? AND preset = 'publisher' AND status = 'pending'`)
+    .bind(userCode, userId)
+    .run()
+}
+
+export async function attachPublisherBootstrapAuthority(
+  sessionToken: string,
+  intent: StoredDeviceAuthorizationIntent,
+): Promise<boolean> {
+  if (intent.preset !== 'publisher' || !intent.selectedPublisherClientId)
+    return false
+  const now = nowIso()
+  const result = await env.DB.prepare(`INSERT INTO cli_session_authorities
+    (session_id, family_id, kind, preset, workspace_id, project_id, agent_profile_id, publisher_client_id, expires_at, bearer_only, created_at)
+    SELECT s.id, NULL, 'bootstrap', 'publisher', pc.workspace_id, NULL, NULL, pc.id, min(s.expires_at, ?), 1, ?
+    FROM sessions s JOIN users u ON u.id = s.user_id AND u.kind = 'human'
+    JOIN publisher_clients pc ON pc.user_id = u.id AND pc.workspace_id = u.workspace_id
+    WHERE s.token = ? AND s.expires_at > ? AND pc.id = ?
+      AND NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.user_id = u.id AND m.workspace_id = pc.workspace_id AND m.status = 'removed')`)
+    .bind(
+      new Date(Date.now() + 600000).toISOString(),
+      now,
+      sessionToken,
+      now,
+      intent.selectedPublisherClientId,
+    )
+    .run()
+  return result.meta.changes === 1
 }

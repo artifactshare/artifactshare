@@ -8,6 +8,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
+  getCliAuthority: vi.fn().mockReturnValue(null),
 }))
 
 import { loader, middleware } from './api.cli.whoami'

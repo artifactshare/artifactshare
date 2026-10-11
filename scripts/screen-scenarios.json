@@ -27,5 +27,10 @@
   "settings-tokens/active-cli",
   "settings-usage/near-limit",
   "device/fixed-project",
-  "device/fixed-project-unavailable"
+  "device/fixed-project-unavailable",
+  "device/publisher-new",
+  "device/publisher-continue",
+  "device/publisher-invalid",
+  "device/publisher-long-name",
+  "settings-cli-sessions/mixed-presets"
 ]

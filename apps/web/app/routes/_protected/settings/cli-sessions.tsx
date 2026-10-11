@@ -43,6 +43,11 @@ export const screen = {
   primaryAction: 'CLIセッションを管理する',
   states: [
     {
+      id: 'mixed-presets',
+      description: 'Unrestricted, agent and publisher credentials',
+      setup: { scenario: 'settings-cli-sessions/mixed-presets' },
+    },
+    {
       id: 'default',
       description: 'CLIセッション管理',
       setup: {},
@@ -206,6 +211,10 @@ function CliFamilyRow({
 }) {
   const navigation = useNavigation()
   const { t } = useT()
+  const name =
+    family.preset === 'publisher'
+      ? (family.publisherClientName ?? t('team.tokens.cli.session'))
+      : (family.deviceName ?? t('team.tokens.cli.session'))
   const pending =
     navigation.state !== 'idle' &&
     navigation.formData?.get('intent') === 'revoke-cli-family' &&
@@ -213,11 +222,11 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <div
-          className="max-w-96 min-w-0 truncate"
-          title={family.deviceName ?? t('team.tokens.cli.session')}
-        >
-          <TeamUser name={family.deviceName ?? t('team.tokens.cli.session')} />
+        <div className="max-w-96 min-w-0 truncate" title={name}>
+          <TeamUser name={name} />
+          <TeamMuted>
+            {t('team.tokens.cli.preset')}: {family.preset ?? 'unrestricted'}
+          </TeamMuted>
         </div>
       </TableCell>
       <TableCell className="max-phone:hidden">

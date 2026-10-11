@@ -8,7 +8,10 @@ import { cliArtifactErrorResponse } from '~/lib/api-errors'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
-import { getCliDownloadManifest } from '~/services/cli-download.server'
+import {
+  getCliDownloadManifest,
+  getPublisherDownloadFile,
+} from '~/services/cli-download.server'
 import { withDb } from '~/services/db.server'
 import type { Route } from './+types/api.cli.artifacts.$id.download'
 
@@ -22,7 +25,29 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   }
   const { id } = parsedParams.data
   return await withDb(async (db) => {
-    const authority = cliReadAuthority(getCliAuthority(context))
+    const resolved = getCliAuthority(context)
+    if (resolved?.kind === 'publisher') {
+      const result = await getPublisherDownloadFile(db, user, resolved, id)
+      if (result.kind !== 'ok')
+        return cliArtifactErrorResponse(
+          result,
+          'This artifact kind cannot be downloaded yet.',
+        )
+      if (!result.object.body)
+        return new Response('Source unavailable', { status: 409 })
+      return new Response(result.object.body, {
+        headers: {
+          'content-type': result.file.content_type,
+          'content-length': String(result.object.size),
+          'content-disposition': 'attachment',
+          'x-content-type-options': 'nosniff',
+          'cache-control': 'private, no-store',
+          'content-security-policy':
+            "default-src 'none'; frame-ancestors 'none'; form-action 'none'",
+        },
+      })
+    }
+    const authority = cliReadAuthority(resolved)
     if (authority === 'denied') return cliScopeDeniedResponse()
     const agentRead =
       authority !== null

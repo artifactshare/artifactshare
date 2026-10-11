@@ -1,3 +1,7 @@
+import {
+  publisherArtifactSql,
+  type PublisherAuthority,
+} from './publisher-scope.server'
 import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
@@ -212,4 +216,42 @@ function singleFileContentType(artifactKind: string): string {
 
 function shareUrl(baseUrl: string, id: string, visibility: string): string {
   return shareableUrl(baseUrl, id, visibility, isProduction(env))
+}
+
+/** Publisher's exact download endpoint returns source bytes, never a manifest. */
+export async function getPublisherDownloadFile(
+  db: Kysely<DB>,
+  user: SessionUser,
+  authority: PublisherAuthority,
+  id: string,
+): Promise<CliDownloadFileResult> {
+  const row = await db
+    .selectFrom('shareables')
+    .innerJoin('versions', 'versions.id', 'shareables.current_version_id')
+    .select([
+      'versions.r2_key',
+      'versions.size_bytes',
+      'versions.sha256',
+      'versions.entrypoint_path',
+      'versions.artifact_kind',
+    ])
+    .where('shareables.id', '=', id)
+    .where(publisherArtifactSql(user.id, authority))
+    .where('versions.status', '=', 'published')
+    .where('versions.artifact_kind', 'in', ['html_page', 'markdown_page'])
+    .executeTakeFirst()
+  if (!row) return { kind: 'not-found' }
+  if (!row.r2_key) return { kind: 'source-unavailable' }
+  const object = await getArtifact(env.BUCKET, row.r2_key)
+  if (!object) return { kind: 'source-unavailable' }
+  return {
+    kind: 'ok',
+    object,
+    file: {
+      path: singleFileDownloadPath(row.artifact_kind, row.entrypoint_path),
+      content_type: singleFileContentType(row.artifact_kind),
+      size_bytes: row.size_bytes,
+      sha256: row.sha256,
+    },
+  }
 }

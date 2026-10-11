@@ -1,6 +1,7 @@
 import type { FormData, RequestInit } from 'undici'
 import type {
   ArtifactReadResponse,
+  DoctorAuthority,
   DownloadManifestFile,
   UploadArtifactKind,
 } from '@artifactshare/contract'
@@ -236,7 +237,7 @@ export type ProfileConfigEntry = {
   email?: string | null
   workspace_id?: string | null
   token_store?: TokenStoreKind
-  preset?: 'unrestricted' | 'agent'
+  preset?: 'unrestricted' | 'agent' | 'publisher'
   updated_at?: string
 }
 
@@ -525,7 +526,7 @@ export type AuthRecoveryData = {
 export type PendingDeviceAuth = {
   base_url: string
   profile: string
-  preset?: 'unrestricted' | 'agent'
+  preset?: 'unrestricted' | 'agent' | 'publisher'
   device_code: string
   verification_uri: string
   verification_uri_complete: string | null
@@ -568,10 +569,7 @@ export type DoctorData = {
     hint?: string
     email?: string | null
     recovery?: AuthRecoveryData
-    authority?: {
-      preset: 'unrestricted' | 'agent'
-      project_id: string | null
-    }
+    authority?: DoctorAuthority
   }
   destination:
     | { ok: false; code: string; hint: string }

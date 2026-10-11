@@ -13,10 +13,19 @@ export type CliAuthority =
   | { kind: 'unrestricted' }
   | {
       kind: 'bootstrap'
-      preset: 'unrestricted' | 'agent'
+      preset: 'unrestricted' | 'agent' | 'publisher'
+      publisherClientId?: string
+      publisherClientName?: string
       workspaceId: string | null
       projectId: string | null
       expiresAt: string
+    }
+  | {
+      kind: 'publisher'
+      familyId: string
+      workspaceId: string
+      publisherClientId: string
+      publisherClientName: string
     }
   | {
       kind: 'agent'
@@ -84,8 +93,12 @@ export async function resolveCliAuthorityBySessionToken(
         'cli_session_authorities.kind',
         'cli_session_authorities.session_id as authority_session_id',
         'cli_session_authorities.preset as session_preset',
+        'cli_session_authorities.publisher_client_id as session_publisher_client_id',
+        'cli_family_authorities.publisher_client_id',
+        'cli_family_authorities.user_id as family_user_id',
         'cli_session_authorities.workspace_id as bootstrap_workspace_id',
         'cli_session_authorities.project_id as bootstrap_project_id',
+        'cli_session_authorities.agent_profile_id as bootstrap_agent_profile_id',
         'cli_session_authorities.expires_at as bootstrap_expires_at',
         'cli_session_authorities.family_id',
         'cli_session_authorities.bearer_only',
@@ -181,6 +194,90 @@ export async function resolveCliAuthorityBySessionToken(
     if (!isRecognizedCliSessionKind(row.kind)) return null
     if (!isRecognizedCliPreset(row.session_preset)) return null
     if (row.bearer_only !== 1) return null
+    if (
+      row.session_preset === 'publisher' ||
+      row.family_preset === 'publisher'
+    ) {
+      const clientId = row.session_publisher_client_id
+      const client = clientId
+        ? await db
+            .selectFrom('publisher_clients')
+            .innerJoin('users', 'users.id', 'publisher_clients.user_id')
+            .select([
+              'publisher_clients.id',
+              'publisher_clients.name',
+              'publisher_clients.workspace_id',
+            ])
+            .where('publisher_clients.id', '=', clientId)
+            .where('users.id', '=', row.user_id)
+            .whereRef(
+              'users.workspace_id',
+              '=',
+              'publisher_clients.workspace_id',
+            )
+            .where('users.kind', '=', 'human')
+            .executeTakeFirst()
+        : null
+      if (
+        !client ||
+        row.session_preset !== 'publisher' ||
+        row.bootstrap_workspace_id !== client.workspace_id ||
+        row.bootstrap_project_id !== null ||
+        row.bootstrap_agent_profile_id !== null
+      )
+        return 'denied'
+      if (row.kind === 'bootstrap') {
+        if (row.family_id !== null) return 'denied'
+        if (!row.bootstrap_expires_at || row.bootstrap_expires_at <= now)
+          return 'denied'
+        return {
+          kind: 'bootstrap',
+          preset: 'publisher',
+          workspaceId: client.workspace_id,
+          projectId: null,
+          publisherClientId: client.id,
+          publisherClientName: client.name,
+          expiresAt: row.bootstrap_expires_at,
+        }
+      }
+      if (
+        row.family_preset !== 'publisher' ||
+        row.status !== 'active' ||
+        !row.family_id ||
+        !row.family_credential_live ||
+        row.family_user_id !== row.user_id ||
+        row.workspace_id !== client.workspace_id ||
+        row.publisher_client_id !== client.id ||
+        row.project_id !== null ||
+        row.agent_profile_id !== null ||
+        row.bridge_authority_id !== null ||
+        row.project_name_snapshot !== null
+      )
+        return 'denied'
+      const authority = {
+        kind: 'publisher' as const,
+        familyId: row.family_id,
+        workspaceId: client.workspace_id,
+        publisherClientId: client.id,
+        publisherClientName: client.name,
+      }
+      const { publisherAuthoritySql } = await import('./publisher-scope.server')
+      if (
+        !(await db
+          .selectFrom('users')
+          .select('id')
+          .where('id', '=', row.user_id)
+          .where(publisherAuthoritySql(row.user_id, authority))
+          .executeTakeFirst())
+      )
+        return 'denied'
+      return authority
+    }
+    if (
+      row.session_publisher_client_id !== null ||
+      row.publisher_client_id != null
+    )
+      return 'denied'
     if (row.kind === 'bootstrap') {
       if (
         !row.bootstrap_expires_at ||

@@ -44,6 +44,57 @@ describe('cli-refresh-credentials service', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('publisher issuance and rotation retain approved client identity and revocation removes access', async () => {
+    sqlite.exec(`
+      INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('publisher-client', 'u1', 'ws1', 'Reports', '2026-01-01');
+      INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at) VALUES ('publisher-session', 'u1', 'publisher-token', '2099-01-01', 'artifactshare-cli-device', '2026-01-01', '2026-01-01');
+      INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, publisher_client_id, expires_at, created_at) VALUES ('publisher-session', 'bootstrap', 'publisher', 'ws1', 'publisher-client', '2099-01-01', '2026-01-01');
+    `)
+    const issued = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'publisher-token',
+      'Untrusted name',
+      'spoofable-device',
+    )
+    expect(issued).not.toBeNull()
+    const rotated = await refreshCliSession(
+      db,
+      issued!.refreshToken,
+      'publisher-rotation',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          'SELECT DISTINCT preset, publisher_client_id FROM cli_session_authorities',
+        )
+        .all(),
+    ).toEqual([
+      { preset: 'publisher', publisher_client_id: 'publisher-client' },
+    ])
+    expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual([
+      expect.objectContaining({
+        preset: 'publisher',
+        publisherClientName: 'Reports',
+      }),
+    ])
+    if (rotated.kind !== 'ok') throw new Error('rotation failed')
+    await revokeCliRefreshCredential(db, rotated.refreshToken)
+    expect(
+      await refreshCliSession(
+        db,
+        rotated.refreshToken,
+        'after-revocation',
+        secret,
+      ),
+    ).toEqual({ kind: 'invalid' })
+    expect(sqlite.prepare('SELECT name FROM publisher_clients').all()).toEqual([
+      { name: 'Reports' },
+    ])
+  })
+
   test.each([null, 'rotate', 'replay', 'interleaved', 'legacy-interleaved'])(
     'rejects unknown family presets for %s without issuing records',
     async (mode) => {

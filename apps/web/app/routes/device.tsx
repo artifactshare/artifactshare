@@ -31,6 +31,7 @@ import {
 } from '~/components/app/landing-styles'
 import { Button } from '~/components/ui/button'
 import { Field, FieldLabel } from '~/components/ui/field'
+import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
 import { Input } from '~/components/ui/input'
 import {
   ProjectCandidatePicker,
@@ -61,6 +62,46 @@ export const screen = {
   role: 'デバイス認証を完了する',
   primaryAction: '認証を完了する',
   states: [
+    {
+      id: 'publisher-new',
+      description: 'publisher-new approval',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/publisher-new',
+        query: '?user_code=PUBL1234',
+      },
+    },
+    {
+      id: 'publisher-continue',
+      description: 'publisher-continue approval',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/publisher-continue',
+        query: '?user_code=PUBL1234',
+      },
+    },
+    {
+      id: 'publisher-invalid',
+      description: 'publisher-invalid approval',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/publisher-invalid',
+        query: '?user_code=PUBL1234',
+      },
+    },
+    {
+      id: 'publisher-long-name',
+      description: 'publisher-long-name approval',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/publisher-long-name',
+        query: '?user_code=PUBL1234',
+      },
+    },
     {
       id: 'default',
       description: '通常のデバイス認証',
@@ -194,6 +235,123 @@ export function loader({ context }: Route.LoaderArgs) {
   }
 }
 
+function DeviceVerificationStatus({ state }: { state: VerifyState }) {
+  const { t } = useT()
+  return (
+    <>
+      {state.kind === 'checking' ? (
+        <ConsentStatusText>{t('device.checking')}</ConsentStatusText>
+      ) : null}
+      {deviceErrorMessageKeys(state.kind) ? (
+        <ConsentErrorAlert id="device-code-error">
+          <strong>{t(deviceErrorMessageKeys(state.kind)!.title)}</strong>
+          <br />
+          {t(deviceErrorMessageKeys(state.kind)!.body)}
+        </ConsentErrorAlert>
+      ) : null}
+      {state.kind === 'already' ? (
+        <ConsentErrorAlert>
+          <strong>{t('device.already_handled.title')}</strong>
+          <br />
+          {t('device.already_handled.body')}
+        </ConsentErrorAlert>
+      ) : null}
+      {state.kind === 'done' ? (
+        <ConsentStatusText>
+          {state.decision === 'approved'
+            ? t('device.approved')
+            : t('device.denied')}
+        </ConsentStatusText>
+      ) : null}
+    </>
+  )
+}
+
+function PublisherApprovalFields({
+  publisherApproval,
+  publisherMode,
+  setPublisherMode,
+  publisherClientId,
+  setPublisherClientId,
+  publisherDuplicate,
+}: {
+  publisherApproval: Extract<
+    Awaited<ReturnType<typeof loadDeviceAgentApproval>>,
+    { preset: 'publisher' }
+  >
+  publisherMode: string
+  setPublisherMode: (mode: string) => void
+  publisherClientId: string
+  setPublisherClientId: (id: string) => void
+  publisherDuplicate: boolean
+}) {
+  const { t } = useT()
+  return (
+    <Stack gap="3" className="w-full max-w-80 text-left">
+      <p className="text-sm font-medium break-words">
+        {publisherApproval.requestedName}
+      </p>
+      <p id="publisher-capability" className="text-muted-foreground text-sm">
+        {t('device.publisher.capability')}
+      </p>
+      <Field>
+        <FieldLabel id="publisher-choice-label">
+          {t('device.publisher.choice')}
+        </FieldLabel>
+        <RadioGroup
+          aria-labelledby="publisher-choice-label"
+          value={publisherMode}
+          onValueChange={setPublisherMode}
+        >
+          <Inline gap="2">
+            <RadioGroupItem id="publisher-new" value="create-new" />
+            <FieldLabel htmlFor="publisher-new">
+              {t('device.publisher.new')}
+            </FieldLabel>
+          </Inline>
+          <Inline gap="2">
+            <RadioGroupItem
+              id="publisher-continue"
+              value="continue-existing"
+              disabled={publisherApproval.clients.length === 0}
+            />
+            <FieldLabel htmlFor="publisher-continue">
+              {t('device.publisher.continue')}
+            </FieldLabel>
+          </Inline>
+        </RadioGroup>
+      </Field>
+      {publisherMode === 'continue-existing' ? (
+        <Field>
+          <FieldLabel id="publisher-client-label" htmlFor="publisher-client">
+            {t('device.publisher.client')}
+          </FieldLabel>
+          <select
+            id="publisher-client"
+            aria-labelledby="publisher-client-label"
+            value={publisherClientId}
+            onChange={(event) => setPublisherClientId(event.target.value)}
+            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="">{t('device.publisher.select')}</option>
+            {publisherApproval.clients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+      {publisherMode === 'create-new' && publisherDuplicate ? (
+        <ConsentErrorAlert>{t('device.publisher.duplicate')}</ConsentErrorAlert>
+      ) : null}
+      <p className="text-muted-foreground text-sm">
+        {t('device.publisher.nameHelp')}
+      </p>
+    </Stack>
+  )
+}
+
 export default function Device({ loaderData }: Route.ComponentProps) {
   const { t, locale } = useT()
   const [params] = useSearchParams()
@@ -212,12 +370,29 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     approval: Awaited<ReturnType<typeof loadDeviceAgentApproval>>
   } | null>(null)
   const initialCleanCode = cleanUserCode(initialCode)
-  const agentApproval =
+  const approval =
     verifiedAgentApproval?.code === cleanUserCode(userCode)
       ? verifiedAgentApproval.approval
       : cleanUserCode(userCode) === initialCleanCode
         ? loaderData.agentApproval
         : null
+  const agentApproval = approval?.preset === 'agent' ? approval : null
+  const publisherApproval = approval?.preset === 'publisher' ? approval : null
+  const [publisherMode, setPublisherMode] = useState('')
+  const [publisherClientId, setPublisherClientId] = useState('')
+  const publisherDuplicate =
+    publisherApproval?.clients.some(
+      (client) => client.name === publisherApproval.requestedName,
+    ) ?? false
+  const publisherChoiceValid =
+    publisherMode === 'create-new'
+      ? !publisherDuplicate
+      : publisherMode === 'continue-existing' &&
+        Boolean(
+          publisherApproval?.clients.some(
+            (client) => client.id === publisherClientId,
+          ),
+        )
   const [selectedProject, setSelectedProject] =
     useState<ProjectCandidateOption | null>(null)
   const fixedProject = agentApproval?.fixedProject ?? null
@@ -256,10 +431,16 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       .then(async (res) => {
         const next = verifyStateFrom(res, verificationCode)
         if (next.kind === 'ready') {
-          const approval = await loadDeviceAgentApproval(verificationCode)
+          const verifiedApproval =
+            await loadDeviceAgentApproval(verificationCode)
           if (!cancelled && currentCleanCode.current === verificationCode) {
-            setVerifiedAgentApproval({ code: verificationCode, approval })
+            setVerifiedAgentApproval({
+              code: verificationCode,
+              approval: verifiedApproval,
+            })
             setSelectedProject(null)
+            setPublisherMode('')
+            setPublisherClientId('')
           }
         }
         dispatchIfCurrent(next)
@@ -274,6 +455,8 @@ export default function Device({ loaderData }: Route.ComponentProps) {
 
   const decide = async (decision: 'approved' | 'denied') => {
     if (!complete || state.kind !== 'ready') return
+    if (decision === 'approved' && publisherApproval && !publisherChoiceValid)
+      return
     const decisionCode = cleanCode
     if (state.code !== decisionCode) return
     if (currentCleanCode.current !== decisionCode) return
@@ -281,12 +464,20 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     try {
       const res =
         decision === 'approved'
-          ? await deviceApprove(
-              decisionCode,
-              agentApproval?.preset === 'agent'
-                ? effectiveProjectId
-                : undefined,
-            )
+          ? publisherApproval
+            ? await deviceApprove(
+                decisionCode,
+                undefined,
+                publisherMode === 'create-new'
+                  ? { mode: 'create-new' }
+                  : { mode: 'continue-existing', client_id: publisherClientId },
+              )
+            : await deviceApprove(
+                decisionCode,
+                agentApproval?.preset === 'agent'
+                  ? effectiveProjectId
+                  : undefined,
+              )
           : await deviceDeny(decisionCode)
       if (currentCleanCode.current === decisionCode) {
         const status = errorStatusOf(res)
@@ -294,6 +485,17 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           dispatch({ kind: 'done', code: decisionCode, decision })
         } else if (status === 401) {
           signInToCurrentPage()
+        } else if (publisherApproval && status === 400) {
+          const refreshed = await loadDeviceAgentApproval(decisionCode)
+          if (currentCleanCode.current !== decisionCode) return
+          if (refreshed?.preset !== 'publisher') {
+            dispatch({ kind: 'expired', code: decisionCode })
+            return
+          }
+          setVerifiedAgentApproval({ code: decisionCode, approval: refreshed })
+          setPublisherMode('')
+          setPublisherClientId('')
+          dispatch({ kind: 'ready', code: decisionCode, notice: true })
         } else if (status === 400 || status === 403) {
           dispatch({ kind: 'already', code: decisionCode })
         } else {
@@ -344,33 +546,22 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           />
         </Field>
 
-        {stateIsForCurrentCode && state.kind === 'checking' ? (
-          <ConsentStatusText>{t('device.checking')}</ConsentStatusText>
-        ) : null}
-        {stateIsForCurrentCode && deviceErrorMessageKeys(state.kind) ? (
-          <ConsentErrorAlert id="device-code-error">
-            <strong>{t(deviceErrorMessageKeys(state.kind)!.title)}</strong>
-            <br />
-            {t(deviceErrorMessageKeys(state.kind)!.body)}
-          </ConsentErrorAlert>
-        ) : null}
-        {stateIsForCurrentCode && state.kind === 'already' ? (
-          <ConsentErrorAlert>
-            <strong>{t('device.already_handled.title')}</strong>
-            <br />
-            {t('device.already_handled.body')}
-          </ConsentErrorAlert>
-        ) : null}
-        {stateIsForCurrentCode && state.kind === 'done' ? (
-          <ConsentStatusText>
-            {state.decision === 'approved'
-              ? t('device.approved')
-              : t('device.denied')}
-          </ConsentStatusText>
+        {stateIsForCurrentCode ? (
+          <DeviceVerificationStatus state={state} />
         ) : null}
 
         {stateIsForCurrentCode && state.kind === 'ready' ? (
           <>
+            {publisherApproval ? (
+              <PublisherApprovalFields
+                publisherApproval={publisherApproval}
+                publisherMode={publisherMode}
+                setPublisherMode={setPublisherMode}
+                publisherClientId={publisherClientId}
+                setPublisherClientId={setPublisherClientId}
+                publisherDuplicate={publisherDuplicate}
+              />
+            ) : null}
             {agentApproval ? (
               <Field className="mt-4 max-w-80">
                 <FieldLabel
@@ -423,7 +614,10 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             <ConsentActions>
               <Button
                 type="button"
-                disabled={Boolean(agentApproval) && !effectiveProjectId}
+                disabled={
+                  (Boolean(agentApproval) && !effectiveProjectId) ||
+                  (Boolean(publisherApproval) && !publisherChoiceValid)
+                }
                 aria-describedby={
                   agentApproval && effectiveProject
                     ? 'agent-project-consequence'

@@ -1,4 +1,8 @@
 import {
+  isPublisherArtifact,
+  publisherArtifactSql,
+} from '~/services/publisher-scope.server'
+import {
   cliWriteAuthority,
   cliReadAuthority,
   allowsHumanCliMutation,
@@ -106,6 +110,7 @@ const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
 const CONTRIBUTOR_GUARDRAIL_LIMIT = 10_000
 
 type UploadOptions = {
+  authority?: CliAuthority | null
   agentProfileId?: string | null
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
@@ -852,6 +857,8 @@ export async function beginStaticSiteBundleUploadSession(
   stableKey: string | null = null,
   options?: UploadOptions,
 ): Promise<StaticSiteBundleUploadSessionResult> {
+  if (options?.authority?.kind === 'publisher')
+    return { kind: 'invalid-container' }
   // Resolve the destination first: cross-workspace posting bills the project's
   // workspace, so the quota snapshot and R2 prefix below must use the destination.
   const destination = await resolveUploadContainer(
@@ -3395,6 +3402,11 @@ async function findWritableShareable(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return null
+  if (authority?.kind === 'publisher')
+    return access === 'version' &&
+      (await isPublisherArtifact(db, user.id, authority, shareableId))
+      ? shareable
+      : null
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return null
   if (writeAuthority) {
@@ -3499,6 +3511,10 @@ function writableShareableSql(
   authority: CliAuthority | null,
   access: 'collaboration' | 'version' = 'collaboration',
 ): RawBuilder<boolean> {
+  if (authority?.kind === 'publisher')
+    return access === 'version'
+      ? publisherArtifactSql(user.id, authority)
+      : sql<boolean>`0 = 1`
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
   if (writeAuthority) {

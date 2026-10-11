@@ -206,6 +206,8 @@ export function extractTypeScriptCopy(source, locale) {
 
 export const COPY_GLOSSARY_ALLOW = {
   json: {
+    // Owner-specified publisher consent sentence uses the API resource name.
+    'en.device.publisher.capability': ['artifacts'],
     'ja.footer.connect': ['ツール'],
     'ja.team.members': ['メンバー'],
     'ja.team.members.body': ['メンバー'],

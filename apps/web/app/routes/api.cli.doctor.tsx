@@ -10,7 +10,13 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const authority = cliReadAuthority(getCliAuthority(context))
+  const resolved = getCliAuthority(context)
+  const publisher =
+    resolved?.kind === 'publisher' ||
+    (resolved?.kind === 'bootstrap' && resolved.preset === 'publisher')
+      ? resolved
+      : null
+  const authority = publisher ? null : cliReadAuthority(resolved)
   if (authority === 'denied') return cliScopeDeniedResponse()
   const permission = await checkUploadAccess(user)
   const payload = {
@@ -25,8 +31,14 @@ export async function loader({ context }: Route.LoaderArgs) {
     auth: {
       kind: 'bearer_or_session',
       ok: true,
-      authority:
-        authority !== null
+      authority: publisher
+        ? {
+            preset: 'publisher',
+            project_id: null,
+            publisher_client_id: publisher.publisherClientId,
+            publisher_client_name: publisher.publisherClientName,
+          }
+        : authority !== null
           ? {
               preset: 'agent',
               project_id: authority.projectId,

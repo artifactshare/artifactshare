@@ -1,3 +1,7 @@
+import {
+  PublisherApprovalSchema,
+  type PublisherApproval,
+} from '@artifactshare/contract'
 import { oauthProviderClient } from '@better-auth/oauth-provider/client'
 import { createAuthClient } from 'better-auth/react'
 import {
@@ -89,10 +93,17 @@ export function deviceVerify(userCode: string): Promise<unknown> {
 export function deviceApprove(
   userCode: string,
   projectId?: string,
+  publisher?:
+    | { mode: 'create-new' }
+    | { mode: 'continue-existing'; client_id: string },
 ): Promise<unknown> {
   return authClient.$fetch('/device/approve', {
     method: 'POST',
-    body: { userCode, project_id: projectId },
+    body: {
+      userCode,
+      project_id: projectId,
+      ...(publisher ? { publisher } : {}),
+    },
   })
 }
 
@@ -104,24 +115,33 @@ export function deviceDeny(userCode: string): Promise<unknown> {
   })
 }
 
-export async function loadDeviceAgentApproval(userCode: string): Promise<{
-  preset: 'agent'
-  deviceName: string | null
-  projectSelector: string | null
-  fixedProject: {
-    id: string
-    name: string
-    baseVisibility: 'workspace' | 'private'
-    updatedAt: string
-  } | null
-  fixedProjectError: boolean
-} | null> {
+export async function loadDeviceAgentApproval(userCode: string): Promise<
+  | {
+      preset: 'agent'
+      deviceName: string | null
+      projectSelector: string | null
+      fixedProject: {
+        id: string
+        name: string
+        baseVisibility: 'workspace' | 'private'
+        updatedAt: string
+      } | null
+      fixedProjectError: boolean
+    }
+  | PublisherApproval
+  | null
+> {
   const response = await fetch(
     `/api/cli/device-approval?user_code=${encodeURIComponent(userCode)}`,
     { headers: { accept: 'application/json' } },
   )
-  if (!response.ok) return null
-  const body = (await response.json()) as { agentApproval?: unknown }
+  if (!response.ok) throw new Error('Unable to load approval context')
+  const body = (await response.json()) as {
+    agentApproval?: unknown
+    publisherApproval?: unknown
+  }
+  if (body.publisherApproval)
+    return PublisherApprovalSchema.parse(body.publisherApproval)
   const approval = body.agentApproval
   if (!approval || typeof approval !== 'object') return null
   return approval as {

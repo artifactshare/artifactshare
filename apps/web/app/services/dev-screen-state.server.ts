@@ -303,6 +303,118 @@ export async function seedDevScreenState(
       .onConflict((oc) => oc.column('id').doNothing())
       .execute()
   }
+  if (scenario.startsWith('device/publisher-')) {
+    const name =
+      scenario === 'device/publisher-long-name'
+        ? 'Dashboard '.repeat(10).trim()
+        : 'Employee dashboard'
+    await db
+      .insertInto('deviceCode')
+      .values({
+        id: `${workspaceId}-publisher-code`,
+        deviceCode: `${workspaceId}-publisher-token`,
+        userCode: 'PUBL1234',
+        userId,
+        expiresAt:
+          scenario === 'device/publisher-invalid'
+            ? '2000-01-01T00:00:00.000Z'
+            : '2099-01-01T00:00:00.000Z',
+        status: 'pending',
+        lastPolledAt: null,
+        pollingInterval: 5,
+        clientId: 'artifactshare-cli',
+        scope: null,
+        preset: 'publisher',
+        deviceName: name,
+        approvalNonce: `${workspaceId}-publisher-approval`,
+        selectedProjectId: null,
+        requestedProjectSelector: null,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    if (scenario === 'device/publisher-continue')
+      await db
+        .insertInto('publisher_clients')
+        .values({
+          id: `${workspaceId}-publisher-client`,
+          user_id: userId,
+          workspace_id: workspaceId,
+          name,
+          created_at: now,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+  }
+  if (scenario === 'settings-cli-sessions/mixed-presets') {
+    for (const preset of ['unrestricted', 'agent', 'publisher'] as const) {
+      const familyId = `${workspaceId}-${preset}`
+      const clientId = `${workspaceId}-publisher-client`
+      const agentId = `${workspaceId}-agent-profile`
+      if (preset === 'publisher')
+        await db
+          .insertInto('publisher_clients')
+          .values({
+            id: clientId,
+            user_id: userId,
+            workspace_id: workspaceId,
+            name: 'Employee dashboard',
+            created_at: now,
+          })
+          .onConflict((oc) => oc.doNothing())
+          .execute()
+      if (preset === 'agent')
+        await db
+          .insertInto('agent_profiles')
+          .values({
+            id: agentId,
+            user_id: userId,
+            workspace_id: workspaceId,
+            created_at: now,
+          })
+          .onConflict((oc) => oc.doNothing())
+          .execute()
+      await db
+        .insertInto('cli_family_authorities')
+        .values({
+          family_id: familyId,
+          user_id: userId,
+          preset,
+          workspace_id: preset === 'unrestricted' ? null : workspaceId,
+          project_id: preset === 'agent' ? containerId : null,
+          project_name_snapshot: preset === 'agent' ? 'Reports' : null,
+          agent_profile_id: preset === 'agent' ? agentId : null,
+          publisher_client_id: preset === 'publisher' ? clientId : null,
+          approved_at: now,
+          device_name: null,
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+      await db
+        .insertInto('cli_refresh_credentials')
+        .values({
+          id: familyId,
+          user_id: userId,
+          family_id: familyId,
+          token_hash: `${familyId}-hash`,
+          expires_at: '2099-01-01T00:00:00.000Z',
+          revoked_at: null,
+          created_at: now,
+          last_used_at: now,
+          replaced_by_id: null,
+          rotation_request_hash: null,
+          rotation_retry_until: null,
+          rotation_session_id: null,
+          device_name: null,
+          device_id: null,
+          revocation_batch_id: null,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    }
+  }
   if (scenario === 'project-detail/slack-reauthorization') {
     await db
       .insertInto('container_slack_channels')

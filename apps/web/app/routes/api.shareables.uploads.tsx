@@ -82,10 +82,16 @@ export async function action({ request, context }: Route.ActionArgs) {
   const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise)
   const db = createDb()
   const authority = getCliAuthority(context)
-  const agentAuthority = cliReadAuthority(authority)
+  const publisher = authority?.kind === 'publisher'
+  const agentAuthority = publisher ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return cliScopeDeniedResponse()
 
   const searchParams = new URL(request.url).searchParams
+  if (
+    publisher &&
+    Array.from(searchParams.keys()).some((key) => !['visibility'].includes(key))
+  )
+    return cliScopeDeniedResponse()
   const rawPublishKey = searchParams.get('publish_key')
   const rawExpectedVersion = searchParams.get('expected_version')
   const rawKindHint = searchParams.get('artifact_kind')
@@ -138,6 +144,17 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formResult = await parseUploadFormData(request)
   if (formResult instanceof Response) return formResult
   const form = formResult
+  if (
+    publisher &&
+    (Array.from(form.keys()).some(
+      (key) => !['file', 'visibility', 'slack_notify'].includes(key),
+    ) ||
+      form.getAll('file').length !== 1 ||
+      (form.has('visibility') && form.get('visibility') !== 'private') ||
+      (searchParams.has('visibility') &&
+        searchParams.get('visibility') !== 'private'))
+  )
+    return cliScopeDeniedResponse()
   const rawArtifactKind = form.get('artifact_kind')
   if (rawArtifactKind !== null && typeof rawArtifactKind !== 'string') {
     return errorResponse(
@@ -768,6 +785,10 @@ function publishPrincipal(
       ? null
       : { kind: 'human', user: { ...user, kind: 'human' } }
   switch (authority.kind) {
+    case 'publisher':
+      return user.kind === 'bot'
+        ? null
+        : { kind: 'publisher', user: { ...user, kind: 'human' }, authority }
     case 'agent':
       return user.kind === 'bot'
         ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }

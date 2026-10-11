@@ -1,3 +1,8 @@
+import {
+  isPublisherArtifact,
+  publisherArtifactSql,
+  publisherAuthoritySql,
+} from '~/services/publisher-scope.server'
 import { cliWriteAuthority } from '~/lib/cli-authority-policy'
 import { pruneVersionsAfterPublish } from '~/services/version-retention.server'
 import type { Compilable, Kysely, RawBuilder } from 'kysely'
@@ -53,6 +58,7 @@ const CONTRIBUTOR_PENDING_GRACE_MS = 60 * 60 * 1000
 const CONTRIBUTOR_GUARDRAIL_LIMIT = 10_000
 
 type UploadOptions = {
+  authority?: CliAuthority | null
   agentProfileId?: string | null
   contributorGuardrailLimit?: number
   linkExpiresAt?: string | null
@@ -156,8 +162,12 @@ export async function appendShareable(
   },
   shareableId: string,
   content: string,
-  options?: { waitUntil?: (promise: Promise<unknown>) => void },
+  options?: {
+    waitUntil?: (promise: Promise<unknown>) => void
+    authority?: CliAuthority | null
+  },
 ): Promise<AppendVersionResult> {
+  if (options?.authority?.kind === 'publisher') return { kind: 'not-found' }
   const shareable = await findOwnedShareable(db, user, shareableId)
   if (!shareable) return { kind: 'not-found' }
   if (shareable.artifact_kind === 'static_site')
@@ -284,13 +294,23 @@ export async function createVersion(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
-  const agentAuthority = cliWriteAuthority(authority)
+  const publisher = authority?.kind === 'publisher' ? authority : null
+  if (
+    publisher &&
+    (user.workspaceId !== publisher.workspaceId ||
+      !expectedCurrentVersionId?.trim())
+  )
+    return { kind: 'not-found' }
+  const agentAuthority = publisher ? null : cliWriteAuthority(authority)
   if (agentAuthority === 'denied') return { kind: 'not-found' }
   const preserveArtifactIdentity =
     shareable.owner_user_id !== user.id &&
     shareable.workspace_id !== user.workspaceId
   const preserveName =
-    requestedPreserveName || agentAuthority !== null || preserveArtifactIdentity
+    requestedPreserveName ||
+    publisher !== null ||
+    agentAuthority !== null ||
+    preserveArtifactIdentity
   const commitExpectedVersionId =
     expectedCurrentVersionId ??
     (agentAuthority !== null || shareable.owner_user_id !== user.id
@@ -374,6 +394,7 @@ export async function createVersion(
           'sha256',
           'created_by_id',
           'created_by_agent_profile_id',
+          'created_by_publisher_client_id',
           'created_at',
           'published_at',
           'label',
@@ -391,7 +412,12 @@ export async function createVersion(
               sel.val(prepared.sizeBytes).as('size_bytes'),
               sel.val(prepared.sha256).as('sha256'),
               sel.val(user.id).as('created_by_id'),
-              sel.val(agentProfileId ?? null).as('created_by_agent_profile_id'),
+              sel
+                .val(publisher ? null : (agentProfileId ?? null))
+                .as('created_by_agent_profile_id'),
+              sel
+                .val(publisher?.publisherClientId ?? null)
+                .as('created_by_publisher_client_id'),
               sel.val(prepared.now).as('created_at'),
               sel.val(prepared.now).as('published_at'),
               sel.val(args.label ?? null).as('label'),
@@ -414,7 +440,10 @@ export async function createVersion(
         size_bytes: prepared.sizeBytes,
         sha256: prepared.sha256,
         created_by_id: user.id,
-        created_by_agent_profile_id: agentProfileId ?? null,
+        created_by_agent_profile_id: publisher
+          ? null
+          : (agentProfileId ?? null),
+        created_by_publisher_client_id: publisher?.publisherClientId ?? null,
         created_at: prepared.now,
         published_at: prepared.now,
       }),
@@ -577,6 +606,29 @@ async function createNewShareableFromFile(
   stableKey: string | null,
   options?: UploadOptions,
 ): Promise<UploadShareableResult> {
+  const publisher =
+    options?.authority?.kind === 'publisher' ? options.authority : null
+  if (
+    publisher &&
+    (user.workspaceId !== publisher.workspaceId ||
+      visibility !== 'private' ||
+      requestedContainerId !== null ||
+      stableKey !== null ||
+      initialGrantEmails.length > 0 ||
+      options?.agentProfileId ||
+      options?.linkExpiresAt != null)
+  )
+    return { kind: 'invalid-container' }
+  if (
+    publisher &&
+    !(await db
+      .selectFrom('users')
+      .select('id')
+      .where('id', '=', user.id)
+      .where(publisherAuthoritySql(user.id, publisher))
+      .executeTakeFirst())
+  )
+    return { kind: 'workspace-access-revoked' }
   const now = nowIso()
   const grantEmails = normalizeGrantEmails(
     initialGrantEmails,
@@ -706,7 +758,7 @@ async function createNewShareableFromFile(
       return { kind: 'storage-failed' }
     }
 
-    const shareableInsert = db.insertInto('shareables').values({
+    const shareableValues = {
       id: shareableId,
       workspace_id: accounting.workspaceId,
       owner_user_id: user.id,
@@ -724,7 +776,26 @@ async function createNewShareableFromFile(
       container_id: destination.containerId,
       last_accessed_at: null,
       created_by_agent_profile_id: options?.agentProfileId ?? null,
-    })
+      created_by_publisher_client_id: publisher?.publisherClientId ?? null,
+    }
+    const shareableInsert = publisher
+      ? db
+          .insertInto('shareables')
+          .columns(
+            Object.keys(shareableValues) as (keyof typeof shareableValues)[],
+          )
+          .expression((eb) =>
+            eb
+              .selectFrom('users')
+              .where('users.id', '=', user.id)
+              .where(publisherAuthoritySql(user.id, publisher))
+              .select(
+                Object.entries(shareableValues).map(([column, value]) =>
+                  eb.val(value).as(column),
+                ),
+              ),
+          )
+      : db.insertInto('shareables').values(shareableValues)
     const attemptValues =
       effectiveVisibility === 'link'
         ? await linkPublicationAttemptValues(db, {
@@ -767,6 +838,7 @@ async function createNewShareableFromFile(
         sha256: prepared.sha256,
         created_by_id: user.id,
         created_by_agent_profile_id: options?.agentProfileId ?? null,
+        created_by_publisher_client_id: publisher?.publisherClientId ?? null,
         created_at: prepared.now,
         published_at: prepared.now,
       }),
@@ -1104,6 +1176,11 @@ async function findWritableShareable(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return null
+  if (authority?.kind === 'publisher')
+    return access === 'version' &&
+      (await isPublisherArtifact(db, user.id, authority, shareableId))
+      ? shareable
+      : null
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return null
   if (writeAuthority) {
@@ -1208,6 +1285,10 @@ function writableShareableSql(
   authority: CliAuthority | null,
   access: 'collaboration' | 'version' = 'collaboration',
 ): RawBuilder<boolean> {
+  if (authority?.kind === 'publisher')
+    return access === 'version'
+      ? publisherArtifactSql(user.id, authority)
+      : sql<boolean>`0 = 1`
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
   if (writeAuthority) {

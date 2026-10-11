@@ -14,6 +14,7 @@ vi.mock('~/middleware/context', () => ({
 
 vi.mock('~/services/cli-device-authority.server', () => ({
   loadAgentApprovalContext: loadAgentApprovalContextMock,
+  loadPublisherApprovalContext: vi.fn().mockResolvedValue(null),
 }))
 
 const { loader, middleware } = await import('./api.cli.device-approval')

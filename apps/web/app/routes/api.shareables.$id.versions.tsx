@@ -109,9 +109,27 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const { id } = parsedParams.data
   const db = createDb()
   const authority = getCliAuthority(context)
-  const agentAuthority = cliReadAuthority(authority)
+  const publisher = authority?.kind === 'publisher'
+  const agentAuthority = publisher ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const searchParams = new URL(request.url).searchParams
+  if (
+    publisher &&
+    (!searchParams.get('expected_version')?.trim() ||
+      searchParams.getAll('expected_version').length !== 1)
+  )
+    return errorResponse(
+      'expected-version-required',
+      'Publisher updates require the current version id.',
+      400,
+    )
+  if (
+    publisher &&
+    Array.from(searchParams.keys()).some(
+      (key) => !['expected_version', 'label'].includes(key),
+    )
+  )
+    return cliScopeDeniedResponse()
   const labels = searchParams.getAll('label')
   if (labels.length > 1) {
     return errorResponse(
@@ -181,6 +199,12 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   }
 
   const form = await request.formData()
+  if (
+    publisher &&
+    (Array.from(form.keys()).some((key) => key !== 'file') ||
+      form.getAll('file').length !== 1)
+  )
+    return cliScopeDeniedResponse()
   const parsedForm = ArtifactVersionUpdateFormSchema.safeParse({
     file: [form.get('file')],
   })

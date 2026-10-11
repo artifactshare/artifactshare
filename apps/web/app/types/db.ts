@@ -30,6 +30,13 @@ export interface DB {
   sessions: SessionsTable
   cli_refresh_credentials: CliRefreshCredentialsTable
   cli_refresh_sessions: CliRefreshSessionsTable
+  publisher_clients: {
+    id: string
+    user_id: string
+    workspace_id: string
+    name: string
+    created_at: string
+  }
   agent_profiles: AgentProfilesTable
   bridge_authorities: BridgeAuthoritiesTable
   bridge_conversations: BridgeConversationsTable
@@ -434,9 +441,10 @@ interface BridgeDmArtifactsTable {
 }
 
 interface CliFamilyAuthoritiesTable {
+  publisher_client_id: Generated<string | null>
   family_id: string
   user_id: string
-  preset: 'unrestricted' | 'agent'
+  preset: 'unrestricted' | 'agent' | 'publisher'
   workspace_id: string | null
   project_id: string | null
   project_name_snapshot: string | null
@@ -450,10 +458,11 @@ interface CliFamilyAuthoritiesTable {
 }
 
 interface CliSessionAuthoritiesTable {
+  publisher_client_id: Generated<string | null>
   session_id: string
   family_id: string | null
   kind: 'bootstrap' | 'family'
-  preset: 'unrestricted' | 'agent'
+  preset: 'unrestricted' | 'agent' | 'publisher'
   workspace_id: string | null
   project_id: string | null
   agent_profile_id: string | null
@@ -473,9 +482,10 @@ interface DeviceCodeTable {
   pollingInterval: number | null
   clientId: string | null
   scope: string | null
-  preset: 'unrestricted' | 'agent' | null
+  preset: 'unrestricted' | 'agent' | 'publisher' | null
   deviceName: string | null
   approvalNonce: string | null
+  selectedPublisherClientId: Generated<string | null>
   selectedProjectId: string | null
   requestedProjectSelector: string | null
 }
@@ -490,6 +500,7 @@ interface VerificationsTable {
 }
 
 interface ShareablesTable {
+  created_by_publisher_client_id: Generated<string | null>
   retain_versions: Generated<number | null>
   version_sequence: Generated<number>
   id: string
@@ -552,6 +563,7 @@ interface AccessRequestsTable {
 }
 
 interface VersionsTable {
+  created_by_publisher_client_id: Generated<string | null>
   number: Generated<number | null>
   label: Generated<string | null>
   id: string
