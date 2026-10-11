@@ -39,6 +39,8 @@ export type ScreenSetup = {
   auth?: ScreenAuth
   seedAuth?: ScreenAuth
   scenario?: string
+  /** Reset this scenario before each serial capture, after ordinary jobs finish. */
+  reseedBeforeCapture?: boolean
   scenarioArtifactIndex?: number
   query?: string
   interactions?: ScreenInteraction[]

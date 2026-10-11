@@ -10,6 +10,7 @@ import {
   devShareableId,
   navigateForCapture,
   pathFor,
+  runCaptureJobs,
   waitForInteractionTarget,
   captureFailure,
   captureUrlForState,
@@ -1012,4 +1013,149 @@ test('section declarations reject IDs that critique cannot label', async (t) => 
       },
     )
   }
+})
+
+test('retention capture query uses the same artifact-scoped removed ID as its seed', () => {
+  const viewer = ledgerScreens.find((screen) => screen.id === 'viewer')
+  const state = viewer.states.find(
+    (candidate) => candidate.id === 'retention-removed',
+  )
+  const seeds = {
+    scenarioCookies: {
+      'team-owner:viewer/retention-removed': {
+        workspaceId: 'ws1',
+        userId: 'u1',
+      },
+    },
+  }
+  const artifactId = devShareableId('ws1-u1-file-1')
+  assert.equal(
+    pathFor(viewer, 'en', seeds, state),
+    `/a/${artifactId}?version=${artifactId}-removed-v1`,
+  )
+})
+
+test('owner retention captures include the unchanged editor and a completed zero-removal save', () => {
+  const viewer = ledgerScreens.find((screen) => screen.id === 'viewer')
+  for (const id of ['retention-expanded', 'retention-saved']) {
+    const state = viewer.states.find((candidate) => candidate.id === id)
+    assert.ok(state)
+    assert.equal(state.setup.scenario, `viewer/${id}`)
+    assert.ok(screenScenarioAllowlist.has(state.setup.scenario))
+    assert.equal(state.setup.scenarioArtifactIndex, 1)
+    const selectors = state.setup.interactions.map(
+      (interaction) => interaction.selector,
+    )
+    assert.deepEqual(selectors.slice(0, 3), [
+      '[data-viewer-more-menu-trigger]',
+      '[data-viewer-history-menu-item]',
+      '[data-retention-change]',
+    ])
+    assert.deepEqual(
+      selectors.slice(3),
+      id === 'retention-saved'
+        ? [
+            '[data-retention-all]',
+            '[data-retention-save]',
+            '[data-retention-saved]',
+          ]
+        : [],
+    )
+  }
+})
+
+test('each Saved capture in the full matrix starts with fresh retention after ordinary jobs finish', async () => {
+  const viewer = ledgerScreens.find((screen) => screen.id === 'viewer')
+  const state = viewer.states.find(
+    (candidate) => candidate.id === 'retention-saved',
+  )
+  const jobs = []
+  for (const locale of ['en', 'ja'])
+    for (const viewport of ['desktop', 'mobile'])
+      for (const theme of ['light', 'dark'])
+        jobs.push({ screen: viewer, state, locale, viewport, theme })
+  const ordinaryJobs = [
+    { screen: viewer, state: { setup: {} } },
+    { screen: viewer, state: { setup: { scenario: state.setup.scenario } } },
+  ]
+  let retention = 1
+  let active = 0
+  let ordinaryDone = 0
+  const saved = []
+  const resets = []
+  await runCaptureJobs({
+    // Interleave to ensure execution order, rather than input ordering, protects shared data.
+    jobs: [jobs[0], ordinaryJobs[0], ...jobs.slice(1), ordinaryJobs[1]],
+    concurrency: 6,
+    reseed: async (job) => {
+      assert.equal(active, 0, 'a reset must not overlap a capture')
+      assert.equal(ordinaryDone, ordinaryJobs.length)
+      retention = 1
+      resets.push(job)
+      await new Promise((resolve) => setImmediate(resolve))
+    },
+    captureJob: async (job) => {
+      active++
+      if (ordinaryJobs.includes(job)) {
+        assert.equal(
+          retention,
+          1,
+          'ordinary captures must see the original seed',
+        )
+        await new Promise((resolve) => setImmediate(resolve))
+        ordinaryDone++
+      } else {
+        assert.equal(active, 1, 'mutating captures must be serial')
+        assert.equal(
+          retention,
+          1,
+          'Keep all must change the stored setting so Save is enabled',
+        )
+        retention = null
+        await new Promise((resolve) => setImmediate(resolve))
+        assert.equal(
+          retention,
+          null,
+          'another reset must not race the saved capture',
+        )
+        saved.push(job)
+      }
+      active--
+    },
+  })
+  assert.equal(saved.length, 8)
+  assert.deepEqual(saved, jobs)
+  assert.deepEqual(resets, jobs)
+})
+
+test('capture reseeding requires an explicit scenario and a boolean', () => {
+  for (const setup of [
+    { reseedBeforeCapture: true },
+    { scenario: 'viewer/retention-saved', reseedBeforeCapture: 'true' },
+  ]) {
+    assert.throws(
+      () =>
+        validateLedger([
+          { ...ledgerScreen([{ id: 'saved', setup }]), auth: 'team-owner' },
+        ]),
+      /reseedBeforeCapture requires a scenario and a boolean/,
+    )
+  }
+  assert.equal(
+    validateLedger([
+      {
+        ...ledgerScreen([
+          {
+            id: 'saved',
+            setup: {
+              scenario: 'viewer/retention-saved',
+              reseedBeforeCapture: true,
+            },
+          },
+        ]),
+        auth: 'team-owner',
+      },
+    ]),
+    true,
+  )
 })

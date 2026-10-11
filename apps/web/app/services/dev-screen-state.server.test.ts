@@ -1255,53 +1255,132 @@ test('CSP capture scenario publishes both HTML bodies with matching metadata', a
   }
 })
 
-test('removed-version capture is deterministic and ordinary reseeding clears its tombstone', async () => {
+test('removed-version seeds are idempotent across workspaces and reset only their own tombstones', async () => {
   const { db } = createMigratedInMemoryDb()
   try {
     const now = '2026-09-09T00:00:00.000Z'
     const scenario = 'viewer/retention-removed'
-    const { workspaceId } = await ensureDevScreenState(
-      db,
-      scenario,
-      now,
-      'team',
-    )
-    const userId = `${workspaceId}-user`
-    await db
-      .insertInto('users')
-      .values({
-        id: userId,
-        email: 'viewer@example.com',
-        name: 'Viewer',
-        email_verified: 1,
-        created_at: now,
-        updated_at: now,
-        workspace_id: workspaceId,
-      })
-      .execute()
-    await seedDevScreenState(db, scenario, workspaceId, userId, now)
-    await seedDevScreenState(db, scenario, workspaceId, userId, now)
-    expect(
-      await db.selectFrom('version_retention_tombstones').selectAll().execute(),
-    ).toEqual([
-      {
-        version_id: 'removed-v1',
-        shareable_id: devShareableId(`${workspaceId}-${userId}-file-1`),
-        version_number: 1,
-        removed_at: now,
-      },
-    ])
+    const seeded = []
+    for (const plan of ['team', 'plus'] as const) {
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        plan,
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: `${plan}@example.com`,
+          name: 'Viewer',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      seeded.push({ workspaceId, userId })
+    }
+    for (let iteration = 0; iteration < 2; iteration++) {
+      for (const { workspaceId, userId } of seeded) {
+        await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      }
+      const rows = await db
+        .selectFrom('version_retention_tombstones')
+        .selectAll()
+        .execute()
+      expect(rows).toHaveLength(2)
+      expect(rows).toEqual(
+        expect.arrayContaining(
+          seeded.map(({ workspaceId, userId }) => {
+            const shareableId = devShareableId(
+              `${workspaceId}-${userId}-file-1`,
+            )
+            return {
+              version_id: `${shareableId}-removed-v1`,
+              shareable_id: shareableId,
+              version_number: 1,
+              removed_at: now,
+            }
+          }),
+        ),
+      )
+    }
     await seedDevScreenState(
       db,
       'recent/content-rich',
-      workspaceId,
-      userId,
+      seeded[0].workspaceId,
+      seeded[0].userId,
       now,
     )
-    expect(
-      await db.selectFrom('version_retention_tombstones').selectAll().execute(),
-    ).toEqual([])
+    const remaining = await db
+      .selectFrom('version_retention_tombstones')
+      .selectAll()
+      .execute()
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0].shareable_id).toBe(
+      devShareableId(`${seeded[1].workspaceId}-${seeded[1].userId}-file-1`),
+    )
   } finally {
     await db.destroy()
   }
 })
+
+test.each(['viewer/retention-expanded', 'viewer/retention-saved'])(
+  '%s seeds a resettable owner setting and its artifact body',
+  async (scenario) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      expect(isScreenScenario(scenario)).toBe(true)
+      const now = '2026-09-09T00:00:00.000Z'
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: 'viewer@example.com',
+          name: 'Viewer',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
+      for (let iteration = 0; iteration < 2; iteration++) {
+        await seedDevScreenState(db, scenario, workspaceId, userId, now)
+        const artifact = await db
+          .selectFrom('shareables')
+          .select(['owner_user_id', 'retain_versions'])
+          .where('id', '=', shareableId)
+          .executeTakeFirstOrThrow()
+        expect(artifact).toEqual({ owner_user_id: userId, retain_versions: 1 })
+        await db
+          .updateTable('shareables')
+          .set({ retain_versions: null })
+          .where('id', '=', shareableId)
+          .execute()
+      }
+      const put = vi.fn().mockResolvedValue(undefined)
+      await seedDevScreenArtifactBodies(
+        { put } as unknown as Pick<R2Bucket, 'put'>,
+        scenario,
+        workspaceId,
+        userId,
+      )
+      expect(
+        put.mock.calls.some(([key]) => key === `dev-screen/${shareableId}-v1`),
+      ).toBe(true)
+    } finally {
+      await db.destroy()
+    }
+  },
+)

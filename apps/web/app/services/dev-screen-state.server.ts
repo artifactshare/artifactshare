@@ -103,6 +103,12 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (
+    scenario === 'viewer/retention-expanded' ||
+    scenario === 'viewer/retention-saved'
+  ) {
+    scenario = 'recent/content-rich'
+  }
   if (scenario === 'viewer/retention-removed') {
     await seedDevScreenArtifactBodies(
       bucket,
@@ -248,6 +254,12 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (
+    scenario === 'viewer/retention-expanded' ||
+    scenario === 'viewer/retention-saved'
+  ) {
+    scenario = 'recent/content-rich'
+  }
   if (scenario === 'viewer/retention-removed') {
     const seeded = await seedDevScreenState(
       db,
@@ -264,7 +276,7 @@ export async function seedDevScreenState(
     await db
       .insertInto('version_retention_tombstones')
       .values({
-        version_id: 'removed-v1',
+        version_id: `${shareableId}-removed-v1`,
         shareable_id: shareableId,
         version_number: 1,
         removed_at: now,

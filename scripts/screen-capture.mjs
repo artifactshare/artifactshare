@@ -364,8 +364,8 @@ async function resolveSeeds(baseUrl, selected) {
       const auth = screenStateAuth(screen, state)
       if (auth !== 'anonymous') await signInFor(auth)
     }
-  // Resolve every scenario before jobs start so parallel captures never sign
-  // in or mutate a scenario workspace while another job is running.
+  // Resolve shared scenarios before parallel jobs. States that mutate their
+  // scenario are explicitly reseeded in the final serial phase.
   for (const screen of selected)
     for (const state of screen.states)
       if (state.setup?.scenario)
@@ -484,10 +484,10 @@ export function pathFor(screen, locale, seeds, state) {
         `${scenarioContainer.workspaceId}-${scenarioContainer.userId}-file-${scenarioArtifactIndex}`,
       )
     : seeds.artifact
-  return screen.route[locale]
-    .replace('{seed:artifact}', artifactId)
-    .replace('{seed:project}', projectId)
-    .replace('{seed:update}', seeds.update)
+  return `${screen.route[locale]}${state.setup?.query ?? ''}`
+    .replaceAll('{seed:artifact}', artifactId)
+    .replaceAll('{seed:project}', projectId)
+    .replaceAll('{seed:update}', seeds.update)
 }
 
 export function fileName(screen, state, viewport, theme, locale, section) {
@@ -587,6 +587,46 @@ export async function captureScreens({
     throw operationError
   } finally {
     await releaseActivityLock(releaseActivity, operationError)
+  }
+}
+
+/** Reset mutating scenarios only after shared-data captures finish, one job at a time. */
+export async function runCaptureJobs({
+  jobs,
+  concurrency,
+  captureJob,
+  reseed,
+}) {
+  const runPool = async (pool, poolConcurrency) => {
+    let next = 0
+    const workers = Array.from(
+      { length: Math.min(poolConcurrency, pool.length) },
+      async () => {
+        while (next < pool.length) await captureJob(pool[next++])
+      },
+    )
+    await Promise.all(workers)
+  }
+
+  const runPhase = async (pool) => {
+    const regular = pool.filter((job) => !job.screen.captureConcurrency)
+    await runPool(regular, concurrency)
+    for (const screen of new Set(pool.map((job) => job.screen)))
+      if (screen.captureConcurrency)
+        await runPool(
+          pool.filter((job) => job.screen === screen),
+          Math.min(concurrency, screen.captureConcurrency),
+        )
+  }
+  const ordinary = jobs.filter((job) => !job.state.setup?.reseedBeforeCapture)
+  await runPhase(ordinary.filter((job) => !job.state.setup?.scenario))
+  await runPhase(ordinary.filter((job) => job.state.setup?.scenario))
+  const reseededJobs = jobs.filter(
+    (job) => job.state.setup?.reseedBeforeCapture,
+  )
+  for (const job of reseededJobs) {
+    await reseed(job)
+    await captureJob(job)
   }
 }
 
@@ -710,11 +750,6 @@ async function captureScreensLocked({
         auth,
       )
       url.searchParams.set('theme', theme)
-      const query = state.setup?.query
-      if (query)
-        new URLSearchParams(query.replace(/^\?/, '')).forEach((value, key) =>
-          url.searchParams.set(key, value),
-        )
       await navigateForCapture(page, url.toString(), state.expectedStatus)
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
@@ -859,35 +894,21 @@ async function captureScreensLocked({
     if (retry) return captureJob(job, attempt + 1)
   }
 
-  const runPool = async (pool, concurrency) => {
-    let next = 0
-    const workers = Array.from(
-      { length: Math.min(concurrency, pool.length) },
-      async () => {
-        while (next < pool.length) await captureJob(pool[next++])
-      },
-    )
-    await Promise.all(workers)
-  }
-
-  const concurrency = validatedConcurrency
-  const runPhase = async (pool) => {
-    const regular = pool.filter((job) => !job.screen.captureConcurrency)
-    await runPool(regular, concurrency)
-    for (const screen of selected)
-      if (screen.captureConcurrency)
-        await runPool(
-          pool.filter((job) => job.screen === screen),
-          Math.min(concurrency, screen.captureConcurrency),
-        )
-  }
   try {
-    // Seeded states run strictly after the plain pass, and their data
-    // mutation happens once, serially, before their own parallel captures.
-    const plainJobs = jobs.filter((job) => !job.state.setup?.scenario)
-    const seededJobs = jobs.filter((job) => job.state.setup?.scenario)
-    await runPhase(plainJobs)
-    await runPhase(seededJobs)
+    await runCaptureJobs({
+      jobs,
+      concurrency: validatedConcurrency,
+      captureJob,
+      reseed: async ({ screen, state }) => {
+        const persona = screenStateSeedAuth(screen, state)
+        const scenario = state.setup.scenario
+        seeds.scenarioCookies[`${persona}:${scenario}`] = await signIn(
+          baseUrl,
+          persona,
+          scenario,
+        )
+      },
+    })
   } finally {
     await browser.close()
     await closeAppFetch()

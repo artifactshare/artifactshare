@@ -52,6 +52,7 @@ export function RetentionEditor({
   function editDraft(next: { limited: boolean; count: string }) {
     setDraft(next)
     setSaved(false)
+    setError(null)
   }
   async function save(confirmed?: Preview) {
     if (busy.current || !valid || unchanged) return
@@ -123,7 +124,7 @@ export function RetentionEditor({
           disabled={pending}
           onClick={() => setExpanded(!expanded)}
         >
-          {t('vw.retentionChange')}
+          {t(expanded ? 'common.close' : 'vw.retentionChange')}
         </Button>
       </div>
       <form
@@ -149,7 +150,7 @@ export function RetentionEditor({
             disabled={pending}
           >
             <label className="flex items-center gap-2 text-sm">
-              <RadioGroupItem value="all" />
+              <RadioGroupItem value="all" data-retention-all />
               {t('vw.retentionAll')}
             </label>
             <label className="flex items-center gap-2 text-sm">
@@ -192,7 +193,11 @@ export function RetentionEditor({
         >
           {t('vw.retentionSave')}
         </Button>
-        <div role="status" className="text-sm">
+        <div
+          role="status"
+          data-retention-saved={saved || undefined}
+          className="text-sm"
+        >
           {!preview &&
             (pending
               ? t('vw.retentionSaving')

@@ -471,8 +471,8 @@ test('failed submissions retain their edited value through refresh and retry, th
 test.each([
   ['en', null, 'Keeping all versions', 'Change', 'Saved'],
   ['en', 4, 'Keeping the latest 4 versions', 'Change', 'Saved'],
-  ['ja', null, 'すべての版を保持しています', '変更', '保存しました'],
-  ['ja', 4, '最新4件の版を保持しています', '変更', '保存しました'],
+  ['ja', null, 'すべての版を残しています', '変更', '保存しました'],
+  ['ja', 4, '最新4件の版を残しています', '変更', '保存しました'],
 ] as const)(
   'compact %s summary for %s expands by keyboard and announces a save once',
   async (locale, setting, summary, changeLabel, savedLabel) => {
@@ -486,7 +486,14 @@ test.each([
     const changeButton = change.element() as HTMLButtonElement
     changeButton.focus()
     await userEvent.keyboard('{Enter}')
-    expect(change.element().getAttribute('aria-expanded')).toBe('true')
+    expect(changeButton.getAttribute('aria-expanded')).toBe('true')
+    expect(changeButton.textContent).toBe(locale === 'en' ? 'Close' : '閉じる')
+    await userEvent.keyboard('{Enter}')
+    expect(changeButton.getAttribute('aria-expanded')).toBe('false')
+    expect(changeButton.textContent).toBe(changeLabel)
+    expect(host.querySelector('form')!.hidden).toBe(true)
+    await userEvent.keyboard('{Enter}')
+    expect(host.querySelector('form')!.hidden).toBe(false)
     const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
     expect(save.disabled).toBe(true)
     const radioName =
@@ -540,8 +547,34 @@ test.each([390, 1280])(
     expect(
       host.querySelector('form')!.getBoundingClientRect().height,
     ).toBeGreaterThan(0)
-    await page.getByRole('button', { name: 'Change', exact: true }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
     expect(host.querySelector('form')!.getBoundingClientRect().height).toBe(0)
     expect(row.getBoundingClientRect().bottom).toBeLessThan(600)
+  },
+)
+
+test.each(['failed', 'changed'] as const)(
+  'editing the count or mode clears the previous %s error',
+  async (kind) => {
+    const message =
+      kind === 'failed'
+        ? 'Could not save. Please try again.'
+        : 'The history or setting changed.'
+    if (kind === 'failed') fetchMock.mockRejectedValue(new Error('offline'))
+    else fetchMock.mockImplementation(() => Promise.resolve(preview(0)))
+    await mount(4)
+    const input = page.getByRole('spinbutton', {
+      name: 'Number of versions to keep',
+    })
+    await input.fill('3')
+    await submit()
+    await vi.waitFor(() => expect(host.textContent).toContain(message))
+    await input.fill('2')
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('')
+    await submit()
+    await vi.waitFor(() => expect(host.textContent).toContain(message))
+    await page.getByRole('radio', { name: 'Keep all versions' }).click()
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   },
 )

@@ -22,9 +22,9 @@ test.each([
   ['en', null, 'Keeping all versions'],
   ['en', 1, 'Keeping only the latest version'],
   ['en', 2, 'Keeping the latest 2 versions'],
-  ['ja', null, 'すべての版を保持しています'],
-  ['ja', 1, '最新版のみを保持しています'],
-  ['ja', 2, '最新2件の版を保持しています'],
+  ['ja', null, 'すべての版を残しています'],
+  ['ja', 1, '最新版だけを残しています'],
+  ['ja', 2, '最新2件の版を残しています'],
 ] as const)(
   'renders %s setting %s without a runtime contract dependency',
   (locale, retainVersions, summary) => {

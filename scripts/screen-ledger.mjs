@@ -231,6 +231,14 @@ export function validateLedger(
         throw new Error(
           `seed auth requires a scenario: ${screen.id}/${state.id}`,
         )
+      if (
+        state.setup?.reseedBeforeCapture !== undefined &&
+        (typeof state.setup.reseedBeforeCapture !== 'boolean' ||
+          !state.setup.scenario)
+      )
+        throw new Error(
+          `reseedBeforeCapture requires a scenario and a boolean: ${screen.id}/${state.id}`,
+        )
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
       if (
