@@ -1,3 +1,5 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   ArtifactAppendRequestSchema,
   ArtifactAppendResponseSchema,
@@ -19,6 +21,8 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
   const user = requireUser(context)
+  if (cliReadAuthority(getCliAuthority(context)) === 'denied')
+    return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Artifact not found.', 404)

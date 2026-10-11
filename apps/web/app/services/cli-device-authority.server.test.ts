@@ -8,6 +8,13 @@ import {
 } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
+const authHandlerMock = vi.hoisted(() => vi.fn())
+
+vi.mock('~/services/auth.server', () => ({
+  authHandlerWithHangDetection: authHandlerMock,
+  getSessionUser: vi.fn(),
+}))
+
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
@@ -25,11 +32,14 @@ const {
   storeDeviceAuthorizationIntent,
 } = await import('./cli-device-authority.server')
 
+const { action } = await import('../routes/api.auth.$')
+
 describe('CLI device authorization intent', () => {
   let sqlite: DatabaseSync
   let db: Kysely<DB>
 
   beforeEach(() => {
+    authHandlerMock.mockReset()
     const fixture = createMigratedInMemoryDb()
     sqlite = fixture.sqlite
     db = fixture.db
@@ -60,6 +70,83 @@ describe('CLI device authorization intent', () => {
     await db.destroy()
     sqliteRef.current = null
   })
+
+  async function exchangeDeviceToken(preset: string | null) {
+    sqlite.exec('PRAGMA ignore_check_constraints = ON')
+    try {
+      sqlite
+        .prepare(
+          "UPDATE deviceCode SET preset = ?, selectedProjectId = 'project-1' WHERE id = 'dc1'",
+        )
+        .run(preset)
+    } finally {
+      sqlite.exec('PRAGMA ignore_check_constraints = OFF')
+    }
+    authHandlerMock.mockImplementation(async () => {
+      sqlite
+        .prepare(
+          `INSERT INTO sessions (
+            id, user_id, token, expires_at, user_agent, created_at, updated_at
+          ) VALUES ('s1', 'u1', 'session-1', '2099-01-01T00:00:00.000Z',
+            'artifactshare-cli-device', '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z')`,
+        )
+        .run()
+      return Response.json({ access_token: 'session-1' })
+    })
+    return action({
+      request: new Request('https://example.test/api/auth/device/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: 'device-1' }),
+      }),
+    } as Parameters<typeof action>[0])
+  }
+
+  test.each(['unknown', ''])(
+    'revokes the issued session for an unknown stored device preset %j',
+    async (preset) => {
+      const response = await exchangeDeviceToken(preset)
+
+      expect(authHandlerMock).toHaveBeenCalledOnce()
+      expect(response.status).toBe(400)
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+      expect(await response.json()).toEqual({
+        error: 'invalid_grant',
+        error_description: 'Agent authorization is incomplete',
+      })
+      for (const table of [
+        'sessions',
+        'cli_session_authorities',
+        'agent_profiles',
+      ]) {
+        expect(
+          sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(),
+        ).toEqual({
+          count: 0,
+        })
+      }
+    },
+  )
+
+  test.each([null, 'unrestricted', 'agent'])(
+    'preserves device token exchange for preset %j',
+    async (preset) => {
+      const response = await exchangeDeviceToken(preset)
+
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ access_token: 'session-1' })
+      expect(sqlite.prepare('SELECT token FROM sessions').get()).toEqual({
+        token: 'session-1',
+      })
+      const authority = sqlite
+        .prepare('SELECT kind, preset FROM cli_session_authorities')
+        .get()
+      expect(authority).toEqual(
+        preset === 'agent' ? { kind: 'bootstrap', preset: 'agent' } : undefined,
+      )
+    },
+  )
 
   test('validates and stores an agent intent', async () => {
     const intent = readDeviceAuthorizationIntent({

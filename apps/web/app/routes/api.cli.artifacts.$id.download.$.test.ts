@@ -1,3 +1,5 @@
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { createRequestHandler, type ServerBuild } from 'react-router'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -10,7 +12,7 @@ vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
 }))
 vi.mock('~/middleware/context', () => ({
-  getCliAuthority: () => null,
+  getCliAuthority: getCliAuthorityMock,
   requireUser: requireUserMock,
 }))
 vi.mock('~/services/db.server', () => ({
@@ -25,6 +27,7 @@ import { loader, middleware } from './api.cli.artifacts.$id.download.$'
 
 describe('/api/cli/artifacts/:id/download/*', () => {
   beforeEach(() => {
+    getCliAuthorityMock.mockReset().mockReturnValue(null)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     createDbMock.mockReset()
@@ -41,6 +44,25 @@ describe('/api/cli/artifacts/:id/download/*', () => {
       hd: 'example.com',
       locale: 'en',
     })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4', '*': 'index.md' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+        { method: 'GET' },
+      ),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(getCliDownloadFileMock).not.toHaveBeenCalled()
   })
 
   test.each([

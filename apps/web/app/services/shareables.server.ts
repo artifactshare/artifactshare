@@ -1,4 +1,9 @@
 import {
+  cliWriteAuthority,
+  cliReadAuthority,
+  allowsHumanCliMutation,
+} from '~/lib/cli-authority-policy'
+import {
   OBJECT_REFERENCE_CHUNK,
   unreferencedObjectKeys,
   releasedObjectBytes,
@@ -944,6 +949,8 @@ export async function beginStaticSiteBundleVersionUploadSession(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const agentAuthority = cliWriteAuthority(options?.authority)
+  if (agentAuthority === 'denied') return { kind: 'not-found' }
   if (shareable.artifact_kind !== 'static_site') {
     return {
       kind:
@@ -1064,8 +1071,7 @@ export async function beginStaticSiteBundleVersionUploadSession(
         expectedCurrentVersionId:
           baseVersionId ??
           options?.expectedCurrentVersionId ??
-          (options?.authority?.kind === 'agent' ||
-          shareable.owner_user_id !== user.id
+          (agentAuthority !== null || shareable.owner_user_id !== user.id
             ? shareable.current_version_id
             : null),
         preserveArtifactIdentity:
@@ -1097,6 +1103,7 @@ export async function updateShareableMetadata(
   },
   authority: CliAuthority | null = null,
 ): Promise<UpdateShareableMetadataResult> {
+  if (cliReadAuthority(authority) === 'denied') return { kind: 'not-found' }
   if (
     patch.visibility === undefined &&
     patch.linkExpiresAt === undefined &&
@@ -1104,8 +1111,7 @@ export async function updateShareableMetadata(
   ) {
     return { kind: 'ok' }
   }
-  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
-    return { kind: 'not-found' }
+  if (!allowsHumanCliMutation(authority, true)) return { kind: 'not-found' }
   const shareable = await db
     .selectFrom('shareables')
     .select(['workspace_id', 'visibility', 'link_expires_at', 'owner_user_id'])
@@ -1587,8 +1593,7 @@ export async function moveShareableContainer(
   destination: MoveDestination,
   authority: CliAuthority | null = null,
 ): Promise<MoveShareableResult> {
-  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
-    return { kind: 'not-found' }
+  if (!allowsHumanCliMutation(authority, true)) return { kind: 'not-found' }
   const shareable = await db
     .selectFrom('shareables')
     .select([
@@ -2300,6 +2305,11 @@ export class StaticSiteBundleUploadSession {
     this.#closed = true
     if (this.target.kind !== 'version') return { kind: 'storage-failed' }
     const versionTarget = this.target
+    const agentAuthority = cliWriteAuthority(versionTarget.authority)
+    if (agentAuthority === 'denied') {
+      await this.abortUploadedFiles()
+      return { kind: 'not-found' }
+    }
 
     const writable = await findWritableShareable(
       this.db,
@@ -2568,7 +2578,7 @@ export class StaticSiteBundleUploadSession {
       this.db
         .updateTable('shareables')
         .set({
-          ...(versionTarget.authority?.kind === 'agent' ||
+          ...(agentAuthority !== null ||
           versionTarget.preserveArtifactIdentity ||
           !this.files.includes(entrypointFile)
             ? {}
@@ -3385,16 +3395,18 @@ async function findWritableShareable(
     .where('shareables.id', '=', shareableId)
     .executeTakeFirst()
   if (!shareable) return null
-  if (authority?.kind === 'agent') {
+  const writeAuthority = cliWriteAuthority(authority)
+  if (writeAuthority === 'denied') return null
+  if (writeAuthority) {
     if (
       !['workspace', 'project'].includes(shareable.visibility) ||
       shareable.container_kind !== 'project' ||
       shareable.container_archived_at !== null ||
-      shareable.container_id !== authority.projectId ||
+      shareable.container_id !== writeAuthority.projectId ||
       !(await isAgentPublishableDestination(
         db,
         { workspaceId: user.workspaceId, email: user.email ?? '' },
-        authority,
+        writeAuthority,
         shareable.container_id,
       ))
     ) {
@@ -3402,7 +3414,6 @@ async function findWritableShareable(
     }
     return shareable
   }
-  if (authority?.kind === 'bridge') return null
   if (
     shareable.owner_user_id === user.id &&
     !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
@@ -3488,15 +3499,17 @@ function writableShareableSql(
   authority: CliAuthority | null,
   access: 'collaboration' | 'version' = 'collaboration',
 ): RawBuilder<boolean> {
-  if (authority?.kind === 'agent') {
+  const writeAuthority = cliWriteAuthority(authority)
+  if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
+  if (writeAuthority) {
     return sql<boolean>`
-      shareables.workspace_id = ${authority.workspaceId}
-      AND shareables.container_id = ${authority.projectId}
+      shareables.workspace_id = ${writeAuthority.workspaceId}
+      AND shareables.container_id = ${writeAuthority.projectId}
       AND shareables.visibility IN ('workspace', 'project')
       AND EXISTS (
         SELECT 1 FROM artifact_containers writable_project
         WHERE writable_project.id = shareables.container_id
-          AND writable_project.workspace_id = ${authority.workspaceId}
+          AND writable_project.workspace_id = ${writeAuthority.workspaceId}
           AND writable_project.kind = 'project'
           AND writable_project.archived_at IS NULL
           AND (
@@ -3510,7 +3523,6 @@ function writableShareableSql(
           )
       )`
   }
-  if (authority?.kind === 'bridge') return sql<boolean>`0 = 1`
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')
     : ''
@@ -3788,8 +3800,7 @@ export async function editShareableSettings(
   payload: EditShareableSettingsPayload,
   authority: CliAuthority | null = null,
 ): Promise<EditShareableSettingsResult> {
-  if (authority?.kind === 'agent' || authority?.kind === 'bridge')
-    return { kind: 'not-found' }
+  if (!allowsHumanCliMutation(authority, true)) return { kind: 'not-found' }
   let before = await getOwnedShareableSummary(db, user, shareableId)
   let isCollaborativeEdit = false
   if (!before && (await findWritableShareable(db, user, shareableId, null))) {

@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
 import { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
@@ -114,6 +115,37 @@ async function json(response: Response) {
 }
 
 describe('/api/shareables/uploads', () => {
+  test.each(['', '?artifact_kind=static_site'])(
+    'denies unknown authority before upload parsing %s',
+    async (query) => {
+      getCliAuthorityMock.mockReturnValue({
+        kind: 'unknown',
+      } as unknown as CliAuthority)
+      const form = new FormData()
+      form.set(
+        'file',
+        new File(['<p>test</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const response = await action(
+        actionArgsFor(
+          `https://example.test/api/shareables/uploads${query}`,
+          form,
+        ),
+      )
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'scope-denied' },
+      })
+      expect(uploadShareableMock).not.toHaveBeenCalled()
+      expect(createVersionMock).not.toHaveBeenCalled()
+      expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).not.toHaveBeenCalled()
+      expect(putBundleFileMock).not.toHaveBeenCalled()
+    },
+  )
+
   beforeEach(() => {
     getCliAuthorityMock.mockReset().mockReturnValue(null)
     isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)

@@ -1,3 +1,5 @@
+const authorityMock = vi.hoisted(() => vi.fn())
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -22,7 +24,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   ctxContext: ctxContextMock,
-  getCliAuthority: () => null,
+  getCliAuthority: authorityMock,
   requireUser: requireUserMock,
 }))
 vi.mock('~/modules/publish', () => ({
@@ -34,6 +36,7 @@ import { action, middleware } from './api.cli.artifacts.$id.append'
 
 describe('/api/cli/artifacts/:id/append', () => {
   beforeEach(() => {
+    authorityMock.mockReset().mockReturnValue(null)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     isAgentOwnedArtifactMock.mockReset().mockResolvedValue(false)
@@ -55,6 +58,34 @@ describe('/api/cli/artifacts/:id/append', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
+  })
+
+  test('denies unknown authority before mutation', async () => {
+    authorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const request = new Request(
+      'https://example.test/api/cli/artifacts/abc123def4',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Changed',
+          destination: 'home',
+          content: '<p>added</p>',
+        }),
+      },
+    )
+    const response = await action({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request,
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(publishMock).not.toHaveBeenCalled()
+    expect(request.bodyUsed).toBe(false)
   })
 
   test('keeps bearer authentication middleware', () => {

@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -39,6 +40,24 @@ describe('/api/cli/doctor', () => {
       hd: 'example.com',
     })
     getCliAuthorityMock.mockReturnValue({ kind: 'unrestricted' })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: {},
+      request: new Request('https://example.test/api/cli/doctor', {
+        method: 'GET',
+      }),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(checkUploadAccessMock).not.toHaveBeenCalled()
   })
 
   test('reports the project selected by an agent credential', async () => {

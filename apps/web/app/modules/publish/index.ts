@@ -1,3 +1,4 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import type { Compilable, Kysely } from 'kysely'
 import { defaultVisibilityFor } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
@@ -72,20 +73,28 @@ export function publishPrincipal(
   user: PublishUser,
   authority: CliAuthority | null,
 ): Principal | null {
-  if (user.kind === 'bot') {
-    return authority?.kind === 'agent'
-      ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }
-      : null
-  }
-  if (authority?.kind === 'agent') return { kind: 'agent', user, authority }
-  if (authority?.kind === 'bridge') return { kind: 'bridge', user, authority }
-  if (authority?.kind === 'bootstrap') {
-    return { kind: 'bootstrap', user, authority }
-  }
-  return {
-    kind: 'human',
-    user: { ...user, kind: 'human' },
-    ...(authority ? { authority } : {}),
+  if (!authority)
+    return user.kind === 'bot'
+      ? null
+      : { kind: 'human', user: { ...user, kind: 'human' } }
+  switch (authority.kind) {
+    case 'agent':
+      return user.kind === 'bot'
+        ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }
+        : { kind: 'agent', user, authority }
+    case 'bridge':
+      return user.kind === 'bot' ? null : { kind: 'bridge', user, authority }
+    case 'bootstrap':
+      return user.kind === 'bot' ? null : { kind: 'bootstrap', user, authority }
+    case 'unrestricted':
+      return user.kind === 'bot'
+        ? null
+        : { kind: 'human', user: { ...user, kind: 'human' }, authority }
+    default: {
+      const unexpected: never = authority
+      void unexpected
+      return null
+    }
   }
 }
 
@@ -287,19 +296,32 @@ async function publishWithDb(
 ): Promise<PublishResult> {
   const user = intent.actor.user
   const authority = intent.actor.authority ?? null
+  if (authority) {
+    switch (authority.kind) {
+      case 'unrestricted':
+        if (intent.actor.kind !== 'human') return { kind: 'forbidden' }
+        break
+      case 'bootstrap':
+        return { kind: 'forbidden' }
+      case 'agent':
+        if (intent.actor.kind !== 'agent' && intent.actor.kind !== 'bot')
+          return { kind: 'forbidden' }
+        break
+      case 'bridge':
+        if (intent.actor.kind !== 'bridge') return { kind: 'forbidden' }
+        break
+      default: {
+        const unexpected: never = authority
+        void unexpected
+        return { kind: 'forbidden' }
+      }
+    }
+  } else if (intent.actor.kind !== 'human') return { kind: 'forbidden' }
   if (
-    intent.actor.kind === 'bootstrap' ||
     (intent.actor.kind === 'human' && user.kind !== 'human') ||
-    (intent.actor.kind === 'bot' && user.kind !== 'bot') ||
-    (intent.actor.kind === 'human' &&
-      authority !== null &&
-      authority.kind !== 'unrestricted') ||
-    ((intent.actor.kind === 'agent' || intent.actor.kind === 'bot') &&
-      authority?.kind !== 'agent') ||
-    (intent.actor.kind === 'bridge' && authority?.kind !== 'bridge')
-  ) {
+    (intent.actor.kind === 'bot' && user.kind !== 'bot')
+  )
     return { kind: 'forbidden' }
-  }
   if (intent.actor.kind === 'bridge') {
     if (!isBridgeIntent(intent)) return { kind: 'forbidden' }
     const bridgeAuthority = intent.actor.authority
@@ -332,20 +354,22 @@ async function publishWithDb(
     hd: user.hd ?? null,
     msTenantId: user.msTenantId ?? null,
   }
+  const agentAuthority = cliReadAuthority(authority)
+  if (agentAuthority === 'denied') return { kind: 'forbidden' }
   const authorityAgentProfileId =
-    authority?.kind === 'agent' ? authority.agentProfileId : null
+    agentAuthority !== null ? agentAuthority.agentProfileId : null
   const agentProfileId = authorityAgentProfileId ?? undefined
 
   if (isAppendIntent(intent)) {
     if (
-      authority?.kind === 'agent' &&
+      agentAuthority !== null &&
       !(await isAgentOwnedArtifact(
         db,
         {
           workspaceId: normalizedUser.workspaceId,
           email: normalizedUser.email ?? '',
         },
-        authority,
+        agentAuthority,
         intent.target.artifactId,
       ))
     ) {
@@ -377,7 +401,7 @@ async function publishWithDb(
   }
 
   if (isUpdateIntent(intent)) {
-    if (authority?.kind === 'agent' && !intent.target.expectedVersionId) {
+    if (agentAuthority !== null && !intent.target.expectedVersionId) {
       return { kind: 'expected-version-required' }
     }
     if (intent.content.kind === 'site') {
@@ -434,7 +458,7 @@ async function publishWithDb(
           containerId === null ? 'inbox' : 'project',
         ))
 
-  if (authority?.kind === 'agent') {
+  if (agentAuthority !== null) {
     const agentUser = {
       workspaceId: normalizedUser.workspaceId,
       email: normalizedUser.email ?? '',
@@ -445,7 +469,7 @@ async function publishWithDb(
       !(await isAgentPublishableDestination(
         db,
         agentUser,
-        authority,
+        agentAuthority,
         containerId,
       ))
     ) {

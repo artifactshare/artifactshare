@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -53,6 +54,45 @@ describe('/api/cli/artifacts/:id', () => {
       hd: 'example.com',
       locale: 'en',
     })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4', '*': 'index.md' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+        { method: 'GET' },
+      ),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(getArtifactReadbackMock).not.toHaveBeenCalled()
+    expect(authorizeAgentArtifactReadMock).not.toHaveBeenCalled()
+  })
+
+  test('denies an unknown authority for DELETE before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await action({
+      context: new Map(),
+      params: { id: 'abc123def4', '*': 'index.md' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+        { method: 'DELETE' },
+      ),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(deleteShareableMock).not.toHaveBeenCalled()
   })
 
   test('rejects invalid offset before opening the database', async () => {

@@ -1,3 +1,5 @@
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   ArtifactIdParamsSchema,
   CliMoveRequestSchema,
@@ -21,6 +23,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
+  if (cliReadAuthority(getCliAuthority(context)) === 'denied')
+    return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Shareable not found.', 404)

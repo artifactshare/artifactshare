@@ -1,3 +1,4 @@
+import { cliReadAuthority, cliWriteAuthority } from '~/lib/cli-authority-policy'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -67,6 +68,9 @@ async function publishStaticSiteUpdate(
     throw new TypeError('Static-site update adapter requires an update target.')
   }
 
+  const agentAuthority = cliWriteAuthority(context.authority)
+  if (agentAuthority === 'denied')
+    return { kind: 'static-site-visibility-forbidden' }
   const begun = await beginStaticSiteBundleVersionUploadSession(
     context.db,
     {
@@ -83,8 +87,8 @@ async function publishStaticSiteUpdate(
       ...(context.target.expectedVersionId
         ? { expectedCurrentVersionId: context.target.expectedVersionId }
         : {}),
-      ...(context.authority?.kind === 'agent'
-        ? { agentProfileId: context.authority.agentProfileId }
+      ...(agentAuthority !== null
+        ? { agentProfileId: agentAuthority.agentProfileId }
         : {}),
     },
   )
@@ -144,14 +148,17 @@ async function publishStaticSiteCreate(
   context: StaticSiteContentSessionContext,
   options: { expectedContainerId: string | null },
 ): Promise<StaticSiteContentSessionResult> {
+  const agentAuthority = cliReadAuthority(context.authority)
+  if (agentAuthority === 'denied')
+    return { kind: 'static-site-visibility-forbidden' }
   const begun =
-    context.authority?.kind === 'agent'
+    agentAuthority !== null
       ? await beginStaticSiteBundleUploadSession(
           context.db,
           context.user,
           context.containerId,
           context.idempotencyKey,
-          { agentProfileId: context.authority.agentProfileId },
+          { agentProfileId: agentAuthority.agentProfileId },
         )
       : await beginStaticSiteBundleUploadSession(
           context.db,
@@ -196,7 +203,7 @@ async function publishStaticSiteCreate(
   }
   const visibility = parsedVisibility.data ?? 'private'
   if (
-    context.authority?.kind === 'agent' &&
+    agentAuthority !== null &&
     (visibility === 'private' || visibility === 'link')
   ) {
     await session.abort()

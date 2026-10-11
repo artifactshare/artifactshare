@@ -123,18 +123,28 @@ async function handleDeviceToken(request: Request): Promise<Response> {
     ? await loadDeviceAuthorizationIntent(deviceCode)
     : null
   const response = await authHandlerWithHangDetection(request)
-  if (!response.ok || intent?.preset !== 'agent') return response
+  if (!response.ok || !intent) return response
   const body = await response
     .clone()
     .json()
     .catch(() => null)
   const accessToken = readResponseString(body, 'access_token')
-  if (
-    accessToken &&
-    intent.preset === 'agent' &&
-    (await attachAgentBootstrapAuthority(accessToken, intent))
-  ) {
-    return response
+  switch (intent.preset) {
+    case 'unrestricted':
+      return response
+    case 'agent':
+      if (
+        accessToken &&
+        (await attachAgentBootstrapAuthority(accessToken, intent))
+      ) {
+        return response
+      }
+      break
+    default: {
+      const unexpected: never = intent.preset
+      void unexpected
+      break
+    }
   }
   if (accessToken) await revokeSessionToken(accessToken)
   return Response.json(

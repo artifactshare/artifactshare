@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -38,6 +39,25 @@ describe('moveShareableContainer', () => {
   afterEach(async () => {
     await db.destroy()
   })
+
+  test.each([OWNER, ADMIN])(
+    'denies unknown authority for owner or admin $id without moving',
+    async (actor) => {
+      const before = await db.selectFrom('shareables').selectAll().execute()
+      expect(
+        await moveShareableContainer(
+          db,
+          actor,
+          's1',
+          { type: 'project', projectId: 'project-a' },
+          { kind: 'unknown' } as unknown as CliAuthority,
+        ),
+      ).toEqual({ kind: 'not-found' })
+      expect(await db.selectFrom('shareables').selectAll().execute()).toEqual(
+        before,
+      )
+    },
+  )
 
   test('owner moves a shareable from inbox into a project', async () => {
     const result = await moveShareableContainer(db, OWNER, 's1', {

@@ -1,3 +1,5 @@
+const getCliAuthorityMock = vi.hoisted(() => vi.fn())
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
@@ -10,6 +12,7 @@ vi.mock('~/middleware/auth', () => ({
 }))
 vi.mock('~/middleware/context', () => ({
   requireUser: requireUserMock,
+  getCliAuthority: getCliAuthorityMock,
 }))
 vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
@@ -23,6 +26,7 @@ import { loader, middleware } from './api.cli.resolve'
 
 describe('/api/cli/resolve', () => {
   beforeEach(() => {
+    getCliAuthorityMock.mockReset().mockReturnValue(null)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     createDbMock.mockReset()
@@ -36,6 +40,24 @@ describe('/api/cli/resolve', () => {
       workspaceId: 'ws1',
       hd: 'example.com',
     })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: {},
+      request: new Request('https://example.test/api/cli/resolve?q=report', {
+        method: 'GET',
+      }),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(resolveCliCandidatesMock).not.toHaveBeenCalled()
   })
 
   test('requires a query', async () => {

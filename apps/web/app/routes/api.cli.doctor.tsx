@@ -1,3 +1,5 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import { CLI_DOCTOR_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -8,7 +10,8 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context }: Route.LoaderArgs) {
   const user = requireUser(context)
-  const authority = getCliAuthority(context)
+  const authority = cliReadAuthority(getCliAuthority(context))
+  if (authority === 'denied') return cliScopeDeniedResponse()
   const permission = await checkUploadAccess(user)
   const payload = {
     user: {
@@ -23,7 +26,7 @@ export async function loader({ context }: Route.LoaderArgs) {
       kind: 'bearer_or_session',
       ok: true,
       authority:
-        authority?.kind === 'agent'
+        authority !== null
           ? {
               preset: 'agent',
               project_id: authority.projectId,

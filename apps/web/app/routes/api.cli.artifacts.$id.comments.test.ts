@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -134,6 +135,50 @@ describe('/api/cli/artifacts/:id/comments', () => {
       thread: THREAD,
       threads: [THREAD],
     })
+  })
+
+  test('denies an unknown authority for GET before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4', '*': 'index.md' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+        { method: 'GET' },
+      ),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(loadCommentAccessMock).not.toHaveBeenCalled()
+    expect(loadCommentThreadsMock).not.toHaveBeenCalled()
+  })
+
+  test('denies an unknown authority for POST before accessing artifact or project data', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const response = await action({
+      context: new Map(),
+      params: { id: 'abc123def4', '*': 'index.md' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+        {
+          method: 'POST',
+          body: JSON.stringify({ body: 'Comment', name: 'Project' }),
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(postArtifactCommentMock).not.toHaveBeenCalled()
+    expect(changeCommentMock).not.toHaveBeenCalled()
   })
 
   test('loader returns the agent-shaped threads', async () => {

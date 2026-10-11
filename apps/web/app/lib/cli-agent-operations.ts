@@ -34,13 +34,25 @@ export function allowsCliOperation(
   method: string,
   pathname: string,
 ) {
-  if (authority.kind === 'unrestricted') return true
-  const rules =
-    authority.kind === 'bootstrap'
-      ? BOOTSTRAP_RULES
-      : authority.kind === 'bridge'
-        ? BRIDGE_RULES
-        : AGENT_RULES
+  let rules: Rule[]
+  switch (authority.kind) {
+    case 'unrestricted':
+      return true
+    case 'bootstrap':
+      rules = BOOTSTRAP_RULES
+      break
+    case 'agent':
+      rules = AGENT_RULES
+      break
+    case 'bridge':
+      rules = BRIDGE_RULES
+      break
+    default: {
+      const unexpected: never = authority
+      void unexpected
+      return false
+    }
+  }
   return rules.some(
     (rule) => rule.method === method && rule.pattern.test(pathname),
   )

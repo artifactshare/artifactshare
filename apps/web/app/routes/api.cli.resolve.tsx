@@ -1,9 +1,11 @@
+import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import {
   ResolveQuerySchema,
   ResolveResponseSchema,
 } from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
-import { requireUser } from '~/middleware/context'
+import { getCliAuthority, requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
 import { resolveCliCandidates } from '~/services/cli-resolve.server'
 import type { Route } from './+types/api.cli.resolve'
@@ -12,6 +14,8 @@ export const middleware = [requireUserApiWithBearerMiddleware]
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   const user = requireUser(context)
+  if (!allowsHumanCliMutation(getCliAuthority(context)))
+    return cliScopeDeniedResponse()
   const url = new URL(request.url)
   const parsedQuery = ResolveQuerySchema.safeParse({
     q: url.searchParams.get('q') ?? '',

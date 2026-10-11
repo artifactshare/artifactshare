@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { describe, expect, test } from 'vitest'
 import {
   allowsCliOperation,
@@ -87,4 +88,21 @@ describe('agent operation declaration', () => {
       requires_human: true,
     })
   })
+})
+
+test.each([
+  ['GET', '/api/cli/artifacts'],
+  ['GET', '/api/cli/doctor'],
+  ['GET', '/api/cli/resolve'],
+  ['POST', '/api/cli/projects'],
+  ['GET', '/api/bridge/v1/health'],
+  ['POST', '/api/bridge/v1/requests'],
+])('denies unknown authority for %s %s', (method, path) => {
+  expect(
+    allowsCliOperation(
+      { kind: 'unknown' } as unknown as CliAuthority,
+      method,
+      path,
+    ),
+  ).toBe(false)
 })

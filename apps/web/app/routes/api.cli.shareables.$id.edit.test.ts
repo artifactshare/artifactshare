@@ -1,3 +1,4 @@
+import type { CliAuthority } from '~/services/cli-authority.server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   associateD1Database,
@@ -58,6 +59,33 @@ describe('/api/cli/shareables/:id/edit', () => {
         projectId: 'prj1',
       },
     })
+  })
+
+  test('denies unknown authority before mutation', async () => {
+    authorityMock.mockReturnValue({
+      kind: 'unknown',
+    } as unknown as CliAuthority)
+    const request = new Request(
+      'https://example.test/api/cli/shareables/abc123def4/edit',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          destination: { project_id: 'prj1' },
+          title: 'Changed',
+        }),
+      },
+    )
+    const response = await action({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request,
+    } as never)
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'scope-denied' },
+    })
+    expect(editShareableSettingsMock).not.toHaveBeenCalled()
+    expect(request.bodyUsed).toBe(false)
   })
 
   test('edits title, sharing, and destination for the authenticated owner', async () => {

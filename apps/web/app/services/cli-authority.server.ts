@@ -1,3 +1,7 @@
+import {
+  isRecognizedCliPreset,
+  isRecognizedCliSessionKind,
+} from '~/lib/cli-authority-policy'
 import { D1Dialect } from 'kysely-d1'
 import { Kysely } from 'kysely'
 import { env } from 'cloudflare:workers'
@@ -78,6 +82,7 @@ export async function resolveCliAuthorityBySessionToken(
         'users.kind as user_kind',
         'users.bot_stopped_at',
         'cli_session_authorities.kind',
+        'cli_session_authorities.session_id as authority_session_id',
         'cli_session_authorities.preset as session_preset',
         'cli_session_authorities.workspace_id as bootstrap_workspace_id',
         'cli_session_authorities.project_id as bootstrap_project_id',
@@ -126,6 +131,7 @@ export async function resolveCliAuthorityBySessionToken(
         row.bot_stopped_at !== null ||
         row.kind !== 'family' ||
         row.bearer_only !== 1 ||
+        row.session_preset !== 'agent' ||
         row.status !== 'active' ||
         row.family_preset !== 'agent' ||
         !row.family_id ||
@@ -171,7 +177,9 @@ export async function resolveCliAuthorityBySessionToken(
         agentProfileId: row.agent_profile_id,
       }
     }
-    if (!row.kind) return { kind: 'unrestricted' }
+    if (row.authority_session_id === null) return { kind: 'unrestricted' }
+    if (!isRecognizedCliSessionKind(row.kind)) return null
+    if (!isRecognizedCliPreset(row.session_preset)) return null
     if (row.bearer_only !== 1) return null
     if (row.kind === 'bootstrap') {
       if (
@@ -190,7 +198,9 @@ export async function resolveCliAuthorityBySessionToken(
       }
     }
     if (row.status !== 'active') return null
+    if (!isRecognizedCliPreset(row.family_preset)) return null
     if (row.family_preset === 'unrestricted') return { kind: 'unrestricted' }
+    if (row.family_preset !== 'agent') return null
     if (
       !row.family_id ||
       !row.workspace_id ||
