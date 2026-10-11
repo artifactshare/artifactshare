@@ -36,7 +36,7 @@ const {
   storeDeviceAuthorizationIntent,
 } = await import('./cli-device-authority.server')
 
-const { action } = await import('../routes/api.auth.$')
+const { action, loader } = await import('../routes/api.auth.$')
 
 describe('CLI device authorization intent', () => {
   let sqlite: DatabaseSync
@@ -80,6 +80,38 @@ describe('CLI device authorization intent', () => {
     await db.destroy()
     sqliteRef.current = null
   })
+
+  test.each(['publisher', 'agent', 'unrestricted'] as const)(
+    'expired verification maps publisher to 410 and preserves %s behavior',
+    async (preset) => {
+      await db
+        .updateTable('deviceCode')
+        .set({
+          preset,
+          deviceName: 'Dashboard',
+          expiresAt: '2000-01-01T00:00:00.000Z',
+        })
+        .where('id', '=', 'dc1')
+        .execute()
+      authHandlerMock.mockResolvedValue(
+        Response.json(
+          { error: 'expired_token', error_description: 'User code expired' },
+          { status: 400, headers: { 'Cache-Control': 'no-store' } },
+        ),
+      )
+      const response = await loader({
+        request: new Request(
+          'https://example.test/api/auth/device?user_code=ABCD-1234',
+        ),
+      } as never)
+      expect(response.status).toBe(preset === 'publisher' ? 410 : 400)
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+      expect(await response.json()).toEqual({
+        error: 'expired_token',
+        error_description: 'User code expired',
+      })
+    },
+  )
 
   function deviceRequest(
     endpoint: string,

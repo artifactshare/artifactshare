@@ -316,10 +316,7 @@ export async function seedDevScreenState(
         deviceCode: `${workspaceId}-publisher-token`,
         userCode: devPublisherUserCode(workspaceId),
         userId,
-        expiresAt:
-          scenario === 'device/publisher-invalid'
-            ? '2000-01-01T00:00:00.000Z'
-            : '2099-01-01T00:00:00.000Z',
+        expiresAt: '2099-01-01T00:00:00.000Z',
         status: 'pending',
         lastPolledAt: null,
         pollingInterval: 5,
@@ -332,12 +329,13 @@ export async function seedDevScreenState(
         requestedProjectSelector: null,
       })
       .onConflict((oc) =>
-        oc
-          .column('id')
-          .doUpdateSet({ userCode: devPublisherUserCode(workspaceId) }),
+        oc.column('id').doUpdateSet({
+          userCode: devPublisherUserCode(workspaceId),
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        }),
       )
       .execute()
-    if (scenario === 'device/publisher-continue')
+    if (scenario !== 'device/publisher-new')
       await db
         .insertInto('publisher_clients')
         .values({

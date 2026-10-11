@@ -74,32 +74,47 @@ export const screen = {
     },
     {
       id: 'publisher-continue',
-      description: 'publisher-continue approval',
+      description: 'Existing publisher client picker',
       setup: {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-continue',
         query: '?user_code=12242955',
+        interactions: [{ action: 'click', selector: '#publisher-continue' }],
+        ready: {
+          selector: '#publisher-continue',
+          description: 'Client choices loaded',
+        },
       },
     },
     {
       id: 'publisher-invalid',
-      description: 'publisher-invalid approval',
+      description: 'Duplicate publisher name blocks new-client approval',
       setup: {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-invalid',
         query: '?user_code=5D39F577',
+        interactions: [{ action: 'click', selector: '#publisher-new' }],
+        ready: {
+          selector: '#publisher-new',
+          description: 'Client choices loaded',
+        },
       },
     },
     {
       id: 'publisher-long-name',
-      description: 'publisher-long-name approval',
+      description: 'Long requested name and existing client picker',
       setup: {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-long-name',
         query: '?user_code=BFD3DBFE',
+        interactions: [{ action: 'click', selector: '#publisher-continue' }],
+        ready: {
+          selector: '#publisher-continue',
+          description: 'Client choices loaded',
+        },
       },
     },
     {
@@ -287,68 +302,88 @@ function PublisherApprovalFields({
 }) {
   const { t } = useT()
   return (
-    <Stack gap="3" className="w-full max-w-80 text-left">
-      <p className="text-sm font-medium break-words">
-        {publisherApproval.requestedName}
-      </p>
-      <p id="publisher-capability" className="text-muted-foreground text-sm">
-        {t('device.publisher.capability')}
-      </p>
-      <Field>
-        <FieldLabel id="publisher-choice-label">
-          {t('device.publisher.choice')}
-        </FieldLabel>
-        <RadioGroup
-          aria-labelledby="publisher-choice-label"
-          value={publisherMode}
-          onValueChange={setPublisherMode}
-        >
-          <Inline gap="2">
-            <RadioGroupItem id="publisher-new" value="create-new" />
-            <FieldLabel htmlFor="publisher-new">
-              {t('device.publisher.new')}
-            </FieldLabel>
-          </Inline>
-          <Inline gap="2">
-            <RadioGroupItem
-              id="publisher-continue"
-              value="continue-existing"
-              disabled={publisherApproval.clients.length === 0}
-            />
-            <FieldLabel htmlFor="publisher-continue">
-              {t('device.publisher.continue')}
-            </FieldLabel>
-          </Inline>
-        </RadioGroup>
-      </Field>
-      {publisherMode === 'continue-existing' ? (
-        <Field>
-          <FieldLabel id="publisher-client-label" htmlFor="publisher-client">
-            {t('device.publisher.client')}
-          </FieldLabel>
-          <select
-            id="publisher-client"
-            aria-labelledby="publisher-client-label"
-            value={publisherClientId}
-            onChange={(event) => setPublisherClientId(event.target.value)}
-            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+    <div className="mt-4 w-full max-w-80 text-left">
+      <Stack gap="3">
+        <Stack gap="1.5">
+          <p id="publisher-name-label" className="text-sm font-medium">
+            {t('device.publisher.requestedName')}
+          </p>
+          <blockquote
+            aria-labelledby="publisher-name-label"
+            className="border-input rounded-md border px-3 py-2 text-sm break-words"
           >
-            <option value="">{t('device.publisher.select')}</option>
-            {publisherApproval.clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </select>
+            {publisherApproval.requestedName}
+          </blockquote>
+          <p className="text-muted-foreground text-sm">
+            {t('device.publisher.nameSource')}
+          </p>
+        </Stack>
+        <p id="publisher-capability" className="text-muted-foreground text-sm">
+          {t('device.publisher.capability')}
+        </p>
+        <Field>
+          <FieldLabel id="publisher-choice-label">
+            {t('device.publisher.choice')}
+          </FieldLabel>
+          <RadioGroup
+            aria-labelledby="publisher-choice-label"
+            value={publisherMode}
+            onValueChange={setPublisherMode}
+          >
+            <Inline gap="2">
+              <RadioGroupItem id="publisher-new" value="create-new" />
+              <FieldLabel htmlFor="publisher-new">
+                {t('device.publisher.new')}
+              </FieldLabel>
+            </Inline>
+            <Inline gap="2">
+              <RadioGroupItem
+                id="publisher-continue"
+                value="continue-existing"
+                disabled={publisherApproval.clients.length === 0}
+              />
+              <FieldLabel htmlFor="publisher-continue">
+                {t('device.publisher.continue')}
+                {publisherApproval.clients.length === 0
+                  ? ` ${t('device.publisher.noneYet')}`
+                  : null}
+              </FieldLabel>
+            </Inline>
+          </RadioGroup>
         </Field>
-      ) : null}
-      {publisherMode === 'create-new' && publisherDuplicate ? (
-        <ConsentErrorAlert>{t('device.publisher.duplicate')}</ConsentErrorAlert>
-      ) : null}
-      <p className="text-muted-foreground text-sm">
-        {t('device.publisher.nameHelp')}
-      </p>
-    </Stack>
+        {publisherMode === 'continue-existing' ? (
+          <Field>
+            <FieldLabel id="publisher-client-label" htmlFor="publisher-client">
+              {t('device.publisher.client')}
+            </FieldLabel>
+            <select
+              id="publisher-client"
+              aria-labelledby="publisher-client-label"
+              value={publisherClientId}
+              onChange={(event) => setPublisherClientId(event.target.value)}
+              className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="">{t('device.publisher.select')}</option>
+              {publisherApproval.clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+        {publisherMode === 'create-new' && publisherDuplicate ? (
+          <ConsentErrorAlert>
+            {t('device.publisher.duplicate')}
+          </ConsentErrorAlert>
+        ) : null}
+        {publisherApproval.clients.length > 0 ? (
+          <p className="text-muted-foreground text-sm">
+            {t('device.publisher.nameHelp')}
+          </p>
+        ) : null}
+      </Stack>
+    </div>
   )
 }
 
@@ -439,7 +474,12 @@ export default function Device({ loaderData }: Route.ComponentProps) {
               approval: verifiedApproval,
             })
             setSelectedProject(null)
-            setPublisherMode('')
+            setPublisherMode(
+              verifiedApproval?.preset === 'publisher' &&
+                verifiedApproval.clients.length === 0
+                ? 'create-new'
+                : '',
+            )
             setPublisherClientId('')
           }
         }
@@ -493,7 +533,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             return
           }
           setVerifiedAgentApproval({ code: decisionCode, approval: refreshed })
-          setPublisherMode('')
+          setPublisherMode(refreshed.clients.length === 0 ? 'create-new' : '')
           setPublisherClientId('')
           dispatch({ kind: 'ready', code: decisionCode, notice: true })
         } else if (status === 400 || status === 403) {

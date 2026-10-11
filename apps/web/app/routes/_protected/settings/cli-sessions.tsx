@@ -222,7 +222,10 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <div className="max-w-96 min-w-0 truncate" title={name}>
+        <div
+          className="max-phone:max-w-48 max-w-96 min-w-0 truncate"
+          title={name}
+        >
           <TeamUser name={name} />
           <TeamMuted>
             {t('team.tokens.cli.preset')}:{' '}

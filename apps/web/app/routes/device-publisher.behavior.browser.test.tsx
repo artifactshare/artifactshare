@@ -66,16 +66,40 @@ async function render(clients: Array<{ id: string; name: string }>) {
     .toBeVisible()
 }
 
-test('approval requires an explicit new-client choice', async () => {
+test('first client defaults to create-new and labels the requested name', async () => {
   await render([])
   await expect
     .element(
       page.getByRole('button', { name: en['device.approve'], exact: true }),
     )
+    .toBeEnabled()
+  await expect
+    .element(
+      page.getByRole('radio', {
+        name: en['device.publisher.new'],
+        exact: true,
+      }),
+    )
+    .toBeChecked()
+  await expect
+    .element(
+      page.getByRole('radio', {
+        name: `${en['device.publisher.continue']} ${en['device.publisher.noneYet']}`,
+      }),
+    )
     .toBeDisabled()
-  await page
-    .getByRole('radio', { name: en['device.publisher.new'], exact: true })
-    .click()
+  await expect
+    .element(page.getByText(en['device.publisher.nameHelp']))
+    .not.toBeInTheDocument()
+  await expect
+    .element(page.getByText(en['device.publisher.nameSource']))
+    .toBeVisible()
+  const name = container!.querySelector('blockquote')!
+  expect(name.getAttribute('aria-labelledby')).toBe('publisher-name-label')
+  expect(name.textContent).toBe('Employee dashboard')
+  await expect
+    .element(page.getByText(en['device.publisher.requestedName']))
+    .toBeVisible()
   await page
     .getByRole('button', { name: en['device.approve'], exact: true })
     .click()
@@ -86,6 +110,30 @@ test('approval requires an explicit new-client choice', async () => {
 
 test('duplicate names require explicit continuation and an owned client selection', async () => {
   await render([{ id: 'client1', name: 'Employee dashboard' }])
+  await expect
+    .element(
+      page.getByRole('radio', {
+        name: en['device.publisher.new'],
+        exact: true,
+      }),
+    )
+    .not.toBeChecked()
+  await expect
+    .element(
+      page.getByRole('radio', {
+        name: en['device.publisher.continue'],
+        exact: true,
+      }),
+    )
+    .not.toBeChecked()
+  await expect
+    .element(
+      page.getByRole('button', { name: en['device.approve'], exact: true }),
+    )
+    .toBeDisabled()
+  await expect
+    .element(page.getByText(en['device.publisher.nameHelp']))
+    .toBeVisible()
   await page
     .getByRole('radio', { name: en['device.publisher.new'], exact: true })
     .click()
@@ -123,4 +171,21 @@ test('duplicate names require explicit continuation and an owned client selectio
     mode: 'continue-existing',
     client_id: 'client1',
   })
+})
+
+test('existing clients keep new-client approval deliberate even without a duplicate', async () => {
+  await render([{ id: 'client1', name: 'Other dashboard' }])
+  await expect
+    .element(
+      page.getByRole('button', { name: en['device.approve'], exact: true }),
+    )
+    .toBeDisabled()
+  await page
+    .getByRole('radio', { name: en['device.publisher.new'], exact: true })
+    .click()
+  await expect
+    .element(
+      page.getByRole('button', { name: en['device.approve'], exact: true }),
+    )
+    .toBeEnabled()
 })

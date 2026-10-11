@@ -229,6 +229,66 @@ describe('/device', () => {
     await React.act(async () => root.unmount())
   })
 
+  test.each([
+    { clients: [] },
+    { clients: [{ id: 'client1', name: 'Other dashboard' }] },
+  ])(
+    'publisher defaults to create-new only without existing clients: %j',
+    async ({ clients }) => {
+      deviceParams = new URLSearchParams('user_code=ab12-cd34')
+      deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+      const authClient = await import('~/lib/auth-client')
+      vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
+        preset: 'publisher',
+        requestedName: 'Employee dashboard',
+        clients,
+      })
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      try {
+        await React.act(async () =>
+          root.render(
+            <Device
+              {...({ loaderData: { signedIn: true } } as Parameters<
+                typeof Device
+              >[0])}
+            />,
+          ),
+        )
+        const approve = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent === 'device.approve',
+        )!
+        expect(approve.disabled).toBe(clients.length > 0)
+        expect(
+          container.textContent?.includes('device.publisher.nameHelp'),
+        ).toBe(clients.length > 0)
+        expect(
+          container.textContent?.includes('device.publisher.noneYet'),
+        ).toBe(clients.length === 0)
+        const name = container.querySelector('blockquote')!
+        expect(name.textContent).toBe('Employee dashboard')
+        expect(name.getAttribute('aria-labelledby')).toBe(
+          'publisher-name-label',
+        )
+        expect(container.textContent).toContain('device.publisher.nameSource')
+      } finally {
+        await React.act(async () => root.unmount())
+      }
+    },
+  )
+
+  test.each([
+    ['publisher-invalid', '#publisher-new'],
+    ['publisher-continue', '#publisher-continue'],
+    ['publisher-long-name', '#publisher-continue'],
+  ])('capture %s explicitly opens its intended choice', (id, selector) => {
+    const state = screen.states.find((candidate) => candidate.id === id)!
+    expect(state.setup).toMatchObject({
+      interactions: [{ action: 'click', selector }],
+      ready: { selector },
+    })
+  })
+
   test('shows a fixed requested project without the editable picker', async () => {
     deviceParams = new URLSearchParams('user_code=ab12-cd34')
     deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })

@@ -34,10 +34,31 @@ function maybeClearSiteData(request: Request, response: Response): Response {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  return maybeClearSiteData(
-    request,
-    await authHandlerWithHangDetection(request),
-  )
+  const response = await authHandlerWithHangDetection(request)
+  const url = new URL(request.url)
+  // The device plugin reports expired verification codes as 400. Preserve
+  // existing presets while letting publisher approval show its expired state.
+  if (url.pathname === '/api/auth/device' && response.status === 400) {
+    const payload = await response
+      .clone()
+      .json()
+      .catch(() => null)
+    const userCode = url.searchParams.get('user_code')?.replace(/-/g, '')
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      payload.error === 'expired_token' &&
+      userCode &&
+      (await isPublisherDeviceApproval(userCode))
+    ) {
+      return new Response(response.body, {
+        status: 410,
+        headers: response.headers,
+      })
+    }
+  }
+  return maybeClearSiteData(request, response)
 }
 
 export async function action({ request }: Route.ActionArgs) {

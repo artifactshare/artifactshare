@@ -91,6 +91,15 @@ describe('dev screen state requests', () => {
             .selectAll()
             .where('userId', '=', userId)
             .executeTakeFirstOrThrow()
+          expect(before.expiresAt).toBe('2099-01-01T00:00:00.000Z')
+          const clients = await db
+            .selectFrom('publisher_clients')
+            .selectAll()
+            .where('user_id', '=', userId)
+            .execute()
+          expect(clients).toHaveLength(state === 'new' ? 0 : 1)
+          if (state !== 'new') expect(clients[0].name).toBe(before.deviceName)
+          if (state === 'long-name') expect(clients[0].name.length).toBe(99)
           expect(before.userCode).toBe(devPublisherUserCode(workspaceId))
           expect(before.userCode).toMatch(/^[A-Z0-9]{8}$/)
           // Existing dev databases may still contain the former shared code.
