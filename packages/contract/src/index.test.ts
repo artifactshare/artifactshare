@@ -12,6 +12,7 @@ import {
   CLI_DEVICE_CLIENT_ID,
   CLI_DOCTOR_RESPONSE_SCHEMA,
   CLI_AUTH_REFRESH_REQUEST_SCHEMA,
+  CliAuthRefreshCredentialsRequestSchema,
   CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
   CLI_EDIT_REQUEST_SCHEMA,
   CLI_EDIT_RESPONSE_SCHEMA,
@@ -1154,6 +1155,18 @@ describe('publisher device contracts', () => {
     'a\nb',
     'a\u0000b',
     'x'.repeat(101),
+    '\u0301',
+    ...[
+      '\u3164',
+      '\u115f',
+      '\u1160',
+      '\u034f',
+      '\u17b4',
+      '\u17b5',
+      '\uffa0',
+      '\ufe0f',
+      '\u200d',
+    ].flatMap((character) => [character, `Reports${character}`]),
   ])('rejects invalid publisher name %j', (device_name) => {
     expect(
       DEVICE_CODE_REQUEST_SCHEMA.safeParse({ ...request, device_name }).success,
@@ -1205,5 +1218,24 @@ describe('publisher device contracts', () => {
         publisher: { mode: 'continue-existing', client_id: 'client1' },
       }).publisher,
     ).toEqual({ mode: 'continue-existing', client_id: 'client1' })
+  })
+})
+
+describe('refresh credential device names', () => {
+  it.each([undefined, null, '', 'x'.repeat(100)])(
+    'accepts bounded optional name %j',
+    (device_name) => {
+      expect(
+        CliAuthRefreshCredentialsRequestSchema.safeParse({ device_name })
+          .success,
+      ).toBe(true)
+    },
+  )
+  it('rejects names longer than 100 characters', () => {
+    expect(
+      CliAuthRefreshCredentialsRequestSchema.safeParse({
+        device_name: 'x'.repeat(101),
+      }).success,
+    ).toBe(false)
   })
 })

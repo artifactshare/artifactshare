@@ -375,6 +375,18 @@ export async function issueCliRefreshCredential(
         .where('user_id', '=', userId)
         .where('device_id', '=', deviceId)
         .where('family_id', 'is not', null)
+        // Caller-controlled device ids must never supersede another preset's
+        // publisher identity, including when issuing an unrestricted/agent family.
+        .$if(!publisherBootstrap, (query) =>
+          query.where(
+            'family_id',
+            'not in',
+            db
+              .selectFrom('cli_family_authorities')
+              .select('family_id')
+              .where('preset', '=', 'publisher'),
+          ),
+        )
         .$if(Boolean(publisherBootstrap), (query) =>
           query.where(
             'family_id',

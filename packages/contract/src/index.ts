@@ -141,7 +141,7 @@ export type CliAuthRefreshResponse = z.infer<
 >
 
 export const CliAuthRefreshCredentialsRequestSchema = z.object({
-  device_name: z.string().nullable().optional(),
+  device_name: z.string().max(100).nullable().optional(),
   device_id: z.string().max(100).nullable().optional(),
 })
 export type CliAuthRefreshCredentialsRequest = z.infer<
@@ -182,7 +182,9 @@ export const PublisherClientNameSchema = z
     (value) =>
       Array.from(value).length >= 1 &&
       Array.from(value).length <= 100 &&
-      /^[\p{L}\p{M}\p{N} ._()-]+$/u.test(value),
+      /^[\p{L}\p{M}\p{N} ._()-]+$/u.test(value) &&
+      !/\p{Default_Ignorable_Code_Point}/u.test(value) &&
+      /[\p{L}\p{N}._()-]/u.test(value),
     'Use 1–100 letters, marks, numbers, spaces, or ._-()',
   )
 
