@@ -89,7 +89,16 @@ export async function action({ request, context }: Route.ActionArgs) {
   const searchParams = new URL(request.url).searchParams
   if (
     publisher &&
-    Array.from(searchParams.keys()).some((key) => !['visibility'].includes(key))
+    (Array.from(searchParams.keys()).some(
+      (key) => !['visibility', 'artifact_kind'].includes(key),
+    ) ||
+      ['visibility', 'artifact_kind'].some(
+        (key) => searchParams.getAll(key).length > 1,
+      ) ||
+      (searchParams.has('visibility') &&
+        searchParams.get('visibility') !== 'private') ||
+      (searchParams.has('artifact_kind') &&
+        searchParams.get('artifact_kind') !== 'static_site'))
   )
     return cliScopeDeniedResponse()
   const rawPublishKey = searchParams.get('publish_key')
@@ -150,7 +159,10 @@ export async function action({ request, context }: Route.ActionArgs) {
       (key) => !['file', 'visibility', 'slack_notify'].includes(key),
     ) ||
       form.getAll('file').length !== 1 ||
-      (form.has('visibility') && form.get('visibility') !== 'private') ||
+      form.getAll('visibility').some((value) => value !== 'private') ||
+      form.getAll('visibility').length > 1 ||
+      form.getAll('slack_notify').length > 1 ||
+      form.getAll('slack_notify').some((value) => typeof value !== 'string') ||
       (searchParams.has('visibility') &&
         searchParams.get('visibility') !== 'private'))
   )
@@ -633,7 +645,8 @@ async function uploadStaticSiteWithSession(
   expectedCurrentVersionId?: string | null,
   queryContainerId?: string,
 ): Promise<Response> {
-  const agentAuthority = cliReadAuthority(authority)
+  const agentAuthority =
+    authority?.kind === 'publisher' ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const containerId = parseUploadContainerId(queryContainerId)
   if (

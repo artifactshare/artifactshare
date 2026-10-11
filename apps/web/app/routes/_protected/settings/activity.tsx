@@ -217,6 +217,7 @@ const ACTIONS = {
   'assets.transfer': true,
   'plan.change': true,
   'artifact.delete': true,
+  'artifact.publisher_adopted': true,
   'cli.refresh_credential.revoke': true,
   'bot.create': true,
   'bot.stop': true,
@@ -303,6 +304,8 @@ function subjectText(
         .filter((plan): plan is string => Boolean(plan))
         .map((plan) => planText(plan, t))
         .join(' → ')
+    case 'artifact.publisher_adopted':
+      return `${d.artifactTitle ?? d.artifactId ?? '—'} · ${d.previousPublisherClientName ?? d.previousPublisherClientId ?? '—'} → ${d.publisherClientName ?? d.publisherClientId ?? '—'}`
     case 'artifact.delete':
       return d.name ?? ''
     case 'bot.create':

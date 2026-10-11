@@ -3,7 +3,7 @@
   "info": {
     "title": "Artifact Share API",
     "version": "0.1.0",
-    "description": "Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery."
+    "description": "Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP) and authenticated CLI REST endpoints. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery."
   },
   "servers": [
     {
@@ -11,10 +11,365 @@
     }
   ],
   "paths": {
+    "/api/cli/artifacts/{id}/adopt": {
+      "post": {
+        "summary": "Assign an artifact to a publisher client",
+        "description": "Current human owner only, using unrestricted CLI Bearer or browser session. Target client must belong to the owner in the same workspace. Strict JSON. Replaces effective assignment; repeat assignment is audited. Publisher, agent, bootstrap and bridge cannot adopt.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-credential-presets": ["unrestricted", "browser-session"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublisherAdoptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublisherAdoptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          },
+          "415": {
+            "description": "JSON content type required."
+          }
+        }
+      }
+    },
+    "/api/cli/artifacts/{id}": {
+      "get": {
+        "summary": "Read an artifact",
+        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All include requests and static-site offset are denied. Other presets retain single-file readback.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "enum": ["versions", "comments"]
+              }
+            }
+          }
+        ],
+        "x-credential-presets": [
+          "unrestricted",
+          "agent",
+          "publisher",
+          "browser-session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ArtifactReadResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PublisherArtifactReadResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an artifact",
+        "description": "Publisher may delete only its created or assigned artifacts still owned by the approver. Uses guarded storage and database cleanup.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-credential-presets": [
+          "unrestricted",
+          "publisher",
+          "browser-session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactDeleteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      }
+    },
+    "/api/cli/shareables/{id}/edit": {
+      "post": {
+        "summary": "Edit artifact settings",
+        "description": "Publisher accepts strictly retain_versions only (positive integer or null), for its own artifacts. Prunes immediately; clearing cannot restore content. Other credentials keep existing edit permissions.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-credential-presets": [
+          "unrestricted",
+          "agent",
+          "publisher",
+          "browser-session"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CliEditRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PublisherRetentionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliEditResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit publisher retention",
+        "description": "Publisher only. Strict retain_versions payload on its created or assigned artifacts. Other presets and browser sessions receive 405.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-credential-presets": ["publisher"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublisherRetentionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CliEditResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      }
+    },
     "/mcp": {
       "post": {
         "summary": "MCP endpoint (JSON-RPC over Streamable HTTP)",
-        "description": "Publisher device credentials are limited to their single-file REST endpoints and cannot access MCP. Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.",
+        "description": "Publisher device credentials are limited to their scoped artifact REST endpoints and cannot access MCP. Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.",
         "security": [
           {
             "oauth2": ["artifactshare:access"]
@@ -32,7 +387,313 @@
     }
   },
   "components": {
+    "schemas": {
+      "PublisherAdoptRequest": {
+        "type": "object",
+        "properties": {
+          "publisher_client_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["publisher_client_id"],
+        "additionalProperties": false
+      },
+      "PublisherAdoptResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "publisher_client_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["id", "publisher_client_id"],
+        "additionalProperties": false
+      },
+      "PublisherRetentionRequest": {
+        "type": "object",
+        "properties": {
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          }
+        },
+        "required": ["retain_versions"],
+        "additionalProperties": false
+      },
+      "ArtifactDeleteResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "deleted": {
+            "const": true
+          }
+        },
+        "required": ["id", "deleted"]
+      },
+      "ArtifactReadResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "share_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "enum": ["html", "markdown"]
+          },
+          "content": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "next_offset": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "link_expires_at": {
+            "type": ["string", "null"]
+          },
+          "project_id": {
+            "type": ["string", "null"]
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "versions_has_more": {
+            "type": "boolean"
+          },
+          "comments_has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "share_url",
+          "version_id",
+          "format",
+          "content",
+          "size_bytes",
+          "truncated",
+          "next_offset"
+        ]
+      },
+      "PublisherSingleFileReadResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ArtifactReadResponse"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "visibility": {
+                "type": "string",
+                "enum": ["private", "workspace", "project", "link"]
+              }
+            },
+            "required": ["visibility"]
+          }
+        ]
+      },
+      "PublisherStaticSiteReadResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "share_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_kind": {
+            "const": "static_site"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["private", "workspace", "project", "link"]
+          },
+          "project_id": {
+            "type": ["string", "null"]
+          },
+          "link_expires_at": {
+            "type": ["string", "null"]
+          },
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "share_url",
+          "version_id",
+          "artifact_kind",
+          "visibility",
+          "project_id",
+          "link_expires_at",
+          "retain_versions"
+        ]
+      },
+      "PublisherArtifactReadResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PublisherSingleFileReadResponse"
+          },
+          {
+            "$ref": "#/components/schemas/PublisherStaticSiteReadResponse"
+          }
+        ]
+      },
+      "CliEditRequest": {
+        "type": "object",
+        "properties": {
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["private", "workspace", "project", "link"]
+          },
+          "link_expires_at": {
+            "type": ["string", "null"]
+          },
+          "add_emails": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remove_emails": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "destination": {
+            "oneOf": [
+              {
+                "const": "home"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "project_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["project_id"]
+              }
+            ]
+          }
+        },
+        "required": []
+      },
+      "CliEditResponse": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": ["string", "null"]
+              }
+            },
+            "required": ["id"]
+          },
+          "title": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": ["home", "project"]
+              },
+              "project_id": {
+                "type": ["string", "null"]
+              }
+            },
+            "required": ["type", "project_id"]
+          },
+          "share": {
+            "type": "object",
+            "properties": {
+              "visibility": {
+                "type": "string",
+                "enum": ["private", "workspace", "project", "link"]
+              },
+              "link_expires_at": {
+                "type": ["string", "null"]
+              }
+            },
+            "required": ["visibility"]
+          },
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "deleted_versions": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["artifact", "title", "destination", "share"]
+      }
+    },
     "securitySchemes": {
+      "cliBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "CLI access credential; not an MCP OAuth token."
+      },
+      "browserSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "Authenticated browser session (secure cookie name may carry the __Secure- prefix)."
+      },
       "oauth2": {
         "type": "oauth2",
         "description": "OAuth 2.1 authorization-code flow with PKCE, served under /api/auth. MCP clients obtain the bearer token for /mcp this way; the same endpoints are advertised at /.well-known/oauth-authorization-server.",

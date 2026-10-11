@@ -334,7 +334,8 @@
         "--home"
       ],
       "option_help": [
-        "--visibility <visibility> private, workspace, project, or link (project requires placement in a project)"
+        "--visibility <visibility> private, workspace, project, or link (project requires placement in a project)",
+        "--retain-versions <retain-versions> N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit."
       ]
     },
     {
@@ -809,5 +810,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-10"
+  "generated_date": "2026-10-11"
 }

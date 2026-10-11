@@ -63,6 +63,9 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4', '*': 'index.md' },
+      url: new URL(
+        'https://example.test/api/cli/artifacts/abc123def4?q=report',
+      ),
       request: new Request(
         'https://example.test/api/cli/artifacts/abc123def4?q=report',
         { method: 'GET' },
@@ -99,6 +102,9 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4' },
+      url: new URL(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4?offset=-1',
+      ),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/abc123def4?offset=-1',
       ),
@@ -116,6 +122,9 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4' },
+      url: new URL(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4?include=owners',
+      ),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/abc123def4?include=owners',
       ),
@@ -159,6 +168,9 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4' },
+      url: new URL(
+        'https://artifactshare.test/api/cli/artifacts/abc123def4?offset=200000&include=versions,comments',
+      ),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/abc123def4?offset=200000&include=versions,comments',
       ),
@@ -232,6 +244,7 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4' },
+      url: new URL('https://artifactshare.test/api/cli/artifacts/abc123def4'),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/abc123def4',
       ),
@@ -255,6 +268,7 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'abc123def4' },
+      url: new URL('https://artifactshare.test/api/cli/artifacts/abc123def4'),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/abc123def4',
       ),
@@ -270,6 +284,7 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'nope' },
+      url: new URL('https://artifactshare.test/api/cli/artifacts/nope'),
       request: new Request('https://artifactshare.test/api/cli/artifacts/nope'),
     } as never)
     const body = (await response.json()) as { error: { code: string } }
@@ -287,6 +302,7 @@ describe('/api/cli/artifacts/:id', () => {
     const response = await loader({
       context: new Map(),
       params: { id: 'site123abc' },
+      url: new URL('https://artifactshare.test/api/cli/artifacts/site123abc'),
       request: new Request(
         'https://artifactshare.test/api/cli/artifacts/site123abc',
       ),

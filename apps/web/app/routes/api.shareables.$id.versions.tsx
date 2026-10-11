@@ -113,10 +113,17 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const agentAuthority = publisher ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return cliScopeDeniedResponse()
   const searchParams = new URL(request.url).searchParams
+  if (publisher && searchParams.getAll('artifact_kind').length > 1) {
+    return errorResponse('validation-failed', 'Invalid version query.', 400)
+  }
   if (
     publisher &&
-    (!searchParams.get('expected_version')?.trim() ||
-      searchParams.getAll('expected_version').length !== 1)
+    (!(
+      searchParams.get('expected_version')?.trim() ||
+      (searchParams.get('artifact_kind') === 'static_site' &&
+        searchParams.get('base_version')?.trim())
+    ) ||
+      searchParams.getAll('expected_version').length > 1)
   )
     return errorResponse(
       'expected-version-required',
@@ -126,10 +133,36 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   if (
     publisher &&
     Array.from(searchParams.keys()).some(
-      (key) => !['expected_version', 'label'].includes(key),
+      (key) =>
+        ![
+          'expected_version',
+          'label',
+          'artifact_kind',
+          'base_version',
+          'delete_path',
+        ].includes(key),
     )
   )
     return cliScopeDeniedResponse()
+  if (
+    publisher &&
+    searchParams.get('artifact_kind') !== 'static_site' &&
+    ['artifact_kind', 'base_version', 'delete_path'].some((key) =>
+      searchParams.has(key),
+    )
+  )
+    return cliScopeDeniedResponse()
+  if (
+    publisher &&
+    searchParams.has('base_version') &&
+    searchParams.has('expected_version') &&
+    searchParams.get('base_version') !== searchParams.get('expected_version')
+  )
+    return errorResponse(
+      'validation-failed',
+      'Conflicting version preconditions.',
+      400,
+    )
   const labels = searchParams.getAll('label')
   if (labels.length > 1) {
     return errorResponse(

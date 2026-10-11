@@ -471,6 +471,7 @@ export async function loadAuditEventsPage(
       'audit_events.id',
       'audit_events.action',
       'audit_events.detail',
+      'audit_events.subject_id as audit_subject_id',
       'audit_events.created_at',
       'actor.id as actor_id',
       'actor.email as actor_email',
@@ -555,7 +556,18 @@ export async function loadAuditEventsPage(
           recipientEmail: stringValue('recipient_email'),
           artifactCount: count,
           accessRequestId: stringValue('access_request_id'),
-          artifactId: stringValue('artifact_id'),
+          artifactId:
+            row.action === 'artifact.publisher_adopted'
+              ? row.audit_subject_id
+              : stringValue('artifact_id'),
+          publisherClientId: stringValue('publisher_client_id'),
+          publisherClientName: stringValue('publisher_client_name'),
+          previousPublisherClientName: stringValue(
+            'previous_publisher_client_name',
+          ),
+          previousPublisherClientId: stringValue(
+            'previous_publisher_client_id',
+          ),
           artifactTitle: stringValue('artifact_title'),
           projectId: stringValue('project_id'),
           projectName: stringValue('project_name'),

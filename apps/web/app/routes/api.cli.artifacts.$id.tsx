@@ -10,6 +10,7 @@ import {
   ArtifactReadQueryParamsSchema,
   ArtifactReadQuerySchema,
   ArtifactReadResponseSchema,
+  PublisherArtifactReadResponseSchema,
 } from '@artifactshare/contract'
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
 import {
@@ -21,6 +22,7 @@ import { getCliAuthority, requireUser } from '~/middleware/context'
 import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
 import {
   getArtifactReadback,
+  getPublisherArtifactReadback,
   type ArtifactReadbackInclude,
 } from '~/services/artifact-readback-service.server'
 import { withDb } from '~/services/db.server'
@@ -29,13 +31,12 @@ import type { Route } from './+types/api.cli.artifacts.$id'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+export async function loader({ context, params, url }: Route.LoaderArgs) {
   const user = requireUser(context)
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
-  const url = new URL(request.url)
   const parsedQueryParams = ArtifactReadQueryParamsSchema.safeParse({
     offset: url.searchParams.get('offset') ?? undefined,
     include: url.searchParams.getAll('include'),
@@ -75,7 +76,27 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   const { offset, include } = parsedQuery.data
 
   return await withDb(async (db) => {
-    const authority = cliReadAuthority(getCliAuthority(context))
+    const resolved = getCliAuthority(context)
+    if (resolved?.kind === 'publisher') {
+      if (url.searchParams.has('include')) return cliScopeDeniedResponse()
+      const result = await getPublisherArtifactReadback(db, user, resolved, {
+        id,
+        baseUrl: url.origin,
+        ...(url.searchParams.has('offset') ? { offset } : {}),
+      })
+      if (result.kind === 'ok')
+        return Response.json(
+          PublisherArtifactReadResponseSchema.parse(result.data),
+        )
+      if (result.kind === 'invalid-offset')
+        return errorResponse(
+          'invalid-offset',
+          'Static-site readback has no source offset.',
+          400,
+        )
+      return cliArtifactErrorResponse(result, 'Source unavailable.')
+    }
+    const authority = cliReadAuthority(resolved)
     if (authority === 'denied') return cliScopeDeniedResponse()
     const agentRead =
       authority !== null
@@ -113,7 +134,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   }
 
   const user = requireUser(context)
-  if (!allowsHumanCliMutation(getCliAuthority(context)))
+  const authority = getCliAuthority(context)
+  if (authority?.kind !== 'publisher' && !allowsHumanCliMutation(authority))
     return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
@@ -121,7 +143,14 @@ export async function action({ context, params, request }: Route.ActionArgs) {
   }
   const { id } = parsedParams.data
   return await withDb(async (db) => {
-    const result = await deleteShareable(db, user, id)
+    const result = await deleteShareable(
+      db,
+      user,
+      id,
+      ...(authority?.kind === 'publisher'
+        ? [{ publisherAuthority: authority }]
+        : []),
+    )
     if (result.kind !== 'ok') return cliDeleteArtifactErrorResponse(result)
     return Response.json(
       ArtifactDeleteResponseSchema.parse(deleteArtifactSuccessBody(id)),

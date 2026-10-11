@@ -720,14 +720,14 @@ test.each([
   [
     'en',
     en,
-    'download and update only those files',
-    'Updates continue after you share or move them.',
+    'read and update files and sites',
+    'Access continues after you share or move them',
   ],
   [
     'ja',
     ja,
-    'ダウンロードと更新ができるのは、そのファイルだけです。',
-    'あとで共有や移動をしても、更新は続きます。',
+    '確認、更新、削除、古い版の削除',
+    '同じワークスペース内で共有や移動をしたあとも',
   ],
 ] as const)(
   'publisher consent explains ongoing access without API vocabulary in %s',

@@ -26,6 +26,7 @@ import {
   CLI_REFERENCE_SECTION_IDS,
   CLI_REFERENCE_ENTRY_POINT,
   cliReferenceUsage,
+  cliReferenceOptionHelp,
   cliReferenceContent,
 } from '~/lib/cli-reference-content'
 import type { Locale } from '~/i18n/messages'
@@ -198,7 +199,13 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                                   key={help}
                                   className="text-muted-foreground mt-[var(--spacing-2)] mb-0 text-xs break-words"
                                 >
-                                  <SectionBody text={help} />
+                                  <SectionBody
+                                    text={cliReferenceOptionHelp(
+                                      surfaceCommand.path,
+                                      help,
+                                      content.locale,
+                                    )}
+                                  />
                                 </p>
                               ))}
                           </article>

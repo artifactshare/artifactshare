@@ -1,4 +1,8 @@
 import {
+  publisherArtifactSql,
+  type PublisherAuthority,
+} from './publisher-scope.server'
+import {
   OBJECT_REFERENCE_CHUNK,
   unreferencedObjectKeys,
   releasedObjectBytes,
@@ -34,7 +38,11 @@ export async function pruneVersions(
   db: Kysely<DB>,
   shareableId: string,
   confirmedSnapshot?: string,
+  publisher?: { userId: string; authority: PublisherAuthority },
 ): Promise<number> {
+  const publisherGuard = publisher
+    ? sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE shareables.id = ${shareableId} AND ${publisherArtifactSql(publisher.userId, publisher.authority)})`
+    : sql<boolean>`1`
   const approved =
     confirmedSnapshot === undefined
       ? sql<boolean>`1`
@@ -49,8 +57,9 @@ export async function pruneVersions(
       .select(['id', 'r2_key'])
       .where('id', 'in', candidates(shareableId))
       .where(approved)
+      .where(publisherGuard)
       // Leave room for the predicate bindings under D1's 100-parameter limit.
-      .limit(80)
+      .limit(publisher ? 50 : 80)
       .execute()
     if (selected.length === 0) break
     const ids = selected.map((row) => row.id)
@@ -66,6 +75,7 @@ export async function pruneVersions(
       .where('id', 'in', ids)
       .where('id', 'in', candidates(shareableId))
       .where(approved)
+      .where(publisherGuard)
     const [, , result] = await runD1BatchWithResults(
       db,
       db
@@ -74,6 +84,7 @@ export async function pruneVersions(
           storage_used_bytes: sql<number>`MAX(storage_used_bytes - ${releasedObjectBytes(eligible)}, 0)`,
           storage_updated_at: nowIso(),
         })
+        .where(publisherGuard)
         .where(
           'id',
           '=',

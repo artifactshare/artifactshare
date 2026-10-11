@@ -1,3 +1,5 @@
+import { displayTitle } from '~/lib/display-title'
+import { publisherArtifactSql } from '~/services/publisher-scope.server'
 import {
   allowsHumanCliMutation,
   cliReadAuthority,
@@ -6,6 +8,7 @@ import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   ArtifactIdParamsSchema,
   CliEditRequestSchema,
+  PublisherRetentionRequestSchema,
   CliEditResponseSchema,
 } from '@artifactshare/contract'
 import { errorResponse } from '~/lib/api-errors'
@@ -22,12 +25,19 @@ import type { Route } from './+types/api.cli.shareables.$id.edit'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function action({ request, params, context }: Route.ActionArgs) {
-  if (request.method !== 'POST') {
+export async function action({
+  request,
+  params,
+  context,
+  url,
+}: Route.ActionArgs) {
+  const authority = getCliAuthority(context)
+  const publisher = authority?.kind === 'publisher' ? authority : null
+  if (request.method !== 'POST' && !(publisher && request.method === 'PATCH')) {
     return new Response('Method Not Allowed', { status: 405 })
   }
   const user = requireUser(context)
-  if (cliReadAuthority(getCliAuthority(context)) === 'denied')
+  if (!publisher && cliReadAuthority(authority) === 'denied')
     return cliScopeDeniedResponse()
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
@@ -35,13 +45,64 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
 
   const body = await request.json().catch(() => null)
+  if (publisher) {
+    const parsed = PublisherRetentionRequestSchema.safeParse(body)
+    if (!parsed.success)
+      return errorResponse(
+        'validation-failed',
+        'Only retain_versions is allowed.',
+        400,
+      )
+    return withDb(async (db) => {
+      const row = await db
+        .selectFrom('shareables')
+        .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
+        .selectAll('shareables')
+        .select('c.kind as container_kind')
+        .where('shareables.id', '=', parsedParams.data.id)
+        .where(publisherArtifactSql(user.id, publisher))
+        .executeTakeFirst()
+      if (!row) return errorResponse('not-found', 'Shareable not found.', 404)
+      const metadata = await saveRetention(
+        db,
+        row.id,
+        user.id,
+        parsed.data.retain_versions,
+        undefined,
+        publisher,
+      )
+      if (!metadata)
+        return errorResponse('not-found', 'Shareable not found.', 404)
+      return Response.json(
+        CliEditResponseSchema.parse({
+          ...cliEditSuccessBody(url.href, {
+            id: row.id,
+            title: displayTitle({
+              name: row.name,
+              derivedTitle: row.derived_title,
+              titleOverride: row.title_override,
+            }),
+            visibility: row.visibility,
+            linkExpiresAt: row.link_expires_at,
+            updatedAt: row.updated_at,
+            projectId:
+              row.container_kind === 'project' ? row.container_id : null,
+            artifactKind: row.artifact_kind as
+              | 'html_page'
+              | 'markdown_page'
+              | 'static_site',
+          }),
+          ...metadata,
+        }),
+      )
+    })
+  }
   const parsedBody = CliEditRequestSchema.safeParse(body)
   if (!parsedBody.success) {
     return errorResponse('validation-failed', 'Invalid edit payload.', 400)
   }
   const parsed = cliEditInput(parsedBody.data)
 
-  const authority = getCliAuthority(context)
   if (parsedBody.data.retain_versions !== undefined) {
     if (!allowsHumanCliMutation(authority)) {
       return errorResponse(
@@ -92,7 +153,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         )
       return Response.json(
         CliEditResponseSchema.parse({
-          ...cliEditSuccessBody(request.url, result.shareable),
+          ...cliEditSuccessBody(url.href, result.shareable),
           ...metadata,
         }),
       )

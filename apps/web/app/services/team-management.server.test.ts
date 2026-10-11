@@ -294,6 +294,40 @@ describe('team-management service', () => {
     )
   })
 
+  test('loads publisher adoption in its workspace with a shareable subject rather than a user join', async () => {
+    seedWorkspace(sqlite, 'team')
+    seedUser(sqlite, 'owner1')
+    sqlite
+      .prepare(`INSERT INTO audit_events (id, workspace_id, actor_user_id, action, subject_type, subject_id, detail, created_at)
+      VALUES ('event1', 'ws1', 'owner1', 'artifact.publisher_adopted', 'shareable', 'abc123def4', ?, '2026-09-01T00:00:00.000Z')`)
+      .run(
+        JSON.stringify({
+          artifact_title: 'Weekly dashboard',
+          previous_publisher_client_id: 'client2',
+          previous_publisher_client_name: 'Previous reports',
+          publisher_client_id: 'client1',
+          publisher_client_name: 'Reports',
+        }),
+      )
+    const page = await loadAuditEventsPage(db, 'ws1', 1)
+    expect(page.events).toHaveLength(1)
+    expect(page.events[0]).toMatchObject({
+      action: 'artifact.publisher_adopted',
+      actor: { id: 'owner1' },
+      subject: null,
+      createdAt: '2026-09-01T00:00:00.000Z',
+      detail: {
+        artifactId: 'abc123def4',
+        publisherClientId: 'client1',
+        previousPublisherClientId: 'client2',
+        previousPublisherClientName: 'Previous reports',
+        publisherClientName: 'Reports',
+        artifactTitle: 'Weekly dashboard',
+      },
+    })
+    expect((await loadAuditEventsPage(db, 'workspace1', 1)).events).toEqual([])
+  })
+
   test('loads access request snapshots without crossing workspace boundaries', async () => {
     seedWorkspace(sqlite, 'team')
     seedWorkspace(sqlite, 'team', 'ws2')

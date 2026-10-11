@@ -21,6 +21,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.cli.artifacts.$id.download.$.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.download.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.$id.tsx': 'requireUserApiWithBearerMiddleware',
+  'api.cli.artifacts.$id.adopt.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.artifacts.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.auth.refresh-credentials.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.device-approval.tsx': 'requireUserApiMiddleware',

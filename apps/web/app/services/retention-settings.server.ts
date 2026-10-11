@@ -1,3 +1,7 @@
+import {
+  publisherArtifactSql,
+  type PublisherAuthority,
+} from './publisher-scope.server'
 import { sql, type Kysely } from 'kysely'
 import { batchRows, runD1BatchWithResults } from '~/lib/d1-batch.server'
 import { workspaceAccessRevokedSql } from '~/modules/access'
@@ -61,6 +65,7 @@ export async function saveRetention(
   ownerId: string,
   proposed: number | null,
   expectedSnapshot?: string,
+  publisherAuthority?: PublisherAuthority,
 ) {
   let query = db
     .updateTable('shareables')
@@ -70,12 +75,21 @@ export async function saveRetention(
     .where(
       sql<boolean>`NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), ownerId)}`,
     )
+  if (publisherAuthority)
+    query = query.where(publisherArtifactSql(ownerId, publisherAuthority))
   if (expectedSnapshot !== undefined)
     query = query.where(snapshot(id, proposed), '=', expectedSnapshot)
   const [result] = await runD1BatchWithResults(db, query.returning('id'))
   if (batchRows<{ id: string }>(result).length === 0) return null
   return {
     retain_versions: proposed,
-    deleted_versions: await pruneVersions(db, id, expectedSnapshot),
+    deleted_versions: await pruneVersions(
+      db,
+      id,
+      expectedSnapshot,
+      publisherAuthority
+        ? { userId: ownerId, authority: publisherAuthority }
+        : undefined,
+    ),
   }
 }

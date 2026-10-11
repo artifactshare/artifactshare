@@ -74,8 +74,8 @@ export async function runStaticSiteVersionUpload(
   const { session } = begun
 
   try {
-    if (request.body !== null || !options.baseVersionId)
-      await parseFormData(
+    if (request.body !== null || !options.baseVersionId) {
+      const form = await parseFormData(
         request,
         {
           maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
@@ -92,6 +92,18 @@ export async function runStaticSiteVersionUpload(
           return null
         },
       )
+      if (
+        options.authority?.kind === 'publisher' &&
+        Array.from(form.keys()).length > 0
+      ) {
+        await session.abort()
+        return errorResponse(
+          'scope-denied',
+          'Version bodies may contain only files.',
+          403,
+        )
+      }
+    }
   } catch (error) {
     if (error instanceof StaticSiteUpdateRejected) {
       await session.abort()

@@ -1738,6 +1738,7 @@ export async function seedDevScreenState(
     for (const [index, action] of [
       'plan.change',
       'artifact.delete',
+      'artifact.publisher_adopted',
       'admin.grant',
     ].entries()) {
       await db
@@ -1747,16 +1748,34 @@ export async function seedDevScreenState(
           workspace_id: workspaceId,
           actor_user_id: userId,
           action,
-          subject_type: index === 0 ? 'workspace' : 'user',
-          subject_id: index === 0 ? workspaceId : userId,
+          subject_type:
+            action === 'artifact.publisher_adopted'
+              ? 'shareable'
+              : index === 0
+                ? 'workspace'
+                : 'user',
+          subject_id:
+            action === 'artifact.publisher_adopted'
+              ? 'abc123def4'
+              : index === 0
+                ? workspaceId
+                : userId,
           detail:
-            action === 'plan.change'
-              ? JSON.stringify({ from: 'plus', to: 'team' })
-              : action === 'artifact.delete'
-                ? JSON.stringify({
-                    name: 'A long representative project handoff file.html',
-                  })
-                : JSON.stringify({ fromRole: 'member', toRole: 'admin' }),
+            action === 'artifact.publisher_adopted'
+              ? JSON.stringify({
+                  artifact_title: 'Weekly dashboard',
+                  previous_publisher_client_id: 'client2',
+                  previous_publisher_client_name: 'Previous reports',
+                  publisher_client_id: 'client1',
+                  publisher_client_name: 'Reports',
+                })
+              : action === 'plan.change'
+                ? JSON.stringify({ from: 'plus', to: 'team' })
+                : action === 'artifact.delete'
+                  ? JSON.stringify({
+                      name: 'A long representative project handoff file.html',
+                    })
+                  : JSON.stringify({ fromRole: 'member', toRole: 'admin' }),
           created_at: new Date(
             Date.parse(now) - index * 86_400_000,
           ).toISOString(),

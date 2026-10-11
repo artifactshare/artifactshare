@@ -113,3 +113,55 @@ function event(
 function user(id: string, name: string, email: string) {
   return { id, name, email, image: null, kind: 'human' as const }
 }
+
+test('renders publisher assignment with its artifact, target client, actor and timestamp', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-09-01T01:00:00.000Z'))
+  const html = renderActivity({
+    events: [
+      event('artifact.publisher_adopted', {
+        actor: user('owner1', 'Owner', 'owner@example.test'),
+        subject: null,
+        detail: {
+          artifactId: 'abc123def4',
+          artifactTitle: 'Weekly dashboard',
+          publisherClientId: 'client1',
+          publisherClientName: 'Reports',
+          previousPublisherClientId: 'client2',
+          previousPublisherClientName: 'Previous reports',
+        },
+      }),
+    ],
+    total: 1,
+    page: 1,
+  })
+  expect(html).toContain('クライアントにファイルを割り当て')
+  expect(html).toContain('Weekly dashboard · Previous reports → Reports')
+  expect(html).toContain('>Owner</span>')
+  expect(html).toContain('1 時間前')
+  expect(html).not.toContain('artifact.publisher_adopted</')
+})
+
+test.each([null, 'client2'])(
+  'renders older assignment events with id fallbacks (%s)',
+  (previousPublisherClientId) => {
+    const html = renderActivity({
+      events: [
+        event('artifact.publisher_adopted', {
+          subject: null,
+          detail: {
+            artifactTitle: null,
+            artifactId: 'abc123def4',
+            publisherClientId: 'client1',
+            previousPublisherClientId,
+          },
+        }),
+      ],
+      total: 1,
+      page: 1,
+    })
+    expect(html).toContain(
+      `abc123def4 · ${previousPublisherClientId ?? '—'} → client1`,
+    )
+  },
+)

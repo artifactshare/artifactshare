@@ -506,6 +506,7 @@ interface VerificationsTable {
 }
 
 interface ShareablesTable {
+  assigned_publisher_client_id: Generated<string | null>
   created_by_publisher_client_id: Generated<string | null>
   retain_versions: Generated<number | null>
   version_sequence: Generated<number>

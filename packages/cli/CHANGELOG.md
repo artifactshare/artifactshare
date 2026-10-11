@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Extend server publisher permissions to static sites, manifest and metadata readback, retention and deletion of client-owned or owner-assigned artifacts. Add audited API-only adoption and update bundled documentation; publisher CLI workflows remain unsupported.
+
 - Update bundled documentation for owner version settings in file history and authorized explanations for versions removed by retention. Clearing a limit does not restore deleted content.
 
 - Preserve the server-verified publisher preset when importing a token, including when replacing an existing profile; reject malformed authority responses before saving credentials.

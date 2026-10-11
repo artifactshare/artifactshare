@@ -26,6 +26,7 @@ export interface CliReferenceContent {
   commandUsageLabel: string
   commandOptionsLabel: string
   commandExampleLabel: string
+  optionHelp: Record<string, Record<string, string>>
   commands: CliReferenceCommand[]
   representativeExamples: string[]
   copyLabels: { copy: string; copied: string; failed: string }
@@ -216,6 +217,7 @@ const jaRoleByPath: Record<string, string> = {
 
 const EN: CliReferenceContent = {
   locale: 'en',
+  optionHelp: {},
   title: 'Artifact Share CLI reference',
   intro:
     'A public, machine-friendly guide to sharing, updating, reading, and organizing artifacts from a terminal.',
@@ -223,7 +225,7 @@ const EN: CliReferenceContent = {
   sections: {
     introduction: {
       title: 'Introduction and authentication',
-      body: `Node.js 22.19 or newer is required. Start with ${CLI_REFERENCE_EXAMPLES.init}, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. API-only publisher credentials require a normalized device_name and explicit browser choice to create or continue a client. Duplicate names require continuation or another device_name; names cannot be edited during approval. They create private home files and update or download only their own files, even after sharing or moving, using expected_version for updates. The exact /api/cli/artifacts/:id/download endpoint returns source bytes for publisher; other presets receive a JSON manifest. Publisher cannot list, read back, comment, edit, move, delete, use projects, append, upsert, or publish static sites. CLI publisher login/resume and publishing/download workflows are unsupported; doctor reports the client scope. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.`,
+      body: `Node.js 22.19 or newer is required. Start with ${CLI_REFERENCE_EXAMPLES.init}, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. API-only publisher credentials require a normalized device_name and explicit browser choice to create or continue a client. Duplicate names require continuation or another device_name; names cannot be edited during approval. Publisher credentials create private HTML/Markdown files or static sites in home and manage artifacts created by or assigned to their client, even after sharing or moving within the workspace. With a publisher credential, single-file updates require expected_version; static-site deltas use base_version and delete_path. With a publisher credential, the exact download endpoint returns source bytes for single files and a manifest for static sites; individual asset downloads are denied. With a publisher credential, readback includes visibility and is metadata-only for static sites. Publisher credentials can delete these artifacts; with a publisher credential, POST/PATCH edit accepts only retain_versions (positive integer or null); pruning deletes old versions permanently. Owner unrestricted credentials or a browser session can POST /api/cli/artifacts/:id/adopt with publisher_client_id from whoami/doctor. Audited assignment replaces the previous client's access. With a publisher credential, list, resolve, comments, audience edits, move, projects, append and upsert remain denied. CLI publisher login/resume and publishing/download workflows are unsupported; doctor reports the client scope. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.`,
     },
     basics: {
       title: 'Basic operations',
@@ -280,6 +282,12 @@ const EN: CliReferenceContent = {
 const JA: CliReferenceContent = {
   ...EN,
   locale: 'ja',
+  optionHelp: {
+    edit: {
+      '--retain-versions':
+        'N または all(持ち主のみ)。最新の N 版だけを残し、古い版は元に戻せない形で削除します。all で制限を外します。',
+    },
+  },
   title: 'Artifact Share CLI リファレンス',
   intro:
     'ターミナルからファイルを共有、更新、読み取り、整理するための公開リファレンスです。',
@@ -287,7 +295,7 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。 publisher は API 専用です。device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。同名での新規作成はできず、名前の変更は認証の再要求が必要です。ホームに自分だけが閲覧できるファイルを作成し、そのファイルだけをダウンロード・更新できます。共有範囲や移動先を変えた後も更新でき、expected_version が必須です。publisher の /api/cli/artifacts/:id/download は元ファイルのバイト列を返し、既存プリセットは JSON マニフェストを返します。一覧・本文の取得、コメント、設定、移動、削除、プロジェクト操作、追記、上書き投稿、静的サイトには使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
+      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。publisher は API 専用です。publisher の資格では、device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。publisher の資格では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格では、個別アセットの取得はできません。publisher の資格では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、古い版の削除は取り消せません。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格では、一覧、検索、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
     },
     basics: {
       title: '基本操作',
@@ -363,4 +371,15 @@ export const CLI_REFERENCE_SECTION_IDS: CliSectionId[] = [
 
 export function cliReferenceContent(locale: Locale): CliReferenceContent {
   return locale === 'ja' ? JA : EN
+}
+
+export function cliReferenceOptionHelp(
+  commandPath: string,
+  help: string,
+  locale: Locale,
+): string {
+  const match = /^(--[a-z0-9-]+)(?: <[^>]+>)?/.exec(help)
+  const description =
+    match && cliReferenceContent(locale).optionHelp[commandPath]?.[match[1]]
+  return description ? `${match![0]} ${description}` : help
 }

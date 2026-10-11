@@ -162,9 +162,9 @@ export const MCP_OPENAPI_METADATA = {
   // The MCP handler requires the product scope in the bearer token.
   operationScopes: ['artifactshare:access'],
   description:
-    'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
+    'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP) and authenticated CLI REST endpoints. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
   endpointDescription:
-    'Publisher device credentials are limited to their single-file REST endpoints and cannot access MCP. Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
+    'Publisher device credentials are limited to their scoped artifact REST endpoints and cannot access MCP. Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
   oauthDescription:
     'OAuth 2.1 authorization-code flow with PKCE, served under /api/auth. MCP clients obtain the bearer token for /mcp this way; the same endpoints are advertised at /.well-known/oauth-authorization-server.',
   scopeDescriptions: {
@@ -178,4 +178,244 @@ export const MCP_OPENAPI_METADATA = {
 }
 
 // Option explanations displayed alongside the generated command reference.
-export const CLI_REFERENCE_OPTION_HELP = { edit: ['--visibility'] }
+export const CLI_REFERENCE_OPTION_HELP = {
+  edit: ['--visibility', '--retain-versions'],
+}
+
+/** @param {string} name */
+const restRef = (name) => ({ $ref: `#/components/schemas/${name}` })
+const restString = { type: 'string', minLength: 1 }
+const nullableString = { type: ['string', 'null'] }
+const retention = { type: ['integer', 'null'], minimum: 1 }
+const visibility = {
+  type: 'string',
+  enum: ['private', 'workspace', 'project', 'link'],
+}
+/** @param {Record<string, object>} properties
+ * @param {string[]} [required]
+ * @param {boolean} [strict]
+ */
+const objectSchema = (
+  properties,
+  required = Object.keys(properties),
+  strict = false,
+) => ({
+  type: 'object',
+  properties,
+  required,
+  ...(strict ? { additionalProperties: false } : {}),
+})
+export const REST_SCHEMAS = {
+  PublisherAdoptRequest: objectSchema(
+    { publisher_client_id: restString },
+    undefined,
+    true,
+  ),
+  PublisherAdoptResponse: objectSchema(
+    { id: restString, publisher_client_id: restString },
+    undefined,
+    true,
+  ),
+  PublisherRetentionRequest: objectSchema(
+    { retain_versions: retention },
+    undefined,
+    true,
+  ),
+  ArtifactDeleteResponse: objectSchema({
+    id: restString,
+    deleted: { const: true },
+  }),
+  ArtifactReadResponse: objectSchema(
+    {
+      id: restString,
+      share_url: { type: 'string', format: 'uri' },
+      version_id: restString,
+      format: { enum: ['html', 'markdown'] },
+      content: { type: 'string' },
+      size_bytes: { type: 'number', minimum: 0 },
+      truncated: { type: 'boolean' },
+      next_offset: { type: ['integer', 'null'], minimum: 0 },
+      link_expires_at: nullableString,
+      project_id: nullableString,
+      versions: { type: 'array', items: { type: 'object' } },
+      comments: { type: 'array', items: { type: 'object' } },
+      versions_has_more: { type: 'boolean' },
+      comments_has_more: { type: 'boolean' },
+    },
+    [
+      'id',
+      'share_url',
+      'version_id',
+      'format',
+      'content',
+      'size_bytes',
+      'truncated',
+      'next_offset',
+    ],
+  ),
+  PublisherSingleFileReadResponse: {
+    allOf: [restRef('ArtifactReadResponse'), objectSchema({ visibility })],
+  },
+  PublisherStaticSiteReadResponse: objectSchema({
+    id: restString,
+    share_url: { type: 'string', format: 'uri' },
+    version_id: restString,
+    artifact_kind: { const: 'static_site' },
+    visibility,
+    project_id: nullableString,
+    link_expires_at: nullableString,
+    retain_versions: retention,
+  }),
+  PublisherArtifactReadResponse: {
+    oneOf: [
+      restRef('PublisherSingleFileReadResponse'),
+      restRef('PublisherStaticSiteReadResponse'),
+    ],
+  },
+  CliEditRequest: objectSchema(
+    {
+      retain_versions: retention,
+      title: { type: 'string' },
+      visibility,
+      link_expires_at: nullableString,
+      add_emails: { type: 'array', items: { type: 'string' } },
+      remove_emails: { type: 'array', items: { type: 'string' } },
+      destination: {
+        oneOf: [{ const: 'home' }, objectSchema({ project_id: restString })],
+      },
+    },
+    [],
+  ),
+  CliEditResponse: objectSchema(
+    {
+      artifact: objectSchema({ id: restString, url: nullableString }, ['id']),
+      title: { type: 'string' },
+      destination: objectSchema({
+        type: { enum: ['home', 'project'] },
+        project_id: nullableString,
+      }),
+      share: objectSchema({ visibility, link_expires_at: nullableString }, [
+        'visibility',
+      ]),
+      retain_versions: retention,
+      deleted_versions: { type: 'integer', minimum: 0 },
+    },
+    ['artifact', 'title', 'destination', 'share'],
+  ),
+}
+const restSecurity = [{ cliBearer: [] }, { browserSession: [] }]
+const pathId = { name: 'id', in: 'path', required: true, schema: restString }
+/** @param {string} summary
+ * @param {string} description
+ * @param {object} response
+ * @param {object | null} request
+ * @param {string[]} presets
+ * @param {object} [errors]
+ */
+const restOperation = (
+  summary,
+  description,
+  response,
+  request,
+  presets,
+  errors = {},
+) => ({
+  summary,
+  description,
+  security: restSecurity,
+  parameters: [pathId],
+  'x-credential-presets': presets,
+  ...(request
+    ? {
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: request } },
+        },
+      }
+    : {}),
+  responses: {
+    200: {
+      description: 'Success.',
+      content: { 'application/json': { schema: response } },
+    },
+    400: { description: 'Invalid payload or query.' },
+    401: { description: 'Authentication required.' },
+    403: { description: 'Credential scope denied.' },
+    404: {
+      description:
+        'Missing or ineligible artifact/client (scope is not disclosed).',
+    },
+    405: { description: 'Method unavailable to this credential preset.' },
+    409: { description: 'Concurrent change or source unavailable.' },
+    ...errors,
+  },
+})
+export const REST_OPERATIONS = {
+  '/api/cli/artifacts/{id}/adopt': {
+    post: restOperation(
+      'Assign an artifact to a publisher client',
+      'Current human owner only, using unrestricted CLI Bearer or browser session. Target client must belong to the owner in the same workspace. Strict JSON. Replaces effective assignment; repeat assignment is audited. Publisher, agent, bootstrap and bridge cannot adopt.',
+      restRef('PublisherAdoptResponse'),
+      restRef('PublisherAdoptRequest'),
+      ['unrestricted', 'browser-session'],
+      { 415: { description: 'JSON content type required.' } },
+    ),
+  },
+  '/api/cli/artifacts/{id}': {
+    get: {
+      ...restOperation(
+        'Read an artifact',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All include requests and static-site offset are denied. Other presets retain single-file readback.',
+        {
+          anyOf: [
+            restRef('ArtifactReadResponse'),
+            restRef('PublisherArtifactReadResponse'),
+          ],
+        },
+        null,
+        ['unrestricted', 'agent', 'publisher', 'browser-session'],
+      ),
+      parameters: [
+        pathId,
+        {
+          name: 'offset',
+          in: 'query',
+          schema: { type: 'integer', minimum: 0 },
+        },
+        {
+          name: 'include',
+          in: 'query',
+          schema: { type: 'array', items: { enum: ['versions', 'comments'] } },
+        },
+      ],
+    },
+    delete: restOperation(
+      'Delete an artifact',
+      'Publisher may delete only its created or assigned artifacts still owned by the approver. Uses guarded storage and database cleanup.',
+      restRef('ArtifactDeleteResponse'),
+      null,
+      ['unrestricted', 'publisher', 'browser-session'],
+    ),
+  },
+  '/api/cli/shareables/{id}/edit': {
+    post: restOperation(
+      'Edit artifact settings',
+      'Publisher accepts strictly retain_versions only (positive integer or null), for its own artifacts. Prunes immediately; clearing cannot restore content. Other credentials keep existing edit permissions.',
+      restRef('CliEditResponse'),
+      {
+        anyOf: [
+          restRef('CliEditRequest'),
+          restRef('PublisherRetentionRequest'),
+        ],
+      },
+      ['unrestricted', 'agent', 'publisher', 'browser-session'],
+    ),
+    patch: restOperation(
+      'Edit publisher retention',
+      'Publisher only. Strict retain_versions payload on its created or assigned artifacts. Other presets and browser sessions receive 405.',
+      restRef('CliEditResponse'),
+      restRef('PublisherRetentionRequest'),
+      ['publisher'],
+    ),
+  },
+}

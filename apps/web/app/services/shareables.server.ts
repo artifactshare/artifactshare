@@ -1,6 +1,8 @@
 import {
   isPublisherArtifact,
   publisherArtifactSql,
+  publisherAuthoritySql,
+  type PublisherAuthority,
 } from '~/services/publisher-scope.server'
 import {
   cliWriteAuthority,
@@ -857,7 +859,12 @@ export async function beginStaticSiteBundleUploadSession(
   stableKey: string | null = null,
   options?: UploadOptions,
 ): Promise<StaticSiteBundleUploadSessionResult> {
-  if (options?.authority?.kind === 'publisher')
+  if (
+    options?.authority?.kind === 'publisher' &&
+    (containerId !== null ||
+      stableKey !== null ||
+      user.workspaceId !== options.authority.workspaceId)
+  )
     return { kind: 'invalid-container' }
   // Resolve the destination first: cross-workspace posting bills the project's
   // workspace, so the quota snapshot and R2 prefix below must use the destination.
@@ -909,6 +916,7 @@ export async function beginStaticSiteBundleUploadSession(
       ),
       {
         kind: 'create',
+        authority: options?.authority ?? null,
         destination,
         stableKey,
         agentProfileId: options?.agentProfileId ?? null,
@@ -956,7 +964,17 @@ export async function beginStaticSiteBundleVersionUploadSession(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
-  const agentAuthority = cliWriteAuthority(options?.authority)
+  const publisher =
+    options?.authority?.kind === 'publisher' ? options.authority : null
+  if (
+    publisher &&
+    !options?.baseVersionId &&
+    !options?.expectedCurrentVersionId
+  )
+    return { kind: 'validation-failed' }
+  const agentAuthority = publisher
+    ? null
+    : cliWriteAuthority(options?.authority)
   if (agentAuthority === 'denied') return { kind: 'not-found' }
   if (shareable.artifact_kind !== 'static_site') {
     return {
@@ -1082,8 +1100,9 @@ export async function beginStaticSiteBundleVersionUploadSession(
             ? shareable.current_version_id
             : null),
         preserveArtifactIdentity:
-          shareable.owner_user_id !== user.id &&
-          shareable.workspace_id !== user.workspaceId,
+          publisher !== null ||
+          (shareable.owner_user_id !== user.id &&
+            shareable.workspace_id !== user.workspaceId),
         authority: options?.authority ?? null,
         agentProfileId: options?.agentProfileId ?? null,
       },
@@ -1254,7 +1273,10 @@ export async function deleteShareable(
     workspaceId: string
   },
   shareableId: string,
-  options?: { allowManagerDelete?: boolean },
+  options?: {
+    allowManagerDelete?: boolean
+    publisherAuthority?: PublisherAuthority
+  },
 ): Promise<DeleteShareableResult> {
   const shareable = await db
     .selectFrom('shareables')
@@ -1272,7 +1294,19 @@ export async function deleteShareable(
     .executeTakeFirst()
   if (!shareable) return { kind: 'not-found' }
 
-  const allowManagerDelete = options?.allowManagerDelete ?? false
+  if (
+    options?.publisherAuthority &&
+    !(await isPublisherArtifact(
+      db,
+      user.id,
+      options.publisherAuthority,
+      shareableId,
+    ))
+  )
+    return { kind: 'not-found' }
+  const allowManagerDelete = options?.publisherAuthority
+    ? false
+    : (options?.allowManagerDelete ?? false)
   const isOwner =
     shareable.owner_user_id === user.id &&
     !(await isWorkspaceAccessRevoked(db, shareable.workspace_id, user.id))
@@ -1336,6 +1370,7 @@ export async function deleteShareable(
     workspaceId: shareable.workspace_id,
     containerId: shareable.container_id,
     allowManagerDelete,
+    publisherAuthority: options?.publisherAuthority,
   })
   const batch: Compilable<unknown>[] = [
     db
@@ -1440,8 +1475,11 @@ export function shareableDeleteAuthoritySql(
     workspaceId: string
     containerId: string | null
     allowManagerDelete: boolean
+    publisherAuthority?: PublisherAuthority
   },
 ): RawBuilder<boolean> {
+  if (target.publisherAuthority)
+    return sql<boolean>`shareables.id = ${target.shareableId} AND shareables.container_id IS ${target.containerId} AND ${publisherArtifactSql(user.id, target.publisherAuthority)}`
   const managerEmail = user.emailVerified
     ? normalizedEmail(user.email ?? '')
     : null
@@ -1878,6 +1916,7 @@ type StaticSiteAddFileResult =
 type StaticSiteBundleUploadTarget =
   | {
       kind: 'create'
+      authority: CliAuthority | null
       destination: UploadDestination
       stableKey: string | null
       agentProfileId: string | null
@@ -2032,6 +2071,20 @@ export class StaticSiteBundleUploadSession {
     this.#closed = true
     if (this.target.kind !== 'create') return { kind: 'storage-failed' }
 
+    const publisher =
+      this.target.authority?.kind === 'publisher' ? this.target.authority : null
+    if (
+      publisher &&
+      (visibility !== 'private' ||
+        initialGrantEmails.length > 0 ||
+        requestedLinkExpiresAt != null ||
+        this.target.destination.containerKind !== 'inbox' ||
+        this.target.stableKey !== null ||
+        this.accounting.workspaceId !== publisher.workspaceId)
+    ) {
+      await this.abortUploadedFiles()
+      return { kind: 'invalid-container' }
+    }
     const entrypointFile = this.entrypointFile()
     if (!entrypointFile) {
       await this.abortUploadedFiles()
@@ -2127,7 +2180,7 @@ export class StaticSiteBundleUploadSession {
     const sha256 = await this.computeBundleSha256()
     const versionFileRows = this.versionFileRows()
 
-    const shareableInsert = this.db.insertInto('shareables').values({
+    const shareableValues = {
       id: this.shareableId,
       workspace_id: this.accounting.workspaceId,
       owner_user_id: this.user.id,
@@ -2136,7 +2189,7 @@ export class StaticSiteBundleUploadSession {
       derived_title: entrypointFile.derivedTitle,
       title_override: null,
       description: null,
-      artifact_kind: 'static_site',
+      artifact_kind: 'static_site' as const,
       visibility: effectiveVisibility,
       link_expires_at: linkWrite.linkExpiresAt,
       current_version_id: this.versionId,
@@ -2145,7 +2198,29 @@ export class StaticSiteBundleUploadSession {
       container_id: this.target.destination.containerId,
       last_accessed_at: null,
       created_by_agent_profile_id: this.target.agentProfileId,
-    })
+      created_by_publisher_client_id: publisher?.publisherClientId ?? null,
+    }
+    const shareableInsert = publisher
+      ? this.db
+          .insertInto('shareables')
+          .columns(
+            Object.keys(shareableValues) as (keyof typeof shareableValues)[],
+          )
+          .expression((eb) =>
+            eb
+              .selectFrom('users')
+              .where('users.id', '=', this.user.id)
+              .where(publisherAuthoritySql(this.user.id, publisher))
+              .where(
+                sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${shareableValues.container_id} AND workspace_id = ${publisher.workspaceId} AND owner_user_id = ${this.user.id} AND kind = 'inbox')`,
+              )
+              .select(
+                Object.entries(shareableValues).map(([column, value]) =>
+                  eb.val(value).as(column),
+                ),
+              ),
+          )
+      : this.db.insertInto('shareables').values(shareableValues)
     const attemptValues =
       effectiveVisibility === 'link'
         ? await linkPublicationAttemptValues(this.db, {
@@ -2190,6 +2265,7 @@ export class StaticSiteBundleUploadSession {
           staticSiteEntrypointKind(entrypointFile.path) === 'html' ? 1 : 0,
         created_by_id: this.user.id,
         created_by_agent_profile_id: this.target.agentProfileId,
+        created_by_publisher_client_id: publisher?.publisherClientId ?? null,
         created_at: this.now,
         published_at: this.now,
       }),
@@ -2312,7 +2388,13 @@ export class StaticSiteBundleUploadSession {
     this.#closed = true
     if (this.target.kind !== 'version') return { kind: 'storage-failed' }
     const versionTarget = this.target
-    const agentAuthority = cliWriteAuthority(versionTarget.authority)
+    const publisher =
+      versionTarget.authority?.kind === 'publisher'
+        ? versionTarget.authority
+        : null
+    const agentAuthority = publisher
+      ? null
+      : cliWriteAuthority(versionTarget.authority)
     if (agentAuthority === 'denied') {
       await this.abortUploadedFiles()
       return { kind: 'not-found' }
@@ -2424,6 +2506,7 @@ export class StaticSiteBundleUploadSession {
           'fallback_to_index',
           'created_by_id',
           'created_by_agent_profile_id',
+          'created_by_publisher_client_id',
           'created_at',
           'published_at',
           'label',
@@ -2444,6 +2527,9 @@ export class StaticSiteBundleUploadSession {
               sql<string>`${this.user.id}`.as('created_by_id'),
               sql<string | null>`${versionTarget.agentProfileId}`.as(
                 'created_by_agent_profile_id',
+              ),
+              sql<string | null>`${publisher?.publisherClientId ?? null}`.as(
+                'created_by_publisher_client_id',
               ),
               sql<string>`${this.now}`.as('created_at'),
               sql<string>`${this.now}`.as('published_at'),

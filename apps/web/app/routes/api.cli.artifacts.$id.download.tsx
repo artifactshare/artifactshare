@@ -1,3 +1,4 @@
+import { loadPublisherArtifact } from '~/services/publisher-scope.server'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
@@ -17,7 +18,12 @@ import type { Route } from './+types/api.cli.artifacts.$id.download'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+export async function loader({
+  context,
+  params,
+  request,
+  url,
+}: Route.LoaderArgs) {
   const user = requireUser(context)
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
@@ -27,6 +33,21 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   return await withDb(async (db) => {
     const resolved = getCliAuthority(context)
     if (resolved?.kind === 'publisher') {
+      const row = await loadPublisherArtifact(db, user.id, resolved, id)
+      if (!row) return new Response('Not Found', { status: 404 })
+      if (row.artifact_kind === 'static_site') {
+        const manifest = await getCliDownloadManifest(db, user, {
+          id,
+          baseUrl: url.origin,
+          publisherAuthority: resolved,
+        })
+        if (manifest.kind === 'ok')
+          return Response.json(
+            DownloadManifestResponseSchema.parse(manifest.data),
+          )
+        return cliArtifactErrorResponse(manifest, 'Source unavailable.')
+      }
+
       const result = await getPublisherDownloadFile(db, user, resolved, id)
       if (result.kind !== 'ok')
         return cliArtifactErrorResponse(

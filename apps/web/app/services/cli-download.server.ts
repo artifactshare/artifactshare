@@ -1,5 +1,6 @@
 import {
   publisherArtifactSql,
+  loadPublisherArtifact,
   type PublisherAuthority,
 } from './publisher-scope.server'
 import { env } from 'cloudflare:workers'
@@ -49,14 +50,24 @@ export async function getCliDownloadManifest(
     id: string
     baseUrl: string
     agentReadAuthorization?: AgentReadAuthorization
+    publisherAuthority?: PublisherAuthority
   },
 ): Promise<CliDownloadManifestResult> {
-  const access = await loadCommentAccess(
-    db,
-    user,
-    args.id,
-    args.agentReadAuthorization,
-  )
+  const publisherRow = args.publisherAuthority
+    ? await loadPublisherArtifact(db, user.id, args.publisherAuthority, args.id)
+    : null
+  const access = args.publisherAuthority
+    ? publisherRow
+      ? {
+          currentVersionId: publisherRow.current_version_id,
+          projectId: publisherRow.container_id,
+          artifactKind: publisherRow.artifact_kind,
+          r2Key: publisherRow.r2_key,
+          visibility: publisherRow.visibility,
+          entrypointPath: null,
+        }
+      : null
+    : await loadCommentAccess(db, user, args.id, args.agentReadAuthorization)
   if (!access?.currentVersionId) return { kind: 'not-found' }
   const projectId = access.projectId ?? null
 
