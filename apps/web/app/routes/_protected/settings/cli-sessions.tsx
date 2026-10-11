@@ -222,12 +222,9 @@ function CliFamilyRow({
   return (
     <TableRow>
       <TableCell>
-        <div
-          className="max-phone:max-w-48 max-w-96 min-w-0 truncate"
-          title={name}
-        >
-          <TeamUser name={name} />
-          <TeamMuted>
+        <div className="max-phone:max-w-48 max-w-96 min-w-0">
+          <TeamUser name={<span title={name}>{name}</span>} />
+          <TeamMuted className="overflow-visible text-clip whitespace-normal">
             {t('team.tokens.cli.preset')}:{' '}
             {t(`team.tokens.cli.preset.${family.preset ?? 'unrestricted'}`)}
           </TeamMuted>

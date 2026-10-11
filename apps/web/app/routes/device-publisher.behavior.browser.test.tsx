@@ -97,6 +97,8 @@ test('first client defaults to create-new and labels the requested name', async 
   const name = container!.querySelector('blockquote')!
   expect(name.getAttribute('aria-labelledby')).toBe('publisher-name-label')
   expect(name.textContent).toBe('Employee dashboard')
+  expect(getComputedStyle(name).backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(name.classList.contains('border-border')).toBe(true)
   await expect
     .element(page.getByText(en['device.publisher.requestedName']))
     .toBeVisible()
@@ -141,6 +143,9 @@ test('duplicate names require explicit continuation and an owned client selectio
     .element(page.getByText(en['device.publisher.duplicate']))
     .toBeVisible()
   await expect
+    .element(page.getByText(en['device.publisher.nameHelp']))
+    .not.toBeInTheDocument()
+  await expect
     .element(
       page.getByRole('button', { name: en['device.approve'], exact: true }),
     )
@@ -153,6 +158,9 @@ test('duplicate names require explicit continuation and an owned client selectio
       page.getByRole('button', { name: en['device.approve'], exact: true }),
     )
     .toBeDisabled()
+  await expect
+    .element(page.getByText(en['device.publisher.nameHelp']))
+    .toBeVisible()
   const clientSelect = page.getByRole('combobox', {
     name: en['device.publisher.client'],
     exact: true,

@@ -310,7 +310,7 @@ function PublisherApprovalFields({
           </p>
           <blockquote
             aria-labelledby="publisher-name-label"
-            className="border-input rounded-md border px-3 py-2 text-sm break-words"
+            className="border-border bg-muted/30 rounded-md border px-3 py-2 text-sm break-words"
           >
             {publisherApproval.requestedName}
           </blockquote>
@@ -377,7 +377,8 @@ function PublisherApprovalFields({
             {t('device.publisher.duplicate')}
           </ConsentErrorAlert>
         ) : null}
-        {publisherApproval.clients.length > 0 ? (
+        {publisherApproval.clients.length > 0 &&
+        !(publisherMode === 'create-new' && publisherDuplicate) ? (
           <p className="text-muted-foreground text-sm">
             {t('device.publisher.nameHelp')}
           </p>

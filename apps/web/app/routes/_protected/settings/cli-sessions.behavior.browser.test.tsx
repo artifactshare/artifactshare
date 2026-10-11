@@ -36,47 +36,63 @@ vi.mock('react-router', async (importOriginal) => ({
 }))
 import CliSessionsPage from './cli-sessions'
 
-test('long publisher names truncate while Revoke stays visible on phones', async () => {
-  await page.viewport(390, 844)
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  const name = 'Dashboard '.repeat(10).trim()
-  try {
-    await act(async () =>
-      root.render(
-        <CliSessionsPage
-          {...({
-            params: {},
-            matches: [] as never,
-            loaderData: {
-              cliFamilies: [
-                {
-                  familyId: 'family-publisher',
-                  preset: 'publisher',
-                  publisherClientName: name,
-                  deviceName: null,
-                  createdAt: '2026-01-01T00:00:00.000Z',
-                  lastUsedAt: null,
-                },
-              ],
-            },
-          } as Parameters<typeof CliSessionsPage>[0])}
-        />,
-      ),
-    )
-    const label = container.querySelector<HTMLElement>('[title] span')!
-    expect(label.textContent).toBe(name)
-    expect(label.scrollWidth).toBeGreaterThan(label.clientWidth)
-    expect(getComputedStyle(label).textOverflow).toBe('ellipsis')
-    const revoke = page.getByRole('button', { name: 'Revoke', exact: true })
-    await expect.element(revoke).toBeVisible()
-    expect(revoke.element().getBoundingClientRect().right).toBeLessThanOrEqual(
-      390,
-    )
-  } finally {
-    await act(async () => root.unmount())
-    container.remove()
-    await page.viewport(1280, 800)
-  }
-})
+test.each(['light', 'dark'])(
+  'publisher access wraps while long names truncate and Revoke stays visible on phones (%s)',
+  async (theme) => {
+    await page.viewport(390, 844)
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const name = 'Dashboard '.repeat(10).trim()
+    try {
+      await act(async () =>
+        root.render(
+          <CliSessionsPage
+            {...({
+              params: {},
+              matches: [] as never,
+              loaderData: {
+                cliFamilies: [
+                  {
+                    familyId: 'family-publisher',
+                    preset: 'publisher',
+                    publisherClientName: name,
+                    deviceName: null,
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    lastUsedAt: null,
+                  },
+                ],
+              },
+            } as Parameters<typeof CliSessionsPage>[0])}
+          />,
+        ),
+      )
+      const label =
+        container.querySelector<HTMLElement>('[title]')!.parentElement!
+      expect(label.textContent).toBe(name)
+      expect(label.scrollWidth).toBeGreaterThan(label.clientWidth)
+      expect(getComputedStyle(label).textOverflow).toBe('ellipsis')
+      const access = label.parentElement!.nextElementSibling as HTMLElement
+      expect(access.textContent).toContain(
+        'Access: Create files and update its own',
+      )
+      expect(getComputedStyle(access).whiteSpace).toBe('normal')
+      expect(access.scrollWidth).toBeLessThanOrEqual(access.clientWidth)
+      expect(access.scrollHeight).toBeLessThanOrEqual(access.clientHeight)
+      expect(access.getBoundingClientRect().height).toBeGreaterThan(
+        Number.parseFloat(getComputedStyle(access).lineHeight),
+      )
+      const revoke = page.getByRole('button', { name: 'Revoke', exact: true })
+      await expect.element(revoke).toBeVisible()
+      expect(
+        revoke.element().getBoundingClientRect().right,
+      ).toBeLessThanOrEqual(390)
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      document.documentElement.classList.remove('dark')
+      await page.viewport(1280, 800)
+    }
+  },
+)
