@@ -101,6 +101,9 @@ describe('CLI device authorization intent', () => {
       )
       const response = await loader({
         request: new Request(
+          'https://example.test/ja/api/auth/device?user_code=WRONG',
+        ),
+        url: new URL(
           'https://example.test/api/auth/device?user_code=ABCD-1234',
         ),
       } as never)
@@ -134,7 +137,9 @@ describe('CLI device authorization intent', () => {
   }
 
   function runAction(request: Request) {
-    return action({ request } as Parameters<typeof action>[0])
+    return action({ request, url: new URL(request.url) } as Parameters<
+      typeof action
+    >[0])
   }
 
   async function exchangeDeviceToken(
@@ -434,6 +439,70 @@ describe('CLI device authorization intent', () => {
       expect(sqlite.prepare('SELECT * FROM sessions').all()).toEqual([])
     },
   )
+
+  test.each(['publisher', 'agent'] as const)(
+    'dash-formatted %s approval enforces and stores the explicit choice',
+    async (preset) => {
+      await storeDeviceAuthorizationIntent('device-1', {
+        preset,
+        deviceName: 'Dashboard',
+        projectSelector: null,
+      })
+      const before = sqlite.prepare('SELECT * FROM deviceCode').all()
+      const rejected = await runAction(
+        deviceRequest('approve', { userCode: 'ABCD-1234' }),
+      )
+      expect(rejected.status).toBe(400)
+      expect(authHandlerMock).not.toHaveBeenCalled()
+      expect(sqlite.prepare('SELECT * FROM deviceCode').all()).toEqual(before)
+      expect(sqlite.prepare('SELECT * FROM publisher_clients').all()).toEqual(
+        [],
+      )
+
+      authHandlerMock.mockResolvedValue(Response.json({ success: true }))
+      const approved = await runAction(
+        deviceRequest('approve', {
+          userCode: 'ABCD-1234',
+          ...(preset === 'publisher'
+            ? { publisher: { mode: 'create-new' } }
+            : { project_id: 'project-1' }),
+        }),
+      )
+      expect(approved.status).toBe(200)
+      expect(authHandlerMock).toHaveBeenCalledOnce()
+      const intent = await loadDeviceAuthorizationIntent('device-1')
+      if (preset === 'publisher') {
+        expect(intent?.selectedPublisherClientId).toEqual(expect.any(String))
+        expect(
+          sqlite
+            .prepare(
+              'SELECT id, user_id, workspace_id, name FROM publisher_clients',
+            )
+            .get(),
+        ).toEqual({
+          id: intent?.selectedPublisherClientId,
+          user_id: 'u1',
+          workspace_id: 'ws1',
+          name: 'Dashboard',
+        })
+      } else {
+        expect(intent?.selectedProjectId).toBe('project-1')
+      }
+    },
+  )
+
+  test('publisher attachment failure revokes the token and names the publisher authorization', async () => {
+    const response = await exchangeDeviceToken('publisher')
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: 'invalid_grant',
+      error_description: 'Publisher authorization is incomplete',
+    })
+    expect(sqlite.prepare('SELECT * FROM sessions').all()).toEqual([])
+    expect(
+      sqlite.prepare('SELECT * FROM cli_session_authorities').all(),
+    ).toEqual([])
+  })
 
   test('publisher approval creates a stable owned identity and only explicit continuation reuses it', async () => {
     await storeDeviceAuthorizationIntent('device-1', {

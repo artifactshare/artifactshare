@@ -22,6 +22,7 @@ test.each([
   'invalid publisher name %j explains requirements before authorization creation',
   async (deviceName) => {
     const response = await action({
+      url: new URL('https://example.test/api/auth/device/code'),
       request: new Request('https://example.test/api/auth/device/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

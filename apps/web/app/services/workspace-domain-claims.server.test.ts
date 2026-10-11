@@ -17,6 +17,7 @@ import {
   listWorkspaceMigrationCandidates,
   maybeMoveUserToClaimedWorkspace,
   moveUserToWorkspaceForOAuth,
+  workspaceMigrationBlockReasons,
 } from './workspace-domain-claims.server'
 
 const sqliteRef = vi.hoisted(() => ({
@@ -812,6 +813,76 @@ describe('workspace domain claims', () => {
         .where('id', '=', 'u1')
         .executeTakeFirstOrThrow(),
     ).resolves.toEqual({ workspace_id: 'ws-personal' })
+  })
+
+  test('keeps a publisher client owner in their personal workspace and reports the blocker', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-org',
+      hd: null,
+      emailDomain: 'example.test',
+    })
+    await seedWorkspace(db, { id: 'ws-personal', hd: null })
+    await ensureWorkspaceDomainClaim(db, {
+      domain: 'example.test',
+      workspaceId: 'ws-org',
+      source: 'google_hd',
+      now: '2026-06-26T00:00:00.000Z',
+    })
+    await seedUser(db, {
+      id: 'u1',
+      email: 'owner@example.test',
+      workspaceId: 'ws-personal',
+    })
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: 'publisher-client',
+        user_id: 'u1',
+        workspace_id: 'ws-personal',
+        name: 'Dashboard',
+        created_at: '2026-06-26T00:00:00.000Z',
+      })
+      .execute()
+    await expect(
+      workspaceMigrationBlockReasons(db, 'u1', {
+        allowCurrentWorkspaceAdmin: 'ws-personal',
+        targetWorkspaceId: 'ws-org',
+      }),
+    ).resolves.toContain('source_workspace_has_integrations')
+    await expect(
+      maybeMoveUserToClaimedWorkspace(db, {
+        userId: 'u1',
+        email: 'owner@example.test',
+        currentWorkspaceId: 'ws-personal',
+      }),
+    ).resolves.toBeNull()
+    expect(
+      await db
+        .selectFrom('users')
+        .select('workspace_id')
+        .where('id', '=', 'u1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ workspace_id: 'ws-personal' })
+    expect(
+      await db
+        .selectFrom('publisher_clients')
+        .select(['id', 'workspace_id'])
+        .execute(),
+    ).toEqual([{ id: 'publisher-client', workspace_id: 'ws-personal' }])
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('id')
+        .where('id', '=', 'ws-personal')
+        .executeTakeFirst(),
+    ).toEqual({ id: 'ws-personal' })
+    await expect(listWorkspaceMigrationCandidates(db)).resolves.toMatchObject([
+      {
+        userId: 'u1',
+        reasonCodes: ['source_workspace_has_integrations'],
+      },
+    ])
   })
 
   test('rolls back when agent data appears before the move batch', async () => {

@@ -22,8 +22,8 @@ import type { Route } from './+types/api.auth.$'
 // or accounts on a shared browser. Requires HTTPS — a no-op on http:// dev.
 const CLEAR_SITE_DATA = '"cookies", "storage"'
 
-function maybeClearSiteData(request: Request, response: Response): Response {
-  if (!/\/sign-?out$/i.test(new URL(request.url).pathname)) return response
+function maybeClearSiteData(url: URL, response: Response): Response {
+  if (!/\/sign-?out$/i.test(url.pathname)) return response
   const headers = new Headers(response.headers)
   headers.set('Clear-Site-Data', CLEAR_SITE_DATA)
   return new Response(response.body, {
@@ -33,9 +33,8 @@ function maybeClearSiteData(request: Request, response: Response): Response {
   })
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, url }: Route.LoaderArgs) {
   const response = await authHandlerWithHangDetection(request)
-  const url = new URL(request.url)
   // The device plugin reports expired verification codes as 400. Preserve
   // existing presets while letting publisher approval show its expired state.
   if (url.pathname === '/api/auth/device' && response.status === 400) {
@@ -58,11 +57,11 @@ export async function loader({ request }: Route.LoaderArgs) {
       })
     }
   }
-  return maybeClearSiteData(request, response)
+  return maybeClearSiteData(url, response)
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  const path = new URL(request.url).pathname
+export async function action({ request, url }: Route.ActionArgs) {
+  const path = url.pathname
   if (/\/device\/(code|token|approve)$/.test(path)) {
     const payload = await readDeviceRequestBody(request)
     if (payload instanceof Response) return payload
@@ -71,10 +70,7 @@ export async function action({ request }: Route.ActionArgs) {
       return handleDeviceToken(request, payload)
     return handleDeviceApprove(request, payload)
   }
-  return maybeClearSiteData(
-    request,
-    await authHandlerWithHangDetection(request),
-  )
+  return maybeClearSiteData(url, await authHandlerWithHangDetection(request))
 }
 
 async function readDeviceRequestBody(
@@ -117,7 +113,7 @@ async function handleDeviceApprove(
   request: Request,
   payload: Record<string, unknown>,
 ): Promise<Response> {
-  const userCode = readResponseString(payload, 'userCode')
+  const userCode = readResponseString(payload, 'userCode')?.replace(/-/g, '')
   if (userCode && (await isPublisherDeviceApproval(userCode))) {
     const approval = payload
     const user = await getSessionUser(request)
@@ -264,7 +260,10 @@ async function handleDeviceToken(
   return Response.json(
     {
       error: 'invalid_grant',
-      error_description: 'Agent authorization is incomplete',
+      error_description:
+        intent.preset === 'publisher'
+          ? 'Publisher authorization is incomplete'
+          : 'Agent authorization is incomplete',
     },
     { status: 400, headers: { 'Cache-Control': 'no-store' } },
   )
