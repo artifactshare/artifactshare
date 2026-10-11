@@ -10,6 +10,7 @@ vi.mock('~/hooks/use-t', () => ({
     locale: 'en',
     t: (key: string, vars?: Record<string, string | number>) =>
       ({
+        'vw.retentionNoteOther': `Keeping the latest ${vars?.count} versions`,
         'vw.versionHistory': 'History & add new version',
         'vw.versionHistoryReadonly': 'Version history',
         'common.close': 'Close',
@@ -366,8 +367,8 @@ test.each([
   { locale: 'en', retainVersions: 1, note: 'Keeping only the latest version' },
   { locale: 'en', retainVersions: 24, note: 'Keeping the latest 24 versions' },
   { locale: 'en', retainVersions: null, note: null },
-  { locale: 'ja', retainVersions: 1, note: '最新版のみを保持しています' },
-  { locale: 'ja', retainVersions: 24, note: '最新の24版を保持しています' },
+  { locale: 'ja', retainVersions: 1, note: '最新版だけを残しています' },
+  { locale: 'ja', retainVersions: 24, note: '最新24件の版を残しています' },
   { locale: 'ja', retainVersions: null, note: null },
 ] as const)(
   '$locale history notes configured retention $retainVersions',
@@ -389,9 +390,35 @@ test.each([
     )
     if (note === null) {
       expect(html).not.toContain('Keeping the latest')
-      expect(html).not.toContain('保持しています')
+      expect(html).not.toContain('残しています')
     } else {
       expect(html).toContain(`>${note}</p>`)
     }
+  },
+)
+
+test.each([true, false])(
+  'only retention authority exposes the editor, regardless of upload permission: %s',
+  (canChangeRetention) => {
+    const html = renderToStaticMarkup(
+      <HistoryPanelBody
+        artifactId="abc123def4"
+        canChangeRetention={canChangeRetention}
+        retainVersions={2}
+        versions={[]}
+        canReplaceFile={!canChangeRetention}
+        active={false}
+        uploading={false}
+        inputRef={{ current: null }}
+        replaceMode="single"
+        setLocalDropActive={() => {}}
+        submitFiles={() => {}}
+        locale="en"
+        t={bindI18n('en').t}
+      />,
+    )
+    expect(html.includes('data-retention-change')).toBe(canChangeRetention)
+    if (canChangeRetention) expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('Keeping the latest 2 versions')
   },
 )

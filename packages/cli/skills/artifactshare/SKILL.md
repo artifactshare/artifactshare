@@ -288,8 +288,11 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id
   to keep the latest N published versions, or `--retain-versions all` to keep all
   future versions. Setting or lowering retention immediately deletes older
   versions; the response reports `retain_versions` and `deleted_versions`.
-  Deleted version links return 404, while comments and surviving version numbers
-  remain. Agent-preset credentials cannot change retention.
+  Owners can also use the file history panel, which confirms existing removals.
+  Authorized viewers of versions removed by retention see an explanation and
+  a latest-version link (HTTP 410). Unknown IDs still return 404 for signed-in
+  viewers. Clearing the limit never restores deleted content. Comments and
+  surviving version numbers remain. Agent-preset credentials cannot change retention.
 - `edit` changes title, visibility, explicit viewers, or project placement
   without adding a new version.
 - Set `--visibility link` with `--link-expires-at <RFC3339 UTC>` for a finite

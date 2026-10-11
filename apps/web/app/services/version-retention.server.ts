@@ -12,24 +12,33 @@ import { deleteArtifacts } from './storage.server'
 
 // Re-evaluated inside the atomic batch: concurrent publishes/settings changes
 // cannot make a current version eligible or release the same quota twice.
-function candidates(shareableId: string) {
+export function candidates(shareableId: string, proposed?: number | null) {
+  const limit =
+    proposed === undefined
+      ? sql`(SELECT retain_versions FROM shareables WHERE id = ${shareableId})`
+      : sql`${proposed}`
   return sql<string>`(SELECT v.id FROM versions v
     JOIN shareables s ON s.id = v.shareable_id
-    WHERE s.id = ${shareableId} AND s.retain_versions IS NOT NULL
+    WHERE s.id = ${shareableId} AND ${limit} IS NOT NULL
       AND v.status = 'published' AND v.published_at IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM shareables current WHERE current.current_version_id = v.id)
       AND v.id NOT IN (
         SELECT kept.id FROM versions kept
         WHERE kept.shareable_id = ${shareableId} AND kept.status = 'published' AND kept.published_at IS NOT NULL
         ORDER BY (kept.id = (SELECT current_version_id FROM shareables WHERE id = ${shareableId})) DESC, kept.number DESC
-        LIMIT (SELECT retain_versions FROM shareables WHERE id = ${shareableId})
+        LIMIT COALESCE(${limit}, -1)
       ))`
 }
 
 export async function pruneVersions(
   db: Kysely<DB>,
   shareableId: string,
+  confirmedSnapshot?: string,
 ): Promise<number> {
+  const approved =
+    confirmedSnapshot === undefined
+      ? sql<boolean>`1`
+      : sql<boolean>`id IN (SELECT value FROM json_each(json_extract(${confirmedSnapshot}, '$.eligible')))`
   const keys = new Set<string>()
   let deletedCount = 0
   // Finish the database work before best-effort R2 cleanup so object deletion
@@ -39,6 +48,7 @@ export async function pruneVersions(
       .selectFrom('versions')
       .select(['id', 'r2_key'])
       .where('id', 'in', candidates(shareableId))
+      .where(approved)
       // Leave room for the predicate bindings under D1's 100-parameter limit.
       .limit(80)
       .execute()
@@ -55,7 +65,8 @@ export async function pruneVersions(
       .select('id')
       .where('id', 'in', ids)
       .where('id', 'in', candidates(shareableId))
-    const [, result] = await runD1BatchWithResults(
+      .where(approved)
+    const [, , result] = await runD1BatchWithResults(
       db,
       db
         .updateTable('workspaces')
@@ -70,6 +81,20 @@ export async function pruneVersions(
             .selectFrom('shareables')
             .select('workspace_id')
             .where('id', '=', shareableId),
+        ),
+      db
+        .insertInto('version_retention_tombstones')
+        .columns(['version_id', 'shareable_id', 'version_number', 'removed_at'])
+        .expression(
+          db
+            .selectFrom('versions')
+            .select([
+              'id',
+              'shareable_id',
+              sql<number>`number`.as('version_number'),
+              sql<string>`${nowIso()}`.as('removed_at'),
+            ])
+            .where('id', 'in', eligible),
         ),
       db.deleteFrom('versions').where('id', 'in', eligible).returning('id'),
     )

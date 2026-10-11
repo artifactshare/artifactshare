@@ -39,6 +39,8 @@ export type ScreenSetup = {
   auth?: ScreenAuth
   seedAuth?: ScreenAuth
   scenario?: string
+  /** Reset this scenario before each serial capture, after ordinary jobs finish. */
+  reseedBeforeCapture?: boolean
   scenarioArtifactIndex?: number
   query?: string
   interactions?: ScreenInteraction[]
@@ -46,6 +48,8 @@ export type ScreenSetup = {
 }
 
 export type ScreenState = {
+  /** Require this exact navigation status instead of the default OK response. */
+  expectedStatus?: number
   id: string
   description: string
   setup: ScreenSetup

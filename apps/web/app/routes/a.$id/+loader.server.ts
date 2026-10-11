@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import { sql } from 'kysely'
 import { data } from 'react-router'
 import { type VersionRow } from './+components/history-panel'
+import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import { detectArtifactType } from '~/lib/artifact-type'
 import * as access from '~/modules/access'
 import { normalizePlan } from '~/lib/billing-plan.server'
@@ -36,6 +37,7 @@ import {
 } from '~/lib/user'
 import {
   ctxContext,
+  getCliAuthority,
   linkDomainContext,
   userContext,
 } from '~/middleware/context'
@@ -108,6 +110,7 @@ interface ArtifactSummary {
   displayedVersionId: string
   displayedVersionOrdinal: number
   isHistoricalVersion: boolean
+  canChangeRetention?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   grants: ReadonlyArray<GrantEntry>
@@ -133,6 +136,7 @@ interface ArtifactSummary {
 }
 
 export type LoaderData =
+  | { kind: 'version-removed'; user: UserInfo | null; latestUrl: string }
   | {
       kind: 'preauth'
       artifact: {
@@ -226,6 +230,7 @@ export type LoaderData =
         displayedVersionId: string
         displayedVersionOrdinal: number
         isHistoricalVersion: boolean
+        canChangeRetention?: boolean
         retainVersions?: number | null
         versions: ReadonlyArray<VersionRow>
         grants: ReadonlyArray<GrantEntry>
@@ -513,6 +518,14 @@ export async function loader({
         published_at: shareable.current_published_at,
       }
   if (!displayedVersion) {
+    const removed = await removedVersionResponse(
+      db,
+      shareable.id,
+      requestedVersionId,
+      userInfo,
+      `/a/${shareable.id}`,
+    )
+    if (removed) return removed
     throw new Response('Not found', { status: 404 })
   }
   const isHistoricalVersion =
@@ -575,6 +588,14 @@ export async function loader({
     (version) => version.id === displayedVersion.id,
   )
   if (!displayedHistoryVersion) {
+    const removed = await removedVersionResponse(
+      db,
+      shareable.id,
+      requestedVersionId,
+      userInfo,
+      `/a/${shareable.id}`,
+    )
+    if (removed) return removed
     throw new Response('Not found', { status: 404 })
   }
   const displayedVersionOrdinal = displayedHistoryVersion.ordinal
@@ -776,6 +797,8 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
+        canChangeRetention:
+          isOwner && allowsHumanCliMutation(getCliAuthority(context)),
         retainVersions: shareable.retain_versions,
         versions,
         grants,
@@ -814,6 +837,8 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
+        canChangeRetention:
+          isOwner && allowsHumanCliMutation(getCliAuthority(context)),
         retainVersions: shareable.retain_versions,
         versions,
         grants,
@@ -881,6 +906,8 @@ export async function loader({
       displayedVersionId: displayedVersion.id,
       displayedVersionOrdinal,
       isHistoricalVersion,
+      canChangeRetention:
+        isOwner && allowsHumanCliMutation(getCliAuthority(context)),
       retainVersions: shareable.retain_versions,
       versions,
       grants,
@@ -975,6 +1002,14 @@ async function buildLinkAnonymousResponse(
 
   if (options.redirectToLinkDomain) {
     const requestUrl = new URL(request.url)
+    const removed = await removedVersionResponse(
+      db,
+      shareable.id,
+      requestUrl.searchParams.get('version')?.trim(),
+      null,
+      canonicalUrl,
+    )
+    if (removed) return removed
     const redirectUrl = new URL(
       linkViewerHistoryUrl('/', requestUrl.search, ''),
       canonicalUrl,
@@ -1504,9 +1539,9 @@ async function loadHistoryVersions(
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
     .executeTakeFirst()
-  if (!displayedRow) {
-    throw new Response('Not found', { status: 404 })
-  }
+  // Retention may commit between the first version lookup and history loading.
+  // Let the caller resolve that newly missing version through its tombstone.
+  if (!displayedRow) return versions
 
   return [
     ...versions,
@@ -1524,4 +1559,29 @@ async function loadHistoryVersions(
           'User'),
     },
   ]
+}
+
+async function removedVersionResponse(
+  db: ReturnType<typeof createDb>,
+  shareableId: string,
+  versionId: string | null | undefined,
+  user: UserInfo | null,
+  latestUrl: string,
+): Promise<LoaderData | null> {
+  if (!versionId) return null
+  const removed = await db
+    .selectFrom('version_retention_tombstones')
+    .select('version_id')
+    .where('shareable_id', '=', shareableId)
+    .where('version_id', '=', versionId)
+    .executeTakeFirst()
+  return removed
+    ? (data(
+        { kind: 'version-removed', user, latestUrl },
+        {
+          status: 410,
+          headers: { 'Cache-Control': 'private, no-store' },
+        },
+      ) as unknown as LoaderData)
+    : null
 }

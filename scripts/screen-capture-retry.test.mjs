@@ -22,6 +22,7 @@ import {
   screenCaptureOutputRoot,
 } from './screen-capture-output.mjs'
 import {
+  navigateForCapture,
   captureRetries,
   shouldRetryCapture,
   captureScreenImages,
@@ -507,4 +508,54 @@ test('review output preserves ordered section failures, stamps HEAD and fails af
   assert.match(html, /section: recovery/)
   assert.ok(html.includes(entries[0].file))
   assert.ok(html.includes(entries[2].file))
+})
+
+for (const [status, expectedStatus, accepted] of [
+  [200, undefined, true],
+  [204, undefined, true],
+  [410, undefined, false],
+  [404, undefined, false],
+  [500, undefined, false],
+  [410, 410, true],
+  [200, 410, false],
+  [404, 410, false],
+  [500, 410, false],
+  [null, 410, false],
+]) {
+  test(`capture navigation status ${status}, expected ${expectedStatus}: ${accepted}`, async () => {
+    const page = {
+      goto: (url, options) => {
+        assert.equal(url, 'https://example.com/a/s1')
+        assert.deepEqual(options, { waitUntil: 'networkidle' })
+        return status === null
+          ? null
+          : {
+              status: () => status,
+              ok: () => status >= 200 && status < 300,
+            }
+      },
+    }
+    const navigation = navigateForCapture(
+      page,
+      'https://example.com/a/s1',
+      expectedStatus,
+    )
+    if (accepted) await navigation
+    else await assert.rejects(navigation, /navigation failed: HTTP/)
+  })
+}
+
+test('capture navigation errors remain failures with an expected status', async () => {
+  await assert.rejects(
+    navigateForCapture(
+      {
+        goto: () => {
+          throw new Error('connection refused')
+        },
+      },
+      'https://example.com/a/s1',
+      410,
+    ),
+    /navigation failed: connection refused/,
+  )
 })

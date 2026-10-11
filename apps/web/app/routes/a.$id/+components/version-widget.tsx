@@ -2,7 +2,11 @@ import type {
   NewCommentMessage,
   ViewerRevisitContext,
 } from '~/lib/viewer-revisit'
-import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
+import {
+  IconChevronRight,
+  IconHistory as HistoryIcon,
+  IconX,
+} from '@tabler/icons-react'
 import {
   useCallback,
   useEffect,
@@ -23,6 +27,7 @@ import { VersionRows } from './version-rows'
 interface VersionWidgetProps {
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
+  retention?: { limit: number | null; editable: boolean }
   canViewHistory?: boolean
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
@@ -43,6 +48,7 @@ export function VersionWidget({
   hidden = false,
   versions,
   canViewHistory = true,
+  retention,
   canReplaceFile = false,
   onSubmit,
   replaceMode = 'single',
@@ -54,6 +60,7 @@ export function VersionWidget({
   onCommentsOpen,
 }: VersionWidgetProps) {
   const { locale, t, tPlural } = useT()
+  const retainVersions = retention?.limit
   const popoverId = useId()
   const popoverTitleId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -185,6 +192,16 @@ export function VersionWidget({
               onClick={closePopover}
             />
           </div>
+          {retainVersions != null ? (
+            <p className="text-muted-foreground m-0 px-2 text-xs">
+              {t(
+                retainVersions === 1
+                  ? 'vw.retentionNoteOne'
+                  : 'vw.retentionNoteOther',
+                { count: retainVersions },
+              )}
+            </p>
+          ) : null}
           <VersionRows
             versions={versions.slice(0, 3)}
             locale={locale}
@@ -193,13 +210,18 @@ export function VersionWidget({
           />
           <button
             type="button"
-            className="text-muted-foreground hover:bg-accent hover:text-foreground h-touch-target cursor-pointer rounded-[var(--r-sm)] border-0 bg-transparent px-2 text-left text-sm"
+            className="text-foreground hover:bg-accent h-touch-target flex cursor-pointer items-center justify-between gap-2 rounded-[var(--r-sm)] border-0 bg-transparent px-2 text-left text-sm"
             onClick={() => {
               setOpen(false)
               onOpenHistory(triggerRef.current)
             }}
           >
-            {t('history.viewAll')}
+            {t(
+              retention?.editable
+                ? 'vw.retentionOpenHistory'
+                : 'history.viewAll',
+            )}
+            <IconChevronRight size={16} aria-hidden="true" />
           </button>
           {hasNewerVersion ? (
             <VersionUpdateNotice onShowLatest={onShowLatest} />

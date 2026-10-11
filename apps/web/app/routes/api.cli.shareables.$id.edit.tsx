@@ -15,7 +15,7 @@ import {
 } from '~/lib/shareable-settings-adapter.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
-import { pruneVersions } from '~/services/version-retention.server'
+import { saveRetention } from '~/services/retention-settings.server'
 import { withDb } from '~/services/db.server'
 import { editShareableSettings } from '~/services/shareables.server'
 import type { Route } from './+types/api.cli.shareables.$id.edit'
@@ -81,20 +81,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const metadata =
         retention === undefined
           ? {}
-          : await withDb(async (db) => {
-              const updated = await db
-                .updateTable('shareables')
-                .set({ retain_versions: retention })
-                .where('id', '=', parsedParams.data.id)
-                .where('owner_user_id', '=', user.id)
-                .returning('id')
-                .executeTakeFirst()
-              if (!updated) return null
-              return {
-                retain_versions: retention,
-                deleted_versions: await pruneVersions(db, parsedParams.data.id),
-              }
-            })
+          : await withDb((db) =>
+              saveRetention(db, parsedParams.data.id, user.id, retention),
+            )
       if (metadata === null)
         return errorResponse(
           'forbidden',

@@ -28,6 +28,7 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.cli.projects.$id.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.projects.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.resolve.tsx': 'requireUserApiWithBearerMiddleware',
+  'api.shareables.$id.retention.tsx': 'requireUserApiMiddleware',
   'api.cli.shareables.$id.edit.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.shareables.$id.move.tsx': 'requireUserApiWithBearerMiddleware',
   'api.cli.whoami.tsx': 'requireUserApiWithBearerMiddleware',

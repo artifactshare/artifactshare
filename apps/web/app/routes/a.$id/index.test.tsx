@@ -68,7 +68,7 @@ vi.mock('~/modules/access', () => ({
       isProjectCreator: false,
       isProjectAdmin: false,
       hasProjectGrant: false,
-      workspaceAccessRevoked: false,
+      workspaceAccessRevoked: result.workspaceAccessRevoked ?? false,
     }
   },
 }))
@@ -156,6 +156,7 @@ describe('/a/:id loader', () => {
     }
     dbMock.selectFrom.mockImplementation((table: string) => {
       if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'version_retention_tombstones') return emptyFirstQuery()
       throw new Error(`unexpected table ${table}`)
     })
     const context = new Map()
@@ -221,6 +222,7 @@ describe('/a/:id loader', () => {
     }
     dbMock.selectFrom.mockImplementation((table: string) => {
       if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'version_retention_tombstones') return emptyFirstQuery()
       throw new Error(`unexpected table ${table}`)
     })
     const context = new Map()
@@ -1592,6 +1594,7 @@ describe('/a/:id loader', () => {
     }
     dbMock.selectFrom.mockImplementation((table: string) => {
       if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'version_retention_tombstones') return emptyFirstQuery()
       throw new Error(`unexpected table ${table}`)
     })
     accessFactsResultMock.mockResolvedValue({
@@ -1647,6 +1650,7 @@ describe('/a/:id loader', () => {
     }
     dbMock.selectFrom.mockImplementation((table: string) => {
       if (table === 'shareables') return shareableQuery(shareable)
+      if (table === 'version_retention_tombstones') return emptyFirstQuery()
       throw new Error(`unexpected table ${table}`)
     })
     accessFactsResultMock.mockResolvedValue({
@@ -2056,3 +2060,194 @@ function chain<T extends Record<string, unknown>>(terminal: T): T {
   }
   return target as T
 }
+
+describe('retention removal access', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    isWorkspaceAccessRevokedMock.mockResolvedValue(false)
+  })
+  test.each([false, true])(
+    'removed versions return 410 without content or tracking (anonymous: %s)',
+    async (anonymous) => {
+      const { context } = setupHtmlShareable()
+      if (anonymous) context.set(userContext, null)
+      dbMock.selectFrom.mockImplementation((table: string) => {
+        if (table === 'shareables')
+          return shareableQuery({
+            id: 'html123abc',
+            visibility: 'link',
+            workspace_id: 'ws1',
+            owner_user_id: 'u1',
+            current_version_id: 'v2',
+            r2_key: 'key2',
+          })
+        if (table === 'version_retention_tombstones')
+          return chain({ executeTakeFirst: async () => ({ version_id: 'v1' }) })
+        return emptyFirstQuery()
+      })
+      const result = await loader({
+        params: { id: 'html123abc' },
+        request: new Request(
+          'https://artifactshare.com/a/html123abc?version=v1',
+        ),
+        context,
+      } as never)
+      expect(result).toMatchObject({
+        data: {
+          kind: 'version-removed',
+          latestUrl: anonymous
+            ? 'https://html123abc.artifactshare.link/'
+            : '/a/html123abc',
+        },
+        init: {
+          status: 410,
+          headers: { 'Cache-Control': 'private, no-store' },
+        },
+      })
+      expect(JSON.stringify(result)).not.toContain('sandboxUrl')
+      expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+      expect(anonymousViewIdentifierMock).not.toHaveBeenCalled()
+    },
+  )
+})
+
+describe('removed-version nondisclosure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    isWorkspaceAccessRevokedMock.mockResolvedValue(false)
+  })
+  test.each([
+    'preauth',
+    'denied',
+    'revoked',
+    'expired',
+    'suspended',
+    'missing-file',
+    'missing-source',
+  ] as const)('%s never looks up removal records', async (state) => {
+    const { context } = setupHtmlShareable()
+    const anonymous = ['preauth', 'expired', 'suspended'].includes(state)
+    if (anonymous) context.set(userContext, null)
+    const row = {
+      id: 'html123abc',
+      workspace_id: 'ws1',
+      owner_user_id: state === 'denied' ? 'u2' : 'u1',
+      visibility:
+        state === 'expired' || state === 'suspended' ? 'link' : 'private',
+      current_version_id: 'v2',
+      r2_key: state === 'missing-source' ? null : 'key2',
+    }
+    accessFactsResultMock.mockResolvedValue({
+      kind: state === 'suspended' ? 'link-suspended' : 'access-denied',
+      workspaceAccessRevoked: state === 'revoked',
+    })
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables')
+        return shareableQuery(state === 'missing-file' ? null : row)
+      if (table === 'version_retention_tombstones')
+        throw new Error('unauthorized removal lookup')
+      return emptyFirstQuery()
+    })
+    const result = await loader({
+      params: { id: 'html123abc' },
+      context,
+      request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+    } as never).catch((error) => error)
+    if (state === 'missing-file') expect(result).toMatchObject({ status: 404 })
+    else if (state === 'preauth')
+      expect(result).toMatchObject({ kind: 'preauth' })
+    else if (state === 'expired' || state === 'suspended')
+      expect(result).toMatchObject({ kind: 'unavailable' })
+    else
+      expect(result).toMatchObject({
+        data: {
+          kind:
+            state === 'missing-source' ? 'source-missing' : 'denied-internal',
+        },
+        init: { status: 403 },
+      })
+    expect(JSON.stringify(result)).not.toContain('version-removed')
+    expect(dbMock.selectFrom).not.toHaveBeenCalledWith(
+      'version_retention_tombstones',
+    )
+    expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+  })
+
+  test('a missing version lookup is scoped to both file and version, and unknown IDs stay 404', async () => {
+    const { context } = setupHtmlShareable()
+    const tombstones = chain({
+      executeTakeFirst: vi.fn().mockResolvedValue(undefined),
+    })
+    dbMock.selectFrom.mockImplementation((table: string) => {
+      if (table === 'shareables')
+        return shareableQuery({
+          id: 'html123abc',
+          workspace_id: 'ws1',
+          owner_user_id: 'u1',
+          visibility: 'private',
+          current_version_id: 'v2',
+          r2_key: 'key2',
+        })
+      if (table === 'version_retention_tombstones') return tombstones
+      return emptyFirstQuery()
+    })
+    await expect(
+      loader({
+        params: { id: 'html123abc' },
+        context,
+        request: new Request(
+          'https://artifactshare.com/a/html123abc?version=v1',
+        ),
+      } as never),
+    ).rejects.toMatchObject({ status: 404 })
+    const where = (tombstones as unknown as { where: ReturnType<typeof vi.fn> })
+      .where
+    expect(where).toHaveBeenCalledWith('shareable_id', '=', 'html123abc')
+    expect(where).toHaveBeenCalledWith('version_id', '=', 'v1')
+  })
+})
+
+test('retention committing during history loading still returns the removal explanation', async () => {
+  vi.clearAllMocks()
+  const { context } = setupHtmlShareable()
+  const version = chain({
+    executeTakeFirst: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'v1',
+        artifact_kind: 'html_page',
+        entrypoint_path: '/index.html',
+        r2_key: 'key1',
+        published_at: '2026-09-01',
+      })
+      .mockResolvedValue(undefined),
+    execute: vi.fn().mockResolvedValue([]),
+  })
+  dbMock.selectFrom.mockImplementation((table: string) => {
+    if (table === 'shareables')
+      return shareableQuery({
+        id: 'html123abc',
+        workspace_id: 'ws1',
+        owner_user_id: 'u1',
+        visibility: 'private',
+        current_version_id: 'v2',
+        r2_key: 'key2',
+      })
+    if (table === 'versions') return version
+    if (table === 'version_retention_tombstones')
+      return chain({
+        executeTakeFirst: vi.fn().mockResolvedValue({ version_id: 'v1' }),
+      })
+    return emptyFirstQuery()
+  })
+  const result = await loader({
+    params: { id: 'html123abc' },
+    context,
+    request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
+  } as never)
+  expect(result).toMatchObject({
+    data: { kind: 'version-removed' },
+    init: { status: 410 },
+  })
+  expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
+})
