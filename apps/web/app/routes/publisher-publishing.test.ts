@@ -435,6 +435,26 @@ function site(files: Record<string, string>) {
   return body
 }
 
+test.each(['single-file', 'static-site'] as const)(
+  'publisher %s readback uses the normalized public origin',
+  async (kind) => {
+    const created = await (kind === 'static-site' ? createSite() : create())
+    const path = `/api/cli/artifacts/${created.id}`
+    const response = await readback({
+      context,
+      params: { id: created.id },
+      request: new Request(`https://internal.example.test${path}`),
+      url: new URL(`https://example.test${path}`),
+    } as never)
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      id: created.id,
+      share_url: `https://example.test/a/${created.id}`,
+    })
+  },
+)
+
 test('publisher static site manifest, delta, retention, readback and deletion', async () => {
   const response = await upload(
     args(

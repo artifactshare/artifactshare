@@ -31,13 +31,12 @@ import type { Route } from './+types/api.cli.artifacts.$id'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+export async function loader({ context, params, url }: Route.LoaderArgs) {
   const user = requireUser(context)
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
-  const url = new URL(request.url)
   const parsedQueryParams = ArtifactReadQueryParamsSchema.safeParse({
     offset: url.searchParams.get('offset') ?? undefined,
     include: url.searchParams.getAll('include'),
