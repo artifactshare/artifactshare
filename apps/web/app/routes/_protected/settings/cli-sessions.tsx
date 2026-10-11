@@ -225,7 +225,8 @@ function CliFamilyRow({
         <div className="max-w-96 min-w-0 truncate" title={name}>
           <TeamUser name={name} />
           <TeamMuted>
-            {t('team.tokens.cli.preset')}: {family.preset ?? 'unrestricted'}
+            {t('team.tokens.cli.preset')}:{' '}
+            {t(`team.tokens.cli.preset.${family.preset ?? 'unrestricted'}`)}
           </TeamMuted>
         </div>
       </TableCell>

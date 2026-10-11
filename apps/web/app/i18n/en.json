@@ -1558,13 +1558,16 @@
   "preview.shareDialog.errorWorkspaceAccessRevoked": "This account no longer has access to that workspace.",
   "preview.shareDialog.errorStorageLimit": "The workspace has reached its storage limit.",
   "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available.",
-  "device.publisher.capability": "Can create new private artifacts in your home and update only those artifacts.",
+  "device.publisher.capability": "Can create new private files in your home, and download and update only those files. Updates continue after you share or move them.",
   "device.publisher.choice": "Client identity",
   "device.publisher.new": "Create a new client",
   "device.publisher.continue": "Continue an existing client",
   "device.publisher.client": "Existing client",
   "device.publisher.select": "Select a client",
-  "device.publisher.duplicate": "This name already exists. Continue that client, or request login again with a different device_name.",
-  "device.publisher.nameHelp": "The requesting client supplies this name. To create another identity, request login with a different device_name. Only continuing an existing client restores access to its earlier files.",
-  "team.tokens.cli.preset": "Preset"
+  "device.publisher.duplicate": "This name is already in use. Continue that client, or start the login again with a different name.",
+  "device.publisher.nameHelp": "The requesting client supplies this name. To register another client, start the login again with a different name. To keep updating files created earlier, continue the existing client.",
+  "team.tokens.cli.preset": "Access",
+  "team.tokens.cli.preset.unrestricted": "Full access",
+  "team.tokens.cli.preset.agent": "Agent (one project)",
+  "team.tokens.cli.preset.publisher": "Create and update own files"
 }

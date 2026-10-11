@@ -1,3 +1,6 @@
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
+import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 // @vitest-environment happy-dom
 
 import * as React from 'react'
@@ -5,7 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import Device, { verifyStateFrom } from './device'
+import Device, { screen, verifyStateFrom } from './device'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
@@ -639,3 +642,39 @@ describe('/device', () => {
     await React.act(async () => root.unmount())
   })
 })
+
+test('publisher capture queries match the seeded team workspace codes', () => {
+  for (const state of screen.states.filter((candidate) =>
+    candidate.id.startsWith('publisher-'),
+  )) {
+    const setup = state.setup as { scenario: string; query: string }
+    expect(new URLSearchParams(setup.query).get('user_code')).toBe(
+      devPublisherUserCode(
+        `dev-screen-team-${setup.scenario.replaceAll('/', '-')}`,
+      ),
+    )
+  }
+})
+
+test.each([
+  [
+    'en',
+    en,
+    'download and update only those files',
+    'Updates continue after you share or move them.',
+  ],
+  [
+    'ja',
+    ja,
+    'ダウンロードと更新ができるのは、そのファイルだけです。',
+    'あとで共有や移動をしても、更新は続きます。',
+  ],
+] as const)(
+  'publisher consent explains ongoing access without API vocabulary in %s',
+  (_locale, messages, download, ongoing) => {
+    expect(messages['device.publisher.capability']).toContain(download)
+    expect(messages['device.publisher.capability']).toContain(ongoing)
+    expect(messages['device.publisher.duplicate']).not.toContain('device_name')
+    expect(messages['device.publisher.nameHelp']).not.toContain('device_name')
+  },
+)

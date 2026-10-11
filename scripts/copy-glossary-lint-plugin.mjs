@@ -245,6 +245,8 @@ export const COPY_GLOSSARY_ALLOW = {
     'ja.visibilityDialog.link.expired': ['公開'],
     'ja.visibilityDialog.link.republishSuccess': ['公開'],
     'ja.visibilityDialog.link.republishError': ['公開'],
+    // Client identity registration, not publishing a file.
+    'ja.device.publisher.nameHelp': ['登録'],
     'ja.toast.pickNotRegistered': ['登録'],
     'ja.toast.repairConflict': ['登録'],
     'ja.sourceMissing.repair': ['差し替える'],

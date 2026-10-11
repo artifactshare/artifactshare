@@ -375,6 +375,22 @@ export async function issueCliRefreshCredential(
         .where('user_id', '=', userId)
         .where('device_id', '=', deviceId)
         .where('family_id', 'is not', null)
+        .$if(Boolean(publisherBootstrap), (query) =>
+          query.where(
+            'family_id',
+            'in',
+            db
+              .selectFrom('cli_family_authorities')
+              .select('family_id')
+              .where('preset', '=', 'publisher')
+              .where(
+                'publisher_client_id',
+                '=',
+                publisherBootstrap!.publisher_client_id,
+              )
+              .where('workspace_id', '=', publisherBootstrap!.workspace_id),
+          ),
+        )
     : null
   const supersedePriorCredentials = sourceSessionToken
     ? db
@@ -461,8 +477,8 @@ export async function issueCliRefreshCredential(
             .where('prior.user_id', '=', userId)
             .where(({ or }) =>
               or([
-                ...(deviceId
-                  ? [sql<boolean>`prior.device_id = ${deviceId}`]
+                ...(priorDeviceFamilies
+                  ? [sql<boolean>`prior.family_id IN ${priorDeviceFamilies}`]
                   : []),
                 sql<boolean>`prior.family_id IN ${db
                   .selectFrom('cli_refresh_sessions')

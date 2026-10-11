@@ -1,3 +1,4 @@
+import { PublisherClientNameSchema } from '@artifactshare/contract'
 import { authHandlerWithHangDetection } from '~/services/auth.server'
 import { getSessionUser } from '~/services/auth.server'
 import {
@@ -173,7 +174,14 @@ async function handleDeviceCode(
     !intent
   ) {
     return Response.json(
-      { error: 'invalid_request', error_description: 'Invalid preset' },
+      {
+        error: 'invalid_request',
+        error_description:
+          payload.preset === 'publisher' &&
+          !PublisherClientNameSchema.safeParse(payload.device_name).success
+            ? 'Device name must contain 1–100 characters of letters, marks, numbers, spaces and ._-().'
+            : 'Invalid preset',
+      },
       { status: 400, headers: { 'Cache-Control': 'no-store' } },
     )
   }

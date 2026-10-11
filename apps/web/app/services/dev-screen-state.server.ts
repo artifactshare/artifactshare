@@ -1,3 +1,4 @@
+import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
 import type { Kysely } from 'kysely'
@@ -313,7 +314,7 @@ export async function seedDevScreenState(
       .values({
         id: `${workspaceId}-publisher-code`,
         deviceCode: `${workspaceId}-publisher-token`,
-        userCode: 'PUBL1234',
+        userCode: devPublisherUserCode(workspaceId),
         userId,
         expiresAt:
           scenario === 'device/publisher-invalid'
@@ -330,7 +331,11 @@ export async function seedDevScreenState(
         selectedProjectId: null,
         requestedProjectSelector: null,
       })
-      .onConflict((oc) => oc.column('id').doNothing())
+      .onConflict((oc) =>
+        oc
+          .column('id')
+          .doUpdateSet({ userCode: devPublisherUserCode(workspaceId) }),
+      )
       .execute()
     if (scenario === 'device/publisher-continue')
       await db

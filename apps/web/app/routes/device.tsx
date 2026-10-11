@@ -69,7 +69,7 @@ export const screen = {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-new',
-        query: '?user_code=PUBL1234',
+        query: '?user_code=323ECBD2',
       },
     },
     {
@@ -79,7 +79,7 @@ export const screen = {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-continue',
-        query: '?user_code=PUBL1234',
+        query: '?user_code=12242955',
       },
     },
     {
@@ -89,7 +89,7 @@ export const screen = {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-invalid',
-        query: '?user_code=PUBL1234',
+        query: '?user_code=5D39F577',
       },
     },
     {
@@ -99,7 +99,7 @@ export const screen = {
         auth: 'team-owner',
         seedAuth: 'team-owner',
         scenario: 'device/publisher-long-name',
-        query: '?user_code=PUBL1234',
+        query: '?user_code=BFD3DBFE',
       },
     },
     {
