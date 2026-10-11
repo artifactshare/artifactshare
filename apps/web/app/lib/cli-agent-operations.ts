@@ -25,6 +25,10 @@ const AGENT_RULES: Rule[] = [
 ]
 
 const PUBLISHER_RULES: Rule[] = [
+  { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+$/ },
+  { method: 'DELETE', pattern: /^\/api\/cli\/artifacts\/[^/]+$/ },
+  { method: 'POST', pattern: /^\/api\/cli\/shareables\/[^/]+\/edit$/ },
+  { method: 'PATCH', pattern: /^\/api\/cli\/shareables\/[^/]+\/edit$/ },
   ...BOOTSTRAP_RULES,
   { method: 'POST', pattern: /^\/api\/shareables\/uploads$/ },
   { method: 'POST', pattern: /^\/api\/shareables\/[^/]+\/versions$/ },

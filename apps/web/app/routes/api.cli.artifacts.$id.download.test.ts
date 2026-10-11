@@ -19,6 +19,9 @@ vi.mock('~/services/db.server', () => ({
   createDb: createDbMock,
   withDb: (fn: (db: unknown) => unknown) => fn(createDbMock()),
 }))
+vi.mock('~/services/publisher-scope.server', () => ({
+  loadPublisherArtifact: vi.fn(async () => ({ artifact_kind: 'html_page' })),
+}))
 vi.mock('~/services/cli-download.server', () => ({
   getCliDownloadManifest: getCliDownloadManifestMock,
   getPublisherDownloadFile: getPublisherDownloadFileMock,

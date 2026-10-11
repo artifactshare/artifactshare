@@ -31,8 +31,8 @@ export function publisherArtifactSql(
   return sql<boolean>`(${publisherAuthoritySql(userId, authority)})
     AND shareables.workspace_id = ${authority.workspaceId}
     AND shareables.owner_user_id = ${userId}
-    AND shareables.created_by_publisher_client_id = ${authority.publisherClientId}
-    AND shareables.artifact_kind IN ('html_page', 'markdown_page')`
+    AND COALESCE(shareables.assigned_publisher_client_id, shareables.created_by_publisher_client_id) = ${authority.publisherClientId}
+    AND shareables.artifact_kind IN ('html_page', 'markdown_page', 'static_site')`
 }
 
 export async function isPublisherArtifact(
@@ -49,4 +49,34 @@ export async function isPublisherArtifact(
       .where(publisherArtifactSql(userId, authority))
       .executeTakeFirst(),
   )
+}
+
+/** Authorize before exposing metadata or following storage references. */
+export function loadPublisherArtifact(
+  db: Kysely<DB>,
+  userId: string,
+  authority: PublisherAuthority,
+  id: string,
+) {
+  return db
+    .selectFrom('shareables')
+    .leftJoin('versions', 'versions.id', 'shareables.current_version_id')
+    .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
+    .select([
+      'shareables.id',
+      'shareables.artifact_kind',
+      'shareables.visibility',
+      'shareables.current_version_id',
+      sql<
+        string | null
+      >`CASE WHEN c.kind = 'project' THEN shareables.container_id ELSE NULL END`.as(
+        'container_id',
+      ),
+      'shareables.link_expires_at',
+      'shareables.retain_versions',
+      'versions.r2_key',
+    ])
+    .where('shareables.id', '=', id)
+    .where(publisherArtifactSql(userId, authority))
+    .executeTakeFirst()
 }

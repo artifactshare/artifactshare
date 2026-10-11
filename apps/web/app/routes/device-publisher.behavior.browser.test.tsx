@@ -68,6 +68,11 @@ async function render(clients: Array<{ id: string; name: string }>) {
 
 test('first client defaults to create-new and labels the requested name', async () => {
   await render([])
+  expect(en['device.publisher.capability']).toContain('static sites')
+  expect(en['device.publisher.capability']).toContain(
+    'permanently delete their older versions',
+  )
+  expect(en['device.publisher.capability']).toContain('you assigned to it')
   await expect
     .element(
       page.getByRole('button', { name: en['device.approve'], exact: true }),

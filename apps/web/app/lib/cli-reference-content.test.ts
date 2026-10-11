@@ -285,3 +285,24 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'publisher reference covers expanded API scope in %s',
+  (locale) => {
+    const body = cliReferenceContent(locale).sections.introduction.body
+    for (const field of [
+      'base_version',
+      'delete_path',
+      'retain_versions',
+      'publisher_client_id',
+      'whoami/doctor',
+      '/api/cli/artifacts/:id/adopt',
+      'POST/PATCH',
+    ])
+      expect(body).toContain(field)
+    expect(body).toContain(locale === 'en' ? 'metadata-only' : 'メタデータのみ')
+    expect(body).toContain(
+      locale === 'en' ? 'workflows are unsupported' : '対応していません',
+    )
+  },
+)

@@ -366,7 +366,7 @@ async function publishWithDb(
   }
   const publisher = authority?.kind === 'publisher' ? authority : null
   if (publisher) {
-    if (intent.content.kind !== 'file' || intent.target.kind === 'append')
+    if (intent.content.kind === 'append' || intent.target.kind === 'append')
       return { kind: 'forbidden' }
     if (isUpdateIntent(intent) && !intent.target.expectedVersionId?.trim())
       return { kind: 'expected-version-required' }

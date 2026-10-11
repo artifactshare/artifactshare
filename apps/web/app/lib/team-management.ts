@@ -57,6 +57,8 @@ export interface AuditEventEntry {
     recipientEmail?: string | null
     artifactCount?: number | null
     accessRequestId?: string | null
+    publisherClientId?: string | null
+    previousPublisherClientId?: string | null
     artifactId?: string | null
     artifactTitle?: string | null
     projectId?: string | null

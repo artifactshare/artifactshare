@@ -234,7 +234,7 @@ export async function runDoctor(
       type: 'home',
       project_id: null,
       code: 'publisher_scope',
-      hint: `Publisher ${authority.publisher_client_name}: create private files in home and update only files created by this client. Use the API; publisher CLI login and publishing workflows are not supported.`,
+      hint: `Publisher ${authority.publisher_client_name}: create private files or static sites in home; read, update, prune versions and delete artifacts created by or assigned to this client. Use the API; publisher CLI login and publishing workflows are not supported.`,
     }
   data.upload.checked = true
   data.upload.ok = upload?.ok === true

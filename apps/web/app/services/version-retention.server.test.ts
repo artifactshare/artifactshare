@@ -147,6 +147,34 @@ test('rechecks changed current pointers before deleting objects or releasing quo
   ).toEqual({ storage_used_bytes: 10 })
 })
 
+test.each([false, true])(
+  'reselects after a fully invalidated batch while respecting confirmation: %s',
+  async (confirmed) => {
+    sqlite.exec('UPDATE shareables SET retain_versions = 3')
+    const preview = await previewRetention(db, 's1', 'u1', 3)
+    sqliteRef.beforeNextBatch = () => {
+      sqlite.exec("UPDATE shareables SET current_version_id = 'v1'")
+    }
+    expect(
+      await pruneVersions(db, 's1', confirmed ? preview!.snapshot : undefined),
+    ).toBe(confirmed ? 0 : 1)
+    expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
+      (confirmed ? ['v1', 'v2', 'v3', 'v4'] : ['v1', 'v3', 'v4']).map((id) => ({
+        id,
+      })),
+    )
+    expect(
+      sqlite
+        .prepare('SELECT version_id FROM version_retention_tombstones')
+        .all(),
+    ).toEqual(confirmed ? [] : [{ version_id: 'v2' }])
+    expect(
+      sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+    ).toEqual({ storage_used_bytes: confirmed ? 40 : 30 })
+    expect(deleteObject.mock.calls.flat(2)).toEqual(confirmed ? [] : ['key2'])
+  },
+)
+
 test('a concurrent clear prevents both deletion and quota release', async () => {
   sqlite.exec('UPDATE shareables SET retain_versions = 1')
   sqliteRef.beforeNextBatch = () => {

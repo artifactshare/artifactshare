@@ -121,12 +121,15 @@ test.each([
   ['POST', '/api/shareables/uploads'],
   ['POST', '/api/shareables/abc123def4/versions'],
   ['GET', '/api/cli/artifacts/abc123def4/download'],
+  ['GET', '/api/cli/artifacts/abc123def4'],
+  ['DELETE', '/api/cli/artifacts/abc123def4'],
+  ['POST', '/api/cli/shareables/abc123def4/edit'],
+  ['PATCH', '/api/cli/shareables/abc123def4/edit'],
 ])('publisher allows %s %s', (method, path) =>
   expect(allowsCliOperation(publisher, method, path)).toBe(true),
 )
 test.each([
   ['GET', '/api/cli/artifacts'],
-  ['GET', '/api/cli/artifacts/abc123def4'],
   ['GET', '/api/cli/artifacts/abc123def4/download/index.html'],
   ['GET', '/api/cli/artifacts/abc123def4/download/'],
   ['POST', '/api/cli/artifacts/abc123def4/comments'],
@@ -139,7 +142,6 @@ test.each([
   ['PATCH', '/api/shareables/abc123def4'],
   ['GET', '/api/shareables/abc123def4/versions'],
   ['POST', '/api/cli/shareables/abc123def4/move'],
-  ['POST', '/api/cli/shareables/abc123def4/edit'],
   ['POST', '/api/bridge/v1/requests'],
   ['PUT', '/api/shareables/uploads'],
 ])('publisher denies %s %s', (method, path) =>

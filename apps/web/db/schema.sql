@@ -592,7 +592,7 @@ CREATE TABLE shareables (
   updated_at                 TEXT NOT NULL,
   last_accessed_at           TEXT,
   container_id               TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE SET NULL -- artifact_containers_no_delete_with_shareables prevents the SET NULL path
-, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT);
+, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT, assigned_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT);
 CREATE INDEX shareables_workspace_owner_created
   ON shareables(workspace_id, owner_user_id, created_at DESC);
 CREATE UNIQUE INDEX shareables_workspace_slug
@@ -1471,3 +1471,5 @@ CREATE TABLE version_retention_tombstones (
   removed_at TEXT NOT NULL
 );
 CREATE INDEX idx_version_retention_tombstones_shareable ON version_retention_tombstones(shareable_id);
+
+CREATE INDEX shareables_assigned_publisher_client_id ON shareables(assigned_publisher_client_id);

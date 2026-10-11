@@ -51,6 +51,11 @@
       "implementation_path": "packages/cli/src/output.ts"
     },
     {
+      "id": "publisher-artifact-api",
+      "identifier": "REST_OPERATIONS",
+      "implementation_path": "packages/contract/src/surface-contract.mjs"
+    },
+    {
       "id": "publisher-device-identity",
       "identifier": "PublisherClientNameSchema",
       "implementation_path": "packages/contract/src/index.ts"
@@ -1321,7 +1326,7 @@
         "cli_json": ["cli_help"],
         "cli_auth": ["cli_help"]
       },
-      "contracts": ["publisher-device-identity"],
+      "contracts": ["publisher-device-identity", "publisher-artifact-api"],
       "cli_options": {
         "login": [
           "--help",

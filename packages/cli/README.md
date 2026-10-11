@@ -185,7 +185,7 @@ Use `--scope repository` only for a policy agreed by all repository participants
 
 edit accepts --visibility private|workspace|project|link. Project visibility requires the artifact to be in a project after the edit; use --project-id <id> in the same request if needed. An explicit --visibility project at home (including --home) is refused without changes. Moving a project-visible artifact home makes it private only when project visibility is not explicitly requested.
 
-Owners can run `edit <target> --retain-versions 24 --json` to keep the latest 24 published versions, or `--retain-versions all` to clear the limit. Setting or lowering the limit immediately deletes older versions and releases their storage. The response includes `retain_versions` and `deleted_versions`. Owners can also change this setting in the file history panel, with confirmation before removing existing versions. Authorized viewers opening a version removed by retention see an explanation and a latest-version link (HTTP 410); unknown version IDs still return 404 for signed-in viewers. Clearing the limit never restores deleted content. Comments and surviving version numbers remain. This requires unrestricted owner credentials; agent-preset credentials cannot change retention. The edit API accepts the same setting as `retain_versions` (a positive integer or `null`) at `POST /api/cli/shareables/:id/edit`.
+Owners can run `edit <target> --retain-versions 24 --json` to keep the latest 24 published versions, or `--retain-versions all` to clear the limit. Setting or lowering the limit immediately deletes older versions and releases their storage. The response includes `retain_versions` and `deleted_versions`. Owners can also change this setting in the file history panel, with confirmation before removing existing versions. Authorized viewers opening a version removed by retention see an explanation and a latest-version link (HTTP 410); unknown version IDs still return 404 for signed-in viewers. Clearing the limit never restores deleted content. Comments and surviving version numbers remain. Unrestricted owner credentials can edit retention; publisher credentials can edit only retention on their assigned artifacts through the API. Agent credentials cannot change retention. The edit API accepts the same setting as `retain_versions` (a positive integer or `null`) at `POST /api/cli/shareables/:id/edit`.
 
 Link sharing is available on every plan; Team workspaces can turn it off. A workspace policy may allow a finite expiry from 1 to 365 days or no expiration; the initial default is 30 days and the initial maximum is no limit. Share and edit results include the confirmed `link_expires_at` UTC timestamp or `null`. If a link command fails, use `link_sharing_plan_required` as a legacy code (no plan limit applies today), `link_sharing_disabled` to ask the workspace owner or a Team owner or admin to enable the workspace setting, or `link_expiry_invalid` to correct the timestamp or choose `--no-link-expiry` when allowed. Under the default thresholds, `link_publish_rate_limited` means the service observed 20 counted files before a publication in a Free workspace less than 14 days old during its rolling 24-hour window. A file counts once for its most recent change to link visibility, or for creation with link visibility while it remains link-shared. Share with specific people. `error.recovery` indicates `retry_later`; use `error.message` and `error.hint` for when to retry. Retry the link publication later instead of retrying immediately with unchanged input.
 
@@ -306,18 +306,33 @@ Names cannot be edited on the approval screen: if a name already exists, continu
 that client or request login again with a different name. Only explicit continuation
 restores access to earlier files; `device_id` never selects a client.
 
-A publisher can create a single HTML or Markdown file using
-`POST /api/shareables/uploads`, with no container and omitted or private visibility.
-The file belongs to the approver in their home. It can download only its own files
-at `GET /api/cli/artifacts/:id/download` and add versions with
-`POST /api/shareables/:id/versions?expected_version=<current-version-id>`.
-Updates preserve the name, owner, destination, sharing, visibility, and retention
-settings, including after a human shares or moves the file. Other clients' files,
-listing, readback, wildcard downloads, comments, settings, projects, append,
-overwrite/upsert uploads, and static sites are denied.
+A publisher can create private HTML, Markdown, or static-site artifacts in the
+approver's home. Static sites use `POST /api/shareables/uploads?artifact_kind=static_site`.
+It can manage only artifacts created by or assigned to its client, still owned by
+that approver in the same workspace, including after the owner shares or moves them.
+Single-file versions require `expected_version`. Static-site versions accept
+`artifact_kind=static_site` with either `expected_version` for replacement or
+`base_version` for changed-files uploads and repeated `delete_path` removals.
+The base must be current. Version uploads preserve audience, location and retention.
 
-The exact download endpoint returns source bytes for publisher credentials;
-existing presets still receive a JSON manifest. Publisher credentials retain their
-client across rotation and can be revoked from Settings → CLI sessions. Stored CLI
-profiles and `doctor` preserve and report publisher, but CLI publisher login/resume
-and publishing/download workflows are unsupported; use the device and file APIs.
+The exact `GET /api/cli/artifacts/:id/download` returns raw source bytes for
+single files and a JSON manifest with version id, paths and SHA-256 hashes for
+static sites. Individual `download/*` requests are denied. `GET /api/cli/artifacts/:id`
+includes visibility; static-site readback contains metadata only. No `include`
+expansions are allowed. `DELETE /api/cli/artifacts/:id` deletes the artifact.
+POST or PATCH `/api/cli/shareables/:id/edit` accepts only `retain_versions`, a
+positive integer or null. Setting a limit prunes older versions immediately;
+clearing it never restores deleted content. Other presets remain POST-only.
+
+The owner can assign an existing artifact using an unrestricted credential or
+browser session: `POST /api/cli/artifacts/:id/adopt` with
+`{"publisher_client_id":"client1"}`. Obtain the verified client id from whoami or
+doctor. Assignment replaces the previous client's access and is audited even when
+repeated; historical creation attribution stays unchanged. Publisher credentials
+cannot adopt. There is no adoption UI or CLI command.
+
+Other clients' artifacts, list, resolve, comments, audience/title/expiry edits,
+move, projects, append and upsert remain denied. Existing presets' download and
+readback responses are unchanged. CLI publisher login/resume and publishing/download
+workflows remain unsupported; use the API. Credentials retain their client across
+rotation and can be revoked from Settings → CLI sessions.

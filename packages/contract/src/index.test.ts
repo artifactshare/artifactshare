@@ -1239,3 +1239,45 @@ describe('refresh credential device names', () => {
     ).toBe(false)
   })
 })
+
+it('publisher readback extends the legacy object without widening its shape', async () => {
+  const c = await import('./index.js')
+  expect(c.ArtifactReadResponseSchema.shape.content).toBeDefined()
+  const metadata = {
+    id: 'abc123def4',
+    share_url: 'https://example.test/s/abc123def4',
+    version_id: 'version1',
+    artifact_kind: 'static_site',
+    visibility: 'private',
+    project_id: null,
+    link_expires_at: null,
+    retain_versions: 2,
+  }
+  expect(
+    c.PublisherArtifactReadResponseSchema.safeParse(metadata).success,
+  ).toBe(true)
+  expect(c.ArtifactReadResponseSchema.safeParse(metadata).success).toBe(false)
+  for (const value of [
+    {},
+    { retain_versions: 0 },
+    { retain_versions: 1, title: '' },
+    { retain_versions: null, visibility: null },
+  ])
+    expect(c.PublisherRetentionRequestSchema.safeParse(value).success).toBe(
+      false,
+    )
+  for (const retain_versions of [1, 24, null])
+    expect(
+      c.PublisherRetentionRequestSchema.safeParse({ retain_versions }).success,
+    ).toBe(true)
+  expect(
+    c.PublisherAdoptRequestSchema.safeParse({ publisher_client_id: 'client1' })
+      .success,
+  ).toBe(true)
+  expect(
+    c.PublisherAdoptRequestSchema.safeParse({
+      publisher_client_id: 'client1',
+      owner: 'owner1',
+    }).success,
+  ).toBe(false)
+})

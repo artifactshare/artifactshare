@@ -663,6 +663,44 @@ export const ArtifactReadResponseSchema = z.object({
 })
 export type ArtifactReadResponse = z.infer<typeof ArtifactReadResponseSchema>
 
+export const PublisherSingleFileReadResponseSchema =
+  ArtifactReadResponseSchema.extend({
+    visibility: VisibilitySchema,
+  })
+export const PublisherStaticSiteReadResponseSchema = z.object({
+  id: stringId,
+  share_url: url,
+  version_id: stringId,
+  artifact_kind: z.literal('static_site'),
+  visibility: VisibilitySchema,
+  project_id: stringId.nullable(),
+  link_expires_at: nullableTimestamp,
+  retain_versions: z.number().int().min(1).nullable(),
+})
+export const PublisherArtifactReadResponseSchema = z.union([
+  PublisherSingleFileReadResponseSchema,
+  PublisherStaticSiteReadResponseSchema,
+])
+export type PublisherArtifactReadResponse = z.infer<
+  typeof PublisherArtifactReadResponseSchema
+>
+export const PublisherRetentionRequestSchema = z
+  .object({
+    retain_versions: z.number().int().min(1).nullable(),
+  })
+  .strict()
+export const PublisherAdoptRequestSchema = z
+  .object({
+    publisher_client_id: stringId,
+  })
+  .strict()
+export const PublisherAdoptResponseSchema = z
+  .object({
+    id: stringId,
+    publisher_client_id: stringId,
+  })
+  .strict()
+
 export const ArtifactDeleteResponseSchema = z.object({
   id: stringId,
   deleted: z.literal(true),
@@ -1158,6 +1196,20 @@ export const CLI_API_ENDPOINTS = {
     successStatus: 200,
     errorStatuses: [400, 401, 403, 404, 409] as const,
   },
+  artifactAdopt: {
+    path: '/api/cli/artifacts/:id/adopt',
+    method: 'POST',
+    auth: 'bearer_or_session' as const,
+    successStatus: 200,
+    errorStatuses: [400, 401, 403, 404, 405, 409] as const,
+  },
+  publisherRetentionEdit: {
+    path: '/api/cli/shareables/:id/edit',
+    method: 'PATCH',
+    auth: 'bearer' as const,
+    successStatus: 200,
+    errorStatuses: [400, 401, 403, 404, 405] as const,
+  },
   artifactDelete: {
     path: '/api/cli/artifacts/:id',
     method: 'DELETE',
@@ -1172,7 +1224,7 @@ export const CLI_API_ENDPOINTS = {
     successStatus: 200,
     errorStatuses: [400, 401, 403, 404, 405, 409, 413, 415, 502] as const,
   },
-  // Publisher returns current single-file source bytes here; existing presets return a JSON manifest.
+  // Publisher returns source bytes for single files and a manifest for static sites; other presets always return a manifest.
   artifactDownloadManifest: {
     path: '/api/cli/artifacts/:id/download',
     method: 'GET',

@@ -1,4 +1,8 @@
 import {
+  publisherArtifactSql,
+  type PublisherAuthority,
+} from './publisher-scope.server'
+import {
   OBJECT_REFERENCE_CHUNK,
   unreferencedObjectKeys,
   releasedObjectBytes,
@@ -34,7 +38,11 @@ export async function pruneVersions(
   db: Kysely<DB>,
   shareableId: string,
   confirmedSnapshot?: string,
+  publisher?: { userId: string; authority: PublisherAuthority },
 ): Promise<number> {
+  const publisherGuard = publisher
+    ? sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE shareables.id = ${shareableId} AND ${publisherArtifactSql(publisher.userId, publisher.authority)})`
+    : sql<boolean>`1`
   const approved =
     confirmedSnapshot === undefined
       ? sql<boolean>`1`
@@ -49,8 +57,9 @@ export async function pruneVersions(
       .select(['id', 'r2_key'])
       .where('id', 'in', candidates(shareableId))
       .where(approved)
+      .where(publisherGuard)
       // Leave room for the predicate bindings under D1's 100-parameter limit.
-      .limit(80)
+      .limit(publisher ? 50 : 80)
       .execute()
     if (selected.length === 0) break
     const ids = selected.map((row) => row.id)
@@ -66,6 +75,7 @@ export async function pruneVersions(
       .where('id', 'in', ids)
       .where('id', 'in', candidates(shareableId))
       .where(approved)
+      .where(publisherGuard)
     const [, , result] = await runD1BatchWithResults(
       db,
       db
@@ -74,6 +84,7 @@ export async function pruneVersions(
           storage_used_bytes: sql<number>`MAX(storage_used_bytes - ${releasedObjectBytes(eligible)}, 0)`,
           storage_updated_at: nowIso(),
         })
+        .where(publisherGuard)
         .where(
           'id',
           '=',
@@ -104,6 +115,10 @@ export async function pruneVersions(
         : (result as { results: { id: string }[] }).results
     ) as { id: string }[]
     const deleted = new Set(rows.map((row) => row.id))
+    // A current-pointer change can invalidate every selected row while making
+    // another version eligible. Reselect with the live policy, confirmation and
+    // authority guards; only an empty selection means pruning is finished.
+    if (deleted.size === 0) continue
     deletedCount += deleted.size
     for (const row of selected) if (deleted.has(row.id)) keys.add(row.r2_key)
     for (const file of files)
@@ -147,9 +162,10 @@ export async function pruneVersions(
 export async function pruneVersionsAfterPublish(
   db: Kysely<DB>,
   shareableId: string,
+  publisher?: { userId: string; authority: PublisherAuthority },
 ): Promise<void> {
   try {
-    await pruneVersions(db, shareableId)
+    await pruneVersions(db, shareableId, undefined, publisher)
   } catch (err) {
     console.error('version_retention_after_publish_failed', {
       shareable_id: shareableId,

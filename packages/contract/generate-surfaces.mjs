@@ -39,6 +39,8 @@ const {
   CLI_REFERENCE_OPTION_HELP,
   CLI_README_COMMANDS,
   MCP_OPENAPI_METADATA,
+  REST_OPERATIONS,
+  REST_SCHEMAS,
 } = await import('./src/surface-contract.mjs')
 export const CLI_SURFACE_SCHEMA_VERSION = 2
 export const CLI_REFERENCE_PACKAGE_VERSION = CLI_PACKAGE_VERSION
@@ -791,6 +793,7 @@ export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
     },
     servers: [{ url: apex }],
     paths: {
+      ...REST_OPERATIONS,
       [metadata.resourcePath]: {
         post: {
           summary: 'MCP endpoint (JSON-RPC over Streamable HTTP)',
@@ -807,7 +810,20 @@ export function generateOpenApiSurface({ host = 'artifactshare.com' } = {}) {
       },
     },
     components: {
+      schemas: REST_SCHEMAS,
       securitySchemes: {
+        cliBearer: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'CLI access credential; not an MCP OAuth token.',
+        },
+        browserSession: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'better-auth.session_token',
+          description:
+            'Authenticated browser session (secure cookie name may carry the __Secure- prefix).',
+        },
         oauth2: {
           type: 'oauth2',
           description: metadata.oauthDescription,
@@ -977,10 +993,20 @@ function generatedJsonText(value) {
 }
 
 function generatedOpenApiText(value) {
-  const scopes = JSON.stringify(value.paths['/mcp'].post.security[0].oauth2)
-  return generatedJsonText(value).replace(
-    /"oauth2": \[[^\]]*\]/u,
-    `"oauth2": ${scopes}`,
+  // Use the repository's pinned formatter for schema arrays as well as MCP
+  // scopes, so generation and the format check agree on every REST schema.
+  return execFileSync(
+    'pnpm',
+    [
+      'exec',
+      'vp',
+      'fmt',
+      '-c',
+      resolve(ROOT, '.oxfmtrc.json'),
+      '--stdin-filepath',
+      OPENAPI_OUTPUT_PATH,
+    ],
+    { cwd: ROOT, input: generatedJsonText(value), encoding: 'utf8' },
   )
 }
 

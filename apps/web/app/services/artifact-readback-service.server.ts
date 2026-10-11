@@ -1,3 +1,8 @@
+import type { PublisherArtifactReadResponse } from '@artifactshare/contract'
+import {
+  loadPublisherArtifact,
+  type PublisherAuthority,
+} from './publisher-scope.server'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
@@ -148,4 +153,55 @@ export async function getArtifactReadback(
   ])
 
   return { kind: 'ok', data }
+}
+
+export async function getPublisherArtifactReadback(
+  db: Kysely<DB>,
+  user: SessionUser,
+  authority: PublisherAuthority,
+  args: { id: string; baseUrl: string; offset?: number },
+): Promise<
+  | { kind: 'ok'; data: PublisherArtifactReadResponse }
+  | { kind: 'not-found' }
+  | { kind: 'source-unavailable' }
+  | { kind: 'invalid-offset' }
+> {
+  const row = await loadPublisherArtifact(db, user.id, authority, args.id)
+  if (!row) return { kind: 'not-found' }
+  if (!row.current_version_id) return { kind: 'source-unavailable' }
+  const metadata = {
+    id: row.id,
+    share_url: shareUrl(args.baseUrl, row.id, row.visibility),
+    version_id: row.current_version_id,
+    visibility: row.visibility,
+    project_id: row.container_id,
+    link_expires_at: row.link_expires_at,
+  }
+  if (row.artifact_kind === 'static_site') {
+    if (args.offset !== undefined) return { kind: 'invalid-offset' }
+    return {
+      kind: 'ok',
+      data: {
+        ...metadata,
+        artifact_kind: 'static_site',
+        retain_versions: row.retain_versions,
+      },
+    }
+  }
+  const format = singleFileFormat(row.artifact_kind)
+  if (!row.r2_key || !format) return { kind: 'source-unavailable' }
+  const source = await fetchArtifactSource(row.r2_key)
+  if (source.kind !== 'ok') return { kind: 'source-unavailable' }
+  const capped = capSource(source.body, args.offset ?? 0)
+  return {
+    kind: 'ok',
+    data: {
+      ...metadata,
+      format,
+      content: capped.content,
+      truncated: capped.truncated,
+      next_offset: capped.nextOffset,
+      size_bytes: source.sizeBytes,
+    },
+  }
 }

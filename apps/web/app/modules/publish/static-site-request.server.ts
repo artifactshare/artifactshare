@@ -68,7 +68,10 @@ async function publishStaticSiteUpdate(
     throw new TypeError('Static-site update adapter requires an update target.')
   }
 
-  const agentAuthority = cliWriteAuthority(context.authority)
+  const agentAuthority =
+    context.authority?.kind === 'publisher'
+      ? null
+      : cliWriteAuthority(context.authority)
   if (agentAuthority === 'denied')
     return { kind: 'static-site-visibility-forbidden' }
   const begun = await beginStaticSiteBundleVersionUploadSession(
@@ -101,7 +104,7 @@ async function publishStaticSiteUpdate(
   const { session } = begun
 
   try {
-    await parseFormData(
+    const form = await parseFormData(
       request,
       {
         maxFiles: MAX_STATIC_SITE_UPLOAD_FILES,
@@ -116,6 +119,13 @@ async function publishStaticSiteUpdate(
         return null
       },
     )
+    if (
+      context.authority?.kind === 'publisher' &&
+      Array.from(form.keys()).length > 0
+    ) {
+      await session.abort()
+      return { kind: 'static-site-visibility-forbidden' }
+    }
   } catch (error) {
     await session.abort()
     if (error instanceof StaticSiteUploadRejected) return error.result
@@ -148,7 +158,10 @@ async function publishStaticSiteCreate(
   context: StaticSiteContentSessionContext,
   options: { expectedContainerId: string | null },
 ): Promise<StaticSiteContentSessionResult> {
-  const agentAuthority = cliReadAuthority(context.authority)
+  const agentAuthority =
+    context.authority?.kind === 'publisher'
+      ? null
+      : cliReadAuthority(context.authority)
   if (agentAuthority === 'denied')
     return { kind: 'static-site-visibility-forbidden' }
   const begun =
@@ -165,6 +178,9 @@ async function publishStaticSiteCreate(
           context.user,
           context.containerId,
           context.idempotencyKey,
+          ...(context.authority?.kind === 'publisher'
+            ? [{ authority: context.authority }]
+            : []),
         )
   if (begun.kind !== 'ok') return begun
   const { session } = begun
@@ -194,6 +210,19 @@ async function publishStaticSiteCreate(
     throw error
   }
 
+  if (
+    context.authority?.kind === 'publisher' &&
+    (Array.from(form.keys()).some(
+      (key) => !['visibility', 'slack_notify'].includes(key),
+    ) ||
+      form.getAll('visibility').some((value) => value !== 'private') ||
+      form.getAll('visibility').length > 1 ||
+      form.getAll('slack_notify').length > 1 ||
+      form.getAll('slack_notify').some((value) => typeof value !== 'string'))
+  ) {
+    await session.abort()
+    return { kind: 'static-site-visibility-forbidden' }
+  }
   const parsedVisibility = ArtifactUploadFormSchema.shape.visibility.safeParse(
     form.get('visibility') ?? undefined,
   )

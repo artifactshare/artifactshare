@@ -917,6 +917,22 @@ test('supported generation and checks use fresh CLI help in a clean checkout', (
   rmSync(distPath, { recursive: true })
   pass('check:contract-surfaces')
 
+  const openapiPath = resolve(
+    checkout,
+    'apps/web/app/lib/openapi.generated.json',
+  )
+  const originalOpenapi = readFileSync(openapiPath, 'utf8')
+  const staleOpenapi = JSON.parse(originalOpenapi)
+  delete staleOpenapi.paths['/api/cli/artifacts/{id}/adopt']
+  writeFileSync(openapiPath, JSON.stringify(staleOpenapi))
+  const staleApi = run('check:contract-surfaces')
+  assert.notEqual(staleApi.status, 0)
+  assert.match(
+    staleApi.stdout + staleApi.stderr,
+    /openapi.generated.json is out of date/,
+  )
+  writeFileSync(openapiPath, originalOpenapi)
+
   // A description-only regression leaves the structured snapshot unchanged,
   // but must still fail capability validation, even with an existing bundle.
   writeFileSync(
@@ -1022,4 +1038,52 @@ test('Cursor edit guidance lists visibility values once and retains placement re
     /Project visibility requires the artifact to be in a project after the edit/,
   )
   assert.match(guidance, /--project-id <id>/)
+})
+
+test('OpenAPI describes publisher REST operations separately from MCP OAuth', () => {
+  const spec = generateOpenApiSurface()
+  const expected = {
+    '/api/cli/artifacts/{id}/adopt': ['post'],
+    '/api/cli/artifacts/{id}': ['get', 'delete'],
+    '/api/cli/shareables/{id}/edit': ['post', 'patch'],
+  }
+  for (const [path, methods] of Object.entries(expected)) {
+    assert.deepEqual(Object.keys(spec.paths[path]).sort(), methods.sort())
+    for (const method of methods) {
+      const operation = spec.paths[path][method]
+      assert.deepEqual(operation.security, [
+        { cliBearer: [] },
+        { browserSession: [] },
+      ])
+      assert.equal(operation.parameters[0].name, 'id')
+      assert.equal(operation.parameters[0].required, true)
+      for (const status of [200, 400, 401, 403, 404, 409])
+        assert.ok(operation.responses[status])
+    }
+  }
+  assert.deepEqual(spec.paths['/mcp'].post.security, [
+    { oauth2: ['artifactshare:access'] },
+  ])
+  assert.deepEqual(
+    spec.paths['/api/cli/artifacts/{id}/adopt'].post['x-credential-presets'],
+    ['unrestricted', 'browser-session'],
+  )
+  assert.deepEqual(
+    spec.paths['/api/cli/shareables/{id}/edit'].patch['x-credential-presets'],
+    ['publisher'],
+  )
+  assert.equal(
+    spec.components.schemas.PublisherAdoptRequest.additionalProperties,
+    false,
+  )
+  assert.equal(
+    spec.components.schemas.PublisherRetentionRequest.additionalProperties,
+    false,
+  )
+  const refs = JSON.stringify(spec.paths).matchAll(
+    /"\$ref":"#\/components\/schemas\/([^"/]+)"/g,
+  )
+  for (const [, name] of refs) assert.ok(spec.components.schemas[name], name)
+  assert.equal(spec.components.securitySchemes.cliBearer.scheme, 'bearer')
+  assert.equal(spec.components.securitySchemes.browserSession.in, 'cookie')
 })

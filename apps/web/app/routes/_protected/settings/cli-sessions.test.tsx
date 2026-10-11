@@ -39,14 +39,14 @@ test.each([
     'Access',
     'Full access',
     'Agent (one project)',
-    'Create files and update its own',
+    'Manage created or assigned files and sites',
   ],
   [
     'ja',
     '権限',
     'すべての操作',
     'エージェント(1つのプロジェクト)',
-    'ファイルの作成と、作ったファイルの更新',
+    '作成・割り当て済みのファイルとサイトの管理',
   ],
 ] as const)(
   'shows translated access labels in %s, including legacy families',

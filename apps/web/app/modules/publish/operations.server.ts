@@ -578,7 +578,11 @@ export async function createVersion(
     }
   }
 
-  await pruneVersionsAfterPublish(db, shareableId)
+  await pruneVersionsAfterPublish(
+    db,
+    shareableId,
+    ...(publisher ? [{ userId: user.id, authority: publisher }] : []),
+  )
   await scheduleArtifactVersionChanged(shareableId, prepared.versionId, {
     waitUntil,
   })
