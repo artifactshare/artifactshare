@@ -1,6 +1,5 @@
 import { useId, useRef, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { CliEditRequestSchema } from '@artifactshare/contract'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
@@ -35,21 +34,32 @@ export function RetentionEditor({
   } | null>(null)
   const limited = draft?.limited ?? retainVersions !== null
   const count = draft?.count ?? String(retainVersions ?? 1)
+  const [expanded, setExpanded] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const changeButton = useRef<HTMLButtonElement>(null)
   const [pending, setPending] = useState(false)
   const busy = useRef(false)
   const saveButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState<'failed' | 'changed' | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
   const proposed = limited ? Number(count) : null
+  // Match the contract's nullable z.number().int().min(1) without a runtime
+  // package import: Zod integer validation also rejects unsafe integers.
   const valid =
-    (!limited || count.trim() !== '') &&
-    CliEditRequestSchema.safeParse({ retain_versions: proposed }).success
+    proposed === null ||
+    (count.trim() !== '' && Number.isSafeInteger(proposed) && proposed >= 1)
+  const unchanged = proposed === retainVersions
+  function editDraft(next: { limited: boolean; count: string }) {
+    setDraft(next)
+    setSaved(false)
+  }
   async function save(confirmed?: Preview) {
-    if (busy.current || !valid) return
+    if (busy.current || !valid || unchanged) return
     busy.current = true
     setDraft({ limited, count })
     setPending(true)
     setError(null)
+    setSaved(false)
     try {
       const response = await fetch(
         `/api/shareables/${encodeURIComponent(artifactId)}/retention`,
@@ -81,6 +91,7 @@ export function RetentionEditor({
       await revalidator.revalidate()
       setDraft(null)
       setPreview(null)
+      setSaved(true)
     } catch {
       setError('failed')
     } finally {
@@ -90,8 +101,35 @@ export function RetentionEditor({
   }
   return (
     <>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-muted-foreground min-w-0 truncate text-sm">
+          {retainVersions === null
+            ? t('vw.retentionSummaryAll')
+            : t(
+                retainVersions === 1
+                  ? 'vw.retentionNoteOne'
+                  : 'vw.retentionNoteOther',
+                { count: retainVersions },
+              )}
+        </p>
+        <Button
+          data-retention-change
+          ref={changeButton}
+          type="button"
+          variant="ghost"
+          className="shrink-0"
+          aria-expanded={expanded}
+          aria-controls={`${id}-editor`}
+          disabled={pending}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {t('vw.retentionChange')}
+        </Button>
+      </div>
       <form
-        className="flex flex-col gap-3"
+        id={`${id}-editor`}
+        hidden={!expanded}
+        className={expanded ? 'flex flex-col gap-3' : undefined}
         aria-busy={pending}
         onSubmit={(event) => {
           event.preventDefault()
@@ -106,7 +144,7 @@ export function RetentionEditor({
             aria-label={t('vw.retentionTitle')}
             value={limited ? 'limited' : 'all'}
             onValueChange={(value) =>
-              setDraft({ limited: value === 'limited', count })
+              editDraft({ limited: value === 'limited', count })
             }
             disabled={pending}
           >
@@ -134,7 +172,7 @@ export function RetentionEditor({
                 aria-invalid={!valid}
                 aria-describedby={!valid ? `${id}-error` : undefined}
                 onChange={(event) =>
-                  setDraft({ limited, count: event.target.value })
+                  editDraft({ limited, count: event.target.value })
                 }
               />
               {!valid ? (
@@ -150,7 +188,7 @@ export function RetentionEditor({
           ref={saveButton}
           type="submit"
           variant="outline"
-          disabled={pending || !valid}
+          disabled={pending || !valid || unchanged}
         >
           {t('vw.retentionSave')}
         </Button>
@@ -164,7 +202,9 @@ export function RetentionEditor({
                       ? 'vw.retentionChanged'
                       : 'vw.retentionFailed',
                   )
-                : null)}
+                : saved
+                  ? t('vw.retentionSaved')
+                  : null)}
         </div>
       </form>
       <AlertDialog
@@ -176,7 +216,10 @@ export function RetentionEditor({
         <AlertDialogContent
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            saveButton.current?.focus()
+            const target = saveButton.current?.disabled
+              ? changeButton.current
+              : saveButton.current
+            target?.focus()
           }}
         >
           <AlertDialogHeader>
@@ -207,6 +250,7 @@ export function RetentionEditor({
               {t('confirm.cancel')}
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={pending}
               onClick={(event) => {
                 event.preventDefault()

@@ -10,6 +10,7 @@ vi.mock('~/hooks/use-t', () => ({
     locale: 'en',
     t: (key: string, vars?: Record<string, string | number>) =>
       ({
+        'vw.retentionNoteOther': `Keeping the latest ${vars?.count} versions`,
         'vw.versionHistory': 'History & add new version',
         'vw.versionHistoryReadonly': 'Version history',
         'common.close': 'Close',
@@ -367,7 +368,7 @@ test.each([
   { locale: 'en', retainVersions: 24, note: 'Keeping the latest 24 versions' },
   { locale: 'en', retainVersions: null, note: null },
   { locale: 'ja', retainVersions: 1, note: '最新版のみを保持しています' },
-  { locale: 'ja', retainVersions: 24, note: '最新の24版を保持しています' },
+  { locale: 'ja', retainVersions: 24, note: '最新24件の版を保持しています' },
   { locale: 'ja', retainVersions: null, note: null },
 ] as const)(
   '$locale history notes configured retention $retainVersions',
@@ -416,9 +417,8 @@ test.each([true, false])(
         t={bindI18n('en').t}
       />,
     )
-    expect(html.includes('data-retention-save')).toBe(canChangeRetention)
-    expect(html.includes('Keeping the latest 2 versions')).toBe(
-      !canChangeRetention,
-    )
+    expect(html.includes('data-retention-change')).toBe(canChangeRetention)
+    if (canChangeRetention) expect(html).toContain('aria-expanded="false"')
+    expect(html).toContain('Keeping the latest 2 versions')
   },
 )

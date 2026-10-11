@@ -598,7 +598,7 @@
   "vw.back": "戻る",
   "vw.more": "その他",
   "vw.retentionNoteOne": "最新版のみを保持しています",
-  "vw.retentionNoteOther": "最新の{count}版を保持しています",
+  "vw.retentionNoteOther": "最新{count}件の版を保持しています",
   "vw.versionHistory": "履歴と新しい版の追加",
   "vw.versionHistoryReadonly": "版の履歴",
   "history.viewingVersion": "{version} を表示中",
@@ -1573,6 +1573,9 @@
   "device.publisher.requestedName": "クライアントが指定した名前",
   "device.publisher.nameSource": "この名前は、ログインを求めているクライアントが指定したものです。",
   "device.publisher.noneYet": "(まだありません)",
+  "vw.retentionSummaryAll": "すべての版を保持しています",
+  "vw.retentionChange": "変更",
+  "vw.retentionSaved": "保存しました",
   "vw.retentionTitle": "残す版数の設定",
   "vw.retentionAll": "すべての版を残す",
   "vw.retentionLimited": "最新の版だけを残す",
@@ -1582,12 +1585,12 @@
   "vw.retentionSaving": "保存しています…",
   "vw.retentionFailed": "保存できませんでした。もう一度お試しください。",
   "vw.retentionConfirmTitle": "古い版を削除しますか？",
-  "vw.retentionConfirm": "{count}版を削除します。この操作は取り消せません。",
+  "vw.retentionConfirm": "古い版を{count}件削除します。この操作は取り消せません。",
   "vw.retentionConfirmSave": "版を削除して保存",
   "vw.retentionRemovedTitle": "削除された版",
   "vw.retentionRemoved": "この版は、残す版数の設定により削除されました。",
   "vw.retentionLatest": "最新版を開く",
   "vw.retentionChanged": "履歴または版数の設定が変わりました。内容を確認してから、もう一度保存してください。",
   "vw.retentionOpenHistory": "履歴と残す版数の設定を開く",
-  "vw.retentionConfirmOne": "{count}版を削除します。この操作は取り消せません。"
+  "vw.retentionConfirmOne": "古い版を{count}件削除します。この操作は取り消せません。"
 }

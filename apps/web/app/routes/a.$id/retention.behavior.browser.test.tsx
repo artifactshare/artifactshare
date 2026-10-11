@@ -43,15 +43,24 @@ afterEach(async () => {
   router = undefined
   host.remove()
   vi.unstubAllGlobals()
+  await page.viewport(1280, 800)
 })
-async function mount(retainVersions: number | null = null) {
+async function mount(retainVersions: number | null = null, expand = true) {
   await act(async () =>
     root.render(
       <HistoryPanelBody
         artifactId="abc123def4"
         canChangeRetention
         retainVersions={retainVersions}
-        versions={[]}
+        versions={[
+          {
+            id: 'v1',
+            ordinal: 1,
+            createdAt: '2026-05-29T00:00:00.000Z',
+            sizeBytes: 1024,
+            isCurrent: true,
+          },
+        ]}
         canReplaceFile={false}
         active={false}
         uploading={false}
@@ -65,6 +74,17 @@ async function mount(retainVersions: number | null = null) {
     ),
   )
   await waitForBrowserLayout()
+  const change = host.querySelector<HTMLButtonElement>(
+    '[data-retention-change]',
+  )!
+  if (expand && change.getAttribute('aria-expanded') === 'false') {
+    await page
+      .getByRole('button', {
+        name: state.locale === 'ja' ? '変更' : 'Change',
+        exact: true,
+      })
+      .click()
+  }
 }
 async function limited() {
   await page
@@ -131,6 +151,12 @@ test('confirmed saves use the exact snapshot, disable duplicate actions and refr
     retain_versions: 1,
     snapshot: 'snapshot',
   })
+  expect(
+    page
+      .getByRole('button', { name: 'Remove versions and save' })
+      .element()
+      .getAttribute('data-variant'),
+  ).toBe('destructive')
   const dialog = document.querySelector('[role="alertdialog"]')!
   expect(
     Array.from(dialog.querySelectorAll('button')).every(
@@ -146,7 +172,7 @@ test('confirmed saves use the exact snapshot, disable duplicate actions and refr
   expect(state.revalidate).toHaveBeenCalledTimes(1)
   await vi.waitFor(() =>
     expect(document.activeElement).toBe(
-      host.querySelector('[data-retention-save]'),
+      host.querySelector('[data-retention-change]'),
     ),
   )
   expect(document.activeElement?.isConnected).toBe(true)
@@ -171,7 +197,7 @@ test('zero-removal changes save directly, clearing sends null, and failures reta
   })
 })
 
-test.each(['', '0', '-1', '1.5'])(
+test.each(['', '0', '-1', '1.5', '9007199254740992'])(
   'invalid count %s cannot save',
   async (value) => {
     await mount()
@@ -307,6 +333,7 @@ test('revalidation replaces a historical version removed by its owner with the e
   await vi.waitFor(() =>
     expect(host.querySelector('[data-retention-save]')).not.toBeNull(),
   )
+  await page.getByRole('button', { name: 'Change', exact: true }).click()
   await limited()
   await submit()
   await vi.waitFor(() =>
@@ -323,18 +350,19 @@ test('revalidation replaces a historical version removed by its owner with the e
 })
 
 test.each([1, 2])(
-  'Japanese confirmation uses consistent version spacing for %s',
+  'Japanese confirmation counts old versions unambiguously for %s',
   async (count) => {
     state.locale = 'ja'
     fetchMock.mockResolvedValueOnce(preview(count))
     await mount(3)
+    await page.getByRole('spinbutton', { name: '残す版数' }).fill('1')
     await page
       .getByRole('button', { name: '版数の設定を保存', exact: true })
       .click()
     await vi.waitFor(() =>
       expect(
         document.querySelector('[role="alertdialog"]')?.textContent,
-      ).toContain(`${count}版を削除します。この操作は取り消せません。`),
+      ).toContain(`古い版を${count}件削除します。この操作は取り消せません。`),
     )
   },
 )
@@ -373,7 +401,7 @@ test('untouched settings follow loader changes without replacing focused control
   expect(host.querySelector('input[type="number"]')).toBe(input)
   expect(input.value).toBe('5')
   expect(document.activeElement).toBe(input)
-  const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
+  const save = host.querySelector<HTMLButtonElement>('[data-retention-change]')!
   save.focus()
   await mount(null)
   expect(host.querySelector('input[type="number"]')).toBeNull()
@@ -407,11 +435,14 @@ test.each(['7', ''])(
   },
 )
 
-test('failed unchanged submissions retain their value through refresh and retry, then follow the loader after success', async () => {
+test('failed submissions retain their edited value through refresh and retry, then follow the loader after success', async () => {
   fetchMock
     .mockRejectedValueOnce(new Error('offline'))
     .mockResolvedValueOnce(Response.json({ kind: 'saved' }))
-  await mount(2)
+  await mount(3)
+  await page
+    .getByRole('spinbutton', { name: 'Number of versions to keep' })
+    .fill('2')
   await submit()
   await vi.waitFor(() =>
     expect(host.textContent).toContain('Could not save. Please try again.'),
@@ -425,13 +456,92 @@ test('failed unchanged submissions retain their value through refresh and retry,
   await submit()
   await vi.waitFor(() => expect(state.revalidate).toHaveBeenCalledOnce())
   await vi.waitFor(() =>
-    expect(
-      host.querySelector<HTMLButtonElement>('[data-retention-save]')?.disabled,
-    ).toBe(false),
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('Saved'),
   )
+  expect(
+    host.querySelector<HTMLButtonElement>('[data-retention-save]')?.disabled,
+  ).toBe(true)
   expect(JSON.parse(fetchMock.mock.calls[1][1].body).retain_versions).toBe(2)
   await mount(6)
   expect(
     host.querySelector<HTMLInputElement>('input[type="number"]')?.value,
   ).toBe('6')
 })
+
+test.each([
+  ['en', null, 'Keeping all versions', 'Change', 'Saved'],
+  ['en', 4, 'Keeping the latest 4 versions', 'Change', 'Saved'],
+  ['ja', null, 'すべての版を保持しています', '変更', '保存しました'],
+  ['ja', 4, '最新4件の版を保持しています', '変更', '保存しました'],
+] as const)(
+  'compact %s summary for %s expands by keyboard and announces a save once',
+  async (locale, setting, summary, changeLabel, savedLabel) => {
+    state.locale = locale
+    await mount(setting, false)
+    const change = page.getByRole('button', { name: changeLabel, exact: true })
+    expect(host.textContent).toContain(summary)
+    expect(change.element().getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('form')!.getBoundingClientRect().height).toBe(0)
+    expect(host.querySelector('form')!.hidden).toBe(true)
+    const changeButton = change.element() as HTMLButtonElement
+    changeButton.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(change.element().getAttribute('aria-expanded')).toBe('true')
+    const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
+    expect(save.disabled).toBe(true)
+    const radioName =
+      locale === 'en' ? 'Keep only the latest versions' : '最新の版だけを残す'
+    await page.getByRole('radio', { name: radioName }).click()
+    const input = page.getByRole('spinbutton')
+    await input.fill('5')
+    expect(save.disabled).toBe(false)
+    if (setting !== null) {
+      await input.fill(String(setting))
+      expect(save.disabled).toBe(true)
+      await input.fill('5')
+    }
+    fetchMock.mockResolvedValueOnce(Response.json({ kind: 'saved' }))
+    state.revalidate.mockImplementation(() => mount(5))
+    save.focus()
+    await userEvent.keyboard('{Enter}')
+    await vi.waitFor(() =>
+      expect(host.querySelector('[role="status"]')?.textContent).toBe(
+        savedLabel,
+      ),
+    )
+    expect(save.disabled).toBe(true)
+    expect(
+      Array.from(host.querySelectorAll('[role="status"]')).filter(
+        (node) => node.textContent === savedLabel,
+      ),
+    ).toHaveLength(1)
+    await input.fill('6')
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  },
+)
+
+test.each([390, 1280])(
+  'history is visible before expanding settings at %s pixels',
+  async (width) => {
+    await page.viewport(width, 600)
+    await mount(24, false)
+    const change = host.querySelector<HTMLButtonElement>(
+      '[data-retention-change]',
+    )!
+    const row = host.querySelector('li')!
+    const summary = change.parentElement!
+    expect(summary.getBoundingClientRect().height).toBe(
+      change.getBoundingClientRect().height,
+    )
+    expect(row.getBoundingClientRect().bottom).toBeLessThan(600)
+    expect(host.querySelector('form')!.getBoundingClientRect().height).toBe(0)
+    await page.getByRole('button', { name: 'Change', exact: true }).click()
+    expect(
+      host.querySelector('form')!.getBoundingClientRect().height,
+    ).toBeGreaterThan(0)
+    await page.getByRole('button', { name: 'Change', exact: true }).click()
+    expect(host.querySelector('form')!.getBoundingClientRect().height).toBe(0)
+    expect(row.getBoundingClientRect().bottom).toBeLessThan(600)
+  },
+)

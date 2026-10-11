@@ -342,6 +342,7 @@ export const screen = {
         interactions: [
           { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
           { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-change]' },
           { action: 'click', selector: '[data-retention-limited]' },
           { action: 'click', selector: '[data-retention-save]' },
         ],
