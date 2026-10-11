@@ -422,3 +422,62 @@ test.each([true, false])(
     expect(html).toContain('Keeping the latest 2 versions')
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  '%s scheduled history preserves labels, links and attribution',
+  (locale) => {
+    const html = renderToStaticMarkup(
+      <VersionRows
+        locale={locale}
+        t={bindI18n(locale).t}
+        versions={[
+          {
+            id: 'machine',
+            ordinal: 3,
+            scheduledUpdate: true,
+            label: 'Hourly report',
+            createdAt: '2026-06-02T00:00:00.000Z',
+            createdByLabel: 'Author',
+            sizeBytes: 10,
+            isCurrent: false,
+            isDisplayed: true,
+          },
+          {
+            id: 'human',
+            ordinal: 4,
+            scheduledUpdate: false,
+            createdAt: '2026-06-03T00:00:00.000Z',
+            sizeBytes: 10,
+            isCurrent: true,
+          },
+        ]}
+      />,
+    )
+    expect(html).toContain(locale === 'en' ? 'Scheduled update' : '定期更新')
+    expect(
+      html.split(locale === 'en' ? 'Scheduled update' : '定期更新'),
+    ).toHaveLength(2)
+    expect(html).toContain('Hourly report')
+    expect(html).toContain('Author')
+    expect(html).toContain('?version=machine')
+    expect(html).toContain('aria-current="page"')
+  },
+)
+
+test.each([true, false])(
+  'freshness uses the displayed publication independently of history permission (%s)',
+  (canViewHistory) => {
+    const html = renderToStaticMarkup(
+      <VersionWidget
+        canViewHistory={canViewHistory}
+        displayedPublishedAt="2026-06-02T10:30:00.000Z"
+        versions={[]}
+        onOpenHistory={() => {}}
+      />,
+    )
+    expect(html).toContain('history.dataUpdated')
+    expect(html).toContain('dateTime="2026-06-02T10:30:00.000Z"')
+    expect(html).toContain('UTC')
+    expect(html).not.toContain('hidden=""')
+  },
+)

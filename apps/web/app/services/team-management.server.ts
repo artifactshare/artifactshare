@@ -254,7 +254,7 @@ export async function loadWorkspaceInventoryArtifactsPage(
       'c.kind as location_kind',
       'c.name as location_name',
       's.visibility',
-      's.updated_at',
+      's.activity_at as updated_at',
       sql<
         number | null
       >`(SELECT SUM(v.size_bytes) FROM versions v WHERE v.shareable_id = s.id AND v.status = 'published')`.as(
@@ -262,7 +262,7 @@ export async function loadWorkspaceInventoryArtifactsPage(
       ),
     ])
     .orderBy(
-      filters.sort === 'size' ? sql`COALESCE(size_bytes, 0)` : 's.updated_at',
+      filters.sort === 'size' ? sql`COALESCE(size_bytes, 0)` : 's.activity_at',
       'desc',
     )
     .orderBy('s.id', 'asc')

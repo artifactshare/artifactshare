@@ -1,3 +1,7 @@
+import {
+  latestPublishedAtSelect,
+  latestHumanVersionNumberSelect,
+} from '~/services/home.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 import type { EditableVisibility } from '~/lib/shareable-types'
@@ -37,7 +41,7 @@ export function projectFileRowsQuery(db: Kysely<DB>, containerId: string) {
       'users.image as owner_image',
       'shareables.visibility',
       'shareables.view_count',
-      'shareables.updated_at as modified_at',
+      'shareables.activity_at as modified_at',
       'shareables.created_at as created_at',
       eb
         .selectFrom('versions')
@@ -45,14 +49,8 @@ export function projectFileRowsQuery(db: Kysely<DB>, containerId: string) {
         .whereRef('versions.shareable_id', '=', 'shareables.id')
         .where('versions.status', '=', 'published')
         .as('version_count'),
-      eb
-        .selectFrom('versions')
-        .select((sqb) =>
-          sqb.fn.max<string | null>('versions.published_at').as('value'),
-        )
-        .whereRef('versions.shareable_id', '=', 'shareables.id')
-        .where('versions.status', '=', 'published')
-        .as('latest_published_at'),
+      latestPublishedAtSelect(eb),
+      latestHumanVersionNumberSelect(eb),
       eb
         .selectFrom('comment_threads')
         .select((sqb) => sqb.fn.count<number>('comment_threads.id').as('count'))

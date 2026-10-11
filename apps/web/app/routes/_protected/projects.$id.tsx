@@ -189,7 +189,8 @@ export const screen = {
     },
     {
       id: 'with-pins',
-      description: 'ピン留めされたファイルがあるプロジェクト',
+      description:
+        '定期更新のみのピンと、人による更新後に定期更新されたピンがあるプロジェクト',
       setup: {
         scenario: 'project-detail/with-pins',
       },
@@ -398,7 +399,7 @@ export async function loader({
         'link',
       ])
       .where((eb) => visibleShareableToViewer(eb, user))
-      .orderBy('shareables.updated_at', 'desc')
+      .orderBy('shareables.activity_at', 'desc')
       .execute(),
     canEditProjectContainer(db, user.workspaceId, project.id, user, {
       managerRoleEnabled,
@@ -471,7 +472,7 @@ async function loadSharedProject(
         .executeTakeFirst(),
       projectFileRowsQuery(db, project.id)
         .where((eb) => visibleSharedProjectShareableToViewer(eb, user))
-        .orderBy('shareables.updated_at', 'desc')
+        .orderBy('shareables.activity_at', 'desc')
         .execute(),
       isExternalPostingEnabledForWorkspace(db, project.workspaceId),
       getContainerSlackChannel(db, project.id),

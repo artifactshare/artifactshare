@@ -41,6 +41,10 @@ export function HomeFixture({ content }: { content: boolean }) {
     ? [
         createRecentFixtureFile({
           id: 'fixture-long-file',
+          versionCount: 3,
+          badgeVersionNumber: null,
+          latestPublishedAt: null,
+          unreadVersionCount: 0,
           fileName: 'quarterly-planning-review-with-a-name-that-keeps-going.md',
           derivedTitle: null,
           projectId: 'fixture-project',

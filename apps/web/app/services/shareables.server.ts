@@ -3740,6 +3740,8 @@ export async function canUpdateShareableVersion(
 }
 
 export interface OwnedShareableSummary {
+  /** Internal list boundary; public updated_at remains the actual mutation time. */
+  activityAt: string
   id: string
   title: string
   visibility: Visibility
@@ -3773,6 +3775,7 @@ function ownedShareableSummaryQuery(
       'shareables.artifact_kind as artifact_kind',
       'shareables.link_expires_at as link_expires_at',
       'shareables.updated_at as updated_at',
+      'shareables.activity_at',
       'shareables.container_id as container_id',
       'c.kind as container_kind',
     ])
@@ -3794,6 +3797,7 @@ function toOwnedShareableSummary(row: {
   artifact_kind: string
   link_expires_at: string | null
   updated_at: string
+  activity_at: string
   container_id: string | null
   container_kind: string | null
 }): OwnedShareableSummary {
@@ -3807,6 +3811,7 @@ function toOwnedShareableSummary(row: {
     visibility: row.visibility,
     linkExpiresAt: row.link_expires_at,
     updatedAt: row.updated_at,
+    activityAt: row.activity_at,
     projectId: row.container_kind === 'project' ? row.container_id : null,
     artifactKind: row.artifact_kind as ArtifactKind,
   }
@@ -3828,6 +3833,7 @@ async function getShareableSummaryById(
       'shareables.artifact_kind',
       'shareables.link_expires_at',
       'shareables.updated_at',
+      'shareables.activity_at',
       'shareables.container_id',
       'c.kind as container_kind',
     ])
@@ -3867,11 +3873,11 @@ export async function listOwnedShareables(
   }
   if (opts.cursor) {
     qb = qb.where(
-      sql<boolean>`(shareables.updated_at < ${opts.cursor.updatedAt} OR (shareables.updated_at = ${opts.cursor.updatedAt} AND shareables.id < ${opts.cursor.id}))`,
+      sql<boolean>`(shareables.activity_at < ${opts.cursor.updatedAt} OR (shareables.activity_at = ${opts.cursor.updatedAt} AND shareables.id < ${opts.cursor.id}))`,
     )
   }
   const rows = await qb
-    .orderBy('shareables.updated_at', 'desc')
+    .orderBy('shareables.activity_at', 'desc')
     .orderBy('shareables.id', 'desc')
     .limit(opts.limit ?? OWNED_SHAREABLE_LIST_LIMIT)
     .execute()

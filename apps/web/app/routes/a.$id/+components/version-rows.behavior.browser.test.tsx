@@ -33,6 +33,7 @@ for (const density of ['panel', 'popover'] as const) {
             isCurrent: true,
           },
           {
+            scheduledUpdate: true,
             id: 'v1',
             ordinal: 1,
             createdAt: '2026-09-01T00:00:00Z',
@@ -47,6 +48,8 @@ for (const density of ['panel', 'popover'] as const) {
     await vi.waitFor(() => expect(host.querySelectorAll('a')).toHaveLength(2))
     await waitForBrowserLayout()
     const links = host.querySelectorAll('a')
+    expect(links[1]!.textContent).toContain('history.scheduledUpdate')
+    expect(links[0]!.textContent).not.toContain('history.scheduledUpdate')
     const line = Array.from(links[1]!.children).find(
       (node) => node.textContent === label,
     ) as HTMLElement

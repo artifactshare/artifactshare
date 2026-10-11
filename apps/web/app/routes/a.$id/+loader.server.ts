@@ -108,6 +108,7 @@ interface ArtifactSummary {
   availableVisibilities: ReadonlyArray<EditableVisibility>
   currentVersionId: string | null
   displayedVersionId: string
+  displayedPublishedAt?: string | null
   displayedVersionOrdinal: number
   isHistoricalVersion: boolean
   canChangeRetention?: boolean
@@ -228,6 +229,7 @@ export type LoaderData =
         availableVisibilities: ReadonlyArray<EditableVisibility>
         currentVersionId: string | null
         displayedVersionId: string
+        displayedPublishedAt?: string | null
         displayedVersionOrdinal: number
         isHistoricalVersion: boolean
         canChangeRetention?: boolean
@@ -795,6 +797,7 @@ export async function loader({
         availableVisibilities,
         currentVersionId: shareable.current_version_id,
         displayedVersionId: displayedVersion.id,
+        displayedPublishedAt: displayedVersion.published_at,
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention:
@@ -835,6 +838,7 @@ export async function loader({
         canChangeVisibility: isOwner,
         currentVersionId: shareable.current_version_id,
         displayedVersionId: displayedVersion.id,
+        displayedPublishedAt: displayedVersion.published_at,
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention:
@@ -904,6 +908,7 @@ export async function loader({
       availableVisibilities,
       currentVersionId: shareable.current_version_id,
       displayedVersionId: displayedVersion.id,
+      displayedPublishedAt: displayedVersion.published_at,
       displayedVersionOrdinal,
       isHistoricalVersion,
       canChangeRetention:
@@ -945,6 +950,7 @@ async function buildLinkAnonymousResponse(
     entrypoint_path: string | null
     fallback_to_index: number | null
     current_version_id: string | null
+    current_published_at: string | null
     version_artifact_kind: string | null
     artifact_kind: string
     visibility: string
@@ -1136,6 +1142,7 @@ async function buildLinkAnonymousResponse(
     availableVisibilities: [] as ReadonlyArray<EditableVisibility>,
     currentVersionId: shareable.current_version_id,
     displayedVersionId: shareable.current_version_id!,
+    displayedPublishedAt: shareable.current_published_at,
     displayedVersionOrdinal: 1,
     isHistoricalVersion: false,
     versions: [] as ReadonlyArray<VersionRow>,
@@ -1491,6 +1498,7 @@ async function loadHistoryVersions(
       'versions.label',
       'versions.number',
       'versions.created_at as createdAt',
+      'versions.created_by_publisher_client_id as publisherClientId',
       'versions.size_bytes as sizeBytes',
       'users.email as createdByEmail',
       'users.name as createdByName',
@@ -1509,6 +1517,7 @@ async function loadHistoryVersions(
     label: row.label,
     ordinal: Number(row.number),
     createdAt: row.createdAt,
+    scheduledUpdate: row.publisherClientId != null,
     sizeBytes: row.sizeBytes,
     isCurrent: row.id === currentVersionId,
     createdByLabel: row.createdByAgentProfileId
@@ -1528,6 +1537,7 @@ async function loadHistoryVersions(
       'versions.id',
       'versions.label',
       'versions.created_at as createdAt',
+      'versions.created_by_publisher_client_id as publisherClientId',
       'versions.size_bytes as sizeBytes',
       'users.email as createdByEmail',
       'users.name as createdByName',
@@ -1550,6 +1560,7 @@ async function loadHistoryVersions(
       label: displayedRow.label,
       ordinal: Number(displayedRow.ordinal),
       createdAt: displayedRow.createdAt,
+      scheduledUpdate: displayedRow.publisherClientId != null,
       sizeBytes: displayedRow.sizeBytes,
       isCurrent: displayedRow.id === currentVersionId,
       createdByLabel: displayedRow.createdByAgentProfileId

@@ -453,3 +453,23 @@ test('signed-in pointer updates abort and invalidate pending responses without r
   expect(lookup).toHaveBeenCalledTimes(3)
   expect(notice()).toBe(true)
 })
+
+test('anonymous viewers see displayed data freshness independently of history and live updates', async () => {
+  const publishedAt = '2026-06-02T10:30:00.000Z'
+  await mount({ displayedPublishedAt: publishedAt })
+  await bodyRead(1)
+  expect(host.textContent).toContain('Data updated')
+  expect(host.querySelector('time')?.dateTime).toBe(publishedAt)
+  expect(host.querySelector('time')?.getAttribute('aria-label')).toBeTruthy()
+  currentVersionId = 'v2'
+  await visibility()
+  // Visibility checks share the initial lookup's 30-second cooldown.
+  await act(async () => vi.advanceTimersByTimeAsync(29_999))
+  expect(lookup).toHaveBeenCalledOnce()
+  expect(notice()).toBe(false)
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  await bodyRead(2)
+  expect(lookup).toHaveBeenCalledTimes(2)
+  expect(notice()).toBe(true)
+  expect(host.querySelector('time')?.dateTime).toBe(publishedAt)
+})

@@ -476,7 +476,7 @@ function projectSummaryQuery(
       eb
         .selectFrom('shareables')
         .select((sqb) =>
-          sqb.fn.max<string>('shareables.updated_at').as('updated_at'),
+          sqb.fn.max<string>('shareables.activity_at').as('updated_at'),
         )
         .whereRef('shareables.container_id', '=', 'c.id')
         .where('shareables.workspace_id', '=', workspaceId)
@@ -609,7 +609,7 @@ function sharedProjectSummaryQuery(
       eb
         .selectFrom('shareables')
         .select((sqb) =>
-          sqb.fn.max<string>('shareables.updated_at').as('updated_at'),
+          sqb.fn.max<string>('shareables.activity_at').as('updated_at'),
         )
         .whereRef('shareables.container_id', '=', 'c.id')
         .where((predicateEb) =>

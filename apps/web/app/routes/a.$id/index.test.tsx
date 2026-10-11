@@ -367,6 +367,7 @@ describe('/a/:id loader', () => {
               executeTakeFirst: vi.fn().mockResolvedValue({
                 id: 'v1',
                 label: 'Restructured',
+                publisherClientId: 'client1',
                 ordinal: 41,
                 createdAt: '2026-05-24T00:00:00Z',
                 sizeBytes: 128,
@@ -388,6 +389,7 @@ describe('/a/:id loader', () => {
                   id: 'v1',
                   number: 41,
                   label: 'Restructured',
+                  publisherClientId: 'client1',
                   createdAt: '2026-05-24T00:00:00Z',
                   sizeBytes: 128,
                 },
@@ -435,6 +437,7 @@ describe('/a/:id loader', () => {
       expect(result.artifact).toMatchObject({
         currentVersionId: 'v2',
         displayedVersionId: 'v1',
+        displayedPublishedAt: '2026-05-24T00:00:00Z',
         displayedVersionOrdinal: 41,
         isHistoricalVersion: true,
         canReplaceFile: true,
@@ -447,6 +450,7 @@ describe('/a/:id loader', () => {
         result.artifact.versions.find((version) => version.id === 'v1'),
       ).toMatchObject({
         isDisplayed: true,
+        scheduledUpdate: true,
         isCurrent: false,
         label: 'Restructured',
       })
@@ -1499,6 +1503,7 @@ describe('/a/:id loader', () => {
         visibility: 'link',
         view_count: 4,
         current_version_id: 'v1',
+        current_published_at: '2026-06-02T10:30:00.000Z',
         owner_email: 'owner@example.com',
         owner_name: 'Owner',
         owner_image: null,
@@ -1559,6 +1564,9 @@ describe('/a/:id loader', () => {
 
       expect(result.kind).toBe(staticSite ? 'static_site' : 'ok')
       if (result.kind !== 'ok' && result.kind !== 'static_site') return
+      expect(result.artifact.displayedPublishedAt).toBe(
+        '2026-06-02T10:30:00.000Z',
+      )
       expect(result.artifact.entrypointPath).toBe('/demo.html')
       expect(result.linkSafety).toEqual({ lowTrust })
       expect(shareableQueryCount).toBe(plan === 'free' ? 2 : 1)

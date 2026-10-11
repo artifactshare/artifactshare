@@ -1,3 +1,4 @@
+import { formatRelative } from '~/lib/datetime'
 import type {
   NewCommentMessage,
   ViewerRevisitContext,
@@ -25,6 +26,7 @@ import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
 
 interface VersionWidgetProps {
+  displayedPublishedAt?: string | null
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
   retention?: { limit: number | null; editable: boolean }
@@ -45,6 +47,7 @@ interface VersionWidgetProps {
 }
 
 export function VersionWidget({
+  displayedPublishedAt,
   hidden = false,
   versions,
   canViewHistory = true,
@@ -140,6 +143,8 @@ export function VersionWidget({
     }
   }, [closePopover, hidden, open])
 
+  const freshness = <DataFreshness publishedAt={displayedPublishedAt} />
+
   if (!canViewHistory) {
     return (
       <>
@@ -151,10 +156,11 @@ export function VersionWidget({
           {hasNewerVersion ? t('history.updateAvailable') : null}
         </div>
         <aside
-          hidden={hidden || !hasNewerVersion}
-          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel) rounded-[var(--r-md)]"
+          hidden={hidden || (!hasNewerVersion && !displayedPublishedAt)}
+          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2 rounded-[var(--r-md)]"
           aria-label={t('vw.activityStatus')}
         >
+          {freshness}
           {hasNewerVersion ? (
             <VersionUpdateNotice
               onShowLatest={onShowLatest}
@@ -296,6 +302,7 @@ export function VersionWidget({
           ) : null}
         </div>
       ) : null}
+      {freshness}
       <button
         ref={triggerRef}
         type="button"
@@ -322,6 +329,27 @@ export function VersionWidget({
         ) : null}
       </button>
     </aside>
+  )
+}
+
+function DataFreshness({ publishedAt }: { publishedAt?: string | null }) {
+  const { locale, t } = useT()
+  if (!publishedAt) return null
+  const absoluteDate = new Date(publishedAt).toLocaleString(locale, {
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  })
+  return (
+    <span className="bg-background text-muted-foreground pointer-events-auto rounded-[var(--r-md)] px-2 py-1 text-xs">
+      {t('history.dataUpdated')}{' '}
+      <time
+        dateTime={publishedAt}
+        title={absoluteDate}
+        aria-label={absoluteDate}
+      >
+        {formatRelative(publishedAt, locale)}
+      </time>
+    </span>
   )
 }
 

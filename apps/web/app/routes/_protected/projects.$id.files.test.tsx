@@ -146,7 +146,50 @@ describe('project files subpage loader', () => {
     expect(page1.files).toHaveLength(50)
     expect(page1.total).toBe(60)
     expect(page1.nextCursor).not.toBeNull()
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: 'client1',
+        user_id: 'u1',
+        workspace_id: 'w1',
+        name: 'Reports',
+        created_at: '2026-07-01T00:00:00Z',
+      })
+      .execute()
+    await db
+      .insertInto('versions')
+      .values({
+        id: 'scheduled',
+        number: 2,
+        shareable_id: 's00',
+        artifact_kind: 'markdown_page',
+        status: 'published',
+        entrypoint_path: '/note.md',
+        r2_key: 'scheduled',
+        size_bytes: 1,
+        sha256: 'test',
+        created_by_id: 'u1',
+        created_by_publisher_client_id: 'client1',
+        created_at: '2026-07-20T00:00:00Z',
+        published_at: '2026-07-20T00:00:00Z',
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({
+        current_version_id: 'scheduled',
+        updated_at: '2026-07-20T00:00:00Z',
+      })
+      .where('id', '=', 's00')
+      .execute()
     const page2 = await loader(args(page1.nextCursor!))
+    expect(page2.files.find((file) => file.id === 's00')).toMatchObject({
+      modifiedTime: '2026-07-10T00:00:00Z',
+      versionCount: 1,
+      badgeVersionNumber: null,
+      latestPublishedAt: null,
+      commentCount: 0,
+    })
     const ids = [...page1.files, ...page2.files].map((f) => f.id)
     expect(new Set(ids).size).toBe(60)
     expect(page2.nextCursor).toBeNull()

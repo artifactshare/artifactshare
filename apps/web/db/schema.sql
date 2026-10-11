@@ -592,7 +592,7 @@ CREATE TABLE shareables (
   updated_at                 TEXT NOT NULL,
   last_accessed_at           TEXT,
   container_id               TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE SET NULL -- artifact_containers_no_delete_with_shareables prevents the SET NULL path
-, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT, assigned_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT);
+, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT, assigned_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT, activity_at TEXT NOT NULL DEFAULT '');
 CREATE INDEX shareables_workspace_owner_created
   ON shareables(workspace_id, owner_user_id, created_at DESC);
 CREATE UNIQUE INDEX shareables_workspace_slug
@@ -1473,3 +1473,33 @@ CREATE TABLE version_retention_tombstones (
 CREATE INDEX idx_version_retention_tombstones_shareable ON version_retention_tombstones(shareable_id);
 
 CREATE INDEX shareables_assigned_publisher_client_id ON shareables(assigned_publisher_client_id);
+
+CREATE TRIGGER shareables_initialize_activity
+AFTER INSERT ON shareables
+WHEN NEW.activity_at = ''
+BEGIN
+  UPDATE shareables SET activity_at = NEW.updated_at WHERE id = NEW.id;
+END;
+
+-- Column-restricted writes cannot recursively fire this trigger. Metadata writes
+-- still count even when the unchanged current version belongs to a publisher.
+CREATE TRIGGER shareables_update_activity
+AFTER UPDATE OF updated_at ON shareables
+WHEN NOT (
+  OLD.current_version_id IS NOT NEW.current_version_id
+  AND EXISTS (
+    SELECT 1 FROM versions
+    WHERE id = NEW.current_version_id AND shareable_id = NEW.id
+      AND created_by_publisher_client_id IS NOT NULL
+  )
+)
+BEGIN
+  UPDATE shareables SET activity_at = NEW.updated_at WHERE id = NEW.id;
+END;
+
+CREATE INDEX shareables_container_activity
+  ON shareables(container_id, activity_at DESC, id DESC);
+CREATE INDEX shareables_workspace_owner_activity
+  ON shareables(workspace_id, owner_user_id, activity_at DESC, id DESC);
+CREATE INDEX shareables_workspace_activity
+  ON shareables(workspace_id, activity_at DESC, id DESC);

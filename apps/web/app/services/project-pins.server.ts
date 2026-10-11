@@ -18,7 +18,7 @@ export async function listProjectPins(
         'latest.id',
         '=',
         // Publication numbers stay stable after retention prunes older rows.
-        sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' order by v2.number desc, v2.id desc limit 1)`,
+        sql`(select v2.id from versions v2 where v2.shareable_id = shareables.id and v2.status = 'published' and v2.created_by_publisher_client_id is null order by v2.number desc, v2.id desc limit 1)`,
       ),
     )
     .leftJoin(

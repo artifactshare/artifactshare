@@ -85,6 +85,7 @@ export async function action({
             visibility: row.visibility,
             linkExpiresAt: row.link_expires_at,
             updatedAt: row.updated_at,
+            activityAt: row.activity_at,
             projectId:
               row.container_kind === 'project' ? row.container_id : null,
             artifactKind: row.artifact_kind as

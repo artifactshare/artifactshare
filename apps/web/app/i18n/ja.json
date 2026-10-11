@@ -1,4 +1,6 @@
 {
+  "history.scheduledUpdate": "定期更新",
+  "history.dataUpdated": "データ更新",
   "team.activity.action.artifact.publisher_adopted": "クライアントにファイルを割り当て",
   "guide.code.copy": "コピー",
   "guide.code.copied": "コピーしました",

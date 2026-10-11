@@ -180,7 +180,10 @@ export async function listFeedEvents(
       .where((eb) =>
         eb.or([
           eb('events.type', '<>', 'version_published'),
-          eb('subject_versions.id', 'is not', null),
+          eb.and([
+            eb('subject_versions.id', 'is not', null),
+            eb('subject_versions.created_by_publisher_client_id', 'is', null),
+          ]),
         ]),
       )
       .where((eb) =>
@@ -485,6 +488,7 @@ export async function listFeedEvents(
             'versions.number as versionNumber',
           ])
           .where('events.type', '=', 'version_published')
+          .where('versions.created_by_publisher_client_id', 'is', null)
           .where('shareables.workspace_id', '=', user.workspaceId)
           .where((eb) => visibleShareableToViewer(eb, user))
           .where('shareables.owner_user_id', '<>', user.id)
@@ -896,6 +900,7 @@ export function versionPublishedEventQuery(
         ])
         .where('versions.id', '=', versionId)
         .where('versions.status', '=', 'published')
+        .where('versions.created_by_publisher_client_id', 'is', null)
         .where('versions.published_at', 'is not', null),
     )
     .onConflict((oc) => oc.doNothing())

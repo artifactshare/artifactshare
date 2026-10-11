@@ -170,6 +170,11 @@ test('D1 publisher bundle, assignment, guarded retention and delete batches', as
     const result = await create.session.commit('private')
     if (result.kind !== 'ok') throw new Error(result.kind)
     const id = result.id
+    await db
+      .updateTable('shareables')
+      .set({ updated_at: '2026-01-01' })
+      .where('id', '=', id)
+      .execute()
     const version = await beginStaticSiteBundleVersionUploadSession(
       db,
       user,
@@ -182,6 +187,37 @@ test('D1 publisher bundle, assignment, guarded retention and delete batches', as
       new File(['<h1>Updated</h1>'], 'index.html', { type: 'text/html' }),
     )
     expect((await version.session.commitVersion()).kind).toBe('ok')
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['activity_at', 'updated_at'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow(),
+    ).toMatchObject({
+      activity_at: '2026-01-01',
+      updated_at: expect.not.stringMatching(/^2026-01-01$/),
+    })
+    expect(
+      await db
+        .selectFrom('events')
+        .selectAll()
+        .where('shareable_id', '=', id)
+        .where('type', '=', 'version_published')
+        .execute(),
+    ).toEqual([])
+    await db
+      .updateTable('shareables')
+      .set({ name: 'Renamed', updated_at: '2026-06-01' })
+      .where('id', '=', id)
+      .execute()
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select('activity_at')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ activity_at: '2026-06-01' })
+
     const inherited = await db
       .selectFrom('version_files')
       .selectAll()

@@ -206,6 +206,7 @@ async function artifactCandidates(
       'shareables.artifact_kind as artifact_kind',
       'shareables.visibility as visibility',
       'shareables.updated_at as updated_at',
+      'shareables.activity_at',
       'c.id as project_id',
       'c.name as project_name',
       'c.kind as project_kind',
@@ -224,7 +225,7 @@ async function artifactCandidates(
   }
 
   const rows = await query
-    .orderBy('shareables.updated_at', 'desc')
+    .orderBy('shareables.activity_at', 'desc')
     .limit(RESOLVE_LIMIT + 1)
     .execute()
 

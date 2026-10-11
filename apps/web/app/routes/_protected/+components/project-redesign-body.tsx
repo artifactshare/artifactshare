@@ -175,33 +175,35 @@ export function ProjectRedesignBody({
                       </DropdownMenu>
                     ) : null}
                   </div>
-                  <div className="text-muted-foreground mt-2 flex items-center gap-1.5 text-xs">
-                    {pinned.latestAuthorName || pinned.latestAuthorEmail ? (
-                      <AuthorAvatar
-                        id={pinned.latestAuthorEmail ?? pinned.shareableId}
-                        image={pinned.latestAuthorImage}
-                        initial={
-                          (pinned.latestAuthorName ??
-                            pinned.latestAuthorEmail ??
-                            '')[0]
-                        }
-                        size="xs"
-                      />
-                    ) : null}
-                    {pinned.latestVersionNumber >= 2 ? (
-                      <span>v{pinned.latestVersionNumber}</span>
-                    ) : null}
-                    {pinned.latestPublishedAt ? (
-                      <span>
-                        {t('project.fileUpdated', {
-                          time: formatRelative(
-                            pinned.latestPublishedAt,
-                            locale,
-                          ),
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
+                  {pinned.latestVersionNumber > 0 ? (
+                    <div className="text-muted-foreground mt-2 flex items-center gap-1.5 text-xs">
+                      {pinned.latestAuthorName || pinned.latestAuthorEmail ? (
+                        <AuthorAvatar
+                          id={pinned.latestAuthorEmail ?? pinned.shareableId}
+                          image={pinned.latestAuthorImage}
+                          initial={
+                            (pinned.latestAuthorName ??
+                              pinned.latestAuthorEmail ??
+                              '')[0]
+                          }
+                          size="xs"
+                        />
+                      ) : null}
+                      {pinned.latestVersionNumber >= 2 ? (
+                        <span>v{pinned.latestVersionNumber}</span>
+                      ) : null}
+                      {pinned.latestPublishedAt ? (
+                        <span>
+                          {t('project.fileUpdated', {
+                            time: formatRelative(
+                              pinned.latestPublishedAt,
+                              locale,
+                            ),
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )
             })}

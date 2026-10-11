@@ -1,3 +1,4 @@
+import { VersionWidget } from '~/routes/a.$id/+components/version-widget'
 import { ViewerChrome } from '~/routes/a.$id/+components/viewer-chrome'
 import { DropCatcher } from '~/routes/a.$id/+components/drop-catcher'
 import {
@@ -94,6 +95,30 @@ export function ViewerFixture({
           regressionOverlay="drop-catcher"
         />
       </ViewerBodySurface>
+      <VersionWidget
+        displayedPublishedAt="2026-06-02T10:30:00.000Z"
+        onOpenHistory={() => undefined}
+        versions={[
+          {
+            id: 'scheduled-v3',
+            ordinal: 3,
+            createdAt: '2026-06-02T10:30:00.000Z',
+            sizeBytes: 420,
+            isCurrent: true,
+            isDisplayed: true,
+            scheduledUpdate: true,
+            label: 'Hourly data refresh',
+          },
+          {
+            id: 'human-v2',
+            ordinal: 2,
+            createdAt: '2026-06-01T10:30:00.000Z',
+            sizeBytes: 400,
+            isCurrent: false,
+            label: 'Reviewed report',
+          },
+        ]}
+      />
     </div>
   )
 }

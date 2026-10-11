@@ -1,4 +1,5 @@
 export interface VersionRow {
+  scheduledUpdate?: boolean
   label?: string | null
   id: string
   ordinal: number
