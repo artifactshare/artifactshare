@@ -196,6 +196,12 @@ export const screen = {
       },
     },
     {
+      id: 'scheduled-pins',
+      description:
+        'Publisher-only pins omit modification metadata while mixed history preserves the latest human publication',
+      setup: { scenario: 'project-detail/scheduled-pins' },
+    },
+    {
       id: 'empty',
       description: 'ファイルがないプロジェクト',
       setup: {

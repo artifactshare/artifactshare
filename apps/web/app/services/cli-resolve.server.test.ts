@@ -59,6 +59,82 @@ describe('resolveCliCandidates', () => {
     )
   })
 
+  test('project resolution returns real mutation time while sorting by human activity', async () => {
+    const mutationAt = '2026-07-01T00:00:00.000Z'
+    const originalProject = await db
+      .selectFrom('artifact_containers')
+      .selectAll()
+      .where('id', '=', 'project-a')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        ...originalProject,
+        id: 'project-b',
+        name: 'Launch plan',
+      })
+      .execute()
+    const originalArtifact = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', 'art123')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('shareables')
+      .values({
+        ...originalArtifact,
+        id: 'art456',
+        container_id: 'project-b',
+        current_version_id: null,
+        updated_at: '2026-06-15T00:00:00.000Z',
+        activity_at: '2026-06-15T00:00:00.000Z',
+      })
+      .execute()
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: 'client1',
+        workspace_id: 'ws1',
+        user_id: 'u1',
+        name: 'Scheduled reports',
+        created_at: mutationAt,
+      })
+      .execute()
+    const originalVersion = await db
+      .selectFrom('versions')
+      .selectAll()
+      .where('id', '=', 'ver1')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('versions')
+      .values({
+        ...originalVersion,
+        id: 'ver2',
+        number: 3,
+        created_by_publisher_client_id: 'client1',
+        created_at: mutationAt,
+        published_at: mutationAt,
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: 'ver2', updated_at: mutationAt })
+      .where('id', '=', 'art123')
+      .execute()
+    const result = await resolveCliCandidates(db, USER, 'Launch')
+    const projects = result.candidates.filter(
+      (candidate) => candidate.kind === 'project',
+    )
+    expect(projects.map((project) => project.id)).toEqual([
+      'project-b',
+      'project-a',
+    ])
+    expect(projects[1]).toMatchObject({ updated_at: mutationAt })
+    expect(projects[0]).toMatchObject({
+      updated_at: '2026-06-15T00:00:00.000Z',
+    })
+  })
+
   test('version resolution keeps its published ordinal after older versions are removed', async () => {
     await db
       .deleteFrom('versions')

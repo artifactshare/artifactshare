@@ -468,6 +468,43 @@ export const screen = {
       },
     },
     {
+      id: 'scheduled-freshness',
+      description:
+        'Scheduled data freshness beside the version control, including mobile captures',
+      setup: {
+        scenario: 'viewer/scheduled-updates',
+        scenarioArtifactIndex: 21,
+      },
+    },
+    {
+      id: 'scheduled-history',
+      description: 'Mixed human and scheduled versions in the history panel',
+      setup: {
+        scenario: 'viewer/scheduled-updates',
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-slot="sheet-title"]' },
+        ],
+      },
+    },
+    {
+      id: 'scheduled-version-menu',
+      description:
+        'Scheduled update rows keep their labels in the version menu',
+      setup: {
+        scenario: 'viewer/scheduled-updates',
+        scenarioArtifactIndex: 21,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Version status: v3"]',
+          },
+        ],
+      },
+    },
+    {
       id: 'updated-version-menu',
       description: '前回閲覧後に更新された成果物の版メニューを開いた状態',
       setup: {

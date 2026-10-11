@@ -189,9 +189,7 @@ export function ProjectRedesignBody({
                           size="xs"
                         />
                       ) : null}
-                      {pinned.latestVersionNumber >= 2 ? (
-                        <span>v{pinned.latestVersionNumber}</span>
-                      ) : null}
+                      <span>v{pinned.latestVersionNumber}</span>
                       {pinned.latestPublishedAt ? (
                         <span>
                           {t('project.fileUpdated', {

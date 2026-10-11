@@ -1,3 +1,4 @@
+import { useHydrated } from '~/hooks/use-hydrated'
 import { formatRelative } from '~/lib/datetime'
 import type {
   NewCommentMessage,
@@ -157,7 +158,7 @@ export function VersionWidget({
         </div>
         <aside
           hidden={hidden || (!hasNewerVersion && !displayedPublishedAt)}
-          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2 rounded-[var(--r-md)]"
+          className="bottom-version-fab-bottom bg-background pointer-events-none fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2 rounded-[var(--r-md)]"
           aria-label={t('vw.activityStatus')}
         >
           {freshness}
@@ -334,20 +335,21 @@ export function VersionWidget({
 
 function DataFreshness({ publishedAt }: { publishedAt?: string | null }) {
   const { locale, t } = useT()
+  const hydrated = useHydrated()
   if (!publishedAt) return null
   const absoluteDate = new Date(publishedAt).toLocaleString(locale, {
     timeZone: 'UTC',
     timeZoneName: 'short',
   })
   return (
-    <span className="bg-background text-muted-foreground pointer-events-auto rounded-[var(--r-md)] px-2 py-1 text-xs">
+    <span className="bg-background text-muted-foreground pointer-events-none rounded-[var(--r-md)] px-2 py-1 text-xs">
       {t('history.dataUpdated')}{' '}
       <time
         dateTime={publishedAt}
         title={absoluteDate}
         aria-label={absoluteDate}
       >
-        {formatRelative(publishedAt, locale)}
+        {hydrated ? formatRelative(publishedAt, locale) : absoluteDate}
       </time>
     </span>
   )
@@ -362,7 +364,7 @@ function VersionUpdateNotice({
 }) {
   const { t } = useT()
   return (
-    <div className="min-h-version-row border-border flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
+    <div className="min-h-version-row border-border pointer-events-auto flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
       <span aria-hidden={announceSeparately || undefined}>
         {t('history.updateAvailable')}
       </span>

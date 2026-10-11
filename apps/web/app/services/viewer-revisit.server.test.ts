@@ -136,3 +136,59 @@ describe('viewer revisit entry snapshot', () => {
     })
   })
 })
+
+describe('scheduled revisit versions', () => {
+  test.each([
+    { scheduled: [2], expected: { kind: 'ordinal', from: 4, to: 5 } },
+    { scheduled: [2, 6], expected: { kind: 'fallback' } },
+    { scheduled: [2, 5], expected: { kind: 'fallback' } },
+    { scheduled: [2, 5, 6], expected: null },
+  ])(
+    'uses only unseen published versions: $scheduled',
+    async ({ scheduled, expected }) => {
+      await fixture.db
+        .insertInto('publisher_clients')
+        .values({
+          id: 'client1',
+          workspace_id: 'ws1',
+          user_id: 'u2',
+          name: 'Scheduled reports',
+          created_at: before,
+        })
+        .execute()
+      const numbers = scheduled.length > 1 ? [2, 4, 5, 6] : [2, 4, 5]
+      for (const number of numbers) {
+        const timestamp = number < 4 ? before : number === 4 ? boundary : after
+        await fixture.db
+          .insertInto('versions')
+          .values({
+            id: `v${number}`,
+            shareable_id: 's1',
+            number,
+            artifact_kind: 'html_page',
+            status: 'published',
+            entrypoint_path: '/index.html',
+            r2_key: `test/v${number}`,
+            size_bytes: 1,
+            sha256: 'test',
+            created_by_id: 'u2',
+            created_by_publisher_client_id: scheduled.includes(number)
+              ? 'client1'
+              : null,
+            created_at: timestamp,
+            published_at: timestamp,
+          })
+          .execute()
+      }
+      const result = await loadViewerRevisitContext(fixture.db, {
+        ...input,
+        currentVersionId: `v${numbers.at(-1)}`,
+        versions: [1, ...numbers].map((ordinal) => ({
+          id: `v${ordinal}`,
+          ordinal,
+        })),
+      })
+      expect(result?.version ?? null).toEqual(expected)
+    },
+  )
+})

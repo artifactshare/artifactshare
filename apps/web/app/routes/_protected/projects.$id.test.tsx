@@ -707,7 +707,7 @@ describe('project action menu', () => {
 })
 
 test.each(['member', 'shared'] as const)(
-  '%s project loader and pin rendering suppress scheduled metadata and preserve human updates',
+  '%s project pins omit publisher metadata and preserve human attribution',
   async (access) => {
     const { db } = await fixture()
     try {
@@ -767,7 +767,11 @@ test.each(['member', 'shared'] as const)(
           email: 'u2@example.com',
         }
       }
-      const publish = async (number: number, scheduled: boolean) => {
+      const publish = async (
+        number: number,
+        scheduled: boolean,
+        publishedAt = NOW,
+      ) => {
         const id = `version${number}`
         await db
           .insertInto('versions')
@@ -783,13 +787,13 @@ test.each(['member', 'shared'] as const)(
             sha256: id,
             created_by_id: 'u1',
             created_by_publisher_client_id: scheduled ? 'client1' : null,
-            created_at: NOW,
-            published_at: NOW,
+            created_at: publishedAt,
+            published_at: publishedAt,
           })
           .execute()
         await db
           .updateTable('shareables')
-          .set({ current_version_id: id, updated_at: NOW })
+          .set({ current_version_id: id, updated_at: publishedAt })
           .where('id', '=', 'scheduled')
           .execute()
       }
@@ -828,27 +832,50 @@ test.each(['member', 'shared'] as const)(
       })
       expect(markup(first)).toContain('/a/scheduled')
       expect(markup(first)).not.toContain('project.fileUpdated')
-      await publish(2, false)
-      await publish(3, true)
+      expect(markup(first)).not.toContain('v1')
+      expect(markup(first)).not.toContain('history.dataUpdated')
+      const refreshAt = '2026-07-29T01:00:00Z'
+      await publish(2, true, refreshAt)
+      const refreshed = await loader(loaderArgs())
+      expect(refreshed.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 0,
+        latestPublishedAt: null,
+        latestAuthorEmail: null,
+      })
+      expect(markup(refreshed)).not.toContain('history.dataUpdated')
+      expect(markup(refreshed)).not.toContain(`dateTime="${refreshAt}"`)
+      expect(markup(refreshed)).toContain('/a/scheduled')
+      await publish(3, false)
+      await publish(4, true)
       const mixed = await loader(loaderArgs())
       expect(mixed.files.map((file) => file.id)).toEqual(['scheduled', 'other'])
       expect(mixed.files[0]).toMatchObject({
-        versionCount: 3,
-        badgeVersionNumber: 2,
+        versionCount: 4,
+        badgeVersionNumber: 3,
         latestPublishedAt: NOW,
       })
       expect(mixed.projectActivity.pins[0]).toMatchObject({
-        latestVersionNumber: 2,
+        latestVersionNumber: 3,
         latestPublishedAt: NOW,
         latestAuthorEmail: 'u1@example.com',
       })
       expect(markup(mixed)).toContain('project.fileUpdated')
-      expect(markup(mixed)).toContain('v2')
-      expect(markup(mixed)).not.toContain('v3')
-      await db.deleteFrom('versions').where('id', '=', 'version2').execute()
+      expect(markup(mixed)).not.toContain('history.dataUpdated')
+      expect(markup(mixed)).toContain('v3')
+      expect(markup(mixed)).not.toContain('v4')
+      await db
+        .deleteFrom('versions')
+        .where('id', 'in', ['version1', 'version3'])
+        .execute()
       const pruned = await loader(loaderArgs())
       expect(pruned.projectActivity.pins).toHaveLength(1)
+      expect(pruned.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 0,
+        latestPublishedAt: null,
+        latestAuthorEmail: null,
+      })
       expect(markup(pruned)).not.toContain('project.fileUpdated')
+      expect(markup(pruned)).not.toContain('history.dataUpdated')
       expect(markup(pruned)).toContain('/a/scheduled')
     } finally {
       await db.destroy()

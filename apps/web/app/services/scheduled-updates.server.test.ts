@@ -105,7 +105,7 @@ test('publisher versions preserve interleaved list order and cursor boundaries w
   ).toEqual(['abc123def4', 'second'])
 })
 
-test('pins and badges use the same retained human publication, including equal timestamps and pruned history', async () => {
+test('pins and badges use only non-publisher updates, including equal timestamps and pruned history', async () => {
   await publish('machine1', 1, true)
   expect(await pin()).toMatchObject({
     latestVersionNumber: 0,
@@ -140,6 +140,12 @@ test('pins and badges use the same retained human publication, including equal t
     .deleteFrom('versions')
     .where('created_by_publisher_client_id', 'is', null)
     .execute()
+  expect(await pin()).toMatchObject({
+    latestVersionNumber: 0,
+    latestPublishedAt: null,
+    latestAuthorEmail: null,
+  })
+  await fixture.db.deleteFrom('versions').where('id', '=', 'machine1').execute()
   expect(await pin()).toMatchObject({
     latestVersionNumber: 0,
     latestPublishedAt: null,
