@@ -159,6 +159,7 @@ async function resolveMicrosoftClaimWorkspace(
         AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${input.workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM publisher_clients WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${input.workspaceId})
         AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${input.workspaceId})
@@ -293,6 +294,7 @@ function deleteWorkspaceIfUnreferenced(db: Kysely<DB>, workspaceId: string) {
         AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId})
         AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId})
         AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+        AND NOT EXISTS (SELECT 1 FROM publisher_clients WHERE workspace_id = ${workspaceId})
         AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
         AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
         AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})
@@ -420,6 +422,8 @@ async function moveUserToWorkspaceIfSafe(
         AND NOT EXISTS (SELECT 1 FROM shareables
           WHERE workspace_id = ${input.currentWorkspaceId})
         AND NOT EXISTS (SELECT 1 FROM agent_profiles
+          WHERE workspace_id = ${input.currentWorkspaceId})
+        AND NOT EXISTS (SELECT 1 FROM publisher_clients
           WHERE workspace_id = ${input.currentWorkspaceId})
         AND NOT EXISTS (SELECT 1 FROM cli_family_authorities
           WHERE workspace_id = ${input.currentWorkspaceId})
@@ -595,6 +599,14 @@ async function moveUserToWorkspaceIfSafe(
           eb.exists(
             eb
               .selectFrom('agent_profiles')
+              .select('id')
+              .where('workspace_id', '=', input.currentWorkspaceId),
+          ),
+        ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('publisher_clients')
               .select('id')
               .where('workspace_id', '=', input.currentWorkspaceId),
           ),
@@ -836,6 +848,7 @@ export async function workspaceMigrationBlockReasons(
         ) AS has_content,
         (
           EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+          OR EXISTS (SELECT 1 FROM publisher_clients WHERE workspace_id = ${workspaceId})
           OR EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
           OR EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
           OR EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})
@@ -1124,6 +1137,7 @@ export async function listWorkspaceMigrationCandidates(
       ) AS sourceWorkspaceHasContent,
       (
         EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = personal_ws.id)
+        OR EXISTS (SELECT 1 FROM publisher_clients WHERE workspace_id = personal_ws.id)
         OR EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = personal_ws.id)
         OR EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = personal_ws.id)
         OR EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = personal_ws.id)

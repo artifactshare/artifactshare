@@ -1,3 +1,6 @@
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
+import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 // @vitest-environment happy-dom
 
 import * as React from 'react'
@@ -5,7 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import Device, { verifyStateFrom } from './device'
+import Device, { screen, verifyStateFrom } from './device'
 
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({ locale: 'en', t: (key: string) => key }),
@@ -224,6 +227,66 @@ describe('/device', () => {
     await React.act(async () => {})
     expect(deviceVerifyMock).toHaveBeenCalledWith('AB12CD34')
     await React.act(async () => root.unmount())
+  })
+
+  test.each([
+    { clients: [] },
+    { clients: [{ id: 'client1', name: 'Other dashboard' }] },
+  ])(
+    'publisher defaults to create-new only without existing clients: %j',
+    async ({ clients }) => {
+      deviceParams = new URLSearchParams('user_code=ab12-cd34')
+      deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+      const authClient = await import('~/lib/auth-client')
+      vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
+        preset: 'publisher',
+        requestedName: 'Employee dashboard',
+        clients,
+      })
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      try {
+        await React.act(async () =>
+          root.render(
+            <Device
+              {...({ loaderData: { signedIn: true } } as Parameters<
+                typeof Device
+              >[0])}
+            />,
+          ),
+        )
+        const approve = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent === 'device.approve',
+        )!
+        expect(approve.disabled).toBe(clients.length > 0)
+        expect(
+          container.textContent?.includes('device.publisher.nameHelp'),
+        ).toBe(clients.length > 0)
+        expect(
+          container.textContent?.includes('device.publisher.noneYet'),
+        ).toBe(clients.length === 0)
+        const name = container.querySelector('blockquote')!
+        expect(name.textContent).toBe('Employee dashboard')
+        expect(name.getAttribute('aria-labelledby')).toBe(
+          'publisher-name-label',
+        )
+        expect(container.textContent).toContain('device.publisher.nameSource')
+      } finally {
+        await React.act(async () => root.unmount())
+      }
+    },
+  )
+
+  test.each([
+    ['publisher-invalid', '#publisher-new'],
+    ['publisher-continue', '#publisher-continue'],
+    ['publisher-long-name', '#publisher-continue'],
+  ])('capture %s explicitly opens its intended choice', (id, selector) => {
+    const state = screen.states.find((candidate) => candidate.id === id)!
+    expect(state.setup).toMatchObject({
+      interactions: [{ action: 'click', selector }],
+      ready: { selector },
+    })
   })
 
   test('shows a fixed requested project without the editable picker', async () => {
@@ -639,3 +702,39 @@ describe('/device', () => {
     await React.act(async () => root.unmount())
   })
 })
+
+test('publisher capture queries match the seeded team workspace codes', () => {
+  for (const state of screen.states.filter((candidate) =>
+    candidate.id.startsWith('publisher-'),
+  )) {
+    const setup = state.setup as { scenario: string; query: string }
+    expect(new URLSearchParams(setup.query).get('user_code')).toBe(
+      devPublisherUserCode(
+        `dev-screen-team-${setup.scenario.replaceAll('/', '-')}`,
+      ),
+    )
+  }
+})
+
+test.each([
+  [
+    'en',
+    en,
+    'download and update only those files',
+    'Updates continue after you share or move them.',
+  ],
+  [
+    'ja',
+    ja,
+    'ダウンロードと更新ができるのは、そのファイルだけです。',
+    'あとで共有や移動をしても、更新は続きます。',
+  ],
+] as const)(
+  'publisher consent explains ongoing access without API vocabulary in %s',
+  (_locale, messages, download, ongoing) => {
+    expect(messages['device.publisher.capability']).toContain(download)
+    expect(messages['device.publisher.capability']).toContain(ongoing)
+    expect(messages['device.publisher.duplicate']).not.toContain('device_name')
+    expect(messages['device.publisher.nameHelp']).not.toContain('device_name')
+  },
+)

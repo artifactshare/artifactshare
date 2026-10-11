@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Preserve the server-verified publisher preset when importing a token, including when replacing an existing profile; reject malformed authority responses before saving credentials.
+
+- Preserve publisher device credentials in saved profiles and rotation, report their client scope in doctor, and reject unsupported publisher login/resume without downgrading. The device API can approve a named publisher client to create private home files and update only its own files; its exact download endpoint returns source bytes.
+
 - Deny unknown CLI authority kinds and persisted credential presets by default.
 
 ## 0.15.3 - 2026-10-10

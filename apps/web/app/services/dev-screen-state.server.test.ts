@@ -1,3 +1,4 @@
+import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
@@ -58,6 +59,76 @@ async function expectWorkspaceExpiryStarts(db: Kysely<DB>) {
 }
 
 describe('dev screen state requests', () => {
+  test('publisher scenarios seed distinct stable approval codes across workspaces', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const now = '2026-09-09T00:00:00.000Z'
+    try {
+      for (const plan of ['free', 'plus', 'team'] as const) {
+        for (const state of ['new', 'continue', 'invalid', 'long-name']) {
+          const scenario = `device/publisher-${state}`
+          const { workspaceId } = await ensureDevScreenState(
+            db,
+            scenario,
+            now,
+            plan,
+          )
+          const userId = `${workspaceId}-user`
+          await db
+            .insertInto('users')
+            .values({
+              id: userId,
+              email: `${plan}-${state}@example.test`,
+              name: 'Owner',
+              email_verified: 1,
+              created_at: now,
+              updated_at: now,
+              workspace_id: workspaceId,
+            })
+            .execute()
+          await seedDevScreenState(db, scenario, workspaceId, userId, now)
+          const before = await db
+            .selectFrom('deviceCode')
+            .selectAll()
+            .where('userId', '=', userId)
+            .executeTakeFirstOrThrow()
+          expect(before.expiresAt).toBe('2099-01-01T00:00:00.000Z')
+          const clients = await db
+            .selectFrom('publisher_clients')
+            .selectAll()
+            .where('user_id', '=', userId)
+            .execute()
+          expect(clients).toHaveLength(state === 'new' ? 0 : 1)
+          if (state !== 'new') expect(clients[0].name).toBe(before.deviceName)
+          if (state === 'long-name') expect(clients[0].name.length).toBe(99)
+          expect(before.userCode).toBe(devPublisherUserCode(workspaceId))
+          expect(before.userCode).toMatch(/^[A-Z0-9]{8}$/)
+          // Existing dev databases may still contain the former shared code.
+          await db
+            .updateTable('deviceCode')
+            .set({ userCode: 'PUBL1234' })
+            .where('id', '=', before.id)
+            .execute()
+          await seedDevScreenState(db, scenario, workspaceId, userId, now)
+          expect(
+            await db
+              .selectFrom('deviceCode')
+              .selectAll()
+              .where('userId', '=', userId)
+              .execute(),
+          ).toEqual([before])
+        }
+      }
+      const codes = await db
+        .selectFrom('deviceCode')
+        .select('userCode')
+        .execute()
+      expect(codes).toHaveLength(12)
+      expect(new Set(codes.map((row) => row.userCode)).size).toBe(12)
+    } finally {
+      await db.destroy()
+    }
+  })
+
   test('accepts only allowlisted scenarios', () => {
     expect(isScreenScenario('settings-billing/subscribed')).toBe(true)
     expect(isScreenScenario('unknown/scenario')).toBe(false)

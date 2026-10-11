@@ -1557,5 +1557,20 @@
   "preview.shareDialog.errorSelfUploadDisabled": "このアカウントではファイルをアップロードできません。Google または Microsoft でログインして共有してください。",
   "preview.shareDialog.errorWorkspaceAccessRevoked": "このアカウントはそのワークスペースにアクセスできなくなりました。",
   "preview.shareDialog.errorStorageLimit": "ワークスペースの保存容量の上限に達しています。",
-  "preview.shareDialog.snapshotFailed": "ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。"
+  "preview.shareDialog.snapshotFailed": "ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。",
+  "device.publisher.capability": "このクライアントは、あなたのホームに、あなただけが見られるファイルを作れます。ダウンロードと更新ができるのは、そのファイルだけです。あとで共有や移動をしても、更新は続きます。",
+  "device.publisher.choice": "クライアントの選択",
+  "device.publisher.new": "新しいクライアントを作成",
+  "device.publisher.continue": "既存のクライアントを継続",
+  "device.publisher.client": "既存のクライアント",
+  "device.publisher.select": "クライアントを選択",
+  "device.publisher.duplicate": "この名前はすでに使われています。そのクライアントを継続するか、別の名前でログインをやり直してください。",
+  "device.publisher.nameHelp": "別のクライアントとして登録するには、別の名前でログインをやり直してください。以前に作ったファイルを更新し続けるには、既存のクライアントを継続してください。",
+  "team.tokens.cli.preset": "権限",
+  "team.tokens.cli.preset.unrestricted": "すべての操作",
+  "team.tokens.cli.preset.agent": "エージェント(1つのプロジェクト)",
+  "team.tokens.cli.preset.publisher": "ファイルの作成と、作ったファイルの更新",
+  "device.publisher.requestedName": "クライアントが指定した名前",
+  "device.publisher.nameSource": "この名前は、ログインを求めているクライアントが指定したものです。",
+  "device.publisher.noneYet": "(まだありません)"
 }

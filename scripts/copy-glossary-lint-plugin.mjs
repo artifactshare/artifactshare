@@ -206,6 +206,8 @@ export function extractTypeScriptCopy(source, locale) {
 
 export const COPY_GLOSSARY_ALLOW = {
   json: {
+    // Owner-specified publisher consent sentence uses the API resource name.
+    'en.device.publisher.capability': ['artifacts'],
     'ja.footer.connect': ['ツール'],
     'ja.team.members': ['メンバー'],
     'ja.team.members.body': ['メンバー'],
@@ -243,6 +245,8 @@ export const COPY_GLOSSARY_ALLOW = {
     'ja.visibilityDialog.link.expired': ['公開'],
     'ja.visibilityDialog.link.republishSuccess': ['公開'],
     'ja.visibilityDialog.link.republishError': ['公開'],
+    // Client identity registration, not publishing a file.
+    'ja.device.publisher.nameHelp': ['登録'],
     'ja.toast.pickNotRegistered': ['登録'],
     'ja.toast.repairConflict': ['登録'],
     'ja.sourceMissing.repair': ['差し替える'],

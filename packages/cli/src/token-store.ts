@@ -847,7 +847,8 @@ function isPendingDeviceAuth(value: unknown): value is PendingDeviceAuth {
     typeof value.profile === 'string' &&
     (value.preset === undefined ||
       value.preset === 'unrestricted' ||
-      value.preset === 'agent') &&
+      value.preset === 'agent' ||
+      value.preset === 'publisher') &&
     typeof value.device_code === 'string' &&
     typeof value.verification_uri === 'string' &&
     (typeof value.verification_uri_complete === 'string' ||

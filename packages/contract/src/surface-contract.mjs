@@ -164,7 +164,7 @@ export const MCP_OPENAPI_METADATA = {
   description:
     'Artifact Share is reached programmatically through its remote MCP endpoint at /mcp (JSON-RPC over Streamable HTTP), not a REST API. An MCP client (Claude, ChatGPT, Cursor) authorizes with OAuth 2.1 and then calls tools to share, update, read, comment on, and organize artifacts. See /capabilities.md for the full tool list and /.well-known/agent.json for discovery.',
   endpointDescription:
-    'Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
+    'Publisher device credentials are limited to their single-file REST endpoints and cannot access MCP. Remote MCP server. Accepts JSON-RPC 2.0 (initialize, tools/list, tools/call) with an OAuth 2.1 bearer token. See /capabilities.md for the full tool list.',
   oauthDescription:
     'OAuth 2.1 authorization-code flow with PKCE, served under /api/auth. MCP clients obtain the bearer token for /mcp this way; the same endpoints are advertised at /.well-known/oauth-authorization-server.',
   scopeDescriptions: {

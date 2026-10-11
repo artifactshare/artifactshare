@@ -12,6 +12,7 @@ import {
   CLI_DEVICE_CLIENT_ID,
   CLI_DOCTOR_RESPONSE_SCHEMA,
   CLI_AUTH_REFRESH_REQUEST_SCHEMA,
+  CliAuthRefreshCredentialsRequestSchema,
   CLI_AUTH_REFRESH_RESPONSE_SCHEMA,
   CLI_EDIT_REQUEST_SCHEMA,
   CLI_EDIT_RESPONSE_SCHEMA,
@@ -1140,4 +1141,101 @@ it('rejects unsupported visibility and empty edits', () => {
     CLI_EDIT_REQUEST_SCHEMA.safeParse({ visibility: 'unsupported' }).success,
   ).toBe(false)
   expect(CLI_EDIT_REQUEST_SCHEMA.safeParse({}).success).toBe(false)
+})
+
+describe('publisher device contracts', () => {
+  const request = { client_id: CLI_DEVICE_CLIENT_ID, preset: 'publisher' }
+  it.each([
+    undefined,
+    null,
+    '',
+    ' ',
+    '<script>',
+    'a/b',
+    'a\nb',
+    'a\u0000b',
+    'x'.repeat(101),
+    '\u0301',
+    ...[
+      '\u3164',
+      '\u115f',
+      '\u1160',
+      '\u034f',
+      '\u17b4',
+      '\u17b5',
+      '\uffa0',
+      '\ufe0f',
+      '\u200d',
+    ].flatMap((character) => [character, `Reports${character}`]),
+  ])('rejects invalid publisher name %j', (device_name) => {
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.safeParse({ ...request, device_name }).success,
+    ).toBe(false)
+  })
+  it('normalizes names and counts Unicode code points', () => {
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.parse({
+        ...request,
+        device_name: '  Cafe\u0301 (Reports)_1  ',
+      }).device_name,
+    ).toBe('Café (Reports)_1')
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.safeParse({
+        ...request,
+        device_name: '𐐀'.repeat(100),
+      }).success,
+    ).toBe(true)
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.safeParse({
+        ...request,
+        device_name: '𐐀'.repeat(101),
+      }).success,
+    ).toBe(false)
+    expect(
+      DEVICE_CODE_REQUEST_SCHEMA.safeParse({
+        ...request,
+        device_name: 'Reports',
+        project_selector: 'Project',
+      }).success,
+    ).toBe(false)
+  })
+  it('requires an explicit approval choice without forged new-client ids', () => {
+    expect(
+      DeviceApproveRequestSchema.safeParse({
+        userCode: 'ABCD1234',
+        publisher: { mode: 'create-new', client_id: 'forged' },
+      }).success,
+    ).toBe(false)
+    expect(
+      DeviceApproveRequestSchema.safeParse({
+        userCode: 'ABCD1234',
+        publisher: { mode: 'continue-existing' },
+      }).success,
+    ).toBe(false)
+    expect(
+      DeviceApproveRequestSchema.parse({
+        userCode: 'ABCD1234',
+        publisher: { mode: 'continue-existing', client_id: 'client1' },
+      }).publisher,
+    ).toEqual({ mode: 'continue-existing', client_id: 'client1' })
+  })
+})
+
+describe('refresh credential device names', () => {
+  it.each([undefined, null, '', 'x'.repeat(100)])(
+    'accepts bounded optional name %j',
+    (device_name) => {
+      expect(
+        CliAuthRefreshCredentialsRequestSchema.safeParse({ device_name })
+          .success,
+      ).toBe(true)
+    },
+  )
+  it('rejects names longer than 100 characters', () => {
+    expect(
+      CliAuthRefreshCredentialsRequestSchema.safeParse({
+        device_name: 'x'.repeat(101),
+      }).success,
+    ).toBe(false)
+  })
 })

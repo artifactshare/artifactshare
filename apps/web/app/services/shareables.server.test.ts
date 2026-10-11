@@ -9360,3 +9360,233 @@ describe('member removal credential blocking', () => {
     expect(updated.kind).toBe('ok')
   })
 })
+
+describe('publisher single-file provenance', () => {
+  let db: Kysely<DB>
+  const authority = {
+    kind: 'publisher' as const,
+    familyId: 'publisher-family',
+    workspaceId: 'ws-a',
+    publisherClientId: 'publisher-client',
+    publisherClientName: 'Dashboard',
+  }
+  beforeEach(async () => {
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    db = fixture.db
+    sqliteRef.current = fixture.sqlite
+    sqliteRef.failNextBatch = false
+    sqliteRef.beforeNextBatch = null
+    sqliteRef.afterNextBatch = null
+    storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
+    await seed(db)
+    fixture.sqlite.exec(`
+      INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('publisher-client', 'owner-1', 'ws-a', 'Dashboard', '2026-01-01');
+      INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('other-client', 'owner-1', 'ws-a', 'Other', '2026-01-01');
+      INSERT INTO cli_family_authorities (family_id, user_id, preset, workspace_id, publisher_client_id, status, created_at, updated_at) VALUES ('publisher-family', 'owner-1', 'publisher', 'ws-a', 'publisher-client', 'active', '2026-01-01', '2026-01-01');
+      INSERT INTO cli_refresh_credentials (id, user_id, token_hash, family_id, expires_at, created_at) VALUES ('publisher-credential', 'owner-1', 'publisher-hash', 'publisher-family', '2099-01-01', '2026-01-01');
+    `)
+  })
+  afterEach(async () => {
+    await db.destroy()
+    sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
+  })
+  async function create() {
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('dashboard.html', '<p>first</p>'),
+      'private',
+      [],
+      null,
+      null,
+      { authority },
+    )
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') throw new Error('publisher create failed')
+    return result
+  }
+  test('creates private home files and preserves provenance across human versions and sharing changes', async () => {
+    const result = await create()
+    const initial = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', result.id)
+      .executeTakeFirstOrThrow()
+    expect(initial).toMatchObject({
+      owner_user_id: OWNER.id,
+      visibility: 'private',
+      created_by_publisher_client_id: authority.publisherClientId,
+    })
+    expect(
+      await db
+        .selectFrom('artifact_containers')
+        .select('kind')
+        .where('id', '=', initial.container_id!)
+        .executeTakeFirst(),
+    ).toEqual({ kind: 'inbox' })
+    const human = await createVersion({
+      db,
+      user: OWNER,
+      shareableId: result.id,
+      file: htmlFile('human.html', '<p>human</p>'),
+    })
+    expect(human.kind).toBe('ok')
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'workspace', name: 'Chosen name', retain_versions: 4 })
+      .where('id', '=', result.id)
+      .execute()
+    const before = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', result.id)
+      .executeTakeFirstOrThrow()
+    const update = await createVersion({
+      db,
+      user: OWNER,
+      authority,
+      shareableId: result.id,
+      expectedCurrentVersionId: before.current_version_id!,
+      file: htmlFile('machine.html', '<p>machine</p>'),
+    })
+    expect(update.kind).toBe('ok')
+    const after = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', result.id)
+      .executeTakeFirstOrThrow()
+    for (const field of [
+      'name',
+      'visibility',
+      'owner_user_id',
+      'container_id',
+      'retain_versions',
+      'created_by_publisher_client_id',
+    ] as const)
+      expect(after[field]).toEqual(before[field])
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('created_by_publisher_client_id')
+        .where('id', '=', after.current_version_id!)
+        .executeTakeFirst(),
+    ).toEqual({ created_by_publisher_client_id: authority.publisherClientId })
+  })
+  test.each([
+    'missing-version',
+    'stale-version',
+    'human-origin',
+    'other-client',
+    'transferred',
+    'static-site',
+    'revoked',
+  ])('rejects %s without publishing', async (mode) => {
+    const result = await create()
+    if (mode === 'human-origin')
+      await db
+        .updateTable('shareables')
+        .set({ created_by_publisher_client_id: null })
+        .where('id', '=', result.id)
+        .execute()
+    if (mode === 'other-client')
+      await db
+        .updateTable('shareables')
+        .set({ created_by_publisher_client_id: 'other-client' })
+        .where('id', '=', result.id)
+        .execute()
+    if (mode === 'transferred') {
+      await seedUser(db, 'other-owner')
+      await db
+        .updateTable('shareables')
+        .set({ owner_user_id: 'other-owner' })
+        .where('id', '=', result.id)
+        .execute()
+    }
+    if (mode === 'static-site')
+      await db
+        .updateTable('shareables')
+        .set({ artifact_kind: 'static_site' })
+        .where('id', '=', result.id)
+        .execute()
+    if (mode === 'revoked')
+      await db
+        .updateTable('cli_family_authorities')
+        .set({ status: 'revoked' })
+        .where('family_id', '=', authority.familyId)
+        .execute()
+    const before = await db.selectFrom('shareables').selectAll().execute()
+    const versions = await db.selectFrom('versions').selectAll().execute()
+    const args = {
+      db,
+      user: OWNER,
+      authority,
+      shareableId: result.id,
+      file: htmlFile('next.html', '<p>next</p>'),
+    }
+    const update =
+      mode === 'missing-version'
+        ? await createVersion(args)
+        : await createVersion({
+            ...args,
+            expectedCurrentVersionId:
+              mode === 'stale-version' ? 'stale-version' : result.versionId,
+          })
+    expect(update.kind).not.toBe('ok')
+    expect(await db.selectFrom('shareables').selectAll().execute()).toEqual(
+      before,
+    )
+    expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+      versions,
+    )
+    expect(
+      await db.selectFrom('shareable_grants').selectAll().execute(),
+    ).toEqual([])
+  })
+  test.each(['transfer', 'revoke', 'competing-version'])(
+    'rechecks %s at the commit boundary and compensates storage',
+    async (mode) => {
+      const result = await create()
+      await seedUser(db, 'other-owner')
+      const before = await db.selectFrom('versions').selectAll().execute()
+      storageMock.deleteArtifact.mockClear()
+      storageMock.putArtifact.mockImplementationOnce(async () => {
+        sqliteRef.beforeNextBatch = async () => {
+          if (mode === 'transfer')
+            await db
+              .updateTable('shareables')
+              .set({ owner_user_id: 'other-owner' })
+              .where('id', '=', result.id)
+              .execute()
+          if (mode === 'revoke')
+            await db
+              .updateTable('cli_family_authorities')
+              .set({ status: 'revoked' })
+              .where('family_id', '=', authority.familyId)
+              .execute()
+          if (mode === 'competing-version')
+            await db
+              .updateTable('shareables')
+              .set({ current_version_id: null })
+              .where('id', '=', result.id)
+              .execute()
+        }
+      })
+      const update = await createVersion({
+        db,
+        user: OWNER,
+        authority,
+        shareableId: result.id,
+        expectedCurrentVersionId: result.versionId,
+        file: htmlFile('next.html', '<p>next</p>'),
+      })
+      expect(update.kind).not.toBe('ok')
+      expect(await db.selectFrom('versions').selectAll().execute()).toEqual(
+        before,
+      )
+      expect(storageMock.deleteArtifact).toHaveBeenCalledOnce()
+    },
+  )
+})

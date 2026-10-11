@@ -44,6 +44,251 @@ describe('cli-refresh-credentials service', () => {
     sqliteRef.beforeNextBatch = null
   })
 
+  test('publisher issuance and rotation retain approved client identity and revocation removes access', async () => {
+    sqlite.exec(`
+      INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('publisher-client', 'u1', 'ws1', 'Reports', '2026-01-01');
+      INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at) VALUES ('publisher-session', 'u1', 'publisher-token', '2099-01-01', 'artifactshare-cli-device', '2026-01-01', '2026-01-01');
+      INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, publisher_client_id, expires_at, created_at) VALUES ('publisher-session', 'bootstrap', 'publisher', 'ws1', 'publisher-client', '2099-01-01', '2026-01-01');
+    `)
+    const issued = await issueCliRefreshCredential(
+      db,
+      'u1',
+      'publisher-token',
+      'Untrusted name',
+      'spoofable-device',
+    )
+    expect(issued).not.toBeNull()
+    const rotated = await refreshCliSession(
+      db,
+      issued!.refreshToken,
+      'publisher-rotation',
+      secret,
+    )
+    expect(rotated.kind).toBe('ok')
+    expect(
+      sqlite
+        .prepare(
+          'SELECT DISTINCT preset, publisher_client_id FROM cli_session_authorities',
+        )
+        .all(),
+    ).toEqual([
+      { preset: 'publisher', publisher_client_id: 'publisher-client' },
+    ])
+    expect(await listCliRefreshCredentialFamilies(db, 'u1')).toEqual([
+      expect.objectContaining({
+        preset: 'publisher',
+        publisherClientName: 'Reports',
+      }),
+    ])
+    if (rotated.kind !== 'ok') throw new Error('rotation failed')
+    await revokeCliRefreshCredential(db, rotated.refreshToken)
+    expect(
+      await refreshCliSession(
+        db,
+        rotated.refreshToken,
+        'after-revocation',
+        secret,
+      ),
+    ).toEqual({ kind: 'invalid' })
+    expect(sqlite.prepare('SELECT name FROM publisher_clients').all()).toEqual([
+      { name: 'Reports' },
+    ])
+  })
+
+  test.each(['bootstrap', 'family'] as const)(
+    'publisher %s issuance supersedes only its own client for a supplied device id',
+    async (sourceKind) => {
+      sqlite.exec(`
+        INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES
+          ('client-a', 'u1', 'ws1', 'Reports A', '2026-01-01'),
+          ('client-b', 'u1', 'ws1', 'Reports B', '2026-01-01');
+        INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, created_by_id, name, created_at, updated_at)
+          VALUES ('project-1', 'ws1', 'project', 'u1', 'u1', 'Agent output', '2026-01-01', '2026-01-01');
+        INSERT INTO agent_profiles (id, user_id, workspace_id, created_at) VALUES ('agent-1', 'u1', 'ws1', '2026-01-01');
+      `)
+      const credentials = new Map<string, string>()
+      for (const kind of [
+        'unrestricted',
+        'agent',
+        'client-b',
+        'client-a',
+        'source',
+      ]) {
+        sqlite
+          .prepare(`INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at)
+          VALUES (?, 'u1', ?, '2099-01-01', 'artifactshare-cli-device', '2026-01-01', '2026-01-01')`)
+          .run(kind, `${kind}-token`)
+        if (kind === 'agent') {
+          sqlite.exec(`INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, project_id, agent_profile_id, expires_at, created_at)
+            VALUES ('agent', 'bootstrap', 'agent', 'ws1', 'project-1', 'agent-1', '2099-01-01', '2026-01-01')`)
+        } else if (kind !== 'unrestricted') {
+          sqlite
+            .prepare(`INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, publisher_client_id, expires_at, created_at)
+            VALUES (?, 'bootstrap', 'publisher', 'ws1', ?, '2099-01-01', '2026-01-01')`)
+            .run(kind, kind === 'source' ? 'client-a' : kind)
+        }
+        if (kind === 'source' && sourceKind === 'bootstrap') continue
+        const issued = await issueCliRefreshCredential(
+          db,
+          'u1',
+          `${kind}-token`,
+          kind,
+          kind,
+        )
+        expect(issued).not.toBeNull()
+        credentials.set(kind, issued!.refreshToken)
+      }
+      // Device metadata is attacker controlled, and may collide across presets.
+      sqlite.exec(
+        "UPDATE cli_refresh_credentials SET device_id = 'spoofed-device'",
+      )
+      const protectedCredentials = sqlite
+        .prepare(
+          "SELECT * FROM cli_refresh_credentials WHERE device_name IN ('unrestricted', 'agent', 'client-b') ORDER BY id",
+        )
+        .all()
+      const protectedSessions = sqlite
+        .prepare(
+          "SELECT * FROM sessions WHERE id IN ('unrestricted', 'agent', 'client-b') ORDER BY id",
+        )
+        .all()
+      const replacement = await issueCliRefreshCredential(
+        db,
+        'u1',
+        'source-token',
+        'Reports',
+        'spoofed-device',
+      )
+      expect(replacement).not.toBeNull()
+      expect(
+        sqlite
+          .prepare(
+            "SELECT * FROM cli_refresh_credentials WHERE device_name IN ('unrestricted', 'agent', 'client-b') ORDER BY id",
+          )
+          .all(),
+      ).toEqual(protectedCredentials)
+      expect(
+        sqlite
+          .prepare(
+            "SELECT * FROM sessions WHERE id IN ('unrestricted', 'agent', 'client-b') ORDER BY id",
+          )
+          .all(),
+      ).toEqual(protectedSessions)
+      expect(
+        sqlite.prepare("SELECT id FROM sessions WHERE id = 'client-a'").all(),
+      ).toEqual([])
+      const audits = readCredentialRevokeAudits(sqlite)
+      expect(audits).toHaveLength(sourceKind === 'family' ? 2 : 1)
+      expect(
+        await refreshCliSession(
+          db,
+          credentials.get('client-a')!,
+          'revoked',
+          secret,
+        ),
+      ).toEqual({ kind: 'invalid' })
+      for (const kind of ['unrestricted', 'agent', 'client-b']) {
+        expect(
+          await refreshCliSession(
+            db,
+            credentials.get(kind)!,
+            `retained-${kind}`,
+            secret,
+          ),
+        ).toMatchObject({ kind: 'ok' })
+      }
+    },
+  )
+
+  test.each(['unrestricted', 'agent'] as const)(
+    '%s device re-login never supersedes publisher credentials',
+    async (preset) => {
+      sqlite.exec(`
+        INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at)
+          VALUES ('client-a', 'u1', 'ws1', 'Reports', '2026-01-01');
+        INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, created_by_id, name, created_at, updated_at)
+          VALUES ('project-1', 'ws1', 'project', 'u1', 'u1', 'Agent output', '2026-01-01', '2026-01-01');
+        INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+          VALUES ('agent-1', 'u1', 'ws1', '2026-01-01');
+      `)
+      const credentials = new Map<string, string>()
+      for (const kind of ['publisher', 'prior', 'source']) {
+        sqlite
+          .prepare(`INSERT INTO sessions (id, user_id, token, expires_at, user_agent, created_at, updated_at)
+          VALUES (?, 'u1', ?, '2099-01-01', 'artifactshare-cli-device', '2026-01-01', '2026-01-01')`)
+          .run(kind, `${kind}-token`)
+        if (kind === 'publisher') {
+          sqlite.exec(`INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, publisher_client_id, expires_at, created_at)
+            VALUES ('publisher', 'bootstrap', 'publisher', 'ws1', 'client-a', '2099-01-01', '2026-01-01')`)
+        } else if (preset === 'agent') {
+          sqlite
+            .prepare(`INSERT INTO cli_session_authorities (session_id, kind, preset, workspace_id, project_id, agent_profile_id, expires_at, created_at)
+            VALUES (?, 'bootstrap', 'agent', 'ws1', 'project-1', 'agent-1', '2099-01-01', '2026-01-01')`)
+            .run(kind)
+        }
+        if (kind === 'source') continue
+        const issued = await issueCliRefreshCredential(
+          db,
+          'u1',
+          `${kind}-token`,
+          kind,
+          kind,
+        )
+        expect(issued).not.toBeNull()
+        credentials.set(kind, issued!.refreshToken)
+      }
+      sqlite.exec(
+        "UPDATE cli_refresh_credentials SET device_id = 'shared-device'",
+      )
+      const protectedCredentials = sqlite
+        .prepare(
+          "SELECT * FROM cli_refresh_credentials WHERE device_name = 'publisher'",
+        )
+        .all()
+      const protectedSessions = sqlite
+        .prepare("SELECT * FROM sessions WHERE id = 'publisher'")
+        .all()
+      expect(
+        await issueCliRefreshCredential(
+          db,
+          'u1',
+          'source-token',
+          'Replacement',
+          'shared-device',
+        ),
+      ).not.toBeNull()
+      expect(
+        sqlite
+          .prepare(
+            "SELECT * FROM cli_refresh_credentials WHERE device_name = 'publisher'",
+          )
+          .all(),
+      ).toEqual(protectedCredentials)
+      expect(
+        sqlite.prepare("SELECT * FROM sessions WHERE id = 'publisher'").all(),
+      ).toEqual(protectedSessions)
+      expect(
+        sqlite.prepare("SELECT id FROM sessions WHERE id = 'prior'").all(),
+      ).toEqual([])
+      expect(
+        await refreshCliSession(
+          db,
+          credentials.get('publisher')!,
+          'retained',
+          secret,
+        ),
+      ).toMatchObject({ kind: 'ok' })
+      expect(
+        await refreshCliSession(
+          db,
+          credentials.get('prior')!,
+          'revoked',
+          secret,
+        ),
+      ).toEqual({ kind: 'invalid' })
+    },
+  )
+
   test.each([null, 'rotate', 'replay', 'interleaved', 'legacy-interleaved'])(
     'rejects unknown family presets for %s without issuing records',
     async (mode) => {

@@ -226,6 +226,61 @@ describe('OAuth workspace integration', () => {
     ).resolves.toEqual({ status: 'removed' })
   })
 
+  test('blocks Microsoft claim repair when a duplicate workspace retains a publisher client', async () => {
+    const db = setup()
+    await seedWorkspace(db, {
+      id: 'ws-tenant',
+      name: 'Organization',
+      microsoftTenantId: 'tenant-1',
+    })
+    await seedWorkspace(db, { id: 'ws-duplicate', name: 'Personal' })
+    await seedUser(db, 'u1', 'owner@example.test', 'ws-tenant')
+    await db.deleteFrom('accounts').where('user_id', '=', 'u1').execute()
+    await seedMicrosoftAccount(db, 'u1', 'owner@example.test', 'tenant-1')
+    await seedClaim(db, 'example.test', 'ws-duplicate', {
+      source: 'microsoft_verified_domain',
+      providerTenantId: 'tenant-1',
+    })
+    const client = {
+      id: 'publisher-client',
+      user_id: 'u1',
+      workspace_id: 'ws-duplicate',
+      name: 'Reports',
+      created_at: NOW,
+    }
+    await db.insertInto('publisher_clients').values(client).execute()
+    const plan = await planOAuthWorkspaceIntegration(db, {
+      domain: 'example.test',
+      email: 'owner@example.test',
+      source: 'microsoft_verified_domain',
+    })
+    expect(plan.executable).toBe(false)
+    expect(plan.stopReasons).toContain('duplicate_claim_workspace_not_empty')
+    expect((await applyOAuthWorkspaceIntegration(db, plan)).kind).toBe(
+      'blocked',
+    )
+    expect(
+      await db.selectFrom('publisher_clients').selectAll().execute(),
+    ).toEqual([client])
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('id')
+        .where('id', '=', 'ws-duplicate')
+        .execute(),
+    ).toEqual([{ id: 'ws-duplicate' }])
+    expect(
+      await db
+        .selectFrom('workspace_domain_claims')
+        .select('workspace_id')
+        .where('domain', '=', 'example.test')
+        .execute(),
+    ).toEqual([{ workspace_id: 'ws-duplicate' }])
+    expect(fixture!.sqlite.prepare('PRAGMA foreign_key_check').all()).toEqual(
+      [],
+    )
+  })
+
   test('repairs a Microsoft claim onto its tenant workspace and removes the empty duplicate', async () => {
     const db = setup()
     await seedWorkspace(db, {

@@ -122,3 +122,29 @@ physical objects once across retained versions; only sent files add bytes.
 Pruning keeps objects referenced by remaining versions. Version URLs retain
 immutable manifests. This is a REST API feature: there are no CLI `update`
 flags, MCP inputs, or bridge inputs for inheritance.
+
+### Publisher device credentials (API only)
+
+The device API accepts `preset: "publisher"` with a required `device_name`.
+Names are trimmed, NFC-normalized, case-sensitive, and limited to 1–100 Unicode
+letters, marks, numbers, ASCII spaces, or `._-()`. The browser approver explicitly
+creates a new client or continues one of their existing clients in that workspace.
+Names cannot be edited on the approval screen: if a name already exists, continue
+that client or request login again with a different name. Only explicit continuation
+restores access to earlier files; `device_id` never selects a client.
+
+A publisher can create a single HTML or Markdown file using
+`POST /api/shareables/uploads`, with no container and omitted or private visibility.
+The file belongs to the approver in their home. It can download only its own files
+at `GET /api/cli/artifacts/:id/download` and add versions with
+`POST /api/shareables/:id/versions?expected_version=<current-version-id>`.
+Updates preserve the name, owner, destination, sharing, visibility, and retention
+settings, including after a human shares or moves the file. Other clients' files,
+listing, readback, wildcard downloads, comments, settings, projects, append,
+overwrite/upsert uploads, and static sites are denied.
+
+The exact download endpoint returns source bytes for publisher credentials;
+existing presets still receive a JSON manifest. Publisher credentials retain their
+client across rotation and can be revoked from Settings → CLI sessions. Stored CLI
+profiles and `doctor` preserve and report publisher, but CLI publisher login/resume
+and publishing/download workflows are unsupported; use the device and file APIs.

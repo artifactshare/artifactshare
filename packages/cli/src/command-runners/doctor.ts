@@ -228,6 +228,14 @@ export async function runDoctor(
   const authority = doctorAuthority(auth?.authority)
   if (authority) data.auth.authority = authority
   applyAgentDestinationDiagnostic(data, authority)
+  if (authority?.preset === 'publisher')
+    data.destination = {
+      ok: true,
+      type: 'home',
+      project_id: null,
+      code: 'publisher_scope',
+      hint: `Publisher ${authority.publisher_client_name}: create private files in home and update only files created by this client. Use the API; publisher CLI login and publishing workflows are not supported.`,
+    }
   data.upload.checked = true
   data.upload.ok = upload?.ok === true
   if (!data.upload.ok) {
@@ -240,6 +248,18 @@ export async function runDoctor(
 function doctorAuthority(value: unknown): DoctorAuthority | null {
   if (!value || typeof value !== 'object') return null
   const authority = value as Record<string, unknown>
+  if (
+    authority.preset === 'publisher' &&
+    authority.project_id === null &&
+    typeof authority.publisher_client_id === 'string' &&
+    typeof authority.publisher_client_name === 'string'
+  )
+    return {
+      preset: 'publisher',
+      project_id: null,
+      publisher_client_id: authority.publisher_client_id,
+      publisher_client_name: authority.publisher_client_name,
+    }
   if (
     authority.preset === 'agent' &&
     typeof authority.project_id === 'string' &&

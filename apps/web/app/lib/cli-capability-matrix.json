@@ -49,6 +49,11 @@
       "id": "pagination",
       "identifier": "next_offset",
       "implementation_path": "packages/cli/src/output.ts"
+    },
+    {
+      "id": "publisher-device-identity",
+      "identifier": "PublisherClientNameSchema",
+      "implementation_path": "packages/contract/src/index.ts"
     }
   ],
   "capabilities": [
@@ -1316,7 +1321,7 @@
         "cli_json": ["cli_help"],
         "cli_auth": ["cli_help"]
       },
-      "contracts": [],
+      "contracts": ["publisher-device-identity"],
       "cli_options": {
         "login": [
           "--help",

@@ -371,6 +371,16 @@ async function handleJsonPendingAuth(
   }
 
   const existing = await readPendingDeviceAuth(baseUrl, profile)
+  if (existing?.preset === 'publisher')
+    return writeFailure(
+      command,
+      validationError(
+        'Publisher login cannot be resumed by this CLI.',
+        'Use the device API and approve an existing or new publisher client in the browser.',
+      ),
+      mode,
+      1,
+    )
   if (existing && !isPendingExpired(existing)) {
     const exchange = await exchangeDeviceTokenOnce(
       options,
@@ -428,6 +438,16 @@ async function handleJsonPendingAuth(
 
   const preset =
     (await readGlobalConfig())?.profiles?.[profile]?.preset ?? 'unrestricted'
+  if (preset !== 'agent' && preset !== 'unrestricted')
+    return writeFailure(
+      command,
+      validationError(
+        'This preset cannot log in through the CLI.',
+        'Use the device API to approve or continue the publisher client.',
+      ),
+      mode,
+      1,
+    )
   const code = await requestDeviceCode(options, request.init, {
     preset,
     deviceName: deviceNameForProfile(profile),

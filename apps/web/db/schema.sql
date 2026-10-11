@@ -368,13 +368,23 @@ CREATE TABLE agent_profiles (
   created_at TEXT NOT NULL,
   UNIQUE (user_id, workspace_id)
 );
+CREATE TABLE publisher_clients (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 100 AND name = trim(name)),
+  created_at TEXT NOT NULL,
+  UNIQUE (user_id, workspace_id, name)
+);
+CREATE INDEX publisher_clients_workspace_id ON publisher_clients(workspace_id);
 CREATE TABLE cli_family_authorities (
   family_id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  preset TEXT NOT NULL CHECK (preset IN ('unrestricted', 'agent')),
+  preset TEXT NOT NULL CHECK (preset IN ('unrestricted', 'agent', 'publisher')),
   workspace_id TEXT REFERENCES workspaces(id) ON DELETE RESTRICT,
   project_id TEXT REFERENCES artifact_containers(id) ON DELETE RESTRICT,
   project_name_snapshot TEXT,
+  publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT,
   agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT,
   bridge_authority_id TEXT REFERENCES bridge_authorities(id) ON DELETE RESTRICT,
   approved_at TEXT,
@@ -384,7 +394,8 @@ CREATE TABLE cli_family_authorities (
   updated_at TEXT NOT NULL,
   -- project_id may be NULL for agent presets: project deletion detaches
   -- non-live agent authorities from the project (project_name_snapshot stays).
-  CHECK ((preset = 'unrestricted' AND workspace_id IS NULL AND project_id IS NULL AND agent_profile_id IS NULL) OR (preset = 'agent' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL))
+  CHECK ((preset = 'publisher' AND workspace_id IS NOT NULL AND publisher_client_id IS NOT NULL AND project_id IS NULL AND agent_profile_id IS NULL AND bridge_authority_id IS NULL AND project_name_snapshot IS NULL) OR (preset <> 'publisher' AND publisher_client_id IS NULL)),
+  CHECK ((preset = 'unrestricted' AND workspace_id IS NULL AND project_id IS NULL AND agent_profile_id IS NULL) OR (preset = 'agent' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL) OR preset = 'publisher')
 );
 CREATE INDEX cli_family_authorities_user_id ON cli_family_authorities(user_id);
 CREATE INDEX cli_family_authorities_agent_profile_id ON cli_family_authorities(agent_profile_id);
@@ -410,13 +421,15 @@ CREATE TABLE cli_session_authorities (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   family_id TEXT REFERENCES cli_family_authorities(family_id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('bootstrap', 'family')),
-  preset TEXT NOT NULL CHECK (preset IN ('unrestricted', 'agent')),
+  preset TEXT NOT NULL CHECK (preset IN ('unrestricted', 'agent', 'publisher')),
   workspace_id TEXT REFERENCES workspaces(id) ON DELETE RESTRICT,
   project_id TEXT REFERENCES artifact_containers(id) ON DELETE RESTRICT,
+  publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT,
   agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT,
   expires_at TEXT,
   bearer_only INTEGER NOT NULL DEFAULT 1 CHECK (bearer_only IN (0, 1)),
   created_at TEXT NOT NULL,
+  CHECK ((preset = 'publisher' AND workspace_id IS NOT NULL AND publisher_client_id IS NOT NULL AND project_id IS NULL AND agent_profile_id IS NULL) OR (preset <> 'publisher' AND publisher_client_id IS NULL)),
   CHECK ((kind = 'bootstrap' AND family_id IS NULL AND expires_at IS NOT NULL) OR (kind = 'family' AND family_id IS NOT NULL AND expires_at IS NULL))
 );
 CREATE INDEX cli_session_authorities_family_id ON cli_session_authorities(family_id);
@@ -522,17 +535,20 @@ CREATE TABLE deviceCode (
   pollingInterval  INTEGER,
   clientId         TEXT,
   scope            TEXT,
-  preset           TEXT CHECK (preset IS NULL OR preset IN ('unrestricted', 'agent')),
+  preset           TEXT CHECK (preset IS NULL OR preset IN ('unrestricted', 'agent', 'publisher')),
   deviceName       TEXT,
   approvalNonce    TEXT,
   selectedProjectId TEXT,
+  selectedPublisherClientId TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT,
   requestedProjectSelector TEXT CHECK (
     requestedProjectSelector IS NULL
     OR (
       requestedProjectSelector = trim(requestedProjectSelector)
       AND length(requestedProjectSelector) BETWEEN 1 AND 120
     )
-  )
+  ),
+  CHECK (preset IS 'publisher' OR selectedPublisherClientId IS NULL),
+  CHECK (preset IS NOT 'publisher' OR (deviceName IS NOT NULL AND length(deviceName) BETWEEN 1 AND 100 AND selectedProjectId IS NULL AND requestedProjectSelector IS NULL))
 );
 CREATE INDEX deviceCode_userId ON deviceCode(userId);
 
@@ -576,7 +592,7 @@ CREATE TABLE shareables (
   updated_at                 TEXT NOT NULL,
   last_accessed_at           TEXT,
   container_id               TEXT NOT NULL REFERENCES artifact_containers(id) ON DELETE SET NULL -- artifact_containers_no_delete_with_shareables prevents the SET NULL path
-, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0);
+, link_expires_at TEXT, created_by_agent_profile_id TEXT REFERENCES agent_profiles(id) ON DELETE RESTRICT, link_suspended_at TEXT, link_suspended_reason TEXT, retain_versions INTEGER CHECK (retain_versions IS NULL OR (typeof(retain_versions) = 'integer' AND retain_versions >= 1)), version_sequence INTEGER NOT NULL DEFAULT 0, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT);
 CREATE INDEX shareables_workspace_owner_created
   ON shareables(workspace_id, owner_user_id, created_at DESC);
 CREATE UNIQUE INDEX shareables_workspace_slug
@@ -824,7 +840,7 @@ CREATE TABLE versions (
   created_at                TEXT NOT NULL,
   published_at              TEXT,
   label                     TEXT CHECK (label IS NULL OR length(label) BETWEEN 1 AND 80)
-);
+, created_by_publisher_client_id TEXT REFERENCES publisher_clients(id) ON DELETE RESTRICT);
 CREATE INDEX versions_shareable_id ON versions(shareable_id);
 CREATE INDEX versions_r2_key ON versions(r2_key);
 CREATE INDEX versions_created_by_agent_profile_id ON versions(created_by_agent_profile_id);
@@ -1443,3 +1459,7 @@ END;
 
 CREATE INDEX versions_shareable_number ON versions(shareable_id, number DESC);
 CREATE INDEX shareables_current_version_id ON shareables(current_version_id);
+
+CREATE INDEX shareables_created_by_publisher_client_id ON shareables(created_by_publisher_client_id);
+
+CREATE INDEX versions_created_by_publisher_client_id ON versions(created_by_publisher_client_id);

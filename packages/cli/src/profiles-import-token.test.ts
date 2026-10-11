@@ -421,3 +421,65 @@ test('profiles import-token ignores ARTIFACTSHARE_TOKEN and reads stdin instead'
     },
   )
 })
+
+for (const previousPreset of [undefined, 'unrestricted', 'agent'] as const) {
+  test(`profiles import-token preserves verified publisher scope over ${previousPreset ?? 'a new profile'}`, async () => {
+    if (previousPreset) {
+      await writeGlobalConfig({
+        profiles: { reports: { preset: previousPreset } },
+      })
+    }
+    await withServer(
+      (request, response) => {
+        if (request.url === '/api/cli/whoami') {
+          writeJson(response, {
+            user: { id: 'owner1', email: 'owner@example.test' },
+            workspace: { id: 'workspace1', hosted_domain: 'example.test' },
+            auth: {
+              kind: 'bearer_or_session',
+              authority: {
+                preset: 'publisher',
+                project_id: null,
+                publisher_client_id: 'client1',
+                publisher_client_name: 'Reports',
+              },
+            },
+          })
+          return
+        }
+        response.statusCode = 404
+        response.end()
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'profiles',
+            'import-token',
+            '--profile',
+            'reports',
+            '--base-url',
+            baseUrl,
+            '--allow-plaintext-token-store',
+            '--json',
+          ],
+          isolation(),
+          { input: 'publisher-test-token' },
+        )
+        expectSuccess(result, 'profiles import-token')
+        const config = JSON.parse(
+          await readFile(join(configHome, 'config.json'), 'utf8'),
+        )
+        assert.equal(config.profiles.reports.preset, 'publisher')
+        const login = await runAsync(
+          ['login', '--profile', 'reports', '--base-url', baseUrl, '--json'],
+          isolation(),
+        )
+        const failure = expectFailure(login, {
+          command: 'login',
+          code: 'validation_failed',
+        })
+        assert.match(failure.error.message, /Publisher login is not supported/)
+      },
+    )
+  })
+}

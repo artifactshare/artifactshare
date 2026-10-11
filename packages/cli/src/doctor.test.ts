@@ -446,3 +446,37 @@ test('doctor points at profile login when saved profile token is rejected', asyn
     },
   )
 })
+
+test('doctor reports publisher client scope without substituting unrestricted', async () => {
+  const authority = {
+    preset: 'publisher',
+    project_id: null,
+    publisher_client_id: 'client1',
+    publisher_client_name: 'Employee dashboard',
+  }
+  await withServer(
+    (_request, response) => {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          auth: { ok: true, authority },
+          user: { email: 'owner@example.test' },
+          upload: { ok: true },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['doctor', '--base-url', baseUrl, '--json'],
+        {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+          ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+        },
+      )
+      const payload = expectSuccess(result, 'doctor')
+      assert.deepEqual(payload.data.auth.authority, authority)
+      assert.equal(payload.data.destination.code, 'publisher_scope')
+      assert.match(payload.data.destination.hint, /Employee dashboard/)
+    },
+  )
+})

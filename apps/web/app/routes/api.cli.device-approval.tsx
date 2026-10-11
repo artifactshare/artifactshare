@@ -4,7 +4,10 @@ import {
 } from '@artifactshare/contract'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
-import { loadAgentApprovalContext } from '~/services/cli-device-authority.server'
+import {
+  loadAgentApprovalContext,
+  loadPublisherApprovalContext,
+} from '~/services/cli-device-authority.server'
 import type { Route } from './+types/api.cli.device-approval'
 
 export const middleware = [requireUserApiMiddleware]
@@ -19,8 +22,14 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       DeviceApprovalResponseSchema.parse({ agentApproval: null }),
     )
   }
+  const publisherApproval = await loadPublisherApprovalContext(
+    query.data.user_code,
+    user.id,
+    user.workspaceId,
+  )
   return Response.json(
     DeviceApprovalResponseSchema.parse({
+      ...(publisherApproval ? { publisherApproval } : {}),
       agentApproval: await loadAgentApprovalContext(
         query.data.user_code,
         user.id,

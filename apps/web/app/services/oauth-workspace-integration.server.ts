@@ -881,6 +881,7 @@ function disposableEmptyWorkspaceCondition(
       AND NOT EXISTS (SELECT 1 FROM artifact_containers WHERE workspace_id = ${workspaceId})
       AND NOT EXISTS (SELECT 1 FROM shareables WHERE workspace_id = ${workspaceId})
       AND NOT EXISTS (SELECT 1 FROM agent_profiles WHERE workspace_id = ${workspaceId})
+      AND NOT EXISTS (SELECT 1 FROM publisher_clients WHERE workspace_id = ${workspaceId})
       AND NOT EXISTS (SELECT 1 FROM cli_family_authorities WHERE workspace_id = ${workspaceId})
       AND NOT EXISTS (SELECT 1 FROM cli_session_authorities WHERE workspace_id = ${workspaceId})
       AND NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE workspace_id = ${workspaceId})

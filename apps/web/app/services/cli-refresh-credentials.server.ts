@@ -43,6 +43,8 @@ export type RefreshedCliSession =
   | { kind: 'invalid' }
 
 export type CliRefreshCredentialFamily = {
+  preset?: 'unrestricted' | 'agent' | 'publisher'
+  publisherClientName?: string | null
   familyId: string
   deviceName: string | null
   createdAt: string
@@ -119,6 +121,7 @@ export async function issueCliRefreshCredential(
           'cli_session_authorities.workspace_id',
           'cli_session_authorities.project_id',
           'cli_session_authorities.agent_profile_id',
+          'cli_session_authorities.publisher_client_id',
           'cli_session_authorities.expires_at',
           'artifact_containers.name as project_name',
         ])
@@ -137,7 +140,8 @@ export async function issueCliRefreshCredential(
     return null
   if (
     bootstrapAuthority?.kind === 'bootstrap' &&
-    bootstrapAuthority.preset !== 'agent'
+    bootstrapAuthority.preset !== 'agent' &&
+    bootstrapAuthority.preset !== 'publisher'
   ) {
     return null
   }
@@ -153,6 +157,39 @@ export async function issueCliRefreshCredential(
   ) {
     return null
   }
+  if (bootstrapAuthority?.preset === 'publisher') {
+    if (
+      !bootstrapAuthority.publisher_client_id ||
+      !bootstrapAuthority.workspace_id ||
+      bootstrapAuthority.project_id ||
+      bootstrapAuthority.agent_profile_id ||
+      (bootstrapAuthority.kind === 'bootstrap' &&
+        (!bootstrapAuthority.expires_at ||
+          bootstrapAuthority.expires_at <= nowIso()))
+    )
+      return null
+    const client = await db
+      .selectFrom('publisher_clients')
+      .innerJoin('users', 'users.id', 'publisher_clients.user_id')
+      .select('publisher_clients.id')
+      .where(
+        'publisher_clients.id',
+        '=',
+        bootstrapAuthority.publisher_client_id,
+      )
+      .where('users.id', '=', userId)
+      .where('users.kind', '=', 'human')
+      .where(
+        'publisher_clients.workspace_id',
+        '=',
+        bootstrapAuthority.workspace_id,
+      )
+      .whereRef('users.workspace_id', '=', 'publisher_clients.workspace_id')
+      .executeTakeFirst()
+    if (!client) return null
+  }
+  const publisherBootstrap =
+    bootstrapAuthority?.preset === 'publisher' ? bootstrapAuthority : null
   const agentBootstrap =
     bootstrapAuthority?.preset === 'agent' ? bootstrapAuthority : null
   const id = nanoid()
@@ -223,6 +260,7 @@ export async function issueCliRefreshCredential(
           'project_id',
           'project_name_snapshot',
           'agent_profile_id',
+          'publisher_client_id',
           'approved_at',
           'device_name',
           'status',
@@ -235,10 +273,20 @@ export async function issueCliRefreshCredential(
             eb.val(userId).as('user_id'),
             eb
               .val(
-                agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+                publisherBootstrap
+                  ? ('publisher' as const)
+                  : agentBootstrap
+                    ? ('agent' as const)
+                    : ('unrestricted' as const),
               )
               .as('preset'),
-            eb.val(agentBootstrap?.workspace_id ?? null).as('workspace_id'),
+            eb
+              .val(
+                publisherBootstrap?.workspace_id ??
+                  agentBootstrap?.workspace_id ??
+                  null,
+              )
+              .as('workspace_id'),
             eb.val(agentBootstrap?.project_id ?? null).as('project_id'),
             eb
               .val(agentBootstrap?.project_name ?? null)
@@ -246,6 +294,9 @@ export async function issueCliRefreshCredential(
             eb
               .val(agentBootstrap?.agent_profile_id ?? null)
               .as('agent_profile_id'),
+            eb
+              .val(publisherBootstrap?.publisher_client_id ?? null)
+              .as('publisher_client_id'),
             eb.val(now).as('approved_at'),
             eb.val(deviceName).as('device_name'),
             eb.val('active' as const).as('status'),
@@ -278,6 +329,7 @@ export async function issueCliRefreshCredential(
           'workspace_id',
           'project_id',
           'agent_profile_id',
+          'publisher_client_id',
           'expires_at',
           'bearer_only',
           'created_at',
@@ -289,14 +341,27 @@ export async function issueCliRefreshCredential(
             eb.val('family' as const).as('kind'),
             eb
               .val(
-                agentBootstrap ? ('agent' as const) : ('unrestricted' as const),
+                publisherBootstrap
+                  ? ('publisher' as const)
+                  : agentBootstrap
+                    ? ('agent' as const)
+                    : ('unrestricted' as const),
               )
               .as('preset'),
-            eb.val(agentBootstrap?.workspace_id ?? null).as('workspace_id'),
+            eb
+              .val(
+                publisherBootstrap?.workspace_id ??
+                  agentBootstrap?.workspace_id ??
+                  null,
+              )
+              .as('workspace_id'),
             eb.val(agentBootstrap?.project_id ?? null).as('project_id'),
             eb
               .val(agentBootstrap?.agent_profile_id ?? null)
               .as('agent_profile_id'),
+            eb
+              .val(publisherBootstrap?.publisher_client_id ?? null)
+              .as('publisher_client_id'),
             eb.val(null).as('expires_at'),
             eb.val(1).as('bearer_only'),
             eb.val(now).as('created_at'),
@@ -310,6 +375,34 @@ export async function issueCliRefreshCredential(
         .where('user_id', '=', userId)
         .where('device_id', '=', deviceId)
         .where('family_id', 'is not', null)
+        // Caller-controlled device ids must never supersede another preset's
+        // publisher identity, including when issuing an unrestricted/agent family.
+        .$if(!publisherBootstrap, (query) =>
+          query.where(
+            'family_id',
+            'not in',
+            db
+              .selectFrom('cli_family_authorities')
+              .select('family_id')
+              .where('preset', '=', 'publisher'),
+          ),
+        )
+        .$if(Boolean(publisherBootstrap), (query) =>
+          query.where(
+            'family_id',
+            'in',
+            db
+              .selectFrom('cli_family_authorities')
+              .select('family_id')
+              .where('preset', '=', 'publisher')
+              .where(
+                'publisher_client_id',
+                '=',
+                publisherBootstrap!.publisher_client_id,
+              )
+              .where('workspace_id', '=', publisherBootstrap!.workspace_id),
+          ),
+        )
     : null
   const supersedePriorCredentials = sourceSessionToken
     ? db
@@ -396,8 +489,8 @@ export async function issueCliRefreshCredential(
             .where('prior.user_id', '=', userId)
             .where(({ or }) =>
               or([
-                ...(deviceId
-                  ? [sql<boolean>`prior.device_id = ${deviceId}`]
+                ...(priorDeviceFamilies
+                  ? [sql<boolean>`prior.family_id IN ${priorDeviceFamilies}`]
                   : []),
                 sql<boolean>`prior.family_id IN ${db
                   .selectFrom('cli_refresh_sessions')
@@ -474,14 +567,20 @@ function recognizedSourceAuthoritySql() {
       SELECT 1 FROM cli_session_authorities source_authority
       WHERE source_authority.session_id = sessions.id
         AND NOT (
-          (source_authority.kind = 'bootstrap' AND source_authority.preset = 'agent')
+          (source_authority.preset <> 'publisher' OR EXISTS (
+            SELECT 1 FROM publisher_clients pc JOIN users pu ON pu.id = pc.user_id AND pu.workspace_id = pc.workspace_id AND pu.kind = 'human'
+            WHERE pc.id = source_authority.publisher_client_id AND pc.user_id = sessions.user_id AND pc.workspace_id = source_authority.workspace_id
+              AND NOT EXISTS (SELECT 1 FROM workspace_members pm WHERE pm.user_id = pu.id AND pm.workspace_id = pc.workspace_id AND pm.status = 'removed')
+          )) AND (
+          (source_authority.kind = 'bootstrap' AND source_authority.preset IN ('agent', 'publisher') AND source_authority.expires_at > ${nowIso()})
           OR (source_authority.kind = 'family'
-            AND source_authority.preset IN ('agent', 'unrestricted')
+            AND source_authority.preset IN ('agent', 'unrestricted', 'publisher')
             AND EXISTS (
               SELECT 1 FROM cli_family_authorities source_family
               WHERE source_family.family_id = source_authority.family_id
-                AND source_family.preset IN ('agent', 'unrestricted')
-            ))
+                AND source_family.preset IN ('agent', 'unrestricted', 'publisher')
+                AND source_family.status = 'active'
+            )))
         )
     )`
 }
@@ -588,7 +687,8 @@ export async function refreshCliSession(
           .select('family_id')
           .where('family_id', '=', familyId)
           .where('status', '=', 'active')
-          .where('preset', 'in', ['unrestricted', 'agent']),
+          .where('preset', 'in', ['unrestricted', 'agent', 'publisher'])
+          .where(publisherFamilyIdentitySql()),
       ),
     )
     // A stopped bot must never be able to mint a new credential or session:
@@ -693,6 +793,7 @@ export async function refreshCliSession(
       'workspace_id',
       'project_id',
       'agent_profile_id',
+      'publisher_client_id',
       'expires_at',
       'bearer_only',
       'created_at',
@@ -704,7 +805,12 @@ export async function refreshCliSession(
         .where('sessions.id', '=', sessionId)
         .where('cli_family_authorities.family_id', '=', familyId)
         .where('cli_family_authorities.status', '=', 'active')
-        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
+        .where('cli_family_authorities.preset', 'in', [
+          'unrestricted',
+          'agent',
+          'publisher',
+        ])
+        .where(publisherFamilyIdentitySql())
         .select([
           'sessions.id as session_id',
           'cli_family_authorities.family_id',
@@ -713,6 +819,7 @@ export async function refreshCliSession(
           'cli_family_authorities.workspace_id',
           'cli_family_authorities.project_id',
           'cli_family_authorities.agent_profile_id',
+          'cli_family_authorities.publisher_client_id',
           eb.val(null).as('expires_at'),
           eb.val(1).as('bearer_only'),
           eb.val(now).as('created_at'),
@@ -771,7 +878,12 @@ async function refreshLegacyCliSession(
     .where('cli_refresh_credentials.expires_at', '>', now)
     .where('cli_refresh_credentials.revoked_at', 'is', null)
     .where('cli_family_authorities.status', '=', 'active')
-    .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
+    .where('cli_family_authorities.preset', 'in', [
+      'unrestricted',
+      'agent',
+      'publisher',
+    ])
+    .where(publisherFamilyIdentitySql())
     // Bot tokens must go through the rotation-consuming path; the legacy
     // route would let a leaked bot token mint sessions indefinitely without
     // consuming the family-root credential. Rejected as an ordinary invalid
@@ -817,7 +929,12 @@ async function refreshLegacyCliSession(
         .where('revoked_at', 'is', null)
         .where('expires_at', '>', now)
         .where('cli_family_authorities.status', '=', 'active')
-        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
+        .where('cli_family_authorities.preset', 'in', [
+          'unrestricted',
+          'agent',
+          'publisher',
+        ])
+        .where(publisherFamilyIdentitySql())
         .select([
           eb.val(sessionId).as('id'),
           eb.val(row.user_id).as('user_id'),
@@ -864,6 +981,7 @@ async function refreshLegacyCliSession(
       'workspace_id',
       'project_id',
       'agent_profile_id',
+      'publisher_client_id',
       'expires_at',
       'bearer_only',
       'created_at',
@@ -875,7 +993,12 @@ async function refreshLegacyCliSession(
         .where('sessions.id', '=', sessionId)
         .where('cli_family_authorities.family_id', '=', row.family_id)
         .where('cli_family_authorities.status', '=', 'active')
-        .where('cli_family_authorities.preset', 'in', ['unrestricted', 'agent'])
+        .where('cli_family_authorities.preset', 'in', [
+          'unrestricted',
+          'agent',
+          'publisher',
+        ])
+        .where(publisherFamilyIdentitySql())
         .select([
           'sessions.id as session_id',
           'cli_family_authorities.family_id',
@@ -884,6 +1007,7 @@ async function refreshLegacyCliSession(
           'cli_family_authorities.workspace_id',
           'cli_family_authorities.project_id',
           'cli_family_authorities.agent_profile_id',
+          'cli_family_authorities.publisher_client_id',
           eb.val(null).as('expires_at'),
           eb.val(1).as('bearer_only'),
           eb.val(now).as('created_at'),
@@ -940,8 +1064,18 @@ export async function listCliRefreshCredentialFamilies(
 ): Promise<CliRefreshCredentialFamily[]> {
   const rows = await db
     .selectFrom('cli_refresh_credentials as credential')
+    .leftJoin(
+      'cli_family_authorities as fa',
+      'fa.family_id',
+      'credential.family_id',
+    )
+    .leftJoin('publisher_clients as pc', 'pc.id', 'fa.publisher_client_id')
     .select([
       'credential.family_id as familyId',
+      sql<
+        'unrestricted' | 'agent' | 'publisher'
+      >`coalesce(max(fa.preset), 'unrestricted')`.as('preset'),
+      sql<string | null>`max(pc.name)`.as('publisherClientName'),
       sql<string | null>`max(credential.device_name)`.as('deviceName'),
       sql<string>`min(credential.created_at)`.as('createdAt'),
       sql<string | null>`max(credential.last_used_at)`.as('lastUsedAt'),
@@ -973,9 +1107,9 @@ export async function listCliRefreshCredentialFamilies(
     .groupBy('credential.family_id')
     .orderBy('createdAt', 'desc')
     .execute()
-  return rows.filter(
-    (row): row is CliRefreshCredentialFamily => row.familyId !== null,
-  )
+  return rows
+    .filter((row) => row.familyId !== null)
+    .map((row) => ({ ...row, familyId: row.familyId! }))
 }
 
 export async function revokeCliRefreshCredentialFamily(
@@ -1357,7 +1491,8 @@ async function readRotationReplay(
         selectFrom('cli_family_authorities')
           .select('family_id')
           .whereRef('family_id', '=', 'next.family_id')
-          .where('preset', 'in', ['unrestricted', 'agent']),
+          .where('preset', 'in', ['unrestricted', 'agent', 'publisher'])
+          .where(publisherFamilyIdentitySql()),
       ),
     )
     .executeTakeFirst()
@@ -1520,4 +1655,13 @@ function hashToken(token: string): Promise<string> {
 
 function isoMsFromNow(ms: number): string {
   return new Date(Date.now() + ms).toISOString()
+}
+
+function publisherFamilyIdentitySql() {
+  return sql<boolean>`(cli_family_authorities.preset <> 'publisher' OR EXISTS (
+    SELECT 1 FROM publisher_clients pc JOIN users pu ON pu.id = pc.user_id AND pu.workspace_id = pc.workspace_id AND pu.kind = 'human'
+    WHERE pc.id = cli_family_authorities.publisher_client_id
+      AND pc.user_id = cli_family_authorities.user_id AND pc.workspace_id = cli_family_authorities.workspace_id
+      AND NOT EXISTS (SELECT 1 FROM workspace_members pm WHERE pm.user_id = pu.id AND pm.workspace_id = pc.workspace_id AND pm.status <> 'active')
+  ))`
 }

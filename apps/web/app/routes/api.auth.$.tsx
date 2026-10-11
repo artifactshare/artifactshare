@@ -1,7 +1,12 @@
+import { PublisherClientNameSchema } from '@artifactshare/contract'
 import { authHandlerWithHangDetection } from '~/services/auth.server'
 import { getSessionUser } from '~/services/auth.server'
 import {
   attachAgentBootstrapAuthority,
+  attachPublisherBootstrapAuthority,
+  isPublisherDeviceApproval,
+  selectPublisherApprovalClient,
+  clearPublisherApprovalClient,
   clearAgentApprovalProject,
   loadDeviceAuthorizationIntent,
   isAgentDeviceApproval,
@@ -17,8 +22,8 @@ import type { Route } from './+types/api.auth.$'
 // or accounts on a shared browser. Requires HTTPS — a no-op on http:// dev.
 const CLEAR_SITE_DATA = '"cookies", "storage"'
 
-function maybeClearSiteData(request: Request, response: Response): Response {
-  if (!/\/sign-?out$/i.test(new URL(request.url).pathname)) return response
+function maybeClearSiteData(url: URL, response: Response): Response {
+  if (!/\/sign-?out$/i.test(url.pathname)) return response
   const headers = new Headers(response.headers)
   headers.set('Clear-Site-Data', CLEAR_SITE_DATA)
   return new Response(response.body, {
@@ -28,30 +33,119 @@ function maybeClearSiteData(request: Request, response: Response): Response {
   })
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  return maybeClearSiteData(
-    request,
-    await authHandlerWithHangDetection(request),
+export async function loader({ request, url }: Route.LoaderArgs) {
+  const response = await authHandlerWithHangDetection(request)
+  // The device plugin reports expired verification codes as 400. Preserve
+  // existing presets while letting publisher approval show its expired state.
+  if (url.pathname === '/api/auth/device' && response.status === 400) {
+    const payload = await response
+      .clone()
+      .json()
+      .catch(() => null)
+    const userCode = url.searchParams.get('user_code')?.replace(/-/g, '')
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      'error' in payload &&
+      payload.error === 'expired_token' &&
+      userCode &&
+      (await isPublisherDeviceApproval(userCode))
+    ) {
+      return new Response(response.body, {
+        status: 410,
+        headers: response.headers,
+      })
+    }
+  }
+  return maybeClearSiteData(url, response)
+}
+
+export async function action({ request, url }: Route.ActionArgs) {
+  const path = url.pathname
+  if (/\/device\/(code|token|approve)$/.test(path)) {
+    const payload = await readDeviceRequestBody(request)
+    if (payload instanceof Response) return payload
+    if (path.endsWith('/device/code')) return handleDeviceCode(request, payload)
+    if (path.endsWith('/device/token'))
+      return handleDeviceToken(request, payload)
+    return handleDeviceApprove(request, payload)
+  }
+  return maybeClearSiteData(url, await authHandlerWithHangDetection(request))
+}
+
+async function readDeviceRequestBody(
+  request: Request,
+): Promise<Record<string, unknown> | Response> {
+  const mediaType = request.headers
+    .get('Content-Type')
+    ?.split(';')[0]
+    .trim()
+    .toLowerCase()
+  const isJson = /^application\/(?:[a-z0-9.+-]+\+)?json$/.test(mediaType ?? '')
+  if (!isJson && mediaType !== 'application/x-www-form-urlencoded') {
+    return Response.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Unsupported content type',
+      },
+      { status: 415, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
+  try {
+    // Match the delegated handler's form decoding, including last-value wins
+    // for repeated fields. Never leave a supported body uninspected.
+    const payload: unknown = isJson
+      ? await request.clone().json()
+      : Object.fromEntries(await request.clone().formData())
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return payload as Record<string, unknown>
+    }
+  } catch {
+    // Malformed bodies must not reach the delegated handler either.
+  }
+  return Response.json(
+    { error: 'invalid_request', error_description: 'Invalid request body' },
+    { status: 400, headers: { 'Cache-Control': 'no-store' } },
   )
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  const path = new URL(request.url).pathname
-  if (path.endsWith('/device/code')) return handleDeviceCode(request)
-  if (path.endsWith('/device/token')) return handleDeviceToken(request)
-  if (path.endsWith('/device/approve')) return handleDeviceApprove(request)
-  return maybeClearSiteData(
-    request,
-    await authHandlerWithHangDetection(request),
-  )
-}
-
-async function handleDeviceApprove(request: Request): Promise<Response> {
-  const payload = await request
-    .clone()
-    .json()
-    .catch(() => null)
-  const userCode = readResponseString(payload, 'userCode')
+async function handleDeviceApprove(
+  request: Request,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  const userCode = readResponseString(payload, 'userCode')?.replace(/-/g, '')
+  if (userCode && (await isPublisherDeviceApproval(userCode))) {
+    const approval = payload
+    const user = await getSessionUser(request)
+    if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (approval.project_id !== undefined)
+      return Response.json({ error: 'invalid_request' }, { status: 400 })
+    if (
+      !(await selectPublisherApprovalClient({
+        userCode,
+        userId: user.id,
+        workspaceId: user.workspaceId,
+        choice: approval.publisher,
+      }))
+    ) {
+      return Response.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'Select an owned client, or request a different device_name to create a new client. Existing names must be continued.',
+        },
+        { status: 400 },
+      )
+    }
+    try {
+      const response = await authHandlerWithHangDetection(request)
+      if (!response.ok) await clearPublisherApprovalClient(userCode, user.id)
+      return response
+    } catch (error) {
+      await clearPublisherApprovalClient(userCode, user.id)
+      throw error
+    }
+  }
   if (!userCode || !(await isAgentDeviceApproval(userCode))) {
     return authHandlerWithHangDetection(request)
   }
@@ -85,11 +179,10 @@ async function handleDeviceApprove(request: Request): Promise<Response> {
   return response
 }
 
-async function handleDeviceCode(request: Request): Promise<Response> {
-  const payload = await request
-    .clone()
-    .json()
-    .catch(() => null)
+async function handleDeviceCode(
+  request: Request,
+  payload: Record<string, unknown>,
+): Promise<Response> {
   const intent = readDeviceAuthorizationIntent(payload)
   if (
     payload &&
@@ -98,7 +191,14 @@ async function handleDeviceCode(request: Request): Promise<Response> {
     !intent
   ) {
     return Response.json(
-      { error: 'invalid_request', error_description: 'Invalid preset' },
+      {
+        error: 'invalid_request',
+        error_description:
+          payload.preset === 'publisher' &&
+          !PublisherClientNameSchema.safeParse(payload.device_name).success
+            ? 'Device name must contain 1–100 characters of letters, marks, numbers, spaces and ._-().'
+            : 'Invalid preset',
+      },
       { status: 400, headers: { 'Cache-Control': 'no-store' } },
     )
   }
@@ -113,11 +213,10 @@ async function handleDeviceCode(request: Request): Promise<Response> {
   return response
 }
 
-async function handleDeviceToken(request: Request): Promise<Response> {
-  const payload = await request
-    .clone()
-    .json()
-    .catch(() => null)
+async function handleDeviceToken(
+  request: Request,
+  payload: Record<string, unknown>,
+): Promise<Response> {
   const deviceCode = readResponseString(payload, 'device_code')
   const intent = deviceCode
     ? await loadDeviceAuthorizationIntent(deviceCode)
@@ -132,6 +231,17 @@ async function handleDeviceToken(request: Request): Promise<Response> {
   switch (intent.preset) {
     case 'unrestricted':
       return response
+    case 'publisher':
+      try {
+        if (
+          accessToken &&
+          (await attachPublisherBootstrapAuthority(accessToken, intent))
+        )
+          return response
+      } catch {
+        /* Revoke the unscoped token below on attachment failure. */
+      }
+      break
     case 'agent':
       if (
         accessToken &&
@@ -150,7 +260,10 @@ async function handleDeviceToken(request: Request): Promise<Response> {
   return Response.json(
     {
       error: 'invalid_grant',
-      error_description: 'Agent authorization is incomplete',
+      error_description:
+        intent.preset === 'publisher'
+          ? 'Publisher authorization is incomplete'
+          : 'Agent authorization is incomplete',
     },
     { status: 400, headers: { 'Cache-Control': 'no-store' } },
   )

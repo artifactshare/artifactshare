@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+const getPublisherDownloadFileMock = vi.hoisted(() => vi.fn())
 const getCliDownloadManifestMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/middleware/auth', () => ({
@@ -20,6 +21,7 @@ vi.mock('~/services/db.server', () => ({
 }))
 vi.mock('~/services/cli-download.server', () => ({
   getCliDownloadManifest: getCliDownloadManifestMock,
+  getPublisherDownloadFile: getPublisherDownloadFileMock,
 }))
 
 import { loader, middleware } from './api.cli.artifacts.$id.download'
@@ -61,6 +63,37 @@ describe('/api/cli/artifacts/:id/download', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'scope-denied' },
     })
+    expect(getCliDownloadManifestMock).not.toHaveBeenCalled()
+  })
+
+  test('publisher exact download streams source with restrictive attachment headers instead of a manifest', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'publisher',
+      familyId: 'family1',
+      workspaceId: 'ws1',
+      publisherClientId: 'client1',
+      publisherClientName: 'Reports',
+    })
+    getPublisherDownloadFileMock.mockResolvedValue({
+      kind: 'ok',
+      file: { content_type: 'text/html' },
+      object: { body: new Blob(['<p>Report</p>']).stream(), size: 13 },
+    })
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.test/api/cli/artifacts/abc123def4/download',
+      ),
+    } as never)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toBe('attachment')
+    expect(response.headers.get('cache-control')).toContain('no-store')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('content-security-policy')).toContain(
+      "default-src 'none'",
+    )
+    expect(await response.text()).toBe('<p>Report</p>')
     expect(getCliDownloadManifestMock).not.toHaveBeenCalled()
   })
 

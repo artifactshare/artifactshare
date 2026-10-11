@@ -223,7 +223,7 @@ const EN: CliReferenceContent = {
   sections: {
     introduction: {
       title: 'Introduction and authentication',
-      body: `Node.js 22.19 or newer is required. Start with ${CLI_REFERENCE_EXAMPLES.init}, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.`,
+      body: `Node.js 22.19 or newer is required. Start with ${CLI_REFERENCE_EXAMPLES.init}, complete browser sign-in, or import a token for CI with profiles import-token. Use login --preset agent to restrict an agent to one selected project. A new profile defaults to unrestricted access; an existing profile keeps its previous preset. API-only publisher credentials require a normalized device_name and explicit browser choice to create or continue a client. Duplicate names require continuation or another device_name; names cannot be edited during approval. They create private home files and update or download only their own files, even after sharing or moving, using expected_version for updates. The exact /api/cli/artifacts/:id/download endpoint returns source bytes for publisher; other presets receive a JSON manifest. Publisher cannot list, read back, comment, edit, move, delete, use projects, append, upsert, or publish static sites. CLI publisher login/resume and publishing/download workflows are unsupported; doctor reports the client scope. Use --profile to keep credentials separate, logout to revoke a browser-authenticated CLI session, and Settings → Tokens to revoke an API token.`,
     },
     basics: {
       title: 'Basic operations',
@@ -287,7 +287,7 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。`,
+      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。 publisher は API 専用です。device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。同名での新規作成はできず、名前の変更は認証の再要求が必要です。ホームに自分だけが閲覧できるファイルを作成し、そのファイルだけをダウンロード・更新できます。共有範囲や移動先を変えた後も更新でき、expected_version が必須です。publisher の /api/cli/artifacts/:id/download は元ファイルのバイト列を返し、既存プリセットは JSON マニフェストを返します。一覧・本文の取得、コメント、設定、移動、削除、プロジェクト操作、追記、上書き投稿、静的サイトには使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
     },
     basics: {
       title: '基本操作',

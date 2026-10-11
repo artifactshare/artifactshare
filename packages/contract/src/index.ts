@@ -166,10 +166,27 @@ export const CliAuthRevokeResponseSchema = z.object({
 })
 export type CliAuthRevokeResponse = z.infer<typeof CliAuthRevokeResponseSchema>
 
-export const DeviceAuthorizationPresetSchema = z.enum(['unrestricted', 'agent'])
+export const DeviceAuthorizationPresetSchema = z.enum([
+  'unrestricted',
+  'agent',
+  'publisher',
+])
 export type DeviceAuthorizationPreset = z.infer<
   typeof DeviceAuthorizationPresetSchema
 >
+
+export const PublisherClientNameSchema = z
+  .string()
+  .transform((value) => value.trim().normalize('NFC'))
+  .refine(
+    (value) =>
+      Array.from(value).length >= 1 &&
+      Array.from(value).length <= 100 &&
+      /^[\p{L}\p{M}\p{N} ._()-]+$/u.test(value) &&
+      !/\p{Default_Ignorable_Code_Point}/u.test(value) &&
+      /[\p{L}\p{N}._()-]/u.test(value),
+    'Use 1–100 letters, marks, numbers, spaces, or ._-()',
+  )
 
 export const DeviceCodeRequestSchema = z
   .object({
@@ -177,7 +194,7 @@ export const DeviceCodeRequestSchema = z
     // The default Better Auth flow permits the field to be omitted. The CLI
     // always sends it, while older clients may rely on the default flow.
     preset: DeviceAuthorizationPresetSchema.optional(),
-    device_name: z.string().max(100).nullable().optional(),
+    device_name: z.string().nullable().optional(),
     project_selector: z
       .string()
       .refine((value) => {
@@ -187,6 +204,22 @@ export const DeviceCodeRequestSchema = z
       .optional(),
   })
   .superRefine((value, context) => {
+    if (value.preset === 'publisher') {
+      const name = PublisherClientNameSchema.safeParse(value.device_name)
+      if (!name.success)
+        context.addIssue({
+          code: 'custom',
+          path: ['device_name'],
+          message: 'A valid publisher client name is required',
+        })
+      else value.device_name = name.data
+    } else if (value.device_name != null && value.device_name.length > 100) {
+      context.addIssue({
+        code: 'custom',
+        path: ['device_name'],
+        message: 'device_name must contain at most 100 characters',
+      })
+    }
     if (value.preset !== 'agent' && value.project_selector !== undefined) {
       context.addIssue({
         code: 'custom',
@@ -227,7 +260,15 @@ export const DeviceTokenResponseSchema = z.object({
 })
 export type DeviceTokenResponse = z.infer<typeof DeviceTokenResponseSchema>
 
+export const PublisherApprovalChoiceSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('create-new') }).strict(),
+  z
+    .object({ mode: z.literal('continue-existing'), client_id: stringId })
+    .strict(),
+])
+
 export const DeviceApproveRequestSchema = z.object({
+  publisher: PublisherApprovalChoiceSchema.optional(),
   userCode: stringId,
   project_id: stringId.optional(),
 })
@@ -271,7 +312,15 @@ export const AgentApprovalSchema = z.object({
 })
 export type AgentApproval = z.infer<typeof AgentApprovalSchema>
 
+export const PublisherApprovalSchema = z.object({
+  preset: z.literal('publisher'),
+  requestedName: PublisherClientNameSchema,
+  clients: z.array(z.object({ id: stringId, name: PublisherClientNameSchema })),
+})
+export type PublisherApproval = z.infer<typeof PublisherApprovalSchema>
+
 export const DeviceApprovalResponseSchema = z.object({
+  publisherApproval: PublisherApprovalSchema.nullable().optional(),
   agentApproval: AgentApprovalSchema.nullable(),
 })
 export type DeviceApprovalResponse = z.infer<
@@ -292,18 +341,49 @@ export const CliWorkspaceSchema = z.object({
 })
 export type CliWorkspace = z.infer<typeof CliWorkspaceSchema>
 
+export const DoctorAuthoritySchema = z
+  .object({
+    preset: DeviceAuthorizationPresetSchema,
+    project_id: stringId.nullable(),
+    publisher_client_id: stringId.optional(),
+    publisher_client_name: PublisherClientNameSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.preset === 'publisher' &&
+      (value.project_id !== null ||
+        !value.publisher_client_id ||
+        !value.publisher_client_name)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Publisher diagnostics require a client and no project',
+      })
+    }
+    if (
+      value.preset !== 'publisher' &&
+      (value.publisher_client_id !== undefined ||
+        value.publisher_client_name !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Client attribution requires the publisher preset',
+      })
+    }
+  })
+export type DoctorAuthority = z.infer<typeof DoctorAuthoritySchema>
+
 export const CliWhoamiResponseSchema = z.object({
   user: CliUserSchema,
   workspace: CliWorkspaceSchema,
-  auth: z.object({ kind: z.literal('bearer_or_session') }).optional(),
+  auth: z
+    .object({
+      kind: z.literal('bearer_or_session'),
+      authority: DoctorAuthoritySchema.optional(),
+    })
+    .optional(),
 })
 export type CliWhoamiResponse = z.infer<typeof CliWhoamiResponseSchema>
-
-export const DoctorAuthoritySchema = z.object({
-  preset: DeviceAuthorizationPresetSchema,
-  project_id: stringId.nullable(),
-})
-export type DoctorAuthority = z.infer<typeof DoctorAuthoritySchema>
 
 export const DoctorUploadSchema = z.union([
   z.object({ ok: z.literal(true) }),
@@ -1092,6 +1172,7 @@ export const CLI_API_ENDPOINTS = {
     successStatus: 200,
     errorStatuses: [400, 401, 403, 404, 405, 409, 413, 415, 502] as const,
   },
+  // Publisher returns current single-file source bytes here; existing presets return a JSON manifest.
   artifactDownloadManifest: {
     path: '/api/cli/artifacts/:id/download',
     method: 'GET',

@@ -24,6 +24,13 @@ const AGENT_RULES: Rule[] = [
   { method: 'POST', pattern: /^\/api\/shareables\/[^/]+\/versions$/ },
 ]
 
+const PUBLISHER_RULES: Rule[] = [
+  ...BOOTSTRAP_RULES,
+  { method: 'POST', pattern: /^\/api\/shareables\/uploads$/ },
+  { method: 'POST', pattern: /^\/api\/shareables\/[^/]+\/versions$/ },
+  { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+\/download$/ },
+]
+
 const BRIDGE_RULES: Rule[] = [
   { method: 'GET', pattern: /^\/api\/bridge\/v1\/health$/ },
   { method: 'POST', pattern: /^\/api\/bridge\/v1\/requests$/ },
@@ -43,6 +50,9 @@ export function allowsCliOperation(
       break
     case 'agent':
       rules = AGENT_RULES
+      break
+    case 'publisher':
+      rules = PUBLISHER_RULES
       break
     case 'bridge':
       rules = BRIDGE_RULES

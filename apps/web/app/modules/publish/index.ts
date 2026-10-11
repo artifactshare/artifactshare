@@ -53,6 +53,7 @@ export type PublishUser = {
  */
 type UnrestrictedAuthority = Extract<CliAuthority, { kind: 'unrestricted' }>
 type BootstrapAuthority = Extract<CliAuthority, { kind: 'bootstrap' }>
+type PublisherAuthority = Extract<CliAuthority, { kind: 'publisher' }>
 type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 type BridgeAuthority = Extract<CliAuthority, { kind: 'bridge' }>
 type HumanPublishUser = PublishUser & { kind: 'human' }
@@ -65,6 +66,7 @@ export type Principal =
       authority?: UnrestrictedAuthority | null
     }
   | { kind: 'bootstrap'; user: PublishUser; authority: BootstrapAuthority }
+  | { kind: 'publisher'; user: HumanPublishUser; authority: PublisherAuthority }
   | { kind: 'agent'; user: PublishUser; authority: AgentAuthority }
   | { kind: 'bot'; user: BotPublishUser; authority: AgentAuthority }
   | { kind: 'bridge'; user: PublishUser; authority: BridgeAuthority }
@@ -78,6 +80,10 @@ export function publishPrincipal(
       ? null
       : { kind: 'human', user: { ...user, kind: 'human' } }
   switch (authority.kind) {
+    case 'publisher':
+      return user.kind === 'bot'
+        ? null
+        : { kind: 'publisher', user: { ...user, kind: 'human' }, authority }
     case 'agent':
       return user.kind === 'bot'
         ? { kind: 'bot', user: { ...user, kind: 'bot' }, authority }
@@ -303,6 +309,10 @@ async function publishWithDb(
         break
       case 'bootstrap':
         return { kind: 'forbidden' }
+      case 'publisher':
+        if (intent.actor.kind !== 'publisher' || user.kind !== 'human')
+          return { kind: 'forbidden' }
+        break
       case 'agent':
         if (intent.actor.kind !== 'agent' && intent.actor.kind !== 'bot')
           return { kind: 'forbidden' }
@@ -354,7 +364,25 @@ async function publishWithDb(
     hd: user.hd ?? null,
     msTenantId: user.msTenantId ?? null,
   }
-  const agentAuthority = cliReadAuthority(authority)
+  const publisher = authority?.kind === 'publisher' ? authority : null
+  if (publisher) {
+    if (intent.content.kind !== 'file' || intent.target.kind === 'append')
+      return { kind: 'forbidden' }
+    if (isUpdateIntent(intent) && !intent.target.expectedVersionId?.trim())
+      return { kind: 'expected-version-required' }
+    if (!isUpdateIntent(intent)) {
+      const create = intent as PublishCreateIntent
+      if (
+        create.destination.kind !== 'home' ||
+        (create.visibility !== undefined && create.visibility !== 'private') ||
+        create.grantEmails?.length ||
+        create.linkExpiresAt != null ||
+        create.idempotencyKey != null
+      )
+        return { kind: 'forbidden' }
+    }
+  }
+  const agentAuthority = publisher ? null : cliReadAuthority(authority)
   if (agentAuthority === 'denied') return { kind: 'forbidden' }
   const authorityAgentProfileId =
     agentAuthority !== null ? agentAuthority.agentProfileId : null
@@ -450,7 +478,7 @@ async function publishWithDb(
       ? createIntent.destination.id
       : null
   const visibility =
-    createIntent.visibility ??
+    (publisher ? 'private' : createIntent.visibility) ??
     (createIntent.grantEmails && createIntent.grantEmails.length > 0
       ? 'private'
       : defaultVisibilityFor(
@@ -499,6 +527,7 @@ async function publishWithDb(
     containerId,
     createIntent.idempotencyKey ?? null,
     {
+      ...(authority ? { authority } : {}),
       ...(agentProfileId !== undefined ? { agentProfileId } : {}),
       ...(createIntent.notify.slack === false ? { slackNotify: false } : {}),
       ...(createIntent.linkExpiresAt !== undefined
