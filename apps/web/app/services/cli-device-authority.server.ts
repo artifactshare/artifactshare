@@ -84,7 +84,7 @@ export async function loadDeviceAuthorizationIntent(
       selectedProjectId: string | null
       requestedProjectSelector: string | null
     }>()
-  if (!row?.preset) return null
+  if (!row || row.preset === null) return null
   return {
     preset: row.preset,
     deviceName: row.deviceName,

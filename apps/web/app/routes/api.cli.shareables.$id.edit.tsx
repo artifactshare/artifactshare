@@ -1,6 +1,8 @@
-import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import {
+  allowsHumanCliMutation,
+  cliReadAuthority,
+} from '~/lib/cli-authority-policy'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
-import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import {
   ArtifactIdParamsSchema,
   CliEditRequestSchema,
