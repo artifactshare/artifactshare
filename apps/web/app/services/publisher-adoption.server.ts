@@ -61,16 +61,13 @@ export async function adoptPublisherArtifact(
             eb.val('artifact.publisher_adopted').as('action'),
             eb.val('shareable').as('subject_type'),
             'id as subject_id',
-            eb
-              .val(
-                JSON.stringify({
-                  previous_publisher_client_id:
-                    row.assigned_publisher_client_id ??
-                    row.created_by_publisher_client_id,
-                  publisher_client_id: clientId,
-                }),
-              )
-              .as('detail'),
+            sql<string>`json_object(
+              'artifact_title', COALESCE(shareables.title_override, shareables.derived_title, shareables.name),
+              'previous_publisher_client_id', COALESCE(shareables.assigned_publisher_client_id, shareables.created_by_publisher_client_id),
+              'previous_publisher_client_name', (SELECT name FROM publisher_clients WHERE id = COALESCE(shareables.assigned_publisher_client_id, shareables.created_by_publisher_client_id)),
+              'publisher_client_id', ${clientId},
+              'publisher_client_name', (SELECT name FROM publisher_clients WHERE id = ${clientId})
+            )`.as('detail'),
             eb.val(nowIso()).as('created_at'),
           ]),
       ),

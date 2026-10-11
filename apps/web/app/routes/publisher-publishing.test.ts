@@ -267,7 +267,10 @@ test('excluded publisher endpoints leave rows, storage and notifications unchang
         method,
         ...(method !== 'GET'
           ? {
-              headers: { 'content-type': 'application/json' },
+              headers: {
+                'content-type': 'application/json',
+                Origin: 'https://example.test',
+              },
               body: JSON.stringify({
                 name: 'Changed',
                 retain_versions: 1,
@@ -404,12 +407,16 @@ function jsonArgs(id: string, method: string, body?: unknown) {
   return {
     context,
     params: { id },
+    url: new URL(`https://example.test/api/cli/shareables/${id}/edit`),
     request: new Request(`https://example.test/api/cli/shareables/${id}/edit`, {
       method,
       ...(body === undefined
         ? {}
         : {
-            headers: { 'content-type': 'application/json' },
+            headers: {
+              'content-type': 'application/json',
+              Origin: 'https://example.test',
+            },
             body: JSON.stringify(body),
           }),
     }),
@@ -648,8 +655,11 @@ test('adoption preserves provenance, replaces scope, and audits repeated assignm
     subject_id: created.id,
   })
   expect(JSON.parse(events[0]!.detail!)).toEqual({
+    artifact_title: 'report.html',
     previous_publisher_client_id: 'client1',
+    previous_publisher_client_name: 'Reports',
     publisher_client_id: 'client2',
+    publisher_client_name: 'Other reports',
   })
   expect(
     await adoptPublisherArtifact(
@@ -1306,4 +1316,163 @@ test('retention cannot prune or write accounting after assignment changes before
       .execute(),
   ).toEqual([])
   expect(bucket.delete).not.toHaveBeenCalled()
+})
+
+test.each([
+  [{ 'Content-Type': 'application/json' }, 403],
+  [
+    {
+      Origin: 'https://other.example.test',
+      'Content-Type': 'application/json',
+    },
+    403,
+  ],
+  [
+    {
+      Origin: 'https://example.test',
+      'Sec-Fetch-Site': 'cross-site',
+      'Content-Type': 'application/json',
+    },
+    403,
+  ],
+  [{ Origin: 'https://example.test', 'Content-Type': 'text/plain' }, 415],
+  [
+    {
+      Origin: 'https://example.test',
+      'Content-Type': 'application/json-invalid',
+    },
+    415,
+  ],
+  [{ Origin: 'https://example.test' }, 415],
+] as const)(
+  'browser adoption rejects unsafe headers %j before reading the payload',
+  async (headers, status) => {
+    const { action: adopt } = await import('./api.cli.artifacts.$id.adopt')
+    const created = await create()
+    credential.value = null
+    context.set('authSource', 'cookie')
+    const before = snapshot()
+    const request = new Request(
+      `https://example.test/api/cli/artifacts/${created.id}/adopt`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ publisher_client_id: 'client2' }),
+      },
+    )
+    const result = await adopt({
+      context,
+      params: { id: created.id },
+      request,
+    } as never)
+    expect(result.status).toBe(status)
+    expect(request.bodyUsed).toBe(false)
+    expect(snapshot()).toEqual(before)
+  },
+)
+
+test('unrestricted static-site updates retain the existing invalid-query response', async () => {
+  credential.value = { kind: 'unrestricted' }
+  const response = await upload(
+    args(
+      '/api/shareables/uploads?artifact_kind=static_site',
+      site({ 'index.html': '<h1>First</h1>' }),
+    ),
+  )
+  expect(response.status).toBe(200)
+  const created = (await response.json()) as { id: string; versionId: string }
+  const result = await update(
+    args(
+      `/api/shareables/${created.id}/versions?artifact_kind=static_site&base_version=${created.versionId}&expected_version=version1`,
+      site({ 'index.html': '<h1>Second</h1>' }),
+      created.id,
+    ),
+  )
+  expect(result.status).toBe(400)
+  expect(await result.json()).toMatchObject({
+    error: { code: 'validation-failed', message: 'Invalid version query.' },
+  })
+})
+
+test.each(['html_page', 'static_site'])(
+  'published %s still enforces owner retention after publisher revocation',
+  async (kind) => {
+    const created =
+      kind === 'html_page'
+        ? await create()
+        : ((await (
+            await upload(
+              args(
+                '/api/shareables/uploads?artifact_kind=static_site',
+                site({ 'index.html': '<h1>First</h1>' }),
+              ),
+            )
+          ).json()) as { id: string; versionId: string })
+    fixture
+      .current!.prepare(
+        'UPDATE shareables SET retain_versions = 1 WHERE id = ?',
+      )
+      .run(created.id)
+    let revoked = false
+    const revokeAfterPublish = () => {
+      const row = fixture
+        .current!.prepare(
+          'SELECT current_version_id FROM shareables WHERE id = ?',
+        )
+        .get(created.id)
+      if (row?.current_version_id !== created.versionId) {
+        fixture.current!.exec(
+          "UPDATE cli_family_authorities SET status = 'revoked'",
+        )
+        revoked = true
+      } else fixture.afterNextBatch = revokeAfterPublish
+    }
+    fixture.afterNextBatch = revokeAfterPublish
+    const result = await update(
+      args(
+        `/api/shareables/${created.id}/versions?${kind === 'static_site' ? 'artifact_kind=static_site&base_version' : 'expected_version'}=${created.versionId}`,
+        kind === 'static_site'
+          ? site({ 'index.html': '<h1>Second</h1>' })
+          : form('<h1>Second</h1>'),
+        created.id,
+      ),
+    )
+    expect(result.status).toBe(200)
+    expect(revoked).toBe(true)
+    const versions = await fixture
+      .db!.selectFrom('versions')
+      .select('id')
+      .where('shareable_id', '=', created.id)
+      .execute()
+    expect(versions).toHaveLength(1)
+    expect(versions[0]!.id).not.toBe(created.versionId)
+    expect(
+      await fixture
+        .db!.selectFrom('version_retention_tombstones')
+        .select('version_id')
+        .execute(),
+    ).toEqual([{ version_id: created.versionId }])
+  },
+)
+
+test('publisher edit uses the normalized public URL and shared edit response', async () => {
+  const created = await create()
+  const result = await edit({
+    context,
+    params: { id: created.id },
+    url: new URL(`https://example.test/api/cli/shareables/${created.id}/edit`),
+    request: new Request(
+      `http://internal.invalid/api/cli/shareables/${created.id}/edit`,
+      { method: 'PATCH', body: JSON.stringify({ retain_versions: null }) },
+    ),
+  } as never)
+  expect(result.status).toBe(200)
+  expect(await result.json()).toMatchObject({
+    artifact: { id: created.id, url: `https://example.test/a/${created.id}` },
+    title: 'report.html',
+    destination: { type: 'home', project_id: null },
+    share: { visibility: 'private', link_expires_at: null },
+    retain_versions: null,
+    deleted_versions: 0,
+  })
 })

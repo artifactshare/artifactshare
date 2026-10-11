@@ -561,6 +561,10 @@ export async function loadAuditEventsPage(
               ? row.audit_subject_id
               : stringValue('artifact_id'),
           publisherClientId: stringValue('publisher_client_id'),
+          publisherClientName: stringValue('publisher_client_name'),
+          previousPublisherClientName: stringValue(
+            'previous_publisher_client_name',
+          ),
           previousPublisherClientId: stringValue(
             'previous_publisher_client_id',
           ),

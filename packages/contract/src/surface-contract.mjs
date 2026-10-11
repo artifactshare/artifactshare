@@ -178,7 +178,9 @@ export const MCP_OPENAPI_METADATA = {
 }
 
 // Option explanations displayed alongside the generated command reference.
-export const CLI_REFERENCE_OPTION_HELP = { edit: ['--visibility'] }
+export const CLI_REFERENCE_OPTION_HELP = {
+  edit: ['--visibility', '--retain-versions'],
+}
 
 /** @param {string} name */
 const restRef = (name) => ({ $ref: `#/components/schemas/${name}` })

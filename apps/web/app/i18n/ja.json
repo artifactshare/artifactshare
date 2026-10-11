@@ -1,5 +1,5 @@
 {
-  "team.activity.action.artifact.publisher_adopted": "投稿クライアントにファイルを割り当て",
+  "team.activity.action.artifact.publisher_adopted": "クライアントにファイルを割り当て",
   "guide.code.copy": "コピー",
   "guide.code.copied": "コピーしました",
   "guide.code.copyAriaLabel": "コードをコピー",
@@ -1559,7 +1559,7 @@
   "preview.shareDialog.errorWorkspaceAccessRevoked": "このアカウントはそのワークスペースにアクセスできなくなりました。",
   "preview.shareDialog.errorStorageLimit": "ワークスペースの保存容量の上限に達しています。",
   "preview.shareDialog.snapshotFailed": "ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。",
-  "device.publisher.capability": "このクライアントは、あなたのホームに自分だけが見られるファイルや静的サイトを作成できます。作成したものと、あなたが割り当てたものの内容・共有範囲の確認、更新、削除、古い版の削除ができます。同じワークスペース内で共有や移動をした後も、あなたが所有している間は利用できます。",
+  "device.publisher.capability": "このクライアントは、あなたのホームに、あなただけが見られるファイルや静的サイトを作れます。このクライアントが作ったものと、あなたが割り当てたものについて、内容と共有範囲の確認、更新、削除、古い版の削除ができます。削除した内容は元に戻せません。同じワークスペース内で共有や移動をしたあとも、あなたが持ち主である間は使えます。",
   "device.publisher.choice": "クライアントの選択",
   "device.publisher.new": "新しいクライアントを作成",
   "device.publisher.continue": "既存のクライアントを継続",

@@ -70,7 +70,7 @@ test('first client defaults to create-new and labels the requested name', async 
   await render([])
   expect(en['device.publisher.capability']).toContain('static sites')
   expect(en['device.publisher.capability']).toContain(
-    'permanently delete their older versions',
+    'permanently delete them or their older versions',
   )
   expect(en['device.publisher.capability']).toContain('you assigned to it')
   await expect

@@ -305,7 +305,7 @@ function subjectText(
         .map((plan) => planText(plan, t))
         .join(' → ')
     case 'artifact.publisher_adopted':
-      return [d.artifactId, d.publisherClientId].filter(Boolean).join(' → ')
+      return `${d.artifactTitle ?? d.artifactId ?? '—'} · ${d.previousPublisherClientName ?? d.previousPublisherClientId ?? '—'} → ${d.publisherClientName ?? d.publisherClientId ?? '—'}`
     case 'artifact.delete':
       return d.name ?? ''
     case 'bot.create':

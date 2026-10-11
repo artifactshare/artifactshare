@@ -1,5 +1,5 @@
 {
-  "team.activity.action.artifact.publisher_adopted": "Assigned file to publisher",
+  "team.activity.action.artifact.publisher_adopted": "File assigned to client",
   "guide.code.copy": "Copy",
   "guide.code.copied": "Copied",
   "guide.code.copyAriaLabel": "Copy code",
@@ -1559,7 +1559,7 @@
   "preview.shareDialog.errorWorkspaceAccessRevoked": "This account no longer has access to that workspace.",
   "preview.shareDialog.errorStorageLimit": "The workspace has reached its storage limit.",
   "preview.shareDialog.snapshotFailed": "The file could not be read, so sharing is disabled. Reopen this dialog once it is available.",
-  "device.publisher.capability": "This client can create private files and static sites in your home. It can read, update or delete files and sites it created or you assigned to it, and permanently delete their older versions. Access continues after you share or move them within this workspace, while you remain the owner.",
+  "device.publisher.capability": "This client can create private files and static sites in your home. It can read and update files and sites it created or you assigned to it, and permanently delete them or their older versions. Access continues after you share or move them within this workspace, while you remain the owner.",
   "device.publisher.choice": "Client identity",
   "device.publisher.new": "Create a new client",
   "device.publisher.continue": "Continue an existing client",

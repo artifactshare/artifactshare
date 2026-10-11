@@ -2835,11 +2835,7 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
-    await pruneVersionsAfterPublish(
-      this.db,
-      this.shareableId,
-      ...(publisher ? [{ userId: this.user.id, authority: publisher }] : []),
-    )
+    await pruneVersionsAfterPublish(this.db, this.shareableId)
     await scheduleArtifactVersionChanged(
       this.shareableId,
       this.versionId,

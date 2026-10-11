@@ -1,5 +1,4 @@
-import { env } from 'cloudflare:workers'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { displayTitle } from '~/lib/display-title'
 import { publisherArtifactSql } from '~/services/publisher-scope.server'
 import {
   allowsHumanCliMutation,
@@ -26,7 +25,12 @@ import type { Route } from './+types/api.cli.shareables.$id.edit'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function action({ request, params, context }: Route.ActionArgs) {
+export async function action({
+  request,
+  params,
+  context,
+  url,
+}: Route.ActionArgs) {
   const authority = getCliAuthority(context)
   const publisher = authority?.kind === 'publisher' ? authority : null
   if (request.method !== 'POST' && !(publisher && request.method === 'PATCH')) {
@@ -71,24 +75,23 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         return errorResponse('not-found', 'Shareable not found.', 404)
       return Response.json(
         CliEditResponseSchema.parse({
-          artifact: {
+          ...cliEditSuccessBody(url.href, {
             id: row.id,
-            url: shareableUrl(
-              new URL(request.url).origin,
-              row.id,
-              row.visibility,
-              isProduction(env),
-            ),
-          },
-          title: row.title_override ?? row.derived_title ?? row.name,
-          destination:
-            row.container_kind === 'project'
-              ? { type: 'project', project_id: row.container_id }
-              : { type: 'home', project_id: null },
-          share: {
+            title: displayTitle({
+              name: row.name,
+              derivedTitle: row.derived_title,
+              titleOverride: row.title_override,
+            }),
             visibility: row.visibility,
-            link_expires_at: row.link_expires_at,
-          },
+            linkExpiresAt: row.link_expires_at,
+            updatedAt: row.updated_at,
+            projectId:
+              row.container_kind === 'project' ? row.container_id : null,
+            artifactKind: row.artifact_kind as
+              | 'html_page'
+              | 'markdown_page'
+              | 'static_site',
+          }),
           ...metadata,
         }),
       )
@@ -150,7 +153,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         )
       return Response.json(
         CliEditResponseSchema.parse({
-          ...cliEditSuccessBody(request.url, result.shareable),
+          ...cliEditSuccessBody(url.href, result.shareable),
           ...metadata,
         }),
       )

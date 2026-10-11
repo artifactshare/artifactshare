@@ -77,6 +77,9 @@ describe('/api/cli/shareables/:id/edit', () => {
     )
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request,
     } as never)
@@ -91,6 +94,9 @@ describe('/api/cli/shareables/:id/edit', () => {
   test('edits title, sharing, and destination for the authenticated owner', async () => {
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -152,6 +158,9 @@ describe('/api/cli/shareables/:id/edit', () => {
 
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -171,6 +180,9 @@ describe('/api/cli/shareables/:id/edit', () => {
 
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'missing' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/missing/edit',
@@ -188,6 +200,9 @@ describe('/api/cli/shareables/:id/edit', () => {
 
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -221,6 +236,9 @@ describe('/api/cli/shareables/:id/edit', () => {
 
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -236,6 +254,9 @@ describe('/api/cli/shareables/:id/edit', () => {
   test('rejects requests with no changes', async () => {
     const response = await action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -298,6 +319,9 @@ describe('owner version retention API', () => {
   const request = (retain_versions: unknown) =>
     action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
@@ -319,6 +343,9 @@ describe('owner version retention API', () => {
   function editRequest(body: object) {
     return action({
       context: new Map(),
+      url: new URL(
+        'https://artifactshare.test/api/cli/shareables/abc123def4/edit',
+      ),
       params: { id: 'abc123def4' },
       request: new Request(
         'https://artifactshare.test/api/cli/shareables/abc123def4/edit',

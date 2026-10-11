@@ -235,6 +235,11 @@ test.each(['en', 'ja'] as const)(
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     expect(html).toContain('private, workspace, project, or link')
     expect(html).toContain('project requires placement in a project')
+    expect(html).toContain(
+      locale === 'en'
+        ? 'N or all. Keeps only the latest N versions and permanently deletes older ones.'
+        : 'N または all。最新の N 版だけを残し、古い版は元に戻せない形で削除します。',
+    )
     const editCard = html.match(/<h3[^>]*>edit<\/h3>([\s\S]*?)<\/article>/)![1]
     expect(editCard).toContain(
       'data-cli-option-list="true" class="text-muted-foreground m-0 text-xs break-words"',

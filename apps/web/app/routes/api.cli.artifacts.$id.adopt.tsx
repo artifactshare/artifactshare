@@ -3,6 +3,7 @@ import {
   PublisherAdoptRequestSchema,
   PublisherAdoptResponseSchema,
 } from '@artifactshare/contract'
+import { isSameOriginRequest } from '~/lib/same-origin-request'
 import { errorResponse } from '~/lib/api-errors'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
@@ -25,6 +26,22 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   const browser = context.get(authSourceContext) === 'cookie'
   if (authority ? authority.kind !== 'unrestricted' : !browser)
     return cliScopeDeniedResponse()
+  if (browser) {
+    if (!isSameOriginRequest(request))
+      return errorResponse('forbidden', 'Same-origin request required.', 403)
+    if (
+      request.headers
+        .get('Content-Type')
+        ?.split(';')[0]
+        .trim()
+        .toLowerCase() !== 'application/json'
+    )
+      return errorResponse(
+        'validation-failed',
+        'JSON content type required.',
+        415,
+      )
+  }
   const parsedId = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedId.success)
     return errorResponse('not-found', 'Artifact not found.', 404)

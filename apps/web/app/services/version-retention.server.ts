@@ -115,10 +115,6 @@ export async function pruneVersions(
         : (result as { results: { id: string }[] }).results
     ) as { id: string }[]
     const deleted = new Set(rows.map((row) => row.id))
-    // A current-pointer change can invalidate every selected row while making
-    // another version eligible. Reselect with the live policy, confirmation and
-    // authority guards; only an empty selection means pruning is finished.
-    if (deleted.size === 0) continue
     deletedCount += deleted.size
     for (const row of selected) if (deleted.has(row.id)) keys.add(row.r2_key)
     for (const file of files)
@@ -162,10 +158,9 @@ export async function pruneVersions(
 export async function pruneVersionsAfterPublish(
   db: Kysely<DB>,
   shareableId: string,
-  publisher?: { userId: string; authority: PublisherAuthority },
 ): Promise<void> {
   try {
-    await pruneVersions(db, shareableId, undefined, publisher)
+    await pruneVersions(db, shareableId)
   } catch (err) {
     console.error('version_retention_after_publish_failed', {
       shareable_id: shareableId,

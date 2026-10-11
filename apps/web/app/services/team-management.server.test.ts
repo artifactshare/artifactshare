@@ -302,8 +302,11 @@ describe('team-management service', () => {
       VALUES ('event1', 'ws1', 'owner1', 'artifact.publisher_adopted', 'shareable', 'abc123def4', ?, '2026-09-01T00:00:00.000Z')`)
       .run(
         JSON.stringify({
-          previous_publisher_client_id: null,
+          artifact_title: 'Weekly dashboard',
+          previous_publisher_client_id: 'client2',
+          previous_publisher_client_name: 'Previous reports',
           publisher_client_id: 'client1',
+          publisher_client_name: 'Reports',
         }),
       )
     const page = await loadAuditEventsPage(db, 'ws1', 1)
@@ -316,7 +319,10 @@ describe('team-management service', () => {
       detail: {
         artifactId: 'abc123def4',
         publisherClientId: 'client1',
-        previousPublisherClientId: null,
+        previousPublisherClientId: 'client2',
+        previousPublisherClientName: 'Previous reports',
+        publisherClientName: 'Reports',
+        artifactTitle: 'Weekly dashboard',
       },
     })
     expect((await loadAuditEventsPage(db, 'workspace1', 1)).events).toEqual([])

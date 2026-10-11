@@ -1763,8 +1763,11 @@ export async function seedDevScreenState(
           detail:
             action === 'artifact.publisher_adopted'
               ? JSON.stringify({
-                  previous_publisher_client_id: null,
+                  artifact_title: 'Weekly dashboard',
+                  previous_publisher_client_id: 'client2',
+                  previous_publisher_client_name: 'Previous reports',
                   publisher_client_id: 'client1',
+                  publisher_client_name: 'Reports',
                 })
               : action === 'plan.change'
                 ? JSON.stringify({ from: 'plus', to: 'team' })

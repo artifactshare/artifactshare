@@ -151,6 +151,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
   )
     return cliScopeDeniedResponse()
   if (
+    publisher &&
     searchParams.has('base_version') &&
     searchParams.has('expected_version') &&
     searchParams.get('base_version') !== searchParams.get('expected_version')
