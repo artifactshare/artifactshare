@@ -476,7 +476,7 @@ function projectSummaryQuery(
       eb
         .selectFrom('shareables')
         .select((sqb) =>
-          sqb.fn.max<string>('shareables.updated_at').as('updated_at'),
+          sqb.fn.max<string>('shareables.activity_at').as('updated_at'),
         )
         .whereRef('shareables.container_id', '=', 'c.id')
         .where('shareables.workspace_id', '=', workspaceId)
@@ -503,13 +503,32 @@ export async function listWorkspaceProjects(
   db: Kysely<DB>,
   workspaceId: string,
   viewer: ShareableViewer,
-): Promise<ProjectSummary[]> {
+): Promise<(ProjectSummary & { fileMutationAt: string | null })[]> {
   const rows = await projectSummaryQuery(db, workspaceId, viewer)
+    .select((eb) =>
+      eb
+        .selectFrom('shareables')
+        .select((sqb) =>
+          sqb.fn.max<string>('shareables.updated_at').as('updated_at'),
+        )
+        .whereRef('shareables.container_id', '=', 'c.id')
+        .where('shareables.workspace_id', '=', workspaceId)
+        .where('shareables.visibility', 'in', [
+          'private',
+          'workspace',
+          'project',
+        ])
+        .where((predicateEb) => visibleShareableToViewer(predicateEb, viewer))
+        .as('file_mutation_at'),
+    )
     .orderBy('file_updated_at', 'desc')
     .orderBy('c.created_at', 'desc')
     .execute()
 
-  return rows.map(toProjectSummary)
+  return rows.map((row) => ({
+    ...toProjectSummary(row),
+    fileMutationAt: row.file_mutation_at,
+  }))
 }
 
 export async function listMyProjects(
@@ -609,7 +628,7 @@ function sharedProjectSummaryQuery(
       eb
         .selectFrom('shareables')
         .select((sqb) =>
-          sqb.fn.max<string>('shareables.updated_at').as('updated_at'),
+          sqb.fn.max<string>('shareables.activity_at').as('updated_at'),
         )
         .whereRef('shareables.container_id', '=', 'c.id')
         .where((predicateEb) =>

@@ -1,3 +1,5 @@
+import { sql } from 'kysely'
+import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
 
@@ -1379,6 +1381,151 @@ test.each(['viewer/retention-expanded', 'viewer/retention-saved'])(
       expect(
         put.mock.calls.some(([key]) => key === `dev-screen/${shareableId}-v1`),
       ).toBe(true)
+    } finally {
+      await db.destroy()
+    }
+  },
+)
+
+test('scheduled viewer capture seeds mixed history, fresh data, and matching artifact bodies', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    const scenario = 'viewer/scheduled-updates'
+    const now = '2026-09-09T00:00:00.000Z'
+    expect(isScreenScenario(scenario)).toBe(true)
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'viewer@example.com',
+        name: 'Viewer',
+        email_verified: 1,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+      })
+      .execute()
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-21`)
+    for (let iteration = 0; iteration < 2; iteration++) {
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      const versions = await db
+        .selectFrom('versions')
+        .select([
+          'number',
+          'created_by_publisher_client_id',
+          'published_at',
+          'label',
+        ])
+        .where('shareable_id', '=', shareableId)
+        .orderBy('number')
+        .execute()
+      expect(versions.map((version) => version.number)).toEqual([1, 2, 3])
+      expect(
+        versions.map((version) =>
+          Boolean(version.created_by_publisher_client_id),
+        ),
+      ).toEqual([false, false, true])
+      expect(versions[2]).toMatchObject({
+        published_at: now,
+        label: 'Hourly data refresh',
+      })
+      const artifact = await db
+        .selectFrom('shareables')
+        .select(['current_version_id', 'activity_at', 'updated_at'])
+        .where('id', '=', shareableId)
+        .executeTakeFirstOrThrow()
+      expect(artifact.current_version_id).toBe(`${shareableId}-v3`)
+      expect(artifact.updated_at).toBe(now)
+      expect(artifact.activity_at < artifact.updated_at).toBe(true)
+    }
+    const put = vi.fn().mockResolvedValue(undefined)
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      scenario,
+      workspaceId,
+      userId,
+    )
+    for (const version of [1, 2, 3]) {
+      expect(
+        put.mock.calls.some(
+          ([key]) => key === `dev-screen/${shareableId}-v${version}`,
+        ),
+      ).toBe(true)
+    }
+  } finally {
+    await db.destroy()
+  }
+})
+
+test.each(['with-pins', 'scheduled-pins'] as const)(
+  'project capture %s distinguishes human updates from scheduled freshness',
+  async (state) => {
+    const { db } = createMigratedInMemoryDb()
+    try {
+      const scenario = `project-detail/${state}`
+      const now = '2026-09-09T00:00:00.000Z'
+      expect(isScreenScenario(scenario)).toBe(true)
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: 'viewer@example.com',
+          name: 'Viewer',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      const pins = await db
+        .selectFrom('project_pins')
+        .select('shareable_id')
+        .orderBy('shareable_id')
+        .execute()
+      expect(pins).toHaveLength(2)
+      const cards = await listProjectPins(
+        db,
+        `${workspaceId}-container`,
+        sql<boolean>`1 = 1`,
+      )
+      expect(cards.map((card) => card.dataUpdatedAt)).toEqual(
+        state === 'scheduled-pins' ? [now, now] : [null, null],
+      )
+      for (let index = 0; index < pins.length; index++) {
+        const versions = await db
+          .selectFrom('versions')
+          .select(['number', 'created_by_publisher_client_id'])
+          .where('shareable_id', '=', pins[index]!.shareable_id)
+          .orderBy('number')
+          .execute()
+        expect(versions.map((version) => version.number)).toEqual([1, 2, 3])
+        expect(
+          versions.map((version) =>
+            Boolean(version.created_by_publisher_client_id),
+          ),
+        ).toEqual(
+          state === 'with-pins'
+            ? [false, false, false]
+            : index === 0
+              ? [true, true, true]
+              : [true, false, true],
+        )
+      }
     } finally {
       await db.destroy()
     }

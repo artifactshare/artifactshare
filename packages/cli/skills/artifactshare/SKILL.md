@@ -634,6 +634,8 @@ flags, MCP inputs, or bridge inputs for inheritance.
 
 ### Publisher device credentials (API only)
 
+Versions added with publisher credentials are scheduled updates: content and live viewers refresh, but list order, feeds, unread indicators, and human update labels do not change. The artifact viewer shows the displayed version's Data updated time, and browser history marks Scheduled update without exposing client names. API `updated_at` remains the actual mutation time; internal `activity_at` controls human activity ordering. Initial creation and versions published through other credentials keep their existing behavior.
+
 The device API accepts `preset: "publisher"` with a required `device_name`.
 Names are trimmed, NFC-normalized, case-sensitive, and limited to 1–100 Unicode
 letters, marks, numbers, ASCII spaces, or `._-()`. The browser approver explicitly

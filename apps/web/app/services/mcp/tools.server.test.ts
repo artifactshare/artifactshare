@@ -979,6 +979,76 @@ describe('headless publish wiring', () => {
     expect(description).toContain('concatenate the content parts')
   })
 
+  test('resource discovery retains human activity order after a publisher version', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    const first = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# First', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    const second = await uploadShareable(
+      db,
+      user,
+      buildArtifactFile('# Second', 'markdown'),
+      'private',
+      [],
+      null,
+    )
+    if (first.kind !== 'ok' || second.kind !== 'ok')
+      throw new Error('publish failed')
+    await db
+      .updateTable('shareables')
+      .set({ updated_at: '2026-06-01T00:00:00.000Z' })
+      .where('id', '=', first.id)
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ updated_at: '2026-06-02T00:00:00.000Z' })
+      .where('id', '=', second.id)
+      .execute()
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: 'client1',
+        user_id: user.id,
+        workspace_id: user.workspaceId,
+        name: 'Reports',
+        created_at: NOW,
+      })
+      .execute()
+    const version = await db
+      .selectFrom('versions')
+      .selectAll()
+      .where('shareable_id', '=', first.id)
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('versions')
+      .values({
+        ...version,
+        id: 'scheduled-version',
+        created_by_publisher_client_id: 'client1',
+        created_at: NOW,
+        published_at: NOW,
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: 'scheduled-version', updated_at: NOW })
+      .where('id', '=', first.id)
+      .execute()
+    const result = await callMcp(db, 'resources/list')
+    expect(result.error).toBeUndefined()
+    const resources = result.result?.resources as Array<{ uri: string }>
+    expect(resources.map((row) => row.uri)).toEqual([
+      `https://artifactshare.com/a/${second.id}`,
+      `https://artifactshare.com/a/${first.id}`,
+    ])
+  })
+
   test('advertises artifact URLs as a template and lists readable artifacts by title', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')

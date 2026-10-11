@@ -177,6 +177,11 @@ describe('AvatarMenu access requests', () => {
       )
       root.render(<RouterProvider router={router} />)
 
+      await expect
+        .element(page.getByRole('button', { name: 'viewer@example.test' }))
+        .toBeVisible()
+      expect(host.querySelector('time')).toBeNull()
+      expect(host.textContent).not.toContain('データ更新')
       await page.getByRole('button', { name: 'viewer@example.test' }).click()
       await page.getByRole('menuitem', { name: '閲覧リクエスト' }).click()
 

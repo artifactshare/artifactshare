@@ -19,10 +19,18 @@ export async function loadViewerRevisitContext(
     .selectFrom('shareable_viewer_recency as recency')
     .select([
       'recency.version_seen_through_at as versionBoundary',
+      sql<number>`EXISTS (
+        SELECT 1 FROM versions v
+        WHERE v.shareable_id = ${input.shareableId}
+          AND v.status = 'published'
+          AND v.created_by_publisher_client_id IS NOT NULL
+          AND (recency.version_seen_through_at IS NULL OR v.published_at > recency.version_seen_through_at)
+      )`.as('hasUnseenScheduledVersions'),
       sql<number>`(
         SELECT COUNT(*) FROM versions v
         WHERE v.shareable_id = ${input.shareableId}
           AND v.status = 'published'
+          AND v.created_by_publisher_client_id IS NULL
           AND v.created_by_id <> ${input.viewerUserId}
           AND (recency.version_seen_through_at IS NULL OR v.published_at > recency.version_seen_through_at)
       )`.as('versionCount'),
@@ -89,6 +97,7 @@ export async function loadViewerRevisitContext(
       (candidate) => candidate.id === input.currentVersionId,
     )
     const useFallback =
+      Boolean(row.hasUnseenScheduledVersions) ||
       row.versionBoundary === null ||
       Number(row.previousTimestampCount ?? 0) !== 1 ||
       !previous ||

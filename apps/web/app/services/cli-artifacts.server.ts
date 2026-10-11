@@ -95,6 +95,7 @@ export async function listCliArtifacts(
         'shareables.artifact_kind as artifact_kind',
         'shareables.link_expires_at as link_expires_at',
         'shareables.updated_at as updated_at',
+        'shareables.activity_at',
         'u.email as owner_email',
       ])
       .where('shareables.workspace_id', '=', workspaceId)
@@ -109,11 +110,11 @@ export async function listCliArtifacts(
     }
     if (decoded) {
       qb = qb.where(
-        sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
+        sql<boolean>`(shareables.activity_at < ${decoded.updated_at} OR (shareables.activity_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
       )
     }
     const rows = await qb
-      .orderBy('shareables.updated_at', 'desc')
+      .orderBy('shareables.activity_at', 'desc')
       .orderBy('shareables.id', 'desc')
       .limit(CLI_ARTIFACTS_LIST_LIMIT + 1)
       .execute()
@@ -143,7 +144,7 @@ export async function listCliArtifacts(
         next_cursor:
           hasMore && last
             ? encodeCursor({
-                updated_at: last.updated_at,
+                updated_at: last.activity_at,
                 id: last.id,
                 filter: fingerprint,
               })
@@ -179,7 +180,7 @@ export async function listCliArtifacts(
       has_more: hasMore,
       next_cursor: hasMore
         ? encodeCursor({
-            updated_at: shown.at(-1)!.updatedAt,
+            updated_at: shown.at(-1)!.activityAt,
             id: shown.at(-1)!.id,
             filter: fingerprint,
           })
@@ -236,6 +237,7 @@ export async function listAgentReadableArtifacts(
           'shareables.artifact_kind',
           'shareables.link_expires_at',
           'shareables.updated_at',
+          'shareables.activity_at',
           'shareables.container_id',
           'u.email as owner_email',
         ])
@@ -254,11 +256,11 @@ export async function listAgentReadableArtifacts(
       }
       if (decoded) {
         query = query.where(
-          sql<boolean>`(shareables.updated_at < ${decoded.updated_at} OR (shareables.updated_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
+          sql<boolean>`(shareables.activity_at < ${decoded.updated_at} OR (shareables.activity_at = ${decoded.updated_at} AND shareables.id < ${decoded.id}))`,
         )
       }
       return query
-        .orderBy('shareables.updated_at', 'desc')
+        .orderBy('shareables.activity_at', 'desc')
         .orderBy('shareables.id', 'desc')
         .limit(CLI_ARTIFACTS_LIST_LIMIT + 1)
     })
@@ -266,7 +268,7 @@ export async function listAgentReadableArtifacts(
     .leftJoin('artifact_page', (join) => join.onTrue())
     .selectAll('artifact_page')
     .select('access_viewer.workspace_id as viewer_workspace_id')
-    .orderBy('artifact_page.updated_at', 'desc')
+    .orderBy('artifact_page.activity_at', 'desc')
     .orderBy('artifact_page.id', 'desc')
     .execute()
   const viewer = result[0]
@@ -287,6 +289,7 @@ export async function listAgentReadableArtifacts(
       visibility: NonNullable<typeof row.visibility>
       artifact_kind: NonNullable<typeof row.artifact_kind>
       updated_at: string
+      activity_at: string
       owner_email: string
     } => row.id !== null,
   )
@@ -316,7 +319,7 @@ export async function listAgentReadableArtifacts(
       next_cursor:
         hasMore && last
           ? encodeCursor({
-              updated_at: last.updated_at,
+              updated_at: last.activity_at,
               id: last.id,
               filter: fingerprint,
             })

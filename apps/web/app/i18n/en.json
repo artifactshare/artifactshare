@@ -1,4 +1,6 @@
 {
+  "history.scheduledUpdate": "Scheduled update",
+  "history.dataUpdated": "Data updated",
   "team.activity.action.artifact.publisher_adopted": "File assigned to client",
   "guide.code.copy": "Copy",
   "guide.code.copied": "Copied",

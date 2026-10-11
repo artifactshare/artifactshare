@@ -185,6 +185,9 @@ test('publisher endpoints create, download and update with provenance and requir
     visibility: 'private',
     created_by_publisher_client_id: 'client1',
   })
+  fixture
+    .current!.prepare('UPDATE shareables SET updated_at = ? WHERE id = ?')
+    .run('2026-01-01', created.id)
   const source = await download(
     args(`/api/cli/artifacts/${created.id}/download`, undefined, created.id),
   )
@@ -232,6 +235,24 @@ test('publisher endpoints create, download and update with provenance and requir
     ),
   )
   expect(response.status).toBe(200)
+  expect(
+    fixture
+      .current!.prepare(
+        'SELECT activity_at, updated_at FROM shareables WHERE id = ?',
+      )
+      .get(created.id),
+  ).toMatchObject({
+    activity_at: '2026-01-01',
+    updated_at: expect.not.stringMatching(/^2026-01-01$/),
+  })
+  expect(
+    fixture
+      .current!.prepare("SELECT * FROM events WHERE type = 'version_published'")
+      .all(),
+  ).toEqual([])
+  await Promise.all(background)
+  expect(notify).toHaveBeenCalled()
+
   expect(
     fixture
       .current!.prepare(
@@ -500,6 +521,7 @@ test('publisher static site manifest, delta, retention, readback and deletion', 
     'owner_user_id',
     'container_id',
     'retain_versions',
+    'activity_at',
     'created_by_publisher_client_id',
   ] as const)
     expect(changed[key]).toBe(initial[key])
@@ -1521,3 +1543,72 @@ test.each([
   })
   expect(snapshot()).toEqual(before)
 })
+
+test.each(['replacement', 'inherited'] as const)(
+  'publisher static-site %s updates content and live viewers without human notifications',
+  async (mode) => {
+    const response = await upload(
+      args(
+        '/api/shareables/uploads?artifact_kind=static_site',
+        site({ 'index.html': '<h1>Original</h1>', 'keep.css': 'a{}' }),
+      ),
+    )
+    const created = (await response.json()) as { id: string; versionId: string }
+    await Promise.all(background.splice(0))
+    await fixture
+      .db!.updateTable('shareables')
+      .set({ updated_at: '2026-01-01' })
+      .where('id', '=', created.id)
+      .execute()
+    const slackBefore = await fixture
+      .db!.selectFrom('slack_notification_outbox')
+      .selectAll()
+      .execute()
+    const notificationsBefore = notify.mock.calls.length
+    const base =
+      mode === 'inherited'
+        ? `&base_version=${created.versionId}`
+        : `&expected_version=${created.versionId}`
+    const updated = await update(
+      args(
+        `/api/shareables/${created.id}/versions?artifact_kind=static_site${base}`,
+        site({ 'index.html': '<h1>Changed</h1>' }),
+        created.id,
+      ),
+    )
+    expect(updated.status).toBe(200)
+    await Promise.all(background.splice(0))
+    const current = await fixture
+      .db!.selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', created.id)
+      .executeTakeFirstOrThrow()
+    expect(current.activity_at).toBe('2026-01-01')
+    expect(current.updated_at).not.toBe('2026-01-01')
+    expect(current.current_version_id).not.toBe(created.versionId)
+    expect(current.version_sequence).toBe(2)
+    expect(notify.mock.calls.length).toBe(notificationsBefore + 1)
+    expect(
+      await fixture
+        .db!.selectFrom('events')
+        .select('type')
+        .where('shareable_id', '=', created.id)
+        .execute(),
+    ).toEqual([{ type: 'artifact_created' }])
+    expect(
+      await fixture
+        .db!.selectFrom('slack_notification_outbox')
+        .selectAll()
+        .execute(),
+    ).toEqual(slackBefore)
+    const paths = await fixture
+      .db!.selectFrom('version_files')
+      .select('path')
+      .where('version_id', '=', current.current_version_id!)
+      .orderBy('path')
+      .execute()
+    expect(paths.map((row) => row.path)).toEqual(
+      mode === 'inherited' ? ['/index.html', '/keep.css'] : ['/index.html'],
+    )
+  },
+)

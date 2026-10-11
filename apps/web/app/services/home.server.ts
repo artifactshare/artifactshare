@@ -43,16 +43,34 @@ export function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
     .as('version_count')
 }
 
+// Both badge subqueries use the same deterministic eligible publication order.
+export function latestHumanVersionNumberSelect(
+  eb: ExpressionBuilder<DB, 'shareables'>,
+) {
+  return eb
+    .selectFrom('versions')
+    .select('versions.number')
+    .whereRef('versions.shareable_id', '=', 'shareables.id')
+    .where('versions.status', '=', 'published')
+    .where('versions.created_by_publisher_client_id', 'is', null)
+    .orderBy('versions.number', 'desc')
+    .orderBy('versions.id', 'desc')
+    .limit(1)
+    .as('badge_version_number')
+}
+
 export function latestPublishedAtSelect(
   eb: ExpressionBuilder<DB, 'shareables'>,
 ) {
   return eb
     .selectFrom('versions')
-    .select((sqb) =>
-      sqb.fn.max<string | null>('versions.published_at').as('value'),
-    )
+    .select('versions.published_at')
     .whereRef('versions.shareable_id', '=', 'shareables.id')
     .where('versions.status', '=', 'published')
+    .where('versions.created_by_publisher_client_id', 'is', null)
+    .orderBy('versions.number', 'desc')
+    .orderBy('versions.id', 'desc')
+    .limit(1)
     .as('latest_published_at')
 }
 
@@ -68,6 +86,7 @@ function unreadVersionCountSelect(
     .where(sql<boolean>`(
       versions.shareable_id = shareables.id
       AND versions.status = 'published'
+      AND versions.created_by_publisher_client_id IS NULL
       AND (
         recency.version_seen_through_at IS NULL OR versions.published_at > recency.version_seen_through_at
       )
@@ -186,7 +205,7 @@ export function recentFilterPredicate(
           : sql<boolean>`1 = 1`
   if (!filters.unread) return relationPredicate
   const unread = sql<boolean>`(
-    EXISTS (SELECT 1 FROM versions v WHERE v.shareable_id = shareables.id AND v.status = 'published' AND v.created_by_id <> ${user.id} AND (recency.version_seen_through_at IS NULL OR v.published_at > recency.version_seen_through_at))
+    EXISTS (SELECT 1 FROM versions v WHERE v.shareable_id = shareables.id AND v.status = 'published' AND v.created_by_publisher_client_id IS NULL AND v.created_by_id <> ${user.id} AND (recency.version_seen_through_at IS NULL OR v.published_at > recency.version_seen_through_at))
     OR EXISTS (SELECT 1 FROM comment_messages cm INNER JOIN comment_threads ct ON ct.id = cm.thread_id WHERE ct.shareable_id = shareables.id AND ${commentThreadWindowExpression(sql.ref('shareables.id'), 'ct')} AND cm.created_by_id <> ${user.id} AND (recency.comment_seen_through_at IS NULL OR cm.created_at > recency.comment_seen_through_at))
   )`
   return sql<boolean>`(${relationPredicate}) AND ${unread}`
@@ -205,6 +224,7 @@ export function recentRowActivitySelects(
   return [
     versionCountSelect(eb),
     latestPublishedAtSelect(eb),
+    latestHumanVersionNumberSelect(eb),
     unreadVersionCountSelect(eb, userId),
     unreadCommentSummarySelect(eb, userId),
     ...(user ? [recentAttributeSelect(user, containerAlias)] : []),
@@ -239,7 +259,7 @@ function artifactSelectQuery(
       'users.image as owner_image',
       'shareables.visibility',
       'shareables.view_count',
-      'shareables.updated_at as modified_at',
+      'shareables.activity_at as modified_at',
       'containers.id as project_id',
       'containers.name as project_name',
       'containers.kind as project_kind',
@@ -250,7 +270,7 @@ function artifactSelectQuery(
     .where('shareables.workspace_id', '=', workspaceId)
     .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
     .where('containers.archived_at', 'is', null)
-    .orderBy('shareables.updated_at', 'desc')
+    .orderBy('shareables.activity_at', 'desc')
 }
 
 export async function listMyArtifacts(

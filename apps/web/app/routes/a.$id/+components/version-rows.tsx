@@ -56,13 +56,18 @@ export function VersionRows({
                   </span>
                 ) : null}
               </div>
+              {version.scheduledUpdate ? (
+                <span className="text-muted-foreground text-xs">
+                  {t('history.scheduledUpdate')}
+                </span>
+              ) : null}
               {version.label != null ? (
                 <div className="min-w-0 text-sm [overflow-wrap:anywhere]">
                   {version.label}
                 </div>
               ) : null}
               <div className="text-muted-foreground flex gap-1.5 text-xs">
-                {version.createdByLabel ? (
+                {!version.scheduledUpdate && version.createdByLabel ? (
                   <>
                     <span className="min-w-0 truncate">
                       {version.createdByLabel}

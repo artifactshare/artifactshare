@@ -1,6 +1,8 @@
 import { createViewerRevisitFixture } from '~/test/viewer-revisit-fixture'
 import * as viewerRevisitService from '~/services/viewer-revisit.server'
 import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
+import { VersionRows } from './+components/version-rows'
+import { bindI18n } from '~/lib/i18n'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
@@ -367,6 +369,9 @@ describe('/a/:id loader', () => {
               executeTakeFirst: vi.fn().mockResolvedValue({
                 id: 'v1',
                 label: 'Restructured',
+                publisherClientId: 'client1',
+                createdByName: 'Scheduled Owner',
+                createdByEmail: 'owner@example.com',
                 ordinal: 41,
                 createdAt: '2026-05-24T00:00:00Z',
                 sizeBytes: 128,
@@ -381,6 +386,7 @@ describe('/a/:id loader', () => {
                 {
                   id: 'v2',
                   number: 52,
+                  createdByName: 'Human Owner',
                   createdAt: '2026-05-25T00:00:00Z',
                   sizeBytes: 256,
                 },
@@ -388,6 +394,9 @@ describe('/a/:id loader', () => {
                   id: 'v1',
                   number: 41,
                   label: 'Restructured',
+                  publisherClientId: 'client1',
+                  createdByName: 'Scheduled Owner',
+                  createdByEmail: 'owner@example.com',
                   createdAt: '2026-05-24T00:00:00Z',
                   sizeBytes: 128,
                 },
@@ -435,6 +444,7 @@ describe('/a/:id loader', () => {
       expect(result.artifact).toMatchObject({
         currentVersionId: 'v2',
         displayedVersionId: 'v1',
+        displayedPublishedAt: '2026-05-24T00:00:00Z',
         displayedVersionOrdinal: 41,
         isHistoricalVersion: true,
         canReplaceFile: true,
@@ -447,9 +457,27 @@ describe('/a/:id loader', () => {
         result.artifact.versions.find((version) => version.id === 'v1'),
       ).toMatchObject({
         isDisplayed: true,
+        scheduledUpdate: true,
+        createdByLabel: null,
         isCurrent: false,
         label: 'Restructured',
       })
+      for (const locale of ['en', 'ja'] as const) {
+        const html = renderToStaticMarkup(
+          <VersionRows
+            versions={result.artifact.versions}
+            locale={locale}
+            t={bindI18n(locale).t}
+          />,
+        )
+        expect(html).toContain(bindI18n(locale).t('history.scheduledUpdate'))
+        expect(html).not.toContain('Scheduled Owner')
+        expect(html).toContain('Human Owner')
+        expect(html).not.toContain('client1')
+        expect(html).not.toContain('owner@example.com')
+        expect(html).toContain('Human Owner')
+        expect(html).toContain('Restructured')
+      }
       expect(recordViewAndNotifyViewCountMock).not.toHaveBeenCalled()
       // A retained history link can disappear between visits after pruning.
       dbMock.selectFrom.mockImplementation((table: string) => {
@@ -1499,6 +1527,7 @@ describe('/a/:id loader', () => {
         visibility: 'link',
         view_count: 4,
         current_version_id: 'v1',
+        current_published_at: '2026-06-02T10:30:00.000Z',
         owner_email: 'owner@example.com',
         owner_name: 'Owner',
         owner_image: null,
@@ -1559,6 +1588,9 @@ describe('/a/:id loader', () => {
 
       expect(result.kind).toBe(staticSite ? 'static_site' : 'ok')
       if (result.kind !== 'ok' && result.kind !== 'static_site') return
+      expect(result.artifact.displayedPublishedAt).toBe(
+        '2026-06-02T10:30:00.000Z',
+      )
       expect(result.artifact.entrypointPath).toBe('/demo.html')
       expect(result.linkSafety).toEqual({ lowTrust })
       expect(shareableQueryCount).toBe(plan === 'free' ? 2 : 1)

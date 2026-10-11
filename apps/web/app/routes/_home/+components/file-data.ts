@@ -25,6 +25,7 @@ export interface FileRowData {
   ownerIsBot?: boolean
   modifiedTime: string | null
   createdTime?: string | null
+  badgeVersionNumber?: number | null
   versionCount?: number
   latestVersionNumber?: number | null
   latestPublishedAt?: string | null
@@ -69,6 +70,7 @@ export interface ShareableFileRow {
   comment_count: number | string | bigint | null
   modified_at: string | null
   created_at?: string | null
+  badge_version_number?: number | null
   version_count?: number | string | bigint | null
   latest_version_number?: number | null
   latest_published_at?: string | null
@@ -156,6 +158,7 @@ export function toFileRowData(
       : false,
     modifiedTime: row.modified_at,
     createdTime: row.created_at,
+    badgeVersionNumber: row.badge_version_number,
     versionCount: Number(row.version_count ?? 0),
     latestVersionNumber: row.latest_version_number ?? null,
     latestPublishedAt: row.latest_published_at ?? null,

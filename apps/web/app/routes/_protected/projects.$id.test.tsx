@@ -601,6 +601,37 @@ describe('ProjectRedesignBody rendering', () => {
     homeOwnerName: 'Owner',
   }
 
+  test.each([1, 2])(
+    'human pin v%s keeps author/time and only labels later versions',
+    (number) => {
+      const html = renderToStaticMarkup(
+        createElement(ProjectRedesignBody, {
+          ...baseProps,
+          files: [fileRow('pin', NOW)],
+          pins: [
+            {
+              shareableId: 'pin',
+              name: 'Pinned file',
+              derivedTitle: null,
+              titleOverride: null,
+              artifactKind: 'markdown_page',
+              latestVersionNumber: number,
+              latestPublishedAt: NOW,
+              latestAuthorName: 'Author',
+              latestAuthorEmail: 'author@example.test',
+              latestAuthorImage: null,
+              dataUpdatedAt: null,
+              createdAt: NOW,
+            },
+          ],
+        }),
+      )
+      expect(html).toContain('project.fileUpdated')
+      expect(html).toContain('>A</span>')
+      expect(html.includes(`>v${number}</span>`)).toBe(number >= 2)
+    },
+  )
+
   test('zero files render a full-page empty state without pinned section', () => {
     const html = renderToStaticMarkup(
       createElement(ProjectRedesignBody, { ...baseProps, files: [] }),
@@ -705,3 +736,197 @@ describe('project action menu', () => {
     expect(html).not.toContain('project.slack.title')
   })
 })
+
+test.each(['member', 'shared'] as const)(
+  '%s project pins omit publisher metadata and preserve human attribution',
+  async (access) => {
+    const { db } = await fixture()
+    try {
+      await insertShareable(db, 'scheduled', {
+        createdAt: '2026-07-01T00:00:00Z',
+      })
+      await insertShareable(db, 'other', { createdAt: '2026-07-02T00:00:00Z' })
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'project' })
+        .execute()
+      await db
+        .insertInto('publisher_clients')
+        .values({
+          id: 'client1',
+          user_id: 'u1',
+          workspace_id: 'w1',
+          name: 'Reports',
+          created_at: NOW,
+        })
+        .execute()
+      await db
+        .insertInto('project_pins')
+        .values({
+          container_id: 'proj1',
+          shareable_id: 'scheduled',
+          pinned_by_user_id: 'u1',
+          created_at: NOW,
+        })
+        .execute()
+      if (access === 'shared') {
+        await db
+          .insertInto('workspaces')
+          .values({ id: 'w2', name: 'Other', created_at: NOW })
+          .execute()
+        await db
+          .updateTable('users')
+          .set({ workspace_id: 'w2' })
+          .where('id', '=', 'u2')
+          .execute()
+        await db
+          .insertInto('project_share_defaults')
+          .values({
+            id: 'grant',
+            project_container_id: 'proj1',
+            email: 'u2@example.com',
+            role: 'viewer',
+            created_by_id: 'u1',
+            created_at: NOW,
+            updated_at: NOW,
+          })
+          .execute()
+        userState.user = {
+          ...userState.user,
+          id: 'u2',
+          workspaceId: 'w2',
+          email: 'u2@example.com',
+        }
+      }
+      const publish = async (
+        number: number,
+        scheduled: boolean,
+        publishedAt = NOW,
+      ) => {
+        const id = `version${number}`
+        await db
+          .insertInto('versions')
+          .values({
+            id,
+            number,
+            shareable_id: 'scheduled',
+            artifact_kind: 'markdown_page',
+            status: 'published',
+            entrypoint_path: '/note.md',
+            r2_key: id,
+            size_bytes: 1,
+            sha256: id,
+            created_by_id: 'u1',
+            created_by_publisher_client_id: scheduled ? 'client1' : null,
+            created_at: publishedAt,
+            published_at: publishedAt,
+          })
+          .execute()
+        await db
+          .updateTable('shareables')
+          .set({ current_version_id: id, updated_at: publishedAt })
+          .where('id', '=', 'scheduled')
+          .execute()
+      }
+      const markup = (data: Awaited<ReturnType<typeof loader>>) =>
+        renderToStaticMarkup(
+          createElement(ProjectRedesignBody, {
+            projectId: 'proj1',
+            files: data.files,
+            pins: data.projectActivity.pins,
+            feed: [],
+            ranking: [],
+            now: NOW,
+            canPin: access === 'member',
+            canUpload: false,
+            archived: false,
+            onUpload: () => {},
+            homeOwnerName: 'Owner',
+          }),
+        )
+      await publish(1, true)
+      const first = await loader(loaderArgs())
+      expect(first.access).toBe(access)
+      expect(first.files.map((file) => file.id)).toEqual(['other', 'scheduled'])
+      expect(first.files.find((file) => file.id === 'scheduled')).toMatchObject(
+        {
+          modifiedTime: '2026-07-01T00:00:00Z',
+          versionCount: 1,
+          badgeVersionNumber: null,
+        },
+      )
+      expect(first.projectActivity.pins).toHaveLength(1)
+      expect(first.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 0,
+        latestPublishedAt: null,
+        latestAuthorEmail: null,
+      })
+      expect(markup(first)).toContain('/a/scheduled')
+      expect(markup(first)).not.toContain('project.fileUpdated')
+      expect(markup(first)).not.toContain('v1')
+      expect(markup(first)).toContain('history.dataUpdated')
+      const refreshAt = '2026-07-29T01:00:00Z'
+      await publish(2, true, refreshAt)
+      const refreshed = await loader(loaderArgs())
+      expect(refreshed.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 0,
+        latestPublishedAt: null,
+        latestAuthorEmail: null,
+      })
+      expect(markup(refreshed)).toContain('history.dataUpdated')
+      expect(markup(refreshed)).toContain(`dateTime="${refreshAt}"`)
+      expect(markup(refreshed)).toContain('/a/scheduled')
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime('2026-07-29T01:01:00Z')
+        const serverMarkup = markup(refreshed)
+        vi.setSystemTime('2026-07-29T03:00:00Z')
+        const browserMarkup = markup(refreshed)
+        expect(serverMarkup.match(/<time[^>]*>.*?<\/time>/)?.[0]).toBe(
+          browserMarkup.match(/<time[^>]*>.*?<\/time>/)?.[0],
+        )
+        expect(serverMarkup).toContain('2026-07-29 01:00:00 UTC</time>')
+      } finally {
+        vi.useRealTimers()
+      }
+      await publish(3, false)
+      const humanOnly = await loader(loaderArgs())
+      expect(humanOnly.projectActivity.pins[0]?.dataUpdatedAt).toBeNull()
+      expect(markup(humanOnly)).not.toContain('history.dataUpdated')
+      expect(markup(humanOnly)).toContain('project.fileUpdated')
+      await publish(4, true)
+      const mixed = await loader(loaderArgs())
+      expect(mixed.files.map((file) => file.id)).toEqual(['scheduled', 'other'])
+      expect(mixed.files[0]).toMatchObject({
+        versionCount: 4,
+        badgeVersionNumber: 3,
+        latestPublishedAt: NOW,
+      })
+      expect(mixed.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 3,
+        latestPublishedAt: NOW,
+        latestAuthorEmail: 'u1@example.com',
+      })
+      expect(markup(mixed)).toContain('project.fileUpdated')
+      expect(markup(mixed)).toContain('history.dataUpdated')
+      expect(markup(mixed)).toContain('v3')
+      expect(markup(mixed)).not.toContain('v4')
+      await db
+        .deleteFrom('versions')
+        .where('id', 'in', ['version1', 'version3'])
+        .execute()
+      const pruned = await loader(loaderArgs())
+      expect(pruned.projectActivity.pins).toHaveLength(1)
+      expect(pruned.projectActivity.pins[0]).toMatchObject({
+        latestVersionNumber: 0,
+        latestPublishedAt: null,
+        latestAuthorEmail: null,
+      })
+      expect(markup(pruned)).not.toContain('project.fileUpdated')
+      expect(markup(pruned)).toContain('history.dataUpdated')
+      expect(markup(pruned)).toContain('/a/scheduled')
+    } finally {
+      await db.destroy()
+    }
+  },
+)

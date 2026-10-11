@@ -37,6 +37,7 @@ import { requireUser } from '~/middleware/context'
 import {
   versionCountSelect,
   latestPublishedAtSelect,
+  latestHumanVersionNumberSelect,
 } from '~/services/home.server'
 import { createDb } from '~/services/db.server'
 import { workspaceAccessRevokedSql } from '~/modules/access'
@@ -136,6 +137,7 @@ export async function loader({
     .select((eb) => [
       versionCountSelect(eb),
       latestPublishedAtSelect(eb),
+      latestHumanVersionNumberSelect(eb),
       'shareables.id',
       'shareables.name',
       'shareables.derived_title',

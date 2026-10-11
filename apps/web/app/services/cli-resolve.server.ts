@@ -3,7 +3,6 @@ import { displayTitle } from '~/lib/display-title'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
 import {
   listWorkspaceProjects,
-  type ProjectSummary,
   visibleShareableToViewer,
 } from './projects.server'
 import type { DB } from '~/types/db'
@@ -102,7 +101,7 @@ export async function resolveCliCandidates(
   const query = rawQuery.trim()
   const candidates: CliResolveCandidate[] = []
   const seen = new Set<string>()
-  let projects: ProjectSummary[] | null = null
+  let projects: Awaited<ReturnType<typeof listWorkspaceProjects>> | null = null
   let exactProjectsChecked = false
   const plainIdentifier = isPlainIdentifier(query)
   const add = (candidate: CliResolveCandidate) => {
@@ -206,6 +205,7 @@ async function artifactCandidates(
       'shareables.artifact_kind as artifact_kind',
       'shareables.visibility as visibility',
       'shareables.updated_at as updated_at',
+      'shareables.activity_at',
       'c.id as project_id',
       'c.name as project_name',
       'c.kind as project_kind',
@@ -224,7 +224,7 @@ async function artifactCandidates(
   }
 
   const rows = await query
-    .orderBy('shareables.updated_at', 'desc')
+    .orderBy('shareables.activity_at', 'desc')
     .limit(RESOLVE_LIMIT + 1)
     .execute()
 
@@ -274,7 +274,7 @@ async function versionCandidates(
 }
 
 function projectCandidates(
-  projects: ProjectSummary[],
+  projects: Awaited<ReturnType<typeof listWorkspaceProjects>>,
   value: string,
   exact: boolean,
 ): ProjectCandidate[] {
@@ -293,7 +293,7 @@ function projectCandidates(
       description: project.description,
       base_visibility: project.baseVisibility,
       file_count: project.fileCount,
-      updated_at: project.fileUpdatedAt ?? project.updatedAt,
+      updated_at: project.fileMutationAt ?? project.updatedAt,
       match: {
         kind: project.id === value ? 'id' : 'project_name',
         confidence: exact ? 'exact' : 'candidate',

@@ -1,3 +1,4 @@
+import { PublicationTime } from '~/components/app/publication-time'
 import type {
   NewCommentMessage,
   ViewerRevisitContext,
@@ -25,6 +26,7 @@ import type { VersionRow } from './version-history-types'
 import { VersionRows } from './version-rows'
 
 interface VersionWidgetProps {
+  displayedPublishedAt?: string | null
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
   retention?: { limit: number | null; editable: boolean }
@@ -45,6 +47,7 @@ interface VersionWidgetProps {
 }
 
 export function VersionWidget({
+  displayedPublishedAt,
   hidden = false,
   versions,
   canViewHistory = true,
@@ -140,6 +143,8 @@ export function VersionWidget({
     }
   }, [closePopover, hidden, open])
 
+  const freshness = <DataFreshness publishedAt={displayedPublishedAt} />
+
   if (!canViewHistory) {
     return (
       <>
@@ -151,10 +156,11 @@ export function VersionWidget({
           {hasNewerVersion ? t('history.updateAvailable') : null}
         </div>
         <aside
-          hidden={hidden || !hasNewerVersion}
-          className="bottom-version-fab-bottom bg-background fixed right-3 z-(--z-dropdown) max-w-(--width-version-panel) rounded-[var(--r-md)]"
+          hidden={hidden || (!hasNewerVersion && !displayedPublishedAt)}
+          className="bottom-version-fab-bottom bg-background pointer-events-none fixed right-3 z-(--z-dropdown) flex max-w-(--width-version-panel) flex-col items-end gap-2 rounded-[var(--r-md)]"
           aria-label={t('vw.activityStatus')}
         >
+          {freshness}
           {hasNewerVersion ? (
             <VersionUpdateNotice
               onShowLatest={onShowLatest}
@@ -296,6 +302,7 @@ export function VersionWidget({
           ) : null}
         </div>
       ) : null}
+      {freshness}
       <button
         ref={triggerRef}
         type="button"
@@ -325,6 +332,16 @@ export function VersionWidget({
   )
 }
 
+function DataFreshness({ publishedAt }: { publishedAt?: string | null }) {
+  const { t } = useT()
+  if (!publishedAt) return null
+  return (
+    <span className="bg-background text-muted-foreground pointer-events-none rounded-[var(--r-md)] px-2 py-1 text-xs">
+      {t('history.dataUpdated')} <PublicationTime publishedAt={publishedAt} />
+    </span>
+  )
+}
+
 function VersionUpdateNotice({
   onShowLatest,
   announceSeparately = false,
@@ -334,7 +351,7 @@ function VersionUpdateNotice({
 }) {
   const { t } = useT()
   return (
-    <div className="min-h-version-row border-border flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
+    <div className="min-h-version-row border-border pointer-events-auto flex items-center justify-between gap-2 rounded-[var(--r-md)] border px-2 py-1.5 text-xs">
       <span aria-hidden={announceSeparately || undefined}>
         {t('history.updateAvailable')}
       </span>

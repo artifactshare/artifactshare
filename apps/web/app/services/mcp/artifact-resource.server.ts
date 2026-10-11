@@ -117,6 +117,7 @@ export function registerArtifactResource(
               'shareables.derived_title',
               'shareables.title_override',
               'shareables.updated_at',
+              'shareables.activity_at',
               'shareables.visibility',
               'versions.artifact_kind',
               'versions.size_bytes',
@@ -206,9 +207,9 @@ export function registerArtifactResource(
             const currentCursor = cursor
             query = query.where((eb) =>
               eb.or([
-                eb('shareables.updated_at', '<', currentCursor.updatedAt),
+                eb('shareables.activity_at', '<', currentCursor.updatedAt),
                 eb.and([
-                  eb('shareables.updated_at', '=', currentCursor.updatedAt),
+                  eb('shareables.activity_at', '=', currentCursor.updatedAt),
                   eb('shareables.id', '<', currentCursor.id),
                 ]),
               ]),
@@ -216,7 +217,7 @@ export function registerArtifactResource(
           }
 
           const rows = await query
-            .orderBy('shareables.updated_at', 'desc')
+            .orderBy('shareables.activity_at', 'desc')
             .orderBy('shareables.id', 'desc')
             .limit(
               Math.min(
@@ -286,7 +287,7 @@ export function registerArtifactResource(
 
           const last = rows.at(-1)
           if (!last || rows.length < ARTIFACT_RESOURCE_LIST_LIMIT) break
-          cursor = { updatedAt: last.updated_at, id: last.id }
+          cursor = { updatedAt: last.activity_at, id: last.id }
         }
 
         return { resources }

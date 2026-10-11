@@ -1,7 +1,7 @@
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import { linkExpiryStartingColumns } from '~/lib/link-sharing-policy'
 import type { DB } from '~/types/db'
 
@@ -103,6 +103,21 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario === 'viewer/scheduled-updates') {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+    )
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-21`)
+    await bucket.put(
+      `dev-screen/${shareableId}-v3`,
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scheduled report</title></head><body><main><h1>Scheduled report</h1><p>Data refreshed by the hourly publisher.</p></main></body></html>',
+      { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+    )
+    return
+  }
   if (
     scenario === 'viewer/retention-expanded' ||
     scenario === 'viewer/retention-saved'
@@ -284,6 +299,58 @@ export async function seedDevScreenState(
       .execute()
     return seeded
   }
+  if (scenario === 'viewer/scheduled-updates') {
+    const seeded = await seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-21`)
+    const clientId = `${workspaceId}-scheduled`
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: clientId,
+        workspace_id: workspaceId,
+        user_id: userId,
+        name: 'Scheduled reports',
+        created_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    const human = await db
+      .selectFrom('versions')
+      .selectAll()
+      .where('id', '=', `${shareableId}-v2`)
+      .executeTakeFirstOrThrow()
+    const versionId = `${shareableId}-v3`
+    await db
+      .insertInto('versions')
+      .values({
+        ...human,
+        id: versionId,
+        number: 3,
+        label: 'Hourly data refresh',
+        created_by_publisher_client_id: clientId,
+        created_at: now,
+        published_at: now,
+        r2_key: `dev-screen/${versionId}`,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: versionId, updated_at: now })
+      .where('id', '=', shareableId)
+      .execute()
+    return seeded
+  }
+  const hasProjectPins =
+    scenario === 'project-detail/with-pins' ||
+    scenario === 'project-detail/scheduled-pins'
+
   const seedsRepresentativeFeed =
     scenario === 'home/content-rich' ||
     scenario === 'home/updates-menu-open' ||
@@ -526,7 +593,7 @@ export async function seedDevScreenState(
     scenario === 'viewer/csp-diagnostics' ||
     scenario === 'viewer/access-requests' ||
     scenario === 'project-detail/with-files' ||
-    scenario === 'project-detail/with-pins'
+    hasProjectPins
   ) {
     const representativeNames =
       scenario === 'viewer/csp-diagnostics'
@@ -574,6 +641,19 @@ export async function seedDevScreenState(
           : `${workspaceId}-${userId}-file-${index + 1}`,
       ),
     )
+    if (hasProjectPins) {
+      await db
+        .insertInto('publisher_clients')
+        .values({
+          id: `${workspaceId}-scheduled`,
+          workspace_id: workspaceId,
+          user_id: userId,
+          name: 'Scheduled reports',
+          created_at: now,
+        })
+        .onConflict((oc) => oc.column('id').doNothing())
+        .execute()
+    }
     await Promise.all(
       names.map(async (name, index) => {
         const shareableId = shareableIds[index]!
@@ -583,7 +663,9 @@ export async function seedDevScreenState(
             : index === 0
               ? 180
               : index * 26 * 60
-          : index * 26 * 60
+          : hasProjectPins
+            ? (index + 1) * 26 * 60
+            : index * 26 * 60
         const timestamp = new Date(
           Date.parse(representativeFeedAnchor) - minutesAgo * 60_000,
         ).toISOString()
@@ -1055,7 +1137,45 @@ export async function seedDevScreenState(
             }
           }
         }
-        if (scenario === 'project-detail/with-pins' && index < 2) {
+        if (hasProjectPins && index < 2) {
+          // Scheduled pins cover publisher-only and mixed history; ordinary
+          // pins keep human publication metadata without a freshness line.
+          const versionNumbers = [1, 2, 3]
+          for (const number of versionNumbers) {
+            const scheduled =
+              scenario === 'project-detail/scheduled-pins' &&
+              (index === 0 || number !== 2)
+            const versionId = `${shareableId}-scheduled-${number}`
+            await db
+              .insertInto('versions')
+              .values({
+                id: versionId,
+                number,
+                shareable_id: shareableId,
+                artifact_kind: 'html_page',
+                status: 'published',
+                entrypoint_path: '/index.html',
+                r2_key: `dev-screen/${versionId}`,
+                size_bytes: 1,
+                sha256: versionId,
+                created_by_id: userId,
+                created_by_publisher_client_id: scheduled
+                  ? `${workspaceId}-scheduled`
+                  : null,
+                created_at: scheduled && number > 1 ? now : timestamp,
+                published_at: scheduled && number > 1 ? now : timestamp,
+              })
+              .onConflict((oc) => oc.column('id').doNothing())
+              .execute()
+          }
+          const currentId = `${shareableId}-scheduled-${versionNumbers.at(-1)}`
+          await db
+            .updateTable('shareables')
+            .set({ current_version_id: currentId, updated_at: now })
+            .where('id', '=', shareableId)
+            .where(sql<boolean>`current_version_id IS NOT ${currentId}`)
+            .execute()
+
           await db
             .insertInto('project_pins')
             .values({

@@ -195,6 +195,12 @@ export const screen = {
       },
     },
     {
+      id: 'scheduled-pins',
+      description:
+        'Publisher-only pins omit modification metadata while mixed history preserves the latest human publication',
+      setup: { scenario: 'project-detail/scheduled-pins' },
+    },
+    {
       id: 'empty',
       description: 'ファイルがないプロジェクト',
       setup: {
@@ -398,7 +404,7 @@ export async function loader({
         'link',
       ])
       .where((eb) => visibleShareableToViewer(eb, user))
-      .orderBy('shareables.updated_at', 'desc')
+      .orderBy('shareables.activity_at', 'desc')
       .execute(),
     canEditProjectContainer(db, user.workspaceId, project.id, user, {
       managerRoleEnabled,
@@ -471,7 +477,7 @@ async function loadSharedProject(
         .executeTakeFirst(),
       projectFileRowsQuery(db, project.id)
         .where((eb) => visibleSharedProjectShareableToViewer(eb, user))
-        .orderBy('shareables.updated_at', 'desc')
+        .orderBy('shareables.activity_at', 'desc')
         .execute(),
       isExternalPostingEnabledForWorkspace(db, project.workspaceId),
       getContainerSlackChannel(db, project.id),
