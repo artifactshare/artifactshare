@@ -142,6 +142,8 @@ Single-file versions require `expected_version`. Static-site versions accept
 `base_version` for changed-files uploads and repeated `delete_path` removals.
 The base must be current. Version uploads preserve audience, location and retention.
 
+On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions.
+
 The exact `GET /api/cli/artifacts/:id/download` returns raw source bytes for
 single files and a JSON manifest with version id, paths and SHA-256 hashes for
 static sites. Individual `download/*` requests are denied. `GET /api/cli/artifacts/:id`

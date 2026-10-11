@@ -400,7 +400,7 @@ export const REST_OPERATIONS = {
   '/api/cli/shareables/{id}/edit': {
     post: restOperation(
       'Edit artifact settings',
-      'Publisher accepts strictly retain_versions only (positive integer or null), for its own artifacts. Prunes immediately; clearing cannot restore content. Other credentials keep existing edit permissions.',
+      'Publisher accepts strictly retain_versions only (positive integer or null), for its own artifacts. On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions. Prunes immediately; clearing cannot restore content. Other credentials keep existing edit permissions.',
       restRef('CliEditResponse'),
       {
         anyOf: [
@@ -412,7 +412,7 @@ export const REST_OPERATIONS = {
     ),
     patch: restOperation(
       'Edit publisher retention',
-      'Publisher only. Strict retain_versions payload on its created or assigned artifacts. Other presets and browser sessions receive 405.',
+      'Publisher only. Strict retain_versions payload on its created or assigned artifacts. On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions. Other presets and browser sessions receive 405.',
       restRef('CliEditResponse'),
       restRef('PublisherRetentionRequest'),
       ['publisher'],

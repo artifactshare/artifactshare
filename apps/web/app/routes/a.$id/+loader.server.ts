@@ -113,6 +113,7 @@ interface ArtifactSummary {
   isHistoricalVersion: boolean
   canChangeRetention?: boolean
   retainVersions?: number | null
+  publisherManaged?: boolean
   versions: ReadonlyArray<VersionRow>
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
@@ -234,6 +235,7 @@ export type LoaderData =
         isHistoricalVersion: boolean
         canChangeRetention?: boolean
         retainVersions?: number | null
+        publisherManaged?: boolean
         versions: ReadonlyArray<VersionRow>
         grants: ReadonlyArray<GrantEntry>
         comments: ReadonlyArray<CommentThreadView>
@@ -299,6 +301,8 @@ export async function loader({
       'shareables.updated_at',
       'shareables.current_version_id',
       'shareables.retain_versions',
+      'shareables.created_by_publisher_client_id',
+      'shareables.assigned_publisher_client_id',
       'shareables.container_id',
       'users.email as owner_email',
       'users.name as owner_name',
@@ -803,6 +807,9 @@ export async function loader({
         canChangeRetention:
           isOwner && allowsHumanCliMutation(getCliAuthority(context)),
         retainVersions: shareable.retain_versions,
+        publisherManaged:
+          shareable.created_by_publisher_client_id != null ||
+          shareable.assigned_publisher_client_id != null,
         versions,
         grants,
         comments,
@@ -844,6 +851,9 @@ export async function loader({
         canChangeRetention:
           isOwner && allowsHumanCliMutation(getCliAuthority(context)),
         retainVersions: shareable.retain_versions,
+        publisherManaged:
+          shareable.created_by_publisher_client_id != null ||
+          shareable.assigned_publisher_client_id != null,
         versions,
         grants,
         comments,
@@ -914,6 +924,9 @@ export async function loader({
       canChangeRetention:
         isOwner && allowsHumanCliMutation(getCliAuthority(context)),
       retainVersions: shareable.retain_versions,
+      publisherManaged:
+        shareable.created_by_publisher_client_id != null ||
+        shareable.assigned_publisher_client_id != null,
       versions,
       grants,
       comments,

@@ -95,6 +95,16 @@ function recentContentRichBody(
   return null
 }
 
+const managedRetentionScenarios = new Set([
+  'viewer/retention-managed-owner',
+  'viewer/retention-managed-readonly',
+  'viewer/retention-managed-unlimited',
+])
+
+function managedRetentionBody(number: number) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Scheduled report</title></head><body><main><h1>Scheduled report</h1><p>${number <= 2 ? 'Reviewed by a person' : 'Scheduled data refresh'}: version ${number}.</p></main></body></html>`
+}
+
 /** Stores the deterministic viewer bodies owned by the recent task scenario. */
 export async function seedDevScreenArtifactBodies(
   bucket: Pick<R2Bucket, 'put'> | undefined,
@@ -103,6 +113,31 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (managedRetentionScenarios.has(scenario)) {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      scenario === 'viewer/retention-managed-readonly'
+        ? 'viewer/revisit-context'
+        : 'recent/content-rich',
+      workspaceId,
+      userId,
+    )
+    const index = scenario === 'viewer/retention-managed-readonly' ? 1 : 21
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-${index}`)
+    await Promise.all(
+      [1, 2, 3, 4].map((number) =>
+        bucket.put(
+          `dev-screen/${shareableId}-v${number}`,
+          managedRetentionBody(number),
+          {
+            httpMetadata: { contentType: 'text/html; charset=utf-8' },
+          },
+        ),
+      ),
+    )
+    return
+  }
+
   if (scenario === 'viewer/scheduled-updates') {
     await seedDevScreenArtifactBodies(
       bucket,
@@ -269,6 +304,95 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (managedRetentionScenarios.has(scenario)) {
+    const readonly = scenario === 'viewer/retention-managed-readonly'
+    const index = readonly ? 1 : 21
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-${index}`)
+    // Reset only this scenario's artifact before the base fixture restores access.
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: null })
+      .where('id', '=', shareableId)
+      .execute()
+    await db
+      .deleteFrom('versions')
+      .where('shareable_id', '=', shareableId)
+      .execute()
+    await db
+      .deleteFrom('version_retention_tombstones')
+      .where('shareable_id', '=', shareableId)
+      .execute()
+    const seeded = await seedDevScreenState(
+      db,
+      readonly ? 'viewer/revisit-context' : 'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
+    const artifact = await db
+      .selectFrom('shareables')
+      .select('owner_user_id')
+      .where('id', '=', shareableId)
+      .executeTakeFirstOrThrow()
+    const clientId = `${workspaceId}-scheduled`
+    await db
+      .insertInto('publisher_clients')
+      .values({
+        id: clientId,
+        workspace_id: workspaceId,
+        user_id: artifact.owner_user_id,
+        name: 'Scheduled reports',
+        created_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ current_version_id: null, version_sequence: 0 })
+      .where('id', '=', shareableId)
+      .execute()
+    await db
+      .deleteFrom('versions')
+      .where('shareable_id', '=', shareableId)
+      .execute()
+    for (let number = 1; number <= 4; number++) {
+      const versionId = `${shareableId}-v${number}`
+      const publishedAt = new Date(
+        Date.parse(now) - (4 - number) * 3_600_000,
+      ).toISOString()
+      await db
+        .insertInto('versions')
+        .values({
+          id: versionId,
+          shareable_id: shareableId,
+          artifact_kind: 'html_page',
+          status: 'published',
+          entrypoint_path: '/index.html',
+          r2_key: `dev-screen/${versionId}`,
+          size_bytes: new TextEncoder().encode(managedRetentionBody(number))
+            .byteLength,
+          sha256: versionId,
+          created_by_id: artifact.owner_user_id,
+          created_by_publisher_client_id: number > 2 ? clientId : null,
+          created_at: publishedAt,
+          published_at: publishedAt,
+        })
+        .execute()
+    }
+    await db
+      .updateTable('shareables')
+      .set({
+        current_version_id: `${shareableId}-v4`,
+        created_by_publisher_client_id: clientId,
+        assigned_publisher_client_id: null,
+        retain_versions:
+          scenario === 'viewer/retention-managed-unlimited' ? null : 2,
+        updated_at: now,
+      })
+      .where('id', '=', shareableId)
+      .execute()
+    return seeded
+  }
   if (
     scenario === 'viewer/retention-expanded' ||
     scenario === 'viewer/retention-saved'
@@ -342,7 +466,11 @@ export async function seedDevScreenState(
       .execute()
     await db
       .updateTable('shareables')
-      .set({ current_version_id: versionId, updated_at: now })
+      .set({
+        current_version_id: versionId,
+        created_by_publisher_client_id: clientId,
+        updated_at: now,
+      })
       .where('id', '=', shareableId)
       .execute()
     return seeded

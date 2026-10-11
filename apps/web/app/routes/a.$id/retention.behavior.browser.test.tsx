@@ -45,13 +45,18 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   await page.viewport(1280, 800)
 })
-async function mount(retainVersions: number | null = null, expand = true) {
+async function mount(
+  retainVersions: number | null = null,
+  expand = true,
+  publisherManaged = false,
+) {
   await act(async () =>
     root.render(
       <HistoryPanelBody
         artifactId="abc123def4"
         canChangeRetention
         retainVersions={retainVersions}
+        publisherManaged={publisherManaged}
         versions={[
           {
             id: 'v1',
@@ -86,9 +91,13 @@ async function mount(retainVersions: number | null = null, expand = true) {
       .click()
   }
 }
-async function limited() {
+async function limited(publisherManaged = false) {
   await page
-    .getByRole('radio', { name: 'Keep only the latest versions' })
+    .getByRole('radio', {
+      name: publisherManaged
+        ? 'Keep the latest scheduled versions'
+        : 'Keep only the latest versions',
+    })
     .click()
 }
 async function submit() {
@@ -127,56 +136,70 @@ test('uses the server count, cancels without another request, and restores keybo
   expect(state.revalidate).not.toHaveBeenCalled()
 })
 
-test('confirmed saves use the exact snapshot, disable duplicate actions and refresh history', async () => {
-  let finish: (value: Response) => void = () => {
-    throw new Error('save not started')
-  }
-  fetchMock.mockResolvedValueOnce(preview(2)).mockImplementationOnce(
-    () =>
-      new Promise<Response>((resolve) => {
-        finish = resolve
-      }),
-  )
-  state.revalidate.mockImplementation(() => mount(1))
-  await mount()
-  await limited()
-  await submit()
-  await vi.waitFor(() =>
-    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
-  )
-  await page.getByRole('button', { name: 'Remove versions and save' }).click()
-  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-    operation: 'save',
-    retain_versions: 1,
-    snapshot: 'snapshot',
-  })
-  expect(
-    page
-      .getByRole('button', { name: 'Remove versions and save' })
-      .element()
-      .getAttribute('data-variant'),
-  ).toBe('destructive')
-  const dialog = document.querySelector('[role="alertdialog"]')!
-  expect(
-    Array.from(dialog.querySelectorAll('button')).every(
-      (button) => button.disabled,
-    ),
-  ).toBe(true)
-  expect(document.body.textContent?.match(/Saving…/g)).toHaveLength(1)
-  expect(dialog.querySelector('[role="status"]')?.textContent).toBe('Saving…')
-  await act(async () => finish(Response.json({ kind: 'saved' })))
-  await vi.waitFor(() =>
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
-  )
-  expect(state.revalidate).toHaveBeenCalledTimes(1)
-  await vi.waitFor(() =>
-    expect(document.activeElement).toBe(
-      host.querySelector('[data-retention-change]'),
-    ),
-  )
-  expect(document.activeElement?.isConnected).toBe(true)
-})
+test.each([false, true])(
+  'confirmed saves use the exact snapshot, disable duplicate actions and refresh history (managed: %s)',
+  async (publisherManaged) => {
+    let finish: (value: Response) => void = () => {
+      throw new Error('save not started')
+    }
+    fetchMock.mockResolvedValueOnce(preview(2)).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve
+        }),
+    )
+    state.revalidate.mockImplementation(() => mount(1, true, publisherManaged))
+    await mount(null, true, publisherManaged)
+    await limited(publisherManaged)
+    await submit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
+    )
+    const confirmation = document.querySelector('[role="alertdialog"]')!
+    expect(confirmation.textContent).toContain(
+      publisherManaged
+        ? 'Remove older scheduled versions?'
+        : 'Remove older versions?',
+    )
+    expect(confirmation.textContent).toContain(
+      publisherManaged
+        ? '2 scheduled versions will be removed. All versions people added are kept. This cannot be undone.'
+        : '2 versions will be removed. This cannot be undone.',
+    )
+    await page.getByRole('button', { name: 'Remove versions and save' }).click()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      operation: 'save',
+      retain_versions: 1,
+      snapshot: 'snapshot',
+    })
+    expect(
+      page
+        .getByRole('button', { name: 'Remove versions and save' })
+        .element()
+        .getAttribute('data-variant'),
+    ).toBe('destructive')
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(
+      Array.from(dialog.querySelectorAll('button')).every(
+        (button) => button.disabled,
+      ),
+    ).toBe(true)
+    expect(document.body.textContent?.match(/Saving…/g)).toHaveLength(1)
+    expect(dialog.querySelector('[role="status"]')?.textContent).toBe('Saving…')
+    await act(async () => finish(Response.json({ kind: 'saved' })))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+    )
+    expect(state.revalidate).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        host.querySelector('[data-retention-change]'),
+      ),
+    )
+    expect(document.activeElement?.isConnected).toBe(true)
+  },
+)
 
 test('zero-removal changes save directly, clearing sends null, and failures retain the draft for retry', async () => {
   fetchMock
@@ -216,26 +239,35 @@ test.each(['', '0', '-1', '1.5', '9007199254740992'])(
   },
 )
 
-test('stale confirmation displays the fresh count before a second confirmation', async () => {
-  fetchMock
-    .mockResolvedValueOnce(preview(2))
-    .mockResolvedValueOnce(preview(3, 'fresh'))
-  await mount()
-  await limited()
-  await submit()
-  await page.getByRole('button', { name: 'Remove versions and save' }).click()
-  await vi.waitFor(() =>
-    expect(document.body.textContent).toContain('3 versions will be removed.'),
-  )
-  expect(state.revalidate).not.toHaveBeenCalled()
-  expect(
-    document.body.textContent?.match(/The history or setting changed\./g),
-  ).toHaveLength(1)
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-    'The history or setting changed.',
-  )
-  expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
-})
+test.each([false, true])(
+  'stale confirmation displays the fresh count before a second confirmation (managed: %s)',
+  async (publisherManaged) => {
+    fetchMock
+      .mockResolvedValueOnce(preview(2))
+      .mockResolvedValueOnce(preview(3, 'fresh'))
+    await mount(null, true, publisherManaged)
+    await limited(publisherManaged)
+    await submit()
+    await page.getByRole('button', { name: 'Remove versions and save' }).click()
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[role="alertdialog"]')?.textContent,
+      ).toContain(
+        publisherManaged
+          ? '3 scheduled versions will be removed. All versions people added are kept. This cannot be undone.'
+          : '3 versions will be removed. This cannot be undone.',
+      ),
+    )
+    expect(state.revalidate).not.toHaveBeenCalled()
+    expect(
+      document.body.textContent?.match(/The history or setting changed\./g),
+    ).toHaveLength(1)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'The history or setting changed.',
+    )
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+  },
+)
 
 test.each([
   [
@@ -576,5 +608,95 @@ test.each(['failed', 'changed'] as const)(
     await page.getByRole('radio', { name: 'Keep all versions' }).click()
     expect(host.querySelector('[role="status"]')?.textContent).toBe('')
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  },
+)
+
+test.each([
+  ['en', 1],
+  ['en', 2],
+  ['ja', 1],
+  ['ja', 2],
+] as const)(
+  'managed %s editor wraps protection on mobile and confirms %s scheduled removals',
+  async (locale, count) => {
+    state.locale = locale
+    await page.viewport(390, 844)
+    await mount(2, true, true)
+    const protection =
+      locale === 'en'
+        ? 'All versions people added are kept'
+        : '人が追加した版はすべて残します'
+    expect(host.textContent).toContain(protection)
+    const input = page.getByRole('spinbutton')
+    await input.fill('1')
+    fetchMock.mockResolvedValueOnce(preview(count))
+    await page
+      .getByRole('button', {
+        name: locale === 'en' ? 'Save version setting' : '版数の設定を保存',
+        exact: true,
+      })
+      .click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).not.toBeNull(),
+    )
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain(
+      locale === 'en'
+        ? 'Remove older scheduled versions?'
+        : '定期更新の古い版を削除しますか？',
+    )
+    expect(dialog.textContent).toContain(
+      locale === 'en'
+        ? `${count} scheduled ${count === 1 ? 'version' : 'versions'} will be removed. All versions people added are kept. This cannot be undone.`
+        : `定期更新の古い版を${count}件削除します。人が追加した版はすべて残します。この操作は取り消せません。`,
+    )
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      retain_versions: 1,
+    })
+    expect(host.scrollWidth).toBeLessThanOrEqual(
+      document.documentElement.clientWidth,
+    )
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'managed %s read-only version menu preserves the protection note',
+  async (locale) => {
+    state.locale = locale
+    for (const publisherManaged of [false, true]) {
+      await act(async () =>
+        root.render(
+          <VersionWidget
+            key={String(publisherManaged)}
+            versions={[
+              {
+                id: 'v1',
+                ordinal: 1,
+                createdAt: '2026-05-29T00:00:00.000Z',
+                sizeBytes: 10,
+                isCurrent: true,
+              },
+            ]}
+            onOpenHistory={() => {}}
+            retention={{ limit: 1, editable: false, publisherManaged }}
+          />,
+        ),
+      )
+      await waitForBrowserLayout()
+      await page
+        .getByRole('button', {
+          name: locale === 'en' ? 'Version status: v1' : '版の表示: v1',
+          exact: true,
+        })
+        .click()
+      await vi.waitFor(() => expect(host.querySelector('h2')).not.toBeNull())
+      expect(
+        host.textContent?.includes(
+          locale === 'en'
+            ? 'All versions people added are kept.'
+            : '人が追加した版はすべて残します。',
+        ),
+      ).toBe(publisherManaged)
+    }
   },
 )

@@ -2,8 +2,12 @@ import { sql } from 'kysely'
 import { listProjectPins } from './project-pins.server'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { vi } from 'vitest'
+import {
+  createD1BatchFixture,
+  type D1BatchSqliteRef,
+} from '~/test/d1-batch-mock'
 
-vi.mock('cloudflare:workers', () => ({ env: {} }))
+vi.mock('cloudflare:workers', () => ({ env: { BUCKET: { delete: vi.fn() } } }))
 
 import type { Kysely } from 'kysely'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -1438,9 +1442,17 @@ test('scheduled viewer capture seeds mixed history, fresh data, and matching art
       })
       const artifact = await db
         .selectFrom('shareables')
-        .select(['current_version_id', 'activity_at', 'updated_at'])
+        .select([
+          'current_version_id',
+          'activity_at',
+          'updated_at',
+          'created_by_publisher_client_id',
+        ])
         .where('id', '=', shareableId)
         .executeTakeFirstOrThrow()
+      expect(artifact.created_by_publisher_client_id).toBe(
+        `${workspaceId}-scheduled`,
+      )
       expect(artifact.current_version_id).toBe(`${shareableId}-v3`)
       expect(artifact.updated_at).toBe(now)
       expect(artifact.activity_at < artifact.updated_at).toBe(true)
@@ -1525,6 +1537,152 @@ test.each(['with-pins', 'scheduled-pins'] as const)(
               ? [true, true, true]
               : [true, false, true],
         )
+      }
+    } finally {
+      await db.destroy()
+    }
+  },
+)
+
+test.each(['owner', 'readonly', 'unlimited'])(
+  'managed retention %s scenario resets history, attribution, access and bodies',
+  async (kind) => {
+    const sqliteRef: D1BatchSqliteRef = { current: null }
+    const { db, sqlite } = createD1BatchFixture({ sqlite: sqliteRef })
+    sqliteRef.current = sqlite
+    try {
+      const scenario = `viewer/retention-managed-${kind}`
+      const now = '2026-09-09T00:00:00.000Z'
+      expect(isScreenScenario(scenario)).toBe(true)
+      const { workspaceId } = await ensureDevScreenState(
+        db,
+        scenario,
+        now,
+        'team',
+      )
+      const userId = `${workspaceId}-user`
+      await db
+        .insertInto('users')
+        .values({
+          id: userId,
+          email: 'viewer@example.com',
+          name: 'Viewer',
+          email_verified: 1,
+          created_at: now,
+          updated_at: now,
+          workspace_id: workspaceId,
+        })
+        .execute()
+      const id = devShareableId(
+        `${workspaceId}-${userId}-file-${kind === 'readonly' ? 1 : 21}`,
+      )
+      const { previewRetention, saveRetention } =
+        await import('./retention-settings.server')
+      for (let iteration = 0; iteration < 2; iteration++) {
+        await seedDevScreenState(db, scenario, workspaceId, userId, now)
+        const artifact = await db
+          .selectFrom('shareables')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+        expect(artifact.created_by_publisher_client_id).toBe(
+          `${workspaceId}-scheduled`,
+        )
+        expect(artifact.assigned_publisher_client_id).toBeNull()
+        expect(artifact.current_version_id).toBe(`${id}-v4`)
+        expect(artifact.retain_versions).toBe(kind === 'unlimited' ? null : 2)
+        expect(artifact.owner_user_id === userId).toBe(kind !== 'readonly')
+        if (kind === 'readonly') expect(artifact.visibility).toBe('workspace')
+        const versions = await db
+          .selectFrom('versions')
+          .selectAll()
+          .where('shareable_id', '=', id)
+          .orderBy('number')
+          .execute()
+        expect(versions.map((v) => v.number)).toEqual([1, 2, 3, 4])
+        expect(versions.map((v) => v.created_by_publisher_client_id)).toEqual([
+          null,
+          null,
+          `${workspaceId}-scheduled`,
+          `${workspaceId}-scheduled`,
+        ])
+        const preview = await previewRetention(
+          db,
+          id,
+          artifact.owner_user_id,
+          1,
+        )
+        expect(preview!.count).toBe(1)
+        expect(JSON.parse(preview!.snapshot).eligible).toEqual([`${id}-v3`])
+        const put = vi.fn().mockResolvedValue(undefined)
+        await seedDevScreenArtifactBodies(
+          { put } as unknown as Pick<R2Bucket, 'put'>,
+          scenario,
+          workspaceId,
+          userId,
+        )
+        const basePut = vi.fn().mockResolvedValue(undefined)
+        await seedDevScreenArtifactBodies(
+          { put: basePut } as unknown as Pick<R2Bucket, 'put'>,
+          kind === 'readonly'
+            ? 'viewer/revisit-context'
+            : 'recent/content-rich',
+          workspaceId,
+          userId,
+        )
+        expect(basePut.mock.calls.length).toBeGreaterThan(0)
+        expect(put.mock.calls.slice(0, basePut.mock.calls.length)).toEqual(
+          basePut.mock.calls,
+        )
+        const bodies = new Map(put.mock.calls.map(([key, body]) => [key, body]))
+        for (const version of versions) {
+          expect(bodies.has(version.r2_key)).toBe(true)
+          expect(
+            new TextEncoder().encode(bodies.get(version.r2_key)).byteLength,
+          ).toBe(version.size_bytes)
+          expect(bodies.get(version.r2_key)).toContain(
+            `version ${version.number}.`,
+          )
+        }
+        for (const [key, body] of basePut.mock.calls) {
+          if (!versions.some((version) => version.r2_key === key))
+            expect(bodies.get(key)).toBe(body)
+        }
+        if (kind === 'readonly')
+          expect(await previewRetention(db, id, userId, 1)).toBeNull()
+        expect(
+          await saveRetention(
+            db,
+            id,
+            artifact.owner_user_id,
+            1,
+            preview!.snapshot,
+          ),
+        ).toEqual({ retain_versions: 1, deleted_versions: 1 })
+        expect(
+          (
+            await db
+              .selectFrom('versions')
+              .select('id')
+              .where('shareable_id', '=', id)
+              .orderBy('number')
+              .execute()
+          ).map((version) => version.id),
+        ).toEqual([`${id}-v1`, `${id}-v2`, `${id}-v4`])
+        await db
+          .updateTable('shareables')
+          .set({
+            retain_versions: 1,
+            created_by_publisher_client_id: null,
+            assigned_publisher_client_id: `${workspaceId}-scheduled`,
+          })
+          .where('id', '=', id)
+          .execute()
+        await db
+          .updateTable('versions')
+          .set({ created_by_publisher_client_id: `${workspaceId}-scheduled` })
+          .where('id', '=', `${id}-v1`)
+          .execute()
       }
     } finally {
       await db.destroy()

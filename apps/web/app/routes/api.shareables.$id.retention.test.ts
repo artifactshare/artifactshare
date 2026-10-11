@@ -283,3 +283,54 @@ test('accepts same-origin JSON with charset and fetch metadata', async () => {
   expect(response.status).toBe(200)
   expect(mocks.withDb).toHaveBeenCalledOnce()
 })
+
+function managed() {
+  fixture.sqlite
+    .exec(`INSERT INTO publisher_clients (id, workspace_id, user_id, name, created_at) VALUES ('client1', 'ws1', 'u1', 'Scheduled reports', '2026-09-01');
+    UPDATE shareables SET assigned_publisher_client_id = 'client1';
+    UPDATE versions SET created_by_publisher_client_id = 'client1' WHERE id = 'v2';`)
+}
+
+test('managed zero-removal saves directly and preserves the human version', async () => {
+  managed()
+  const response = await request({ operation: 'save', retain_versions: 1 })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({
+    kind: 'saved',
+    deleted_versions: 0,
+  })
+  expect(
+    fixture.sqlite.prepare('SELECT id FROM versions ORDER BY id').all(),
+  ).toEqual([{ id: 'v1' }, { id: 'v2' }])
+})
+
+test.each([
+  "UPDATE shareables SET created_by_publisher_client_id = 'client1'",
+  "UPDATE versions SET created_by_publisher_client_id = NULL WHERE id = 'v1'",
+])(
+  'managed confirmation refreshes after attribution changes: %s',
+  async (change) => {
+    managed()
+    fixture.sqlite.exec(
+      "UPDATE versions SET created_by_publisher_client_id = 'client1' WHERE id = 'v1'",
+    )
+    const preview = await request({ operation: 'preview', retain_versions: 1 })
+    const { snapshot } = (await preview.json()) as { snapshot: string }
+    sqliteRef.beforeNextBatch = () => {
+      fixture.sqlite.exec(change)
+    }
+    const response = await request({
+      operation: 'save',
+      retain_versions: 1,
+      snapshot,
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      kind: 'preview',
+      count: change.includes('versions SET') ? 0 : 1,
+    })
+    expect(
+      fixture.sqlite.prepare('SELECT retain_versions FROM shareables').get(),
+    ).toEqual({ retain_versions: null })
+  },
+)

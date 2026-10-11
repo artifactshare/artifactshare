@@ -17,20 +17,24 @@ import { deleteArtifacts } from './storage.server'
 // Re-evaluated inside the atomic batch: concurrent publishes/settings changes
 // cannot make a current version eligible or release the same quota twice.
 export function candidates(shareableId: string, proposed?: number | null) {
-  const limit =
-    proposed === undefined
-      ? sql`(SELECT retain_versions FROM shareables WHERE id = ${shareableId})`
-      : sql`${proposed}`
-  return sql<string>`(SELECT v.id FROM versions v
-    JOIN shareables s ON s.id = v.shareable_id
-    WHERE s.id = ${shareableId} AND ${limit} IS NOT NULL
+  const limit = proposed === undefined ? sql`retain_versions` : sql`${proposed}`
+  // Bind the artifact once: this predicate is repeated in the atomic accounting
+  // query, which must still fit D1's 100-parameter budget.
+  return sql<string>`(WITH policy AS (
+    SELECT id, current_version_id, ${limit} AS retention_limit,
+      (created_by_publisher_client_id IS NOT NULL OR assigned_publisher_client_id IS NOT NULL) AS managed
+    FROM shareables WHERE id = ${shareableId}
+  ) SELECT v.id FROM versions v JOIN policy s ON s.id = v.shareable_id
+    WHERE s.retention_limit IS NOT NULL
       AND v.status = 'published' AND v.published_at IS NOT NULL
+      AND (NOT s.managed OR v.created_by_publisher_client_id IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM shareables current WHERE current.current_version_id = v.id)
       AND v.id NOT IN (
-        SELECT kept.id FROM versions kept
-        WHERE kept.shareable_id = ${shareableId} AND kept.status = 'published' AND kept.published_at IS NOT NULL
-        ORDER BY (kept.id = (SELECT current_version_id FROM shareables WHERE id = ${shareableId})) DESC, kept.number DESC
-        LIMIT COALESCE(${limit}, -1)
+        SELECT kept.id FROM versions kept JOIN policy p ON p.id = kept.shareable_id
+        WHERE kept.status = 'published' AND kept.published_at IS NOT NULL
+          AND (NOT p.managed OR kept.created_by_publisher_client_id IS NOT NULL)
+        ORDER BY (NOT p.managed AND kept.id = p.current_version_id) DESC, kept.number DESC
+        LIMIT COALESCE((SELECT retention_limit FROM policy), -1)
       ))`
 }
 

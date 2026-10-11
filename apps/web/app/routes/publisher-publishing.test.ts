@@ -1612,3 +1612,87 @@ test.each(['replacement', 'inherited'] as const)(
     )
   },
 )
+
+test.each(['html_page', 'static_site'])(
+  'managed %s publication and owner edits preserve human history',
+  async (kind) => {
+    const created = kind === 'html_page' ? await create() : await createSite()
+    await fixture
+      .db!.updateTable('versions')
+      .set({ created_by_publisher_client_id: null })
+      .where('id', '=', created.versionId)
+      .execute()
+    await fixture
+      .db!.updateTable('shareables')
+      .set({ retain_versions: 1 })
+      .where('id', '=', created.id)
+      .execute()
+    let current = created.versionId
+    for (let number = 2; number <= 3; number++) {
+      const result = await update(
+        args(
+          `/api/shareables/${created.id}/versions?${kind === 'static_site' ? 'artifact_kind=static_site&base_version' : 'expected_version'}=${current}`,
+          kind === 'static_site'
+            ? site({ 'index.html': `<h1>Update ${number}</h1>` })
+            : form(`<h1>Update ${number}</h1>`),
+          created.id,
+        ),
+      )
+      expect(result.status).toBe(200)
+      current = (
+        await fixture
+          .db!.selectFrom('shareables')
+          .select('current_version_id')
+          .where('id', '=', created.id)
+          .executeTakeFirstOrThrow()
+      ).current_version_id!
+    }
+    expect(
+      (
+        await fixture
+          .db!.selectFrom('versions')
+          .select('id')
+          .where('shareable_id', '=', created.id)
+          .execute()
+      )
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual([created.versionId, current].sort())
+    for (const caller of [
+      undefined,
+      { kind: 'unrestricted' } as CliAuthority,
+    ]) {
+      credential.value = caller
+      const result = await edit(
+        jsonArgs(created.id, 'POST', { retain_versions: 1 }),
+      )
+      expect(result.status).toBe(200)
+      expect(await result.json()).toMatchObject({
+        retain_versions: 1,
+        deleted_versions: 0,
+      })
+    }
+    credential.value = { kind: 'agent' } as CliAuthority
+    expect(
+      (await edit(jsonArgs(created.id, 'POST', { retain_versions: 1 }))).status,
+    ).toBe(403)
+    credential.value = undefined
+    expect(
+      (
+        await edit(
+          jsonArgs(created.id, 'POST', {
+            retain_versions: 1,
+            include_human_versions: true,
+          }),
+        )
+      ).status,
+    ).toBe(400)
+    expect(
+      await fixture
+        .db!.selectFrom('versions')
+        .select('id')
+        .where('id', '=', created.versionId)
+        .executeTakeFirst(),
+    ).toEqual({ id: created.versionId })
+  },
+)

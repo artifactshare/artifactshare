@@ -108,7 +108,7 @@ CLI の command または option を変更したときは、CLI を build して
 ### 今回実装済み
 
 - `open <target>` / `share <path>`: AI に頼む主要な行動に合わせ、共有 URL を読む入口を `open`、ローカルファイルやフォルダを共有する入口を `share` にする。旧 `agent open` と `publish` は後方互換 command として残さない。`schema_version` は 2、CLI package は `0.2.0` に上げる。
-- `edit <target> --retain-versions N`: 所有者が最新 N 版だけを保持する。`N` は 1 以上の整数で、`all` を指定すると保持数の制限を解除する。設定時と更新時に古い公開版を削除してストレージ使用量を減らす。CLI では unrestricted の所有者認証を使う。publisher は API 経由で作成・割り当て済みの成果物の保持数だけを変更でき、agent プリセットは利用できない。成功応答の `retain_versions` は設定値（制限なしは `null`）、`deleted_versions` は今回削除した版数を返す。残る版の番号とコメントは保持する。所有者は共有ページの履歴でも残す版数を設定でき、既存の版を削除する場合は確認が必要になる。閲覧権限がある人が設定により削除された版を開くと、削除理由と最新版へのリンクを表示する（HTTP 410）。制限を解除しても削除済みの内容は復元されない。
+- `edit <target> --retain-versions N`: 所有者が最新 N 件の対象版を残す。`N` は 1 以上の整数で、`all` を指定すると残す版数の制限を解除する。定期更新用クライアントが作成した、または割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格情報で追加した公開版だけを数える。それ以外の版はすべて残し、このルールは unrestricted の所有者認証でも変わらない。それ以外のファイルでは、これまでどおりすべての公開版を数える。現在の版は常に残す。設定時と更新時に対象となる古い公開版を削除してストレージ使用量を減らす。CLI では unrestricted の所有者認証を使う。publisher は API 経由で作成・割り当て済みの成果物の保持数だけを変更でき、agent プリセットは利用できない。成功応答の `retain_versions` は設定値（制限なしは `null`）、`deleted_versions` は今回削除した版数を返す。残る版の番号とコメントは保持する。所有者は共有ページの履歴でも残す版数を設定でき、既存の版を削除する場合は確認が必要になる。閲覧権限がある人が設定により削除された版を開くと、削除理由と最新版へのリンクを表示する（HTTP 410）。制限を解除しても削除済みの内容は復元されない。
 - `edit <target>`: 投稿後に表示タイトル、共有範囲、個別共有、保存先を 1 回で整えられるようにする。`--visibility private|workspace|project|link` を指定できる。`project` には編集後の保存先がプロジェクトであることが必要で、同じコマンドに `--project-id <id>` を指定してもよい。home での明示的な `--visibility project`（`--home` との併用を含む）は変更せずに拒否する。project の共有範囲を持つ成果物を home に移す場合、`project` を明示指定していなければ `private` になる。`--visibility project` を指定した編集では、移動、タイトル、共有設定をまとめて保存する。これらを逐次適用する場合は、移動、タイトル、共有設定の順に適用し、先に成功した変更は後続失敗時もロールバックしない。既存の `move` は移動だけの後方互換 command として残し、新しい案内では `edit --project-id` / `edit --home` を主導線にする。
 - `projects create <name>`: ローカルで作った静的サイトやレポートを、新しいプロジェクトを作ってから同じ CLI 流れで `share --project-id` できるようにする。MCP の `create_project` と Web のプロジェクト作成に対応する CLI 面である。`--visibility` 省略時はリポジトリ設定、利用者設定、`workspace` の順で解決し、不正値は `validation_failed` にする。
 - `move <target> --project-id <id> | --home`: `--home` へ仮置きした成果物を後からプロジェクトへ整理し、誤ったプロジェクトから戻せるようにする。移動は共有範囲と個別共有先を直接追加しないが、`project` 共有範囲の成果物では参照するプロジェクトの関係者が変わるため、成功 `data` で移動後の保存先と共有範囲の扱いを返す。`project` 共有範囲の成果物をホームへ戻す場合は、ホームに関係者が存在しないため `private` へ落とす。`share --key` の安定キーは移動に追従せず、移動前の保存先で同じ key を再投稿した場合は既存の `key_target_moved` になる。
@@ -326,6 +326,8 @@ Single-file versions require `expected_version`. Static-site versions accept
 `artifact_kind=static_site` with either `expected_version` for replacement or
 `base_version` for changed-files uploads and repeated `delete_path` removals.
 The base must be current. Version uploads preserve audience, location and retention.
+
+On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions.
 
 The exact `GET /api/cli/artifacts/:id/download` returns raw source bytes for
 single files and a JSON manifest with version id, paths and SHA-256 hashes for

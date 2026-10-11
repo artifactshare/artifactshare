@@ -333,6 +333,122 @@ export const screen = {
       },
     },
     {
+      id: 'retention-managed-expanded',
+      description:
+        'Owner edits scheduled version limits while preserving human history',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-owner',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-change]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-managed-saved',
+      description:
+        'Saved owner setting keeps all versions and explains human preservation',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-owner',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-change]' },
+          { action: 'click', selector: '[data-retention-all]' },
+          { action: 'click', selector: '[data-retention-save]' },
+          { action: 'click', selector: '[data-retention-saved]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-managed-confirmation',
+      description:
+        'Owner confirms removal of one scheduled version while human versions remain',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-unlimited',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-change]' },
+          { action: 'click', selector: '[data-retention-limited]' },
+          { action: 'click', selector: '[data-retention-save]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-managed-readonly',
+      description:
+        'Non-owner history explains scheduled retention without edit controls',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-readonly',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 1,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+        ],
+      },
+    },
+    {
+      id: 'history-retention-managed-open',
+      description:
+        'Managed history summary explains the finite scheduled limit and human preservation',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-owner',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-managed-version-menu',
+      description:
+        'Read-only version menu explains scheduled retention and human preservation',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-readonly',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 1,
+        interactions: [
+          {
+            action: 'click',
+            selector: 'button[aria-label="Version status: v4"]',
+          },
+        ],
+      },
+    },
+    {
+      id: 'retention-managed-unlimited-editor',
+      description:
+        'Unlimited managed editor explains human preservation before choosing a limit',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-unlimited',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-change]' },
+        ],
+      },
+    },
+    {
       id: 'retention-expanded',
       description:
         'Owner editor expanded with the stored setting and Save disabled',

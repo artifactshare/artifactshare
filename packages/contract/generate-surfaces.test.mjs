@@ -990,7 +990,7 @@ test('edit reference includes visibility and retention help from the built comma
   const visibilityHelp =
     '--visibility <visibility> private, workspace, project, or link (project requires placement in a project)'
   const retentionHelp =
-    '--retain-versions <retain-versions> N or all (owner only). Keeps only the latest N versions and permanently deletes older ones; all clears the limit.'
+    '--retain-versions <retain-versions> N or all (owner only). Keeps the latest N versions; publisher-managed artifacts count only publisher versions and keep all versions people added. Older eligible versions are permanently deleted; all clears the limit.'
   const surface = await generateSurface({
     run: (args) =>
       args.length
