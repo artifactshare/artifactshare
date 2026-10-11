@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Update bundled documentation for owner version settings in file history and authorized explanations for versions removed by retention. Clearing a limit does not restore deleted content.
+
 - Preserve the server-verified publisher preset when importing a token, including when replacing an existing profile; reject malformed authority responses before saving credentials.
 
 - Preserve publisher device credentials in saved profiles and rotation, report their client scope in doctor, and reject unsupported publisher login/resume without downgrading. The device API can approve a named publisher client to create private home files and update only its own files; its exact download endpoint returns source bytes.

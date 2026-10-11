@@ -103,6 +103,15 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario === 'viewer/retention-removed') {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+    )
+    return
+  }
   if (scenario === 'viewer/csp-diagnostics') {
     await Promise.all(
       CSP_DIAGNOSTIC_BODIES.map((html, index) =>
@@ -239,6 +248,30 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (scenario === 'viewer/retention-removed') {
+    const seeded = await seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
+    const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
+    await db
+      .deleteFrom('version_retention_tombstones')
+      .where('shareable_id', '=', shareableId)
+      .execute()
+    await db
+      .insertInto('version_retention_tombstones')
+      .values({
+        version_id: 'removed-v1',
+        shareable_id: shareableId,
+        version_number: 1,
+        removed_at: now,
+      })
+      .execute()
+    return seeded
+  }
   const seedsRepresentativeFeed =
     scenario === 'home/content-rich' ||
     scenario === 'home/updates-menu-open' ||
@@ -448,6 +481,20 @@ export async function seedDevScreenState(
           .executeTakeFirstOrThrow()
       ).created_at
     : now
+
+  if (scenario === 'recent/content-rich') {
+    await db
+      .deleteFrom('version_retention_tombstones')
+      .where(
+        'shareable_id',
+        'in',
+        db
+          .selectFrom('shareables')
+          .select('id')
+          .where('workspace_id', '=', workspaceId),
+      )
+      .execute()
+  }
 
   if (scenario === 'home/empty' || scenario === 'home/first-file') {
     await db
@@ -1359,6 +1406,7 @@ export async function seedDevScreenState(
         artifact_kind: 'html_page',
         visibility: 'workspace',
         current_version_id: `${shareableId}-v2`,
+        retain_versions: 2,
         container_id: ownerContainerId,
         created_at: v1At,
         updated_at: updateAt,
@@ -1370,6 +1418,7 @@ export async function seedDevScreenState(
           owner_user_id: ownerId,
           visibility: 'workspace',
           current_version_id: `${shareableId}-v2`,
+          retain_versions: 2,
           container_id: ownerContainerId,
           updated_at: updateAt,
         }),

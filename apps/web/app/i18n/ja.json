@@ -1572,5 +1572,22 @@
   "team.tokens.cli.preset.publisher": "ファイルの作成と、作ったファイルの更新",
   "device.publisher.requestedName": "クライアントが指定した名前",
   "device.publisher.nameSource": "この名前は、ログインを求めているクライアントが指定したものです。",
-  "device.publisher.noneYet": "(まだありません)"
+  "device.publisher.noneYet": "(まだありません)",
+  "vw.retentionTitle": "残す版数の設定",
+  "vw.retentionAll": "すべての版を残す",
+  "vw.retentionLimited": "最新の版だけを残す",
+  "vw.retentionCount": "残す版数",
+  "vw.retentionInvalid": "1以上の整数を入力してください。",
+  "vw.retentionSave": "版数の設定を保存",
+  "vw.retentionSaving": "保存しています…",
+  "vw.retentionFailed": "保存できませんでした。もう一度お試しください。",
+  "vw.retentionConfirmTitle": "古い版を削除しますか？",
+  "vw.retentionConfirm": "{count} 版を削除します。この操作は取り消せません。",
+  "vw.retentionConfirmSave": "版を削除して保存",
+  "vw.retentionRemovedTitle": "削除された版",
+  "vw.retentionRemoved": "この版は、残す版数の設定により削除されました。",
+  "vw.retentionLatest": "最新版を開く",
+  "vw.retentionChanged": "履歴または版数の設定が変わりました。内容を確認してから、もう一度保存してください。",
+  "vw.retentionOpenHistory": "履歴と残す版数の設定を開く",
+  "vw.retentionConfirmOne": "{count} 版を削除します。この操作は取り消せません。"
 }

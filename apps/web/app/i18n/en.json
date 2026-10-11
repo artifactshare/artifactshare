@@ -1572,5 +1572,22 @@
   "team.tokens.cli.preset.publisher": "Create files and update its own",
   "device.publisher.requestedName": "Name requested by the client",
   "device.publisher.nameSource": "The requesting client supplies this name.",
-  "device.publisher.noneYet": "(none yet)"
+  "device.publisher.noneYet": "(none yet)",
+  "vw.retentionTitle": "Version retention",
+  "vw.retentionAll": "Keep all versions",
+  "vw.retentionLimited": "Keep only the latest versions",
+  "vw.retentionCount": "Number of versions to keep",
+  "vw.retentionInvalid": "Enter a whole number of at least 1.",
+  "vw.retentionSave": "Save version setting",
+  "vw.retentionSaving": "Saving…",
+  "vw.retentionFailed": "Could not save. Please try again.",
+  "vw.retentionConfirmTitle": "Remove older versions?",
+  "vw.retentionConfirm": "{count} versions will be removed. This cannot be undone.",
+  "vw.retentionConfirmSave": "Remove versions and save",
+  "vw.retentionRemovedTitle": "Version removed",
+  "vw.retentionRemoved": "This version was removed by the version retention setting",
+  "vw.retentionLatest": "Open latest version",
+  "vw.retentionChanged": "The history or setting changed. Review it before saving again.",
+  "vw.retentionOpenHistory": "Open history and version settings",
+  "vw.retentionConfirmOne": "{count} version will be removed. This cannot be undone."
 }

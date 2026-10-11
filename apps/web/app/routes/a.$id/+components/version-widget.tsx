@@ -23,6 +23,7 @@ import { VersionRows } from './version-rows'
 interface VersionWidgetProps {
   hidden?: boolean
   versions: ReadonlyArray<VersionRow>
+  retention?: { limit: number | null; editable: boolean }
   canViewHistory?: boolean
   canReplaceFile?: boolean
   onSubmit?: (files: File[]) => void
@@ -43,6 +44,7 @@ export function VersionWidget({
   hidden = false,
   versions,
   canViewHistory = true,
+  retention,
   canReplaceFile = false,
   onSubmit,
   replaceMode = 'single',
@@ -54,6 +56,7 @@ export function VersionWidget({
   onCommentsOpen,
 }: VersionWidgetProps) {
   const { locale, t, tPlural } = useT()
+  const retainVersions = retention?.limit
   const popoverId = useId()
   const popoverTitleId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -185,6 +188,16 @@ export function VersionWidget({
               onClick={closePopover}
             />
           </div>
+          {retainVersions != null ? (
+            <p className="text-muted-foreground m-0 px-2 text-xs">
+              {t(
+                retainVersions === 1
+                  ? 'vw.retentionNoteOne'
+                  : 'vw.retentionNoteOther',
+                { count: retainVersions },
+              )}
+            </p>
+          ) : null}
           <VersionRows
             versions={versions.slice(0, 3)}
             locale={locale}
@@ -199,7 +212,11 @@ export function VersionWidget({
               onOpenHistory(triggerRef.current)
             }}
           >
-            {t('history.viewAll')}
+            {t(
+              retention?.editable
+                ? 'vw.retentionOpenHistory'
+                : 'history.viewAll',
+            )}
           </button>
           {hasNewerVersion ? (
             <VersionUpdateNotice onShowLatest={onShowLatest} />

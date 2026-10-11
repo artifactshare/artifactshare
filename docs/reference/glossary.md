@@ -21,6 +21,7 @@ lint の `copy-glossary/no-violations` rule は「使わない語」列を deny 
 
 | 概念 | 日本語表示語 | 英語表示語 | コード識別子 | 使わない語 |
 |---|---|---|---|---|
+| 残す版数 | 残す版数の設定 | Version retention | `retain_versions` | リテンション、プルーン、トゥームストーン |
 | 製品の自称 | サービス | service | — | ui:ツール、プラットフォーム、ui:場所、ui:アプリ |
 | 共有する対象物 | ファイル | file | `shareable`, `artifact` | 成果物、アーティファクト、ドキュメント、en:artifact、en:artifacts |
 | 対象物の更新単位 | 版 | version | `versions` | バージョン |

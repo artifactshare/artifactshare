@@ -56,6 +56,12 @@ export interface DB {
   link_publications: LinkPublicationsTable
   shareable_grants: ShareableGrantsTable
   access_requests: AccessRequestsTable
+  version_retention_tombstones: {
+    version_id: string
+    shareable_id: string
+    version_number: number
+    removed_at: string
+  }
   versions: VersionsTable
   version_files: VersionFilesTable
   comment_threads: CommentThreadsTable

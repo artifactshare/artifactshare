@@ -16,7 +16,8 @@ import {
   type ReactNode,
 } from 'react'
 import { useLocation, useNavigate, useRevalidator } from 'react-router'
-import { HistoryPanel, VersionWidget, type VersionRow } from './history-panel'
+import { VersionWidget, type VersionRow } from './history-panel'
+import { ViewerHistoryPanel } from './viewer-history-panel'
 import { DropCatcher } from './drop-catcher'
 import { hasLocalFiles } from './drag-files'
 import { ViewerChrome } from './viewer-chrome'
@@ -106,6 +107,7 @@ export type ViewerShellArtifact = {
   displayedVersionId?: string
   displayedVersionOrdinal?: number
   isHistoricalVersion?: boolean
+  canChangeRetention?: boolean
   retainVersions?: number | null
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
@@ -2676,6 +2678,10 @@ function ViewerShellView({
         children
       )}
       <VersionWidget
+        retention={{
+          limit: artifact.retainVersions ?? null,
+          editable: artifact.canChangeRetention === true,
+        }}
         canViewHistory={canViewHistory}
         hidden={state.chromeCollapsed}
         versions={artifact.versions ?? []}
@@ -2695,25 +2701,17 @@ function ViewerShellView({
         onCommentsOpen={commentsEnabled ? comments.openPanel : undefined}
       />
       {canViewHistory ? (
-        <HistoryPanel
-          retainVersions={artifact.retainVersions}
-          versions={artifact.versions ?? []}
-          open={state.historyOpen}
-          onOpenChange={(open) => {
-            if (open) {
-              closeAccessRequests()
-              comments.changePanelOpen(false)
-            }
-            dispatch({ type: 'history-open-changed', open })
-          }}
-          returnFocusRef={historyReturnFocusRef}
-          collapsedFallbackRef={collapseToggleRef}
-          topbarCollapsed={state.chromeCollapsed}
+        <ViewerHistoryPanel
+          artifact={artifact}
+          state={state}
+          dispatch={dispatch}
           canReplaceFile={canReplaceFile}
-          onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
+          submitReplaceVersion={submitReplaceVersion}
           replaceMode={replaceMode}
-          uploading={state.uploading}
-          dropActive={state.dropActive}
+          closeAccessRequests={closeAccessRequests}
+          comments={comments}
+          historyReturnFocusRef={historyReturnFocusRef}
+          collapseToggleRef={collapseToggleRef}
         />
       ) : null}
       {textAnchorsEnabled ? (

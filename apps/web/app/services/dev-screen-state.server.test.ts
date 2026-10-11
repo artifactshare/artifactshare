@@ -1254,3 +1254,54 @@ test('CSP capture scenario publishes both HTML bodies with matching metadata', a
     await db.destroy()
   }
 })
+
+test('removed-version capture is deterministic and ordinary reseeding clears its tombstone', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    const now = '2026-09-09T00:00:00.000Z'
+    const scenario = 'viewer/retention-removed'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'viewer@example.com',
+        name: 'Viewer',
+        email_verified: 1,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+      })
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    expect(
+      await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+    ).toEqual([
+      {
+        version_id: 'removed-v1',
+        shareable_id: devShareableId(`${workspaceId}-${userId}-file-1`),
+        version_number: 1,
+        removed_at: now,
+      },
+    ])
+    await seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
+    expect(
+      await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+    ).toEqual([])
+  } finally {
+    await db.destroy()
+  }
+})

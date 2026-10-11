@@ -1,3 +1,4 @@
+import { previewRetention, saveRetention } from './retention-settings.server'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
@@ -19,6 +20,7 @@ let sqlite: ReturnType<typeof createMigratedInMemoryDb>['sqlite']
 const sqliteRef: {
   current: typeof sqlite | null
   beforeNextBatch?: (() => void) | null
+  afterNextBatch?: (() => void) | null
 } = { current: null }
 beforeEach(() => {
   ;({ db, sqlite } = createD1BatchFixture({ sqlite: sqliteRef }))
@@ -30,6 +32,7 @@ afterEach(async () => {
   await db.destroy()
   sqliteRef.current = null
   sqliteRef.beforeNextBatch = null
+  sqliteRef.afterNextBatch = null
 })
 
 function seed() {
@@ -311,4 +314,162 @@ test('remaining versions-only references protect objects even without a file row
   expect(
     sqlite.prepare('SELECT storage_used_bytes AS bytes FROM workspaces').get(),
   ).toEqual({ bytes: 10 })
+})
+
+test('retention writes minimal unique tombstones only for deleted versions and cascades with the file', async () => {
+  sqlite.exec('UPDATE shareables SET retain_versions = 2')
+  await pruneVersions(db, 's1')
+  await pruneVersions(db, 's1')
+  const rows = await db
+    .selectFrom('version_retention_tombstones')
+    .selectAll()
+    .orderBy('version_number')
+    .execute()
+  expect(rows).toEqual([
+    {
+      version_id: 'v1',
+      shareable_id: 's1',
+      version_number: 1,
+      removed_at: expect.any(String),
+    },
+    {
+      version_id: 'v2',
+      shareable_id: 's1',
+      version_number: 2,
+      removed_at: expect.any(String),
+    },
+  ])
+  expect(() =>
+    sqlite.exec(
+      'INSERT INTO version_retention_tombstones SELECT * FROM version_retention_tombstones',
+    ),
+  ).toThrow()
+  sqlite.exec("DELETE FROM shareables WHERE id = 's1'")
+  expect(
+    await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+  ).toEqual([])
+})
+
+test.each(['INSERT ON version_retention_tombstones', 'DELETE ON versions'])(
+  'failed %s rolls back tombstones, versions and quota',
+  async (event) => {
+    sqlite.exec(`UPDATE shareables SET retain_versions = 1;
+    CREATE TRIGGER fail_retention BEFORE ${event} BEGIN SELECT RAISE(ABORT, 'injected failure'); END;`)
+    await expect(pruneVersions(db, 's1')).rejects.toThrow('injected failure')
+    expect(
+      await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+    ).toEqual([])
+    expect(await db.selectFrom('versions').select('id').execute()).toHaveLength(
+      4,
+    )
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .executeTakeFirst(),
+    ).toEqual({ storage_used_bytes: 40 })
+  },
+)
+
+test('preview is nonmutating, uses full eligibility, and a confirmed save matches pruning', async () => {
+  const preview = await previewRetention(db, 's1', 'u1', 2)
+  expect(preview).toMatchObject({ stored: null, proposed: 2, count: 2 })
+  expect(await db.selectFrom('versions').select('id').execute()).toHaveLength(4)
+  expect(await saveRetention(db, 's1', 'u1', 2, preview!.snapshot)).toEqual({
+    retain_versions: 2,
+    deleted_versions: 2,
+  })
+  expect(await previewRetention(db, 's1', 'u1', null)).toMatchObject({
+    stored: 2,
+    proposed: null,
+    count: 0,
+  })
+  expect(await saveRetention(db, 's1', 'u1', null)).toEqual({
+    retain_versions: null,
+    deleted_versions: 0,
+  })
+  expect(await previewRetention(db, 's1', 'u2', 1)).toBeNull()
+  expect(await saveRetention(db, 's1', 'u2', 1)).toBeNull()
+})
+
+test.each([
+  "UPDATE shareables SET current_version_id = 'v1'",
+  'UPDATE shareables SET retain_versions = 3',
+  "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES ('ws1', 'u1', 'member', 'removed', '2026-09-01', '2026-09-01')",
+  "UPDATE versions SET published_at = '2026-09-06' WHERE id = 'v1'",
+])('browser guard refuses a concurrent change: %s', async (change) => {
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  sqliteRef.beforeNextBatch = () => {
+    sqlite.exec(change)
+  }
+  expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toBeNull()
+  expect(await db.selectFrom('versions').select('id').execute()).toHaveLength(4)
+  expect(
+    await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+  ).toEqual([])
+})
+
+test('browser confirmation covers full histories without counting drafts or foreign current references', async () => {
+  const insert = sqlite.prepare(
+    `INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES (?, 's1', 'html_page', ?, '/index.html', ?, 10, 'hash', 'u1', '2026-09-05', ?)`,
+  )
+  for (let n = 5; n <= 105; n++)
+    insert.run(`v${n}`, 'published', `key${n}`, '2026-09-05')
+  insert.run('draft', 'uploading', 'draft-key', null)
+  sqlite.exec(`UPDATE shareables SET current_version_id = 'v105'; UPDATE workspaces SET storage_used_bytes = 1060;
+    INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id) VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v1');`)
+  const preview = await previewRetention(db, 's1', 'u1', 2)
+  expect(preview?.count).toBe(102)
+  expect(await saveRetention(db, 's1', 'u1', 2, preview!.snapshot)).toEqual({
+    retain_versions: 2,
+    deleted_versions: 102,
+  })
+  expect(
+    await db.selectFrom('versions').select('id').orderBy('id').execute(),
+  ).toEqual([{ id: 'draft' }, { id: 'v1' }, { id: 'v104' }, { id: 'v105' }])
+  expect(
+    await db
+      .selectFrom('version_retention_tombstones')
+      .select('version_id')
+      .execute(),
+  ).toHaveLength(102)
+})
+
+test('a pointer move after accepting a browser setting never adds unconfirmed removals', async () => {
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  sqliteRef.afterNextBatch = () => {
+    sqlite.exec("UPDATE shareables SET current_version_id = 'v1'")
+  }
+  expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
+    retain_versions: 1,
+    deleted_versions: 2,
+  })
+  expect(
+    await db.selectFrom('versions').select('id').orderBy('id').execute(),
+  ).toEqual([{ id: 'v1' }, { id: 'v4' }])
+  expect(
+    await db
+      .selectFrom('version_retention_tombstones')
+      .select('version_id')
+      .orderBy('version_id')
+      .execute(),
+  ).toEqual([{ version_id: 'v2' }, { version_id: 'v3' }])
+})
+
+test('publication after preview cannot increase the browser-authorized removal set', async () => {
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  expect(preview?.count).toBe(3)
+  sqliteRef.beforeNextBatch = () => {
+    sqlite.exec(
+      `INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES ('v5', 's1', 'html_page', 'published', '/index.html', 'key5', 10, 'hash', 'u1', '2026-09-05', '2026-09-05'); UPDATE shareables SET current_version_id = 'v5';`,
+    )
+  }
+  expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toBeNull()
+  expect(await previewRetention(db, 's1', 'u1', 1)).toMatchObject({
+    stored: null,
+    count: 4,
+  })
+  expect(
+    await db.selectFrom('version_retention_tombstones').selectAll().execute(),
+  ).toEqual([])
 })

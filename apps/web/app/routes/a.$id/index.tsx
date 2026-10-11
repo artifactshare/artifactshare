@@ -333,6 +333,47 @@ export const screen = {
       },
     },
     {
+      id: 'retention-confirmation',
+      description:
+        'Owner confirms the server-counted removal of an older version',
+      setup: {
+        scenario: 'recent/content-rich',
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+          { action: 'click', selector: '[data-retention-limited]' },
+          { action: 'click', selector: '[data-retention-save]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-readonly',
+      description:
+        'A viewer sees the current version setting without owner controls',
+      setup: {
+        scenario: 'viewer/revisit-context',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+        ],
+      },
+    },
+    {
+      id: 'retention-removed',
+      description: 'Removed version explanation with latest-version navigation',
+      setup: {
+        scenario: 'viewer/retention-removed',
+        scenarioArtifactIndex: 1,
+        query: '?version=removed-v1',
+        ready: {
+          selector: '[data-screen-capture-state="version-removed"]',
+          description: 'removed version explanation',
+        },
+      },
+    },
+    {
       id: 'history-retention-open',
       description:
         '最新版のみを保持する成果物の履歴パネルで保持設定を確認する状態',

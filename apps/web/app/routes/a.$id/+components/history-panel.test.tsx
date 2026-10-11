@@ -395,3 +395,30 @@ test.each([
     }
   },
 )
+
+test.each([true, false])(
+  'only retention authority exposes the editor, regardless of upload permission: %s',
+  (canChangeRetention) => {
+    const html = renderToStaticMarkup(
+      <HistoryPanelBody
+        artifactId="abc123def4"
+        canChangeRetention={canChangeRetention}
+        retainVersions={2}
+        versions={[]}
+        canReplaceFile={!canChangeRetention}
+        active={false}
+        uploading={false}
+        inputRef={{ current: null }}
+        replaceMode="single"
+        setLocalDropActive={() => {}}
+        submitFiles={() => {}}
+        locale="en"
+        t={bindI18n('en').t}
+      />,
+    )
+    expect(html.includes('data-retention-save')).toBe(canChangeRetention)
+    expect(html.includes('Keeping the latest 2 versions')).toBe(
+      !canChangeRetention,
+    )
+  },
+)

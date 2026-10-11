@@ -8,6 +8,7 @@
   "viewer/bridge-attribution",
   "viewer/csp-diagnostics",
   "viewer/revisit-context",
+  "viewer/retention-removed",
   "viewer/access-requests",
   "viewer/link-suspended",
   "project-detail/with-files",

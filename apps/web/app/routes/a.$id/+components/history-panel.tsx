@@ -1,3 +1,4 @@
+import { RetentionEditor } from './retention-editor'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import { useRef, useState, type RefObject } from 'react'
 import { toast } from 'sonner'
@@ -16,6 +17,8 @@ export type { VersionRow } from './version-history-types'
 export { VersionWidget } from './version-widget'
 
 interface HistoryPanelProps {
+  artifactId?: string
+  canChangeRetention?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
@@ -33,6 +36,8 @@ interface HistoryPanelProps {
 export function HistoryPanel({
   versions,
   retainVersions,
+  artifactId,
+  canChangeRetention,
   open,
   onOpenChange,
   canReplaceFile = false,
@@ -92,6 +97,8 @@ export function HistoryPanel({
         </SheetClose>
       </SheetHeader>
       <HistoryPanelBody
+        artifactId={artifactId}
+        canChangeRetention={canChangeRetention}
         retainVersions={retainVersions}
         versions={versions}
         canReplaceFile={canReplaceFile}
@@ -111,6 +118,8 @@ export function HistoryPanel({
 export function HistoryPanelBody({
   versions,
   retainVersions,
+  artifactId,
+  canChangeRetention,
   canReplaceFile,
   active,
   uploading,
@@ -121,6 +130,8 @@ export function HistoryPanelBody({
   locale,
   t,
 }: {
+  artifactId?: string
+  canChangeRetention?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
@@ -136,7 +147,13 @@ export function HistoryPanelBody({
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3.5">
-        {retainVersions != null ? (
+        {canChangeRetention && artifactId ? (
+          <RetentionEditor
+            key={retainVersions ?? 'all'}
+            artifactId={artifactId}
+            retainVersions={retainVersions ?? null}
+          />
+        ) : retainVersions != null ? (
           <p className="text-muted-foreground m-0 text-xs">
             {t(
               retainVersions === 1

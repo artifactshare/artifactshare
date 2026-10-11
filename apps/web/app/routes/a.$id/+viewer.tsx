@@ -30,6 +30,8 @@ import { CopyableCodeBlock } from '~/components/app/copyable-code-block'
 import { LastUsedBadge } from '~/components/app/last-used-badge'
 import { SignInOptions } from '~/components/app/sign-in-options'
 import { PermissionDenied } from './+components/permission-denied'
+import { ViewerErrorShell } from '~/components/app/viewer-error-shell'
+import { BrokenFileIcon } from '~/components/app/broken-file-icon'
 import { SourceMissing } from './+components/source-missing'
 import { Unavailable } from '~/components/app/unavailable'
 import { UnsupportedContent } from './+components/unsupported-content'
@@ -180,7 +182,23 @@ function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
   const shouldLoadAnalytics =
     rootData?.analyticsConsent?.shouldLoadAnalytics ?? false
 
+  const { t } = useT()
   switch (loaderData.kind) {
+    case 'version-removed':
+      return (
+        <ViewerErrorShell
+          user={loaderData.user}
+          icon={<BrokenFileIcon />}
+          title={t('vw.retentionRemovedTitle')}
+          body={<p>{t('vw.retentionRemoved')}</p>}
+          actions={
+            <Button asChild>
+              <Link to={loaderData.latestUrl}>{t('vw.retentionLatest')}</Link>
+            </Button>
+          }
+          screenCaptureState="version-removed"
+        />
+      )
     case 'preauth':
       return <PreauthFallback canonicalUrl={loaderData.canonicalUrl} />
     case 'denied-internal':
