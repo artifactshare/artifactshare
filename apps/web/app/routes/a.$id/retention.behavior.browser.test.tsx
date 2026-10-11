@@ -3,6 +3,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
+import { VersionWidget } from './+components/version-widget'
+import { HistoryPanelBody } from './+components/history-panel'
+import { bindI18n as bindTestI18n } from '~/lib/i18n'
 import { RetentionEditor } from './+components/retention-editor'
 import ViewerRoute from './+viewer'
 import { waitForBrowserLayout } from '~/test/browser-layout'
@@ -44,9 +47,20 @@ afterEach(async () => {
 async function mount(retainVersions: number | null = null) {
   await act(async () =>
     root.render(
-      <RetentionEditor
+      <HistoryPanelBody
         artifactId="abc123def4"
+        canChangeRetention
         retainVersions={retainVersions}
+        versions={[]}
+        canReplaceFile={false}
+        active={false}
+        uploading={false}
+        inputRef={{ current: null }}
+        replaceMode="single"
+        setLocalDropActive={() => {}}
+        submitFiles={() => {}}
+        locale={state.locale}
+        t={bindTestI18n(state.locale).t}
       />,
     ),
   )
@@ -103,6 +117,7 @@ test('confirmed saves use the exact snapshot, disable duplicate actions and refr
         finish = resolve
       }),
   )
+  state.revalidate.mockImplementation(() => mount(1))
   await mount()
   await limited()
   await submit()
@@ -122,11 +137,19 @@ test('confirmed saves use the exact snapshot, disable duplicate actions and refr
       (button) => button.disabled,
     ),
   ).toBe(true)
+  expect(document.body.textContent?.match(/Saving…/g)).toHaveLength(1)
+  expect(dialog.querySelector('[role="status"]')?.textContent).toBe('Saving…')
   await act(async () => finish(Response.json({ kind: 'saved' })))
   await vi.waitFor(() =>
     expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
   )
   expect(state.revalidate).toHaveBeenCalledTimes(1)
+  await vi.waitFor(() =>
+    expect(document.activeElement).toBe(
+      host.querySelector('[data-retention-save]'),
+    ),
+  )
+  expect(document.activeElement?.isConnected).toBe(true)
 })
 
 test('zero-removal changes save directly, clearing sends null, and failures retain the draft for retry', async () => {
@@ -179,13 +202,19 @@ test('stale confirmation displays the fresh count before a second confirmation',
     expect(document.body.textContent).toContain('3 versions will be removed.'),
   )
   expect(state.revalidate).not.toHaveBeenCalled()
+  expect(
+    document.body.textContent?.match(/The history or setting changed\./g),
+  ).toHaveLength(1)
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+    'The history or setting changed.',
+  )
   expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
 })
 
 test.each([
   [
     'en',
-    'This version was removed by the version retention setting',
+    'This version was removed by the version retention setting.',
     'Open latest version',
   ],
   ['ja', 'この版は、残す版数の設定により削除されました。', '最新版を開く'],
@@ -291,4 +320,118 @@ test('revalidation replaces a historical version removed by its owner with the e
   )
   expect(host.querySelector('iframe')).toBeNull()
   expect(router.state.location.search).toBe('?version=v1')
+})
+
+test.each([1, 2])(
+  'Japanese confirmation uses consistent version spacing for %s',
+  async (count) => {
+    state.locale = 'ja'
+    fetchMock.mockResolvedValueOnce(preview(count))
+    await mount(3)
+    await page
+      .getByRole('button', { name: '版数の設定を保存', exact: true })
+      .click()
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[role="alertdialog"]')?.textContent,
+      ).toContain(`${count}版を削除します。この操作は取り消せません。`),
+    )
+  },
+)
+
+test('owner history entry has visible text and a chevron before hover and opens settings by keyboard', async () => {
+  const openHistory = vi.fn()
+  await act(async () =>
+    root.render(
+      <VersionWidget
+        versions={[]}
+        retention={{ limit: null, editable: true }}
+        canViewHistory
+        onOpenHistory={openHistory}
+      />,
+    ),
+  )
+  await page
+    .getByRole('button', { name: 'Version status: v-', exact: true })
+    .click()
+  const entry = page.getByRole('button', {
+    name: 'Open history and version settings',
+  })
+  const button = entry.element() as HTMLButtonElement
+  expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+  expect(button.classList.contains('text-foreground')).toBe(true)
+  button.focus()
+  await userEvent.keyboard('{Enter}')
+  expect(openHistory).toHaveBeenCalledOnce()
+})
+
+test('untouched settings follow loader changes without replacing focused controls', async () => {
+  await mount(2)
+  const input = host.querySelector<HTMLInputElement>('input[type="number"]')!
+  input.focus()
+  await mount(5)
+  expect(host.querySelector('input[type="number"]')).toBe(input)
+  expect(input.value).toBe('5')
+  expect(document.activeElement).toBe(input)
+  const save = host.querySelector<HTMLButtonElement>('[data-retention-save]')!
+  save.focus()
+  await mount(null)
+  expect(host.querySelector('input[type="number"]')).toBeNull()
+  expect(
+    page
+      .getByRole('radio', { name: 'Keep all versions' })
+      .element()
+      .getAttribute('aria-checked'),
+  ).toBe('true')
+  expect(document.activeElement).toBe(save)
+  await mount(3)
+  expect(
+    host.querySelector<HTMLInputElement>('input[type="number"]')?.value,
+  ).toBe('3')
+  expect(document.activeElement).toBe(save)
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test.each(['7', ''])(
+  'loader updates preserve an edited draft %j',
+  async (value) => {
+    await mount(2)
+    await page
+      .getByRole('spinbutton', { name: 'Number of versions to keep' })
+      .fill(value)
+    const input = host.querySelector<HTMLInputElement>('input[type="number"]')!
+    await mount(null)
+    expect(input.value).toBe(value)
+    expect(document.activeElement).toBe(input)
+    expect(fetchMock).not.toHaveBeenCalled()
+  },
+)
+
+test('failed unchanged submissions retain their value through refresh and retry, then follow the loader after success', async () => {
+  fetchMock
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(Response.json({ kind: 'saved' }))
+  await mount(2)
+  await submit()
+  await vi.waitFor(() =>
+    expect(host.textContent).toContain('Could not save. Please try again.'),
+  )
+  await mount(5)
+  expect(
+    host.querySelector<HTMLInputElement>('input[type="number"]')?.value,
+  ).toBe('2')
+  expect(host.textContent).toContain('Could not save. Please try again.')
+  state.revalidate.mockImplementation(() => mount(2))
+  await submit()
+  await vi.waitFor(() => expect(state.revalidate).toHaveBeenCalledOnce())
+  await vi.waitFor(() =>
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-retention-save]')?.disabled,
+    ).toBe(false),
+  )
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body).retain_versions).toBe(2)
+  await mount(6)
+  expect(
+    host.querySelector<HTMLInputElement>('input[type="number"]')?.value,
+  ).toBe('6')
 })

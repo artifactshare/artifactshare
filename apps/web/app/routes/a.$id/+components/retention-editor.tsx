@@ -27,8 +27,14 @@ export function RetentionEditor({
   const { t } = useT()
   const id = useId()
   const revalidator = useRevalidator()
-  const [limited, setLimited] = useState(retainVersions !== null)
-  const [count, setCount] = useState(String(retainVersions ?? 1))
+  // Until edited, follow loader updates without remounting the controls.
+  // A draft also freezes submitted values through pending, confirmation and failure.
+  const [draft, setDraft] = useState<{
+    limited: boolean
+    count: string
+  } | null>(null)
+  const limited = draft?.limited ?? retainVersions !== null
+  const count = draft?.count ?? String(retainVersions ?? 1)
   const [pending, setPending] = useState(false)
   const busy = useRef(false)
   const saveButton = useRef<HTMLButtonElement>(null)
@@ -41,6 +47,7 @@ export function RetentionEditor({
   async function save(confirmed?: Preview) {
     if (busy.current || !valid) return
     busy.current = true
+    setDraft({ limited, count })
     setPending(true)
     setError(null)
     try {
@@ -71,8 +78,9 @@ export function RetentionEditor({
       if (!response.ok) throw new Error('save failed')
       const result = (await response.json()) as { kind: string }
       if (result.kind !== 'saved') throw new Error('invalid save response')
-      setPreview(null)
       await revalidator.revalidate()
+      setDraft(null)
+      setPreview(null)
     } catch {
       setError('failed')
     } finally {
@@ -97,7 +105,9 @@ export function RetentionEditor({
           <RadioGroup
             aria-label={t('vw.retentionTitle')}
             value={limited ? 'limited' : 'all'}
-            onValueChange={(value) => setLimited(value === 'limited')}
+            onValueChange={(value) =>
+              setDraft({ limited: value === 'limited', count })
+            }
             disabled={pending}
           >
             <label className="flex items-center gap-2 text-sm">
@@ -123,7 +133,9 @@ export function RetentionEditor({
                 value={count}
                 aria-invalid={!valid}
                 aria-describedby={!valid ? `${id}-error` : undefined}
-                onChange={(event) => setCount(event.target.value)}
+                onChange={(event) =>
+                  setDraft({ limited, count: event.target.value })
+                }
               />
               {!valid ? (
                 <p id={`${id}-error`} className="text-destructive text-sm">
@@ -140,18 +152,19 @@ export function RetentionEditor({
           variant="outline"
           disabled={pending || !valid}
         >
-          {t(pending ? 'vw.retentionSaving' : 'vw.retentionSave')}
+          {t('vw.retentionSave')}
         </Button>
         <div role="status" className="text-sm">
-          {pending
-            ? t('vw.retentionSaving')
-            : error
-              ? t(
-                  error === 'changed'
-                    ? 'vw.retentionChanged'
-                    : 'vw.retentionFailed',
-                )
-              : null}
+          {!preview &&
+            (pending
+              ? t('vw.retentionSaving')
+              : error
+                ? t(
+                    error === 'changed'
+                      ? 'vw.retentionChanged'
+                      : 'vw.retentionFailed',
+                  )
+                : null)}
         </div>
       </form>
       <AlertDialog
@@ -177,6 +190,9 @@ export function RetentionEditor({
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div role="status" className="text-sm">
+            {pending ? t('vw.retentionSaving') : null}
+          </div>
           {error ? (
             <p role="alert" className="text-destructive text-sm">
               {t(
@@ -197,7 +213,7 @@ export function RetentionEditor({
                 if (preview) void save(preview)
               }}
             >
-              {t(pending ? 'vw.retentionSaving' : 'vw.retentionConfirmSave')}
+              {t('vw.retentionConfirmSave')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -362,6 +362,7 @@ export const screen = {
     },
     {
       id: 'retention-removed',
+      expectedStatus: 410,
       description: 'Removed version explanation with latest-version navigation',
       setup: {
         scenario: 'viewer/retention-removed',

@@ -2,6 +2,7 @@ import {
   ArtifactIdParamsSchema,
   CliEditRequestSchema,
 } from '@artifactshare/contract'
+import { isSameOriginRequest } from '~/lib/same-origin-request'
 import { errorResponse } from '~/lib/api-errors'
 import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import { requireUserApiMiddleware } from '~/middleware/auth'
@@ -18,6 +19,17 @@ export const middleware = [requireUserApiMiddleware]
 export async function action({ request, params, context }: Route.ActionArgs) {
   if (request.method !== 'POST')
     return new Response('Method Not Allowed', { status: 405 })
+  if (!isSameOriginRequest(request))
+    return errorResponse('forbidden', 'Same-origin request required.', 403)
+  if (
+    request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !==
+    'application/json'
+  )
+    return errorResponse(
+      'validation-failed',
+      'JSON content type required.',
+      415,
+    )
   const user = requireUser(context)
   if (!allowsHumanCliMutation(getCliAuthority(context)))
     return errorResponse('forbidden', 'Owner access required.', 403)

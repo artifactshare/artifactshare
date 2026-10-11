@@ -2,7 +2,11 @@ import type {
   NewCommentMessage,
   ViewerRevisitContext,
 } from '~/lib/viewer-revisit'
-import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
+import {
+  IconChevronRight,
+  IconHistory as HistoryIcon,
+  IconX,
+} from '@tabler/icons-react'
 import {
   useCallback,
   useEffect,
@@ -206,7 +210,7 @@ export function VersionWidget({
           />
           <button
             type="button"
-            className="text-muted-foreground hover:bg-accent hover:text-foreground h-touch-target cursor-pointer rounded-[var(--r-sm)] border-0 bg-transparent px-2 text-left text-sm"
+            className="text-foreground hover:bg-accent h-touch-target flex cursor-pointer items-center justify-between gap-2 rounded-[var(--r-sm)] border-0 bg-transparent px-2 text-left text-sm"
             onClick={() => {
               setOpen(false)
               onOpenHistory(triggerRef.current)
@@ -217,6 +221,7 @@ export function VersionWidget({
                 ? 'vw.retentionOpenHistory'
                 : 'history.viewAll',
             )}
+            <IconChevronRight size={16} aria-hidden="true" />
           </button>
           {hasNewerVersion ? (
             <VersionUpdateNotice onShowLatest={onShowLatest} />

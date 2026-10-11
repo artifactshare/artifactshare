@@ -1585,7 +1585,7 @@
   "vw.retentionConfirm": "{count} versions will be removed. This cannot be undone.",
   "vw.retentionConfirmSave": "Remove versions and save",
   "vw.retentionRemovedTitle": "Version removed",
-  "vw.retentionRemoved": "This version was removed by the version retention setting",
+  "vw.retentionRemoved": "This version was removed by the version retention setting.",
   "vw.retentionLatest": "Open latest version",
   "vw.retentionChanged": "The history or setting changed. Review it before saving again.",
   "vw.retentionOpenHistory": "Open history and version settings",

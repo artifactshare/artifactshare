@@ -156,7 +156,7 @@ export async function assertNoRouteError(page) {
   )
 }
 
-export async function navigateForCapture(page, url) {
+export async function navigateForCapture(page, url, expectedStatus) {
   let navigation
   try {
     navigation = await page.goto(url, { waitUntil: 'networkidle' })
@@ -166,7 +166,12 @@ export async function navigateForCapture(page, url) {
       `navigation failed: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-  if (!navigation || !navigation.ok())
+  if (
+    !navigation ||
+    (expectedStatus === undefined
+      ? !navigation.ok()
+      : navigation.status() !== expectedStatus)
+  )
     throw new CaptureFailure(
       'navigation_failure',
       `navigation failed: HTTP ${navigation?.status() ?? 'none'}`,
@@ -710,7 +715,7 @@ async function captureScreensLocked({
         new URLSearchParams(query.replace(/^\?/, '')).forEach((value, key) =>
           url.searchParams.set(key, value),
         )
-      await navigateForCapture(page, url.toString())
+      await navigateForCapture(page, url.toString(), state.expectedStatus)
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
       const interactions = state.setup?.interactions ?? []

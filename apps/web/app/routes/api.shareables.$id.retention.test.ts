@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   user: { id: 'u1' },
   authority: null as unknown,
   db: null as unknown,
+  withDb: vi.fn(),
 }))
 vi.mock('~/middleware/auth', () => ({ requireUserApiMiddleware: vi.fn() }))
 vi.mock('~/middleware/context', () => ({
@@ -15,7 +16,10 @@ vi.mock('~/middleware/context', () => ({
   getCliAuthority: () => mocks.authority,
 }))
 vi.mock('~/services/db.server', () => ({
-  withDb: (fn: (db: unknown) => unknown) => fn(mocks.db),
+  withDb: (fn: (db: unknown) => unknown) => {
+    mocks.withDb()
+    return fn(mocks.db)
+  },
 }))
 import { action } from './api.shareables.$id.retention'
 const sqliteRef: D1BatchSqliteRef = { current: null }
@@ -26,6 +30,7 @@ beforeEach(() => {
   mocks.db = fixture.db
   mocks.user = { id: 'u1' }
   mocks.authority = null
+  mocks.withDb.mockClear()
   fixture.sqlite.exec(`
     INSERT INTO workspaces (id, name, created_at, storage_used_bytes) VALUES ('ws1', 'Workspace', '2026-09-01', 20);
     INSERT INTO users (id, email, name, created_at, updated_at, workspace_id) VALUES ('u1', 'author@example.com', 'Author', '2026-09-01', '2026-09-01', 'ws1');
@@ -46,7 +51,14 @@ function request(body: unknown) {
     params: { id: 'abc123def4' },
     request: new Request(
       'https://example.com/api/shareables/abc123def4/retention',
-      { method: 'POST', body: JSON.stringify(body) },
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://example.com',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
     ),
   } as never)
 }
@@ -185,4 +197,89 @@ test('unsupported methods do not mutate', async () => {
   expect(
     fixture.sqlite.prepare('SELECT retain_versions FROM shareables').get(),
   ).toEqual({ retain_versions: null })
+})
+
+test.each([
+  [{ 'Content-Type': 'application/json' }, 403],
+  [{ Origin: 'null', 'Content-Type': 'application/json' }, 403],
+  [
+    { Origin: 'https://other.example.com', 'Content-Type': 'application/json' },
+    403,
+  ],
+  [
+    {
+      Origin: 'https://example.com',
+      'Sec-Fetch-Site': 'cross-site',
+      'Content-Type': 'application/json',
+    },
+    403,
+  ],
+  [
+    {
+      Origin: 'https://example.com',
+      'Sec-Fetch-Site': 'same-site',
+      'Content-Type': 'application/json',
+    },
+    403,
+  ],
+  [{ Origin: 'https://example.com' }, 415],
+  [{ Origin: 'https://example.com', 'Content-Type': 'text/plain' }, 415],
+  [
+    {
+      Origin: 'https://example.com',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    415,
+  ],
+  [
+    {
+      Origin: 'https://example.com',
+      'Content-Type': 'application/json-invalid',
+    },
+    415,
+  ],
+] as const)(
+  'rejects unsafe request headers %j before reading body or database',
+  async (headers, status) => {
+    for (const operation of ['preview', 'save']) {
+      const incoming = new Request(
+        'https://example.com/api/shareables/abc123def4/retention',
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ operation, retain_versions: 1 }),
+        },
+      )
+      const read = vi.spyOn(incoming, 'json')
+      const response = await action({
+        context: new Map(),
+        params: { id: 'abc123def4' },
+        request: incoming,
+      } as never)
+      expect(response.status).toBe(status)
+      expect(read).not.toHaveBeenCalled()
+      expect(mocks.withDb).not.toHaveBeenCalled()
+    }
+  },
+)
+
+test('accepts same-origin JSON with charset and fetch metadata', async () => {
+  const response = await action({
+    context: new Map(),
+    params: { id: 'abc123def4' },
+    request: new Request(
+      'https://example.com/api/shareables/abc123def4/retention',
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://example.com',
+          'Sec-Fetch-Site': 'same-origin',
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ operation: 'save', retain_versions: 2 }),
+      },
+    ),
+  } as never)
+  expect(response.status).toBe(200)
+  expect(mocks.withDb).toHaveBeenCalledOnce()
 })

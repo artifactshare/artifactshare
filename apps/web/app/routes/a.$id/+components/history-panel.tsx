@@ -149,7 +149,7 @@ export function HistoryPanelBody({
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-3.5">
         {canChangeRetention && artifactId ? (
           <RetentionEditor
-            key={retainVersions ?? 'all'}
+            key={artifactId}
             artifactId={artifactId}
             retainVersions={retainVersions ?? null}
           />
