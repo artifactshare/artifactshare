@@ -189,8 +189,7 @@ export const screen = {
     },
     {
       id: 'with-pins',
-      description:
-        '定期更新のみのピンと、人による更新後に定期更新されたピンがあるプロジェクト',
+      description: 'ピン留めされたファイルがあるプロジェクト',
       setup: {
         scenario: 'project-detail/with-pins',
       },

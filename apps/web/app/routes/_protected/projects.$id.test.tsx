@@ -601,6 +601,37 @@ describe('ProjectRedesignBody rendering', () => {
     homeOwnerName: 'Owner',
   }
 
+  test.each([1, 2])(
+    'human pin v%s keeps author/time and only labels later versions',
+    (number) => {
+      const html = renderToStaticMarkup(
+        createElement(ProjectRedesignBody, {
+          ...baseProps,
+          files: [fileRow('pin', NOW)],
+          pins: [
+            {
+              shareableId: 'pin',
+              name: 'Pinned file',
+              derivedTitle: null,
+              titleOverride: null,
+              artifactKind: 'markdown_page',
+              latestVersionNumber: number,
+              latestPublishedAt: NOW,
+              latestAuthorName: 'Author',
+              latestAuthorEmail: 'author@example.test',
+              latestAuthorImage: null,
+              dataUpdatedAt: null,
+              createdAt: NOW,
+            },
+          ],
+        }),
+      )
+      expect(html).toContain('project.fileUpdated')
+      expect(html).toContain('>A</span>')
+      expect(html.includes(`>v${number}</span>`)).toBe(number >= 2)
+    },
+  )
+
   test('zero files render a full-page empty state without pinned section', () => {
     const html = renderToStaticMarkup(
       createElement(ProjectRedesignBody, { ...baseProps, files: [] }),
@@ -845,6 +876,19 @@ test.each(['member', 'shared'] as const)(
       expect(markup(refreshed)).toContain('history.dataUpdated')
       expect(markup(refreshed)).toContain(`dateTime="${refreshAt}"`)
       expect(markup(refreshed)).toContain('/a/scheduled')
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime('2026-07-29T01:01:00Z')
+        const serverMarkup = markup(refreshed)
+        vi.setSystemTime('2026-07-29T03:00:00Z')
+        const browserMarkup = markup(refreshed)
+        expect(serverMarkup.match(/<time[^>]*>.*?<\/time>/)?.[0]).toBe(
+          browserMarkup.match(/<time[^>]*>.*?<\/time>/)?.[0],
+        )
+        expect(serverMarkup).toContain('2026-07-29 01:00:00 UTC</time>')
+      } finally {
+        vi.useRealTimers()
+      }
       await publish(3, false)
       const humanOnly = await loader(loaderArgs())
       expect(humanOnly.projectActivity.pins[0]?.dataUpdatedAt).toBeNull()

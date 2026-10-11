@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { PublicationTime } from '~/components/app/publication-time'
 import { Link, useFetcher } from 'react-router'
 import { IconDots, IconStack2 } from '@tabler/icons-react'
 import type { FeedEventRow } from '~/services/events.server'
@@ -189,7 +190,9 @@ export function ProjectRedesignBody({
                           size="xs"
                         />
                       ) : null}
-                      <span>v{pinned.latestVersionNumber}</span>
+                      {pinned.latestVersionNumber >= 2 ? (
+                        <span>v{pinned.latestVersionNumber}</span>
+                      ) : null}
                       {pinned.latestPublishedAt ? (
                         <span>
                           {t('project.fileUpdated', {
@@ -205,18 +208,7 @@ export function ProjectRedesignBody({
                   {pinned.dataUpdatedAt ? (
                     <div className="text-muted-foreground mt-2 text-xs">
                       {t('history.dataUpdated')}{' '}
-                      <time
-                        dateTime={pinned.dataUpdatedAt}
-                        title={new Date(pinned.dataUpdatedAt).toLocaleString(
-                          locale,
-                          {
-                            timeZone: 'UTC',
-                            timeZoneName: 'short',
-                          },
-                        )}
-                      >
-                        {formatRelative(pinned.dataUpdatedAt, locale)}
-                      </time>
+                      <PublicationTime publishedAt={pinned.dataUpdatedAt} />
                     </div>
                   ) : null}
                 </div>

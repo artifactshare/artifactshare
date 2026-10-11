@@ -16,6 +16,7 @@ let root: Root | undefined
 afterEach(async () => {
   await act(async () => root?.unmount())
   document.body.replaceChildren()
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 const publishedAt = '2026-06-02T10:30:00.000Z'
@@ -71,7 +72,13 @@ test('freshness hydrates across different server and browser clocks', async () =
   vi.setSystemTime('2026-06-02T10:31:00.000Z')
   const host = document.createElement('div')
   document.body.appendChild(host)
+  const localized = vi.spyOn(Date.prototype, 'toLocaleString')
+  localized.mockReturnValue('server ICU date')
   host.innerHTML = renderToString(widget(false))
+  expect(host.querySelector('time')?.textContent).toBe(
+    '2026-06-02 10:30:00 UTC',
+  )
+  localized.mockReturnValue('browser ICU date')
   const recoverable = vi.fn()
   vi.setSystemTime('2026-06-02T12:30:00.000Z')
   await act(async () => {
@@ -80,4 +87,8 @@ test('freshness hydrates across different server and browser clocks', async () =
   expect(recoverable).not.toHaveBeenCalled()
   expect(host.querySelector('time')?.textContent).toBe('2 hours ago')
   expect(host.querySelector('time')?.dateTime).toBe(publishedAt)
+  expect(host.querySelector('time')?.getAttribute('aria-label')).toBe(
+    '2026-06-02 10:30:00 UTC',
+  )
+  expect(host.querySelector('time')?.hasAttribute('title')).toBe(false)
 })

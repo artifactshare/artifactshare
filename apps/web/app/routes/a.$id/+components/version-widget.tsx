@@ -1,5 +1,4 @@
-import { useHydrated } from '~/hooks/use-hydrated'
-import { formatRelative } from '~/lib/datetime'
+import { PublicationTime } from '~/components/app/publication-time'
 import type {
   NewCommentMessage,
   ViewerRevisitContext,
@@ -334,23 +333,11 @@ export function VersionWidget({
 }
 
 function DataFreshness({ publishedAt }: { publishedAt?: string | null }) {
-  const { locale, t } = useT()
-  const hydrated = useHydrated()
+  const { t } = useT()
   if (!publishedAt) return null
-  const absoluteDate = new Date(publishedAt).toLocaleString(locale, {
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  })
   return (
     <span className="bg-background text-muted-foreground pointer-events-none rounded-[var(--r-md)] px-2 py-1 text-xs">
-      {t('history.dataUpdated')}{' '}
-      <time
-        dateTime={publishedAt}
-        title={absoluteDate}
-        aria-label={absoluteDate}
-      >
-        {hydrated ? formatRelative(publishedAt, locale) : absoluteDate}
-      </time>
+      {t('history.dataUpdated')} <PublicationTime publishedAt={publishedAt} />
     </span>
   )
 }
