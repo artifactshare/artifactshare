@@ -110,7 +110,6 @@ export type ViewerShellArtifact = {
   canChangeRetention?: boolean
   retainVersions?: number | null
   publisherManaged?: boolean
-  displayedPublishedAt?: string | null
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
@@ -2688,7 +2687,6 @@ function ViewerShellView({
         canViewHistory={canViewHistory}
         hidden={state.chromeCollapsed}
         versions={artifact.versions ?? []}
-        displayedPublishedAt={artifact.displayedPublishedAt}
         canReplaceFile={canReplaceFile}
         onSubmit={canReplaceFile ? submitReplaceVersion : undefined}
         replaceMode={replaceMode}

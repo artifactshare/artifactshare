@@ -1,3 +1,5 @@
+import { createMemoryRouter, RouterProvider } from 'react-router'
+import { ViewerShell } from './+components/viewer-shell'
 import { createViewerRevisitFixture } from '~/test/viewer-revisit-fixture'
 import * as viewerRevisitService from '~/services/viewer-revisit.server'
 import type { ViewerRevisitContext } from '~/lib/viewer-revisit'
@@ -92,26 +94,31 @@ vi.mock('~/services/link-abuse-signals.server', () => ({
     recordAnonymousViewSignalAndMaybeJudgeMock,
 }))
 
+const viewerLocale = vi.hoisted(() => ({ value: null as 'en' | 'ja' | null }))
+
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: 'en',
-    t: (key: string) =>
-      ({
-        'lp.invite.aiBody':
-          'If you are reading this page without signing in, you cannot read the file contents.',
-        'lp.invite.cliTitle': 'If you can run shell commands',
-        'lp.invite.cliBody':
-          'Use the CLI to open this link, then sign in with an account included in the sharing settings.',
-        'lp.invite.chatTitle': 'If you cannot run commands',
-        'lp.invite.chatBody':
-          'Ask the user to attach the file, sign in with an allowed account, or ask the person who shared it to add access or change the sharing settings.',
-        'lp.invite.commandLabel': 'Shell command',
-        'lp.invite.copyCommand': 'Copy command',
-        'lp.invite.copyCopied': 'Copied',
-        'lp.invite.copyFailed': 'Copy failed',
-      })[key] ?? key,
-    tPlural: (key: string, n: number) => `${key}:${n}`,
-  }),
+  useT: () =>
+    viewerLocale.value
+      ? bindI18n(viewerLocale.value)
+      : {
+          locale: 'en',
+          t: (key: string) =>
+            ({
+              'lp.invite.aiBody':
+                'If you are reading this page without signing in, you cannot read the file contents.',
+              'lp.invite.cliTitle': 'If you can run shell commands',
+              'lp.invite.cliBody':
+                'Use the CLI to open this link, then sign in with an account included in the sharing settings.',
+              'lp.invite.chatTitle': 'If you cannot run commands',
+              'lp.invite.chatBody':
+                'Ask the user to attach the file, sign in with an allowed account, or ask the person who shared it to add access or change the sharing settings.',
+              'lp.invite.commandLabel': 'Shell command',
+              'lp.invite.copyCommand': 'Copy command',
+              'lp.invite.copyCopied': 'Copied',
+              'lp.invite.copyFailed': 'Copy failed',
+            })[key] ?? key,
+          tPlural: (key: string, n: number) => `${key}:${n}`,
+        },
 }))
 
 import {
@@ -124,6 +131,7 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    viewerLocale.value = null
     isWorkspaceAccessRevokedMock.mockResolvedValue(false)
     canUpdateShareableVersionMock.mockResolvedValue(false)
     recordViewerRecencyMock.mockResolvedValue(undefined)
@@ -137,6 +145,109 @@ describe('/a/:id loader', () => {
     })
     recordAnonymousViewSignalAndMaybeJudgeMock.mockResolvedValue(undefined)
   })
+
+  test.each(
+    (['en', 'ja'] as const).flatMap((locale) =>
+      [false, true].flatMap((scheduled) =>
+        [false, true].flatMap((anonymous) =>
+          (anonymous ? [false] : [false, true]).map((historical) => ({
+            locale,
+            scheduled,
+            anonymous,
+            historical,
+          })),
+        ),
+      ),
+    ),
+  )(
+    'published viewer omits freshness: %j',
+    async ({ locale, scheduled, anonymous, historical }) => {
+      viewerLocale.value = locale
+      recordViewAndNotifyViewCountMock.mockResolvedValue({ counted: true })
+      const { context } = setupHtmlShareable({
+        shareable: {
+          visibility: 'link',
+          current_version_id: 'v2',
+          created_by_publisher_client_id: scheduled ? 'client1' : null,
+        },
+      })
+      if (anonymous) {
+        context.set(userContext, null)
+        context.set(linkDomainContext, { shareableId: 'html123abc' })
+      }
+      const select = dbMock.selectFrom.getMockImplementation()!
+      dbMock.selectFrom.mockImplementation((table: string) => {
+        if (table !== 'versions') return select(table)
+        return chain({
+          executeTakeFirst: vi.fn().mockResolvedValue({
+            id: historical ? 'v1' : 'v2',
+            artifact_kind: 'html_page',
+            entrypoint_path: '/demo.html',
+            r2_key: 'artifacts/html123abc/v1/index.html',
+            published_at: '2026-05-23T00:00:00.000Z',
+            count: 2,
+          }),
+          execute: vi.fn().mockResolvedValue(
+            ['v2', 'v1'].map((id, index) => ({
+              id,
+              number: 2 - index,
+              createdAt: '2026-05-23T00:00:00.000Z',
+              publisherClientId: scheduled ? 'client1' : null,
+              sizeBytes: 128,
+            })),
+          ),
+        })
+      })
+      const result = await loader({
+        params: { id: 'html123abc' },
+        request: new Request(
+          `https://artifactshare.com/a/html123abc${historical ? '?version=v1' : ''}`,
+        ),
+        context,
+      } as never)
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') throw new Error('Expected published viewer')
+      expect(result.artifact.displayedVersionId).toBe(historical ? 'v1' : 'v2')
+      expect(result.artifact.isHistoricalVersion).toBe(historical)
+      expect(result.artifact.canViewHistory).toBe(!anonymous)
+      const router = createMemoryRouter([
+        {
+          path: '/',
+          Component: () => (
+            <TooltipProvider>
+              <ViewerShell
+                artifact={result.artifact}
+                user={result.user}
+                renderType={null}
+                sandboxUrl={null}
+                bundlePaths={[]}
+              />
+            </TooltipProvider>
+          ),
+        },
+      ])
+      try {
+        const html = renderToStaticMarkup(<RouterProvider router={router} />)
+        expect(html).not.toMatch(/Data updated|データ更新/)
+        // Use the translated activity label so both locales inspect the same chrome.
+        const activityAside = html
+          .split('<aside')
+          .slice(1)
+          .find((part) =>
+            part
+              .split('>')[0]
+              .includes(bindI18n(locale).t('vw.activityStatus')),
+          )
+        expect(activityAside).toBeDefined()
+        expect(activityAside!.split('>')[0].includes('hidden=""')).toBe(
+          anonymous,
+        )
+        if (!anonymous) expect(html).toContain('aria-expanded="false"')
+      } finally {
+        router.dispose()
+      }
+    },
+  )
 
   test('returns preauth without artifact metadata for anonymous shares', async () => {
     const shareable = {
@@ -444,7 +555,6 @@ describe('/a/:id loader', () => {
       expect(result.artifact).toMatchObject({
         currentVersionId: 'v2',
         displayedVersionId: 'v1',
-        displayedPublishedAt: '2026-05-24T00:00:00Z',
         displayedVersionOrdinal: 41,
         isHistoricalVersion: true,
         canReplaceFile: true,
@@ -1588,9 +1698,6 @@ describe('/a/:id loader', () => {
 
       expect(result.kind).toBe(staticSite ? 'static_site' : 'ok')
       if (result.kind !== 'ok' && result.kind !== 'static_site') return
-      expect(result.artifact.displayedPublishedAt).toBe(
-        '2026-06-02T10:30:00.000Z',
-      )
       expect(result.artifact.entrypointPath).toBe('/demo.html')
       expect(result.linkSafety).toEqual({ lowTrust })
       expect(shareableQueryCount).toBe(plan === 'free' ? 2 : 1)

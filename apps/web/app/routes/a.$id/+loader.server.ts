@@ -108,7 +108,6 @@ interface ArtifactSummary {
   availableVisibilities: ReadonlyArray<EditableVisibility>
   currentVersionId: string | null
   displayedVersionId: string
-  displayedPublishedAt?: string | null
   displayedVersionOrdinal: number
   isHistoricalVersion: boolean
   canChangeRetention?: boolean
@@ -230,7 +229,6 @@ export type LoaderData =
         availableVisibilities: ReadonlyArray<EditableVisibility>
         currentVersionId: string | null
         displayedVersionId: string
-        displayedPublishedAt?: string | null
         displayedVersionOrdinal: number
         isHistoricalVersion: boolean
         canChangeRetention?: boolean
@@ -801,7 +799,6 @@ export async function loader({
         availableVisibilities,
         currentVersionId: shareable.current_version_id,
         displayedVersionId: displayedVersion.id,
-        displayedPublishedAt: displayedVersion.published_at,
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention:
@@ -845,7 +842,6 @@ export async function loader({
         canChangeVisibility: isOwner,
         currentVersionId: shareable.current_version_id,
         displayedVersionId: displayedVersion.id,
-        displayedPublishedAt: displayedVersion.published_at,
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention:
@@ -918,7 +914,6 @@ export async function loader({
       availableVisibilities,
       currentVersionId: shareable.current_version_id,
       displayedVersionId: displayedVersion.id,
-      displayedPublishedAt: displayedVersion.published_at,
       displayedVersionOrdinal,
       isHistoricalVersion,
       canChangeRetention:
@@ -1155,7 +1150,6 @@ async function buildLinkAnonymousResponse(
     availableVisibilities: [] as ReadonlyArray<EditableVisibility>,
     currentVersionId: shareable.current_version_id,
     displayedVersionId: shareable.current_version_id!,
-    displayedPublishedAt: shareable.current_published_at,
     displayedVersionOrdinal: 1,
     isHistoricalVersion: false,
     versions: [] as ReadonlyArray<VersionRow>,

@@ -466,21 +466,24 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-test.each([true, false])(
-  'freshness uses the displayed publication independently of history permission (%s)',
-  (canViewHistory) => {
+test.each([
+  { hidden: false, hasNewerVersion: false, expected: true },
+  { hidden: false, hasNewerVersion: true, expected: false },
+  { hidden: true, hasNewerVersion: true, expected: true },
+])(
+  'no-history aside visibility: %j',
+  ({ hidden, hasNewerVersion, expected }) => {
     const html = renderToStaticMarkup(
       <VersionWidget
-        canViewHistory={canViewHistory}
-        displayedPublishedAt="2026-06-02T10:30:00.000Z"
+        canViewHistory={false}
+        hidden={hidden}
+        hasNewerVersion={hasNewerVersion}
         versions={[]}
         onOpenHistory={() => {}}
       />,
     )
-    expect(html).toContain('history.dataUpdated')
-    expect(html).toContain('dateTime="2026-06-02T10:30:00.000Z"')
-    expect(html).toContain('UTC')
-    expect(html).not.toContain('hidden=""')
+    expect(/<aside[^>]*hidden=""/.test(html)).toBe(expected)
+    expect(html.includes('Show latest')).toBe(hasNewerVersion)
   },
 )
 

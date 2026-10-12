@@ -584,15 +584,6 @@ export const screen = {
       },
     },
     {
-      id: 'scheduled-freshness',
-      description:
-        'Scheduled data freshness beside the version control, including mobile captures',
-      setup: {
-        scenario: 'viewer/scheduled-updates',
-        scenarioArtifactIndex: 21,
-      },
-    },
-    {
       id: 'scheduled-history',
       description: 'Mixed human and scheduled versions in the history panel',
       setup: {
