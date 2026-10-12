@@ -505,7 +505,6 @@ export async function loader({
           'entrypoint_path',
           'r2_key',
           'fallback_to_index',
-          'published_at',
         ])
         .where('shareable_id', '=', shareable.id)
         .where('id', '=', requestedVersionId)
@@ -519,7 +518,6 @@ export async function loader({
         entrypoint_path: shareable.entrypoint_path!,
         r2_key: shareable.r2_key!,
         fallback_to_index: shareable.fallback_to_index ?? 0,
-        published_at: shareable.current_published_at,
       }
   if (!displayedVersion) {
     const removed = await removedVersionResponse(
