@@ -1,3 +1,5 @@
+import { loadPublishedViewer } from './+published-viewer-loader-fixture'
+import { bindI18n as viewerI18n } from '~/lib/i18n'
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider } from 'react-router'
@@ -10,9 +12,10 @@ import {
 } from './+components/viewer-shell'
 
 const revalidate = vi.hoisted(() => vi.fn())
+const viewerLocale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('en') }
+  return { useT: () => bindI18n(viewerLocale.value) }
 })
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
@@ -64,6 +67,7 @@ function versionResponse(versionId: string) {
 }
 
 beforeEach(() => {
+  viewerLocale.value = 'en'
   vi.useFakeTimers({
     toFake: [
       'Date',
@@ -96,6 +100,7 @@ async function mount(
   patch: Partial<ViewerShellArtifact> = {},
   signedIn = false,
   sandboxUrl: string | null = null,
+  viewer: Parameters<typeof ViewerShell>[0]['user'] = user,
 ) {
   function Harness() {
     const [value, update] = useState({ ...artifact, ...patch })
@@ -104,7 +109,7 @@ async function mount(
       <TooltipProvider>
         <ViewerShell
           artifact={value}
-          user={signedIn ? user : null}
+          user={signedIn ? viewer : null}
           renderType={null}
           sandboxUrl={sandboxUrl}
           bundlePaths={[]}
@@ -126,6 +131,62 @@ function notice() {
 async function visibility() {
   await act(async () => document.dispatchEvent(new Event('visibilitychange')))
 }
+
+test.each(
+  (['en', 'ja'] as const).flatMap((locale) =>
+    [false, true].flatMap((scheduled) =>
+      (['owner', 'member', 'anonymous'] as const).flatMap((persona) =>
+        (persona === 'anonymous' ? [false] : [false, true]).map(
+          (historical) => ({
+            locale,
+            scheduled,
+            persona,
+            historical,
+          }),
+        ),
+      ),
+    ),
+  ),
+)(
+  'published version chrome has no freshness: %j',
+  async ({ locale, scheduled, persona, historical }) => {
+    viewerLocale.value = locale
+    const result = await loadPublishedViewer({
+      locale,
+      scheduled,
+      persona,
+      historical,
+    })
+    const canViewHistory = persona !== 'anonymous'
+    expect(result.artifact.canViewHistory).toBe(canViewHistory)
+    expect(result.artifact.displayedVersionId).toBe(historical ? 'v0' : 'v1')
+    expect(result.artifact.isHistoricalVersion).toBe(historical)
+    await mount(result.artifact, canViewHistory, null, result.user)
+    expect(host.textContent).not.toMatch(/Data updated|データ更新/)
+    const aside = host.querySelector<HTMLElement>(
+      `aside[aria-label="${viewerI18n(locale).t('vw.activityStatus')}"]`,
+    )!
+    expect(aside).not.toBeNull()
+    expect(aside.hidden).toBe(!canViewHistory)
+    if (canViewHistory) {
+      const trigger = aside.querySelector<HTMLButtonElement>(
+        'button[aria-expanded]',
+      )!
+      expect(trigger).not.toBeNull()
+      // With no revisit clue, only the version trigger occupies the closed aside.
+      expect(aside.children).toHaveLength(1)
+      await act(async () => trigger.click())
+      expect(trigger.getAttribute('aria-expanded')).toBe('true')
+      expect(aside.querySelector('a[href="?version=v0"]')).not.toBeNull()
+      expect(
+        aside.textContent?.includes(
+          locale === 'en' ? 'Scheduled update' : '定期更新',
+        ),
+      ).toBe(scheduled)
+      expect(aside.textContent).not.toMatch(/Data updated|データ更新/)
+    }
+  },
+)
 
 test('anonymous link checks only current-version, shows an update, and refreshes without history access', async () => {
   const networkLog = vi.spyOn(console, 'info')
@@ -454,13 +515,9 @@ test('signed-in pointer updates abort and invalidate pending responses without r
   expect(notice()).toBe(true)
 })
 
-test('anonymous viewers see displayed data freshness independently of history and live updates', async () => {
-  const publishedAt = '2026-06-02T10:30:00.000Z'
-  await mount({ displayedPublishedAt: publishedAt })
+test('anonymous visibility checks respect the initial lookup cooldown', async () => {
+  await mount()
   await bodyRead(1)
-  expect(host.textContent).toContain('Data updated')
-  expect(host.querySelector('time')?.dateTime).toBe(publishedAt)
-  expect(host.querySelector('time')?.getAttribute('aria-label')).toBeTruthy()
   currentVersionId = 'v2'
   await visibility()
   // Visibility checks share the initial lookup's 30-second cooldown.
@@ -471,5 +528,4 @@ test('anonymous viewers see displayed data freshness independently of history an
   await bodyRead(2)
   expect(lookup).toHaveBeenCalledTimes(2)
   expect(notice()).toBe(true)
-  expect(host.querySelector('time')?.dateTime).toBe(publishedAt)
 })

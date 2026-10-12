@@ -124,7 +124,6 @@ export type TaskLedgerScreenReference =
   | 'viewer/retention-saved'
   | 'viewer/revisit-comments-open'
   | 'viewer/revisit-context'
-  | 'viewer/scheduled-freshness'
   | 'viewer/scheduled-history'
   | 'viewer/scheduled-version-menu'
   | 'viewer/updated-return'

@@ -89,6 +89,24 @@ describe('route discovery', () => {
     },
   )
 
+  test.each([true, false])(
+    'keeps the published viewer test fixture out of runtime routes (development: %s)',
+    (includeDevelopmentRoutes) => {
+      const routes = discoverRoutes(includeDevelopmentRoutes)
+      const routeIds = flatten(routes).map((route) => route.id)
+
+      expect(routeIds).not.toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('published-viewer-loader-fixture'),
+        ]),
+      )
+      expect(
+        matchRoutes(routes.map(toRouteObject), '/a/abc123def4')?.at(-1)?.route
+          .id,
+      ).toBe('routes/a.$id/index')
+    },
+  )
+
   test('removes duplicate root and Japanese wrappers for migrated resources', () => {
     const routeIds = flatten(discoverRoutes(false)).map((route) => route.id)
     expect(routeIds).not.toContain('routes/og-image')
