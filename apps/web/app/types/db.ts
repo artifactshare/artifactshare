@@ -302,6 +302,7 @@ interface ProjectMembersTable {
 }
 
 interface UsersTable {
+  oauth_token_version: Generated<number>
   id: string
   email: string
   email_verified: number

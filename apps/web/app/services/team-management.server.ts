@@ -1386,10 +1386,20 @@ export async function removeWorkspaceMember(
     )
   }
 
-  const removalDetail = JSON.stringify({
-    email: target.email,
-    name: target.name,
-  })
+  const removalDetail = sql<string>`json_object(
+    'email', ${target.email}, 'name', ${target.name},
+    'revoked_api_token_count', ${
+      targetCurrentlyInWorkspace
+        ? sql`(select count(*) from api_tokens where user_id = ${targetUserId} and revoked_at is null)`
+        : sql`0`
+    },
+    'revoked_oauth_token_count', ${
+      targetCurrentlyInWorkspace
+        ? sql`((select count(*) from oauthAccessToken where userId = ${targetUserId}) +
+          (select count(*) from oauthRefreshToken where userId = ${targetUserId} and revoked is null))`
+        : sql`0`
+    }
+  )`
   const removalBatch: Compilable<unknown>[] = [
     db
       .insertInto('audit_events')
@@ -1420,13 +1430,44 @@ export async function removeWorkspaceMember(
             eb.val('member.remove').as('action'),
             eb.val('user').as('subject_type'),
             eb.val(targetUserId).as('subject_id'),
-            eb.val(removalDetail).as('detail'),
+            removalDetail.as('detail'),
             eb.val(now).as('created_at'),
           ]),
       ),
   ]
   if (targetCurrentlyInWorkspace) {
+    const guard = sql<boolean>`exists ${removableMembershipGuard(
+      db,
+      oldWorkspaceId,
+      targetUserId,
+      actor.id,
+    )}`
+    const oauthDb = db.withTables<{
+      oauthAccessToken: { userId: string | null }
+      oauthRefreshToken: { userId: string; revoked: string | null }
+    }>()
     removalBatch.push(
+      db
+        .updateTable('api_tokens')
+        .set({ revoked_at: now })
+        .where('user_id', '=', targetUserId)
+        .where('revoked_at', 'is', null)
+        .where(guard),
+      oauthDb
+        .deleteFrom('oauthAccessToken')
+        .where('userId', '=', targetUserId)
+        .where(guard),
+      oauthDb
+        .updateTable('oauthRefreshToken')
+        .set({ revoked: now })
+        .where('userId', '=', targetUserId)
+        .where('revoked', 'is', null)
+        .where(guard),
+      db
+        .updateTable('users')
+        .set({ oauth_token_version: sql`oauth_token_version + 1` })
+        .where('id', '=', targetUserId)
+        .where(guard),
       ...buildCliRefreshCredentialRevocationStatements(db, {
         actorUserId: actor.id,
         targetUserId,

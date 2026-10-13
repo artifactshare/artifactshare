@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Revoke API tokens and AI tool OAuth credentials when a workspace member is removed.
+
 - Preserve every version people added when applying retention to publisher-managed artifacts; update bundled retention guidance and CLI help.
 
 - Treat publisher versions as scheduled updates: preserve activity order and human update signals while displaying scheduled freshness on project pinned cards and marking scheduled versions in history. Remove the data freshness label from the artifact viewer.

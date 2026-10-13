@@ -9006,13 +9006,15 @@ describe('member removal credential blocking', () => {
     return uploaded
   }
 
-  test('API token resolves to the personal workspace after removal', async () => {
+  test('API token issued before member removal no longer resolves', async () => {
     const created = await createApiToken(db, REMOVED_MEMBER_ID, 'CI deploy')
-    const personalWorkspaceId = await removeMember()
+    expect(await findUserByApiToken(db, created.token)).toMatchObject({
+      workspace_id: TEAM_WS,
+    })
 
-    const resolved = await findUserByApiToken(db, created.token)
-    expect(resolved?.workspace_id).toBe(personalWorkspaceId)
-    expect(resolved?.workspace_id).not.toBe(TEAM_WS)
+    await removeMember()
+
+    expect(await findUserByApiToken(db, created.token)).toBeNull()
   })
 
   test('removed member cannot list or post to the old workspace project via API paths', async () => {

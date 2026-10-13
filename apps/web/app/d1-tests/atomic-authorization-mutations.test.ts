@@ -11,6 +11,12 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
+import { removeWorkspaceMember } from '../services/team-management.server'
+import {
+  createApiToken,
+  findUserByApiToken,
+} from '../services/api-tokens.server'
+import { issueCliRefreshCredential } from '../services/cli-refresh-credentials.server'
 import { createDb } from '../services/db.server'
 import { saveProjectShareDefaults } from '../services/projects.server'
 import { deleteShareable } from '../services/shareables.server'
@@ -434,3 +440,149 @@ describe.sequential('atomic authorization mutation D1 batches', () => {
     expect(bucketDelete).not.toHaveBeenCalled()
   })
 })
+
+it.each([false, true])(
+  'member removal atomically revokes credentials (failure=%s)',
+  async (failure) => {
+    const prefix = failure ? 'remove-fail' : 'remove-ok'
+    await seedProject(prefix)
+    const ws = `${prefix}-ws`
+    const owner = `${prefix}-owner`
+    const member = `${prefix}-member`
+    await database.batch([
+      database
+        .prepare(
+          'INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id, google_sub) VALUES (?, ?, 1, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          member,
+          `${member}@example.com`,
+          member,
+          at,
+          at,
+          ws,
+          `${member}-sub`,
+        ),
+      database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'owner', 'active', ?, ?)",
+        )
+        .bind(ws, owner, at, at),
+      database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'member', 'active', ?, ?)",
+        )
+        .bind(ws, member, at, at),
+      database
+        .prepare(
+          'INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .bind(prefix, member, crypto.randomUUID(), '2099-01-01', at, at),
+      database
+        .prepare(
+          "INSERT INTO oauthClient (id, clientId, public, redirectUris) VALUES (?, ?, 1, '[]')",
+        )
+        .bind(prefix, prefix),
+      database
+        .prepare(
+          "INSERT INTO oauthRefreshToken (id, token, clientId, userId, scopes) VALUES (?, ?, ?, ?, '[]')",
+        )
+        .bind(prefix, crypto.randomUUID(), prefix, member),
+      database
+        .prepare(
+          "INSERT INTO oauthAccessToken (id, token, clientId, userId, scopes) VALUES (?, ?, ?, ?, '[]')",
+        )
+        .bind(prefix, crypto.randomUUID(), prefix, member),
+    ])
+    const db = createDb(
+      failure
+        ? failStatement(database, /^update "workspace_members" set "status" = /)
+        : database,
+    )
+    try {
+      const api = await createApiToken(db, member, 'existing')
+      await issueCliRefreshCredential(db, member)
+      const removal = removeWorkspaceMember(
+        db,
+        { id: owner, workspaceId: ws },
+        member,
+      )
+      if (failure) await expect(removal).rejects.toThrow()
+      else expect(await removal).toEqual({ kind: 'ok' })
+      expect(Boolean(await findUserByApiToken(db, api.token))).toBe(failure)
+      const user = await db
+        .selectFrom('users')
+        .select(['workspace_id', 'oauth_token_version'])
+        .where('id', '=', member)
+        .executeTakeFirstOrThrow()
+      expect(user.workspace_id).not.toBe(ws)
+      expect(user.oauth_token_version).toBe(failure ? 0 : 1)
+      expect(
+        (
+          await database
+            .prepare('SELECT revoked FROM oauthRefreshToken WHERE id = ?')
+            .bind(prefix)
+            .first()
+        )?.revoked === null,
+      ).toBe(failure)
+      expect(
+        Boolean(
+          await database
+            .prepare('SELECT id FROM oauthAccessToken WHERE id = ?')
+            .bind(prefix)
+            .first(),
+        ),
+      ).toBe(failure)
+      expect(
+        Boolean(
+          await db
+            .selectFrom('sessions')
+            .select('id')
+            .where('user_id', '=', member)
+            .executeTakeFirst(),
+        ),
+      ).toBe(failure)
+      expect(
+        Boolean(
+          await db
+            .selectFrom('cli_refresh_credentials')
+            .select('id')
+            .where('user_id', '=', member)
+            .where('revoked_at', 'is', null)
+            .executeTakeFirst(),
+        ),
+      ).toBe(failure)
+      const audits = await db
+        .selectFrom('audit_events')
+        .selectAll()
+        .where('workspace_id', '=', ws)
+        .where('action', 'in', [
+          'member.remove',
+          'cli.refresh_credential.revoke',
+        ])
+        .execute()
+      expect(audits.length).toBe(failure ? 0 : 2)
+      if (!failure)
+        expect(
+          JSON.parse(
+            audits.find((row) => row.action === 'member.remove')!.detail!,
+          ),
+        ).toMatchObject({
+          revoked_api_token_count: 1,
+          revoked_oauth_token_count: 2,
+        })
+      expect(
+        (
+          await db
+            .selectFrom('workspace_members')
+            .select('status')
+            .where('workspace_id', '=', ws)
+            .where('user_id', '=', member)
+            .executeTakeFirstOrThrow()
+        ).status,
+      ).toBe(failure ? 'active' : 'removed')
+    } finally {
+      await db.destroy()
+    }
+  },
+)

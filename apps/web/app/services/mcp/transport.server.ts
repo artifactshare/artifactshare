@@ -14,12 +14,35 @@ async function runMcp(
   request: Request,
   identity: McpIdentity,
   executionContext: ExecutionContext,
+  version?: { claim: unknown; resource: string },
 ): Promise<Response> {
   // One D1 connection per request, shared across the tool calls in it. The
   // tools resolve the workspace-scoped user from it; closing it after the body
   // is buffered keeps the per-request resources from outliving the response.
   const db = createDb()
   try {
+    if (version) {
+      const claim = version.claim === undefined ? 0 : version.claim
+      if (
+        typeof claim !== 'number' ||
+        !Number.isSafeInteger(claim) ||
+        claim < 0 ||
+        !identity.userId.trim()
+      ) {
+        return unauthorized(version.resource)
+      }
+      try {
+        const user = await db
+          .selectFrom('users')
+          .select('oauth_token_version')
+          .where('id', '=', identity.userId)
+          .executeTakeFirst()
+        if (!user || user.oauth_token_version !== claim)
+          return unauthorized(version.resource)
+      } catch {
+        return unauthorized(version.resource)
+      }
+    }
     const server = createMcpServer({
       identity,
       db,
@@ -125,8 +148,8 @@ function methodNotAllowed(): Response {
 
 /**
  * Protect /mcp with the OAuth 2.1 access token (JWT). The token is verified
- * locally against the JWKS read from D1 (no remote fetch, no introspection D1
- * read on the hot path), and unauthenticated requests get a `WWW-Authenticate`
+ * locally against the JWKS read from D1, then checked against the current
+ * user token version, and unauthenticated requests get a `WWW-Authenticate`
  * header pointing at the protected-resource metadata.
  *
  * A hardcoded dev token bypasses OAuth for protocol smoke tests without a
@@ -190,5 +213,6 @@ export async function handleMcpRequest(
       mode: 'oauth',
     },
     executionContext,
+    { claim: jwt.oauth_token_version, resource },
   )
 }
