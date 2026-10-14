@@ -456,6 +456,7 @@ export async function loadAuditEventsPage(
         .on('audit_events.subject_type', '=', 'user'),
     )
     .where('audit_events.workspace_id', '=', workspaceId)
+    .where('audit_events.action', '!=', 'member.credentials.revoke')
   const totalRow = await base
     .select(({ fn }) => fn.countAll<number>().as('count'))
     .executeTakeFirstOrThrow()
@@ -1223,6 +1224,22 @@ function removableMembershipGuard(
     )
 }
 
+// Insertion order, rather than request timestamps or random ids, determines
+// whether a removal consumed the revocation.
+// Ignore this batch's own removal audit so the guard stays true for the
+// credential/session statements and membership update after its audit insert.
+function unconsumedRevocationGuard(removalAuditId: string) {
+  return sql<boolean>`not exists (
+    select 1 from audit_events as removal
+    where removal.workspace_id = audit_events.workspace_id
+      and removal.subject_type = 'user'
+      and removal.subject_id = audit_events.subject_id
+      and removal.action = 'member.remove'
+      and removal.rowid > audit_events.rowid
+      and removal.id != ${removalAuditId}
+  )`
+}
+
 export async function removeWorkspaceMember(
   db: Kysely<DB>,
   actor: { id: string; workspaceId: string },
@@ -1265,11 +1282,84 @@ export async function removeWorkspaceMember(
   const now = nowIso()
   const targetCurrentlyInWorkspace = target.workspace_id === oldWorkspaceId
 
+  const revocationAuditId = nanoid(16)
+  const revocationDetail = sql<string>`json_object(
+    'revoked_api_token_count', (select count(*) from api_tokens where user_id = ${targetUserId} and revoked_at is null),
+    'revoked_oauth_token_count', ((select count(*) from oauthAccessToken where userId = ${targetUserId}) +
+      (select count(*) from oauthRefreshToken where userId = ${targetUserId} and revoked is null))
+  )`
   if (targetCurrentlyInWorkspace) {
     const newWorkspaceId = nanoid()
     const workspaceName = `${target.email}'s workspace`
+    const guard = sql<boolean>`exists ${removableMembershipGuard(
+      db,
+      oldWorkspaceId,
+      targetUserId,
+      actor.id,
+    )} and exists (select 1 from users where id = ${targetUserId} and workspace_id = ${oldWorkspaceId})`
+    const oauthDb = db.withTables<{
+      oauthAccessToken: { userId: string | null }
+      oauthRefreshToken: { userId: string; revoked: string | null }
+    }>()
+    // Revoke before the move under its live guard. A retry that observes the
+    // personal workspace must never be able to skip revocation of old tokens.
     await runD1Batch(
       db,
+      db
+        .insertInto('audit_events')
+        .columns([
+          'id',
+          'workspace_id',
+          'actor_user_id',
+          'action',
+          'subject_type',
+          'subject_id',
+          'detail',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('workspace_members')
+            .where(guard)
+            .where('workspace_id', '=', oldWorkspaceId)
+            .where('user_id', '=', targetUserId)
+            .where('role', '=', 'member')
+            .where('status', '!=', 'removed')
+            .where(({ exists }) =>
+              exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
+            )
+            .select([
+              eb.val(revocationAuditId).as('id'),
+              eb.val(oldWorkspaceId).as('workspace_id'),
+              eb.val(actor.id).as('actor_user_id'),
+              eb.val('member.credentials.revoke').as('action'),
+              eb.val('user').as('subject_type'),
+              eb.val(targetUserId).as('subject_id'),
+              revocationDetail.as('detail'),
+              eb.val(now).as('created_at'),
+            ]),
+        ),
+      db
+        .updateTable('api_tokens')
+        .set({ revoked_at: now })
+        .where('user_id', '=', targetUserId)
+        .where('revoked_at', 'is', null)
+        .where(guard),
+      oauthDb
+        .deleteFrom('oauthAccessToken')
+        .where('userId', '=', targetUserId)
+        .where(guard),
+      oauthDb
+        .updateTable('oauthRefreshToken')
+        .set({ revoked: now })
+        .where('userId', '=', targetUserId)
+        .where('revoked', 'is', null)
+        .where(guard),
+      db
+        .updateTable('users')
+        .set({ oauth_token_version: sql`oauth_token_version + 1` })
+        .where('id', '=', targetUserId)
+        .where(guard),
       db
         .insertInto('workspaces')
         .columns([
@@ -1386,20 +1476,41 @@ export async function removeWorkspaceMember(
     )
   }
 
+  // Revocation commits with the move. A retry (or concurrent removal) may
+  // observe the personal workspace, so recover its durable counts here.
+  const removalAuditId = nanoid(16)
+  let revocationAudit = db
+    .selectFrom('audit_events')
+    .select('detail')
+    .where('workspace_id', '=', oldWorkspaceId)
+    .where('action', '=', 'member.credentials.revoke')
+    .where('subject_type', '=', 'user')
+    .where('subject_id', '=', targetUserId)
+    .where(unconsumedRevocationGuard(removalAuditId))
+  if (targetCurrentlyInWorkspace) {
+    revocationAudit = revocationAudit.where('id', '=', revocationAuditId)
+  }
+  const revocationDetailQuery = revocationAudit
+    .orderBy(sql`audit_events.rowid`, 'desc')
+    .limit(1)
   const removalDetail = sql<string>`json_object(
     'email', ${target.email}, 'name', ${target.name},
-    'revoked_api_token_count', ${
-      targetCurrentlyInWorkspace
-        ? sql`(select count(*) from api_tokens where user_id = ${targetUserId} and revoked_at is null)`
-        : sql`0`
-    },
-    'revoked_oauth_token_count', ${
-      targetCurrentlyInWorkspace
-        ? sql`((select count(*) from oauthAccessToken where userId = ${targetUserId}) +
-          (select count(*) from oauthRefreshToken where userId = ${targetUserId} and revoked is null))`
-        : sql`0`
-    }
+    'revoked_api_token_count', coalesce(json_extract(${revocationDetailQuery}, '$.revoked_api_token_count'), 0),
+    'revoked_oauth_token_count', coalesce(json_extract(${revocationDetailQuery}, '$.revoked_oauth_token_count'), 0)
   )`
+  // A request that lost the move race must not finish another request's
+  // removal. Retries that read the moved user recover unconsumed counts above
+  // and must still find that user elsewhere; restoration invalidates their guard.
+  const removalGuard = sql<boolean>`exists ${removableMembershipGuard(
+    db,
+    oldWorkspaceId,
+    targetUserId,
+    actor.id,
+  )} and ${
+    targetCurrentlyInWorkspace
+      ? sql<boolean>`exists ${revocationAudit}`
+      : sql<boolean>`exists (select 1 from users where id = ${targetUserId} and workspace_id = ${target.workspace_id} and workspace_id != ${oldWorkspaceId})`
+  }`
   const removalBatch: Compilable<unknown>[] = [
     db
       .insertInto('audit_events')
@@ -1416,6 +1527,7 @@ export async function removeWorkspaceMember(
       .expression((eb) =>
         eb
           .selectFrom('workspace_members')
+          .where(removalGuard)
           .where('workspace_id', '=', oldWorkspaceId)
           .where('user_id', '=', targetUserId)
           .where('role', '=', 'member')
@@ -1424,7 +1536,7 @@ export async function removeWorkspaceMember(
             exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
           )
           .select([
-            eb.val(nanoid(16)).as('id'),
+            eb.val(removalAuditId).as('id'),
             eb.val(oldWorkspaceId).as('workspace_id'),
             eb.val(actor.id).as('actor_user_id'),
             eb.val('member.remove').as('action'),
@@ -1436,69 +1548,25 @@ export async function removeWorkspaceMember(
       ),
   ]
   if (targetCurrentlyInWorkspace) {
-    const guard = sql<boolean>`exists ${removableMembershipGuard(
-      db,
-      oldWorkspaceId,
-      targetUserId,
-      actor.id,
-    )}`
-    const oauthDb = db.withTables<{
-      oauthAccessToken: { userId: string | null }
-      oauthRefreshToken: { userId: string; revoked: string | null }
-    }>()
     removalBatch.push(
-      db
-        .updateTable('api_tokens')
-        .set({ revoked_at: now })
-        .where('user_id', '=', targetUserId)
-        .where('revoked_at', 'is', null)
-        .where(guard),
-      oauthDb
-        .deleteFrom('oauthAccessToken')
-        .where('userId', '=', targetUserId)
-        .where(guard),
-      oauthDb
-        .updateTable('oauthRefreshToken')
-        .set({ revoked: now })
-        .where('userId', '=', targetUserId)
-        .where('revoked', 'is', null)
-        .where(guard),
-      db
-        .updateTable('users')
-        .set({ oauth_token_version: sql`oauth_token_version + 1` })
-        .where('id', '=', targetUserId)
-        .where(guard),
       ...buildCliRefreshCredentialRevocationStatements(db, {
         actorUserId: actor.id,
         targetUserId,
         workspaceId: oldWorkspaceId,
         reason: 'member_removal',
-        guard: sql<boolean>`exists ${removableMembershipGuard(
-          db,
-          oldWorkspaceId,
-          targetUserId,
-          actor.id,
-        )}`,
+        guard: removalGuard,
         deleteSessions: false,
       }),
       db
         .deleteFrom('sessions')
         .where('user_id', '=', targetUserId)
-        .where(({ exists }) =>
-          exists(
-            removableMembershipGuard(
-              db,
-              oldWorkspaceId,
-              targetUserId,
-              actor.id,
-            ),
-          ),
-        ),
+        .where(removalGuard),
     )
   }
   removalBatch.push(
     db
       .updateTable('workspace_members')
+      .where(removalGuard)
       .set({
         status: 'removed',
         removed_at: now,

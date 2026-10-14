@@ -5,7 +5,12 @@ import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import { createD1MockFromSqliteRef } from '~/test/sqlite-fixture'
 import { seedSession, seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 
-const sqliteRef = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
+const sqliteRef = vi.hoisted(() => ({
+  current: null as DatabaseSync | null,
+  beforeNextBatch: null as
+    | ((stmts: { sql: string; params: unknown[] }[]) => void)
+    | null,
+}))
 const authSecret = vi.hoisted(
   () => 'test-secret-with-enough-entropy-for-oauth-tests',
 )
@@ -32,6 +37,7 @@ vi.mock(
   }),
 )
 import { createAuth } from './auth.server'
+import { createApiToken, findUserByApiToken } from './api-tokens.server'
 import { handleMcpRequest } from './mcp/transport.server'
 import {
   removeWorkspaceMember,
@@ -59,6 +65,7 @@ beforeEach(() => {
   sqlite = fixture.sqlite
   db = fixture.db
   sqliteRef.current = sqlite
+  sqliteRef.beforeNextBatch = null
   seedWorkspace(sqlite)
   seedUser(sqlite, 'u1')
   seedUser(sqlite, 'u2')
@@ -152,6 +159,68 @@ test('real OAuth JWTs and refresh exchanges stop on removal and new personal aut
   expect((await refresh(fresh.clientId, fresh.refresh_token)).status).toBe(200)
   await restoreWorkspaceMember(db, actor, 'u1')
   expect((await mcp(old.access_token)).status).toBe(401)
+})
+
+test('failed final batch and a successful retry leave old API tokens and signed JWTs rejected', async () => {
+  const old = await issue()
+  const api = await createApiToken(db, 'u1', 'existing')
+  expect((await mcp(old.access_token)).status).toBe(200)
+  sqlite.exec(
+    "CREATE TRIGGER fail_removal BEFORE UPDATE OF status ON workspace_members WHEN NEW.status = 'removed' BEGIN SELECT RAISE(ABORT, 'induced removal failure'); END",
+  )
+  const actor = { id: 'u2', workspaceId: 'ws1' }
+  await expect(removeWorkspaceMember(db, actor, 'u1')).rejects.toThrow(
+    'induced removal failure',
+  )
+  // The first batch already committed. Credentials must be rejected even
+  // before the membership update is retried.
+  expect(await findUserByApiToken(db, api.token)).toBeNull()
+  expect((await mcp(old.access_token)).status).toBe(401)
+  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(400)
+  sqlite.exec('DROP TRIGGER fail_removal')
+  expect(await removeWorkspaceMember(db, actor, 'u1')).toEqual({ kind: 'ok' })
+  expect(await findUserByApiToken(db, api.token)).toBeNull()
+  expect((await mcp(old.access_token)).status).toBe(401)
+  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(400)
+  expect(
+    sqlite
+      .prepare("SELECT oauth_token_version FROM users WHERE id = 'u1'")
+      .get(),
+  ).toEqual({ oauth_token_version: 1 })
+})
+
+test('a user moved elsewhere before the move batch keeps their signed JWT and refresh token', async () => {
+  const old = await issue()
+  const api = await createApiToken(db, 'u1', 'existing')
+  sqlite.exec(
+    "INSERT INTO workspaces (id, name, created_at) VALUES ('ws2', 'Personal', '2026-01-01')",
+  )
+  let moved = false
+  const hook = (stmts: { sql: string; params: unknown[] }[]) => {
+    if (
+      !stmts.some((stmt) => stmt.sql.startsWith('insert into "workspaces"'))
+    ) {
+      sqliteRef.beforeNextBatch = hook
+      return
+    }
+    sqlite.exec("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'")
+    moved = true
+  }
+  sqliteRef.beforeNextBatch = hook
+  expect(
+    await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+  ).toEqual({ kind: 'not-found' })
+  expect(moved).toBe(true)
+  expect(await findUserByApiToken(db, api.token)).not.toBeNull()
+  expect((await mcp(old.access_token)).status).toBe(200)
+  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(200)
+  expect(
+    sqlite
+      .prepare(
+        "SELECT workspace_id, oauth_token_version FROM users WHERE id = 'u1'",
+      )
+      .get(),
+  ).toEqual({ workspace_id: 'ws2', oauth_token_version: 0 })
 })
 
 function authorizationRequest(

@@ -441,10 +441,12 @@ describe.sequential('atomic authorization mutation D1 batches', () => {
   })
 })
 
-it.each([false, true])(
+it.each(['none', 'move', 'membership'])(
   'member removal atomically revokes credentials (failure=%s)',
   async (failure) => {
-    const prefix = failure ? 'remove-fail' : 'remove-ok'
+    const prefix = `remove-${failure}`
+    const moveFailed = failure === 'move'
+    const finalFailed = failure !== 'none'
     await seedProject(prefix)
     const ws = `${prefix}-ws`
     const owner = `${prefix}-owner`
@@ -495,9 +497,11 @@ it.each([false, true])(
         .bind(prefix, crypto.randomUUID(), prefix, member),
     ])
     const db = createDb(
-      failure
+      failure === 'membership'
         ? failStatement(database, /^update "workspace_members" set "status" = /)
-        : database,
+        : failure === 'move'
+          ? failStatement(database, /^update "users" set "workspace_id" = /)
+          : database,
     )
     try {
       const api = await createApiToken(db, member, 'existing')
@@ -507,16 +511,16 @@ it.each([false, true])(
         { id: owner, workspaceId: ws },
         member,
       )
-      if (failure) await expect(removal).rejects.toThrow()
+      if (finalFailed) await expect(removal).rejects.toThrow()
       else expect(await removal).toEqual({ kind: 'ok' })
-      expect(Boolean(await findUserByApiToken(db, api.token))).toBe(failure)
+      expect(Boolean(await findUserByApiToken(db, api.token))).toBe(moveFailed)
       const user = await db
         .selectFrom('users')
         .select(['workspace_id', 'oauth_token_version'])
         .where('id', '=', member)
         .executeTakeFirstOrThrow()
-      expect(user.workspace_id).not.toBe(ws)
-      expect(user.oauth_token_version).toBe(failure ? 0 : 1)
+      expect(user.workspace_id === ws).toBe(moveFailed)
+      expect(user.oauth_token_version).toBe(moveFailed ? 0 : 1)
       expect(
         (
           await database
@@ -524,7 +528,7 @@ it.each([false, true])(
             .bind(prefix)
             .first()
         )?.revoked === null,
-      ).toBe(failure)
+      ).toBe(moveFailed)
       expect(
         Boolean(
           await database
@@ -532,7 +536,7 @@ it.each([false, true])(
             .bind(prefix)
             .first(),
         ),
-      ).toBe(failure)
+      ).toBe(moveFailed)
       expect(
         Boolean(
           await db
@@ -541,7 +545,7 @@ it.each([false, true])(
             .where('user_id', '=', member)
             .executeTakeFirst(),
         ),
-      ).toBe(failure)
+      ).toBe(finalFailed)
       expect(
         Boolean(
           await db
@@ -551,7 +555,7 @@ it.each([false, true])(
             .where('revoked_at', 'is', null)
             .executeTakeFirst(),
         ),
-      ).toBe(failure)
+      ).toBe(finalFailed)
       const audits = await db
         .selectFrom('audit_events')
         .selectAll()
@@ -561,13 +565,25 @@ it.each([false, true])(
           'cli.refresh_credential.revoke',
         ])
         .execute()
-      expect(audits.length).toBe(failure ? 0 : 2)
-      if (!failure)
+      expect(audits.length).toBe(finalFailed ? 0 : 2)
+      if (!finalFailed)
         expect(
           JSON.parse(
             audits.find((row) => row.action === 'member.remove')!.detail!,
           ),
         ).toMatchObject({
+          revoked_api_token_count: 1,
+          revoked_oauth_token_count: 2,
+        })
+      const credentialAudits = await db
+        .selectFrom('audit_events')
+        .select('detail')
+        .where('workspace_id', '=', ws)
+        .where('action', '=', 'member.credentials.revoke')
+        .execute()
+      expect(credentialAudits).toHaveLength(moveFailed ? 0 : 1)
+      if (!moveFailed)
+        expect(JSON.parse(credentialAudits[0]!.detail!)).toMatchObject({
           revoked_api_token_count: 1,
           revoked_oauth_token_count: 2,
         })
@@ -580,7 +596,47 @@ it.each([false, true])(
             .where('user_id', '=', member)
             .executeTakeFirstOrThrow()
         ).status,
-      ).toBe(failure ? 'active' : 'removed')
+      ).toBe(finalFailed ? 'active' : 'removed')
+      if (failure === 'membership') {
+        const retryDb = createDb(database)
+        try {
+          expect(
+            await removeWorkspaceMember(
+              retryDb,
+              { id: owner, workspaceId: ws },
+              member,
+            ),
+          ).toEqual({ kind: 'ok' })
+          expect(await findUserByApiToken(retryDb, api.token)).toBeNull()
+          expect(
+            await retryDb
+              .selectFrom('users')
+              .select('oauth_token_version')
+              .where('id', '=', member)
+              .executeTakeFirstOrThrow(),
+          ).toEqual({ oauth_token_version: 1 })
+          expect(
+            await retryDb
+              .selectFrom('audit_events')
+              .select('detail')
+              .where('workspace_id', '=', ws)
+              .where('action', '=', 'member.credentials.revoke')
+              .execute(),
+          ).toEqual(credentialAudits)
+          const removalAudits = await retryDb
+            .selectFrom('audit_events')
+            .select('detail')
+            .where('workspace_id', '=', ws)
+            .where('action', '=', 'member.remove')
+            .execute()
+          expect(removalAudits).toHaveLength(1)
+          expect(JSON.parse(removalAudits[0]!.detail!)).toMatchObject(
+            JSON.parse(credentialAudits[0]!.detail!),
+          )
+        } finally {
+          await retryDb.destroy()
+        }
+      }
     } finally {
       await db.destroy()
     }
