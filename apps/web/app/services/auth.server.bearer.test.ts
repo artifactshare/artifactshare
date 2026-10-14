@@ -2,10 +2,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedSession, seedUser, seedWorkspace } from '~/test/db-seed-fixture'
-import {
-  createD1MockFromSqliteRef,
-  createMigratedInMemoryDb,
-} from '~/test/sqlite-fixture'
+import { createD1MockFromSqliteRef } from '~/test/sqlite-fixture'
+import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import { createApiToken, revokeApiToken } from './api-tokens.server'
 
@@ -18,13 +16,14 @@ vi.mock('cloudflare:workers', () => ({
 }))
 
 import { getSessionUserFromBearer } from './auth.server'
+import { removeWorkspaceMember } from './team-management.server'
 
 describe('getSessionUserFromBearer', () => {
   let sqlite: DatabaseSync
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: d1TestRef.sqliteRef })
     sqlite = fixture.sqlite
     db = fixture.db
     d1TestRef.sqliteRef.current = sqlite
@@ -129,25 +128,25 @@ describe('getSessionUserFromBearer', () => {
     ).resolves.toBeNull()
   })
 
-  test('API token bearer resolves the personal workspace after member removal', async () => {
-    const created = await createApiToken(db, 'u1', 'CI deploy')
+  test('API token bearer authentication fails after member removal', async () => {
+    seedUser(sqlite, 'u2')
     sqlite.exec(`
-      INSERT INTO workspaces (
-        id, hd, name, created_at, plan, storage_quota_bytes, storage_used_bytes,
-        storage_updated_at
-      ) VALUES (
-        'ws-personal', NULL, 'Personal', '2026-05-26T00:00:00.000Z', 'free',
-        104857600, 0, '2026-05-26T00:00:00.000Z'
-      );
-      UPDATE users SET workspace_id = 'ws-personal' WHERE id = 'u1';
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at)
+      VALUES ('ws1', 'u1', 'member', 'active', '2026-05-26T00:00:00.000Z', '2026-05-26T00:00:00.000Z'),
+             ('ws1', 'u2', 'admin', 'active', '2026-05-26T00:00:00.000Z', '2026-05-26T00:00:00.000Z');
     `)
+    const created = await createApiToken(db, 'u1', 'CI deploy')
+    await expect(
+      getSessionUserFromBearer(bearerRequest(created.token)),
+    ).resolves.toMatchObject({ id: 'u1', workspaceId: 'ws1' })
+
+    expect(
+      await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+    ).toEqual({ kind: 'ok' })
 
     await expect(
       getSessionUserFromBearer(bearerRequest(created.token)),
-    ).resolves.toMatchObject({
-      id: 'u1',
-      workspaceId: 'ws-personal',
-    })
+    ).resolves.toBeNull()
   })
 
   test('session bearer clears signup creation analytics after a claim move', async () => {

@@ -103,7 +103,8 @@ CREATE TABLE users (
   kind            TEXT NOT NULL DEFAULT 'human' CHECK (kind IN ('human', 'bot')),
   -- Stop time for bot users (soft stop; the row is never deleted). Always
   -- NULL for humans.
-  bot_stopped_at  TEXT
+  bot_stopped_at  TEXT,
+  oauth_token_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX users_workspace_id ON users(workspace_id);
 CREATE INDEX users_email_lower ON users(lower(email));

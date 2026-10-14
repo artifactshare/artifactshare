@@ -1240,6 +1240,7 @@ export async function removeWorkspaceMember(
       'users.email',
       'users.name',
       'users.workspace_id',
+      'users.oauth_token_version',
     ])
     .where('workspace_members.workspace_id', '=', actor.workspaceId)
     .where('workspace_members.user_id', '=', targetUserId)
@@ -1265,11 +1266,110 @@ export async function removeWorkspaceMember(
   const now = nowIso()
   const targetCurrentlyInWorkspace = target.workspace_id === oldWorkspaceId
 
+  const removalAuditId = nanoid(16)
+  const removalDetail = sql<string>`json_object(
+    'email', ${target.email}, 'name', ${target.name},
+    'revoked_api_token_count', ${targetCurrentlyInWorkspace ? sql`(select count(*) from api_tokens where user_id = ${targetUserId} and revoked_at is null)` : sql`0`},
+    'revoked_oauth_token_count', ${targetCurrentlyInWorkspace ? sql`((select count(*) from oauthAccessToken where userId = ${targetUserId}) + (select count(*) from oauthRefreshToken where userId = ${targetUserId}))` : sql`0`}
+  )`
+  const membershipGuard = sql<boolean>`exists ${removableMembershipGuard(
+    db,
+    oldWorkspaceId,
+    targetUserId,
+    actor.id,
+  )}`
+  // Check the snapshot once, before this batch changes the workspace/version.
+  // A completed removal and restoration invalidates a delayed request too.
+  const startingGuard = sql<boolean>`${membershipGuard} and exists (
+    select 1 from users where id = ${targetUserId}
+      and workspace_id = ${target.workspace_id}
+      and oauth_token_version = ${target.oauth_token_version}
+  )`
+  // The guarded audit is in this same transaction. It keeps the decision valid
+  // after our own version increment and workspace move, without admitting a
+  // request whose initial guard failed.
+  const removalGuard = sql<boolean>`${membershipGuard} and exists (
+    select 1 from audit_events where id = ${removalAuditId}
+  )`
+  const removalBatch: Compilable<unknown>[] = [
+    db
+      .insertInto('audit_events')
+      .columns([
+        'id',
+        'workspace_id',
+        'actor_user_id',
+        'action',
+        'subject_type',
+        'subject_id',
+        'detail',
+        'created_at',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('workspace_members')
+          .where(startingGuard)
+          .where('workspace_id', '=', oldWorkspaceId)
+          .where('user_id', '=', targetUserId)
+          .where('role', '=', 'member')
+          .where('status', '!=', 'removed')
+          .where(({ exists }) =>
+            exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
+          )
+          .select([
+            eb.val(removalAuditId).as('id'),
+            eb.val(oldWorkspaceId).as('workspace_id'),
+            eb.val(actor.id).as('actor_user_id'),
+            eb.val('member.remove').as('action'),
+            eb.val('user').as('subject_type'),
+            eb.val(targetUserId).as('subject_id'),
+            removalDetail.as('detail'),
+            eb.val(now).as('created_at'),
+          ]),
+      ),
+  ]
+  if (targetCurrentlyInWorkspace) {
+    const oauthDb = db.withTables<{
+      oauthAccessToken: { userId: string | null }
+      oauthRefreshToken: { userId: string }
+    }>()
+    removalBatch.push(
+      db
+        .updateTable('api_tokens')
+        .set({ revoked_at: now })
+        .where('user_id', '=', targetUserId)
+        .where('revoked_at', 'is', null)
+        .where(removalGuard),
+      oauthDb
+        .deleteFrom('oauthAccessToken')
+        .where('userId', '=', targetUserId)
+        .where(removalGuard),
+      oauthDb
+        .deleteFrom('oauthRefreshToken')
+        .where('userId', '=', targetUserId)
+        .where(removalGuard),
+      db
+        .updateTable('users')
+        .set({ oauth_token_version: sql`oauth_token_version + 1` })
+        .where('id', '=', targetUserId)
+        .where(removalGuard),
+      ...buildCliRefreshCredentialRevocationStatements(db, {
+        actorUserId: actor.id,
+        targetUserId,
+        workspaceId: oldWorkspaceId,
+        reason: 'member_removal',
+        guard: removalGuard,
+        deleteSessions: false,
+      }),
+      db
+        .deleteFrom('sessions')
+        .where('user_id', '=', targetUserId)
+        .where(removalGuard),
+    )
+  }
   if (targetCurrentlyInWorkspace) {
     const newWorkspaceId = nanoid()
     const workspaceName = `${target.email}'s workspace`
-    await runD1Batch(
-      db,
+    removalBatch.push(
       db
         .insertInto('workspaces')
         .columns([
@@ -1289,20 +1389,7 @@ export async function removeWorkspaceMember(
             .selectFrom('users')
             .where('id', '=', targetUserId)
             .where('workspace_id', '=', oldWorkspaceId)
-            .where(({ exists }) =>
-              exists(
-                db
-                  .selectFrom('workspace_members')
-                  .select('user_id')
-                  .where('workspace_id', '=', oldWorkspaceId)
-                  .where('user_id', '=', targetUserId)
-                  .where('role', '=', 'member')
-                  .where('status', '!=', 'removed'),
-              ),
-            )
-            .where(({ exists }) =>
-              exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
-            )
+            .where(removalGuard)
             .select([
               eb.val(newWorkspaceId).as('id'),
               eb.val(null).as('hd'),
@@ -1341,20 +1428,7 @@ export async function removeWorkspaceMember(
             .selectFrom('users')
             .where('id', '=', targetUserId)
             .where('workspace_id', '=', oldWorkspaceId)
-            .where(({ exists }) =>
-              exists(
-                db
-                  .selectFrom('workspace_members')
-                  .select('user_id')
-                  .where('workspace_id', '=', oldWorkspaceId)
-                  .where('user_id', '=', targetUserId)
-                  .where('role', '=', 'member')
-                  .where('status', '!=', 'removed'),
-              ),
-            )
-            .where(({ exists }) =>
-              exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
-            )
+            .where(removalGuard)
             .select([
               eb.val(newWorkspaceId).as('workspace_id'),
               eb.val(targetUserId).as('user_id'),
@@ -1369,95 +1443,14 @@ export async function removeWorkspaceMember(
         .set({ workspace_id: newWorkspaceId, updated_at: now })
         .where('id', '=', targetUserId)
         .where('workspace_id', '=', oldWorkspaceId)
-        .where(({ exists }) =>
-          exists(
-            db
-              .selectFrom('workspace_members')
-              .select('user_id')
-              .where('workspace_id', '=', oldWorkspaceId)
-              .where('user_id', '=', targetUserId)
-              .where('role', '=', 'member')
-              .where('status', '!=', 'removed'),
-          ),
-        )
-        .where(({ exists }) =>
-          exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
-        ),
+        .where(removalGuard),
     )
   }
 
-  const removalDetail = JSON.stringify({
-    email: target.email,
-    name: target.name,
-  })
-  const removalBatch: Compilable<unknown>[] = [
-    db
-      .insertInto('audit_events')
-      .columns([
-        'id',
-        'workspace_id',
-        'actor_user_id',
-        'action',
-        'subject_type',
-        'subject_id',
-        'detail',
-        'created_at',
-      ])
-      .expression((eb) =>
-        eb
-          .selectFrom('workspace_members')
-          .where('workspace_id', '=', oldWorkspaceId)
-          .where('user_id', '=', targetUserId)
-          .where('role', '=', 'member')
-          .where('status', '!=', 'removed')
-          .where(({ exists }) =>
-            exists(workspaceAdminQuery(db, actor.id, oldWorkspaceId)),
-          )
-          .select([
-            eb.val(nanoid(16)).as('id'),
-            eb.val(oldWorkspaceId).as('workspace_id'),
-            eb.val(actor.id).as('actor_user_id'),
-            eb.val('member.remove').as('action'),
-            eb.val('user').as('subject_type'),
-            eb.val(targetUserId).as('subject_id'),
-            eb.val(removalDetail).as('detail'),
-            eb.val(now).as('created_at'),
-          ]),
-      ),
-  ]
-  if (targetCurrentlyInWorkspace) {
-    removalBatch.push(
-      ...buildCliRefreshCredentialRevocationStatements(db, {
-        actorUserId: actor.id,
-        targetUserId,
-        workspaceId: oldWorkspaceId,
-        reason: 'member_removal',
-        guard: sql<boolean>`exists ${removableMembershipGuard(
-          db,
-          oldWorkspaceId,
-          targetUserId,
-          actor.id,
-        )}`,
-        deleteSessions: false,
-      }),
-      db
-        .deleteFrom('sessions')
-        .where('user_id', '=', targetUserId)
-        .where(({ exists }) =>
-          exists(
-            removableMembershipGuard(
-              db,
-              oldWorkspaceId,
-              targetUserId,
-              actor.id,
-            ),
-          ),
-        ),
-    )
-  }
   removalBatch.push(
     db
       .updateTable('workspace_members')
+      .where(removalGuard)
       .set({
         status: 'removed',
         removed_at: now,

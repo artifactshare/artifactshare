@@ -11,6 +11,12 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
+import { removeWorkspaceMember } from '../services/team-management.server'
+import {
+  createApiToken,
+  findUserByApiToken,
+} from '../services/api-tokens.server'
+import { issueCliRefreshCredential } from '../services/cli-refresh-credentials.server'
 import { createDb } from '../services/db.server'
 import { saveProjectShareDefaults } from '../services/projects.server'
 import { deleteShareable } from '../services/shareables.server'
@@ -434,3 +440,241 @@ describe.sequential('atomic authorization mutation D1 batches', () => {
     expect(bucketDelete).not.toHaveBeenCalled()
   })
 })
+
+const removalFailures = {
+  none: null,
+  audit: /^insert into "audit_events"/,
+  api: /^update "api_tokens"/,
+  access: /^delete from "oauthAccessToken"/,
+  refresh: /^delete from "oauthRefreshToken"/,
+  version: /^update "users" set "oauth_token_version"/,
+  cli: /^update "cli_refresh_credentials"/,
+  sessions: /^delete from "sessions"/,
+  workspace: /^insert into "workspaces"/,
+  owner: /^insert into "workspace_members"/,
+  move: /^update "users" set "workspace_id"/,
+  membership: /^update "workspace_members" set "status" = /,
+}
+
+it.each(Object.entries(removalFailures))(
+  'member removal atomically revokes credentials (failure=%s)',
+  async (failure, failurePattern) => {
+    const prefix = `remove-${failure}`
+    const finalFailed = failure !== 'none'
+    await seedProject(prefix)
+    const ws = `${prefix}-ws`
+    const owner = `${prefix}-owner`
+    const member = `${prefix}-member`
+    await database.batch([
+      database
+        .prepare(
+          'INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id, google_sub) VALUES (?, ?, 1, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          member,
+          `${member}@example.com`,
+          member,
+          at,
+          at,
+          ws,
+          `${member}-sub`,
+        ),
+      database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'owner', 'active', ?, ?)",
+        )
+        .bind(ws, owner, at, at),
+      database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'member', 'active', ?, ?)",
+        )
+        .bind(ws, member, at, at),
+      database
+        .prepare(
+          'INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .bind(prefix, member, crypto.randomUUID(), '2099-01-01', at, at),
+      database
+        .prepare(
+          "INSERT INTO oauthClient (id, clientId, public, redirectUris) VALUES (?, ?, 1, '[]')",
+        )
+        .bind(prefix, prefix),
+      database
+        .prepare(
+          "INSERT INTO oauthRefreshToken (id, token, clientId, userId, scopes) VALUES (?, ?, ?, ?, '[]')",
+        )
+        .bind(prefix, crypto.randomUUID(), prefix, member),
+      database
+        .prepare(
+          "INSERT INTO oauthAccessToken (id, token, clientId, userId, scopes) VALUES (?, ?, ?, ?, '[]')",
+        )
+        .bind(prefix, crypto.randomUUID(), prefix, member),
+    ])
+    const setupDb = createDb(database)
+    const api = await createApiToken(setupDb, member, 'existing')
+    await issueCliRefreshCredential(setupDb, member)
+    await setupDb.destroy()
+    const beforeWorkspaces = await database
+      .prepare('SELECT count(*) AS n FROM workspaces')
+      .first()
+    const db = createDb(
+      failurePattern ? failStatement(database, failurePattern) : database,
+    )
+    try {
+      const removal = removeWorkspaceMember(
+        db,
+        { id: owner, workspaceId: ws },
+        member,
+      )
+      if (finalFailed) await expect(removal).rejects.toThrow()
+      else expect(await removal).toEqual({ kind: 'ok' })
+      expect(Boolean(await findUserByApiToken(db, api.token))).toBe(finalFailed)
+      const user = await db
+        .selectFrom('users')
+        .select(['workspace_id', 'oauth_token_version'])
+        .where('id', '=', member)
+        .executeTakeFirstOrThrow()
+      expect(user.workspace_id === ws).toBe(finalFailed)
+      if (finalFailed) {
+        expect(
+          await database
+            .prepare('SELECT count(*) AS n FROM workspaces')
+            .first(),
+        ).toEqual(beforeWorkspaces)
+        expect(
+          await db
+            .selectFrom('workspace_members')
+            .select('workspace_id')
+            .where('user_id', '=', member)
+            .execute(),
+        ).toEqual([{ workspace_id: ws }])
+      }
+      expect(user.oauth_token_version).toBe(finalFailed ? 0 : 1)
+      expect(
+        await database
+          .prepare('SELECT revoked FROM oauthRefreshToken WHERE id = ?')
+          .bind(prefix)
+          .first(),
+      ).toEqual(finalFailed ? { revoked: null } : null)
+      expect(
+        Boolean(
+          await database
+            .prepare('SELECT id FROM oauthAccessToken WHERE id = ?')
+            .bind(prefix)
+            .first(),
+        ),
+      ).toBe(finalFailed)
+      expect(
+        Boolean(
+          await db
+            .selectFrom('sessions')
+            .select('id')
+            .where('user_id', '=', member)
+            .executeTakeFirst(),
+        ),
+      ).toBe(finalFailed)
+      expect(
+        Boolean(
+          await db
+            .selectFrom('cli_refresh_credentials')
+            .select('id')
+            .where('user_id', '=', member)
+            .where('revoked_at', 'is', null)
+            .executeTakeFirst(),
+        ),
+      ).toBe(finalFailed)
+      const audits = await db
+        .selectFrom('audit_events')
+        .selectAll()
+        .where('workspace_id', '=', ws)
+        .where('action', 'in', [
+          'member.remove',
+          'cli.refresh_credential.revoke',
+        ])
+        .execute()
+      expect(audits.length).toBe(finalFailed ? 0 : 2)
+      if (!finalFailed)
+        expect(
+          JSON.parse(
+            audits.find((row) => row.action === 'member.remove')!.detail!,
+          ),
+        ).toMatchObject({
+          revoked_api_token_count: 1,
+          revoked_oauth_token_count: 2,
+        })
+      expect(
+        (
+          await db
+            .selectFrom('workspace_members')
+            .select('status')
+            .where('workspace_id', '=', ws)
+            .where('user_id', '=', member)
+            .executeTakeFirstOrThrow()
+        ).status,
+      ).toBe(finalFailed ? 'active' : 'removed')
+      if (finalFailed) {
+        const retryDb = createDb(database)
+        try {
+          expect(
+            await removeWorkspaceMember(
+              retryDb,
+              { id: owner, workspaceId: ws },
+              member,
+            ),
+          ).toEqual({ kind: 'ok' })
+          expect(await findUserByApiToken(retryDb, api.token)).toBeNull()
+          expect(
+            await database
+              .prepare('SELECT id FROM oauthRefreshToken WHERE userId = ?')
+              .bind(member)
+              .first(),
+          ).toBeNull()
+          expect(
+            await retryDb
+              .selectFrom('sessions')
+              .select('id')
+              .where('user_id', '=', member)
+              .execute(),
+          ).toEqual([])
+          expect(
+            await retryDb
+              .selectFrom('cli_refresh_credentials')
+              .select('id')
+              .where('user_id', '=', member)
+              .where('revoked_at', 'is', null)
+              .execute(),
+          ).toEqual([])
+          expect(
+            await retryDb
+              .selectFrom('users')
+              .select('oauth_token_version')
+              .where('id', '=', member)
+              .executeTakeFirstOrThrow(),
+          ).toEqual({ oauth_token_version: 1 })
+          expect(
+            await removeWorkspaceMember(
+              retryDb,
+              { id: owner, workspaceId: ws },
+              member,
+            ),
+          ).toEqual({ kind: 'not-found' })
+          const removals = await retryDb
+            .selectFrom('audit_events')
+            .select('detail')
+            .where('workspace_id', '=', ws)
+            .where('action', '=', 'member.remove')
+            .execute()
+          expect(removals).toHaveLength(1)
+          expect(JSON.parse(removals[0]!.detail!)).toMatchObject({
+            revoked_api_token_count: 1,
+            revoked_oauth_token_count: 2,
+          })
+        } finally {
+          await retryDb.destroy()
+        }
+      }
+    } finally {
+      await db.destroy()
+    }
+  },
+)

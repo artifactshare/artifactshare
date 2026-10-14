@@ -3,11 +3,16 @@ import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
+import { createApiToken, findUserByApiToken } from './api-tokens.server'
 import { viewerDisplayCheck } from './access.server'
 import { issueCliRefreshCredential } from './cli-refresh-credentials.server'
 
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
+  afterNextBatch: null as (() => void | Promise<void>) | null,
+  beforeNextBatch: null as
+    | ((stmts: { sql: string; params: unknown[] }[]) => void | Promise<void>)
+    | null,
 }))
 const batchHookRef = vi.hoisted(() => ({
   current: null as ((batchIndex: number) => void) | null,
@@ -63,6 +68,8 @@ describe('team-management service', () => {
     db = fixture.db
     sqliteRef.current = sqlite
     batchHookRef.current = null
+    sqliteRef.beforeNextBatch = null
+    sqliteRef.afterNextBatch = null
     batchCountRef.current = 0
   })
 
@@ -575,6 +582,7 @@ describe('team-management service', () => {
   afterEach(async () => {
     sqliteRef.current = null
     batchHookRef.current = null
+    sqliteRef.beforeNextBatch = null
     batchCountRef.current = 0
     await db.destroy()
   })
@@ -971,7 +979,9 @@ describe('team-management service', () => {
       link_expiry_max_days: null,
     })
 
-    const audits = readAuditEvents(sqlite, 'ws1')
+    const audits = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'member.remove',
+    )
     expect(audits).toHaveLength(1)
     expect(audits[0]).toMatchObject({
       action: 'member.remove',
@@ -982,7 +992,572 @@ describe('team-management service', () => {
     expect(JSON.parse(audits[0]!.detail!)).toEqual({
       email: 'u2@example.com',
       name: 'User u2',
+      revoked_api_token_count: 0,
+      revoked_oauth_token_count: 0,
     })
+  })
+
+  test('revokes all stored credentials, counts final-batch rows, and permits fresh personal tokens', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    const old = await createApiToken(db, 'u2', 'old')
+    const already = await createApiToken(db, 'u2', 'already')
+    const other = await createApiToken(db, 'u1', 'other')
+    const at = '2026-01-01T00:00:00.000Z'
+    await db
+      .updateTable('api_tokens')
+      .set({ revoked_at: at })
+      .where('id', '=', already.id)
+      .execute()
+    seedOAuthCredentials(sqlite, 'u2')
+    seedOAuthCredentials(sqlite, 'u1')
+    sqlite
+      .prepare('UPDATE oauthRefreshToken SET revoked = ? WHERE id = ?')
+      .run(at, 'u2-revoked')
+    const hook = (stmts: { sql: string; params: unknown[] }[]) => {
+      if (!stmts.some((stmt) => stmt.params.includes('member.remove'))) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
+      sqlite
+        .prepare(
+          'INSERT INTO api_tokens (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run('late', 'u2', 'late', crypto.randomUUID(), at)
+      seedOAuthCredentials(sqlite, 'u2', '-late')
+    }
+    sqliteRef.beforeNextBatch = hook
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await findUserByApiToken(db, old.token)).toBeNull()
+    expect(await findUserByApiToken(db, other.token)).not.toBeNull()
+    expect(
+      sqlite
+        .prepare('SELECT revoked_at FROM api_tokens WHERE id = ?')
+        .get(already.id),
+    ).toEqual({ revoked_at: at })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT revoked FROM oauthRefreshToken WHERE id = 'u2-revoked'",
+        )
+        .get(),
+    ).toBeUndefined()
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2' AND revoked IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u1'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    const audit = readAuditEvents(sqlite, 'ws1').find(
+      (event) => event.action === 'member.remove',
+    )!
+    expect(JSON.parse(audit.detail!)).toEqual({
+      email: 'u2@example.com',
+      name: 'User u2',
+      revoked_api_token_count: 2,
+      revoked_oauth_token_count: 6,
+    })
+    const fresh = await createApiToken(db, 'u2', 'personal')
+    expect(await findUserByApiToken(db, fresh.token)).toMatchObject({
+      workspace_id: readUserWorkspaceId(sqlite, 'u2'),
+    })
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'not-found',
+    })
+    expect(
+      readAuditEvents(sqlite, 'ws1').filter(
+        (event) => event.action === 'member.remove',
+      ),
+    ).toHaveLength(1)
+    await restoreWorkspaceMember(db, user('u1'), 'u2')
+    expect(await findUserByApiToken(db, old.token)).toBeNull()
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+  })
+
+  test('concurrent removals with in-workspace snapshots revoke once and record one audit', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    seedSession(sqlite, 'u2', 'sess-1')
+    await issueCliRefreshCredential(db, 'u2')
+    const old = await createApiToken(db, 'u2', 'existing')
+    const hook = async (stmts: { sql: string; params: unknown[] }[]) => {
+      if (
+        !stmts.some((stmt) => stmt.sql.startsWith('insert into "workspaces"'))
+      ) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
+      expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+        kind: 'ok',
+      })
+    }
+    sqliteRef.beforeNextBatch = hook
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await findUserByApiToken(db, old.token)).toBeNull()
+    expect(readSessionCount(sqlite, 'u2')).toBe(0)
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = 'u2' AND revoked_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+    const removals = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'member.remove',
+    )
+    expect(removals).toHaveLength(1)
+    expect(JSON.parse(removals[0]!.detail!)).toMatchObject({
+      revoked_api_token_count: 1,
+      revoked_oauth_token_count: 3,
+    })
+  })
+
+  test('a concurrent request observing the workspace move also observes revoked credentials and removed membership', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    seedSession(sqlite, 'u2', 'sess-1')
+    await issueCliRefreshCredential(db, 'u2')
+    const old = await createApiToken(db, 'u2', 'existing')
+    let observed = false
+    const hook = (stmts: { sql: string; params: unknown[] }[]) => {
+      if (
+        !stmts.some((stmt) =>
+          stmt.sql.startsWith('update "users" set "workspace_id"'),
+        )
+      ) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
+      sqliteRef.afterNextBatch = async () => {
+        observed = true
+        expect(readUserWorkspaceId(sqlite, 'u2')).not.toBe('ws1')
+        expect(readMembershipStatus(sqlite, 'u2', 'ws1')).toBe('removed')
+        expect(await findUserByApiToken(db, old.token)).toBeNull()
+        expect(readSessionCount(sqlite, 'u2')).toBe(0)
+        expect(
+          sqlite
+            .prepare(
+              "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2'",
+            )
+            .get(),
+        ).toEqual({ n: 0 })
+        expect(
+          sqlite
+            .prepare(
+              "SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = 'u2' AND revoked_at IS NULL",
+            )
+            .get(),
+        ).toEqual({ n: 0 })
+        expect(
+          sqlite
+            .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+            .get(),
+        ).toEqual({ oauth_token_version: 1 })
+        const fresh = await createApiToken(db, 'u2', 'personal')
+        expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+          kind: 'not-found',
+        })
+        expect(await findUserByApiToken(db, fresh.token)).not.toBeNull()
+      }
+    }
+    sqliteRef.beforeNextBatch = hook
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(observed).toBe(true)
+    const removals = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'member.remove',
+    )
+    expect(removals).toHaveLength(1)
+    expect(JSON.parse(removals[0]!.detail!)).toMatchObject({
+      revoked_api_token_count: 1,
+      revoked_oauth_token_count: 3,
+    })
+    expect(
+      sqlite.prepare('SELECT count(*) AS n FROM workspaces').get(),
+    ).toEqual({ n: 2 })
+  })
+
+  test('a delayed removal cannot revoke fresh credentials after another removal and restoration', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    const old = await createApiToken(db, 'u2', 'existing')
+    let fresh: string | undefined
+    let beforeAudits: ReturnType<typeof readAuditEvents> = []
+    const hook = async (stmts: { sql: string; params: unknown[] }[]) => {
+      if (!stmts.some((stmt) => stmt.params.includes('member.remove'))) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
+      expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+        kind: 'ok',
+      })
+      expect(await restoreWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+        kind: 'ok',
+      })
+      fresh = (await createApiToken(db, 'u2', 'restored')).token
+      seedOAuthCredentials(sqlite, 'u2', '-fresh')
+      seedSession(sqlite, 'u2', 'sess-fresh')
+      await issueCliRefreshCredential(db, 'u2')
+      beforeAudits = readAuditEvents(sqlite, 'ws1')
+    }
+    sqliteRef.beforeNextBatch = hook
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'not-found',
+    })
+    expect(await findUserByApiToken(db, old.token)).toBeNull()
+    expect(await findUserByApiToken(db, fresh!)).not.toBeNull()
+    expect(readUserWorkspaceId(sqlite, 'u2')).toBe('ws1')
+    expect(readMembershipStatus(sqlite, 'u2', 'ws1')).toBe('active')
+    expect(readSessionCount(sqlite, 'u2')).toBe(1)
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 2 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = 'u2' AND revoked_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(readAuditEvents(sqlite, 'ws1')).toEqual(beforeAudits)
+  })
+
+  test('stale membership removal preserves credentials and records zero counts', async () => {
+    seedWorkspace(sqlite, 'team')
+    seedWorkspace(sqlite, 'free', 'ws2')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    const old = await createApiToken(db, 'u2', 'existing')
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await findUserByApiToken(db, old.token)).toBeNull()
+    await restoreWorkspaceMember(db, user('u1'), 'u2')
+    sqlite.exec("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u2'")
+    const fresh = await createApiToken(db, 'u2', 'personal')
+    seedOAuthCredentials(sqlite, 'u2', '-fresh')
+    const before = sqlite
+      .prepare("SELECT * FROM oauthRefreshToken WHERE userId = 'u2'")
+      .all()
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await findUserByApiToken(db, fresh.token)).not.toBeNull()
+    expect(
+      sqlite
+        .prepare("SELECT * FROM oauthRefreshToken WHERE userId = 'u2'")
+        .all(),
+    ).toEqual(before)
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+    const removals = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'member.remove',
+    )
+    expect(removals).toHaveLength(2)
+    expect(JSON.parse(removals[1]!.detail!)).toMatchObject({
+      revoked_api_token_count: 0,
+      revoked_oauth_token_count: 0,
+    })
+    expect(
+      readAuditEvents(sqlite, 'ws1').filter(
+        (event) => event.action === 'member.credentials.revoke',
+      ),
+    ).toHaveLength(0)
+  })
+
+  test('workspace move failure rolls back credentials, version and credential audit', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    seedSession(sqlite, 'u2', 'sess-1')
+    const token = await createApiToken(db, 'u2', 'existing')
+    const beforeAudits = readAuditEvents(sqlite, 'ws1')
+    sqlite.exec(
+      "CREATE TRIGGER fail_move BEFORE UPDATE OF workspace_id ON users BEGIN SELECT RAISE(ABORT, 'induced move failure'); END",
+    )
+    await expect(removeWorkspaceMember(db, user('u1'), 'u2')).rejects.toThrow(
+      'induced move failure',
+    )
+    expect(await findUserByApiToken(db, token.token)).not.toBeNull()
+    expect(
+      sqlite
+        .prepare(
+          "SELECT workspace_id, oauth_token_version FROM users WHERE id = 'u2'",
+        )
+        .get(),
+    ).toEqual({ workspace_id: 'ws1', oauth_token_version: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2' AND revoked IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 2 })
+    expect(readAuditEvents(sqlite, 'ws1')).toEqual(beforeAudits)
+    expect(readSessionCount(sqlite, 'u2')).toBe(1)
+    expect(readMembershipStatus(sqlite, 'u2', 'ws1')).not.toBe('removed')
+  })
+
+  test('final membership failure rolls back the move and retry revokes every credential', async () => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedOwner(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    seedSession(sqlite, 'u2', 'sess-1')
+    const token = await createApiToken(db, 'u2', 'existing')
+    await issueCliRefreshCredential(db, 'u2')
+    const beforeAudits = readAuditEvents(sqlite, 'ws1')
+    sqlite.exec(
+      "CREATE TRIGGER fail_removal BEFORE UPDATE OF status ON workspace_members WHEN NEW.status = 'removed' BEGIN SELECT RAISE(ABORT, 'induced removal failure'); END",
+    )
+    await expect(removeWorkspaceMember(db, user('u1'), 'u2')).rejects.toThrow(
+      'induced removal failure',
+    )
+    expect(await findUserByApiToken(db, token.token)).not.toBeNull()
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2' AND revoked IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 2 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = 'u2' AND revoked_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(readSessionCount(sqlite, 'u2')).toBe(1)
+    expect(readAuditEvents(sqlite, 'ws1')).toEqual(beforeAudits)
+    expect(readMembershipStatus(sqlite, 'u2', 'ws1')).not.toBe('removed')
+    const personalWorkspace = readUserWorkspaceId(sqlite, 'u2')
+    expect(personalWorkspace).toBe('ws1')
+    expect(
+      sqlite.prepare('SELECT count(*) AS n FROM workspaces').get(),
+    ).toEqual({ n: 1 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM workspace_members WHERE user_id = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    sqlite.exec('DROP TRIGGER fail_removal')
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'ok',
+    })
+    expect(await findUserByApiToken(db, token.token)).toBeNull()
+    expect(readUserWorkspaceId(sqlite, 'u2')).not.toBe(personalWorkspace)
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 1 })
+    expect(readSessionCount(sqlite, 'u2')).toBe(0)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthRefreshToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM cli_refresh_credentials WHERE user_id = 'u2' AND revoked_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 })
+    expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
+      kind: 'not-found',
+    })
+    expect(
+      readAuditEvents(sqlite, 'ws1').filter(
+        (event) => event.action === 'member.remove',
+      ),
+    ).toHaveLength(1)
+    const removalAudit = readAuditEvents(sqlite, 'ws1').find(
+      (event) => event.action === 'member.remove',
+    )!
+    expect(JSON.parse(removalAudit.detail!)).toEqual({
+      email: 'u2@example.com',
+      name: 'User u2',
+      revoked_api_token_count: 1,
+      revoked_oauth_token_count: 3,
+    })
+  })
+
+  test.each([
+    'admin',
+    'lost-authority',
+    'promoted-target',
+    'elsewhere',
+    'moved-before-batch',
+  ])('preserves credentials for %s removal', async (scenario) => {
+    seedWorkspace(sqlite, 'team')
+    for (const id of ['u1', 'u2']) {
+      seedUser(sqlite, id)
+      seedContributor(sqlite, id)
+    }
+    seedAdmin(sqlite, 'u1')
+    seedOAuthCredentials(sqlite, 'u2')
+    const token = await createApiToken(db, 'u2', 'existing')
+    if (scenario === 'admin') seedAdmin(sqlite, 'u2')
+    if (scenario === 'elsewhere' || scenario === 'moved-before-batch')
+      seedWorkspace(sqlite, 'free', 'ws2')
+    if (scenario === 'elsewhere') {
+      sqlite.exec("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u2'")
+    }
+    const before = sqlite
+      .prepare("SELECT * FROM oauthRefreshToken WHERE userId = 'u2'")
+      .all()
+    const hook = (stmts: { sql: string; params: unknown[] }[]) => {
+      if (!stmts.some((stmt) => stmt.params.includes('member.remove'))) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
+      if (scenario === 'moved-before-batch')
+        sqlite.exec("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u2'")
+      if (scenario === 'lost-authority') demoteAdmin(sqlite, 'u1')
+      if (scenario === 'promoted-target') seedAdmin(sqlite, 'u2')
+    }
+    sqliteRef.beforeNextBatch = hook
+    await removeWorkspaceMember(db, user('u1'), 'u2')
+    expect(await findUserByApiToken(db, token.token)).not.toBeNull()
+    expect(
+      sqlite
+        .prepare("SELECT * FROM oauthRefreshToken WHERE userId = 'u2'")
+        .all(),
+    ).toEqual(before)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM oauthAccessToken WHERE userId = 'u2'",
+        )
+        .get(),
+    ).toEqual({ n: 1 })
+    expect(
+      sqlite
+        .prepare("SELECT oauth_token_version FROM users WHERE id = 'u2'")
+        .get(),
+    ).toEqual({ oauth_token_version: 0 })
+    const audits = readAuditEvents(sqlite, 'ws1').filter(
+      (event) => event.action === 'member.remove',
+    )
+    expect(
+      readAuditEvents(sqlite, 'ws1').filter(
+        (event) => event.action === 'member.credentials.revoke',
+      ),
+    ).toHaveLength(0)
+    if (scenario === 'elsewhere')
+      expect(JSON.parse(audits[0]!.detail!)).toMatchObject({
+        revoked_api_token_count: 0,
+        revoked_oauth_token_count: 0,
+      })
+    else expect(audits).toHaveLength(0)
   })
 
   test('member removal revokes CLI families and audits them in the old workspace', async () => {
@@ -994,8 +1569,11 @@ describe('team-management service', () => {
     seedOwner(sqlite, 'u1')
     await issueCliRefreshCredential(db, 'u2')
     await issueCliRefreshCredential(db, 'u2')
-    batchHookRef.current = (batchIndex) => {
-      if (batchIndex !== 3) return
+    const hook = (stmts: { sql: string; params: unknown[] }[]) => {
+      if (!stmts.some((stmt) => stmt.params.includes('member.remove'))) {
+        sqliteRef.beforeNextBatch = hook
+        return
+      }
       sqlite
         .prepare(
           `INSERT INTO cli_refresh_credentials (
@@ -1009,6 +1587,8 @@ describe('team-management service', () => {
           'racing-family',
         )
     }
+
+    sqliteRef.beforeNextBatch = hook
 
     expect(await removeWorkspaceMember(db, user('u1'), 'u2')).toEqual({
       kind: 'ok',
@@ -1212,7 +1792,16 @@ describe('team-management service', () => {
     await expect(removeWorkspaceMember(db, user('u1'), 'u2')).resolves.toEqual({
       kind: 'not-found',
     })
-    expect(readAuditEvents(sqlite, 'ws1')).toHaveLength(1)
+    expect(
+      readAuditEvents(sqlite, 'ws1')
+        .map((event) => event.action)
+        .sort(),
+    ).toEqual(['member.remove'])
+    const activity = await loadAuditEventsPage(db, 'ws1', 1)
+    expect(activity.total).toBe(1)
+    expect(activity.events.map((event) => event.action)).toEqual([
+      'member.remove',
+    ])
   })
 
   test('member page is capped at the page size for large workspaces', async () => {
@@ -2133,4 +2722,36 @@ function readArtifactAuthorship(db: DatabaseSync) {
     .prepare(`SELECT created_by_id FROM comment_messages WHERE id = 'm1'`)
     .get() as { created_by_id: string }
   return [version.created_by_id, thread.created_by_id, message.created_by_id]
+}
+
+function seedOAuthCredentials(
+  sqlite: DatabaseSync,
+  userId: string,
+  suffix = '',
+) {
+  const client = `${userId}${suffix}`
+  sqlite
+    .prepare(
+      'INSERT INTO oauthClient (id, clientId, public, redirectUris) VALUES (?, ?, 1, ?)',
+    )
+    .run(client, client, '[]')
+  for (const ending of ['refresh', 'revoked']) {
+    sqlite
+      .prepare(
+        'INSERT INTO oauthRefreshToken (id, token, clientId, userId, scopes, expiresAt) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        `${client}-${ending}`,
+        crypto.randomUUID(),
+        client,
+        userId,
+        '[]',
+        '2020-01-01T00:00:00.000Z',
+      )
+  }
+  sqlite
+    .prepare(
+      'INSERT INTO oauthAccessToken (id, token, clientId, userId, scopes) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(client, crypto.randomUUID(), client, userId, '[]')
 }

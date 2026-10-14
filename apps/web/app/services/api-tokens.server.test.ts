@@ -1,8 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
-import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
 import type { DB } from '~/types/db'
 import {
   createApiToken,
@@ -13,17 +13,27 @@ import {
   touchApiTokenLastUsedByHash,
 } from './api-tokens.server'
 
+const sqliteRef = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
+
+vi.mock('cloudflare:workers', () => ({
+  env: { DB: createD1BatchDbMock({ sqlite: sqliteRef }) },
+}))
+
+import { removeWorkspaceMember } from './team-management.server'
+
 describe('api-tokens service', () => {
   let sqlite: DatabaseSync
   let db: Kysely<DB>
 
   beforeEach(() => {
-    const fixture = createMigratedInMemoryDb()
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
     sqlite = fixture.sqlite
+    sqliteRef.current = sqlite
     db = fixture.db
   })
 
   afterEach(async () => {
+    sqliteRef.current = null
     await db.destroy()
   })
 
@@ -110,28 +120,27 @@ describe('api-tokens service', () => {
     expect(readTokenRow(sqlite, created.id).last_used_at).toBe(firstTouch)
   })
 
-  test('findUserByApiToken follows users.workspace_id after member removal', async () => {
+  test('findUserByApiToken rejects a token issued before member removal', async () => {
     seedWorkspace(sqlite)
     seedUser(sqlite, 'u1')
+    seedUser(sqlite, 'u2')
     sqlite.exec(`
-      INSERT INTO workspaces (
-        id, hd, name, created_at, plan, storage_quota_bytes, storage_used_bytes,
-        storage_updated_at
-      ) VALUES (
-        'ws-personal', NULL, 'Personal', '2026-05-26T00:00:00.000Z', 'free',
-        104857600, 0, '2026-05-26T00:00:00.000Z'
-      );
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at)
+      VALUES ('ws1', 'u1', 'member', 'active', '2026-05-26T00:00:00.000Z', '2026-05-26T00:00:00.000Z'),
+             ('ws1', 'u2', 'admin', 'active', '2026-05-26T00:00:00.000Z', '2026-05-26T00:00:00.000Z');
     `)
 
     const created = await createApiToken(db, 'u1', 'CI deploy')
-    sqlite.exec(`
-      UPDATE users SET workspace_id = 'ws-personal' WHERE id = 'u1';
-    `)
-
     expect(await findUserByApiToken(db, created.token)).toMatchObject({
       id: 'u1',
-      workspace_id: 'ws-personal',
+      workspace_id: 'ws1',
     })
+
+    expect(
+      await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+    ).toEqual({ kind: 'ok' })
+
+    expect(await findUserByApiToken(db, created.token)).toBeNull()
   })
 })
 

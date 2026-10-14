@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   getLocalJwksWithHangDetection: vi.fn(),
   evaluateFlagshipFlag: vi.fn(),
   createDb: vi.fn(),
+  readUser: vi.fn(),
+  destroy: vi.fn(),
   createMcpServer: vi.fn(),
   serverConnect: vi.fn(),
   transportConstructor: vi.fn(),
@@ -92,8 +94,13 @@ beforeEach(() => {
   })
   mocks.serverConnect.mockResolvedValue(undefined)
   mocks.createMcpServer.mockReturnValue({ connect: mocks.serverConnect })
+  mocks.readUser.mockReset().mockResolvedValue({ oauth_token_version: 0 })
+  mocks.destroy.mockReset().mockResolvedValue(undefined)
   mocks.createDb.mockImplementation(() => ({
-    destroy: vi.fn().mockResolvedValue(undefined),
+    destroy: mocks.destroy,
+    selectFrom: () => ({
+      select: () => ({ where: () => ({ executeTakeFirst: mocks.readUser }) }),
+    }),
   }))
   mocks.transportHandleRequest.mockResolvedValue(
     new Response('handled', { status: 200 }),
@@ -232,36 +239,77 @@ describe('handleMcpRequest product scope enforcement', () => {
     },
   )
 
-  test.each([
-    { name: 'missing', sub: undefined, expectedUserId: '' },
-    { name: 'non-string', sub: 42, expectedUserId: '' },
-    { name: 'empty', sub: '', expectedUserId: '' },
-    { name: 'whitespace', sub: '  \t', expectedUserId: '  \t' },
-  ])(
-    'preserves current identity for $name signed subject without Flagship evaluation',
-    async ({ sub, expectedUserId }) => {
+  test.each([undefined, 42, '', '  \t'])(
+    'rejects invalid subject %s',
+    async (sub) => {
       mocks.verifyJwsAccessToken.mockResolvedValue({
         sub,
         azp: 'client-1',
-        scope: 'openid profile artifactshare:access',
+        scope: 'artifactshare:access',
       })
-
-      const response = await handleMcpRequest(mcpRequest(), executionContext)
-
-      expect(response.status).toBe(200)
-      expect(mocks.evaluateFlagshipFlag).not.toHaveBeenCalled()
-      expect(mocks.createMcpServer).toHaveBeenCalledWith(
-        expect.objectContaining({
-          identity: {
-            userId: expectedUserId,
-            clientId: 'client-1',
-            scopes: ['openid', 'profile', 'artifactshare:access'],
-            mode: 'oauth',
-          },
-        }),
-      )
+      expect(
+        (await handleMcpRequest(mcpRequest(), executionContext)).status,
+      ).toBe(401)
+      expect(mocks.createMcpServer).not.toHaveBeenCalled()
+      expect(mocks.destroy).toHaveBeenCalledOnce()
     },
   )
+
+  test.each([null, '0', -1, 0.5, Number.MAX_SAFE_INTEGER + 1, {}, 1])(
+    'rejects malformed or stale version %s',
+    async (oauth_token_version) => {
+      mocks.verifyJwsAccessToken.mockResolvedValue({
+        sub: 'u1',
+        azp: 'client-1',
+        scope: 'artifactshare:access',
+        oauth_token_version,
+      })
+      expect(
+        (await handleMcpRequest(mcpRequest(), executionContext)).status,
+      ).toBe(401)
+      expect(mocks.createMcpServer).not.toHaveBeenCalled()
+      expect(mocks.destroy).toHaveBeenCalledOnce()
+    },
+  )
+
+  test.each(['missing', 'failure', 'advanced'])(
+    'fails closed for %s user version lookup',
+    async (scenario) => {
+      mocks.verifyJwsAccessToken.mockResolvedValue({
+        sub: 'u1',
+        azp: 'client-1',
+        scope: 'artifactshare:access',
+      })
+      if (scenario === 'failure')
+        mocks.readUser.mockRejectedValue(new Error('database unavailable'))
+      else
+        mocks.readUser.mockResolvedValue(
+          scenario === 'missing' ? undefined : { oauth_token_version: 1 },
+        )
+      const response = await handleMcpRequest(mcpRequest(), executionContext)
+      expect(response.status).toBe(scenario === 'failure' ? 503 : 401)
+      expect(response.headers.has('WWW-Authenticate')).toBe(
+        scenario !== 'failure',
+      )
+      expect(mocks.createMcpServer).not.toHaveBeenCalled()
+      expect(mocks.destroy).toHaveBeenCalledOnce()
+    },
+  )
+
+  test('accepts a fresh version without a session claim and shares the connection', async () => {
+    mocks.verifyJwsAccessToken.mockResolvedValue({
+      sub: 'u1',
+      azp: 'client-1',
+      scope: 'artifactshare:access',
+      oauth_token_version: 1,
+    })
+    mocks.readUser.mockResolvedValue({ oauth_token_version: 1 })
+    expect(
+      (await handleMcpRequest(mcpRequest(), executionContext)).status,
+    ).toBe(200)
+    expect(mocks.createDb).toHaveBeenCalledOnce()
+    expect(mocks.destroy).toHaveBeenCalledOnce()
+  })
 
   test('invalid token returns 401 without Flagship evaluation or MCP handling', async () => {
     mocks.verifyJwsAccessToken.mockRejectedValue(new Error('invalid token'))

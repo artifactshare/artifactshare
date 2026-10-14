@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN oauth_token_version INTEGER NOT NULL DEFAULT 0;

@@ -165,13 +165,23 @@ function buildAuth() {
     // leak into createAuth's inferred return type (TS2883, non-portable). The
     // OAuth/JWT endpoints are served through `.handler`, not typed `.api`.
     plugins: [
-      // Signs OAuth access tokens as JWTs (verifiable via /jwks without a D1
-      // read) and stores the signing keys in the `jwks` table.
+      // Signs OAuth access tokens as JWTs and stores keys in `jwks`. MCP
+      // verifies signatures locally and reads the user token version from D1.
       jwt(),
       // OAuth 2.1 authorization server. MCP hosts self-register via dynamic
       // client registration (no pre-shared credentials), so unauthenticated
       // registration is on; public clients get PKCE enforced by default.
       oauthProvider({
+        customAccessTokenClaims: async ({ user }) => {
+          if (!user) return {}
+          const current = await db
+            .selectFrom('users')
+            .select('oauth_token_version')
+            .where('id', '=', user.id)
+            .executeTakeFirst()
+          if (!current) throw new Error('OAuth user no longer exists')
+          return { oauth_token_version: current.oauth_token_version }
+        },
         loginPage: '/sign-in',
         consentPage: '/consent',
         scopes: [...MCP_OAUTH_SCOPES],
