@@ -161,71 +161,84 @@ test('real OAuth JWTs and refresh exchanges stop on removal and new personal aut
   expect((await mcp(old.access_token)).status).toBe(401)
 })
 
-test('failed final batch and a successful retry leave old API tokens and signed JWTs rejected', async () => {
+test('replaying old refresh tokens cannot invalidate a fresh authorization for the same client', async () => {
+  const old = await issue()
+  // Keep both a previously rotated token and its active successor. Both old
+  // rows must disappear so neither replay can invalidate the new family.
+  const rotatedResponse = await refresh(old.clientId, old.refresh_token)
+  expect(rotatedResponse.status).toBe(200)
+  const rotated = await jsonObject(rotatedResponse)
+  expect(
+    await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+  ).toEqual({ kind: 'ok' })
+  login()
+  const fresh = await consentAndExchangeCode(
+    await authorizationRequest(old.clientId, { prompt: 'consent' }),
+    old.clientId,
+    MCP_OAUTH_SCOPES,
+  )
+  expect(decodeJwtPayload(fresh.access_token).oauth_token_version).toBe(1)
+  expect((await mcp(fresh.access_token)).status).toBe(200)
+  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(400)
+  expect((await refresh(old.clientId, rotated.refresh_token)).status).toBe(400)
+  const nextResponse = await refresh(old.clientId, fresh.refresh_token)
+  expect(nextResponse.status).toBe(200)
+  const next = await jsonObject(nextResponse)
+  expect((await mcp(next.access_token)).status).toBe(200)
+  expect((await mcp(old.access_token)).status).toBe(401)
+  expect((await mcp(rotated.access_token)).status).toBe(401)
+})
+
+test('failed removal preserves the workspace and credentials; retry rejects them', async () => {
   const old = await issue()
   const api = await createApiToken(db, 'u1', 'existing')
-  expect((await mcp(old.access_token)).status).toBe(200)
   sqlite.exec(
     "CREATE TRIGGER fail_removal BEFORE UPDATE OF status ON workspace_members WHEN NEW.status = 'removed' BEGIN SELECT RAISE(ABORT, 'induced removal failure'); END",
   )
-  const actor = { id: 'u2', workspaceId: 'ws1' }
-  await expect(removeWorkspaceMember(db, actor, 'u1')).rejects.toThrow(
-    'induced removal failure',
-  )
-  // The first batch already committed. Credentials must be rejected even
-  // before the membership update is retried.
-  expect(await findUserByApiToken(db, api.token)).toBeNull()
-  expect((await mcp(old.access_token)).status).toBe(401)
-  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(400)
-  sqlite.exec('DROP TRIGGER fail_removal')
-  expect(await removeWorkspaceMember(db, actor, 'u1')).toEqual({ kind: 'ok' })
-  expect(await findUserByApiToken(db, api.token)).toBeNull()
-  expect((await mcp(old.access_token)).status).toBe(401)
-  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(400)
+  await expect(
+    removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+  ).rejects.toThrow('induced removal failure')
+  expect(await findUserByApiToken(db, api.token)).not.toBeNull()
+  expect((await mcp(old.access_token)).status).toBe(200)
+  const exchange = await refresh(old.clientId, old.refresh_token)
+  expect(exchange.status).toBe(200)
+  const rotated = await jsonObject(exchange)
   expect(
     sqlite
       .prepare("SELECT oauth_token_version FROM users WHERE id = 'u1'")
       .get(),
-  ).toEqual({ oauth_token_version: 1 })
-})
-
-test('a user moved elsewhere before the move batch keeps their signed JWT and refresh token', async () => {
-  const old = await issue()
-  const api = await createApiToken(db, 'u1', 'existing')
-  sqlite.exec(
-    "INSERT INTO workspaces (id, name, created_at) VALUES ('ws2', 'Personal', '2026-01-01')",
-  )
-  let moved = false
-  const hook = (stmts: { sql: string; params: unknown[] }[]) => {
-    if (
-      !stmts.some((stmt) => stmt.sql.startsWith('insert into "workspaces"'))
-    ) {
-      sqliteRef.beforeNextBatch = hook
-      return
-    }
-    sqlite.exec("UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1'")
-    moved = true
-  }
-  sqliteRef.beforeNextBatch = hook
-  expect(
-    await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
-  ).toEqual({ kind: 'not-found' })
-  expect(moved).toBe(true)
-  expect(await findUserByApiToken(db, api.token)).not.toBeNull()
-  expect((await mcp(old.access_token)).status).toBe(200)
-  expect((await refresh(old.clientId, old.refresh_token)).status).toBe(200)
+  ).toEqual({ oauth_token_version: 0 })
   expect(
     sqlite
       .prepare(
-        "SELECT workspace_id, oauth_token_version FROM users WHERE id = 'u1'",
+        "SELECT status FROM workspace_members WHERE workspace_id = 'ws1' AND user_id = 'u1'",
       )
       .get(),
-  ).toEqual({ workspace_id: 'ws2', oauth_token_version: 0 })
+  ).toEqual({ status: 'active' })
+  expect(
+    sqlite
+      .prepare("SELECT id FROM audit_events WHERE action = 'member.remove'")
+      .all(),
+  ).toEqual([])
+  expect(
+    sqlite.prepare("SELECT workspace_id FROM users WHERE id = 'u1'").get(),
+  ).toEqual({ workspace_id: 'ws1' })
+  expect(sqlite.prepare('SELECT count(*) AS n FROM workspaces').get()).toEqual({
+    n: 1,
+  })
+  sqlite.exec('DROP TRIGGER fail_removal')
+  expect(
+    await removeWorkspaceMember(db, { id: 'u2', workspaceId: 'ws1' }, 'u1'),
+  ).toEqual({ kind: 'ok' })
+  expect(await findUserByApiToken(db, api.token)).toBeNull()
+  expect((await mcp(old.access_token)).status).toBe(401)
+  expect((await mcp(rotated.access_token)).status).toBe(401)
+  expect((await refresh(old.clientId, rotated.refresh_token)).status).toBe(400)
 })
 
 function authorizationRequest(
   clientId: string,
-  fields: { scope?: string } = {},
+  fields: { scope?: string; prompt?: string } = {},
 ) {
   const query = new URLSearchParams({
     response_type: 'code',

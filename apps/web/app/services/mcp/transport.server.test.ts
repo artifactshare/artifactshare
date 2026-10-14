@@ -286,9 +286,11 @@ describe('handleMcpRequest product scope enforcement', () => {
         mocks.readUser.mockResolvedValue(
           scenario === 'missing' ? undefined : { oauth_token_version: 1 },
         )
-      expect(
-        (await handleMcpRequest(mcpRequest(), executionContext)).status,
-      ).toBe(401)
+      const response = await handleMcpRequest(mcpRequest(), executionContext)
+      expect(response.status).toBe(scenario === 'failure' ? 503 : 401)
+      expect(response.headers.has('WWW-Authenticate')).toBe(
+        scenario !== 'failure',
+      )
       expect(mocks.createMcpServer).not.toHaveBeenCalled()
       expect(mocks.destroy).toHaveBeenCalledOnce()
     },

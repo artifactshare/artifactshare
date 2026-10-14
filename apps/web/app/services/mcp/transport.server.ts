@@ -40,7 +40,7 @@ async function runMcp(
         if (!user || user.oauth_token_version !== claim)
           return unauthorized(version.resource)
       } catch {
-        return unauthorized(version.resource)
+        return new Response('Service unavailable', { status: 503 })
       }
     }
     const server = createMcpServer({
