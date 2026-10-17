@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
-// projects.server never reads the Workers env; a bare mock keeps the import
-// graph resolvable, matching the other projects.server tests.
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { visibleShareableToViewer } from './projects.server'

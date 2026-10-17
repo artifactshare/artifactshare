@@ -1973,9 +1973,7 @@ async function cleanupFailedShareable(
       .where('id', '=', shareableId)
       .where('current_version_id', '=', versionId)
       .execute()
-  } catch {
-    // Production D1 batches are atomic; this is test-adapter compensation.
-  }
+  } catch {}
 }
 
 async function cleanupFailedMapping(
@@ -1992,9 +1990,7 @@ async function cleanupFailedMapping(
       .deleteFrom('bridge_conversations')
       .where('id', '=', mappingId)
       .execute()
-  } catch {
-    // A surviving reference means the failed path converged elsewhere.
-  }
+  } catch {}
   await deleteEmptyProject(db, projectId)
 }
 

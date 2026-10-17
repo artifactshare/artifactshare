@@ -13,8 +13,6 @@ export async function runD1BatchWithResults(
   db: Kysely<DB>,
   ...queries: Compilable<unknown>[]
 ): Promise<unknown[]> {
-  // Service tests use an in-process Kysely database without a Workers binding.
-  // Production always takes the D1 batch path below.
   const database = d1DatabaseFor(db)
   if (!database) {
     const results: unknown[] = []

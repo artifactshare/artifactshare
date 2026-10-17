@@ -136,9 +136,6 @@ function audienceUsersQuery(db: Kysely<DB>, shareableId: string) {
     .where((eb) => audienceConditions(eb, shareableId))
 }
 
-// Run read queries in one D1 batch when the Workers binding is present.
-// Service tests use an in-process Kysely database without a binding and fall
-// back to sequential execution.
 async function runReadBatch(
   db: Kysely<DB>,
   queries: Array<{
