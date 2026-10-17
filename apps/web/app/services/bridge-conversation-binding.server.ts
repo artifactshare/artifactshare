@@ -662,7 +662,5 @@ export async function deleteEmptyProject(db: Kysely<DB>, projectId: string) {
         )`,
       )
       .execute()
-  } catch {
-    // A surviving reference means the failed path converged elsewhere.
-  }
+  } catch {}
 }

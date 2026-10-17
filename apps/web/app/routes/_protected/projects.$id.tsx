@@ -568,8 +568,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
   if (intent === 'pin' || intent === 'unpin') {
     const db = createDb()
-    // ピンは「そのプロジェクトへ投稿できる人」が操作できる (参加モデル導入
-    // までの暫定条件)。member は workspace メンバー全員、共有された関係者は
+    // ピンは「そのプロジェクトへ投稿できる人」が操作できる。
+    // member は workspace メンバー全員、共有された関係者は
     // contributor / manager のみ。アーカイブ済みは不可。
     const project = await findWorkspaceProject(
       db,

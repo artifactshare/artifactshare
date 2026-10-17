@@ -155,8 +155,8 @@ export async function processSlackLinkShared(
 
   // 各 link は理論上独立で Promise.all 並列化可能だが、(1) Slack
   // chat.unfurl の rate limit (tier 4、50 req/min) を 1 イベント burst で
-  // 食う、(2) 既存テストが calls[0] index 順を assert する、(3) 典型的に
-  // links は 1-3 件で sequential のレイテンシ差が小さい、の 3 点から
+  // 食う、(2) 典型的に links は 1-3 件で sequential のレイテンシ差が
+  // 小さい、の 2 点から
   // sequential のまま残す。
   for (const link of links) {
     // react-doctor-disable-next-line react-doctor/async-await-in-loop
