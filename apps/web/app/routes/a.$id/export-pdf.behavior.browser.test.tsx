@@ -1,4 +1,5 @@
 import { act } from 'react'
+import DOMPurify from 'dompurify'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { server, userEvent, page } from 'vitest/browser'
 import {
@@ -509,7 +510,9 @@ test('missing readiness fails within its deadline and late messages cannot print
   expect(popup!.document.querySelector('iframe')).toBeNull()
 }, 15_000)
 
-test('real Viewer export menu opens the isolated print shell', async () => {
+test('real Viewer export menu opens the isolated print shell without unwrapped React updates', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const consoleError = vi.spyOn(console, 'error')
   const { createRoot } = await import('react-dom/client')
   const { createMemoryRouter, RouterProvider } = await import('react-router')
   const { TooltipProvider } = await import('~/components/ui/tooltip')
@@ -555,6 +558,9 @@ test('real Viewer export menu opens the isolated print shell', async () => {
               if (!popup) throw new Error('Popup unexpectedly blocked')
               vi.spyOn(popup, 'print').mockImplementation(() => {})
               completion = writePrintPdf(popup, 'artifact-1', data, labels)
+              // Observe failure immediately while the browser click completes;
+              // awaiting completion below still propagates the same rejection.
+              void completion.catch(() => {})
             }}
           />
         </TooltipProvider>
@@ -562,30 +568,38 @@ test('real Viewer export menu opens the isolated print shell', async () => {
     },
   ])
   try {
-    await act(async () => {
-      root.render(<RouterProvider router={router} />)
+    await act(async () => root.render(<RouterProvider router={router} />))
+    const more = page.getByRole('button', { name: 'More', exact: true })
+    await expect.element(more).toBeVisible()
+    await act(async () => more.click({ timeout: 5000 }))
+    const download = page.getByRole('menuitem', {
+      name: 'Download PDF',
+      exact: true,
     })
-    await act(async () => {
-      await page.getByRole('button', { name: 'More', exact: true }).click()
-    })
-    await act(async () => {
-      await page
-        .getByRole('menuitem', { name: 'Download PDF', exact: true })
-        .click()
-    })
+    await expect.element(download).toBeVisible()
+    await act(async () => download.click({ timeout: 5000 }))
     await vi.waitFor(() => expect(completion).toBeDefined())
-    await completion
+    await act(async () => {
+      await completion
+    })
     expect(
       popup!.document.querySelector('iframe')!.getAttribute('sandbox'),
     ).toBe('allow-scripts')
     expect(popup!.document.body.dataset.exportState).toBe('ready')
   } finally {
-    await act(async () => {
-      root.unmount()
-    })
+    await act(async () => root.unmount())
     router.dispose()
     host.remove()
+    vi.unstubAllGlobals()
   }
+  expect(
+    consoleError.mock.calls.filter((args) =>
+      args.some(
+        (value) =>
+          typeof value === 'string' && value.includes('not wrapped in act'),
+      ),
+    ),
+  ).toEqual([])
 }, 20_000)
 
 test('sandbox and CSP deny active content independently of the sanitizer', async () => {
@@ -1391,3 +1405,998 @@ test('an unmatched picture source leaves a harmless placeholder', async () => {
   expect(printed).toHaveBeenCalledOnce()
   expect((await server.commands.inspectExportPdf()).imageHeights).toEqual([0])
 }, 15000)
+
+test.each([
+  'base64-fragment',
+  'percent-fragment',
+  'base64',
+  'raw-percent',
+  'escaped-percent',
+])(
+  'inline SVG data URL round trips through actual print preparation: %s',
+  async (encoding) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><style>text{font-family:"A&amp;B"}</style><rect width="100%" height="100%" fill="red"/><text y="90">Safe\u00a0text</text></svg>`
+    const fragment = encoding.endsWith('-fragment')
+      ? '#svgView(viewBox(0,0,50,50))'
+      : ''
+    const base64 = encoding.startsWith('base64')
+    const payload = base64
+      ? btoa(unescape(encodeURIComponent(svg)))
+      : encoding === 'raw-percent'
+        ? svg.replaceAll('"', "'")
+        : encodeURIComponent(svg)
+    const uri = `data:image/svg+xml${base64 ? ';base64' : ''},${payload}${fragment}`
+    // A real browser decode is the positive control for each source encoding.
+    const original = new Image()
+    original.src = uri
+    await original.decode()
+    const printed = await print(
+      source(`<img src="${uri}"><p>Safe SVG report</p>`),
+    )
+    expect(printed).toHaveBeenCalledOnce()
+    const inspected = await server.commands.inspectExportPdf(
+      false,
+      'light',
+      true,
+    )
+    expect(inspected.imageLoaded).toBe(true)
+    const prepared = inspected.imageSources[0]
+    expect(new URL(prepared).hash).toBe(fragment)
+    const xml = new TextDecoder().decode(
+      Uint8Array.from(atob(prepared.split(',')[1].split('#')[0]), (c) =>
+        c.charCodeAt(0),
+      ),
+    )
+    expect(xml).not.toContain('&nbsp;')
+    expect(xml).toContain('\u00a0')
+    expect(
+      new DOMParser()
+        .parseFromString(xml, 'image/svg+xml')
+        .querySelector('parsererror'),
+    ).toBeNull()
+    const screenshot = new Image()
+    screenshot.src = `data:image/png;base64,${inspected.imageScreenshots[0]}`
+    await screenshot.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d')!
+    context.drawImage(screenshot, 0, 0)
+    expect(Array.from(context.getImageData(0, 0, 1, 1).data)).toEqual([
+      255, 0, 0, 255,
+    ])
+  },
+  15000,
+)
+
+test.each(['100%', '100%25'])(
+  'print embeds CSS data URLs with %s lengths',
+  async (width) => {
+    await print(
+      source(
+        `<link rel="stylesheet" href="data:text/css,h1{width:${width};color:rgb(255,0,0)}"><h1>Percent CSS</h1>`,
+      ),
+    )
+    expect((await server.commands.inspectExportPdf()).color).toBe(
+      'rgb(255, 0, 0)',
+    )
+  },
+)
+
+test.each([1800, 41000])(
+  'root generated final content fits the printed frame (%i pixels)',
+  async (height) => {
+    await print(
+      source(
+        `<style>html::after{display:block;padding-top:${height}px;content:'FINAL-PDF-MARKER'}</style><p>Short body</p>`,
+      ),
+    )
+    const frame = popup!.document.querySelector('iframe')!
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.rootAfterContent).toContain('FINAL-PDF-MARKER')
+    expect(parseFloat(frame.style.height)).toBeGreaterThan(height)
+    expect(parseFloat(frame.style.height)).toBeGreaterThanOrEqual(
+      inspected.rootScrollHeight,
+    )
+    if (height > 32000)
+      expect(
+        popup!.document.getElementById('artifactshare-print-status')!
+          .textContent,
+      ).toBe(labels.heightLimited)
+  },
+)
+
+test.each(['absolute', 'fixed-descendant', 'fixed-flow-offset'])(
+  'viewport anchored %s stabilizes without hiding ordinary content',
+  async (kind) => {
+    const anchored =
+      '<div style="position:absolute;bottom:-80px">Anchored marker</div>'
+    await print(
+      source(
+        `<p>Ordinary marker</p>${kind === 'absolute' ? anchored : kind === 'fixed-descendant' ? `<div style="position:fixed;bottom:0">${anchored}</div>` : '<div style="position:fixed;bottom:-80px"><div>Anchored marker</div></div>'}`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    // Resolved CSS offsets can round a fraction of a pixel before the helper
+    // rounds the final paper extent up to an integer. Never clip that fraction.
+    expect(height).toBeGreaterThanOrEqual(840)
+    expect(height).toBeLessThanOrEqual(841)
+    expect(
+      (await server.commands.inspectExportPdf(true)).layoutHeight,
+    ).toBeLessThanOrEqual(height)
+    expect((await server.commands.inspectExportPdf()).text).toContain(
+      'Ordinary marker',
+    )
+  },
+)
+
+test.each([
+  '<div style="position:relative;height:100%">CONTENT</div>',
+  '<div style="position:absolute;inset:0"><div style="position:relative;height:100%">CONTENT</div></div>',
+])(
+  'fixed shell with intermediate containing blocks prints completely: %s',
+  async (wrapper) => {
+    const anchored =
+      '<div style="position:absolute;bottom:-80px">Anchored marker</div>'
+    const printed = await print(
+      source(
+        `<p>Ordinary marker</p><div style="position:fixed;inset:0">${wrapper.replace('CONTENT', anchored)}</div>`,
+      ),
+    )
+    expect(printed).toHaveBeenCalledOnce()
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(height).toBeGreaterThanOrEqual(840)
+    expect(height).toBeLessThanOrEqual(841)
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.layoutHeight).toBeLessThanOrEqual(height)
+    expect(inspected.text).toContain('Ordinary marker')
+    expect(inspected.text).toContain('Anchored marker')
+  },
+)
+
+test('whitespace Mermaid preserves visible source in PDF and HTML alongside a valid diagram', async () => {
+  const { resolveExportHtml } = await import('./+components/export-actions')
+  const data: ExportSourceData = {
+    ...source(''),
+    kind: 'markdown',
+    artifactKind: 'markdown_page',
+    source: '```mermaid\n   \n```',
+    renderedHtml:
+      '<body data-artifact-markdown><pre><code class="language-mermaid">   \n\t</code></pre><pre><code class="language-mermaid">flowchart LR\nA --> B</code></pre><p>Report marker</p></body>',
+  }
+  await print(data)
+  const inspected = await server.commands.inspectExportPdf()
+  expect(inspected.svgCount).toBe(1)
+  expect(inspected.text).toContain('Report marker')
+  const downloaded = await resolveExportHtml('artifact-1', data)
+  expect(downloaded).toContain('language-mermaid')
+  expect(downloaded).toContain('<svg')
+  expect(downloaded).toContain('Report marker')
+}, 30000)
+
+test('foreign namespace serialization cannot recreate refresh navigation', async () => {
+  await print(
+    source(
+      `<p>Safe report marker</p><form><math><mtext></form><form><mglyph><style></math><meta http-equiv="refresh" content="0;url=https://example.com/pdf-fixture/refresh">`,
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf()
+  expect(inspected.activeNavigationCount).toBe(0)
+  expect(inspected.text).toContain('Safe report marker')
+  expect(await server.commands.exportPdfObservation('external')).toEqual([])
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test('same-session eager and below-fold lazy images both decode completely', async () => {
+  const { PDF_FIXTURE_IMAGE } =
+    await import('~/services/dev-pdf-export-fixtures')
+  for (const loading of ['eager', 'lazy']) {
+    await print(
+      source(
+        `<div style="height:2000px">Image report</div><img loading="${loading}" src="${PDF_FIXTURE_IMAGE}"><p>Final image marker</p>`,
+      ),
+    )
+    expect((await server.commands.inspectExportPdf()).imageLoaded).toBe(true)
+    expect(
+      parseFloat(popup!.document.querySelector('iframe')!.style.height),
+    ).toBeGreaterThan(2000)
+    popup!.close()
+    await server.commands.exportPdfObservation('stop')
+  }
+}, 30000)
+
+test.each(['-->', '--!>'])(
+  'noscript comment serialization cannot introduce unsanitized navigation: %s',
+  async (commentEnd) => {
+    await print(
+      source(
+        `<p>Safe noscript report</p><noscript><!--<meta http-equiv="refresh" content="0;url=https://example.com/pdf-fixture/refresh"><img src="/__pdf_probe_noscript">${commentEnd}</noscript>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf()
+    expect(inspected.activeNavigationCount).toBe(0)
+    expect(inspected.text).toContain('Safe noscript report')
+    expect(inspected.imageSources).toEqual([])
+    expect(await server.commands.exportPdfObservation('external')).toEqual([])
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test('native MathML retains fraction layout without exposing hidden annotation text', async () => {
+  await print(
+    source(
+      `<p>Mathematical report</p><math display="block"><semantics><mfrac><mi id="numerator">x</mi><mn id="denominator">2</mn></mfrac><annotation encoding="application/x-tex">HIDDEN-TEX-ANNOTATION</annotation></semantics></math>`,
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf()
+  expect(inspected.mathLayout).toMatchObject({
+    fractions: 1,
+    namespace: 'http://www.w3.org/1998/Math/MathML',
+  })
+  expect(inspected.mathLayout.numeratorBottom).toBeLessThan(
+    inspected.mathLayout.denominatorTop,
+  )
+  expect(inspected.text).not.toContain('HIDDEN-TEX-ANNOTATION')
+  expect(inspected.text).toContain('Mathematical report')
+})
+
+test.each(
+  ['div', 'body'].flatMap((tag) => [
+    { tag, height: 1800, bottom: 0 },
+    { tag, height: 41000, bottom: 0 },
+    { tag, height: 1800, bottom: -80 },
+    { tag, height: 41000, bottom: -80 },
+  ]),
+)(
+  'fixed scrolling $tag shells retain their entire normal-flow content ($height px, bottom $bottom)',
+  async ({ tag, height, bottom }) => {
+    await print(
+      source(
+        `<${tag} style="position:fixed;inset:0;bottom:${bottom}px;overflow:auto"><main><div style="height:${height}px">Long report</div><p>FINAL-FIXED-MARKER</p></main></${tag}>`,
+      ),
+    )
+    const frame = popup!.document.querySelector('iframe')!
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(parseFloat(frame.style.height)).toBeGreaterThan(height)
+    expect(inspected.fixedShell).not.toBeNull()
+    expect(inspected.fixedShell!.markerBottom).toBeLessThanOrEqual(
+      inspected.fixedShell!.bottom,
+    )
+    expect(inspected.fixedShell!.markerBottom).toBeLessThanOrEqual(
+      parseFloat(frame.style.height),
+    )
+    expect(inspected.text).toContain('FINAL-FIXED-MARKER')
+    if (height > 32000)
+      expect(
+        popup!.document.getElementById('artifactshare-print-status')!
+          .textContent,
+      ).toBe(labels.heightLimited)
+  },
+)
+
+test.each(['Anchored body text', '<span>Anchored body text</span>'])(
+  'fixed negative-bottom body stabilizes with content: %s',
+  async (content) => {
+    const printed = await print(
+      source(
+        `<body style="position:fixed;bottom:-80px;margin:0">${content}</body>`,
+      ),
+    )
+    expect(printed).toHaveBeenCalledOnce()
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(height).toBeGreaterThanOrEqual(840)
+    expect(height).toBeLessThanOrEqual(841)
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.text).toContain('Anchored body text')
+    expect(inspected.fixedElements).toHaveLength(1)
+    expect(inspected.fixedElements[0].contentTop).toBeGreaterThan(760)
+    expect(inspected.fixedElements[0].contentBottom).toBeLessThanOrEqual(height)
+    expect(inspected.fixedElements[0].contentBottom).toBeGreaterThan(
+      inspected.fixedElements[0].contentTop,
+    )
+    expect(inspected.layoutHeight).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each([40, 1800])(
+  'intrinsic fixed footer stays visible and bottom-anchored with a %s px report and repeat print',
+  async (reportHeight) => {
+    const printed = await print(
+      source(
+        `<div style="height:${reportHeight}px">Report</div><p>FINAL-REPORT-MARKER</p><footer style="position:fixed;bottom:0;background:red">One-line footer</footer>`,
+      ),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      expect(height).toBeGreaterThan(reportHeight)
+      expect(inspected.text).toContain('FINAL-REPORT-MARKER')
+      expect(inspected.layoutHeight).toBeLessThanOrEqual(height)
+      expect(inspected.fixedElements).toHaveLength(1)
+      const footer = inspected.fixedElements[0]
+      expect(footer.height).toBeGreaterThan(0)
+      expect(footer.height).toBeLessThan(40)
+      expect(footer.top).toBeGreaterThan(700)
+      expect(footer.bottom).toBeCloseTo(760, 0)
+      expect(footer.bottom).toBeLessThanOrEqual(height)
+      expect(footer.contentTop).toBeGreaterThanOrEqual(footer.top)
+      expect(footer.contentBottom).toBeLessThanOrEqual(footer.bottom)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(
+  ['flex', 'grid'].flatMap((layout) =>
+    ['visible', 'hidden'].flatMap((overflow) =>
+      [1800, 41000].map((height) => ({ layout, overflow, height })),
+    ),
+  ),
+)(
+  'fixed $layout shell with $overflow overflow expands its descendant scroller for $height px',
+  async ({ layout, overflow, height }) => {
+    const printed = await print(
+      source(
+        `<div style="position:fixed;inset:0;display:${layout};flex-direction:column;grid-template-rows:auto minmax(0,1fr);overflow:${overflow}"><header>Report header</header><main style="flex:1;min-height:0;overflow:auto"><div style="height:${height}px">Report</div><p>FINAL-NESTED-SCROLL-MARKER</p></main></div>`,
+      ),
+    )
+    expect(printed).toHaveBeenCalledOnce()
+    const inspected = await server.commands.inspectExportPdf(true)
+    const frameHeight = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(inspected.text).toContain('FINAL-NESTED-SCROLL-MARKER')
+    expect(frameHeight).toBeGreaterThan(height)
+    expect(inspected.fixedShell).not.toBeNull()
+    const shell = inspected.fixedShell!
+    expect(shell.scrollHeight).toBeLessThanOrEqual(shell.clientHeight + 1)
+    expect(shell.markerBottom).toBeLessThanOrEqual(shell.scrollBottom)
+    expect(shell.markerBottom).toBeLessThanOrEqual(shell.bottom)
+    expect(shell.markerBottom).toBeLessThanOrEqual(frameHeight)
+  },
+)
+
+test.each([
+  'height:100vh',
+  'height:100vh;max-height:100vh',
+  'height:760px;max-height:760px',
+])(
+  'fixed scrolling shell expands explicit viewport constraints: %s',
+  async (constraint) => {
+    await print(
+      source(
+        `<div style="position:fixed;inset:0;overflow:auto;${constraint}"><main><div style="height:41000px">Long report</div><p>FINAL-EXPLICIT-SHELL-MARKER</p></main></div>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(inspected.text).toContain('FINAL-EXPLICIT-SHELL-MARKER')
+    expect(height).toBeGreaterThan(41000)
+    expect(inspected.fixedShell).not.toBeNull()
+    expect(inspected.fixedShell!.markerBottom).toBeLessThanOrEqual(
+      inspected.fixedShell!.bottom,
+    )
+    expect(inspected.fixedShell!.markerBottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each([
+  'inset:0;background:#111',
+  'top:0;bottom:0;left:0;width:80px;background:#111',
+])(
+  'fixed full-height layer keeps covering the complete report: %s',
+  async (position) => {
+    await print(
+      source(
+        `<div style="position:fixed;${position}"></div><main style="position:relative;margin-left:90px"><div style="height:41000px">Long report</div><p>FINAL-LAYER-MARKER</p></main>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(height).toBeGreaterThan(41000)
+    expect(inspected.text).toContain('FINAL-LAYER-MARKER')
+    expect(inspected.fixedElements).toHaveLength(1)
+    expect(inspected.fixedElements[0].top).toBeCloseTo(0, 0)
+    expect(inspected.fixedElements[0].bottom).toBeCloseTo(height, 0)
+  },
+)
+
+test.each(['visible', 'hidden'])(
+  'intrinsic footer does not stretch for an independent %s scrolling box',
+  async (visibility) => {
+    await print(
+      source(
+        `<div style="height:1800px">Report</div><p>FINAL-FOOTER-SCROLLER-MARKER</p><footer style="position:fixed;bottom:0"><div style="height:40px;max-height:40px;overflow:auto;visibility:${visibility}"><div style="height:120px">Independent scrolling box</div></div></footer>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.text).toContain('FINAL-FOOTER-SCROLLER-MARKER')
+    expect(inspected.fixedElements).toHaveLength(1)
+    expect(inspected.fixedElements[0].height).toBeCloseTo(40, 0)
+    expect(inspected.fixedElements[0].bottom).toBeCloseTo(760, 0)
+  },
+)
+
+test.each([
+  '<p>Start</p><noscript><noscript></noscript><p id="pdf-final-marker">FINAL-PARSING-MARKER</p>',
+  '<p>A</ <noscript>B</p><p id="pdf-final-marker">FINAL-PARSING-MARKER</p>',
+  '<p title=<noscript>Text</p><p id="pdf-final-marker">FINAL-PARSING-MARKER</p>',
+  '<noscript><!--</noscript><p id="pdf-final-marker">FINAL-PARSING-MARKER</p>',
+])(
+  'preserves visible trailing content across noscript token boundaries: %s',
+  async (html) => {
+    await print(
+      source(`${html}<noscript><img src="/__pdf_probe_noscript"></noscript>`),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.text).toContain('FINAL-PARSING-MARKER')
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+      parseFloat(popup!.document.querySelector('iframe')!.style.height),
+    )
+    expect(inspected.imageSources).toEqual([])
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each(
+  ['flow', 'footer'].flatMap((kind) =>
+    [180, 3000].map((lines) => ({ kind, lines })),
+  ),
+)(
+  'independent clipped $kind scroll box with $lines lines preserves short-page print height',
+  async ({ kind, lines }) => {
+    const box = `<pre style="margin:0;max-height:200px;overflow:auto"><span>${'Log line\n'.repeat(lines)}</span></pre>`
+    await print(
+      source(
+        `<body style="margin:0">${kind === 'flow' ? box : `<footer style="position:fixed;bottom:0">${box}</footer>`}<p id="pdf-final-marker">FINAL-CLIPPED-MARKER</p></body>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(height).toBeLessThanOrEqual(760)
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.text).toContain('FINAL-CLIPPED-MARKER')
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(0)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+    if (kind === 'footer') {
+      expect(height).toBe(760)
+      expect(inspected.fixedElements[0].bottom).toBeLessThanOrEqual(height)
+    }
+  },
+)
+
+test.each([
+  "<noscript>x</noscript ='><p id='pdf-final-marker'>FINAL-EQUALS-MARKER</p>",
+  "<noscript ='><img src='/__pdf_probe_noscript'></noscript><p id='pdf-final-marker'>FINAL-EQUALS-MARKER</p>",
+  "<noscript a='x'='><img src='/__pdf_probe_noscript'></noscript><p id='pdf-final-marker'>FINAL-EQUALS-MARKER</p>",
+  "<noscript /='><img src='/__pdf_probe_noscript'></noscript><p id='pdf-final-marker'>FINAL-EQUALS-MARKER</p>",
+])(
+  'unexpected equals signs do not swallow trailing content: %s',
+  async (html) => {
+    const printed = await print(source(html))
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(inspected.text).toContain('FINAL-EQUALS-MARKER')
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.imageSources).toEqual([])
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each([
+  '<svg><noscript></svg><p>FINAL</p>',
+  '<math><noscript></math><p>FINAL</p>',
+  '<svg><noscript></svg><p>FINAL</p><noscript>Fallback</noscript>',
+  '<svg data=x/><noscript></svg><p>FINAL</p><noscript>Fallback</noscript>',
+  '<math><noscript></math><p>FINAL</p><noscript>Fallback</noscript>',
+])('foreign noscript fails preparation explicitly: %s', async (html) => {
+  await expect(print(source(html))).rejects.toThrow('Foreign export noscript')
+  expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+    labels.failed,
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each([
+  {
+    name: 'root vertical scroll',
+    css: 'html{overflow-y:scroll}',
+    container: '',
+    position: 'absolute',
+  },
+  {
+    name: 'root implicit vertical auto',
+    css: 'html{overflow-x:hidden}',
+    container: '',
+    position: 'absolute',
+  },
+  {
+    name: 'body viewport overflow',
+    css: 'body{overflow-y:scroll}',
+    container: '',
+    position: 'absolute',
+  },
+  {
+    name: 'absolute escaping static scroller',
+    css: '',
+    container: 'height:100px;overflow:auto',
+    position: 'absolute',
+  },
+  {
+    name: 'fixed escaping positioned scroller',
+    css: '',
+    container: 'position:relative;height:100px;overflow:auto',
+    position: 'fixed',
+  },
+])(
+  'preserves out-of-flow final content with $name',
+  async ({ css, container, position }) => {
+    await print(
+      source(
+        `<style>body{margin:0;height:100px}${css}</style><div style="${container}"><div style="position:${position};top:1800px"><p id="pdf-final-marker">FINAL-ESCAPED-MARKER</p></div></div>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(height).toBeGreaterThan(1800)
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each([
+  { container: 'position:relative', position: 'absolute' },
+  { container: 'transform:translateX(0)', position: 'fixed' },
+])(
+  'containing-block scroller still clips $position descendants',
+  async ({ container, position }) => {
+    await print(
+      source(
+        `<body style="margin:0"><div style="${container};height:200px;overflow:auto"><div style="position:${position};top:1800px"><p>Clipped scroll content</p></div></div><p id="pdf-final-marker">FINAL-VISIBLE-MARKER</p></body>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(height).toBeLessThan(760)
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test('foreign CDATA keeps visible text and the final HTML marker', async () => {
+  await print(
+    source(
+      '<svg width="300" height="60"><text y="30"><![CDATA[a>b<noscript>c]]></text></svg><p id="pdf-final-marker">FINAL-CDATA-MARKER</p>',
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(inspected.text).toContain('a>b<noscript>c')
+  expect(inspected.text).toContain('FINAL-CDATA-MARKER')
+  expect(inspected.finalMarker!.visible).toBe(true)
+  expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+    parseFloat(popup!.document.querySelector('iframe')!.style.height),
+  )
+})
+
+test.each(['auto', 'scroll', 'hidden', 'clip'])(
+  'display:contents does not clip a fixed descendant marker with overflow:%s',
+  async (overflow) => {
+    await print(
+      source(
+        `<body style="margin:0;height:100px"><div style="position:fixed;top:1800px"><div style="display:contents;overflow:${overflow}"><p id="pdf-final-marker">FINAL-BOXLESS-MARKER</p></div></div></body>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(height).toBeGreaterThan(1800)
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each(
+  ['hidden', 'clip'].flatMap((overflow) =>
+    [0, 200].flatMap((maxHeight) =>
+      [3000, 41000].map((contentHeight) => ({
+        overflow,
+        maxHeight,
+        contentHeight,
+      })),
+    ),
+  ),
+)(
+  'overflow:$overflow preview capped at $maxHeight does not print $contentHeight px of hidden content',
+  async ({ overflow, maxHeight, contentHeight }) => {
+    const printed = await print(
+      source(
+        `<body style="margin:0"><div style="max-height:${maxHeight}px;overflow:${overflow}"><div style="height:${contentHeight}px">Clipped preview</div></div><p id="pdf-final-marker">FINAL-CLIPPED-PREVIEW</p></body>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(height).toBeLessThan(760)
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each([
+  '<script><!--<script></script><noscript></script><p>FINAL</p><noscript>x</noscript>',
+  '<script><!--<ScRiPt type="text/plain"></script><noscript></script><p>FINAL</p><noscript>x</noscript>',
+])(
+  'double-escaped scripts fail explicitly before preparing incomplete content: %s',
+  async (html) => {
+    await expect(print(source(html))).rejects.toThrow(
+      'Double-escaped export script',
+    )
+    expect(popup!.print).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+    expect(
+      popup!.document.getElementById('artifactshare-print-status')!.textContent,
+    ).toBe(labels.failed)
+    expect(popup!.document.querySelector('iframe')).toBeNull()
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each([
+  '<script><!-- legacy comment --></script>',
+  '<script><!--><script></script>',
+  '<script><!---><script></script>',
+  '<script><!-- comment --><script></script>',
+  '<script><!--<scripture></script>',
+])('ordinary script comments preserve the final marker: %s', async (script) => {
+  const printed = await print(
+    source(
+      `${script}<p id="pdf-final-marker">FINAL-SCRIPT-MARKER</p><noscript><img src="/__pdf_probe_noscript"></noscript>`,
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(printed).toHaveBeenCalledOnce()
+  expect(inspected.text).toContain('FINAL-SCRIPT-MARKER')
+  expect(inspected.finalMarker!.visible).toBe(true)
+  expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+    parseFloat(popup!.document.querySelector('iframe')!.style.height),
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each(['overflow-x:hidden', 'overflow:hidden'])(
+  'root-positioned content escapes static body clipping with %s on both roots',
+  async (overflow) => {
+    const printed = await print(
+      source(
+        `<style>html,body{${overflow}}body{margin:0}</style><p>Intro</p><div style="position:absolute;top:1800px"><p id="pdf-final-marker">FINAL-ROOT-POSITIONED-MARKER</p></div>`,
+      ),
+    )
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(height).toBeGreaterThan(1800)
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(1800)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+  },
+)
+
+test.each([
+  '<!DOCTYPE html PUBLIC "identifier > <noscript>" "about:legacy-compat">',
+  "<!DOCTYPE html SYSTEM 'identifier > <noscript>'>",
+])('quoted DOCTYPE preserves the final PDF marker: %s', async (declaration) => {
+  const printed = await print(
+    source(
+      `${declaration}<html lang="en"><body><p id="pdf-final-marker">FINAL-DOCTYPE-MARKER</p><noscript><img src="/__pdf_probe_noscript"></noscript></body></html>`,
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(printed).toHaveBeenCalledOnce()
+  expect(inspected.text).toContain('FINAL-DOCTYPE-MARKER')
+  expect(inspected.finalMarker!.visible).toBe(true)
+  expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+    parseFloat(popup!.document.querySelector('iframe')!.style.height),
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each([
+  'style',
+  'script',
+  'title',
+  'textarea',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  'plaintext',
+])('foreign %s cannot prepare silently truncated content', async (tag) => {
+  await expect(
+    print(
+      source(`<svg><${tag}></svg><noscript><style></noscript><p>FINAL</p>`),
+    ),
+  ).rejects.toThrow('Ambiguous foreign export text')
+  expect(popup!.print).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(
+    popup!.document.getElementById('artifactshare-print-status')!.textContent,
+  ).toBe(labels.failed)
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each([
+  '<svg><foreignObject><div><![CDATA[></div></foreignObject></svg>',
+  '<svg><desc><span><![CDATA[></span></desc></svg>',
+  '<math><mtext><span><![CDATA[></span></mtext></math>',
+  '<math><annotation-xml encoding="text/html"><div><![CDATA[></div></annotation-xml></math>',
+])(
+  'integration-point CDATA cannot hide a later HTML noscript: %s',
+  async (prefix) => {
+    await expect(
+      print(source(`${prefix}<noscript><style></noscript><p>FINAL</p>`)),
+    ).rejects.toThrow('Ambiguous export CDATA')
+    expect(popup!.print).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test('simple SVG styles and titles preserve sibling CDATA and the final marker', async () => {
+  const printed = await print(
+    source(
+      '<svg width="300" height="60"><title>Report</title><style>text{fill:red}</style><text y="30"><![CDATA[<noscript>literal]]></text></svg><p id="pdf-final-marker">FINAL-FOREIGN-TEXT-MARKER</p>',
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(printed).toHaveBeenCalledOnce()
+  expect(inspected.text).toContain('<noscript>literal')
+  expect(inspected.finalMarker!.visible).toBe(true)
+  expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+    parseFloat(popup!.document.querySelector('iframe')!.style.height),
+  )
+})
+
+test('foreign HTML error recovery fails explicitly before misreading CDATA', async () => {
+  await expect(
+    print(
+      source(
+        '<svg><p><![CDATA[></p></svg><noscript><style></noscript><p>FINAL</p>',
+      ),
+    ),
+  ).rejects.toThrow('Ambiguous foreign export markup')
+  expect(popup!.print).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each([
+  '<svg><foreignObject><p>x</svg></p></foreignObject><noscript></svg>',
+  '<math><mtext><p>x</math></p></mtext><noscript></math>',
+])('stray ancestor close fails instead of losing FINAL: %s', async (prefix) => {
+  await expect(
+    print(
+      source(
+        `${prefix}<p>FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`,
+      ),
+    ),
+  ).rejects.toThrow('Ambiguous foreign export closing tag')
+  expect(popup!.print).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+    labels.failed,
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test('deep foreign input settles with localized failure and no hidden requests', async () => {
+  const html = `${'<svg>'.repeat(120_000)}<!--<noscript>--><noscript><img src="/__pdf_probe_noscript"></noscript>${'</svg>'.repeat(120_000)}`
+  await expect(print(source(html))).rejects.toThrow(
+    'Export foreign nesting limit exceeded',
+  )
+  expect(popup!.print).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+    labels.failed,
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each([
+  '<svg><foreignObject><div>x</foreignObject></svg></div></foreignObject>',
+  '<svg><desc><div>x</desc></svg></div></desc>',
+  '<math><mtext><div>x</mtext></math></div></mtext>',
+  '<math><annotation-xml encoding="text/html"><div>x</annotation-xml></math></div></annotation-xml>',
+  '<math><annotation-xml><div>x</div></annotation-xml><![CDATA[><svg>]]></math>',
+  '<math><annotation-xml encoding="text/plain"><div>x</div></annotation-xml><![CDATA[><svg>]]></math>',
+  '<math><desc><div>x</div></desc><![CDATA[><svg>]]></math>',
+  '<math><title><div>x</div></title><![CDATA[><svg>]]></math>',
+  ...['mi', 'mo', 'mn', 'ms', 'mtext'].map(
+    (tag) => `<svg><${tag}><div>x</div></${tag}><![CDATA[><svg>]]></svg>`,
+  ),
+])('ambiguous integration boundaries fail explicitly: %s', async (prefix) => {
+  await expect(
+    print(
+      source(
+        `${prefix}<noscript></svg><p>FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`,
+      ),
+    ),
+  ).rejects.toThrow(/Ambiguous foreign export (closing tag|markup|text)/)
+  expect(popup!.print).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+    labels.failed,
+  )
+  expect(await server.commands.exportPdfObservation('read')).toEqual([])
+})
+
+test.each(['<?', '<!x', '</1'])(
+  'unterminated bogus comment %s finishes preparation without hidden requests',
+  async (opener) => {
+    const printed = await print(
+      source(
+        `<p id="pdf-final-marker">FINAL-BOGUS-MARKER</p><noscript><img src="/__pdf_probe_noscript"></noscript>${opener.repeat(500_000)}`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test('nested SVG in MathML retains the stricter SVG sanitization pass', () => {
+  const doc = inertExportDocument(
+    '<math><mtext><svg><svg><text>Visible</text><a href="javascript:alert(1)">Unsafe</a></svg></svg></mtext><annotation>Hidden</annotation></math><svg><text>Sibling</text></svg>',
+    true,
+  )
+  const sanitizer = vi.spyOn(DOMPurify, 'sanitize')
+  sanitizeExportDocument(doc)
+  expect(
+    sanitizer.mock.calls.map(([root]) => (root as Element).localName),
+  ).toEqual(['math', 'svg', 'svg'])
+  expect(doc.querySelector('annotation')).toBeNull()
+  expect(doc.documentElement.outerHTML).not.toContain('javascript:')
+  expect(doc.body.textContent).toContain('Visible')
+  expect(doc.body.textContent).toContain('Sibling')
+})
+
+test.each(['svg', 'math'])(
+  'nested %s without noscript prints with bounded sanitizer work',
+  async (kind) => {
+    const child =
+      kind === 'svg'
+        ? '<g><text y="30">Visible</text></g>'
+        : '<mrow><mspace width="1px" height="1px"/></mrow>'
+    const html = `${`<${kind}>`.repeat(100)}${child.repeat(200)}${`</${kind}>`.repeat(100)}<p id="pdf-final-marker">FINAL-NESTED-MARKER</p>`
+    const sanitizer = vi.spyOn(DOMPurify, 'sanitize')
+    const printed = await print(source(html))
+    const visited = sanitizer.mock.calls.reduce(
+      (total, [root]) =>
+        total + (root as Element).querySelectorAll('*').length + 1,
+      0,
+    )
+    // At most two profiles over 100 roots + 400 child elements, independent
+    // of nesting. The old loop submits tens of thousands of node visits.
+    expect(visited).toBeGreaterThan(200)
+    expect(visited).toBeLessThanOrEqual(1_000)
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each([
+  ['svg', 'foreignObject', 'svg'],
+  ['svg', 'desc', 'math'],
+  ['math', 'mtext', 'svg'],
+  ['math', 'mi', 'math'],
+])(
+  'rejects HTML ancestor closes across %s/%s/%s before losing FINAL',
+  async (root, integration, nested) => {
+    const html = `<${root}><${integration}><div><${nested}></div><section></${nested}></div></${integration}></${root}></section><![CDATA[><noscript>]]></${root}><p id="pdf-final-marker">FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`
+    await expect(print(source(html))).rejects.toThrow(
+      'Ambiguous foreign export closing tag',
+    )
+    expect(popup!.print).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+    expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+      labels.failed,
+    )
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each([
+  ['div', 'svg'],
+  ['span', 'math'],
+  ['section', 'svg'],
+  ['b', 'math'],
+  ['custom-report', 'svg'],
+])(
+  'rejects closing outer HTML %s across %s before misreading CDATA',
+  async (ancestor, root) => {
+    const html = `<${ancestor}><${root}></${ancestor}><![CDATA[><noscript>]]></${root}><p id="pdf-final-marker">FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`
+    await expect(print(source(html))).rejects.toThrow(
+      'Ambiguous foreign export closing tag',
+    )
+    expect(popup!.print).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+    expect(popup!.document.querySelector('[role="status"]')!.textContent).toBe(
+      labels.failed,
+    )
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each(['p', 'li'])(
+  'prints long ordinary HTML with omitted %s end tags',
+  async (tag) => {
+    const printed = await print(
+      source(
+        `${`<${tag}>Report item`.repeat(300)}<svg width="300" height="60"><a><text y="30">Visible link</text></a></svg><p id="pdf-final-marker">FINAL-OPTIONAL-TAGS</p><noscript><img src="/__pdf_probe_noscript"></noscript>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(printed).toHaveBeenCalledOnce()
+    expect(inspected.text).toContain('Visible link')
+    expect(inspected.text).toContain('FINAL-OPTIONAL-TAGS')
+    expect(inspected.finalMarker!.visible).toBe(true)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+      parseFloat(popup!.document.querySelector('iframe')!.style.height),
+    )
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)
+
+test.each([
+  ['<h2><svg>', 'h3'],
+  ['<table><td><svg>', 'tr'],
+  ['<table><td><svg>', 'tbody'],
+  ['<table><svg>', 'td'],
+])(
+  'uncertain foreign closing tags show localized failure: %s / %s',
+  async (prefix, end) => {
+    await expect(
+      print(
+        source(
+          `${prefix}</${end}></svg><p>FINAL</p><noscript>Fallback</noscript>`,
+        ),
+      ),
+    ).rejects.toThrow('Ambiguous foreign export closing tag')
+    expect(popup!.print).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+    expect(
+      popup!.document.getElementById('artifactshare-print-status')!.textContent,
+    ).toBe(labels.failed)
+    expect(popup!.document.querySelector('iframe')).toBeNull()
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+)

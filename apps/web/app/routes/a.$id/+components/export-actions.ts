@@ -8,7 +8,7 @@ import {
   withExportDeadline,
 } from './export-resources'
 import { isolatedPrintHtml, installPrintRelay } from './export-print-frame'
-import { exportEndpointRoot } from '~/lib/export-path'
+import { exportEndpointRoot, canonicalExportPath } from '~/lib/export-path'
 
 export type ExportSourceData = {
   kind: 'markdown' | 'html'
@@ -58,8 +58,13 @@ export function normalizeExportPath(
   return stripped.startsWith('/') ? stripped : `/${stripped}`
 }
 
-export function normalizeStaticSiteFramePath(pathname: string): string {
-  const decoded = decodePath(pathname)
+export function normalizeStaticSiteFramePath(pathname: string): string | null {
+  let decoded: string
+  try {
+    decoded = canonicalExportPath(pathname)
+  } catch {
+    return null
+  }
   if (!decoded || decoded === '/') return '/index.html'
   return decoded.startsWith('/') ? decoded : `/${decoded}`
 }
@@ -108,7 +113,10 @@ async function fetchSource(
     `${exportEndpointRoot(shareableId)}/export-source`,
     window.location.origin,
   )
-  url.searchParams.set('path', path)
+  url.searchParams.set(
+    'path',
+    path.split('/').map(encodeURIComponent).join('/'),
+  )
   if (versionId) url.searchParams.set('versionId', versionId)
 
   let response: Response
@@ -672,12 +680,4 @@ function stripQueryAndHash(path: string): string {
   const withoutHash = hashIndex === -1 ? path : path.slice(0, hashIndex)
   const queryIndex = withoutHash.indexOf('?')
   return queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex)
-}
-
-function decodePath(path: string): string {
-  try {
-    return decodeURIComponent(path)
-  } catch {
-    return path
-  }
 }

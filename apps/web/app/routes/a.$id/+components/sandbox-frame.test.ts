@@ -83,3 +83,34 @@ test.each(['', '#subpage'])(
     expect(url.hash).toBe(hash)
   },
 )
+
+test.each(
+  ['/docs%2Findex.html', '/docs%5cindex.html'].flatMap((path) =>
+    [true, false].map((entrypoint) => ({ path, entrypoint })),
+  ),
+)(
+  'viewer token recovery preserves non-exportable $path (entrypoint $entrypoint)',
+  async ({ path, entrypoint }) => {
+    vi.stubGlobal('window', { location: { hash: '#live' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          renderType: 'static_site',
+          sandboxUrl: `https://example.test${entrypoint ? path : '/index.html'}?t=new`,
+        }),
+      ),
+    )
+    const refreshed = await refreshSandboxFrameUrl(
+      'abc123def4',
+      'v1',
+      `https://example.test${path}?q=1#previous`,
+    )
+    expect(refreshed).not.toBeNull()
+    const url = new URL(refreshed!)
+    const hash = entrypoint ? '#live' : '#previous'
+    expect(url.hash).toBe(hash)
+    expect(url.searchParams.get('as_next')).toBe(`${path}?q=1${hash}`)
+    expect(url.searchParams.get('t')).toBe('new')
+  },
+)

@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
-import { canonicalExportPath } from '~/lib/export-path'
+import { canonicalExportPath, storedExportPath } from '~/lib/export-path'
 import { errorResponse } from '~/lib/api-errors'
 import { renderMarkdownDocument } from '~/lib/markdown-render'
 import type { SessionUser } from '~/lib/user'
@@ -117,7 +117,7 @@ export async function getExportAsset(
 
   let path: string
   try {
-    path = canonicalExportPath(args.path)
+    path = storedExportPath(args.path)
   } catch {
     return { kind: 'not-found' }
   }
@@ -246,7 +246,7 @@ async function loadMarkdownExportSource(
   if (!access.r2Key) return { kind: 'source-unavailable' }
 
   const path = access.entrypointPath
-    ? normalizeExportPath(access.entrypointPath, '/index.md')
+    ? storedExportPath(access.entrypointPath)
     : '/index.md'
   const object = await getArtifact(env.BUCKET, access.r2Key)
   if (!object) return { kind: 'source-unavailable' }
@@ -272,9 +272,9 @@ async function loadHtmlPageExportSource(
 ): Promise<ExportSourceResult> {
   if (!access.r2Key) return { kind: 'source-unavailable' }
 
-  const path = normalizeExportPath(
-    access.entrypointPath ?? queryPath ?? '/index.html',
-  )
+  const path = access.entrypointPath
+    ? storedExportPath(access.entrypointPath)
+    : normalizeExportPath(queryPath)
   const object = await getArtifact(env.BUCKET, access.r2Key)
   if (!object) return { kind: 'source-unavailable' }
 
@@ -306,9 +306,12 @@ async function loadStaticSiteExportSource(
   access: Access,
   queryPath?: string | null,
 ): Promise<ExportSourceResult> {
-  const path = normalizeExportPath(
-    queryPath ?? access.entrypointPath ?? '/index.html',
-  )
+  const path =
+    queryPath != null
+      ? normalizeExportPath(queryPath)
+      : access.entrypointPath
+        ? storedExportPath(access.entrypointPath)
+        : '/index.html'
   const candidatePaths = staticSiteExportCandidatePaths(path)
   const files = await db
     .selectFrom('versions')

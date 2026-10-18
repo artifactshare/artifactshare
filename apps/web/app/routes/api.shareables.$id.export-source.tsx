@@ -10,14 +10,14 @@ import type { Route } from './+types/api.shareables.$id.export-source'
 
 export const middleware = [exportNoStoreMiddleware, requireUserApiMiddleware]
 
-async function loadSource({ context, params, request }: Route.LoaderArgs) {
+async function loadSource({ context, params, url }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
-  const path = new URL(request.url).searchParams.get('path')
+  const path = url.searchParams.get('path')
   const result = await getExportSource(db, user, {
     id: params.id,
     path,
-    versionId: new URL(request.url).searchParams.get('versionId'),
+    versionId: url.searchParams.get('versionId'),
   })
   const response =
     result.kind === 'ok'

@@ -33,14 +33,303 @@ export type InertExportDocument = Pick<
   | 'querySelectorAll'
 >
 
-export function inertExportDocument(html: string): InertExportDocument {
+// Fragment parsing differs across engines for noscript. Remove its scripting-
+// enabled raw text before inert parsing; markup inside it is never tokenized.
+// Consume whole tags (including malformed unquoted attributes) and bogus end-tag
+// comments so a literal "<noscript>" in either cannot truncate visible content.
+export function stripExportNoscript(html: string): string {
+  // This prepass only resolves scripting-dependent noscript boundaries. Keep
+  // ordinary/malformed markup on the existing inert sanitization path when no
+  // possible noscript opener occurs (including existing namespace regressions).
+  if (!/<noscript(?=[\t\n\f\r />])/i.test(html)) return html
+  // Bogus comments also consume EOF: requiring a closing > retries a full
+  // suffix scan at every subsequent < in an unterminated comment.
+  const tokens =
+    /<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<!\[CDATA\[|<!doctype(?=[\t\n\f\r >])|<![^>]*(?:>|$)|<\?[^>]*(?:>|$)|<\/(?![a-z>])[^>]*(?:>|$)|<\/?[a-z][^\t\n\f\r />]*/gi
+  // Unlike bogus declarations, a DOCTYPE identifier can contain quoted '>'.
+  // Accept the ordinary HTML/Public/System forms as one token; reject malformed
+  // declarations instead of interpreting their identifier text as markup.
+  const doctype =
+    /<!doctype[\t\n\f\r ]+[a-z][a-z0-9:_-]*(?:[\t\n\f\r ]+public[\t\n\f\r ]+(?:"[^"]*"|'[^']*')(?:[\t\n\f\r ]+(?:"[^"]*"|'[^']*'))?|[\t\n\f\r ]+system[\t\n\f\r ]+(?:"[^"]*"|'[^']*'))?[\t\n\f\r ]*>/iy
+  // A quote starts an attribute value only after '='. In an unquoted value,
+  // '<' and quotes are ordinary characters, not the start of another tag.
+  const tagEnd = (start: number) => {
+    let state:
+      | 'name'
+      | 'before'
+      | 'afterName'
+      | 'value'
+      | 'unquoted'
+      | 'quoted' = 'before'
+    let quote = ''
+    let selfClosing = false
+    for (let index = start; index < html.length; index++) {
+      const char = html[index]
+      if (state === 'quoted') {
+        if (char === quote) state = 'before'
+        continue
+      }
+      if (char === '>') return { end: index + 1, selfClosing }
+      selfClosing =
+        char === '/' &&
+        (state === 'before' || state === 'name' || state === 'afterName')
+      const space = /[\t\n\f\r ]/.test(char)
+      if (state === 'value') {
+        if (space) continue
+        if (char === '"' || char === "'") {
+          quote = char
+          state = 'quoted'
+        } else state = 'unquoted'
+      } else if (state === 'unquoted') {
+        if (space) state = 'before'
+      } else if (state === 'before') {
+        // An unexpected '=' here begins a name; it does not introduce a
+        // quoted value. This also applies after '/' or a quoted value.
+        if (!space && char !== '/') state = 'name'
+      } else if (char === '=') state = 'value'
+      else if (char === '/') state = 'before'
+      else if (space) state = 'afterName'
+      else state = 'name'
+    }
+    return { end: html.length, selfClosing: false }
+  }
+  const rawText = new Set([
+    'noscript',
+    'script',
+    'style',
+    'textarea',
+    'title',
+    'xmp',
+    'iframe',
+    'noembed',
+    'noframes',
+  ])
+  // Each token may scan this stack. Bound it before pushing so synchronous
+  // parsing stays linear in input length with at most 256 contexts per scan;
+  // the asynchronous preparation deadline cannot interrupt this prepass.
+  const maxForeignContexts = 256
+  type ForeignContext = {
+    name: string
+    namespace: 'svg' | 'math'
+    integration: boolean
+    htmlChildren: string[]
+  }
+  const foreignContexts: ForeignContext[] = []
+  // Track only foreign content. HTML optional end tags and implied ancestors
+  // belong to the browser's tree builder, not a second HTML stack here.
+  const svgIntegrationPoints = new Set(['foreignobject', 'desc', 'title'])
+  const mathIntegrationPoints = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+  const htmlVoid = new Set(
+    'area base br col embed hr img input link meta param source track wbr'.split(
+      ' ',
+    ),
+  )
+  const annotationIsHtml = (markup: string) => {
+    // Read attributes with the inert HTML tokenizer, including entities and
+    // duplicate-attribute handling. No source element enters an active document.
+    const template = document.createElement('template')
+    const attributes = template.content.ownerDocument.createElement('template')
+    attributes.innerHTML = markup
+    const encoding = attributes.content.firstElementChild
+      ?.getAttribute('encoding')
+      ?.toLowerCase()
+    return encoding === 'text/html' || encoding === 'application/xhtml+xml'
+  }
+  // These tags leave foreign content through HTML error recovery. Refuse that
+  // transition rather than guessing the namespace of subsequent declarations.
+  const foreignBreakouts = new Set(
+    'b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr i img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var font'.split(
+      ' ',
+    ),
+  )
+  let kept = 0
+  const output: string[] = []
+  let token: RegExpExecArray | null
+  while ((token = tokens.exec(html))) {
+    if (token[0].toLowerCase() === '<!doctype') {
+      doctype.lastIndex = token.index
+      if (!doctype.exec(html)) throw new Error('Malformed export doctype')
+      tokens.lastIndex = doctype.lastIndex
+      // Fragment parsing ignores doctypes. Removing the complete declaration
+      // also keeps outer-html attribute extraction independent of identifier text.
+      output.push(html.slice(kept, token.index))
+      kept = tokens.lastIndex
+      continue
+    }
+    if (token[0].toUpperCase() === '<![CDATA[') {
+      // HTML descendants of integration points use different CDATA boundaries.
+      // This prepass cannot safely infer their namespace after error recovery.
+      if (foreignContexts.some((context) => context.integration))
+        throw new Error('Ambiguous export CDATA')
+      // CDATA is text in ordinary foreign content, a bogus comment in HTML.
+      const delimiter =
+        foreignContexts.length && token[0] === '<![CDATA[' ? ']]>' : '>'
+      const end = html.indexOf(delimiter, tokens.lastIndex)
+      tokens.lastIndex = end < 0 ? html.length : end + delimiter.length
+      continue
+    }
+    const tag = /^<(\/?)([a-z][^\t\n\f\r />]*)$/i.exec(token[0])
+    if (!tag) continue
+    const tagStart = token.index
+    const parsedTag = tagEnd(tokens.lastIndex)
+    tokens.lastIndex = parsedTag.end
+    const name = tag[2].toLowerCase()
+    if (
+      foreignContexts.length &&
+      !foreignContexts.at(-1)?.integration &&
+      (tag[1] ? name === 'p' || name === 'br' : foreignBreakouts.has(name))
+    )
+      throw new Error('Ambiguous foreign export markup')
+    const current = foreignContexts.at(-1)
+    if (tag[1]) {
+      const index = foreignContexts.findLastIndex(
+        (context) => context.name === name,
+      )
+      // A close matching the tracked foreign top can still be ignored by the
+      // browser while HTML descendants are open. Refuse both ambiguous cases.
+      if (index >= 0) {
+        if (
+          index !== foreignContexts.length - 1 ||
+          current!.htmlChildren.length
+        )
+          throw new Error('Ambiguous foreign export closing tag')
+        foreignContexts.pop()
+      } else if (current?.integration && current.htmlChildren.length) {
+        if (current.htmlChildren.at(-1) !== name)
+          throw new Error('Ambiguous foreign export closing tag')
+        current.htmlChildren.pop()
+      } else if (current) {
+        // An unmatched end tag can be reprocessed by the HTML tree builder,
+        // including heading aliases and implied table ancestors. Never guess
+        // whether it pops the foreign root and changes subsequent tokenization.
+        throw new Error('Ambiguous foreign export closing tag')
+      }
+      continue
+    }
+    const inHtml = current?.integration ?? false
+    // These MathML text-point exceptions remain foreign, unlike ordinary HTML
+    // children. This limited prepass refuses to guess their descendant context.
+    if (
+      inHtml &&
+      current?.namespace === 'math' &&
+      (name === 'mglyph' || name === 'malignmark')
+    )
+      throw new Error('Ambiguous foreign export markup')
+    // A foreign root name in another foreign namespace is not a namespace
+    // switch. Refuse that ambiguity instead of inventing integration points.
+    if (
+      current &&
+      !inHtml &&
+      ((name === 'svg' && current.namespace !== 'svg') ||
+        (name === 'math' && current.namespace !== 'math'))
+    )
+      throw new Error('Ambiguous foreign export markup')
+    const integration =
+      !!current &&
+      !inHtml &&
+      (current.namespace === 'svg'
+        ? svgIntegrationPoints.has(name)
+        : mathIntegrationPoints.has(name) ||
+          (name === 'annotation-xml' &&
+            annotationIsHtml(html.slice(tagStart, parsedTag.end))))
+    if (
+      name === 'svg' ||
+      name === 'math' ||
+      integration ||
+      (current && !inHtml && !rawText.has(name) && name !== 'plaintext')
+    ) {
+      if (!parsedTag.selfClosing) {
+        if (foreignContexts.length >= maxForeignContexts)
+          throw new Error('Export foreign nesting limit exceeded')
+        foreignContexts.push({
+          name,
+          namespace:
+            name === 'svg' || name === 'math' ? name : current!.namespace,
+          integration,
+          htmlChildren: [],
+        })
+      }
+    } else if (inHtml && !htmlVoid.has(name) && !rawText.has(name)) {
+      // HTML ignores the self-closing flag. Optional/end-tag recovery is left
+      // to the inert parser only when it cannot change a foreign boundary.
+      const children = current!.htmlChildren
+      if (children.length >= maxForeignContexts)
+        throw new Error('Export foreign nesting limit exceeded')
+      children.push(name)
+    }
+    // A foreign noscript is not HTML raw text. Reject the ambiguous construct
+    // before a later HTML closer could make us discard visible content. This
+    // conservative prepass does not attempt foreign-content error recovery.
+    if (name === 'noscript' && foreignContexts.length)
+      throw new Error('Foreign export noscript')
+    if (rawText.has(name)) {
+      if (foreignContexts.length && parsedTag.selfClosing) {
+        if (foreignContexts.some((context) => context.integration))
+          throw new Error('Ambiguous foreign export text')
+        continue
+      }
+      const end = new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`, 'gi')
+      end.lastIndex = tokens.lastIndex
+      const match = end.exec(html)
+      // These names are not raw text in foreign namespaces. Simple text has
+      // identical boundaries, but embedded markup or a missing closer needs a
+      // real tree builder. Refuse it before skipping a root close or noscript.
+      if (
+        foreignContexts.length &&
+        (!match || html.slice(tokens.lastIndex, match.index).includes('<'))
+      )
+        throw new Error('Ambiguous foreign export text')
+      if (name === 'script') {
+        // An escaped script can enter double-escaped data, where the first
+        // </script> is text. Refuse that case rather than interpreting its
+        // contents as markup and consuming a later visible noscript boundary.
+        const scriptText = html.slice(
+          tokens.lastIndex,
+          match?.index ?? html.length,
+        )
+        let escaped = false
+        const markers = /<!--|-->|<script(?=[\t\n\f\r />])/gi
+        let marker: RegExpExecArray | null
+        while ((marker = markers.exec(scriptText))) {
+          if (marker[0] === '<!--') {
+            escaped = true
+            // The opener ends in escaped dash-dash state. Its trailing dashes
+            // can also start the closing sequence in <!--> or <!--->.
+            markers.lastIndex = marker.index + 2
+          } else if (marker[0] === '-->') escaped = false
+          else if (escaped) throw new Error('Double-escaped export script')
+        }
+      }
+      if (name === 'noscript' && !match)
+        throw new Error('Unclosed export noscript')
+      tokens.lastIndex = match ? tagEnd(end.lastIndex).end : html.length
+      if (integration && !parsedTag.selfClosing) foreignContexts.pop()
+      if (name === 'noscript') {
+        output.push(html.slice(kept, token.index))
+        kept = tokens.lastIndex
+      }
+    } else if (name === 'plaintext') {
+      if (foreignContexts.length)
+        throw new Error('Ambiguous foreign export text')
+      break
+    }
+  }
+  output.push(html.slice(kept))
+  return output.join('')
+}
+
+export function inertExportDocument(
+  html: string,
+  forPrint = false,
+): InertExportDocument {
   // Keep the entire tree in the template contents' inert owner document. In
   // particular, never connect raw links/images to a detached HTML Document:
   // engines need not treat all detached documents as network-disabled.
   const template = document.createElement('template')
   const inert = template.content.ownerDocument
   const parsed = inert.createElement('html')
-  parsed.innerHTML = html
+  const preparedHtml = forPrint ? stripExportNoscript(html) : html
+  parsed.innerHTML = preparedHtml
   const root = inert.createElement('html')
   const head = parsed.querySelector('head') ?? inert.createElement('head')
   const body = parsed.querySelector('body') ?? inert.createElement('body')
@@ -55,7 +344,7 @@ export function inertExportDocument(html: string): InertExportDocument {
   // attributes without ever parsing the rest of the source in an active doc.
   const outer =
     /^(?:\s|<!--[\s\S]*?-->|<!doctype[^>]*>)*<html\b((?:[^"'<>]|"[^"]*"|'[^']*')*)>/i.exec(
-      html,
+      preparedHtml,
     )
   if (outer) {
     const attributes = inert.createElement('template')
@@ -103,13 +392,56 @@ function isExportStylesheet(el: Element): boolean {
   return relations.includes('stylesheet')
 }
 
+// Select disjoint subtrees without walking ancestors for each match. Each
+// sanitizer already visits all descendants, including nested roots of its kind.
+function outermostExportElements(doc: InertExportDocument, name: string) {
+  const roots: Element[] = []
+  const pending: Element[] = [doc.documentElement]
+  while (pending.length) {
+    const element = pending.pop()!
+    if (element.localName === name) {
+      roots.push(element)
+      continue
+    }
+    for (
+      let child = element.lastElementChild;
+      child;
+      child = child.previousElementSibling
+    )
+      pending.push(child)
+  }
+  return roots
+}
+
 export function sanitizeExportDocument(doc: InertExportDocument) {
+  // Comments never paint, but their serialized text can cross a raw-text
+  // boundary when srcdoc is reparsed with scripting enabled (notably noscript).
+  const comments = doc.documentElement.ownerDocument.createTreeWalker(
+    doc.documentElement,
+    128,
+  )
+  const remove: Node[] = []
+  while (comments.nextNode()) remove.push(comments.currentNode)
+  for (const comment of remove) comment.parentNode!.removeChild(comment)
   doc
     .querySelectorAll(
-      'script,base,meta,iframe,frame,frameset,object,embed,portal,template,foreignObject,animate,animateMotion,animateTransform,set',
+      'script,base,meta,noscript,iframe,frame,frameset,object,embed,portal,template,foreignObject,animate,animateMotion,animateTransform,set',
     )
     .forEach((el) => el.remove())
-  for (const svg of doc.querySelectorAll('svg')) {
+  // Preserve native mathematical layout while rejecting namespace integration
+  // mutations. Annotations are non-display alternatives, never visible prose.
+  for (const math of outermostExportElements(doc, 'math')) {
+    DOMPurify.sanitize(math, {
+      IN_PLACE: true,
+      USE_PROFILES: { html: true, mathMl: true, svg: true, svgFilters: true },
+      ADD_TAGS: ['semantics'],
+      FORBID_TAGS: ['annotation', 'annotation-xml'],
+      FORBID_CONTENTS: ['annotation', 'annotation-xml'],
+    })
+  }
+  // Discover SVG roots after MathML sanitization. Keep the stricter SVG pass
+  // even inside surviving MathML, but visit each subtree only once per profile.
+  for (const svg of outermostExportElements(doc, 'svg')) {
     DOMPurify.sanitize(svg, {
       IN_PLACE: true,
       USE_PROFILES: { svg: true, svgFilters: true },
@@ -473,6 +805,20 @@ function dataUri(blob: Blob): Promise<string> {
   })
 }
 
+function decodeDataPayload(payload: string): string {
+  const bytes = new TextEncoder().encode(payload)
+  const decoded = new Uint8Array(bytes.length)
+  let length = 0
+  for (let i = 0; i < bytes.length; i++) {
+    const hex = String.fromCharCode(bytes[i + 1] ?? 0, bytes[i + 2] ?? 0)
+    if (bytes[i] === 37 && /^[0-9a-f]{2}$/i.test(hex)) {
+      decoded[length++] = parseInt(hex, 16)
+      i += 2
+    } else decoded[length++] = bytes[i]
+  }
+  return new TextDecoder().decode(decoded.subarray(0, length))
+}
+
 async function decodeEmbeddedImage(uri: string): Promise<string> {
   const image = new Image()
   image.src = uri
@@ -494,11 +840,15 @@ async function prepareDocument(
 ): Promise<InertExportDocument> {
   const html = data.kind === 'markdown' ? data.renderedHtml : data.source
   if (!html || !data.versionId) throw new Error('Export source unavailable')
-  const doc = inertExportDocument(html)
-  if (forPrint) sanitizeExportDocument(doc)
-  let count = 0
+  // Enforce the source budget before synchronous parsing/sanitization, where
+  // the asynchronous deadline cannot interrupt work. UTF-8 is at least as long
+  // as the UTF-16 code-unit count, so reject huge strings before allocating it.
+  if (html.length > MAX_BYTES) throw new Error('Export exceeds resource budget')
   let bytes = new TextEncoder().encode(html).length
   if (bytes > MAX_BYTES) throw new Error('Export exceeds resource budget')
+  const doc = inertExportDocument(html, forPrint)
+  if (forPrint) sanitizeExportDocument(doc)
+  let count = 0
   let embeddedBytes = 0
   const embedded = (uri: string) => {
     embeddedBytes += new TextEncoder().encode(uri).byteLength
@@ -557,14 +907,24 @@ async function prepareDocument(
       const inlineKey = `inline-${count}`
       addDependency(ancestors.at(-1), inlineKey)
       if (/^data:(?:text\/css|image\/svg\+xml)[;,]/i.test(value)) {
-        const comma = value.indexOf(',')
-        const decoded = /;base64$/i.test(value.slice(0, comma))
+        const hash = value.indexOf('#')
+        const fragment = hash < 0 ? '' : value.slice(hash)
+        if (
+          Array.from(fragment).some(
+            (char) => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127,
+          )
+        )
+          throw new Error('Invalid inline fragment')
+        const content = hash < 0 ? value : value.slice(0, hash)
+        const comma = content.indexOf(',')
+        const decoded = /;base64$/i.test(content.slice(0, comma))
           ? new TextDecoder().decode(
-              Uint8Array.from(atob(value.slice(comma + 1)), (c) =>
-                c.charCodeAt(0),
+              Uint8Array.from(
+                atob(decodeDataPayload(content.slice(comma + 1))),
+                (c) => c.charCodeAt(0),
               ),
             )
-          : decodeURIComponent(value.slice(comma + 1))
+          : decodeDataPayload(content.slice(comma + 1))
         bytes += new TextEncoder().encode(decoded).byteLength
         if (bytes > MAX_BYTES) throw new Error('Export exceeds resource budget')
         const nested = [...ancestors, inlineKey]
@@ -592,9 +952,13 @@ async function prepareDocument(
           if (!svg) throw new Error('Invalid inline SVG')
           svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
           const uri = embedded(
-            await dataUri(new Blob([svg.outerHTML], { type: 'image/svg+xml' })),
+            await dataUri(
+              new Blob([new XMLSerializer().serializeToString(svg)], {
+                type: 'image/svg+xml',
+              }),
+            ),
           )
-          return decodeEmbeddedImage(uri)
+          return decodeEmbeddedImage(uri + fragment)
         }
         throw new Error('Unexpected inline resource type')
       }

@@ -189,8 +189,31 @@ function loaderArgs(id: string, url?: string) {
   return {
     context: new Map(),
     params: { id },
+    url: new URL(
+      url ?? `https://artifactshare.test/api/shareables/${id}/export-source`,
+    ),
     request: new Request(
       url ?? `https://artifactshare.test/api/shareables/${id}/export-source`,
     ),
   } as never
 }
+
+test('uses normalized loader query rather than the raw data request URL', async () => {
+  getExportSourceMock.mockResolvedValue({ kind: 'not-found' })
+  const response = await loader({
+    context: new Map(),
+    params: { id: 'artifact-1' },
+    request: new Request(
+      'https://artifactshare.test/raw?versionId=wrong&path=/wrong.html',
+    ),
+    url: new URL(
+      'https://artifactshare.test/api/shareables/artifact-1/export-source?versionId=version-1&path=/report.html',
+    ),
+  } as never)
+  expect(getExportSourceMock).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.anything(),
+    { id: 'artifact-1', versionId: 'version-1', path: '/report.html' },
+  )
+  expect(response.headers.get('cache-control')).toBe('no-store')
+})

@@ -242,12 +242,14 @@ export const exportPdfObservation = defineBrowserCommand(
           }),
         )
         await Promise.all([
-          unsafe.waitForResponse(`${origin}/__pdf_probe_csp_image`),
-          unsafe.goto(`${origin}/__pdf_negative`),
+          unsafe.waitForResponse(`${origin}/__pdf_probe_csp_image`, {
+            timeout: 5000,
+          }),
+          unsafe.goto(`${origin}/__pdf_negative`, { timeout: 5000 }),
         ])
         await Promise.all([
-          unsafe.waitForURL('**/__pdf_probe_negative'),
-          unsafe.locator('button').click(),
+          unsafe.waitForURL('**/__pdf_probe_negative', { timeout: 5000 }),
+          unsafe.locator('button').click({ timeout: 5000 }),
         ])
       } finally {
         await unsafe.close()
@@ -255,56 +257,76 @@ export const exportPdfObservation = defineBrowserCommand(
       }
     }
     const state = sessions.get(page)
-    await Promise.all(state?.pending ?? [])
-    // Intercepted WebKit headers omit Cookie, and redirect destinations do not
-    // dispatch another route handler. Only server receipts establish wire headers.
-    if (state) {
-      const response = await context.request.get(
-        `${origin}/__pdf_receipts?id=${state.receiptId}`,
-      )
-      if (!response.ok()) throw new Error('PDF request receipts unavailable')
-      const receipts: Observation[] = await response.json()
-      // A receipt consumes one dispatch at most; rereading must not duplicate
-      // it or collapse repeated redirect destinations into the first request.
-      for (const receipt of receipts) {
-        if (
-          state.requests.some((request) => request.receipt === receipt.receipt)
-        )
-          continue
-        receipt.wire = true
-        const dispatched = state.requests.find(
-          (request) =>
-            request.receipt === undefined &&
-            request.url === receipt.url &&
-            request.method === receipt.method,
-        )
-        if (dispatched) Object.assign(dispatched, receipt)
-        else state.requests.push(receipt)
+    try {
+      let headerDeadline: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          Promise.all(state?.pending ?? []),
+          new Promise<never>((_resolve, reject) => {
+            headerDeadline = setTimeout(
+              () => reject(new Error('PDF request header deadline exceeded')),
+              5000,
+            )
+          }),
+        ])
+      } finally {
+        clearTimeout(headerDeadline)
       }
-      if (action === 'stop')
-        await context.request.delete(
+      // Intercepted WebKit headers omit Cookie, and redirect destinations do not
+      // dispatch another route handler. Only server receipts establish wire headers.
+      if (state) {
+        const response = await context.request.get(
           `${origin}/__pdf_receipts?id=${state.receiptId}`,
+          { timeout: 5000 },
         )
+        if (!response.ok()) throw new Error('PDF request receipts unavailable')
+        const receipts: Observation[] = await response.json()
+        // A receipt consumes one dispatch at most; rereading must not duplicate
+        // it or collapse repeated redirect destinations into the first request.
+        for (const receipt of receipts) {
+          if (
+            state.requests.some(
+              (request) => request.receipt === receipt.receipt,
+            )
+          )
+            continue
+          receipt.wire = true
+          const dispatched = state.requests.find(
+            (request) =>
+              request.receipt === undefined &&
+              request.url === receipt.url &&
+              request.method === receipt.method,
+          )
+          if (dispatched) Object.assign(dispatched, receipt)
+          else state.requests.push(receipt)
+        }
+      }
+      const result =
+        (action === 'external'
+          ? state?.externalRequests
+          : action === 'attempts'
+            ? state?.attempts
+            : state?.requests) ?? []
+      return result
+    } finally {
+      if (action === 'stop') {
+        if (state) context.off('request', state.listen)
+        state?.stopDiagnostics()
+        sessions.delete(page)
+        await context.unroute('**/__pdf_probe**')
+        await context.unroute('**/api/shareables/artifact-1/export-source**')
+        await context.unroute('**/api/shareables/artifact-1/export-asset**')
+        await context.unroute('https://example.com/pdf-fixture/**')
+        await context.clearCookies({ name: 'pdf_test_session' })
+        await context.clearCookies({ name: 'pdf_probe_id' })
+        await context.clearCookies({ name: 'pdf_test_external' })
+        if (state)
+          await context.request.delete(
+            `${origin}/__pdf_receipts?id=${state.receiptId}`,
+            { timeout: 5000 },
+          )
+      }
     }
-    const result =
-      (action === 'external'
-        ? state?.externalRequests
-        : action === 'attempts'
-          ? state?.attempts
-          : state?.requests) ?? []
-    if (action === 'stop') {
-      if (state) context.off('request', state.listen)
-      state?.stopDiagnostics()
-      sessions.delete(page)
-      await context.unroute('**/__pdf_probe**')
-      await context.unroute('**/api/shareables/artifact-1/export-source**')
-      await context.unroute('**/api/shareables/artifact-1/export-asset**')
-      await context.unroute('https://example.com/pdf-fixture/**')
-      await context.clearCookies({ name: 'pdf_test_session' })
-      await context.clearCookies({ name: 'pdf_probe_id' })
-      await context.clearCookies({ name: 'pdf_test_external' })
-    }
-    return result
   },
 )
 
@@ -315,7 +337,12 @@ export const exportPdfDiagnostics = defineBrowserCommand(
 )
 
 export const inspectExportPdf = defineBrowserCommand(
-  async ({ page }, printLayout = false, colorScheme?: 'light' | 'dark') => {
+  async (
+    { page },
+    printLayout = false,
+    colorScheme?: 'light' | 'dark',
+    sampleImages = false,
+  ) => {
     const popup = page.context().pages().at(-1)!
     const frame = popup
       .frames()
@@ -326,7 +353,7 @@ export const inspectExportPdf = defineBrowserCommand(
         colorScheme,
       })
     try {
-      return await frame.evaluate(() => {
+      const inspected = await frame.evaluate(() => {
         let parentDenied = false
         try {
           void parent.document.cookie
@@ -335,6 +362,57 @@ export const inspectExportPdf = defineBrowserCommand(
         }
         return {
           parentDenied,
+          mathLayout: {
+            fractions: document.querySelectorAll('math mfrac').length,
+            namespace: document.querySelector('math')?.namespaceURI ?? null,
+            numeratorBottom:
+              document.getElementById('numerator')?.getBoundingClientRect()
+                .bottom ?? 0,
+            denominatorTop:
+              document.getElementById('denominator')?.getBoundingClientRect()
+                .top ?? 0,
+          },
+          fixedElements: [document.body, ...document.body.querySelectorAll('*')]
+            .filter((element) => getComputedStyle(element).position === 'fixed')
+            .map((element) => {
+              const rect = element.getBoundingClientRect()
+              const range = document.createRange()
+              range.selectNodeContents(element)
+              const content = range.getBoundingClientRect()
+              return {
+                top: rect.top,
+                bottom: rect.bottom,
+                height: rect.height,
+                contentTop: content.top,
+                contentBottom: content.bottom,
+              }
+            }),
+          fixedShell: (() => {
+            const main = document.querySelector('main')
+            const shell = main?.parentElement
+            return shell && getComputedStyle(shell).position === 'fixed'
+              ? {
+                  bottom: shell.getBoundingClientRect().bottom,
+                  scrollBottom: main!.getBoundingClientRect().bottom,
+                  scrollHeight: main!.scrollHeight,
+                  clientHeight: main!.clientHeight,
+                  markerBottom:
+                    main!.lastElementChild!.getBoundingClientRect().bottom,
+                }
+              : null
+          })(),
+          rootScrollHeight: document.documentElement.scrollHeight,
+          rootAfterContent: getComputedStyle(
+            document.documentElement,
+            '::after',
+          ).content,
+          activeNavigationCount: document.querySelectorAll(
+            'meta[http-equiv="refresh"],base,iframe,object,embed',
+          ).length,
+          imageSources: Array.from(
+            document.images,
+            (image) => image.currentSrc,
+          ),
           markdownPresentation: {
             bodyColor: getComputedStyle(document.body).color,
             codeColor: document.querySelector('pre code')
@@ -366,6 +444,18 @@ export const inspectExportPdf = defineBrowserCommand(
               (element) => element.getBoundingClientRect().bottom + scrollY,
             ),
           ),
+          finalMarker: (() => {
+            const marker = document.getElementById('pdf-final-marker')
+            if (!marker) return null
+            const rect = marker.getBoundingClientRect()
+            return {
+              top: rect.top,
+              bottom: rect.bottom,
+              visible:
+                rect.height > 0 &&
+                getComputedStyle(marker).visibility === 'visible',
+            }
+          })(),
           origin: self.origin,
           text: document.body.textContent ?? '',
           svgCount: document.querySelectorAll('svg').length,
@@ -400,6 +490,24 @@ export const inspectExportPdf = defineBrowserCommand(
             .color,
         }
       })
+      // Sample the rendered image through automation. Reading an SVG-backed
+      // canvas inside an opaque realm can be origin-tainted even for data URLs.
+      const imageScreenshots = sampleImages
+        ? await Promise.all(
+            (await frame.locator('img').all()).map(async (image) => {
+              // Element screenshots scroll the opaque child and wait for its
+              // animation-frame stability. Sample its already rendered box
+              // from the parent page instead, without changing frame layout.
+              const clip = await image.boundingBox()
+              if (!clip || clip.width <= 0 || clip.height <= 0)
+                throw new Error('Prepared image has no rendered box')
+              return Buffer.from(
+                await popup.screenshot({ clip, timeout: 5000 }),
+              ).toString('base64')
+            }),
+          )
+        : []
+      return { ...inspected, imageScreenshots }
     } finally {
       if (printLayout || colorScheme)
         await popup.emulateMedia({ media: null, colorScheme: null })
@@ -516,6 +624,7 @@ declare module 'vitest/browser' {
     inspectExportPdf: (
       printLayout?: boolean,
       colorScheme?: 'light' | 'dark',
+      sampleImages?: boolean,
     ) => Promise<{
       markdownPresentation: {
         bodyColor: string
@@ -526,6 +635,32 @@ declare module 'vitest/browser' {
         tocHeight: number
         tocOpen: boolean
       }
+      mathLayout: {
+        fractions: number
+        namespace: string | null
+        numeratorBottom: number
+        denominatorTop: number
+      }
+      fixedElements: Array<{
+        top: number
+        bottom: number
+        height: number
+        contentTop: number
+        contentBottom: number
+      }>
+      fixedShell: {
+        bottom: number
+        markerBottom: number
+        scrollBottom: number
+        scrollHeight: number
+        clientHeight: number
+      } | null
+      rootScrollHeight: number
+      rootAfterContent: string
+      activeNavigationCount: number
+      imageSources: string[]
+      imageScreenshots: string[]
+      finalMarker: { top: number; bottom: number; visible: boolean } | null
       layoutHeight: number
       parentDenied: boolean
       origin: string

@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { toast } from 'sonner'
 import { bindI18n } from '~/lib/i18n'
 import { ViewerShell, type ViewerShellArtifact } from './viewer-shell'
+import { normalizeStaticSiteFramePath } from './export-actions'
 
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 const navigation = vi.hoisted(() => ({
@@ -44,6 +45,23 @@ vi.mock('./viewer-chrome', () => ({
     </>
   ),
 }))
+
+vi.mock('./sandbox-frame', () => ({
+  SandboxFrame: ({
+    onFramePathChange,
+  }: {
+    onFramePathChange?: (path: string | null) => void
+  }) => (
+    <button
+      onClick={() =>
+        onFramePathChange!(normalizeStaticSiteFramePath('/a%2fb.html'))
+      }
+    >
+      Invalid frame path
+    </button>
+  ),
+}))
+
 const artifact: ViewerShellArtifact = {
   id: 'abc123def4',
   storageKey: 'abc123def4/index.html',
@@ -71,10 +89,12 @@ afterEach(() => {
 
 test.each(
   (['en', 'ja'] as const).flatMap((language) =>
-    ['source', 'preparation', 'unsupported', 'html', 'copy'].map((failure) => ({
-      language,
-      failure,
-    })),
+    ['source', 'preparation', 'unsupported', 'html', 'copy', 'path'].map(
+      (failure) => ({
+        language,
+        failure,
+      }),
+    ),
   ),
 )(
   'Viewer export reports the correct operation for $failure failure in $language',
@@ -144,12 +164,20 @@ test.each(
               image: null,
               initial: 'O',
             }}
-            renderType="html"
-            sandboxUrl={null}
+            renderType={failure === 'path' ? 'static_site' : 'html'}
+            sandboxUrl={
+              failure === 'path' ? 'https://example.com/index.html' : null
+            }
             bundlePaths={[]}
           />,
         ),
       )
+      if (failure === 'path') {
+        const invalidPath = Array.from(host.querySelectorAll('button')).find(
+          (el) => el.textContent === 'Invalid frame path',
+        )!
+        await act(async () => invalidPath.click())
+      }
       const label =
         failure === 'html' ? 'HTML' : failure === 'copy' ? 'Copy' : 'PDF'
       const button = Array.from(host.querySelectorAll('button')).find(
@@ -167,6 +195,14 @@ test.each(
           ),
         ),
       )
+      if (failure === 'path')
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.filter(([input]) =>
+              String(input).includes('/export-source'),
+            ),
+        ).toEqual([])
       if (failure === 'source' || failure === 'preparation') {
         expect(toast.error).toHaveBeenCalledWith(
           language === 'en'

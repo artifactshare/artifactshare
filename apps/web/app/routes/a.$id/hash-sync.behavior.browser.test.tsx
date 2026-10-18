@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server'
 import { afterEach, expect, test, vi } from 'vitest'
 import { server } from 'vitest/browser'
 import { toast } from 'sonner'
+import { waitForBrowserLayout } from '~/test/browser-layout'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '~/lib/csp-reporter'
 import {
   SandboxFrame,
@@ -79,31 +80,39 @@ function documentUrl() {
     ),
   )
 }
-async function ready(host: HTMLElement) {
-  await vi.waitFor(() =>
-    expect(
-      host
-        .querySelector('[data-sandbox-state]')
-        ?.getAttribute('data-sandbox-state'),
-    ).toBe('ready'),
-  )
-  const frame = host.querySelector('iframe')!
-  const token = messages.find(
-    (event) =>
-      event.source === frame.contentWindow && event.data?.kind === 'ready',
-  )!.data.token as string
-  await vi.waitFor(() =>
-    expect(
+async function ready(host: HTMLElement, previousFrame?: HTMLIFrameElement) {
+  const deadline = performance.now() + 5000
+  // Retry replaces the iframe only after its response body has been read.
+  // Re-query after each committed update; old WindowProxy messages are not
+  // evidence that the replacement is ready. Keep every event-loop yield in act.
+  do {
+    await act(async () => waitForBrowserLayout())
+    const frame = host.querySelector('iframe')
+    const state = host
+      .querySelector('[data-sandbox-state]')
+      ?.getAttribute('data-sandbox-state')
+    if (!frame || frame === previousFrame || state !== 'ready') continue
+    const message = messages.findLast(
+      (event) =>
+        event.source === frame.contentWindow && event.data?.kind === 'ready',
+    )
+    const token = message?.data.token as string | undefined
+    if (
+      token &&
       messages.some(
         (event) =>
           event.source === frame.contentWindow &&
           event.data?.kind === 'hash-changed' &&
           event.data.token === token,
-      ),
-    ).toBe(true),
+      )
+    )
+      return { frame, token }
+  } while (performance.now() < deadline)
+  throw new Error(
+    `Sandbox frame did not become ready: ${host.querySelector('[data-sandbox-state]')?.getAttribute('data-sandbox-state')}`,
   )
-  return { frame, token }
 }
+
 async function report(
   frame: HTMLIFrameElement,
   token: string,
@@ -190,7 +199,7 @@ test.each(
     )
     expect(host.querySelector('iframe')).toBe(frame)
     expect(frame.src).toBe(src)
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(
       messages.filter((e) => e.data?.kind === 'first-script'),
     ).toHaveLength(1)
@@ -256,7 +265,13 @@ test.each(['/a/abc123def4?comment=s1', '/?access-request=s1'])(
   },
 )
 
-test.each(['/index.html', '/start.html'])(
+test.each([
+  '/index.html',
+  '/start.html',
+  '/literal%2e.html',
+  '/literal%2f.html',
+  '/literal%.html',
+])(
   'static-site reports use the reported entrypoint, %s',
   async (entrypointPath) => {
     window.history.replaceState(null, '', '#entry')
@@ -278,7 +293,10 @@ test.each(['/index.html', '/start.html'])(
     expect(window.location.hash).toBe(
       entrypointPath === '/index.html' ? '#changed' : '#entry',
     )
-    await report(frame, token, { path: entrypointPath, hash: '#returned' })
+    await report(frame, token, {
+      path: entrypointPath.split('/').map(encodeURIComponent).join('/'),
+      hash: '#returned',
+    })
     expect(window.location.hash).toBe('#returned')
   },
 )
@@ -468,7 +486,7 @@ test.each(['html', 'md', 'static_site'])(
     window.history.replaceState(null, '', '#retry')
     const button = host.querySelector('button')!
     await act(async () => button.click())
-    const { frame: retryFrame, token: retryToken } = await ready(host)
+    const { frame: retryFrame, token: retryToken } = await ready(host, frame)
     expect(retryFrame).not.toBe(frame)
     expect(retryFrame.src.endsWith('#retry')).toBe(true)
     expect(await server.commands.sandboxHashDocumentLoads()).toBe(3)
@@ -639,3 +657,29 @@ test.each(['load', 'link'])(
     expect(replace).toHaveBeenCalledTimes(2)
   },
 )
+
+test('native frame readiness commits without unwrapped React updates', async () => {
+  const errors = vi.spyOn(console, 'error')
+  documentUrl()
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  await act(async () => {
+    root = createRoot(host)
+    root.render(<SandboxFrame {...props()} />)
+  })
+  const { frame } = await ready(host)
+  expect(frame).toBe(host.querySelector('iframe'))
+  expect(
+    host
+      .querySelector('[data-sandbox-state]')!
+      .getAttribute('data-sandbox-state'),
+  ).toBe('ready')
+  expect(
+    errors.mock.calls.filter((args) =>
+      args.some(
+        (value) =>
+          typeof value === 'string' && value.includes('not wrapped in act'),
+      ),
+    ),
+  ).toEqual([])
+})

@@ -121,8 +121,29 @@ function loaderArgs(id: string, path: string) {
   return {
     context: new Map(),
     params: { id, '*': path },
+    url: new URL(
+      `https://artifactshare.test/api/shareables/${id}/export-asset/${path}?versionId=version-1`,
+    ),
     request: new Request(
       `https://artifactshare.test/api/shareables/${id}/export-asset/${path}?versionId=version-1`,
     ),
   } as never
 }
+
+test('uses normalized loader version rather than the raw data request URL', async () => {
+  getExportAssetMock.mockResolvedValue({ kind: 'not-found' })
+  const response = await loader({
+    context: new Map(),
+    params: { id: 'artifact-1', '*': 'growth 20%.png' },
+    request: new Request('https://artifactshare.test/raw?versionId=wrong'),
+    url: new URL(
+      'https://artifactshare.test/api/shareables/artifact-1/export-asset/growth%2020%25.png?versionId=version-1',
+    ),
+  } as never)
+  expect(getExportAssetMock).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.anything(),
+    { id: 'artifact-1', versionId: 'version-1', path: '/growth 20%.png' },
+  )
+  expect(response.headers.get('cache-control')).toBe('no-store')
+})

@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const loadCommentAccessMock = vi.hoisted(() => vi.fn())
 const getArtifactMock = vi.hoisted(() => vi.fn())
+const routeDbMock = vi.hoisted(() => vi.fn())
+vi.mock('~/services/db.server', () => ({ createDb: routeDbMock }))
+vi.mock('~/middleware/auth', () => ({ requireUserApiMiddleware: vi.fn() }))
+vi.mock('~/middleware/context', () => ({ requireUser: () => user }))
 
 vi.mock('cloudflare:workers', () => ({
   env: { BUCKET: {} },
@@ -13,6 +17,8 @@ vi.mock('~/services/storage.server', () => ({
   getArtifact: getArtifactMock,
 }))
 
+import { loader as sourceLoader } from '~/routes/api.shareables.$id.export-source'
+import { loader as assetLoader } from '~/routes/api.shareables.$id.export-asset.$'
 import {
   exportSourceErrorResponse,
   getExportAsset,
@@ -584,7 +590,7 @@ function versionFileDb(rowOrRows: unknown | unknown[]) {
   const query = {
     innerJoin: () => query,
     select: () => query,
-    where: () => query,
+    where: (..._args: unknown[]) => query,
     execute: vi.fn().mockResolvedValue(rows),
     executeTakeFirst: vi.fn().mockResolvedValue(row),
   }
@@ -671,7 +677,7 @@ test('asset lookup pins ownership, version and exact canonical path and rechecks
     await getExportAsset({ selectFrom: () => query } as never, user, {
       id: 'artifact-1',
       versionId: 'version-1',
-      path: '/images/a.png?versionId=other#fragment',
+      path: '/images/a.png',
     }),
   ).toEqual({ kind: 'not-found' })
   expect(where.mock.calls).toEqual([
@@ -680,3 +686,200 @@ test('asset lookup pins ownership, version and exact canonical path and rechecks
     ['version_files.path', '=', '/images/a.png'],
   ])
 })
+
+test.each(['markdown_page', 'html_page'])(
+  'stored %s entrypoints preserve literal percent through initial load and snapshot revalidation',
+  async (artifactKind) => {
+    const path =
+      artifactKind === 'markdown_page' ? '/growth 20%.md' : '/growth 20%.html'
+    loadCommentAccessMock.mockResolvedValue({
+      currentVersionId: 'version-1',
+      artifactKind,
+      entrypointPath: path,
+      r2Key: 'artifact-1/version-1/source',
+    })
+    getArtifactMock.mockResolvedValue({
+      text: async () => 'Report',
+      httpMetadata: {
+        contentType:
+          artifactKind === 'markdown_page' ? 'text/markdown' : 'text/html',
+      },
+    })
+    for (const query of [
+      undefined,
+      path.split('/').map(encodeURIComponent).join('/'),
+    ]) {
+      const result = await getExportSource(
+        versionFileDb({ id: 'version-1' }) as never,
+        user,
+        { id: 'artifact-1', path: query, versionId: 'version-1' },
+      )
+      expect(result).toMatchObject({
+        kind: 'ok',
+        data: { path, versionId: 'version-1' },
+      })
+    }
+  },
+)
+
+test('exact authorized asset lookup preserves a decoded literal percent name', async () => {
+  loadCommentAccessMock.mockResolvedValue({
+    currentVersionId: 'version-1',
+    artifactKind: 'static_site',
+  })
+  getArtifactMock.mockResolvedValue({
+    body: new Blob(['png']).stream(),
+    httpMetadata: { contentType: 'image/png' },
+  })
+  const result = await getExportAsset(
+    versionFileDb({
+      path: '/growth 20%.png',
+      r2_key: 'artifact-1/version-1/image',
+      mime_type: 'image/png',
+    }) as never,
+    user,
+    { id: 'artifact-1', versionId: 'version-1', path: '/growth 20%.png' },
+  )
+  expect(result).toMatchObject({ kind: 'ok', path: '/growth 20%.png' })
+})
+
+test.each([
+  '/../image.png',
+  '/a\\b.png',
+  '/a/../image.png',
+  '/a.png?x=1',
+  '/a.png#x',
+])(
+  'decoded asset route rejects ambiguous path %s before storage',
+  async (path) => {
+    loadCommentAccessMock.mockResolvedValue({
+      currentVersionId: 'version-1',
+      artifactKind: 'static_site',
+    })
+    getArtifactMock.mockClear()
+    expect(
+      await getExportAsset(versionFileDb({}) as never, user, {
+        id: 'artifact-1',
+        versionId: 'version-1',
+        path,
+      }),
+    ).toEqual({ kind: 'not-found' })
+    expect(getArtifactMock).not.toHaveBeenCalled()
+  },
+)
+
+test.each(
+  ['markdown_page', 'html_page'].flatMap((artifactKind) =>
+    ['growth 20%', 'Survey 30%Decline', 'literal%2e', 'literal%2f'].map(
+      (name) => ({ artifactKind, name }),
+    ),
+  ),
+)(
+  'authorized source route exports stored percent entrypoint $name ($artifactKind) and refuses stale access',
+  async ({ artifactKind, name }) => {
+    const path =
+      '/' + name + (artifactKind === 'markdown_page' ? '.md' : '.html')
+    loadCommentAccessMock.mockReset().mockResolvedValue({
+      currentVersionId: 'version-1',
+      artifactKind,
+      entrypointPath: path,
+      r2Key: 'artifact-1/version-1/source',
+    })
+    routeDbMock.mockReturnValue(versionFileDb({ id: 'version-1' }))
+    getArtifactMock.mockResolvedValue({
+      text: async () => 'Report',
+      httpMetadata: {
+        contentType:
+          artifactKind === 'markdown_page' ? 'text/markdown' : 'text/html',
+      },
+    })
+    const url = new URL(
+      'https://artifactshare.test/api/shareables/artifact-1/export-source',
+    )
+    url.searchParams.set(
+      'path',
+      path.split('/').map(encodeURIComponent).join('/'),
+    )
+    url.searchParams.set('versionId', 'version-1')
+    const args = {
+      context: new Map(),
+      params: { id: 'artifact-1' },
+      request: new Request(url),
+      url,
+    } as never
+    const response = await sourceLoader(args)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      path,
+      versionId: 'version-1',
+    })
+    loadCommentAccessMock.mockResolvedValue({
+      currentVersionId: 'version-2',
+      artifactKind,
+    })
+    expect((await sourceLoader(args)).status).toBe(404)
+    loadCommentAccessMock.mockResolvedValue(null)
+    expect((await sourceLoader(args)).status).toBe(404)
+  },
+)
+
+test.each([
+  'growth 20%.png',
+  '100%ad.png',
+  'literal%2e.md',
+  'literal%2f.md',
+  'literal%2F.png',
+])(
+  'authorized asset route resolves %s and rejects encoded path confusion',
+  async (name) => {
+    loadCommentAccessMock.mockReset().mockResolvedValue({
+      currentVersionId: 'version-1',
+      artifactKind: 'static_site',
+    })
+    const db = versionFileDb({
+      path: '/' + name,
+      r2_key: 'artifact-1/version-1/image',
+      mime_type: 'image/png',
+    })
+    const where = vi.spyOn(db.selectFrom('version_files'), 'where')
+    routeDbMock.mockReturnValue(db)
+    getArtifactMock.mockResolvedValue({
+      body: new Blob(['png']).stream(),
+      size: 3,
+      httpMetadata: { contentType: 'image/png' },
+    })
+    const url = new URL(
+      `https://artifactshare.test/api/shareables/artifact-1/export-asset/${encodeURIComponent(name)}?versionId=version-1`,
+    )
+    const args = (path: string, requestUrl = url) =>
+      ({
+        context: new Map(),
+        params: { id: 'artifact-1', '*': path },
+        request: new Request(requestUrl),
+        url: requestUrl,
+      }) as never
+    const response = await assetLoader(args(name))
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('png')
+    expect(where.mock.calls).toEqual([
+      ['version_files.version_id', '=', 'version-1'],
+      ['versions.shareable_id', '=', 'artifact-1'],
+      ['version_files.path', '=', '/' + name],
+    ])
+    getArtifactMock.mockClear()
+    for (const path of ['%2e%2e/image.png', 'a%2fb.png', 'a%5cb.png'])
+      expect(
+        (
+          await assetLoader(
+            args(
+              path,
+              new URL(
+                `https://artifactshare.test/api/shareables/artifact-1/export-asset/${path}?versionId=version-1`,
+              ),
+            ),
+          )
+        ).status,
+      ).toBe(404)
+    expect(getArtifactMock).not.toHaveBeenCalled()
+  },
+)

@@ -75,6 +75,7 @@ import {
 } from '~/lib/viewer-network'
 import { type PendingTextAnchor } from './viewer-comment-types'
 import { normalizeStaticSiteFramePath } from './export-actions'
+import { storedExportPath } from '~/lib/export-path'
 import {
   classifySandboxProbeResponse,
   shouldAttemptAutomaticRecovery,
@@ -139,7 +140,7 @@ type SandboxFrameProps = {
   onTextSelectionClear: () => void
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
   onOutsidePointerDown: () => void
-  onFramePathChange?: (path: string) => void
+  onFramePathChange?: (path: string | null) => void
   sandboxPermissions: 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
   children?: ReactNode
 }
@@ -510,11 +511,14 @@ function useSandboxFrameController({
   }, [commentThreads])
   const handleAnchorResolutions = useEffectEvent(
     (message: AnchorResolutionMessage) => {
+      const targetPath = normalizeStaticSiteFramePath(
+        new URL(frameUrl).pathname,
+      )
       if (
+        targetPath === null ||
         message.token !== securityTokenRef.current ||
         message.versionId !== versionId ||
-        message.targetPath !==
-          normalizeStaticSiteFramePath(new URL(frameUrl).pathname)
+        message.targetPath !== targetPath
       )
         return
       resolutionSyncRef.current?.accept(message)
@@ -874,12 +878,14 @@ function useSandboxFrameController({
         message.token !== securityTokenRef.current
       )
         return
-      if (
-        renderType === 'static_site' &&
-        normalizeStaticSiteFramePath(message.path) !==
-          normalizeStaticSiteFramePath(entrypointPath ?? '/index.html')
-      )
-        return
+      if (renderType === 'static_site') {
+        const path = normalizeStaticSiteFramePath(message.path)
+        const entrypoint =
+          !entrypointPath || entrypointPath === '/'
+            ? '/index.html'
+            : storedExportPath(entrypointPath)
+        if (path === null || path !== entrypoint) return
+      }
       hashSync.accept(message.hash)
     } else if (message.kind === 'anchor-resolutions') {
       handleAnchorResolutions(message)
@@ -1145,10 +1151,14 @@ export async function refreshSandboxFrameUrl(
     ? nextUrl.hash
     : (options.getHash?.() ?? window.location.hash)
   if (body.renderType === 'static_site') {
-    if (
-      normalizeStaticSiteFramePath(nextUrl.pathname) ===
-      normalizeStaticSiteFramePath(entrypointUrl.pathname)
-    ) {
+    const nextPath = normalizeStaticSiteFramePath(nextUrl.pathname)
+    // Export acquisition rejects ambiguous paths, but viewer token recovery
+    // must retain its existing URL and hash behavior for those paths.
+    const samePath =
+      nextPath === null
+        ? nextUrl.pathname === entrypointUrl.pathname
+        : nextPath === normalizeStaticSiteFramePath(entrypointUrl.pathname)
+    if (samePath) {
       nextUrl.hash = entrypointUrl.hash
     } else {
       // Redirects without a fragment inherit the request fragment. Keep a

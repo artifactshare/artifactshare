@@ -1,9 +1,14 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"settings":{"disableCSSFileLoading":true,"disableJavaScriptFileLoading":true}}
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import DOMPurify from 'dompurify'
 import * as mermaidExport from '~/lib/mermaid-export.client'
 import { isolatedPrintHtml } from './export-print-frame'
-import { inertExportDocument, sanitizeExportDocument } from './export-resources'
+import {
+  inertExportDocument,
+  sanitizeExportDocument,
+  stripExportNoscript,
+} from './export-resources'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
 import {
   prepareExportDocument,
@@ -168,7 +173,6 @@ test.each([
   '/%2e%2e/escape',
   '/safe/%2fescape',
   '/safe/%5cescape',
-  '/safe/%252e%252e/escape',
   '//example.com/path',
   '/bad%ZZ',
 ])('rejects ambiguous or escaping path %s', (path) => {
@@ -183,7 +187,7 @@ test('normalizes relative dot segments and keeps source suffixes outside endpoin
     exportAssetHref(
       'artifact-1',
       'version-1',
-      '/images/a.png?versionId=other#mark',
+      canonicalExportPath('/images/a.png?versionId=other#mark'),
       'https://artifactshare.test',
     ),
   )
@@ -1142,3 +1146,575 @@ test('namespace URL punctuation is not an at-rule terminator', async () => {
   expect(css).toContain(namespace)
   expect(resolve).toHaveBeenCalledExactlyOnceWith('/hero.png', false)
 })
+
+test.each(['100%', '100%25'])(
+  'data CSS accepts browser percent payload %s',
+  async (width) => {
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(`<link rel="stylesheet" href="data:text/css,p{width:${width}}">`),
+      new AbortController().signal,
+    )
+    expect(cssText(doc.querySelector('link')!.getAttribute('href')!)).toBe(
+      'p{width:100%}',
+    )
+  },
+)
+
+test('literal percent references are decoded exactly once before endpoint encoding', async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(
+      new Response('png', { headers: { 'content-type': 'image/png' } }),
+    )
+  vi.stubGlobal('fetch', fetch)
+  await prepareExportDocument(
+    'artifact-1',
+    data('<img src="growth%2020%25.png">'),
+    new AbortController().signal,
+  )
+  expect(fetch.mock.calls[0][0]).toContain(
+    '/export-asset/guide/growth%2020%25.png?versionId=version-1',
+  )
+})
+
+test('removes inert comments and scripting-dependent noscript before serialization', () => {
+  const doc = inertExportDocument(
+    '<p>Safe text</p><noscript><!--</noscript><meta http-equiv="refresh" content="0;url=/escape"><img src="/escape.png">--></noscript>',
+  )
+  sanitizeExportDocument(doc)
+  expect(doc.documentElement.outerHTML).not.toContain('noscript')
+  expect(doc.documentElement.outerHTML).not.toContain('<!--')
+  expect(doc.documentElement.outerHTML).not.toContain('http-equiv')
+  expect(doc.documentElement.outerHTML).toContain('Safe text')
+  expect(doc.querySelector('img')).toBeNull()
+})
+
+test.each([
+  'Survey 30%Decline.md',
+  '100%ad.png',
+  'literal%2e.md',
+  'literal%2f.md',
+  '%2e%2e',
+  'literal%252f.png',
+])('keeps non-delimiter percent sequences in stored file %s', (name) => {
+  const path = canonicalExportPath('/' + encodeURIComponent(name))
+  expect(path).toBe('/' + name)
+  expect(
+    new URL(
+      exportAssetHref(
+        'artifact-1',
+        'version-1',
+        path,
+        'https://artifactshare.test',
+      ),
+    ).pathname,
+  ).toContain(encodeURIComponent(name))
+})
+
+test.each(['-->', '--!>'])(
+  'removes a complete noscript comment before resource acquisition (%s)',
+  async (end) => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const html = `<p>Safe report</p><noscript><!--<img src="/comment.png">${end}</noscript><p>Final report</p>`
+    expect(stripExportNoscript(html)).toBe(
+      '<p>Safe report</p><p>Final report</p>',
+    )
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(html),
+      new AbortController().signal,
+      true,
+    )
+    expect(doc.querySelector('img')).toBeNull()
+    expect(doc.body.textContent).toContain('Final report')
+    expect(fetch).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  '<style>p::after{content:"<noscript>keep</noscript>"}</style>',
+  '<textarea><noscript>keep</noscript></textarea>',
+  '<div title="<noscript>keep</noscript>">Visible</div>',
+  '<!--<noscript>keep</noscript>-->',
+  '<custom.element title="<noscript>keep</noscript>">Visible</custom.element>',
+  '<div title=unquoted"<noscript>Visible</div>',
+])('does not reinterpret noscript-looking literal text: %s', (html) => {
+  expect(stripExportNoscript(html)).toBe(html)
+})
+
+test('only noscript fallback resources are discarded; real image failure is fatal', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response('', { status: 404 }))
+  vi.stubGlobal('fetch', fetch)
+  await expect(
+    prepareExportDocument(
+      'artifact-1',
+      data(
+        '<noscript><!--<img src="/comment.png">--></noscript><img src="/required.png">',
+      ),
+      new AbortController().signal,
+      true,
+    ),
+  ).rejects.toThrow('Export asset unavailable')
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(String(fetch.mock.calls[0][0])).toContain(
+    '/export-asset/required.png?versionId=version-1',
+  )
+})
+
+test('non-PDF inert preparation retains ordinary noscript fallback markup', () => {
+  const doc = inertExportDocument('<noscript><p>Fallback text</p></noscript>')
+  expect(doc.documentElement.outerHTML).toContain('noscript')
+  expect(doc.documentElement.outerHTML).toContain('Fallback text')
+})
+
+test.each([
+  [
+    '<p>Start</p><noscript><noscript></noscript><p>FINAL</p>',
+    '<p>Start</p><p>FINAL</p>',
+  ],
+  ['<p>A</ <noscript>B</p><p>FINAL</p>', '<p>A</ <noscript>B</p><p>FINAL</p>'],
+  [
+    '<p title=<noscript>Text</p><p>FINAL</p>',
+    '<p title=<noscript>Text</p><p>FINAL</p>',
+  ],
+  ['<noscript><!--</noscript><p>FINAL</p>', '<p>FINAL</p>'],
+])(
+  'preserves browser-visible content after raw-text and malformed tags: %s',
+  (html, expected) => {
+    expect(stripExportNoscript(html)).toBe(expected)
+  },
+)
+
+test('an image after a raw-text noscript closer remains a required resource', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response('', { status: 404 }))
+  vi.stubGlobal('fetch', fetch)
+  await expect(
+    prepareExportDocument(
+      'artifact-1',
+      data('<noscript><!--</noscript><img src="/required.png">--></noscript>'),
+      new AbortController().signal,
+      true,
+    ),
+  ).rejects.toThrow('Export asset unavailable')
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(String(fetch.mock.calls[0][0])).toContain(
+    '/export-asset/required.png?versionId=version-1',
+  )
+})
+
+test.each([
+  "<noscript>x</noscript ='><p>FINAL</p>",
+  "<noscript ='>x</noscript><p>FINAL</p>",
+  "<noscript a='x'='>hidden</noscript><p>FINAL</p>",
+  "<noscript /='>hidden</noscript><p>FINAL</p>",
+])('unexpected equals signs remain attribute names: %s', (html) => {
+  expect(stripExportNoscript(html)).toBe('<p>FINAL</p>')
+})
+
+test.each([
+  '<svg><noscript></svg><p>FINAL</p>',
+  '<math><noscript></math><p>FINAL</p>',
+  '<svg><noscript></svg><p>FINAL</p><noscript>Fallback</noscript>',
+  '<svg data=x/><noscript></svg><p>FINAL</p><noscript>Fallback</noscript>',
+  '<math><noscript></math><p>FINAL</p><noscript>Fallback</noscript>',
+])(
+  'rejects foreign noscript before a later closer can swallow content: %s',
+  (html) => {
+    expect(() => inertExportDocument(html, true)).toThrow(
+      'Foreign export noscript',
+    )
+  },
+)
+
+test('foreign CDATA preserves literal noscript text and trailing HTML', () => {
+  const html = '<svg><text><![CDATA[a>b<noscript>c]]></text></svg><p>FINAL</p>'
+  expect(stripExportNoscript(html)).toBe(html)
+  expect(inertExportDocument(html, true).body.textContent).toContain('FINAL')
+})
+
+test('a self-closing SVG leaves subsequent HTML noscript in HTML context', () => {
+  expect(
+    stripExportNoscript('<svg /><noscript>Fallback</noscript><p>FINAL</p>'),
+  ).toBe('<svg /><p>FINAL</p>')
+})
+
+test.each([
+  '<script><!--<script></script><noscript></script><p>FINAL</p><noscript>x</noscript>',
+  '<script><!--<ScRiPt type="text/plain"></script><noscript></script><p>FINAL</p><noscript>x</noscript>',
+])(
+  'rejects double-escaped script before losing trailing visible content: %s',
+  (html) => {
+    expect(() => inertExportDocument(html, true)).toThrow(
+      'Double-escaped export script',
+    )
+  },
+)
+
+test.each([
+  '<script><!-- legacy comment --></script>',
+  '<script><!--><script></script>',
+  '<script><!---><script></script>',
+  '<script><!-- comment --><script></script>',
+  '<script><!--<scripture></script>',
+])('ordinary script comments retain following content: %s', (script) => {
+  const html = `${script}<p>FINAL</p><noscript>Fallback</noscript>`
+  expect(stripExportNoscript(html)).toBe(`${script}<p>FINAL</p>`)
+  const doc = inertExportDocument(html, true)
+  sanitizeExportDocument(doc)
+  expect(doc.body.textContent).toContain('FINAL')
+  expect(doc.querySelector('script')).toBeNull()
+})
+
+test.each([
+  '<!DOCTYPE html PUBLIC "identifier > <noscript>" "about:legacy-compat">',
+  "<!DOCTYPE html SYSTEM 'identifier > <noscript>'>",
+])(
+  'quoted declaration text cannot swallow visible content: %s',
+  (declaration) => {
+    const html = `${declaration}<html lang="ja" class="report"><body><p>FINAL</p><noscript>Fallback</noscript></body></html>`
+    const doc = inertExportDocument(html, true)
+    expect(doc.body.textContent).toContain('FINAL')
+    expect(doc.body.textContent).not.toContain('Fallback')
+    expect(doc.documentElement.getAttribute('lang')).toBe('ja')
+    expect(doc.documentElement.getAttribute('class')).toBe('report')
+  },
+)
+
+test('an unterminated quoted doctype fails explicitly', () => {
+  expect(() =>
+    inertExportDocument(
+      '<!DOCTYPE html SYSTEM "identifier > <noscript><p>FINAL</p>',
+      true,
+    ),
+  ).toThrow('Malformed export doctype')
+})
+
+test.each([
+  'style',
+  'script',
+  'title',
+  'textarea',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+  'plaintext',
+])('foreign %s cannot skip a later HTML noscript', (tag) => {
+  for (const root of ['svg', 'math']) {
+    const html = `<${root}><${tag}></${root}><noscript><style></noscript><p>FINAL</p>`
+    expect(() => inertExportDocument(html, true)).toThrow(
+      'Ambiguous foreign export text',
+    )
+  }
+})
+
+test.each([
+  '<svg><foreignObject><div>',
+  '<svg><desc><span>',
+  '<math><mtext><span>',
+  '<math><mi><span>',
+  '<math><mo><span>',
+  '<math><mn><span>',
+  '<math><ms><span>',
+  '<math><annotation-xml encoding="text/html"><div>',
+])('CDATA in an uncertain integration context is rejected: %s', (prefix) => {
+  expect(() =>
+    inertExportDocument(
+      `${prefix}<![CDATA[></div></span></foreignObject></desc></mtext></mi></mo></mn></ms></annotation-xml></math></svg><noscript><style></noscript><p>FINAL</p>`,
+      true,
+    ),
+  ).toThrow('Ambiguous export CDATA')
+})
+
+test('ordinary SVG text and styles leave subsequent CDATA in foreign context', () => {
+  const html =
+    '<svg><title>Report</title><style>text{fill:red}</style><text><![CDATA[<noscript>literal]]></text></svg><p>FINAL</p>'
+  expect(stripExportNoscript(html)).toBe(html)
+})
+
+test('self-closing foreign text elements do not consume subsequent HTML', () => {
+  const html =
+    '<svg><title/><style/></svg><noscript><style></noscript><p>FINAL</p>'
+  expect(stripExportNoscript(html)).toBe(
+    '<svg><title/><style/></svg><p>FINAL</p>',
+  )
+})
+
+test.each(['<p>', '</p>', '</br>'])(
+  'foreign HTML error recovery cannot hide a later noscript: %s',
+  (transition) => {
+    expect(() =>
+      inertExportDocument(
+        `<svg>${transition}<![CDATA[></svg><noscript><style></noscript><p>FINAL</p>`,
+        true,
+      ),
+    ).toThrow('Ambiguous foreign export markup')
+  },
+)
+
+test('markup without noscript retains the existing inert parsing path', () => {
+  const html = '<p>Safe report</p><svg><style></svg>'
+  expect(stripExportNoscript(html)).toBe(html)
+  const doc = inertExportDocument(html, true)
+  expect(doc.body.textContent).toContain('Safe report')
+})
+
+test('deep foreign markup fails promptly before acquiring any hidden assets', async () => {
+  const fetcher = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  // More than a megabyte, with a noscript-looking comment to require the
+  // prepass. This previously monopolized the thread beyond its 30s deadline.
+  const html = `${'<svg>'.repeat(120_000)}<!--<noscript>--><noscript><img src="/hidden.png"></noscript>${'</svg>'.repeat(120_000)}`
+  const started = performance.now()
+  await expect(
+    prepareExportDocument(
+      'artifact-1',
+      data(html),
+      new AbortController().signal,
+      true,
+    ),
+  ).rejects.toThrow('Export foreign nesting limit exceeded')
+  expect(performance.now() - started).toBeLessThan(2_000)
+  expect(fetcher).not.toHaveBeenCalled()
+})
+
+test.each([
+  '<svg><foreignObject><p>x</svg></p></foreignObject><noscript></svg>',
+  '<math><mtext><p>x</math></p></mtext><noscript></math>',
+])(
+  'rejects an ancestor close across an integration point: %s',
+  async (prefix) => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(
+          `${prefix}<p>FINAL</p><noscript><img src="/hidden.png"></noscript>`,
+        ),
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow('Ambiguous foreign export closing tag')
+    expect(fetcher).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  '<svg><foreignObject><p>Text</p></foreignObject></svg>',
+  '<math><mtext><span>Text</span></mtext></math>',
+])('preserves balanced integration points: %s', (prefix) => {
+  expect(
+    stripExportNoscript(`${prefix}<p>FINAL</p><noscript>Fallback</noscript>`),
+  ).toBe(`${prefix}<p>FINAL</p>`)
+})
+
+test.each(['<?', '<!x', '</1'])(
+  'unterminated bogus comment %s consumes EOF in bounded time without fetching',
+  async (opener) => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const tail = opener.repeat(500_000)
+    const html = `<p>FINAL</p><noscript><img src="/hidden.png"></noscript>${tail}`
+    const started = performance.now()
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(html),
+      new AbortController().signal,
+      true,
+    )
+    expect(performance.now() - started).toBeLessThan(2_000)
+    expect(doc.body.textContent).toContain('FINAL')
+    expect(doc.querySelector('img')).toBeNull()
+    expect(fetcher).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  '<svg><foreignObject><div>x</foreignObject></svg></div></foreignObject>',
+  '<svg><desc><div>x</desc></svg></div></desc>',
+  '<math><mtext><div>x</mtext></math></div></mtext>',
+  '<math><annotation-xml encoding="text/html"><div>x</annotation-xml></math></div></annotation-xml>',
+])(
+  'rejects a foreign top close with HTML children still open: %s',
+  (prefix) => {
+    expect(() =>
+      stripExportNoscript(
+        `${prefix}<noscript></svg><p>FINAL</p><noscript>x</noscript>`,
+      ),
+    ).toThrow('Ambiguous foreign export closing tag')
+  },
+)
+
+test.each([
+  ['math', 'annotation-xml'],
+  ['math', 'annotation-xml encoding="text/plain"'],
+  ['math', 'desc'],
+  ['math', 'title'],
+  ['svg', 'mi'],
+  ['svg', 'mo'],
+  ['svg', 'mn'],
+  ['svg', 'ms'],
+  ['svg', 'mtext'],
+])('does not invent an integration point for %s/%s', (root, tag) => {
+  const name = tag.split(' ')[0]
+  expect(() =>
+    stripExportNoscript(
+      `<${root}><${tag}><div>x</div></${name}><![CDATA[><svg>]]></${root}><noscript></svg><p>FINAL</p><noscript>x</noscript>`,
+    ),
+  ).toThrow(/Ambiguous foreign export (markup|text)/)
+})
+
+test.each(['text/html', 'application/xhtml+xml', 'TEXT/HTML', 'text&#47;html'])(
+  'preserves balanced HTML in a MathML annotation with encoding %s',
+  (encoding) => {
+    const prefix = `<math><annotation-xml encoding="${encoding}"><div>Text</div></annotation-xml></math><p>FINAL</p>`
+    expect(stripExportNoscript(`${prefix}<noscript>Fallback</noscript>`)).toBe(
+      prefix,
+    )
+  },
+)
+
+test.each(['svg', 'math'])(
+  'nested %s without noscript has a linear sanitizer traversal budget',
+  (kind) => {
+    const child =
+      kind === 'svg' ? '<g><text>Visible</text></g>' : '<mrow><mi>x</mi></mrow>'
+    const html = `${`<${kind}>`.repeat(100)}${child.repeat(1_000)}${`</${kind}>`.repeat(100)}<p>FINAL</p>`
+    const doc = inertExportDocument(html, true)
+    const nodeCount = doc.querySelectorAll('*').length
+    // happy-dom does not support this DOMPurify in-place namespace path; the
+    // browser suite runs the real sanitizer. Here measure the submitted work.
+    const sanitizer = vi.spyOn(DOMPurify, 'sanitize').mockReturnValue('')
+    sanitizeExportDocument(doc)
+    // Count the subtree work submitted to the sanitizer, not just elapsed
+    // time. Rewalking every nested root exceeds this budget at any CPU speed.
+    const visited = sanitizer.mock.calls.reduce(
+      (total, [root]) =>
+        total + (root as Element).querySelectorAll('*').length + 1,
+      0,
+    )
+    expect(visited).toBeGreaterThan(1_000)
+    expect(visited).toBeLessThanOrEqual(2 * nodeCount)
+    expect(doc.body.textContent).toContain('FINAL')
+    expect(doc.querySelectorAll(kind === 'svg' ? 'text' : 'mi')).toHaveLength(
+      1_000,
+    )
+  },
+)
+
+test.each(['x', '界'])(
+  'rejects oversized %s source before parsing or asset acquisition',
+  async (character) => {
+    const createElement = vi.spyOn(document, 'createElement')
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const source = character.repeat(
+      character === 'x' ? 32 * 1024 * 1024 + 1 : 12 * 1024 * 1024,
+    )
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(source),
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow('Export exceeds resource budget')
+    expect(createElement).not.toHaveBeenCalled()
+    expect(fetcher).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  ['svg', 'foreignObject', 'svg'],
+  ['svg', 'desc', 'math'],
+  ['math', 'mtext', 'svg'],
+  ['math', 'mi', 'math'],
+])(
+  'rejects HTML ancestor closes across %s/%s/%s before losing FINAL',
+  async (root, integration, nested) => {
+    const html = `<${root}><${integration}><div><${nested}></div><section></${nested}></div></${integration}></${root}></section><![CDATA[><noscript>]]></${root}><p id="pdf-final-marker">FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`
+    expect(() => stripExportNoscript(html)).toThrow(
+      'Ambiguous foreign export closing tag',
+    )
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(html),
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow('Ambiguous foreign export closing tag')
+    expect(fetcher).not.toHaveBeenCalled()
+  },
+)
+
+test('balanced nested roots release HTML ancestor names without losing siblings', () => {
+  const html =
+    '<svg><foreignObject><div><svg><g></g></svg></div><div><div><math><mi>x</mi></math></div></div><svg><g></g></svg></foreignObject></svg><p>FINAL</p>'
+  expect(stripExportNoscript(`${html}<noscript>Fallback</noscript>`)).toBe(html)
+})
+
+test.each([
+  ['div', 'svg'],
+  ['span', 'math'],
+  ['section', 'svg'],
+  ['b', 'math'],
+  ['custom-report', 'svg'],
+])(
+  'rejects closing outer HTML %s across %s before misreading CDATA',
+  async (ancestor, root) => {
+    const html = `<${ancestor}><${root}></${ancestor}><![CDATA[><noscript>]]></${root}><p id="pdf-final-marker">FINAL</p><noscript><img src="/__pdf_probe_noscript"></noscript>`
+    expect(() => stripExportNoscript(html)).toThrow(
+      'Ambiguous foreign export closing tag',
+    )
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(html),
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow('Ambiguous foreign export closing tag')
+    expect(fetcher).not.toHaveBeenCalled()
+  },
+)
+
+test('balanced outer HTML ancestors and repeated names retain final content', () => {
+  const html =
+    '<section><div><div><svg><g><text>Visible</text></g></svg></div><math><mi>x</mi></math></div></section><a>Closed link</a><svg><a><text>Sibling</text></a></svg><p>FINAL</p>'
+  expect(stripExportNoscript(`${html}<noscript>Fallback</noscript>`)).toBe(html)
+})
+
+test.each(['p', 'li'])(
+  'ordinary omitted %s end tags do not consume the foreign nesting budget',
+  (tag) => {
+    const content = `<${tag}>Report item`.repeat(300)
+    const suffix = '<svg><a><text>Visible link</text></a></svg><p>FINAL</p>'
+    expect(
+      stripExportNoscript(`${content}${suffix}<noscript>Fallback</noscript>`),
+    ).toBe(`${content}${suffix}`)
+  },
+)
+
+test.each([
+  ['<h2><svg>', 'h3'],
+  ['<table><td><svg>', 'tr'],
+  ['<table><td><svg>', 'tbody'],
+  ['<table><svg>', 'td'],
+])(
+  'refuses uncertain HTML recovery inside foreign content: %s / %s',
+  (prefix, end) => {
+    expect(() =>
+      stripExportNoscript(
+        `${prefix}</${end}></svg><p>FINAL</p><noscript>Fallback</noscript>`,
+      ),
+    ).toThrow('Ambiguous foreign export closing tag')
+  },
+)

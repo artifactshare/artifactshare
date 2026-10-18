@@ -2181,16 +2181,21 @@ function useViewerShellController({
   const exportResetKey = `${artifact.id}:${artifact.currentVersionId ?? ''}:${initialExportPath}`
   const [frameExportState, setFrameExportState] = useState<{
     key: string
-    path: string | null
-  }>(() => ({ key: exportResetKey, path: null }))
+    path: string | null | undefined
+  }>(() => ({ key: exportResetKey, path: undefined }))
   let currentFrameExportPath = frameExportState.path
   if (frameExportState.key !== exportResetKey) {
-    currentFrameExportPath = null
-    setFrameExportState({ key: exportResetKey, path: null })
+    currentFrameExportPath = undefined
+    setFrameExportState({ key: exportResetKey, path: undefined })
   }
-  const currentExportPath = currentFrameExportPath ?? initialExportPath
+  // Undefined means no navigation yet; null means the selected URL is invalid.
+  // Never substitute the entrypoint or an encoded literal filename on failure.
+  const currentExportPath =
+    currentFrameExportPath === undefined
+      ? initialExportPath
+      : currentFrameExportPath
   const setFrameExportPath = useCallback(
-    (path: string) => {
+    (path: string | null) => {
       setFrameExportState({ key: exportResetKey, path })
     },
     [exportResetKey],
@@ -2216,7 +2221,10 @@ function useViewerShellController({
         toast.error(t('toast.exportUnsupported'))
         return false
       }
-      const fetched = await fetchExportSource(artifact.id, currentExportPath)
+      const fetched =
+        currentExportPath === null
+          ? { ok: false as const, reason: 'unavailable' as const }
+          : await fetchExportSource(artifact.id, currentExportPath)
       if (!fetched.ok) {
         toast.error(
           fetched.reason === 'unsupported'

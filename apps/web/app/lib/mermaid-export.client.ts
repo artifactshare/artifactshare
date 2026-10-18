@@ -78,7 +78,6 @@ export async function renderExportMermaidSvg(
     addEventListener('message', async (event) => {
       if (event.source !== parent || event.data?.channel !== ${JSON.stringify(channel)}
           || typeof event.data.source !== 'string') return;
-      if (!event.data.source.trim() || event.data.source.length > 20000) return;
       try {
         if (typeof mermaid === 'undefined' || typeof mermaid.render !== 'function' || typeof mermaid.parse !== 'function') {
           adapterFailed = true;
@@ -88,6 +87,10 @@ export async function renderExportMermaidSvg(
           layout:'dagre', theme:'default', look:'classic', startOnLoad:false,
           securityLevel:'strict', suppressErrorRendering:true, htmlLabels:false
         }); } catch (error) { adapterFailed = true; throw error; }
+      if (!event.data.source.trim() || event.data.source.length > 20000) {
+        parent.postMessage({channel:${JSON.stringify(channel)}, kind:'invalid-source'}, '*');
+        return;
+      }
         try {
           await mermaid.parse(event.data.source);
         } catch {

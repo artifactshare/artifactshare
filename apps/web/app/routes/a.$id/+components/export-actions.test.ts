@@ -116,3 +116,34 @@ test.each([400, 401, 403, 404, 409, 500])(
     })
   },
 )
+
+test.each([undefined, 'version-1'])(
+  'source acquisition encodes stored percent names once (version %s)',
+  async (versionId) => {
+    vi.stubGlobal('window', {
+      location: { origin: 'https://artifactshare.test' },
+    })
+    const fetch = vi.fn().mockResolvedValue(new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
+    await fetchExportSource('artifact-1', '/growth 20%.md', versionId)
+    expect(fetch.mock.calls[0][0].searchParams.get('path')).toBe(
+      '/growth%2020%25.md',
+    )
+  },
+)
+
+test.each(['/a%2fb.html', '/%2e%2e/a.html', '/a%5cb.html'])(
+  'ambiguous frame path %s cannot select a different literal stored filename',
+  (path) => {
+    expect(normalizeStaticSiteFramePath(path)).toBeNull()
+  },
+)
+
+test.each(['literal%2f.html', 'literal%2e.html', 'literal%.html'])(
+  'frame paths decode literal stored name %s exactly once',
+  (name) => {
+    expect(normalizeStaticSiteFramePath('/' + encodeURIComponent(name))).toBe(
+      '/' + name,
+    )
+  },
+)
