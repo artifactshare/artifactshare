@@ -545,6 +545,134 @@ test.each([2, 3])(
   },
 )
 
+test.each([127, 128])(
+  'counts %i literal images matching renderer output',
+  async (copies) => {
+    const uri = 'data:image/png;base64,cG5n'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('png', { headers: { 'content-type': 'image/png' } }),
+      ),
+    )
+    vi.spyOn(mermaidExport, 'renderExportMermaidSvg').mockImplementation(
+      async (_source, _signal, acquire) =>
+        `<svg xmlns="http://www.w3.org/2000/svg"><image href="${await acquire!('image.png')}"/></svg>`,
+    )
+    const result = prepareExportDocument(
+      'artifact-1',
+      {
+        ...data(''),
+        kind: 'markdown',
+        renderedHtml:
+          '<body data-artifact-markdown>' +
+          `<img src="${uri}">`.repeat(copies) +
+          '<pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      },
+      AbortSignal.timeout(5000),
+    )
+    if (copies === 127)
+      expect((await result).querySelectorAll('img, image')).toHaveLength(128)
+    else await expect(result).rejects.toThrow('Too many export assets')
+  },
+)
+
+test.each([
+  'https://user@example.com/image.png',
+  'https://:pass@example.com/image.png',
+])(
+  'rejects credential URL before invoking even a permissive fetch: %s',
+  async (url) => {
+    const fetch = vi.fn(
+      async () =>
+        new Response('png', { headers: { 'content-type': 'image/png' } }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(`<img src="${url}">`),
+        AbortSignal.timeout(1000),
+      ),
+    ).rejects.toThrow('Unsafe external asset')
+    expect(fetch).not.toHaveBeenCalled()
+    await prepareExportDocument(
+      'artifact-1',
+      data('<img src="https://example.com/image.png">'),
+      AbortSignal.timeout(1000),
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+  },
+)
+
+test.each([6, 10])(
+  'counts literal copies alongside %i prepared Mermaid image references',
+  async (diagrams) => {
+    const uri = 'data:image/png;base64,cG5n'
+    const html =
+      '<body data-artifact-markdown>' +
+      `<img src="${uri}">`.repeat(4) +
+      '<pre><code class="language-mermaid">flowchart LR</code></pre>'.repeat(
+        diagrams,
+      ) +
+      '</body>'
+    const mib = 1024 * 1024
+    const encode = TextEncoder.prototype.encode
+    vi.spyOn(TextEncoder.prototype, 'encode').mockImplementation(
+      function (this: TextEncoder, input) {
+        const bytes = encode.call(this, input)
+        // Four literal 6 MiB URIs plus markup fit below 25 MiB. Each renderer
+        // returns one 6 MiB URI, below its independent 8 MiB SVG limit.
+        if (input === html)
+          Object.defineProperty(bytes, 'length', { value: 25 * mib })
+        if (input === uri)
+          Object.defineProperty(bytes, 'byteLength', { value: 6 * mib })
+        return bytes
+      },
+    )
+    const fetchMock = vi.fn(async () => {
+      const chunk = new TextEncoder().encode('png')
+      // The cached base64 image models 4.5 MiB of acquired bytes; source plus
+      // acquisition is 29.5 MiB, independently below the 32 MiB limit.
+      Object.defineProperty(chunk, 'byteLength', { value: 4.5 * mib })
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(chunk)
+            controller.close()
+          },
+        }),
+        { headers: { 'content-type': 'image/png' } },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(mermaidExport, 'renderExportMermaidSvg').mockImplementation(
+      async (_source, _signal, acquire) =>
+        `<svg xmlns="http://www.w3.org/2000/svg"><image href="${await acquire!('image.png')}"/></svg>`,
+    )
+    const result = prepareExportDocument(
+      'artifact-1',
+      {
+        ...data(''),
+        kind: 'markdown',
+        renderedHtml: html,
+      },
+      AbortSignal.timeout(5000),
+    )
+    if (diagrams === 6) {
+      const doc = await result
+      expect(doc.querySelectorAll('img, image')).toHaveLength(10)
+      expect(
+        Array.from(doc.querySelectorAll('image'), (el) =>
+          el.getAttribute('href'),
+        ),
+      ).toEqual(Array(6).fill(uri))
+    } else await expect(result).rejects.toThrow('embedded resource budget')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  },
+)
+
 test('new nested data images retain sanitization and resource budgets', async () => {
   const nested =
     'data:text/css,' +

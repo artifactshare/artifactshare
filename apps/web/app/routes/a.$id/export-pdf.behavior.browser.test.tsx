@@ -1091,6 +1091,7 @@ test.each(['application', 'credentials', 'redirect', 'allowed'])(
         base64: true,
       },
     ])
+    const fetchSpy = vi.spyOn(window, 'fetch')
     let intercepted = 0
     // Mutate only the payload of the actual realm's event before the product
     // listener: WindowProxy, opaque origin, channel and sequence stay intact.
@@ -1115,6 +1116,21 @@ test.each(['application', 'credentials', 'redirect', 'allowed'])(
       } else {
         await expect(result).rejects.toThrow('forbidden resource')
         expect(printSpy).not.toHaveBeenCalled()
+      }
+      if (kind === 'application' || kind === 'credentials') {
+        // Observe invocation before native fetch can reject credentialed URLs.
+        expect(fetchSpy.mock.calls.some(([url]) => String(url) === ref)).toBe(
+          false,
+        )
+      } else if (kind === 'allowed') {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          original,
+          expect.objectContaining({
+            credentials: 'omit',
+            redirect: 'error',
+            mode: 'cors',
+          }),
+        )
       }
       expect(intercepted).toBe(1)
       expect(await server.commands.exportPdfObservation('read')).toEqual([])

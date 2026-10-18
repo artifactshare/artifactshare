@@ -20,6 +20,15 @@ Preparation keeps raw markup in a template-owned, disconnected tree. SVG is
 sanitized in place there. Source markup and styles never enter the application
 or popup document. Markdown diagrams retain the shared strict Mermaid renderer,
 its 20,000-character and 16-diagram limits, and sanitized SVG output.
+A separate network-denied opaque preparation realm runs only the trusted Mermaid
+bundle and its adapter. Artifact-derived temporary rendering DOM stays in that
+realm. Image materialization calls the parent acquisition closure, fixed to the
+authorized artifact, version and canonical path. That closure rejects application
+origin URLs, credentialed URLs and redirects; external images use anonymous HTTPS
+CORS acquisition under the same budgets, cancellation and cleanup as other assets.
+The preparation realm has no direct network authority and cannot select an
+artifact, version or application operation. The final print-content frame remains
+measurement-only: it cannot request resources or actions.
 
 Authenticated acquisition uses only the fixed source and asset endpoints for the
 selected artifact and exact source version. Asset lookups also constrain version
@@ -39,7 +48,12 @@ on embedded resources; external query strings retain their usual meaning.
 CSS imports are recursively rewritten relative to their own stylesheet paths,
 including root-relative references. Import conditions remain intact. Cycles fail
 explicitly. Limits are 12 nested resource levels, 128 acquisitions/inline resource
-references, 32 MiB of source and acquired bytes, and 64 MiB of expanded embedded resource references. Initial PDF preparation has
+references, 32 MiB of source and acquired bytes, and 64 MiB of expanded embedded
+resource references. Each validated Mermaid image acquisition charges its embedded
+URI and grants one consumable reference credit for the subsequent document pass.
+Matching literal images and extra references consume at most those paid credits;
+all remaining references count toward the inline-reference and expanded-byte
+limits. Cached acquisition does not exempt repeated embedded bytes. Initial PDF preparation has
 a 30-second deadline. Each measurement has a 10-second deadline; each repeat
 print has a 40-second deadline, excluding time spent in the native print dialog.
 Artifact print media types are applied during preparation, including stylesheet and picture source
@@ -58,7 +72,7 @@ layouts fail explicitly instead of printing clipped content. Images are decoded,
 frames. Invalid or missing measurements fail rather than printing a partial
 result. Closing or navigating the popup aborts preparation.
 
-Frame startup waits for a channel-bound acknowledgment from the nonce helper,
+Final print-content frame startup waits for a channel-bound acknowledgment from the nonce helper,
 not an initial empty-document load event. Startup has a ten-second deadline.
 The parent accepts messages only from the exact frame WindowProxy, opaque
 `null` origin, unpredictable export channel and current sequence. Measurements

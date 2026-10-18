@@ -438,9 +438,9 @@ async function prepareDocument(
       throw new Error('Export exceeds embedded resource budget')
     return uri
   }
-  // Only exact image outputs already acquired, validated and charged by this
-  // export may bypass the second renderer-output acquisition pass.
-  const preparedImages = new Set<string>()
+  // Each acquired, validated renderer image pays for one embedded reference.
+  // Consume that credit once: matching literal or extra references still count.
+  const preparedImageCredits = new Map<string, number>()
   const cache = new Map<string, Promise<string>>()
   const origin = window.location.origin
   const dependencies = new Map<string, Set<string>>()
@@ -455,7 +455,11 @@ async function prepareDocument(
     if (!value || value.startsWith('#')) return value
     if (ancestors.length >= MAX_DEPTH)
       throw new Error('Deeply nested export resources')
-    if (!css && preparedImages.has(value)) return value
+    const credit = !css ? (preparedImageCredits.get(value) ?? 0) : 0
+    if (credit > 0) {
+      preparedImageCredits.set(value, credit - 1)
+      return value
+    }
     if (/^data:/i.test(value)) {
       embedded(value)
       if (++count > MAX_RESOURCES) throw new Error('Too many export assets')
@@ -706,7 +710,7 @@ async function prepareDocument(
   await renderMermaidInDocument(doc, data.kind === 'markdown', (source) =>
     renderExportMermaidSvg(source, signal, async (ref) => {
       const uri = await resource(ref, data.path)
-      preparedImages.add(uri)
+      preparedImageCredits.set(uri, (preparedImageCredits.get(uri) ?? 0) + 1)
       return uri
     }),
   )
