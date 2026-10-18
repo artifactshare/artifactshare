@@ -68,7 +68,11 @@ function appendMermaidSvg(
 export async function renderMermaidInDocument(
   doc: MermaidDocument,
   trustedMarkdown: boolean,
-  render: (source: string) => Promise<string> = renderMermaidSvg,
+  render: (
+    source: string,
+    pre: HTMLElement,
+  ) => Promise<string> = renderMermaidSvg,
+  onInserted?: (pre: HTMLElement, container: HTMLElement) => void,
 ): Promise<void> {
   if (!trustedMarkdown || !doc.body.hasAttribute('data-artifact-markdown'))
     return
@@ -90,7 +94,7 @@ export async function renderMermaidInDocument(
     const results = await pending
     if (pre.dataset.mermaidRendered === 'true') return results
     try {
-      results.push({ pre, svg: await render(source) })
+      results.push({ pre, svg: await render(source, pre) })
     } catch (error) {
       if (error instanceof Error && error.name === 'MermaidResourceError')
         throw error
@@ -107,6 +111,7 @@ export async function renderMermaidInDocument(
       result.pre.dataset.mermaidRendered = 'true'
       result.pre.hidden = true
       result.pre.parentNode?.insertBefore(container, result.pre)
+      onInserted?.(result.pre, container)
     } catch {
       result.pre.classList.add('mermaid-error')
     }

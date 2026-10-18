@@ -2202,7 +2202,7 @@ function useViewerShellController({
       backgroundHint: t('export.printBackgroundHint'),
       preparing: t('export.printPreparing'),
       heightLimited: t('export.printHeightLimited'),
-      failed: t('toast.exportExtractFailed'),
+      failed: t('toast.exportPdfFailed'),
     }),
     [t],
   )
@@ -2221,7 +2221,9 @@ function useViewerShellController({
         toast.error(
           fetched.reason === 'unsupported'
             ? t('toast.exportUnsupported')
-            : t('toast.exportExtractFailed'),
+            : action === 'pdf'
+              ? t('toast.exportPdfFailed')
+              : t('toast.exportExtractFailed'),
         )
         return false
       }
@@ -2232,7 +2234,9 @@ function useViewerShellController({
         toast.error(
           action === 'copy'
             ? t('toast.exportCopyFailed')
-            : t('toast.exportExtractFailed'),
+            : action === 'pdf'
+              ? t('toast.exportPdfFailed')
+              : t('toast.exportExtractFailed'),
         )
         return false
       }

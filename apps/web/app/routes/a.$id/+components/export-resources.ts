@@ -438,9 +438,10 @@ async function prepareDocument(
       throw new Error('Export exceeds embedded resource budget')
     return uri
   }
-  // Each acquired, validated renderer image pays for one embedded reference.
-  // Consume that credit once: matching literal or extra references still count.
-  const preparedImageCredits = new Map<string, number>()
+  // Credits belong only to surviving references in the diagram that acquired them.
+  // DOM identity is trusted provenance; artifact attributes and URI equality are not.
+  const diagramCredits = new WeakMap<HTMLElement, Map<string, number>>()
+  const preparedImageReferences = new WeakMap<Element, Map<string, string>>()
   const cache = new Map<string, Promise<string>>()
   const origin = window.location.origin
   const dependencies = new Map<string, Set<string>>()
@@ -455,11 +456,6 @@ async function prepareDocument(
     if (!value || value.startsWith('#')) return value
     if (ancestors.length >= MAX_DEPTH)
       throw new Error('Deeply nested export resources')
-    const credit = !css ? (preparedImageCredits.get(value) ?? 0) : 0
-    if (credit > 0) {
-      preparedImageCredits.set(value, credit - 1)
-      return value
-    }
     if (/^data:/i.test(value)) {
       embedded(value)
       if (++count > MAX_RESOURCES) throw new Error('Too many export assets')
@@ -640,7 +636,7 @@ async function prepareDocument(
           : []),
       ]) {
         const value = el.getAttribute(attr)
-        if (value)
+        if (value && preparedImageReferences.get(el)?.get(attr) !== value)
           pending.push(
             resource(value, base, false, ancestors).then((uri) =>
               el.setAttribute(attr, uri),
@@ -707,12 +703,34 @@ async function prepareDocument(
     }
     await Promise.all(pending)
   }
-  await renderMermaidInDocument(doc, data.kind === 'markdown', (source) =>
-    renderExportMermaidSvg(source, signal, async (ref) => {
-      const uri = await resource(ref, data.path)
-      preparedImageCredits.set(uri, (preparedImageCredits.get(uri) ?? 0) + 1)
-      return uri
-    }),
+  await renderMermaidInDocument(
+    doc,
+    data.kind === 'markdown',
+    (source, pre) => {
+      const credits = new Map<string, number>()
+      diagramCredits.set(pre, credits)
+      return renderExportMermaidSvg(source, signal, async (ref) => {
+        const uri = await resource(ref, data.path)
+        credits.set(uri, (credits.get(uri) ?? 0) + 1)
+        return uri
+      })
+    },
+    (pre, container) => {
+      const credits = diagramCredits.get(pre)!
+      for (const el of container.querySelectorAll('image')) {
+        for (const attr of ['href', 'xlink:href']) {
+          const uri = el.getAttribute(attr)
+          if (!uri) continue
+          const credit = credits.get(uri) ?? 0
+          if (!credit) continue
+          credits.set(uri, credit - 1)
+          const references = preparedImageReferences.get(el) ?? new Map()
+          references.set(attr, uri)
+          preparedImageReferences.set(el, references)
+        }
+      }
+      diagramCredits.delete(pre)
+    },
   )
   signal.throwIfAborted()
   // Renderer output is still untrusted resource-bearing content.

@@ -841,6 +841,7 @@
   "toast.linkUnavailableInDocument": "That file is not included in this share.",
   "toast.linkRecoveryFailed": "The link could not be reopened. Reload the share and try again.",
   "toast.exportUnsupported": "This file type does not support export.",
+  "toast.exportPdfFailed": "Could not prepare this file for PDF export.",
   "toast.exportExtractFailed": "Could not extract Markdown from this file.",
   "toast.exportCopied": "Markdown copied.",
   "toast.exportCopyFailed": "Could not copy Markdown.",

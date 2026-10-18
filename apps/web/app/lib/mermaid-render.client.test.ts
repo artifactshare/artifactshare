@@ -57,7 +57,10 @@ describe('renderMermaidInDocument', () => {
     await expect(renderMermaidInDocument(doc, true, isolated)).rejects.toBe(
       error,
     )
-    expect(isolated).toHaveBeenCalledWith('flowchart LR\nA --> B')
+    expect(isolated).toHaveBeenCalledWith(
+      'flowchart LR\nA --> B',
+      doc.querySelector('pre'),
+    )
     expect(render).not.toHaveBeenCalled()
     expect(doc.querySelector('pre')!.hidden).toBe(false)
   })

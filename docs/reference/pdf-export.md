@@ -50,10 +50,13 @@ including root-relative references. Import conditions remain intact. Cycles fail
 explicitly. Limits are 12 nested resource levels, 128 acquisitions/inline resource
 references, 32 MiB of source and acquired bytes, and 64 MiB of expanded embedded
 resource references. Each validated Mermaid image acquisition charges its embedded
-URI and grants one consumable reference credit for the subsequent document pass.
-Matching literal images and extra references consume at most those paid credits;
-all remaining references count toward the inline-reference and expanded-byte
-limits. Cached acquisition does not exempt repeated embedded bytes. Initial PDF preparation has
+URI and grants one consumable reference credit to the acquiring diagram. During
+the subsequent document pass, only surviving, validated image references in that
+diagram's inserted SVG can use its credits to avoid double charging. Credits from
+fallback or dropped output, and any unused credits, cannot subsidize literal
+images or another diagram. All ordinary artifact literal images and extra or
+unmatched references count toward the inline-reference and expanded-byte limits.
+Cached acquisition does not exempt repeated embedded bytes. Initial PDF preparation has
 a 30-second deadline. Each measurement has a 10-second deadline; each repeat
 print has a 40-second deadline, excluding time spent in the native print dialog.
 Artifact print media types are applied during preparation, including stylesheet and picture source

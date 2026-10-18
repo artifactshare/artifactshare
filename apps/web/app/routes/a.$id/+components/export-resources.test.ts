@@ -578,6 +578,56 @@ test.each([127, 128])(
   },
 )
 
+test.each(['dropped', 'invalid-svg', 'render-failure', 'extra-reference'])(
+  'unused credits cannot subsidize literal images after %s',
+  async (outcome) => {
+    const uri = 'data:image/png;base64,cG5n'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('png', { headers: { 'content-type': 'image/png' } }),
+      ),
+    )
+    vi.spyOn(mermaidExport, 'renderExportMermaidSvg').mockImplementation(
+      async (_source, _signal, acquire) => {
+        await acquire!('image.png')
+        if (outcome === 'render-failure') throw new Error('Invalid diagram')
+        if (outcome === 'invalid-svg') return '<not-svg/>'
+        return `<svg xmlns="http://www.w3.org/2000/svg">${
+          outcome === 'extra-reference'
+            ? `<image href="${uri}"/><image href="${uri}"/>`
+            : ''
+        }</svg>`
+      },
+    )
+    const prepare = (copies: number) =>
+      prepareExportDocument(
+        'artifact-1',
+        {
+          ...data(''),
+          kind: 'markdown',
+          renderedHtml:
+            '<body data-artifact-markdown>' +
+            `<img class="mermaid-diagram" src="${uri}">`.repeat(copies) +
+            '<pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+        },
+        AbortSignal.timeout(5000),
+      )
+    const valid = await prepare(outcome === 'extra-reference' ? 126 : 127)
+    expect(valid.querySelectorAll('img')).toHaveLength(
+      outcome === 'extra-reference' ? 126 : 127,
+    )
+    if (outcome === 'render-failure' || outcome === 'invalid-svg')
+      expect(
+        valid.querySelector('pre')?.classList.contains('mermaid-error'),
+      ).toBe(true)
+    await expect(
+      prepare(outcome === 'extra-reference' ? 127 : 128),
+    ).rejects.toThrow('Too many export assets')
+  },
+)
+
 test.each([
   'https://user@example.com/image.png',
   'https://:pass@example.com/image.png',
