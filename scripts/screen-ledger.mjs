@@ -239,6 +239,24 @@ export function validateLedger(
         throw new Error(
           `reseedBeforeCapture requires a scenario and a boolean: ${screen.id}/${state.id}`,
         )
+      const popupInteractions = (state.setup?.interactions ?? []).filter(
+        (item) => item.action === 'openPrintPopup',
+      )
+      if (
+        popupInteractions.length > 1 ||
+        popupInteractions.some(
+          (item) =>
+            screen.id !== 'viewer' ||
+            !item.selector?.trim() ||
+            !['preparing', 'ready', 'height-limited', 'failed'].includes(
+              item.state,
+            ) ||
+            state.setup.interactions.at(-1) !== item,
+        )
+      )
+        throw new Error(
+          `invalid print popup interaction: ${screen.id}/${state.id}`,
+        )
       if (state.setup?.scenario && !scenarioAllowlist.has(state.setup.scenario))
         throw new Error(`unknown scenario: ${state.setup.scenario}`)
       if (

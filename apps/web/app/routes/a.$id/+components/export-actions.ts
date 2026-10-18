@@ -1,6 +1,14 @@
-import { splitAssetRef } from '~/lib/asset-ref'
 import type { ArtifactType } from '~/lib/artifact-type'
-import { renderMermaidInDocument } from '~/lib/mermaid-render.client'
+import {
+  prepareExportDocument,
+  loadPrintFont,
+  EXPORT_TIMEOUT,
+  PRINT_VIEWPORT_WIDTH,
+  PRINT_VIEWPORT_HEIGHT,
+  withExportDeadline,
+} from './export-resources'
+import { isolatedPrintHtml, installPrintRelay } from './export-print-frame'
+import { exportAssetHref, exportEndpointRoot } from '~/lib/export-path'
 
 export type ExportSourceData = {
   kind: 'markdown' | 'html'
@@ -16,11 +24,12 @@ export type ExportPrintLabels = {
   savePdf: string
   backgroundHint: string
   preparing: string
+  failed?: string
   heightLimited: string
 }
 
 const READABILITY_BASE_ORIGIN = 'https://artifactshare.local'
-const PRINT_PAGE_WIDTH = 900
+const PRINT_PAGE_WIDTH = PRINT_VIEWPORT_WIDTH
 const PRINT_HEIGHT_EXTRA = 760
 const PRINT_HEIGHT_LIMIT = 32_000
 
@@ -65,190 +74,51 @@ export function htmlDownloadFileName(fileName: string): string {
   return `${stem}.html`
 }
 
-export async function resolveExportHtml(
+export function resolveExportHtml(
   shareableId: string,
   data: ExportSourceData,
 ): Promise<string | null> {
-  const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
-  if (!sourceHtml) return null
-  if (!sourceHtml.trim()) return null
-  const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
-  await renderMermaidInDocument(doc, data.kind === 'markdown')
-  await inlineDocumentAssets(doc, shareableId, data.path)
-  return `<!doctype html>\n${doc.documentElement.outerHTML}`
-}
-
-async function inlineDocumentAssets(
-  doc: Document,
-  shareableId: string,
-  pagePath: string,
-): Promise<void> {
-  const pending = new Map<string, Promise<string | null>>()
-
-  function enqueue(rawUrl: string): void {
-    const path = resolveRelativeAssetPath(rawUrl, pagePath)
-    if (!path || pending.has(path)) return
-    pending.set(path, fetchAssetDataUri(shareableId, path))
-  }
-
-  doc.querySelectorAll('[src], [poster]').forEach((el) => {
-    for (const attr of ['src', 'poster']) {
-      const v = el.getAttribute(attr)
-      if (v) enqueue(v)
-    }
-  })
-  doc.querySelectorAll('link[href]').forEach((el) => {
-    if (isStylesheetLink(el)) enqueue(el.getAttribute('href') ?? '')
-  })
-  doc.querySelectorAll('[srcset]').forEach((el) => {
-    for (const c of (el.getAttribute('srcset') ?? '').split(',')) {
-      const url = c.trim().split(/\s+/)[0]
-      if (url) enqueue(url)
-    }
-  })
-  const cssUrlRe = /url\(["']?((?!data:)[^"')]+)["']?\)/gi
-  doc.querySelectorAll('style').forEach((el) => {
-    for (const m of (el.textContent ?? '').matchAll(cssUrlRe)) enqueue(m[1])
-  })
-  doc.querySelectorAll('[style]').forEach((el) => {
-    for (const m of (el.getAttribute('style') ?? '').matchAll(cssUrlRe))
-      enqueue(m[1])
-  })
-
-  if (pending.size === 0) return
-
-  const resolved = new Map<string, string>()
-  await Promise.all(
-    Array.from(pending).map(async ([path, p]) => {
-      const uri = await p
-      if (uri) resolved.set(path, uri)
-    }),
-  )
-
-  function lookup(rawUrl: string): string | null {
-    const path = resolveRelativeAssetPath(rawUrl, pagePath)
-    return path ? (resolved.get(path) ?? null) : null
-  }
-
-  doc.querySelectorAll('[src], [poster]').forEach((el) => {
-    for (const attr of ['src', 'poster']) {
-      const v = el.getAttribute(attr)
-      if (!v) continue
-      const uri = lookup(v)
-      if (uri) el.setAttribute(attr, uri)
-    }
-  })
-  doc.querySelectorAll('link[href]').forEach((el) => {
-    if (!isStylesheetLink(el)) return
-    const uri = lookup(el.getAttribute('href') ?? '')
-    if (uri) el.setAttribute('href', uri)
-  })
-  doc.querySelectorAll('[srcset]').forEach((el) => {
-    const raw = el.getAttribute('srcset') ?? ''
-    el.setAttribute(
-      'srcset',
-      raw
-        .split(',')
-        .map((c) => {
-          const [url, ...desc] = c.trim().split(/\s+/)
-          if (!url) return c
-          const uri = lookup(url)
-          return uri ? [uri, ...desc].join(' ') : c
-        })
-        .join(', '),
+  const source = data.kind === 'markdown' ? data.renderedHtml : data.source
+  if (!source?.trim()) return Promise.resolve(null)
+  return withExportDeadline(async (signal) => {
+    const doc = await prepareExportDocument(shareableId, data, signal)
+    // This access check must happen after the last acquisition/rendering await.
+    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
+    const current = await fetchExportSource(
+      shareableId,
+      data.path,
+      data.versionId,
+      signal,
     )
-  })
-  function replaceCssUrls(css: string): string {
-    return css.replace(
-      /url\(["']?((?!data:)[^"')]+)["']?\)/gi,
-      (match, url) => {
-        const uri = lookup(url)
-        return uri ? `url("${uri}")` : match
-      },
-    )
-  }
-  doc.querySelectorAll('style').forEach((el) => {
-    el.textContent = replaceCssUrls(el.textContent ?? '')
-  })
-  doc.querySelectorAll('[style]').forEach((el) => {
-    el.setAttribute('style', replaceCssUrls(el.getAttribute('style') ?? ''))
+    if (!current.ok) throw new Error('Export snapshot unavailable')
+    return `<!doctype html>\n${doc.documentElement.outerHTML}`
   })
 }
 
-function resolveRelativeAssetPath(
-  rawUrl: string,
-  pagePath: string,
-): string | null {
-  const url = stripQueryAndHash(rawUrl.trim())
-  if (
-    !url ||
-    url.startsWith('data:') ||
-    url.startsWith('http:') ||
-    url.startsWith('https:') ||
-    url.startsWith('//')
-  ) {
-    return null
-  }
-  if (url.startsWith('/')) return normalizePath(url)
-  const dir = sourceDirectory(pagePath)
-  return normalizePath(dir + url)
-}
-
-function normalizePath(path: string): string {
-  const segments = path.split('/')
-  const resolved: string[] = []
-  for (const segment of segments) {
-    if (segment === '.' || segment === '') continue
-    if (segment === '..') {
-      resolved.pop()
-    } else {
-      resolved.push(segment)
-    }
-  }
-  return `/${resolved.join('/')}`
-}
-
-async function fetchAssetDataUri(
-  shareableId: string,
-  assetPath: string,
-): Promise<string | null> {
-  const normalized = assetPath.startsWith('/') ? assetPath : `/${assetPath}`
-  const encoded = normalized
-    .split('/')
-    .map((s) => encodeURIComponent(s))
-    .join('/')
-  const url = `/api/shareables/${encodeURIComponent(shareableId)}/export-asset${encoded}`
-  try {
-    const response = await fetch(url)
-    if (!response.ok) return null
-    const blob = await response.blob()
-    return new Promise<string | null>((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.onerror = () => resolve(null)
-      reader.readAsDataURL(blob)
-    })
-  } catch {
-    return null
-  }
-}
-
-export async function fetchExportSource(
+async function fetchSource(
   shareableId: string,
   path: string,
+  versionId?: string,
+  signal?: AbortSignal,
 ): Promise<
   | { ok: true; data: ExportSourceData }
   | { ok: false; reason: 'unsupported' | 'failed' }
 > {
   const url = new URL(
-    `/api/shareables/${encodeURIComponent(shareableId)}/export-source`,
+    `${exportEndpointRoot(shareableId)}/export-source`,
     window.location.origin,
   )
   url.searchParams.set('path', path)
+  if (versionId) url.searchParams.set('versionId', versionId)
 
   let response: Response
   try {
-    response = await fetch(url, { headers: { accept: 'application/json' } })
+    response = await fetch(url, {
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+      redirect: 'error',
+      signal,
+    })
   } catch {
     return { ok: false, reason: 'failed' }
   }
@@ -264,16 +134,35 @@ export async function fetchExportSource(
     }
   }
 
-  if (!response.ok) return { ok: false, reason: 'failed' }
+  if (!response.ok || response.redirected)
+    return { ok: false, reason: 'failed' }
 
   const data = (await response
     .json()
     .catch(() => null)) as ExportSourceData | null
-  if (!data?.source || (data.kind !== 'markdown' && data.kind !== 'html')) {
+  if (
+    !data?.versionId ||
+    (versionId && data.versionId !== versionId) ||
+    !data?.source ||
+    (data.kind !== 'markdown' && data.kind !== 'html')
+  ) {
     return { ok: false, reason: 'failed' }
   }
 
   return { ok: true, data }
+}
+
+export function fetchExportSource(
+  shareableId: string,
+  path: string,
+  versionId?: string,
+  signal?: AbortSignal,
+) {
+  return signal
+    ? fetchSource(shareableId, path, versionId, signal)
+    : withExportDeadline((active) =>
+        fetchSource(shareableId, path, versionId, active),
+      )
 }
 
 export function resolveExportMarkdown(
@@ -320,8 +209,16 @@ export function downloadText(filename: string, text: string, type: string) {
   URL.revokeObjectURL(url)
 }
 
-export function openPrintWindow(): Window | null {
-  return window.open('', '_blank')
+const printDocuments = new WeakMap<Window, Document>()
+
+export function openPrintWindow(labels?: ExportPrintLabels): Window | null {
+  const popup = window.open('', '_blank')
+  if (popup) {
+    popup.opener = null
+    printDocuments.set(popup, popup.document)
+    if (labels) installPrintChrome(popup.document, labels)
+  }
+  return popup
 }
 
 export async function writePrintPdf(
@@ -330,29 +227,238 @@ export async function writePrintPdf(
   data: ExportSourceData,
   labels: ExportPrintLabels,
 ) {
-  const printDoc = await buildPrintDocument(shareableId, data, labels)
-  const targetDoc = printWindow.document
+  const target = printDocuments.get(printWindow) ?? printWindow.document
+  if (printWindow.closed || printWindow.document !== target)
+    throw new Error('Print window navigated')
   printWindow.opener = null
-  targetDoc.open()
-  targetDoc.close()
-  replaceDocumentContents(targetDoc, printDoc)
-  setupPrintSizing(printWindow, labels)
-}
-
-function replaceDocumentContents(targetDoc: Document, sourceDoc: Document) {
-  for (const child of Array.from(targetDoc.childNodes)) {
-    child.remove()
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), EXPORT_TIMEOUT)
+  const alive = () => {
+    try {
+      return !printWindow.closed && printWindow.document === target
+    } catch {
+      return false
+    }
   }
-  const sourceDoctype = sourceDoc.doctype
-  const doctype = targetDoc.implementation.createDocumentType(
-    sourceDoctype?.name ?? 'html',
-    sourceDoctype?.publicId ?? '',
-    sourceDoctype?.systemId ?? '',
+  const shell = document.implementation.createHTMLDocument('')
+  installPrintChrome(shell, labels)
+  target.replaceChild(
+    target.importNode(shell.documentElement, true),
+    target.documentElement,
   )
-  targetDoc.append(
-    doctype,
-    targetDoc.importNode(sourceDoc.documentElement, true),
+  const button = target.getElementById(
+    'artifactshare-print-button',
+  ) as HTMLInputElement
+  button.disabled = true
+  target.body.dataset.exportState = 'preparing'
+  const status = target.getElementById('artifactshare-print-status')!
+  const frame = createPrintFrame(target, data.fileName)
+  const channel = crypto.randomUUID()
+  const removeRelay = installPrintRelay(target, frame, channel)
+  let sequence = 0
+  let busy = false
+  let disposed = false
+  let rejectMeasurement: ((error: Error) => void) | undefined
+  let receive: ((event: MessageEvent) => void) | undefined
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    removeRelay()
+    controller.abort()
+    window.clearTimeout(timer)
+    window.clearInterval(watch)
+    if (receive) printWindow.removeEventListener('message', receive)
+    rejectMeasurement?.(new Error('Print window disposed'))
+    button.removeEventListener('click', repeat)
+    printWindow.removeEventListener('pagehide', dispose)
+  }
+  controller.signal.addEventListener(
+    'abort',
+    () => rejectMeasurement?.(new Error('Print preparation cancelled')),
+    { once: true },
   )
+  const watch = window.setInterval(() => {
+    if (!alive()) dispose()
+  }, 200)
+  printWindow.addEventListener('pagehide', dispose, { once: true })
+  const measure = (signal: AbortSignal) =>
+    new Promise<number>((resolve, reject) => {
+      const current = ++sequence
+      const timeout = window.setTimeout(
+        () => finish(new Error('Print layout timeout')),
+        10_000,
+      )
+      const finish = (result: number | Error) => {
+        window.clearTimeout(timeout)
+        signal.removeEventListener('abort', abort)
+        if (receive) printWindow.removeEventListener('message', receive)
+        receive = undefined
+        rejectMeasurement = undefined
+        if (typeof result === 'number') resolve(result)
+        else reject(result)
+      }
+      const abort = () => finish(new Error('Print measurement cancelled'))
+      if (signal.aborted) return abort()
+      signal.addEventListener('abort', abort, { once: true })
+      rejectMeasurement = (error) => finish(error)
+      receive = (event) => {
+        if (
+          event.source !== frame.contentWindow ||
+          event.origin !== 'null' ||
+          event.data?.channel !== channel ||
+          event.data?.sequence !== current
+        )
+          return
+        if (event.data.kind === 'failed')
+          return finish(new Error('Print resources failed'))
+        if (
+          event.data.kind !== 'measured' ||
+          !Number.isFinite(event.data.height) ||
+          event.data.height <= 0 ||
+          event.data.height > 2_000_000
+        )
+          return
+        finish(event.data.height)
+      }
+      printWindow.addEventListener('message', receive)
+      printWindow.postMessage(
+        { kind: 'measure', channel, sequence: current },
+        window.location.origin,
+      )
+    })
+  const waitForLayout = (signal: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      let first = 0
+      let second = 0
+      const abort = () => {
+        printWindow.cancelAnimationFrame(first)
+        printWindow.cancelAnimationFrame(second)
+        reject(new Error('Print layout cancelled'))
+      }
+      if (signal.aborted) return abort()
+      signal.addEventListener('abort', abort, { once: true })
+      first = printWindow.requestAnimationFrame(() => {
+        second = printWindow.requestAnimationFrame(() => {
+          signal.removeEventListener('abort', abort)
+          resolve()
+        })
+      })
+    })
+  const print = async () => {
+    if (busy || disposed) return
+    busy = true
+    button.disabled = true
+    const operation = new AbortController()
+    const deadline = window.setTimeout(() => operation.abort(), 40_000)
+    const signal = AbortSignal.any([controller.signal, operation.signal])
+    try {
+      if (!alive()) throw new Error('Print window closed')
+      let height = 0
+      let stable = false
+      // Resizing changes viewport units and height/orientation media queries.
+      // Only print a layout measured again at its final iframe dimensions.
+      for (let pass = 0; pass < 8; pass++) {
+        signal.throwIfAborted()
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop
+        const measured = await measure(signal)
+        if (measured === height) {
+          stable = true
+          break
+        }
+        height = measured
+        frame.style.height = `${height}px`
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop
+        await waitForLayout(signal)
+      }
+      if (!stable) throw new Error('Print layout did not stabilize')
+      const check = await fetchExportSource(
+        shareableId,
+        data.path,
+        data.versionId,
+        signal,
+      )
+      if (!check.ok || !alive() || disposed)
+        throw new Error('Export snapshot unavailable')
+      frame.style.height = `${height}px`
+      const paperHeight = height + PRINT_HEIGHT_EXTRA
+      target.getElementById(
+        'artifactshare-client-print-dynamic-style',
+      )!.textContent =
+        `@media print { @page { margin:0; size:${paperHeight > PRINT_HEIGHT_LIMIT ? 'auto' : `${PRINT_PAGE_WIDTH}px ${paperHeight}px`}; } }`
+      target.body.dataset.exportState =
+        paperHeight > PRINT_HEIGHT_LIMIT ? 'height-limited' : 'ready'
+      status.textContent =
+        paperHeight > PRINT_HEIGHT_LIMIT ? labels.heightLimited : ''
+      printWindow.print()
+    } finally {
+      window.clearTimeout(deadline)
+      operation.abort()
+      busy = false
+      if (!disposed) button.disabled = false
+    }
+  }
+  const failure = () => {
+    if (alive()) {
+      target.body.dataset.exportState = 'failed'
+      status.textContent = labels.failed ?? labels.preparing
+      button.disabled = true
+      frame.remove()
+    }
+    dispose()
+  }
+  function repeat() {
+    void print().catch(failure)
+  }
+  try {
+    const doc = await prepareExportDocument(
+      shareableId,
+      data,
+      controller.signal,
+      true,
+    )
+    const { PRINT_FONT_STYLE } = await loadPrintFont()
+    if (!alive() || disposed || controller.signal.aborted)
+      throw new Error('Print window closed')
+    const fonts = target.createElement('style')
+    fonts.textContent = PRINT_FONT_STYLE
+    target.head.appendChild(fonts)
+    await new Promise<void>((resolve, reject) => {
+      // about:blank can fire load before the srcdoc helper is listening. Only
+      // the nonce helper in the expected opaque frame can acknowledge startup.
+      const timeout = window.setTimeout(
+        () => finish(new Error('Print frame startup timeout')),
+        10_000,
+      )
+      const finish = (error?: Error) => {
+        window.clearTimeout(timeout)
+        controller.signal.removeEventListener('abort', abort)
+        printWindow.removeEventListener('message', ready)
+        if (error) reject(error)
+        else resolve()
+      }
+      const abort = () => finish(new Error('Print preparation timeout'))
+      const ready = (event: MessageEvent) => {
+        if (
+          event.source === frame.contentWindow &&
+          event.origin === 'null' &&
+          event.data?.channel === channel &&
+          event.data?.sequence === 0 &&
+          event.data?.kind === 'ready'
+        )
+          finish()
+      }
+      controller.signal.addEventListener('abort', abort, { once: true })
+      printWindow.addEventListener('message', ready)
+      frame.srcdoc = isolatedPrintHtml(doc, channel)
+      target.body.appendChild(frame)
+    })
+    button.addEventListener('click', repeat)
+    await print()
+    window.clearTimeout(timer)
+  } catch (error) {
+    failure()
+    throw error
+  }
 }
 
 export async function buildPrintDocument(
@@ -360,61 +466,46 @@ export async function buildPrintDocument(
   data: ExportSourceData,
   labels: ExportPrintLabels,
 ): Promise<Document> {
-  const sourceHtml = data.kind === 'markdown' ? data.renderedHtml : data.source
-  if (!sourceHtml) throw new Error('Rendered Markdown is unavailable')
-  const doc = new DOMParser().parseFromString(sourceHtml, 'text/html')
-  await renderMermaidInDocument(doc, data.kind === 'markdown')
-  doc.querySelectorAll('base').forEach((node) => {
-    node.remove()
-  })
-  doc.querySelectorAll('script, iframe, object, embed').forEach((node) => {
-    node.remove()
-  })
-  doc.querySelectorAll('meta[http-equiv]').forEach((node) => {
-    const equiv = (node.getAttribute('http-equiv') ?? '').toLowerCase()
-    if (
-      equiv === 'refresh' ||
-      equiv === 'set-cookie' ||
-      equiv === 'content-security-policy' ||
-      equiv === 'content-security-policy-report-only'
-    ) {
-      node.remove()
-    }
-  })
-  doc.querySelectorAll('*').forEach((element) => {
-    for (const attr of Array.from(element.attributes)) {
-      if (/^on/i.test(attr.name)) element.removeAttribute(attr.name)
-    }
-  })
-  sanitizePrintUrlAttributes(doc)
-  stripSourcePageRules(doc)
-  if (data.artifactKind === 'static_site') {
-    rewriteRootRelativePrintAssets(doc, shareableId)
-  } else {
-    stripAppOriginPrintUrls(doc, window.location.origin)
-  }
-  doc.documentElement.lang = doc.documentElement.lang || 'ja'
-  installPrintChrome(doc, shareableId, data, labels)
+  const doc = document.implementation.createHTMLDocument('')
+  installPrintChrome(doc, labels)
+  const frame = createPrintFrame(doc, data.fileName)
+  frame.srcdoc = isolatedPrintHtml(
+    await withExportDeadline((signal) =>
+      prepareExportDocument(shareableId, data, signal, true),
+    ),
+    crypto.randomUUID(),
+  )
+  const { PRINT_FONT_STYLE } = await loadPrintFont()
+  const fonts = doc.createElement('style')
+  fonts.textContent = PRINT_FONT_STYLE
+  doc.head.appendChild(fonts)
+  doc.body.appendChild(frame)
   return doc
 }
 
-function installPrintChrome(
-  doc: Document,
-  shareableId: string,
-  data: ExportSourceData,
-  labels: ExportPrintLabels,
-) {
+function createPrintFrame(doc: Document, title: string): HTMLIFrameElement {
+  // Unlike JSX, the DOM API cannot take a sandbox prop at construction. Set
+  // the sandbox before assigning content or attaching this node to any tree.
+  // react-doctor-disable-next-line react-doctor/iframe-missing-sandbox
+  const frame = doc.createElement('iframe')
+  frame.setAttribute('sandbox', 'allow-scripts')
+  frame.title = title
+  frame.setAttribute('tabindex', '-1')
+  frame.setAttribute('inert', '')
+  frame.style.cssText = `display:block;border:0;width:${PRINT_VIEWPORT_WIDTH}px;height:${PRINT_VIEWPORT_HEIGHT}px;margin:8px auto 0;pointer-events:none;`
+  return frame
+}
+
+function installPrintChrome(doc: Document, labels: ExportPrintLabels) {
+  const csp = doc.createElement('meta')
+  csp.httpEquiv = 'Content-Security-Policy'
+  csp.content =
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data:; font-src data:; media-src data:; frame-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  doc.head.appendChild(csp)
   const brandMarkUri =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='357.22 354.97 539.12 539.12'%3E%3Cpath fill='%23F76B58' d='M473.7 355.404C492.329 354.467 518.221 355.342 537.528 355.346L664.857 355.342 744.53 355.322C758.365 355.32 781.891 354.646 794.68 356.84 814.258 360.247 832.577 368.799 847.761 381.618 870.909 400.841 886.232 428.791 889.234 458.874 889.99 466.447 889.721 476.442 889.723 484.264L889.707 523.333 889.694 646.17 889.696 743.131C889.698 756.565 890.454 784.421 888.465 796.608 885.102 817.301 876.173 836.689 862.635 852.696 841.224 878.324 814.191 890.952 781.434 893.88L565.737 893.959 503.207 893.994C488.842 893.998 472.593 894.674 458.537 892.317 438.796 889.007 418.763 878.481 403.763 865.457 382.223 846.94 365.658 816.682 364.362 787.897 363.289 764.083 363.872 738.745 363.893 714.722L363.901 584.398 363.884 503.047C363.882 489.206 363.172 464.523 365.493 451.533 369.257 430.264 378.813 410.445 393.111 394.255 414.518 370.051 441.638 357.245 473.7 355.404Z'/%3E%3Cpath fill='%23F9F6F2' d='M541.413 517.037C551.831 516.276 562.305 516.897 572.56 518.885 588.67 522.044 604.109 528.889 615.98 540.414 657.87 581.083 624.348 639.167 646.741 671.649 656.823 686.274 676.078 691.85 692.692 694.699 708.04 697.331 736.423 699.548 749.683 689.685 754.033 686.449 756.98 681.684 757.607 676.246 759.781 657.407 727.749 651.942 714.462 648.22 706.498 645.988 698.589 643.595 690.922 640.468 679.054 635.628 668.153 628.987 659.921 619.001 650.03 607.001 646.123 591.049 647.686 575.699 649.433 559.59 657.556 544.852 670.242 534.773 706.622 505.357 773.816 512.758 802.603 549.634 805.783 553.708 811.591 559.82 810.994 565.023 809.231 568.312 780.652 588.946 775.987 591.585 768.63 584.162 766.236 578.474 756.905 570.771 744.155 560.246 711.674 555.844 702.176 571.679 686.313 598.126 743.074 604.594 758.24 610.618 769.805 615.211 776.876 617.391 787.856 625.078 804.114 637.719 812.899 654.617 811.928 675.459 809.264 732.69 750.809 745.568 703.518 742.414 664.873 739.836 629.023 734.456 601.355 704.205 588.631 721.307 573.424 732.782 552.777 738.684 515.018 749.478 462.653 740.219 450.647 697.088 446.328 681.573 447.558 663.093 455.81 649.078 481.51 605.431 539.111 607.646 582.205 596.011 582.084 592.818 582.01 588.707 581.305 585.773 573.376 552.76 522.899 558.305 510.313 584.868 508.736 588.196 506.33 592.305 504.4 595.282L504.025 595.852C503.551 595.746 503.078 595.633 502.607 595.512 496.392 593.865 457.668 581.89 455.629 578.416 455.444 571.268 465.999 555.263 470.892 549.698 489.759 528.24 513.675 519.243 541.413 517.037Z'/%3E%3Cpath fill='%23F76B58' d='M579.612 638.78C581.407 638.551 580.622 638.317 582.081 639.158 584.565 648.251 581.017 664.406 576.409 672.672 565.116 692.926 535.557 703.893 514.612 692.012 505.116 685.676 502.56 672.802 509.072 664.223 521.965 647.235 560.399 642.884 579.612 638.78Z'/%3E%3C/svg%3E"
 
   const baseStyle = `
-@font-face {
-  font-family: "ArtifactShareNotoSansJP";
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: url("https://fonts.gstatic.com/s/notosansjp/v55/-F6jfjtqLzI2JPCgQBnw7HFQoggM-FNthvIU4Zu1ky4vNQ.woff2") format("woff2");
-}
 :root {
   color-scheme: light;
   background: #fff;
@@ -423,7 +514,7 @@ html,
 body {
   background: #fff !important;
   color: #37352f;
-  font-family: "ArtifactShareNotoSansJP", "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif !important;
+  font-family: ArtifactSharePrintJP, sans-serif !important;
   margin: 0 !important;
   min-height: 0 !important;
 }
@@ -445,10 +536,12 @@ video {
   gap: 12px;
   left: 0;
   padding: 8px 12px;
-  position: fixed;
+  position: sticky;
   right: 0;
   top: 0;
-  z-index: 2147483647;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
 }
 .asx-print-brand {
   display: inline-flex;
@@ -479,6 +572,8 @@ video {
   padding: 8px 12px;
   white-space: nowrap;
 }
+.asx-print-action:focus-visible { outline: 2px solid #1766ad; outline-offset: 3px; }
+.asx-print-action:disabled { opacity: 0.6; cursor: wait; }
 .asx-print-action:hover {
   background: #125892;
 }
@@ -495,8 +590,7 @@ video {
 }
 @media screen {
   body {
-    margin: 56px auto 24px !important;
-    width: ${PRINT_PAGE_WIDTH}px;
+    margin: 0 auto 24px !important;
   }
 }
 @media print {
@@ -507,6 +601,7 @@ video {
   .asx-print-toolbar {
     display: none !important;
   }
+  iframe { margin: 0 !important; }
   html,
   body {
     height: auto !important;
@@ -516,13 +611,6 @@ video {
 }
 `
 
-  const baseHref =
-    data.artifactKind === 'static_site'
-      ? assetBaseHref(shareableId, data.path)
-      : `${READABILITY_BASE_ORIGIN}/`
-
-  const base = doc.createElement('base')
-  base.href = baseHref
   const baseStyleElement = doc.createElement('style')
   baseStyleElement.id = 'artifactshare-client-print-base-style'
   baseStyleElement.textContent = baseStyle
@@ -530,7 +618,7 @@ video {
   dynamicStyle.id = 'artifactshare-client-print-dynamic-style'
   doc.head.insertBefore(dynamicStyle, doc.head.firstChild)
   doc.head.insertBefore(baseStyleElement, doc.head.firstChild)
-  doc.head.insertBefore(base, doc.head.firstChild)
+  doc.head.insertBefore(csp, doc.head.firstChild)
 
   const toolbar = doc.createElement('div')
   toolbar.className = 'asx-print-toolbar'
@@ -546,6 +634,8 @@ video {
 
   const status = doc.createElement('span')
   status.id = 'artifactshare-print-status'
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-live', 'polite')
   status.textContent = labels.preparing
 
   const spacer = doc.createElement('span')
@@ -560,6 +650,8 @@ video {
   button.id = 'artifactshare-print-button'
   button.className = 'asx-print-action'
   button.value = labels.savePdf
+  button.disabled = true
+  doc.body.dataset.exportState = 'preparing'
 
   toolbar.appendChild(brand)
   toolbar.appendChild(status)
@@ -567,178 +659,6 @@ video {
   toolbar.appendChild(hint)
   toolbar.appendChild(button)
   doc.body.insertBefore(toolbar, doc.body.firstChild)
-}
-
-function setupPrintSizing(printWindow: Window, labels: ExportPrintLabels) {
-  const printDocument = printWindow.document
-  let printInProgress = false
-
-  function waitForEventOrTimeout(
-    target: EventTarget,
-    events: ReadonlyArray<string>,
-    timeoutMs: number,
-  ) {
-    return new Promise<void>((resolve) => {
-      const timeout = printWindow.setTimeout(done, timeoutMs)
-      function done() {
-        printWindow.clearTimeout(timeout)
-        events.forEach((event) => {
-          target.removeEventListener(event, done)
-        })
-        resolve()
-      }
-      events.forEach((event) => {
-        target.addEventListener(event, done, { once: true })
-      })
-    })
-  }
-
-  function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number) {
-    return Promise.race([
-      promise,
-      new Promise<void>((resolve) => {
-        printWindow.setTimeout(resolve, timeoutMs)
-      }),
-    ])
-  }
-
-  async function waitForStylesheets() {
-    const links = Array.from(
-      printDocument.querySelectorAll('link[rel~="stylesheet"]'),
-    )
-    await Promise.all(
-      links.map((link) => {
-        const stylesheetLink = link as HTMLLinkElement
-        if (stylesheetLink.sheet) {
-          return Promise.resolve()
-        }
-        return waitForEventOrTimeout(link, ['load', 'error'], 5000)
-      }),
-    )
-    await waitUntilStylesheetImportsSettle()
-  }
-
-  function waitUntilStylesheetImportsSettle() {
-    const startedAt = Date.now()
-    return new Promise<void>((resolve) => {
-      function check() {
-        if (areStylesheetImportsSettled() || Date.now() - startedAt > 5000) {
-          resolve()
-          return
-        }
-        printWindow.setTimeout(check, 50)
-      }
-      check()
-    })
-  }
-
-  function areStylesheetImportsSettled() {
-    return Array.from(printDocument.styleSheets).every((sheet) => {
-      return canReadNestedStylesheets(sheet)
-    })
-  }
-
-  function canReadNestedStylesheets(sheet: CSSStyleSheet): boolean {
-    try {
-      return Array.from(sheet.cssRules).every((rule) => {
-        if (rule.type !== CSSRule.IMPORT_RULE) return true
-        const importRule = rule as CSSImportRule
-        return importRule.styleSheet
-          ? canReadNestedStylesheets(importRule.styleSheet)
-          : false
-      })
-    } catch (err) {
-      return typeof err === 'object' && err !== null && 'name' in err
-        ? err.name === 'SecurityError'
-        : false
-    }
-  }
-
-  async function waitForImages() {
-    const images = Array.from(printDocument.images ?? [])
-    await Promise.all(
-      images.map((image) => {
-        if (image.complete && image.naturalWidth > 0) return Promise.resolve()
-        if (typeof image.decode === 'function') {
-          return waitWithTimeout(image.decode(), 5000).catch(() => {})
-        }
-        return waitForEventOrTimeout(image, ['load', 'error'], 5000)
-      }),
-    )
-  }
-
-  function maxDocumentHeight() {
-    const { body, documentElement } = printDocument
-    const elements = Array.from(body.querySelectorAll('*')).filter((node) => {
-      return !node.classList?.contains('asx-print-toolbar')
-    })
-    let maxBottom = 0
-    elements.forEach((node) => {
-      const rect = node.getBoundingClientRect()
-      const style = printWindow.getComputedStyle(node)
-      if (style.position === 'fixed') return
-      maxBottom = Math.max(maxBottom, rect.bottom + printWindow.scrollY)
-    })
-    return Math.max(
-      maxBottom,
-      body.scrollHeight,
-      body.offsetHeight,
-      documentElement.scrollHeight,
-      documentElement.offsetHeight,
-    )
-  }
-
-  function setStatus(text: string) {
-    const status = printDocument.getElementById('artifactshare-print-status')
-    if (status) status.textContent = text
-  }
-
-  async function waitForLayout() {
-    await new Promise<void>((resolve) => {
-      printWindow.requestAnimationFrame(() => {
-        printWindow.requestAnimationFrame(() => resolve())
-      })
-    })
-  }
-
-  async function applyPageSize() {
-    await waitForStylesheets()
-    if (printDocument.fonts?.ready) await printDocument.fonts.ready
-    await waitForImages()
-    await waitForLayout()
-    const contentHeight = Math.ceil(maxDocumentHeight())
-    const height = contentHeight + PRINT_HEIGHT_EXTRA
-    const style = printDocument.getElementById(
-      'artifactshare-client-print-dynamic-style',
-    )
-    if (!style) return
-    if (height > PRINT_HEIGHT_LIMIT) {
-      style.textContent = '@media print { @page { margin: 0; size: auto; } }'
-      setStatus(labels.heightLimited)
-      return
-    }
-    style.textContent = `@media print { @page { margin: 0; size: ${PRINT_PAGE_WIDTH}px ${height}px; } * { page-break-before: auto !important; page-break-after: auto !important; break-before: auto !important; break-after: auto !important; } }`
-    setStatus('')
-  }
-
-  async function printAfterPageSize() {
-    if (printInProgress) return
-    printInProgress = true
-    try {
-      await applyPageSize()
-      await waitForLayout()
-      printWindow.print()
-    } finally {
-      printInProgress = false
-    }
-  }
-
-  printDocument
-    .getElementById('artifactshare-print-button')
-    ?.addEventListener('click', () => {
-      void printAfterPageSize()
-    })
-  void printAfterPageSize()
 }
 
 function setReadabilityBase(doc: Document, path: string) {
@@ -767,22 +687,13 @@ export function sourceDirectory(path: string): string {
   return normalized.slice(0, slashIndex + 1)
 }
 
-function assetBaseHref(shareableId: string, path: string): string {
-  return assetRouteHref(shareableId, sourceDirectory(path))
-}
-
 export function assetRouteHref(
   shareableId: string,
   path: string,
+  versionId: string,
   origin = window.location.origin,
 ): string {
-  const { pathname, suffix } = splitAssetRef(path)
-  const normalized = pathname.startsWith('/') ? pathname : `/${pathname}`
-  const encodedPath = normalized
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
-  return `${origin}/api/shareables/${encodeURIComponent(shareableId)}/export-asset${encodedPath}${suffix}`
+  return exportAssetHref(shareableId, versionId, path, origin)
 }
 
 export { splitAssetRef } from '~/lib/asset-ref'
@@ -791,144 +702,6 @@ export function isRootRelativeAssetRef(
   value: string | null | undefined,
 ): value is string {
   return Boolean(value && value.startsWith('/') && !value.startsWith('//'))
-}
-
-function rewriteRootRelativePrintAssets(doc: Document, shareableId: string) {
-  doc.querySelectorAll('[src], [poster]').forEach((element) => {
-    for (const attrName of ['src', 'poster']) {
-      const value = element.getAttribute(attrName)
-      if (isRootRelativeAssetRef(value)) {
-        element.setAttribute(attrName, assetRouteHref(shareableId, value))
-      }
-    }
-  })
-
-  doc.querySelectorAll('link[href]').forEach((element) => {
-    if (!isStylesheetLink(element)) return
-    const value = element.getAttribute('href')
-    if (isRootRelativeAssetRef(value)) {
-      element.setAttribute('href', assetRouteHref(shareableId, value))
-    }
-  })
-
-  doc.querySelectorAll('[srcset]').forEach((element) => {
-    const value = element.getAttribute('srcset')
-    if (value) element.setAttribute('srcset', rewriteSrcset(value, shareableId))
-  })
-
-  doc.querySelectorAll('[style]').forEach((element) => {
-    const value = element.getAttribute('style')
-    if (value) {
-      element.setAttribute('style', rewriteCssAssetUrls(value, shareableId))
-    }
-  })
-
-  doc.querySelectorAll('style').forEach((element) => {
-    element.textContent = rewriteCssAssetUrls(
-      element.textContent ?? '',
-      shareableId,
-    )
-  })
-}
-
-function isStylesheetLink(element: Element): boolean {
-  return (element.getAttribute('rel') ?? '')
-    .toLowerCase()
-    .split(/\s+/)
-    .includes('stylesheet')
-}
-
-function stripSourcePageRules(doc: Document) {
-  doc.querySelectorAll('style').forEach((element) => {
-    const text = element.textContent ?? ''
-    if (!/@page/i.test(text)) return
-    element.textContent = stripPageAtRules(text)
-  })
-}
-
-function stripPageAtRules(css: string): string {
-  const pattern = /@page[^{]*\{/gi
-  let result = ''
-  let lastEnd = 0
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(css)) !== null) {
-    result += css.slice(lastEnd, match.index)
-    let depth = 1
-    let i = match.index + match[0].length
-    while (i < css.length && depth > 0) {
-      if (css[i] === '{') depth++
-      else if (css[i] === '}') depth--
-      i++
-    }
-    lastEnd = i
-  }
-  return result + css.slice(lastEnd)
-}
-
-const URL_ATTR_NAMES = new Set([
-  'href',
-  'xlink:href',
-  'src',
-  'poster',
-  'action',
-  'formaction',
-])
-
-function sanitizePrintUrlAttributes(doc: Document) {
-  doc.querySelectorAll('*').forEach((element) => {
-    for (const attr of Array.from(element.attributes)) {
-      const name = attr.name.toLowerCase()
-      if (URL_ATTR_NAMES.has(name) && !isSafePrintUrl(attr.value)) {
-        element.removeAttribute(attr.name)
-      }
-      if (name === 'srcset') {
-        const sanitized = sanitizePrintSrcset(attr.value)
-        if (sanitized) {
-          element.setAttribute(attr.name, sanitized)
-        } else {
-          element.removeAttribute(attr.name)
-        }
-      }
-      if (name === 'style' && containsUnsafeCssUrl(attr.value)) {
-        element.removeAttribute(attr.name)
-      }
-    }
-  })
-  doc.querySelectorAll('style').forEach((element) => {
-    if (containsUnsafeCssUrl(element.textContent ?? '')) {
-      element.textContent = ''
-    }
-  })
-}
-
-function stripAppOriginPrintUrls(doc: Document, appOrigin: string) {
-  doc.querySelectorAll('*').forEach((element) => {
-    for (const attr of Array.from(element.attributes)) {
-      const name = attr.name.toLowerCase()
-      if (
-        URL_ATTR_NAMES.has(name) &&
-        isAppOriginPrintUrl(attr.value, appOrigin)
-      ) {
-        element.removeAttribute(attr.name)
-      }
-      if (name === 'srcset') {
-        const sanitized = stripAppOriginSrcset(attr.value, appOrigin)
-        if (sanitized) {
-          element.setAttribute(attr.name, sanitized)
-        } else {
-          element.removeAttribute(attr.name)
-        }
-      }
-      if (name === 'style' && containsAppOriginCssUrl(attr.value, appOrigin)) {
-        element.removeAttribute(attr.name)
-      }
-    }
-  })
-  doc.querySelectorAll('style').forEach((element) => {
-    if (containsAppOriginCssUrl(element.textContent ?? '', appOrigin)) {
-      element.textContent = ''
-    }
-  })
 }
 
 export function sanitizePrintSrcset(value: string): string {
@@ -1017,27 +790,6 @@ function compactPrintUrl(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function rewriteSrcset(value: string, shareableId: string): string {
-  return value
-    .split(',')
-    .map((candidate) => {
-      const trimmed = candidate.trim()
-      const [url, ...descriptors] = trimmed.split(/\s+/)
-      if (!isRootRelativeAssetRef(url)) return candidate
-      return [assetRouteHref(shareableId, url), ...descriptors].join(' ')
-    })
-    .join(', ')
-}
-
-function rewriteCssAssetUrls(value: string, shareableId: string): string {
-  return value.replace(
-    /url\((["']?)(\/(?!\/)[^"')]+)\1\)/g,
-    (_match, _quote, ref) => {
-      return `url("${assetRouteHref(shareableId, ref)}")`
-    },
-  )
 }
 
 function stripQueryAndHash(path: string): string {

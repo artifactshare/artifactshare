@@ -19,6 +19,102 @@ export const screen = {
   },
   states: [
     {
+      id: 'pdf-preparing',
+      description: 'PDF の準備中',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'preparing',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pdf-html',
+      description: 'HTML の印刷準備完了',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 1,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'ready',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pdf-markdown',
+      description: 'Mermaid を含む Markdown の印刷準備完了',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 2,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'ready',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pdf-height-limited',
+      description: '長い文書の標準ページ印刷',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 3,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'height-limited',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pdf-failed',
+      description: '必要な画像を取得できない状態',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 4,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'failed',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pdf-static-site',
+      description: '選択したサブページの CSS・画像・フォントを含む印刷',
+      setup: {
+        scenario: 'viewer/pdf-export',
+        scenarioArtifactIndex: 5,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          {
+            action: 'openPrintPopup',
+            selector: '[data-viewer-export-pdf]',
+            state: 'ready',
+          },
+        ],
+      },
+    },
+    {
       id: 'default',
       description: '通常閲覧',
       setup: {},

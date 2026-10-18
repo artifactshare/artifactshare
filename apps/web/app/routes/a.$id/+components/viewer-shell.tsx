@@ -2202,6 +2202,7 @@ function useViewerShellController({
       backgroundHint: t('export.printBackgroundHint'),
       preparing: t('export.printPreparing'),
       heightLimited: t('export.printHeightLimited'),
+      failed: t('toast.exportExtractFailed'),
     }),
     [t],
   )
@@ -2279,15 +2280,26 @@ function useViewerShellController({
   }, [artifact.id, runExportAction])
 
   const handleDownloadPdf = useCallback(() => {
-    const printWindow = openPrintWindow()
+    const printWindow = openPrintWindow(exportPrintLabels)
     if (!printWindow) {
       toast.error(t('toast.exportPopupBlocked'))
       return
     }
+    const initialDocument = printWindow.document
     void runExportAction('pdf', async (source) => {
       await writePrintPdf(printWindow, artifact.id, source, exportPrintLabels)
     }).then((ok) => {
-      if (!ok) printWindow.close()
+      try {
+        if (
+          !ok &&
+          !printWindow.closed &&
+          printWindow.document === initialDocument &&
+          initialDocument.body.dataset.exportState !== 'failed'
+        )
+          printWindow.close()
+      } catch {
+        /* The user navigated the popup. */
+      }
     })
   }, [artifact.id, exportPrintLabels, runExportAction, t])
 

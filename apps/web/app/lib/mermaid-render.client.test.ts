@@ -46,6 +46,22 @@ describe('renderMermaidInDocument', () => {
     expect(doc.querySelector('pre')?.textContent).toBe('flowchart LR\nA --> B')
   })
 
+  test('propagates isolated renderer resource failure instead of reporting a prepared export', async () => {
+    const doc = new DOMParser().parseFromString(
+      '<body data-artifact-markdown><pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre></body>',
+      'text/html',
+    )
+    const error = new Error('Forbidden resource')
+    error.name = 'MermaidResourceError'
+    const isolated = vi.fn().mockRejectedValue(error)
+    await expect(renderMermaidInDocument(doc, true, isolated)).rejects.toBe(
+      error,
+    )
+    expect(isolated).toHaveBeenCalledWith('flowchart LR\nA --> B')
+    expect(render).not.toHaveBeenCalled()
+    expect(doc.querySelector('pre')!.hidden).toBe(false)
+  })
+
   test('ignores output without the trusted Markdown marker', async () => {
     const doc = new DOMParser().parseFromString(
       '<body><pre><code class="language-mermaid">flowchart LR</code></pre></body>',

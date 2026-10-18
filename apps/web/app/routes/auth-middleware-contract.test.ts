@@ -84,12 +84,23 @@ function importedAuthMiddleware(source: string): AuthMiddleware | null {
 
 function declaredMiddleware(source: string): AuthMiddleware | null {
   const exportMatch = source.match(
-    /export\s+const\s+middleware\s*=\s*\[\s*(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\s*\]/,
+    /export\s+const\s+middleware\s*=\s*\[\s*(?:exportNoStoreMiddleware\s*,\s*)?(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\s*\]/,
   )
   return (exportMatch?.[1] as AuthMiddleware | undefined) ?? null
 }
 
 describe('route modules declare their required authentication middleware', () => {
+  test('the export cache wrapper preserves the directly declared auth guard', () => {
+    expect(
+      declaredMiddleware(
+        'export const middleware = [exportNoStoreMiddleware, requireUserApiMiddleware]',
+      ),
+    ).toBe('requireUserApiMiddleware')
+    expect(
+      declaredMiddleware('export const middleware = [exportNoStoreMiddleware]'),
+    ).toBeNull()
+  })
+
   test('finds auth middleware among multiple named imports', () => {
     const source = `
       import {

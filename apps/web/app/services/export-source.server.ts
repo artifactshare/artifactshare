@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
+import { canonicalExportPath } from '~/lib/export-path'
 import { errorResponse } from '~/lib/api-errors'
 import { renderMarkdownDocument } from '~/lib/markdown-render'
 import type { SessionUser } from '~/lib/user'
@@ -61,62 +62,117 @@ export interface ExportSourceData {
 export async function getExportSource(
   db: Kysely<DB>,
   user: SessionUser,
-  args: { id: string; path?: string | null },
+  args: { id: string; path?: string | null; versionId?: string | null },
 ): Promise<ExportSourceResult> {
   const access = await loadCommentAccess(db, user, args.id)
   if (!access?.currentVersionId) return { kind: 'not-found' }
 
-  switch (access.artifactKind) {
-    case 'markdown_page':
-      return loadMarkdownExportSource(access)
-    case 'html_page':
-      return loadHtmlPageExportSource(access, args.path)
-    case 'static_site':
-      return loadStaticSiteExportSource(db, access, args.path)
-    default:
-      return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
+  if (args.versionId != null && args.versionId !== access.currentVersionId)
+    return { kind: 'not-found' }
+  if (!(await ownsExportVersion(db, args.id, access.currentVersionId)))
+    return { kind: 'not-found' }
+  try {
+    if (args.path) canonicalExportPath(args.path)
+  } catch {
+    return { kind: 'not-found' }
   }
+
+  const result = await (():
+    | Promise<ExportSourceResult>
+    | ExportSourceResult => {
+    switch (access.artifactKind) {
+      case 'markdown_page':
+        return loadMarkdownExportSource(access)
+      case 'html_page':
+        return loadHtmlPageExportSource(access, args.path)
+      case 'static_site':
+        return loadStaticSiteExportSource(db, access, args.path)
+      default:
+        return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
+    }
+  })()
+  if (result.kind === 'ok') {
+    const current = await loadCommentAccess(db, user, args.id)
+    if (current?.currentVersionId !== result.data.versionId)
+      return { kind: 'not-found' }
+  }
+  return result
 }
 
 export async function getExportAsset(
   db: Kysely<DB>,
   user: SessionUser,
-  args: { id: string; path: string },
+  args: { id: string; path: string; versionId: string | null },
 ): Promise<ExportAssetResult> {
   const access = await loadCommentAccess(db, user, args.id)
-  if (!access?.currentVersionId) return { kind: 'not-found' }
+  if (
+    !args.versionId ||
+    !access?.currentVersionId ||
+    args.versionId !== access.currentVersionId
+  )
+    return { kind: 'not-found' }
   if (access.artifactKind !== 'static_site') {
     return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
   }
 
-  const path = normalizeExportPath(args.path)
+  let path: string
+  try {
+    path = canonicalExportPath(args.path)
+  } catch {
+    return { kind: 'not-found' }
+  }
   const file = await db
     .selectFrom('version_files')
-    .select(['path', 'r2_key', 'mime_type'])
-    .where('version_id', '=', access.currentVersionId)
-    .where('path', '=', path)
+    .innerJoin('versions', 'versions.id', 'version_files.version_id')
+    .select([
+      'version_files.path',
+      'version_files.r2_key',
+      'version_files.mime_type',
+    ])
+    .where('version_files.version_id', '=', args.versionId)
+    .where('versions.shareable_id', '=', args.id)
+    .where('version_files.path', '=', path)
     .executeTakeFirst()
   if (!file) return { kind: 'not-found' }
 
   const object = await getArtifact(env.BUCKET, file.r2_key)
   if (!object) return { kind: 'source-unavailable' }
+  const current = await loadCommentAccess(db, user, args.id)
+  if (current?.currentVersionId !== args.versionId) return { kind: 'not-found' }
 
   return {
     kind: 'ok',
     object,
     path: file.path,
-    contentType: file.mime_type || 'application/octet-stream',
+    contentType: !isPassiveExportAssetContent(file.path, file.mime_type)
+      ? file.mime_type
+      : object.httpMetadata?.contentType ||
+        file.mime_type ||
+        'application/octet-stream',
   }
+}
+
+async function ownsExportVersion(
+  db: Kysely<DB>,
+  id: string,
+  versionId: string,
+): Promise<boolean> {
+  return Boolean(
+    await db
+      .selectFrom('versions')
+      .select('id')
+      .where('id', '=', versionId)
+      .where('shareable_id', '=', id)
+      .executeTakeFirst(),
+  )
 }
 
 export function normalizeExportPath(
   path: string | null | undefined,
   defaultPath = '/index.html',
 ): string {
-  const stripped = stripQueryAndHash(String(path ?? '').trim())
-  const decoded = decodePath(stripped)
-  if (!decoded || decoded === '/') return defaultPath
-  return decoded.startsWith('/') ? decoded : `/${decoded}`
+  const canonical = canonicalExportPath(String(path ?? '').trim())
+  return canonical === '/' ? defaultPath : canonical
 }
 
 export function isHtmlContent(path: string, contentType: string): boolean {
@@ -338,21 +394,6 @@ async function loadStaticSiteExportSource(
 function exportFileName(path: string, fallback: string): string {
   const segments = path.split('/').filter(Boolean)
   return segments.at(-1) ?? fallback
-}
-
-function stripQueryAndHash(path: string): string {
-  const hashIndex = path.indexOf('#')
-  const withoutHash = hashIndex === -1 ? path : path.slice(0, hashIndex)
-  const queryIndex = withoutHash.indexOf('?')
-  return queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex)
-}
-
-function decodePath(path: string): string {
-  try {
-    return decodeURIComponent(path)
-  } catch {
-    return path
-  }
 }
 
 function hasFileExtension(path: string): boolean {

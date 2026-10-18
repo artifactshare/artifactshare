@@ -197,3 +197,47 @@ done
 ## Retries
 
 A capture that fails only because the screen's ready condition timed out before any interaction ran (`readiness_timeout`) is retried up to `SCREEN_CAPTURE_RETRIES` times (an integer from 0 to 10; default 2; `0` disables). Each retry starts a new browser context and is logged to stderr as `capture retry n/m: <screen>/<state>/<viewport>/<theme>/<locale> [readiness_timeout]: <message>`. A capture that needed retries records `attempts` in `manifest.json` (on success and on final failure), and the end-of-run summary counts captures that were retried (once per capture, whatever the number of attempts). A readiness timeout after an interaction, and every other failure kind, is reported at once.
+
+## PDF popup captures
+
+Viewer's `viewer/pdf-export` scenario seeds HTML, Markdown/Mermaid, a document
+beyond 40,000 pixels, an unavailable-image failure, and a nested static-site page
+with imported CSS, a real bundled font and image bytes. The `pdf-*` Viewer states
+open the actual export menu. `openPrintPopup` is a terminal Viewer interaction:
+its selector opens the popup, and its `state` must be `preparing`, `ready`,
+`height-limited` or `failed`. The capture waits on that popup's product status,
+records the popup target and opener URL, captures the viewport and closes it.
+Preparation captures hold the real source request until cleanup. Native printing
+is suppressed only in the capture context and recorded in target metadata;
+these screenshots are not evidence of PDF content. Existing non-popup captures
+and navigation retry rules are unchanged.
+
+On the committed final head, with the real local topology running:
+
+```sh
+pnpm screens:capture -- --screen viewer --label pdf-isolation
+pnpm walkthroughs:capture -- --task return-to-recent-file --label pdf-isolation-return
+pnpm walkthroughs:capture -- --task confirm-agent-publish --label pdf-isolation-confirm
+pnpm walkthroughs:capture -- --task republish-updated-file --label pdf-isolation-republish
+pnpm walkthroughs:capture -- --task share-file-link --label pdf-isolation-share
+pnpm walkthroughs:capture -- --task review-new-reactions --label pdf-isolation-reactions
+pnpm check:scenario-routes
+```
+
+Run the declared desktop/mobile, locale and theme matrix. For each walkthrough
+output, run the following with the actual output directories:
+
+```sh
+pnpm critique:tasks -- --walkthrough-root <task-output> --screen-root <viewer-output> \
+  --source 'apps/web/app/routes/a.$id/+components/export-actions.ts' \
+  --source 'apps/web/app/routes/a.$id/+components/export-resources.ts' \
+  --source 'apps/web/app/routes/a.$id/+components/export-print-frame.ts' \
+  --source 'apps/web/app/routes/a.$id/+components/viewer-shell.tsx'
+```
+
+Those five existing walkthroughs provide regression context; none invokes PDF
+export. The other ledger-only Viewer tasks do not gain walkthrough coverage from
+this change. Inspect actual short, intrinsic-height and long Chromium/Firefox
+PDFs for images, fonts, diagrams and the final marker, and compare WebKit with
+its existing supported baseline. Repeat material-change captures on the final
+commit. Missing native, visual or route-scenario evidence prevents Ready.

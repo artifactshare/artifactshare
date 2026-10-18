@@ -233,6 +233,61 @@ export function screenStateSeedAuth(screen, state) {
   return state.setup?.seedAuth ?? screenStateAuth(screen, state)
 }
 
+/** Opens the real product print popup. Native printing is suppressed only in
+ * the capture context; the manifest records the popup target, not PDF evidence. */
+export async function openPrintPopupForCapture(page, interaction) {
+  let release
+  let heldRequest
+  let popup
+  const endpoint = '**/api/shareables/*/export-source*'
+  const held = new Promise((resolveHeld) => {
+    release = resolveHeld
+  })
+  if (interaction.state === 'preparing') {
+    await page.route(endpoint, (route) => {
+      heldRequest = held.then(() => route.abort('aborted'))
+      return heldRequest
+    })
+  }
+  const cleanup = async () => {
+    if (popup) await popup.close()
+    release()
+    await heldRequest?.catch(() => {})
+    if (interaction.state === 'preparing') await page.unroute(endpoint)
+  }
+  try {
+    await page.context().addInitScript(() => {
+      window.print = () => {}
+    })
+    const opened = page.waitForEvent('popup', { timeout: 10_000 })
+    await page.click(interaction.selector)
+    popup = await opened
+    await popup.evaluate(() => {
+      window.print = () => {}
+    })
+    await waitForReady(popup, {
+      selector: `body[data-export-state="${interaction.state}"]`,
+      description: `print popup ${interaction.state}`,
+      timeoutMs: 35_000,
+    })
+    return {
+      page: popup,
+      cleanup,
+      target: {
+        kind: 'print-popup',
+        state: interaction.state,
+        openerUrl: page.url(),
+        url: popup.url(),
+        nativePrintSuppressed: true,
+        extent: 'viewport',
+      },
+    }
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
+}
+
 export function shouldHoldUpload(interactions) {
   return interactions.some(
     (interaction) =>
@@ -501,9 +556,10 @@ export async function captureScreenImages({
   entry,
   sections = [],
   afterFullCapture = () => ({}),
+  fullPage = true,
   reportFailure = (message) => console.error(message),
 }) {
-  await page.screenshot({ path: join(outDir, entry.file), fullPage: true })
+  await page.screenshot({ path: join(outDir, entry.file), fullPage })
   const full = { ...entry, ...(await afterFullCapture()) }
   const entries = [full]
   for (const section of sections) {
@@ -735,6 +791,7 @@ async function captureScreensLocked({
       extraHTTPHeaders: screenStateRequestHeaders(state),
     })
     let page
+    let printCapture
     let url
     let releaseHeldUpload
     let heldUploadRequest
@@ -775,7 +832,9 @@ async function captureScreensLocked({
       for (const interaction of interactions) {
         await waitForInteractionTarget(page, interaction)
         try {
-          if (interaction.action === 'hover')
+          if (interaction.action === 'openPrintPopup')
+            printCapture = await openPrintPopupForCapture(page, interaction)
+          else if (interaction.action === 'hover')
             await page.hover(interaction.selector)
           else if (interaction.action === 'click')
             await page.click(interaction.selector)
@@ -800,20 +859,27 @@ async function captureScreensLocked({
             action: 'wait',
             selector: interaction.readySelector,
           })
-        if (!interaction.captureImmediately) await page.waitForTimeout(400)
+        if (
+          !interaction.captureImmediately &&
+          interaction.action !== 'openPrintPopup'
+        )
+          await page.waitForTimeout(400)
       }
       // goto already waited for networkidle; only re-settle after interactions.
       if (
+        !printCapture &&
         interactions.length > 0 &&
         !interactions.some((interaction) => interaction.captureImmediately)
       )
         await page.waitForLoadState('networkidle')
       await assertNoRouteError(page)
       await waitForReady(page, state.setup?.ready ?? screen.ready)
+      const targetPage = printCapture?.page ?? page
       const entries = await captureScreenImages({
-        page,
+        page: targetPage,
+        fullPage: !printCapture,
         outDir,
-        sections: screen.sections,
+        sections: printCapture ? undefined : screen.sections,
         entry: {
           order,
           status: 'success',
@@ -824,11 +890,12 @@ async function captureScreensLocked({
           locale,
           file,
           url: url.toString(),
+          ...(printCapture ? { target: printCapture.target } : {}),
           ...(attempt ? { attempts: attempt + 1 } : {}),
         },
         afterFullCapture: async () => {
           if (!auditGaps) return {}
-          const findings = await page.evaluate(auditGapsBrowser, {
+          const findings = await targetPage.evaluate(auditGapsBrowser, {
             rootSelector: 'body',
             minGap: 4,
           })
@@ -887,6 +954,7 @@ async function captureScreensLocked({
         )
       }
     } finally {
+      await printCapture?.cleanup()
       releaseHeldUpload?.()
       await heldUploadRequest?.catch(() => {})
       await context.close()

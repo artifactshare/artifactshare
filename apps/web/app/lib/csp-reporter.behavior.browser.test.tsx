@@ -884,6 +884,7 @@ describe('CSP reporter runtime behavior', () => {
       renderedHtml: `<html><body data-artifact-markdown><article data-comment-content><pre><code class="language-mermaid">${source}</code></pre></article></body></html>`,
     }
 
+    await server.commands.exportPdfObservation('start', data)
     const html = await resolveExportHtml('artifact-1', data)
     expect(html).toContain('class="mermaid-diagram"')
     expect(html).toContain('<svg')
@@ -895,8 +896,16 @@ describe('CSP reporter runtime behavior', () => {
       preparing: 'Preparing',
       heightLimited: 'Height limited',
     })
-    expect(print.querySelector('.mermaid-diagram svg')).not.toBeNull()
-    expect(print.querySelector('pre')?.hidden).toBe(true)
+    expect(print.querySelector('.mermaid-diagram svg')).toBeNull()
+    const printFrame = print.querySelector('iframe')!
+    expect(printFrame.getAttribute('sandbox')).toBe('allow-scripts')
+    const content = new DOMParser().parseFromString(
+      printFrame.srcdoc,
+      'text/html',
+    )
+    expect(content.querySelector('.mermaid-diagram svg')).not.toBeNull()
+    expect(content.querySelector('pre')?.hidden).toBe(true)
+    await server.commands.exportPdfObservation('stop')
   })
 
   test('keyboard link activation and script clicks ignore highlight geometry at the origin', async () => {

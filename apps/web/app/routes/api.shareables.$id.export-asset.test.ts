@@ -21,10 +21,7 @@ vi.mock('~/services/export-source.server', async (importOriginal) => ({
   getExportAsset: getExportAssetMock,
 }))
 
-import {
-  loader,
-  rewriteRootRelativeCssAssetUrls,
-} from './api.shareables.$id.export-asset.$'
+import { loader } from './api.shareables.$id.export-asset.$'
 
 describe('/api/shareables/:id/export-asset/*', () => {
   beforeEach(() => {
@@ -82,32 +79,21 @@ describe('/api/shareables/:id/export-asset/*', () => {
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
   })
 
-  test('rewrites linked CSS root-relative asset URLs', async () => {
+  test('returns CSS acquisition bytes unchanged with no-store and exact version', async () => {
+    const css = '@import "nested/theme.css"; a { background: url(/image.png) }'
     getExportAssetMock.mockResolvedValue({
       kind: 'ok',
-      object: {
-        body: new Blob(['']).stream(),
-        text: vi
-          .fn()
-          .mockResolvedValue(
-            '@font-face { src: url("/fonts/a.woff2"); } .hero { background: url(/images/bg.png?v=1); }',
-          ),
-        size: 91,
-      },
+      object: { body: new Blob([css]).stream(), size: css.length },
       path: '/style.css',
-      contentType: 'text/css; charset=utf-8',
+      contentType: 'text/css',
     })
-
-    const response = await loader(loaderArgs('site123abc', 'style.css'))
-    const body = await response.text()
-
-    expect(response.status).toBe(200)
-    expect(response.headers.get('content-length')).toBeNull()
-    expect(body).toContain(
-      'url("https://artifactshare.test/api/shareables/site123abc/export-asset/fonts/a.woff2")',
-    )
-    expect(body).toContain(
-      'url("https://artifactshare.test/api/shareables/site123abc/export-asset/images/bg.png?v=1")',
+    const response = await loader(loaderArgs('artifact-1', 'style.css'))
+    expect(await response.text()).toBe(css)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(getExportAssetMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { id: 'artifact-1', path: '/style.css', versionId: 'version-1' },
     )
   })
 
@@ -125,22 +111,9 @@ describe('/api/shareables/:id/export-asset/*', () => {
     const response = await loader(loaderArgs('site123abc', 'page.html'))
     const body = (await response.json()) as { error: { code: string } }
 
+    expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.status).toBe(400)
     expect(body.error.code).toBe('unsafe-export-asset')
-  })
-})
-
-describe('rewriteRootRelativeCssAssetUrls', () => {
-  test('leaves external and protocol-relative URLs unchanged', () => {
-    expect(
-      rewriteRootRelativeCssAssetUrls(
-        'a{background:url(https://cdn.example/a.png)} b{background:url(//cdn.example/b.png)}',
-        'site123abc',
-        'https://artifactshare.test',
-      ),
-    ).toBe(
-      'a{background:url(https://cdn.example/a.png)} b{background:url(//cdn.example/b.png)}',
-    )
   })
 })
 
@@ -149,7 +122,7 @@ function loaderArgs(id: string, path: string) {
     context: new Map(),
     params: { id, '*': path },
     request: new Request(
-      `https://artifactshare.test/api/shareables/${id}/export-asset/${path}`,
+      `https://artifactshare.test/api/shareables/${id}/export-asset/${path}?versionId=version-1`,
     ),
   } as never
 }

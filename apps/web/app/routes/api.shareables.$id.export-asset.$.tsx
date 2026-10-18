@@ -1,7 +1,7 @@
+import { exportNoStoreMiddleware } from '~/middleware/export-no-store'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import { errorResponse } from '~/lib/api-errors'
-import { splitAssetRef } from '~/lib/asset-ref'
 import { createDb } from '~/services/db.server'
 import {
   exportSourceErrorResponse,
@@ -10,14 +10,15 @@ import {
 } from '~/services/export-source.server'
 import type { Route } from './+types/api.shareables.$id.export-asset.$'
 
-export const middleware = [requireUserApiMiddleware]
+export const middleware = [exportNoStoreMiddleware, requireUserApiMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+async function loadAsset({ context, params, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const path = `/${params['*'] ?? ''}`
   const result = await getExportAsset(createDb(), user, {
     id: params.id,
     path,
+    versionId: new URL(request.url).searchParams.get('versionId'),
   })
   if (result.kind === 'ok') {
     if (!result.object.body) {
@@ -30,25 +31,11 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
         400,
       )
     }
-    if (isCssContent(result.contentType)) {
-      const css = rewriteRootRelativeCssAssetUrls(
-        await result.object.text(),
-        params.id,
-        new URL(request.url).origin,
-      )
-      return new Response(css, {
-        headers: {
-          'content-type': result.contentType,
-          'cache-control': 'private, max-age=300',
-          'x-content-type-options': 'nosniff',
-        },
-      })
-    }
     return new Response(result.object.body, {
       headers: {
         'content-type': result.contentType,
         'content-length': String(result.object.size),
-        'cache-control': 'private, max-age=300',
+        'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
       },
     })
@@ -56,24 +43,12 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   return exportSourceErrorResponse(result)
 }
 
-function isCssContent(contentType: string): boolean {
-  return contentType.split(';', 1)[0]?.trim().toLowerCase() === 'text/css'
-}
-
-export function rewriteRootRelativeCssAssetUrls(
-  value: string,
-  shareableId: string,
-  origin: string,
-): string {
-  return value.replace(
-    /url\((["']?)(\/(?!\/)[^"')]+)\1\)/g,
-    (_match, _quote, ref: string) => {
-      const { pathname, suffix } = splitAssetRef(ref)
-      const encodedPath = pathname
-        .split('/')
-        .map((segment) => encodeURIComponent(segment))
-        .join('/')
-      return `url("${origin}/api/shareables/${encodeURIComponent(shareableId)}/export-asset${encodedPath}${suffix}")`
-    },
+export async function loader(args: Route.LoaderArgs) {
+  const response = await loadAsset(args).catch((error: unknown) =>
+    error instanceof Response
+      ? error
+      : exportSourceErrorResponse({ kind: 'source-unavailable' }),
   )
+  response.headers.set('cache-control', 'no-store')
+  return response
 }

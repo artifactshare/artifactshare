@@ -22,6 +22,11 @@ export type ScreenReady = {
 
 export type ScreenInteraction =
   | {
+      action: 'openPrintPopup'
+      selector: string
+      state: 'preparing' | 'ready' | 'height-limited' | 'failed'
+    }
+  | {
       action: 'click' | 'hover'
       selector: string
     }

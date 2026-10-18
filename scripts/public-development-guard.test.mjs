@@ -489,3 +489,33 @@ test('default guardPush implementation passes a real temporary repository', () =
     fs.rmSync(repo, { recursive: true, force: true })
   }
 })
+
+test('PDF export boundary documentation is an explicit canonical public file', () => {
+  const boundary = loadBoundaryManifest(process.cwd())
+  assert.ok(
+    boundary.classifications.canonical.includes('docs/reference/pdf-export.md'),
+  )
+  assert.doesNotThrow(() =>
+    inspectTree(
+      [{ path: 'docs/reference/pdf-export.md', mode: 'file' }],
+      boundary,
+    ),
+  )
+  assert.throws(
+    () =>
+      inspectTree(
+        [
+          {
+            path: path.posix.join(
+              'docs',
+              'reference',
+              'unregistered-document.md',
+            ),
+            mode: 'file',
+          },
+        ],
+        boundary,
+      ),
+    /manifest outside path/,
+  )
+})

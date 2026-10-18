@@ -1159,3 +1159,85 @@ test('capture reseeding requires an explicit scenario and a boolean', () => {
     true,
   )
 })
+
+test('PDF captures use the real Viewer menu and distinct popup states', () => {
+  const viewer = ledgerScreens.find((screen) => screen.id === 'viewer')
+  const states = viewer.states.filter((state) => state.id.startsWith('pdf-'))
+  assert.equal(states.length, 6)
+  assert.deepEqual(
+    new Set(states.map((state) => state.setup.interactions.at(-1).state)),
+    new Set(['preparing', 'ready', 'height-limited', 'failed']),
+  )
+  for (const state of states) {
+    assert.equal(state.setup.scenario, 'viewer/pdf-export')
+    assert.equal(state.setup.interactions.at(-1).action, 'openPrintPopup')
+    assert.equal(
+      state.setup.interactions.at(-1).selector,
+      '[data-viewer-export-pdf]',
+    )
+  }
+})
+
+test('print popup capture waits on the popup and closes it, preserving opener provenance', async () => {
+  const { openPrintPopupForCapture } = await import('./screen-capture.mjs')
+  const calls = []
+  const popup = {
+    evaluate: () => Promise.resolve(calls.push('suppress')),
+    locator: (selector) => ({
+      waitFor: () => Promise.resolve(calls.push(selector)),
+    }),
+    close: () => Promise.resolve(calls.push('close')),
+    url: () => 'about:blank',
+  }
+  const page = {
+    context: () => ({
+      addInitScript: () => Promise.resolve(calls.push('init')),
+    }),
+    waitForEvent: (name) => {
+      calls.push(name)
+      return Promise.resolve(popup)
+    },
+    click: (selector) => Promise.resolve(calls.push(selector)),
+    url: () => 'https://artifactshare.test/a/artifact-1',
+  }
+  const result = await openPrintPopupForCapture(page, {
+    selector: '[data-viewer-export-pdf]',
+    state: 'ready',
+  })
+  assert.equal(result.page, popup)
+  assert.equal(result.target.kind, 'print-popup')
+  assert.equal(result.target.openerUrl, page.url())
+  assert.ok(calls.includes('body[data-export-state="ready"]'))
+  await result.cleanup()
+  assert.equal(calls.at(-1), 'close')
+})
+
+test('print popup capture cleans up a failed readiness wait and refuses nonterminal targets', async () => {
+  const { openPrintPopupForCapture } = await import('./screen-capture.mjs')
+  let closed = false
+  const popup = {
+    evaluate: () => Promise.resolve(),
+    locator: () => ({ waitFor: () => Promise.reject(new Error('not ready')) }),
+    close: () => {
+      closed = true
+      return Promise.resolve()
+    },
+  }
+  const opener = {
+    context: () => ({ addInitScript: () => Promise.resolve() }),
+    waitForEvent: () => Promise.resolve(popup),
+    click: () => Promise.resolve(),
+  }
+  await assert.rejects(
+    openPrintPopupForCapture(opener, { selector: 'button', state: 'ready' }),
+  )
+  assert.equal(closed, true)
+  const changedScreens = structuredClone(ledgerScreens)
+  const viewer = changedScreens.find((screen) => screen.id === 'viewer')
+  const state = viewer.states.find((candidate) => candidate.id === 'pdf-html')
+  state.setup.interactions.push({ action: 'click', selector: 'button' })
+  assert.throws(
+    () => validateLedger(changedScreens),
+    /invalid print popup interaction/,
+  )
+})

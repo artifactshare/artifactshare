@@ -1,3 +1,4 @@
+import { PDF_EXPORT_FIXTURES, pdfFixtureFiles } from './dev-pdf-export-fixtures'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
 import { CSP_DIAGNOSTIC_BODIES } from './dev-csp-diagnostic-fixtures'
 import scenarioIds from '../../../../scripts/screen-scenarios.json'
@@ -113,6 +114,19 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario === 'viewer/pdf-export') {
+    await Promise.all(
+      PDF_EXPORT_FIXTURES.flatMap((fixture, index) => {
+        const versionId = `${devShareableId(`${workspaceId}-${userId}-file-${index + 1}`)}-v1`
+        return pdfFixtureFiles(index).map((file) =>
+          bucket.put(`dev-screen/${versionId}${file.path}`, file.body, {
+            httpMetadata: { contentType: file.mime },
+          }),
+        )
+      }),
+    )
+    return
+  }
   if (managedRetentionScenarios.has(scenario)) {
     await seedDevScreenArtifactBodies(
       bucket,
@@ -678,6 +692,79 @@ export async function seedDevScreenState(
       })
       .onConflict((oc) => oc.doNothing())
       .execute()
+  }
+  if (scenario === 'viewer/pdf-export') {
+    await Promise.all(
+      PDF_EXPORT_FIXTURES.map(async (fixture, index) => {
+        const id = devShareableId(`${workspaceId}-${userId}-file-${index + 1}`)
+        const versionId = `${id}-v1`
+        await db
+          .insertInto('shareables')
+          .values({
+            id,
+            workspace_id: workspaceId,
+            owner_user_id: userId,
+            container_id: containerId,
+            name: fixture.name,
+            artifact_kind: fixture.kind,
+            visibility: 'private',
+            created_at: now,
+            updated_at: now,
+          })
+          .onConflict((oc) =>
+            oc
+              .column('id')
+              .doUpdateSet({ name: fixture.name, artifact_kind: fixture.kind }),
+          )
+          .execute()
+        await db
+          .insertInto('versions')
+          .values({
+            id: versionId,
+            shareable_id: id,
+            artifact_kind: fixture.kind,
+            status: 'published',
+            entrypoint_path: fixture.path,
+            r2_key: `dev-screen/${versionId}${fixture.path}`,
+            size_bytes: new TextEncoder().encode(fixture.source).byteLength,
+            sha256: versionId,
+            created_by_id: userId,
+            created_at: now,
+            published_at: now,
+          })
+          .onConflict((oc) => oc.column('id').doNothing())
+          .execute()
+        await db
+          .updateTable('shareables')
+          .set({ current_version_id: versionId })
+          .where('id', '=', id)
+          .execute()
+        if (fixture.kind === 'static_site')
+          await Promise.all(
+            pdfFixtureFiles(index).map((file, fileIndex) =>
+              db
+                .insertInto('version_files')
+                .values({
+                  id: `${versionId}-${fileIndex}`,
+                  version_id: versionId,
+                  path: file.path,
+                  r2_key: `dev-screen/${versionId}${file.path}`,
+                  mime_type: file.mime,
+                  size_bytes:
+                    typeof file.body === 'string'
+                      ? new TextEncoder().encode(file.body).byteLength
+                      : file.body.byteLength,
+                  sha256: `${versionId}-${fileIndex}`,
+                  scan_flags: null,
+                  created_at: now,
+                })
+                .onConflict((oc) => oc.column('id').doNothing())
+                .execute(),
+            ),
+          )
+      }),
+    )
+    return { containerId, containerKind: 'inbox' }
   }
   const representativeFeedAnchor = seedsRepresentativeFeed
     ? (

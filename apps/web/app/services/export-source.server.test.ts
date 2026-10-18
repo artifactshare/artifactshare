@@ -115,9 +115,13 @@ describe('getExportSource', () => {
       httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
     })
 
-    const result = await getExportSource({} as never, user, {
-      id: 'abc123def4',
-    })
+    const result = await getExportSource(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      {
+        id: 'abc123def4',
+      },
+    )
 
     expect(result).toEqual({
       kind: 'ok',
@@ -150,9 +154,13 @@ describe('getExportSource', () => {
       httpMetadata: { contentType: 'text/html; charset=utf-8' },
     })
 
-    const result = await getExportSource({} as never, user, {
-      id: 'html123abc',
-    })
+    const result = await getExportSource(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      {
+        id: 'html123abc',
+      },
+    )
 
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
@@ -336,7 +344,11 @@ describe('getExportSource', () => {
   test('returns not-found when access is missing', async () => {
     loadCommentAccessMock.mockResolvedValue(null)
 
-    const result = await getExportSource({} as never, user, { id: 'nope' })
+    const result = await getExportSource(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      { id: 'nope' },
+    )
 
     expect(result).toEqual({ kind: 'not-found' })
   })
@@ -354,9 +366,13 @@ describe('getExportSource', () => {
       isTeamWorkspaceAdmin: false,
     })
 
-    const result = await getExportSource({} as never, user, {
-      id: 'spa123abcd',
-    })
+    const result = await getExportSource(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      {
+        id: 'spa123abcd',
+      },
+    )
 
     expect(result).toEqual({ kind: 'unsupported-kind', artifactKind: 'spa' })
   })
@@ -406,9 +422,13 @@ describe('getExportSource', () => {
     })
     getArtifactMock.mockResolvedValue(null)
 
-    const result = await getExportSource({} as never, user, {
-      id: 'abc123def4',
-    })
+    const result = await getExportSource(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      {
+        id: 'abc123def4',
+      },
+    )
 
     expect(result).toEqual({ kind: 'source-unavailable' })
   })
@@ -418,6 +438,45 @@ describe('getExportAsset', () => {
   beforeEach(() => {
     loadCommentAccessMock.mockReset()
     getArtifactMock.mockReset()
+  })
+
+  test.each([null, '', 'old-version', 'foreign-version'])(
+    'refuses missing or stale asset snapshot %s before storage',
+    async (versionId) => {
+      loadCommentAccessMock.mockResolvedValue({
+        currentVersionId: 'version-1',
+        artifactKind: 'static_site',
+      })
+      expect(
+        await getExportAsset(
+          versionFileDb({ id: 'version-1' }) as never,
+          user,
+          { id: 'artifact-1', path: '/a.png', versionId },
+        ),
+      ).toEqual({ kind: 'not-found' })
+      expect(getArtifactMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test('refuses revoked source access and stale expected source versions', async () => {
+    loadCommentAccessMock.mockResolvedValue({
+      currentVersionId: 'version-2',
+      artifactKind: 'html_page',
+    })
+    expect(
+      await getExportSource(versionFileDb({ id: 'version-1' }) as never, user, {
+        id: 'artifact-1',
+        versionId: 'version-1',
+      }),
+    ).toEqual({ kind: 'not-found' })
+    loadCommentAccessMock.mockResolvedValue(null)
+    expect(
+      await getExportSource(versionFileDb({ id: 'version-1' }) as never, user, {
+        id: 'artifact-1',
+        versionId: 'version-2',
+      }),
+    ).toEqual({ kind: 'not-found' })
+    expect(getArtifactMock).not.toHaveBeenCalled()
   })
 
   test('returns a static site asset by path', async () => {
@@ -448,7 +507,7 @@ describe('getExportAsset', () => {
         mime_type: 'text/css',
       }) as never,
       user,
-      { id: 'site123abc', path: '/assets/app.css' },
+      { id: 'site123abc', path: '/assets/app.css', versionId: 'ver999' },
     )
 
     expect(result).toEqual({
@@ -472,10 +531,15 @@ describe('getExportAsset', () => {
       isTeamWorkspaceAdmin: false,
     })
 
-    const result = await getExportAsset({} as never, user, {
-      id: 'html123abc',
-      path: '/demo.html',
-    })
+    const result = await getExportAsset(
+      versionFileDb({ id: 'version-1' }) as never,
+      user,
+      {
+        id: 'html123abc',
+        path: '/demo.html',
+        versionId: 'ver123',
+      },
+    )
 
     expect(result).toEqual({
       kind: 'unsupported-kind',
@@ -517,24 +581,102 @@ describe('exportSourceErrorResponse', () => {
 function versionFileDb(rowOrRows: unknown | unknown[]) {
   const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]
   const row = rows[0] ?? null
+  const query = {
+    innerJoin: () => query,
+    select: () => query,
+    where: () => query,
+    execute: vi.fn().mockResolvedValue(rows),
+    executeTakeFirst: vi.fn().mockResolvedValue(row),
+  }
   return {
-    selectFrom: () => ({
-      innerJoin: () => ({
-        select: () => ({
-          where: () => ({
-            where: () => ({
-              execute: vi.fn().mockResolvedValue(rows),
+    selectFrom: (table: string) =>
+      table === 'versions'
+        ? {
+            ...query,
+            select: () => ({
+              ...query,
+              executeTakeFirst: vi.fn().mockResolvedValue({ id: 'version-1' }),
             }),
-          }),
-        }),
-      }),
-      select: () => ({
-        where: () => ({
-          where: () => ({
-            executeTakeFirst: vi.fn().mockResolvedValue(row),
-          }),
-        }),
-      }),
-    }),
+          }
+        : query,
   }
 }
+
+test('refuses foreign version ownership before reading the source object', async () => {
+  loadCommentAccessMock.mockResolvedValue({
+    currentVersionId: 'foreign-version',
+    artifactKind: 'html_page',
+    r2Key: 'source',
+  })
+  getArtifactMock.mockClear()
+  const query = {
+    select: () => query,
+    where: () => query,
+    executeTakeFirst: vi.fn().mockResolvedValue(undefined),
+  }
+  expect(
+    await getExportSource({ selectFrom: () => query } as never, user, {
+      id: 'artifact-1',
+      versionId: 'foreign-version',
+    }),
+  ).toEqual({ kind: 'not-found' })
+  expect(getArtifactMock).not.toHaveBeenCalled()
+})
+
+test('rechecks access after reading snapshot bytes', async () => {
+  loadCommentAccessMock.mockReset()
+  loadCommentAccessMock
+    .mockResolvedValueOnce({
+      currentVersionId: 'version-1',
+      artifactKind: 'html_page',
+      r2Key: 'source',
+    })
+    .mockResolvedValueOnce(null)
+  getArtifactMock.mockResolvedValue({
+    text: async () => '<p>Old source</p>',
+    httpMetadata: { contentType: 'text/html' },
+  })
+  expect(
+    await getExportSource(versionFileDb({}) as never, user, {
+      id: 'artifact-1',
+      versionId: 'version-1',
+    }),
+  ).toEqual({ kind: 'not-found' })
+})
+
+test('asset lookup pins ownership, version and exact canonical path and rechecks a changed version', async () => {
+  const where = vi.fn(() => query)
+  const query = {
+    innerJoin: () => query,
+    select: () => query,
+    where,
+    executeTakeFirst: vi.fn().mockResolvedValue({
+      path: '/images/a.png',
+      r2_key: 'snapshot/image',
+      mime_type: 'image/png',
+    }),
+  }
+  loadCommentAccessMock.mockReset()
+  loadCommentAccessMock
+    .mockResolvedValueOnce({
+      currentVersionId: 'version-1',
+      artifactKind: 'static_site',
+    })
+    .mockResolvedValueOnce({ currentVersionId: 'version-2' })
+  getArtifactMock.mockResolvedValue({
+    body: new ReadableStream(),
+    httpMetadata: { contentType: 'image/png' },
+  })
+  expect(
+    await getExportAsset({ selectFrom: () => query } as never, user, {
+      id: 'artifact-1',
+      versionId: 'version-1',
+      path: '/images/a.png?versionId=other#fragment',
+    }),
+  ).toEqual({ kind: 'not-found' })
+  expect(where.mock.calls).toEqual([
+    ['version_files.version_id', '=', 'version-1'],
+    ['versions.shareable_id', '=', 'artifact-1'],
+    ['version_files.path', '=', '/images/a.png'],
+  ])
+})

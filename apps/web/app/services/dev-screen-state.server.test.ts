@@ -1689,3 +1689,76 @@ test.each(['owner', 'readonly', 'unlimited'])(
     }
   },
 )
+
+test('PDF capture fixtures store exact snapshot files, including nested CSS and font bytes', async () => {
+  const { db } = createMigratedInMemoryDb()
+  try {
+    const scenario = 'viewer/pdf-export'
+    expect(isScreenScenario(scenario)).toBe(true)
+    const now = '2026-08-17T12:00:00.000Z'
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'team',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'viewer@example.com',
+        email_verified: 1,
+        name: 'Viewer',
+        image: null,
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+        locale: null,
+      })
+      .execute()
+    await seedDevScreenState(db, scenario, workspaceId, userId, now)
+    const put = vi.fn().mockResolvedValue(undefined)
+    await seedDevScreenArtifactBodies(
+      { put } as unknown as Pick<R2Bucket, 'put'>,
+      scenario,
+      workspaceId,
+      userId,
+    )
+    const versions = await db.selectFrom('versions').selectAll().execute()
+    expect(versions).toHaveLength(5)
+    expect(new Set(versions.map((v) => v.artifact_kind))).toEqual(
+      new Set(['html_page', 'markdown_page', 'static_site']),
+    )
+    const files = await db.selectFrom('version_files').selectAll().execute()
+    expect(files.map((f) => f.path)).toEqual(
+      expect.arrayContaining([
+        '/guide/report.html',
+        '/styles/nested/theme.css',
+        '/fonts/report.woff2',
+        '/images/mark.png',
+      ]),
+    )
+    for (const file of files) {
+      const stored = put.mock.calls.find(([key]) => key === file.r2_key)
+      expect(stored).toBeDefined()
+      const body = stored![1]
+      expect(
+        typeof body === 'string'
+          ? new TextEncoder().encode(body).byteLength
+          : body.byteLength,
+      ).toBe(file.size_bytes)
+      expect(stored![2].httpMetadata.contentType).toBe(file.mime_type)
+    }
+    expect(
+      put.mock.calls.some(
+        ([, body]) =>
+          typeof body === 'string' &&
+          body.includes('41000px') &&
+          body.includes('FINAL-PDF-MARKER'),
+      ),
+    ).toBe(true)
+  } finally {
+    await db.destroy()
+  }
+})

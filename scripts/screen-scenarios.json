@@ -7,6 +7,7 @@
   "recent/content-rich",
   "viewer/bridge-attribution",
   "viewer/csp-diagnostics",
+  "viewer/pdf-export",
   "viewer/revisit-context",
   "viewer/scheduled-updates",
   "viewer/retention-managed-owner",

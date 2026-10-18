@@ -61,9 +61,14 @@ describe('export-actions helpers', () => {
 
   test('assetRouteHref encodes static site asset paths', () => {
     expect(
-      assetRouteHref('abc123', '/assets/logo.png', 'https://example.com'),
+      assetRouteHref(
+        'abc123',
+        '/assets/logo.png',
+        'version-1',
+        'https://example.com',
+      ),
     ).toBe(
-      'https://example.com/api/shareables/abc123/export-asset/assets/logo.png',
+      'https://example.com/api/shareables/abc123/export-asset/assets/logo.png?versionId=version-1',
     )
   })
 
@@ -147,3 +152,44 @@ describe('export-actions helpers', () => {
     ).toBe(true)
   })
 })
+
+test('source revalidation pins the version, bypasses cache and refuses a replaced snapshot', async () => {
+  vi.stubGlobal('window', {
+    location: { origin: 'https://artifactshare.test' },
+  })
+  const fetch = vi.fn().mockResolvedValue(
+    Response.json({
+      kind: 'html',
+      artifactKind: 'html_page',
+      path: '/index.html',
+      versionId: 'version-2',
+      source: '<p>New source</p>',
+      fileName: 'index.html',
+    }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  expect(
+    await fetchExportSource('artifact-1', '/guide/report.html', 'version-1'),
+  ).toEqual({ ok: false, reason: 'failed' })
+  const [url, init] = fetch.mock.calls[0]
+  expect(url.searchParams.get('versionId')).toBe('version-1')
+  expect(url.searchParams.get('path')).toBe('/guide/report.html')
+  expect(init).toMatchObject({ cache: 'no-store', redirect: 'error' })
+})
+
+test.each([400, 401, 403, 404, 409, 500])(
+  'unknown source failure %s retains the failed result',
+  async (status) => {
+    vi.stubGlobal('window', {
+      location: { origin: 'https://artifactshare.test' },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('not JSON', { status })),
+    )
+    expect(await fetchExportSource('artifact-1', '/index.html')).toEqual({
+      ok: false,
+      reason: 'failed',
+    })
+  },
+)

@@ -62,6 +62,7 @@ describe('/api/shareables/:id/export-source', () => {
       fileName: string
     }
 
+    expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.status).toBe(200)
     expect(body.kind).toBe('markdown')
     expect(body.source).toBe('# Report')
@@ -77,7 +78,7 @@ describe('/api/shareables/:id/export-source', () => {
         hd: 'example.com',
         locale: 'en',
       },
-      { id: 'abc123def4', path: null },
+      { id: 'abc123def4', path: null, versionId: null },
     )
   })
 
@@ -101,6 +102,7 @@ describe('/api/shareables/:id/export-source', () => {
       ),
     )
 
+    expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.status).toBe(200)
     expect(getExportSourceMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -108,6 +110,7 @@ describe('/api/shareables/:id/export-source', () => {
       {
         id: 'site123abc',
         path: '/about.html',
+        versionId: null,
       },
     )
   })
@@ -163,6 +166,23 @@ describe('/api/shareables/:id/export-source', () => {
     expect(response.status).toBe(409)
     expect(body.error.code).toBe('source-unavailable')
   })
+})
+
+test('source revalidation forwards the expected version and storage errors are not cacheable', async () => {
+  getExportSourceMock.mockRejectedValue(new Error('Storage failed'))
+  const response = await loader(
+    loaderArgs(
+      'artifact-1',
+      'https://artifactshare.test/api/shareables/artifact-1/export-source?path=%2Fguide%2Freport.html&versionId=version-1',
+    ),
+  )
+  expect(getExportSourceMock).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    { id: 'artifact-1', path: '/guide/report.html', versionId: 'version-1' },
+  )
+  expect(response.status).toBe(409)
+  expect(response.headers.get('cache-control')).toBe('no-store')
 })
 
 function loaderArgs(id: string, url?: string) {

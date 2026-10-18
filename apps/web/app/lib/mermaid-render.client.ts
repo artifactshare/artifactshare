@@ -43,7 +43,16 @@ export function sanitizeMermaidSvg(svg: string): string {
   })
 }
 
-function appendMermaidSvg(doc: Document, container: HTMLElement, svg: string) {
+type MermaidDocument = Pick<
+  Document,
+  'body' | 'querySelectorAll' | 'createElement' | 'importNode'
+>
+
+function appendMermaidSvg(
+  doc: MermaidDocument,
+  container: HTMLElement,
+  svg: string,
+) {
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
   const root = parsed.documentElement
   if (
@@ -57,8 +66,9 @@ function appendMermaidSvg(doc: Document, container: HTMLElement, svg: string) {
 }
 
 export async function renderMermaidInDocument(
-  doc: Document,
+  doc: MermaidDocument,
   trustedMarkdown: boolean,
+  render: (source: string) => Promise<string> = renderMermaidSvg,
 ): Promise<void> {
   if (!trustedMarkdown || !doc.body.hasAttribute('data-artifact-markdown'))
     return
@@ -80,8 +90,10 @@ export async function renderMermaidInDocument(
     const results = await pending
     if (pre.dataset.mermaidRendered === 'true') return results
     try {
-      results.push({ pre, svg: await renderMermaidSvg(source) })
-    } catch {
+      results.push({ pre, svg: await render(source) })
+    } catch (error) {
+      if (error instanceof Error && error.name === 'MermaidResourceError')
+        throw error
       pre.classList.add('mermaid-error')
     }
     return results

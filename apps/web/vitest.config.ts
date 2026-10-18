@@ -11,6 +11,8 @@ export default defineConfig({
     },
   },
   test: {
+    // PDF preparation embeds this stylesheet as text, including in unit tests.
+    css: { include: [/print-viewport\.css/] },
     include: [
       'app/**/*.test.ts',
       'app/**/*.test.tsx',

@@ -1,0 +1,6 @@
+/* Embedded only in prepared print content. The trusted frame helper sets these
+   logical-axis defaults from the root writing mode before measuring layout. */
+:root {
+  --artifactshare-print-vb: 7.6px;
+  --artifactshare-print-vi: 9px;
+}

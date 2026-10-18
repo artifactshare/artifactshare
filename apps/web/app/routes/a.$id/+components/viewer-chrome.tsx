@@ -1351,7 +1351,10 @@ function ViewerActions({
                     </DropdownMenuItem>
                   ) : null}
                   {onDownloadPdf ? (
-                    <DropdownMenuItem onSelect={() => onDownloadPdf()}>
+                    <DropdownMenuItem
+                      data-viewer-export-pdf
+                      onSelect={() => onDownloadPdf()}
+                    >
                       {t('vw.downloadPdf')}
                     </DropdownMenuItem>
                   ) : null}
