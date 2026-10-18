@@ -60,8 +60,8 @@ export default defineConfig({
             // Route dispatch tags direct probes; real redirect responses carry
             // the same session in Location, even when credentials are omitted.
             const id =
-              url.searchParams.get('pdf_probe_id') ??
-              request.headers['x-pdf-probe-id'] ??
+              url.searchParams.get('pdf_probe_id') ||
+              request.headers['x-pdf-probe-id'] ||
               /(?:^|; )pdf_probe_id=([^;]+)/.exec(cookie)?.[1]
             if (typeof id === 'string') {
               const records = receipts.get(id) ?? []

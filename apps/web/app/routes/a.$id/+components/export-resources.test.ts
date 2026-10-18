@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options {"settings":{"disableCSSFileLoading":true,"disableJavaScriptFileLoading":true}}
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import * as mermaidExport from '~/lib/mermaid-export.client'
 import { isolatedPrintHtml } from './export-print-frame'
 import { inertExportDocument } from './export-resources'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
@@ -443,4 +444,128 @@ test('embeds logical viewport defaults in print content only', async () => {
   )
   expect(downloaded.head.textContent).not.toContain('--artifactshare-print-vb:')
   expect(downloaded.head.textContent).not.toContain('--artifactshare-print-vi:')
+})
+
+test.each([128, 129])(
+  'Mermaid prepared images use the original %i resource count',
+  async (size) => {
+    vi.spyOn(mermaidExport, 'renderExportMermaidSvg').mockImplementation(
+      async (_source, _signal, acquire) => {
+        const images = await Promise.all(
+          Array.from(
+            { length: size },
+            async (_, index) =>
+              `<image href="${await acquire!(`${index}.png`).catch(
+                (error: Error) => {
+                  error.name = 'MermaidResourceError'
+                  throw error
+                },
+              )}"/>`,
+          ),
+        )
+        return `<svg xmlns="http://www.w3.org/2000/svg">${images.join('')}</svg>`
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (url: string) =>
+          new Response(url, { headers: { 'content-type': 'image/png' } }),
+      ),
+    )
+    const result = prepareExportDocument(
+      'artifact-1',
+      {
+        ...data(''),
+        kind: 'markdown',
+        renderedHtml:
+          '<body data-artifact-markdown><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      },
+      AbortSignal.timeout(5000),
+    )
+    if (size === 128)
+      expect((await result).querySelectorAll('image')).toHaveLength(size)
+    else await expect(result).rejects.toThrow('Too many')
+  },
+)
+
+test.each([2, 3])(
+  'prepared image bytes are charged once and still bounded (%i images)',
+  async (size) => {
+    // Model large encoded images at the accounting boundary without allocating
+    // tens of megabytes or making DOM parsing the subject of this regression.
+    const encode = TextEncoder.prototype.encode
+    vi.spyOn(TextEncoder.prototype, 'encode').mockImplementation(
+      function (this: TextEncoder, input) {
+        const bytes = encode.call(this, input)
+        if (input?.startsWith('data:image/png;'))
+          Object.defineProperty(bytes, 'byteLength', {
+            value: 24 * 1024 * 1024,
+          })
+        return bytes
+      },
+    )
+    vi.spyOn(mermaidExport, 'renderExportMermaidSvg').mockImplementation(
+      async (_source, _signal, acquire) => {
+        const images = await Promise.all(
+          Array.from(
+            { length: size },
+            async (_, index) =>
+              `<image href="${await acquire!(`${index}.png`).catch(
+                (error: Error) => {
+                  error.name = 'MermaidResourceError'
+                  throw error
+                },
+              )}"/>`,
+          ),
+        )
+        return `<svg xmlns="http://www.w3.org/2000/svg">${images.join('')}</svg>`
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (url: string) =>
+          new Response(url, { headers: { 'content-type': 'image/png' } }),
+      ),
+    )
+    const result = prepareExportDocument(
+      'artifact-1',
+      {
+        ...data(''),
+        kind: 'markdown',
+        renderedHtml:
+          '<body data-artifact-markdown><pre><code class="language-mermaid">flowchart LR</code></pre></body>',
+      },
+      AbortSignal.timeout(5000),
+    )
+    if (size === 2)
+      expect((await result).querySelectorAll('image')).toHaveLength(2)
+    else await expect(result).rejects.toThrow('embedded resource budget')
+  },
+)
+
+test('new nested data images retain sanitization and resource budgets', async () => {
+  const nested =
+    'data:text/css,' +
+    encodeURIComponent('body { background: url("data:text/html,unsafe") }')
+  await expect(
+    prepareExportDocument(
+      'artifact-1',
+      data(`<link rel="stylesheet" href="${nested}">`),
+      AbortSignal.timeout(1000),
+    ),
+  ).rejects.toThrow('Unsafe inline asset')
+  await expect(
+    prepareExportDocument(
+      'artifact-1',
+      data(
+        Array.from(
+          { length: 129 },
+          (_, i) => `<img src="data:image/png;base64,${btoa(String(i))}">`,
+        ).join(''),
+      ),
+      AbortSignal.timeout(1000),
+    ),
+  ).rejects.toThrow('Too many')
 })

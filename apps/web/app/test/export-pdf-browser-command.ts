@@ -390,6 +390,8 @@ export const probeExportPdfBoundary = defineBrowserCommand(async ({ page }) => {
     predicate: (candidate) => candidate === frame,
     timeout: 5000,
   })
+  // Observe the deadline immediately, including when evaluate rejects first.
+  void loaded.catch(() => {})
   await popup.evaluate(
     ({ origin, probeId }) => {
       const element = document.querySelector('iframe')!

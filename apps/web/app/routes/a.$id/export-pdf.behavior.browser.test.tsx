@@ -248,6 +248,7 @@ test('Mermaid HTTPS image nodes acquire actual bytes anonymously before isolated
       base64: true,
     },
   ])
+  const fetchSpy = vi.spyOn(window, 'fetch')
   popup = await openPopup()
   const spy = vi.spyOn(popup!, 'print').mockImplementation(() => {})
   await writePrintPdf(popup!, 'artifact-1', data, labels)
@@ -266,7 +267,18 @@ test('Mermaid HTTPS image nodes acquire actual bytes anonymously before isolated
   expect(await server.commands.exportPdfObservation('read')).toEqual([])
   const external = await server.commands.exportPdfObservation('external')
   expect(external).toHaveLength(1)
+  // Cookie metadata is diagnostic in WebKit; the real acquisition call also
+  // proves policy in every engine, alongside successfully decoded image bytes.
   expect(external[0].cookie).toBe('')
+  expect(fetchSpy).toHaveBeenCalledWith(
+    image,
+    expect.objectContaining({
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      redirect: 'error',
+      mode: 'cors',
+    }),
+  )
 }, 25_000)
 
 test('Mermaid image-node preparation cannot use application authentication', async () => {
@@ -1031,3 +1043,93 @@ test('external images and fonts are acquired anonymously and decoded before firs
   expect(repeated.fontLoaded).toBe(true)
   expect(repeated.imageHeights).toEqual([40])
 }, 20000)
+
+test('empty receipt query falls back to the dispatched session header', async () => {
+  await server.commands.exportPdfObservation(
+    'start',
+    source('<p>Receipt control</p>'),
+  )
+  const url = new URL('/__pdf_probe_empty?pdf_probe_id=', location.origin).href
+  await fetch(url, { credentials: 'omit' })
+  const records = await server.commands.exportPdfObservation('read')
+  expect(
+    records.filter((record) => record.url === url && record.wire),
+  ).toHaveLength(1)
+  expect(await server.commands.exportPdfObservation('read')).toEqual(records)
+})
+
+test.each(['application', 'credentials', 'redirect', 'allowed'])(
+  'Mermaid image message resource policy: %s',
+  async (kind) => {
+    const { PDF_FIXTURE_IMAGE } =
+      await import('~/services/dev-pdf-export-fixtures')
+    const { renderMarkdownDocument } = await import('~/lib/markdown-render')
+    const original = 'https://example.com/pdf-fixture/original.png'
+    const ref =
+      kind === 'application'
+        ? location.origin + '/__pdf_probe_message'
+        : kind === 'credentials'
+          ? 'https://user:pass@example.com/pdf-fixture/image.png'
+          : kind === 'redirect'
+            ? 'redirect.png'
+            : original
+    const markdown =
+      '```mermaid\nflowchart LR\nA@{ img: "' +
+      original +
+      '", label: "Image", h: 40 }\n```'
+    const data = {
+      ...source(markdown),
+      kind: 'markdown' as const,
+      artifactKind: 'markdown_page' as const,
+      renderedHtml: renderMarkdownDocument(markdown),
+    }
+    await server.commands.exportPdfObservation('start', data, [
+      {
+        path: '/pdf-fixture/original.png',
+        mime: 'image/png',
+        body: PDF_FIXTURE_IMAGE.split(',')[1],
+        base64: true,
+      },
+    ])
+    let intercepted = 0
+    // Mutate only the payload of the actual realm's event before the product
+    // listener: WindowProxy, opaque origin, channel and sequence stay intact.
+    const substitute = (event: MessageEvent) => {
+      if (event.data?.kind === 'image' && event.data.ref === original) {
+        expect(event.origin).toBe('null')
+        event.data.ref = ref
+        intercepted++
+      }
+    }
+    window.addEventListener('message', substitute, true)
+    popup = await openPopup()
+    const printSpy = vi.spyOn(popup!, 'print').mockImplementation(() => {})
+    try {
+      const result = writePrintPdf(popup!, 'artifact-1', data, labels)
+      if (kind === 'allowed') {
+        await result
+        expect(printSpy).toHaveBeenCalledTimes(1)
+        expect((await server.commands.inspectExportPdf()).svgImages).toEqual([
+          { href: PDF_FIXTURE_IMAGE, xlinkHref: null },
+        ])
+      } else {
+        await expect(result).rejects.toThrow('forbidden resource')
+        expect(printSpy).not.toHaveBeenCalled()
+      }
+      expect(intercepted).toBe(1)
+      expect(await server.commands.exportPdfObservation('read')).toEqual([])
+      // Live unsafe control proves the same receipt observer sees dispatch.
+      await fetch('/__pdf_probe_message', { credentials: 'include' })
+      const records = await server.commands.exportPdfObservation('read')
+      expect(
+        records.some(
+          (record) =>
+            record.wire && record.cookie.includes('pdf_test_session=synthetic'),
+        ),
+      ).toBe(true)
+    } finally {
+      window.removeEventListener('message', substitute, true)
+    }
+  },
+  25_000,
+)

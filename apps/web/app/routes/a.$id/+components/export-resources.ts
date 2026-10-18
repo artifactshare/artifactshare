@@ -438,6 +438,9 @@ async function prepareDocument(
       throw new Error('Export exceeds embedded resource budget')
     return uri
   }
+  // Only exact image outputs already acquired, validated and charged by this
+  // export may bypass the second renderer-output acquisition pass.
+  const preparedImages = new Set<string>()
   const cache = new Map<string, Promise<string>>()
   const origin = window.location.origin
   const dependencies = new Map<string, Set<string>>()
@@ -452,6 +455,7 @@ async function prepareDocument(
     if (!value || value.startsWith('#')) return value
     if (ancestors.length >= MAX_DEPTH)
       throw new Error('Deeply nested export resources')
+    if (!css && preparedImages.has(value)) return value
     if (/^data:/i.test(value)) {
       embedded(value)
       if (++count > MAX_RESOURCES) throw new Error('Too many export assets')
@@ -700,7 +704,11 @@ async function prepareDocument(
     await Promise.all(pending)
   }
   await renderMermaidInDocument(doc, data.kind === 'markdown', (source) =>
-    renderExportMermaidSvg(source, signal, (ref) => resource(ref, data.path)),
+    renderExportMermaidSvg(source, signal, async (ref) => {
+      const uri = await resource(ref, data.path)
+      preparedImages.add(uri)
+      return uri
+    }),
   )
   signal.throwIfAborted()
   // Renderer output is still untrusted resource-bearing content.
