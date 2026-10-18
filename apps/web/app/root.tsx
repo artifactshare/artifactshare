@@ -16,6 +16,7 @@ import './app.css'
 import { isPublicPagePath, pathGuideLocale } from '~/lib/guide-locale'
 import { getLocale } from '~/lib/i18n.server'
 import { DEFAULT_LOCALE, type Locale } from '~/i18n/messages'
+import { sandboxBlockReportMiddleware } from '~/middleware/sandbox-block-report.server'
 import { sessionMiddleware } from '~/middleware/auth'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import { Toaster } from '~/components/ui/sonner'
@@ -71,7 +72,7 @@ export const links: Route.LinksFunction = () => [
   },
 ]
 
-export const middleware = [sessionMiddleware]
+export const middleware = [sandboxBlockReportMiddleware, sessionMiddleware]
 
 export async function loader({ request, url, context }: Route.LoaderArgs) {
   const linkDomainState = context.get(linkDomainContext)

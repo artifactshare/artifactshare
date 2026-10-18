@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { action, loader } from './api.shareables.$id.sandbox-block-report'
 
+vi.mock('cloudflare:workers', () => ({
+  env: {
+    SANDBOX_BLOCK_REPORT_RATELIMIT: { limit: async () => ({ success: true }) },
+  },
+}))
+
 const executeTakeFirst = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
   createDb: () => {
@@ -28,6 +34,7 @@ function request(
       method,
       headers: {
         'content-type': 'application/json',
+        'CF-Connecting-IP': '203.0.113.10',
         Origin: 'https://artifactshare.com',
         'Sec-Fetch-Site': 'same-origin',
       },
@@ -106,6 +113,7 @@ describe('sandbox block report route', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          'CF-Connecting-IP': '203.0.113.10',
           Origin: 'https://evil.example',
           'Sec-Fetch-Site': 'cross-site',
         },

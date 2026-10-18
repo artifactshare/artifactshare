@@ -52,6 +52,11 @@
   "send_email": [{ "name": "EMAIL" }],
   "ratelimits": [
     {
+      "name": "SANDBOX_BLOCK_REPORT_RATELIMIT",
+      "namespace_id": "1005",
+      "simple": { "limit": 20, "period": 60 },
+    },
+    {
       "name": "MCP_RATELIMIT_USER",
       "namespace_id": "1001",
       "simple": { "limit": 120, "period": 60 },
