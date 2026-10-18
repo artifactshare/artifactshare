@@ -337,6 +337,9 @@ describe('bounded report preparation', () => {
 import { createRequestHandler, type ServerBuild } from 'react-router'
 import { reportArtifactId } from './sandbox-block-report.server'
 test.each([
+  ...['example%ZZ', '%', '%E0%A4%A'].map(
+    (id) => `/api/shareables/${id}/sandbox-block-report`,
+  ),
   '/api/shareables/abc123def4/sandbox-block-report',
   '/api/shareables/abc123def4/sandbox-block-report.data',
   '/api/shareables/abc123def4/sandbox-block-report/',
@@ -344,7 +347,9 @@ test.each([
   '/API/SHAREABLES/abc123def4/SANDBOX-BLOCK-REPORT',
   '/%61pi/shareables/abc123def4/sandbox-block-report',
 ])('protects every router-supported alias %s', async (path) => {
-  const action = vi.fn(() => new Response('accepted'))
+  const action = vi.fn(
+    (_args: { params: Record<string, string> }) => new Response('accepted'),
+  )
   const handler = createRequestHandler(
     {
       entry: { module: { default: () => new Response('document') } },
@@ -370,7 +375,7 @@ test.each([
     new Request(`https://example.test${path}`, { method: 'POST', body: '{}' }),
   )
   expect(action).toHaveBeenCalledOnce()
-  expect(reportArtifactId(path)).toBe('abc123def4')
+  expect(reportArtifactId(path)).toBe(action.mock.calls[0]?.[0].params.id)
 })
 
 test.each(['empty', 'trickle'])(
@@ -452,3 +457,24 @@ test('cooldown expires and log suppression stays bounded', async () => {
   await run(request())
   expect(warn).toHaveBeenCalledOnce()
 })
+
+test.each(['construction', 'query'])(
+  'database %s failure returns unavailable without logging',
+  async (failure) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    if (failure === 'construction')
+      createDb.mockImplementationOnce(() => {
+        throw Error('internal database detail')
+      })
+    else query.mockRejectedValueOnce(Error('internal database detail'))
+    const response = await run(request())
+    expect(response.status).toBe(503)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(await response.json()).toEqual({ error: 'report-unavailable' })
+    expect(createDb).toHaveBeenCalledOnce()
+    expect(query).toHaveBeenCalledTimes(failure === 'construction' ? 0 : 1)
+    expect(warn).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+  },
+)

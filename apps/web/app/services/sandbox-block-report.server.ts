@@ -56,7 +56,19 @@ export function reportArtifactId(pathname: string): string | null {
   const path = singleFetch ? pathname.slice(0, -5) : pathname
   let segments: string[]
   try {
-    segments = path.split('/').slice(1).map(decodeURIComponent)
+    segments = path
+      .split('/')
+      .slice(1)
+      .map((segment, index) => {
+        if (index !== 2) return decodeURIComponent(segment)
+        try {
+          return decodeURIComponent(segment)
+        } catch {
+          // The router still matches malformed dynamic IDs. Keep them inside
+          // report admission; strict marker validation rejects them afterward.
+          return segment
+        }
+      })
     while (segments.at(-1) === '') segments.pop()
   } catch {
     return null
@@ -229,11 +241,16 @@ export async function finishSandboxBlockReport(
   >,
 ) {
   if (request.signal.aborted) return invalid()
-  const shareable = await createDb()
-    .selectFrom('shareables')
-    .select('id')
-    .where('id', '=', record.artifactId)
-    .executeTakeFirst()
+  let shareable
+  try {
+    shareable = await createDb()
+      .selectFrom('shareables')
+      .select('id')
+      .where('id', '=', record.artifactId)
+      .executeTakeFirst()
+  } catch {
+    return unavailable()
+  }
   if (!shareable) return reportResponse(200, { accepted: true })
   const cooldownKey = `${record.artifactId}:${record.failureType}`
   const now = Date.now()

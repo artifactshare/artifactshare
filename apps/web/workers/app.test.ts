@@ -1557,6 +1557,9 @@ describe('report Worker admission before initialization', () => {
     })
   }
   test.each([
+    ...['example%ZZ', '%', '%E0%A4%A'].map((id) =>
+      path.replace('abc123def4', id),
+    ),
     path,
     path + '.data',
     path + '/',
@@ -1584,6 +1587,47 @@ describe('report Worker admission before initialization', () => {
       expect(anchorAuthInitMock).not.toHaveBeenCalled()
       expect(requestHandlerMock).not.toHaveBeenCalled()
       expect(reportDb).not.toHaveBeenCalled()
+    },
+  )
+  test.each(['construction', 'query'])(
+    'database %s failure stays inside the report boundary',
+    async (failure) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      if (failure === 'construction')
+        reportDb.mockImplementationOnce(() => {
+          throw Error('internal database detail')
+        })
+      else reportQuery.mockRejectedValueOnce(Error('internal database detail'))
+      const limit = vi.fn(async () => ({ success: true }))
+      const response = await app.fetch(
+        reportRequest(
+          path,
+          'artifactshare.com',
+          JSON.stringify({
+            artifactId: 'abc123def4',
+            failureType: 'forbidden',
+            confirmedAt: '2026-07-04T00:00:00.000Z',
+          }),
+        ),
+        {
+          ...productionEnv({ maintenance: false }),
+          SANDBOX_BLOCK_REPORT_RATELIMIT: { limit },
+        },
+        executionContext(),
+      )
+      expect(response.status).toBe(503)
+      expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+      expect(await response.json()).toEqual({ error: 'report-unavailable' })
+      expect(limit).toHaveBeenCalledOnce()
+      expect(reportDb).toHaveBeenCalledOnce()
+      expect(reportQuery).toHaveBeenCalledTimes(
+        failure === 'construction' ? 0 : 1,
+      )
+      expect(anchorAuthInitMock).not.toHaveBeenCalled()
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
+      expect(error).not.toHaveBeenCalled()
     },
   )
   test('missing binding fails closed despite spoofed markers', async () => {
