@@ -94,7 +94,25 @@ export function printFrameHelper(channel: string, parentOrigin: string) {
       // font loads before waiting for readiness on every sizing pass.
       await layout()
       await Promise.all(
-        Array.from(document.images).map((image) => image.decode()),
+        Array.from(document.images).map((image) => {
+          const source = image.getAttribute('src')?.trim() ?? ''
+          const placeholder = !source || source.startsWith('#')
+          const selected = image.currentSrc
+          const selectedPlaceholder =
+            source.startsWith('#') &&
+            selected === new URL(source, document.baseURI).href
+          // currentSrc reflects picture media/type selection. Merely having a
+          // source element (empty or unmatched) does not select an image.
+          // A pending or failed real candidate must still go through decode.
+          if (
+            placeholder &&
+            (!selected || selectedPlaceholder) &&
+            !image.getAttribute('srcset')?.trim() &&
+            image.complete
+          )
+            return
+          return image.decode()
+        }),
       )
       await document.fonts.ready
       if (Array.from(document.fonts).some((font) => font.status === 'error'))

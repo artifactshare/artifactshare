@@ -11,7 +11,8 @@ import {
 } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
 import {
-  buildPrintDocument,
+  openPrintWindow,
+  writePrintPdf,
   resolveExportHtml,
 } from '../routes/a.$id/+components/export-actions'
 
@@ -890,23 +891,39 @@ describe('CSP reporter runtime behavior', () => {
     expect(html).toContain('<svg')
     expect(html).toContain('data-mermaid-rendered="true" hidden')
 
-    const print = await buildPrintDocument('artifact-1', data, {
+    const labels = {
       savePdf: 'Save PDF',
       backgroundHint: 'Print backgrounds',
       preparing: 'Preparing',
       heightLimited: 'Height limited',
-    })
-    expect(print.querySelector('.mermaid-diagram svg')).toBeNull()
-    const printFrame = print.querySelector('iframe')!
-    expect(printFrame.getAttribute('sandbox')).toBe('allow-scripts')
-    const content = new DOMParser().parseFromString(
-      printFrame.srcdoc,
-      'text/html',
-    )
-    expect(content.querySelector('.mermaid-diagram svg')).not.toBeNull()
-    expect(content.querySelector('pre')?.hidden).toBe(true)
-    await server.commands.exportPdfObservation('stop')
-  })
+    }
+    let popup: Window | null = null
+    const trigger = document.createElement('button')
+    trigger.onclick = () => {
+      popup = openPrintWindow(labels)
+    }
+    document.body.appendChild(trigger)
+    try {
+      await userEvent.click(trigger)
+      const print = popup! as Window
+      const printed = vi.spyOn(print, 'print').mockImplementation(() => {})
+      await writePrintPdf(print, 'artifact-1', data, labels)
+      expect(printed).toHaveBeenCalledOnce()
+      expect(print.document.querySelector('.mermaid-diagram svg')).toBeNull()
+      expect(
+        print.document.querySelector('iframe')!.getAttribute('sandbox'),
+      ).toBe('allow-scripts')
+      const content = await server.commands.inspectExportPdf()
+      expect(content.svgCount).toBeGreaterThan(0)
+      expect(content.parentDenied).toBe(true)
+      expect(content.origin).toBe('null')
+      expect(await server.commands.exportPdfObservation('read')).toEqual([])
+    } finally {
+      ;(popup as Window | null)?.close()
+      trigger.remove()
+      await server.commands.exportPdfObservation('stop')
+    }
+  }, 25_000)
 
   test('keyboard link activation and script clicks ignore highlight geometry at the origin', async () => {
     const doc = await fixture(

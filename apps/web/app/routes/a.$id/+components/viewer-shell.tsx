@@ -2202,7 +2202,7 @@ function useViewerShellController({
       backgroundHint: t('export.printBackgroundHint'),
       preparing: t('export.printPreparing'),
       heightLimited: t('export.printHeightLimited'),
-      failed: t('toast.exportPdfFailed'),
+      failed: t('export.printFailed'),
     }),
     [t],
   )

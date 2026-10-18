@@ -68,6 +68,37 @@ describe('copyShareUrl analytics', () => {
     )
   })
 
+  test.each([
+    [
+      { linkExpiresAt: '2099-10-19T07:12:34.567Z' },
+      'Copied · link expires 2099-10-19 07:12:34 UTC',
+      false,
+    ],
+    [{ linkExpiresAt: null }, 'Copied', false],
+    [{}, 'Copied', false],
+    [
+      { linkExpiresAt: '2020-01-01T00:00:00Z' },
+      'Copied · this link has expired. Recipients cannot open it.',
+      true,
+    ],
+    [
+      { paused: true, linkExpiresAt: '2099-10-19T07:12:34.567Z' },
+      'Copied · link sharing is paused, so recipients will see a paused page until the operators resume it',
+      true,
+    ],
+  ] as const)(
+    'copy-time feedback uses confirmed expiry: %j',
+    async (options, expected, warning) => {
+      writeText.mockResolvedValue(undefined)
+      const result = copyShareUrl(shareUrl, translator, options)
+      expect(writeText).toHaveBeenCalledWith(shareUrl)
+      await result
+      expect(warning ? toastMock.warning : toastMock).toHaveBeenCalledWith(
+        expected,
+      )
+    },
+  )
+
   test('removes the fallback textarea when text selection throws', async () => {
     writeText.mockRejectedValue(new Error('clipboard denied'))
     vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(() => {

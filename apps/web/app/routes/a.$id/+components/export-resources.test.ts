@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import * as mermaidExport from '~/lib/mermaid-export.client'
 import { isolatedPrintHtml } from './export-print-frame'
-import { inertExportDocument } from './export-resources'
+import { inertExportDocument, sanitizeExportDocument } from './export-resources'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
 import {
   prepareExportDocument,
@@ -36,6 +36,132 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
+
+test.each(['', '   ', '#', ' #placeholder '])(
+  'normalizes inert HTML image placeholder %j without changing selected resources',
+  (source) => {
+    const doc = inertExportDocument(
+      `<picture><source srcset="selected.png 2x"><img src="${source}" alt="Placeholder" width="80" srcset="fallback.png 1x"></picture><img src="real.png#fragment">`,
+    )
+    sanitizeExportDocument(doc)
+    const placeholder = doc.querySelector('img')!
+    expect(placeholder.hasAttribute('src')).toBe(false)
+    expect(placeholder.getAttribute('alt')).toBe('Placeholder')
+    expect(placeholder.getAttribute('width')).toBe('80')
+    expect(placeholder.getAttribute('srcset')).toBe('fallback.png 1x')
+    expect(doc.querySelector('source')!.getAttribute('srcset')).toBe(
+      'selected.png 2x',
+    )
+    expect(doc.querySelectorAll('img')[1]!.getAttribute('src')).toBe(
+      'real.png#fragment',
+    )
+  },
+)
+
+test.each(['img', 'picture'])(
+  'normalizes %s srcset without changing real candidates',
+  (kind) => {
+    const candidates = '# 1x, data:image/png;base64,YQ== 2x, photo.png#crop 3x'
+    const doc = inertExportDocument(
+      kind === 'img'
+        ? `<img srcset="${candidates}">`
+        : `<picture><source srcset="${candidates}"><img src="fallback.png"></picture>`,
+    )
+    sanitizeExportDocument(doc)
+    expect(doc.querySelector('[srcset]')!.getAttribute('srcset')).toBe(
+      'data:image/png;base64,YQ== 2x, photo.png#crop 3x',
+    )
+  },
+)
+
+test('image placeholder policy leaves non-image source elements alone', () => {
+  const doc = inertExportDocument('<video><source srcset="# 1x"></video>')
+  sanitizeExportDocument(doc)
+  expect(doc.querySelector('source')!.getAttribute('srcset')).toBe('# 1x')
+})
+
+test.each(
+  ['1q', '0w', '00w', '0.5w', '1.5w', '1.0w'].flatMap((descriptor) => [
+    `<img srcset="# ${descriptor}">`,
+    `<picture><source srcset="# ${descriptor}"></picture>`,
+  ]),
+)('rejects malformed placeholder descriptors: %s', (html) => {
+  expect(() => sanitizeExportDocument(inertExportDocument(html))).toThrow(
+    'Invalid srcset',
+  )
+})
+
+test.each([
+  '1w',
+  '900w',
+  '01w',
+  '0x',
+  '1.5x',
+  '.5x',
+  '1e0x',
+  '1E+0x',
+  '1e-1x',
+  '-0x',
+])('preserves valid srcset descriptor %s', (descriptor) => {
+  expect(parseExportSrcset(`photo.png ${descriptor}`)).toEqual([
+    { url: 'photo.png', descriptor },
+  ])
+})
+
+test.each([
+  '+1x',
+  '1.x',
+  '-1x',
+  'NaNx',
+  'Infinityx',
+  '1e309x',
+  '1e+x',
+  '1xjunk',
+])('rejects invalid density descriptor %s', (descriptor) => {
+  expect(() => parseExportSrcset(`photo.png ${descriptor}`)).toThrow(
+    'Invalid srcset',
+  )
+})
+
+test.each(['.5x', '1e0x', '1E+0x', '1e-1x', '-0x'])(
+  'HTML download acquires and preserves valid density %s',
+  async (descriptor) => {
+    const input = data(
+      `<picture><source srcset="../image.png#crop ${descriptor}"><img srcset="../image.png ${descriptor}"></picture>`,
+    )
+    const fetch = vi.fn(async (url: string) =>
+      String(url).includes('export-source')
+        ? Response.json(input)
+        : new Response('image', { headers: { 'content-type': 'image/png' } }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const html = await resolveExportHtml('artifact-1', input)
+    expect(html).toContain(`data:image/png;base64,aW1hZ2U=#crop ${descriptor}`)
+    expect(html).toContain(`data:image/png;base64,aW1hZ2U= ${descriptor}`)
+    expect(
+      fetch.mock.calls
+        .map(([url]) => String(url))
+        .filter((url) => url.includes('export-asset')),
+    ).toEqual([
+      `${window.location.origin}/api/shareables/artifact-1/export-asset/image.png?versionId=version-1`,
+    ])
+  },
+)
+
+test.each(['0w', '1.5w', '1.0w', '+1x', '1.x', '-1x', 'NaNx', '1e309x'])(
+  'HTML download rejects malformed descriptor %s',
+  async (descriptor) => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    await expect(
+      resolveExportHtml(
+        'artifact-1',
+        data(`<img srcset="image.png ${descriptor}">`),
+      ),
+    ).rejects.toThrow('Invalid srcset')
+    expect(fetch).not.toHaveBeenCalled()
+  },
+)
 
 test.each([
   '/../escape',
@@ -746,4 +872,273 @@ test('new nested data images retain sanitization and resource budgets', async ()
       AbortSignal.timeout(1000),
     ),
   ).rejects.toThrow('Too many')
+})
+
+test.each([false, true])(
+  'stylesheet rel tokens preserve stylesheets without acquiring non-stylesheet links (print=%s)',
+  async (forPrint) => {
+    const fetcher = vi.fn(
+      async (_url: string) =>
+        new Response('h1{color:red}', {
+          headers: { 'content-type': 'text/css' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(
+        '<link rel=" stylesheet \t" href="/main.css"><link rel="preload" href="/ignored.css">',
+      ),
+      AbortSignal.timeout(5000),
+      forPrint,
+    )
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(fetcher.mock.calls[0]?.[0]).toContain(
+      '/export-asset/main.css?versionId=version-1',
+    )
+    expect(
+      cssText(
+        doc.querySelector('link[rel*="stylesheet"]')!.getAttribute('href')!,
+      ),
+    ).toBe('h1{color:red}')
+  },
+)
+
+test('CSS namespace identifiers are retained without acquisition, including escapes and comments', async () => {
+  const resolve = vi.fn(async () => 'data:image/png;base64,cG5n')
+  const namespace =
+    '@n\\61mespace /* space */ svg u\\72l( http://www.w3.org/2000/svg ); @namespace "http://www.w3.org/1999/xhtml";'
+  const output = await rewriteExportCss(
+    namespace + 'svg|image{background:url(/image.png)}',
+    resolve,
+  )
+  expect(output).toContain(namespace)
+  expect(resolve).toHaveBeenCalledExactlyOnceWith('/image.png', false)
+})
+
+test.each([
+  '<img src="/a.png"><img srcset="/b.png 1q">',
+  '<style>a{background:url(/x.png)}b{background:url(</style>',
+  '<img src="/a.png"><style>b{background:url(</style>',
+])('malformed scans own all asynchronous work: %s', async (html) => {
+  const unhandled: unknown[] = []
+  const receive = (error: unknown) => unhandled.push(error)
+  process.on('unhandledRejection', receive)
+  const fetcher = vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        )
+      }),
+  )
+  vi.stubGlobal('fetch', fetcher)
+  try {
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(html),
+        AbortSignal.timeout(1000),
+      ),
+    ).rejects.toThrow(/Invalid srcset|Malformed CSS/)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    if (html.includes('<img src="/a.png"><style>')) {
+      expect(fetcher).toHaveBeenCalledOnce()
+      expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true)
+    } else expect(fetcher).not.toHaveBeenCalled()
+    expect(unhandled).toEqual([])
+  } finally {
+    process.removeListener('unhandledRejection', receive)
+  }
+})
+
+test.each([20, 40])(
+  'charges transformed inline CSS output with %i cached imports',
+  async (imports) => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(`/*${'x'.repeat(1024 * 1024)}*/`, {
+          headers: { 'content-type': 'text/css' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const inline =
+      'data:text/css,' +
+      encodeURIComponent('@import "/large.css";'.repeat(imports))
+    const result = prepareExportDocument(
+      'artifact-1',
+      data(`<link rel="stylesheet" href="${inline}">`),
+      AbortSignal.timeout(10000),
+    )
+    if (imports === 20) {
+      const doc = await result
+      expect(
+        doc.querySelector('link')!.getAttribute('href')!.length,
+      ).toBeGreaterThan(37_000_000)
+    } else await expect(result).rejects.toThrow('embedded resource budget')
+    expect(fetcher).toHaveBeenCalledOnce()
+  },
+  15000,
+)
+
+test.each([
+  ['direct', 13],
+  ['cached', 8],
+  ['cached', 4],
+  ['inline', 8],
+] as const)(
+  'composed depth: %s subtree with %i parents',
+  async (mode, parents) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        const name = new URL(input).pathname.split('/').at(-1)!
+        const index = Number(name.slice(1, -4))
+        const isB = name.startsWith('b')
+        const next = isB
+          ? index < 7
+            ? `b${index + 1}.css`
+            : null
+          : index < parents - 1
+            ? `a${index + 1}.css`
+            : mode === 'direct'
+              ? null
+              : 'b0.css'
+        let content = next ? `@import "${next}";` : 'p{color:red}'
+        if (mode === 'inline' && !isB && index === parents - 1)
+          content = `@import "data:text/css,${encodeURIComponent(content)}";`
+        return new Response(content, {
+          headers: { 'content-type': 'text/css' },
+        })
+      }),
+    )
+    const html =
+      (mode === 'direct' ? '' : '<link rel="stylesheet" href="b0.css">') +
+      '<link rel="stylesheet" href="a0.css">'
+    const result = prepareExportDocument(
+      'artifact-1',
+      data(html),
+      AbortSignal.timeout(5000),
+    )
+    if (parents === 4)
+      expect((await result).querySelectorAll('link')).toHaveLength(2)
+    else await expect(result).rejects.toThrow(/nested/)
+  },
+)
+
+test('HTML download preserves SVG navigation without fetching its destination', async () => {
+  const fetcher = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  const doc = await prepareExportDocument(
+    'artifact-1',
+    data('<svg><a href="https://example.com/page"><text>link</text></a></svg>'),
+    AbortSignal.timeout(1000),
+  )
+  expect(doc.querySelector('svg a')!.getAttribute('href')).toBe(
+    'https://example.com/page',
+  )
+  expect(fetcher).not.toHaveBeenCalled()
+})
+
+test('loading Viewer export actions does not initialize the Markdown renderer', async () => {
+  vi.resetModules()
+  const renderer = vi.fn(() => {
+    throw new Error('Renderer must remain outside the Viewer import graph')
+  })
+  vi.doMock('~/lib/markdown-render', renderer)
+  try {
+    const actions = await import('./export-actions')
+    expect(actions.openPrintWindow).toBeTypeOf('function')
+    expect(renderer).not.toHaveBeenCalled()
+  } finally {
+    vi.doUnmock('~/lib/markdown-render')
+    vi.resetModules()
+  }
+})
+
+test('malformed namespace blocks do not hide subsequent required CSS resources', async () => {
+  const resolve = vi.fn(async () => 'data:image/png;base64,cG5n')
+  const css = '@namespace x url(y) p{ nested{} } q{background:url(/hero.png)}'
+  const rewritten = await rewriteExportCss(css, resolve)
+  expect(resolve).toHaveBeenCalledExactlyOnceWith('/hero.png', false)
+  expect(rewritten).toContain('q{background:url("data:image/png;base64,cG5n")}')
+})
+
+test.each([false, true])(
+  'alternate stylesheets embed nested resources from the exact snapshot (print=%s)',
+  async (forPrint) => {
+    const files: Record<string, [string, string]> = {
+      '/styles/alternate.css': ['text/css', '@import "nested/theme.css";'],
+      '/styles/nested/theme.css': [
+        'text/css',
+        '@font-face{font-family:Other;src:url("../../font.woff2")}p{background:url("/image.png")}',
+      ],
+      '/font.woff2': ['font/woff2', 'font-bytes'],
+      '/image.png': ['image/png', 'image-bytes'],
+    }
+    const fetcher = vi.fn(async (input: string, init: RequestInit) => {
+      const url = new URL(input)
+      expect(url.pathname).toMatch(
+        /^\/api\/shareables\/artifact-1\/export-asset\//,
+      )
+      expect(url.search).toBe('?versionId=version-1')
+      expect(init.cache).toBe('no-store')
+      expect(init.redirect).toBe('error')
+      const file = files[url.pathname.split('/export-asset')[1]]
+      return new Response(file?.[1] ?? '', {
+        status: file ? 200 : 404,
+        headers: { 'content-type': file?.[0] ?? 'text/plain' },
+      })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(
+        '<link rel="alternate stylesheet" title="Other" href="/styles/alternate.css"><p>Report</p>',
+      ),
+      AbortSignal.timeout(5000),
+      forPrint,
+    )
+    const link = doc.querySelector('link')!
+    expect(link.getAttribute('rel')).toBe('alternate stylesheet')
+    expect(link.getAttribute('title')).toBe('Other')
+    const main = cssText(link.getAttribute('href')!)
+    const nested = cssText(/"(data:[^"]+)"/.exec(main)![1])
+    expect(nested).toContain('data:font/woff2;base64,')
+    expect(nested).toContain('data:image/png;base64,')
+    expect(fetcher).toHaveBeenCalledTimes(4)
+  },
+)
+
+test.each([false, true])(
+  'missing alternate stylesheet resources fail preparation (print=%s)',
+  async (forPrint) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 404 })),
+    )
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        data(
+          '<link rel="alternate stylesheet" title="Other" href="/missing.css">',
+        ),
+        AbortSignal.timeout(5000),
+        forPrint,
+      ),
+    ).rejects.toThrow()
+  },
+)
+
+test('namespace URL punctuation is not an at-rule terminator', async () => {
+  const resolve = vi.fn(async () => 'data:image/png;base64,cG5n')
+  const namespace = '@namespace svg url(https://example.com/a{b;c);'
+  const css = await rewriteExportCss(
+    namespace + 'q{background:url(/hero.png)}',
+    resolve,
+  )
+  expect(css).toContain(namespace)
+  expect(resolve).toHaveBeenCalledExactlyOnceWith('/hero.png', false)
 })

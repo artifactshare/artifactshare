@@ -949,3 +949,53 @@ test('access-request dismissal through ViewerChrome preserves the live fragment'
     window.history.replaceState(null, '', previousUrl)
   }
 })
+
+test('Copy link uses the latest confirmed expiry only for link sharing, including historical URLs', async () => {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const previousUrl = window.location.href
+  const previousState = window.history.state
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  try {
+    window.history.replaceState(null, '', '/a/abc123def4?version=version-1')
+    for (const [visibility, linkExpiresAt] of [
+      ['link', '2099-10-19T07:12:34.567Z'],
+      ['link', '2099-11-20T08:00:00.000Z'],
+      ['link', null],
+      ['private', '2099-11-20T08:00:00.000Z'],
+      ['workspace', '2099-11-20T08:00:00.000Z'],
+      ['project', '2099-11-20T08:00:00.000Z'],
+    ] as const) {
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <ViewerChrome
+              artifact={{
+                ...artifact,
+                id: 'abc123def4',
+                visibility,
+                linkExpiresAt,
+              }}
+              user={null}
+              renderType="html"
+            />
+          </TooltipProvider>,
+        ),
+      )
+      const button = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy URL"]',
+      )!
+      await act(async () => button.click())
+      const [url, , options] = vi.mocked(copyShareUrl).mock.calls.at(-1)!
+      expect(url).toContain('version=version-1')
+      if (visibility === 'link')
+        expect(options).toMatchObject({ linkExpiresAt })
+      else expect(options).not.toHaveProperty('linkExpiresAt')
+    }
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    window.history.replaceState(previousState, '', previousUrl)
+  }
+})

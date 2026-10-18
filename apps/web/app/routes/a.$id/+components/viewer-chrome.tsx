@@ -448,6 +448,8 @@ export function ViewerChrome({
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
           linkSuspended={artifact.linkSuspended === true}
+          linkExpiresAt={artifact.linkExpiresAt}
+          linkExpired={artifact.linkExpired}
           canChangeVisibility={canChangeVisibility}
           commentCount={commentCount}
           commentsAvailable={commentsAvailable}
@@ -1110,6 +1112,8 @@ interface ViewerActionsProps {
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
   linkSuspended: boolean
+  linkExpiresAt?: string | null
+  linkExpired?: boolean
   canChangeVisibility: boolean
   canMove: boolean
   commentCount: number
@@ -1147,6 +1151,8 @@ interface ViewerActionsProps {
 
 function ViewerActions({
   linkSuspended,
+  linkExpiresAt,
+  linkExpired,
   appOrigin,
   analyticsMode,
   artifactId,
@@ -1284,7 +1290,10 @@ function ViewerActions({
                   ) + latestViewerHash(),
                 translator,
                 {
-                  paused: linkSuspended,
+                  paused: currentVisibility === 'link' && linkSuspended,
+                  ...(currentVisibility === 'link'
+                    ? { linkExpiresAt, expired: linkExpired }
+                    : {}),
                   ...(canChangeVisibility
                     ? {
                         onOpenSharing: onVisibilityOpen,

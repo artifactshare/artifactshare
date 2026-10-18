@@ -13,6 +13,8 @@ export async function copyShareUrl(
   translator: Translator,
   options: {
     paused?: boolean
+    linkExpiresAt?: string | null
+    expired?: boolean
     onOpenSharing?: () => void
     sharingActionSignal?: AbortSignal
   } = {},
@@ -29,7 +31,19 @@ export async function copyShareUrl(
     // A paused link copies fine but will not open for recipients; say so
     // where the owner is looking instead of only in the banner above.
     if (options.paused) toast.warning(translator.t('toast.copiedLinkPaused'))
-    else toast(translator.t('toast.copySuccess'))
+    else if (
+      options.expired ||
+      (options.linkExpiresAt && Date.parse(options.linkExpiresAt) <= Date.now())
+    )
+      toast.warning(translator.t('toast.copiedLinkExpired'))
+    else if (
+      options.linkExpiresAt &&
+      Number.isFinite(Date.parse(options.linkExpiresAt))
+    ) {
+      // Match the exact, timezone-explicit absolute timestamp used by PublicationTime.
+      const date = `${new Date(options.linkExpiresAt).toISOString().slice(0, 19).replace('T', ' ')} UTC`
+      toast(translator.t('toast.copiedLinkExpires', { date }))
+    } else toast(translator.t('toast.copySuccess'))
   } else {
     trackEvent(ANALYTICS_EVENTS.copyLinkFailed)
     showCopyFailureRecovery(url, translator, options)

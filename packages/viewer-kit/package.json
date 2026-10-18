@@ -5,6 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./markdown-print-style": "./src/markdown-print-style.ts",
     "./markdown-render": "./src/markdown-render.ts",
     "./markdown-renderer": "./src/markdown-renderer.ts",
     "./tanstack-highlight": "./src/tanstack-highlight.ts",

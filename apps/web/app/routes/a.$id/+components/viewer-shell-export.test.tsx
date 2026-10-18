@@ -167,12 +167,20 @@ test.each(
           ),
         ),
       )
+      if (failure === 'source' || failure === 'preparation') {
+        expect(toast.error).toHaveBeenCalledWith(
+          language === 'en'
+            ? 'Could not prepare this file for PDF export.'
+            : 'PDF 書き出しの準備ができませんでした。',
+        )
+      }
       if (failure === 'preparation') {
         expect(popup.document.body.dataset.exportState).toBe('failed')
         expect(
           popup.document.getElementById('artifactshare-print-status')
             ?.textContent,
-        ).toBe(t('toast.exportPdfFailed'))
+        ).toBe(t('export.printFailed'))
+        expect(t('export.printFailed')).not.toBe(t('toast.exportPdfFailed'))
       }
     } finally {
       await act(async () => root.unmount())

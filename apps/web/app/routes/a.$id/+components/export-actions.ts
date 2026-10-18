@@ -8,7 +8,7 @@ import {
   withExportDeadline,
 } from './export-resources'
 import { isolatedPrintHtml, installPrintRelay } from './export-print-frame'
-import { exportAssetHref, exportEndpointRoot } from '~/lib/export-path'
+import { exportEndpointRoot } from '~/lib/export-path'
 
 export type ExportSourceData = {
   kind: 'markdown' | 'html'
@@ -402,6 +402,7 @@ export async function writePrintPdf(
       target.body.dataset.exportState = 'failed'
       status.textContent = labels.failed ?? labels.preparing
       button.disabled = true
+      target.querySelector('.asx-print-hint')!.textContent = ''
       frame.remove()
     }
     dispose()
@@ -459,28 +460,6 @@ export async function writePrintPdf(
     failure()
     throw error
   }
-}
-
-export async function buildPrintDocument(
-  shareableId: string,
-  data: ExportSourceData,
-  labels: ExportPrintLabels,
-): Promise<Document> {
-  const doc = document.implementation.createHTMLDocument('')
-  installPrintChrome(doc, labels)
-  const frame = createPrintFrame(doc, data.fileName)
-  frame.srcdoc = isolatedPrintHtml(
-    await withExportDeadline((signal) =>
-      prepareExportDocument(shareableId, data, signal, true),
-    ),
-    crypto.randomUUID(),
-  )
-  const { PRINT_FONT_STYLE } = await loadPrintFont()
-  const fonts = doc.createElement('style')
-  fonts.textContent = PRINT_FONT_STYLE
-  doc.head.appendChild(fonts)
-  doc.body.appendChild(frame)
-  return doc
 }
 
 function createPrintFrame(doc: Document, title: string): HTMLIFrameElement {
@@ -574,6 +553,7 @@ video {
 }
 .asx-print-action:focus-visible { outline: 2px solid #1766ad; outline-offset: 3px; }
 .asx-print-action:disabled { opacity: 0.6; cursor: wait; }
+body[data-export-state="failed"] .asx-print-action:disabled { cursor: default; }
 .asx-print-action:hover {
   background: #125892;
 }
@@ -685,111 +665,6 @@ export function sourceDirectory(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`
   const slashIndex = normalized.lastIndexOf('/')
   return normalized.slice(0, slashIndex + 1)
-}
-
-export function assetRouteHref(
-  shareableId: string,
-  path: string,
-  versionId: string,
-  origin = window.location.origin,
-): string {
-  return exportAssetHref(shareableId, versionId, path, origin)
-}
-
-export { splitAssetRef } from '~/lib/asset-ref'
-
-export function isRootRelativeAssetRef(
-  value: string | null | undefined,
-): value is string {
-  return Boolean(value && value.startsWith('/') && !value.startsWith('//'))
-}
-
-export function sanitizePrintSrcset(value: string): string {
-  return value
-    .split(',')
-    .flatMap((candidate) => {
-      const trimmed = candidate.trim()
-      const [url, ...descriptors] = trimmed.split(/\s+/)
-      if (!url || !isSafePrintUrl(url)) return []
-      return [[url, ...descriptors].join(' ')]
-    })
-    .join(', ')
-}
-
-export function containsUnsafeCssUrl(value: string): boolean {
-  return /url\(\s*["']?\s*(?:javascript|vbscript):/i.test(value)
-}
-
-export function containsAppOriginCssUrl(
-  value: string,
-  appOrigin: string,
-): boolean {
-  return new RegExp(
-    String.raw`url\(\s*["']?\s*${escapeRegExp(appOrigin)}(?:[/#?)]|$)`,
-    'i',
-  ).test(value)
-}
-
-export function stripAppOriginSrcset(value: string, appOrigin: string): string {
-  return value
-    .split(',')
-    .flatMap((candidate) => {
-      const trimmed = candidate.trim()
-      const [url, ...descriptors] = trimmed.split(/\s+/)
-      if (!url || isAppOriginPrintUrl(url, appOrigin)) return []
-      return [[url, ...descriptors].join(' ')]
-    })
-    .join(', ')
-}
-
-export function isAppOriginPrintUrl(value: string, appOrigin: string): boolean {
-  const compact = compactPrintUrl(value)
-  if (!compact || compact.startsWith('#')) return false
-  const lower = compact.toLowerCase()
-  if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
-    if (!compact.startsWith('//')) return false
-  }
-  try {
-    return new URL(compact, appOrigin).origin === appOrigin
-  } catch {
-    return false
-  }
-}
-
-export function isSafePrintUrl(value: string): boolean {
-  const compact = compactPrintUrl(value)
-  if (!compact || compact.startsWith('#')) return true
-  if (
-    compact.startsWith('/') ||
-    compact.startsWith('./') ||
-    compact.startsWith('../')
-  ) {
-    return true
-  }
-  if (compact.startsWith('//')) return true
-
-  const scheme = /^([a-zA-Z][a-zA-Z\d+.-]*):/.exec(compact)?.[1]?.toLowerCase()
-  if (!scheme) return true
-  return (
-    scheme === 'http' ||
-    scheme === 'https' ||
-    scheme === 'mailto' ||
-    scheme === 'tel' ||
-    (scheme === 'data' && compact.toLowerCase().startsWith('data:image/'))
-  )
-}
-
-function compactPrintUrl(value: string): string {
-  return Array.from(value.trim())
-    .filter((char) => {
-      const code = char.charCodeAt(0)
-      return code > 0x20 && code !== 0x7f
-    })
-    .join('')
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function stripQueryAndHash(path: string): string {

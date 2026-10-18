@@ -33,12 +33,13 @@ export async function renderExportMermaidSvg(
     // Mermaid 12 imageSquare first assigns Image.src, awaits its load, then
     // assigns the same reference to SVG image.href. Acquire before either live
     // assignment; the realm itself retains no network permission.
+    let adapterFailed = false;
     const images = new Map();
     const pendingImages = new Map();
     const imageReady = new WeakMap();
     const decode = HTMLImageElement.prototype.decode;
     HTMLImageElement.prototype.decode = function() {
-      return (imageReady.get(this) || Promise.resolve()).then(() => decode.call(this));
+      return (imageReady.get(this) || Promise.resolve()).then(() => decode.call(this)).catch(error => { adapterFailed = true; throw error; });
     };
     let imageSequence = 0;
     const src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
@@ -56,7 +57,7 @@ export async function renderExportMermaidSvg(
     Element.prototype.setAttribute = function(name, value) {
       if (this.localName === 'image' && name === 'href') {
         if (images.has(String(value))) value = images.get(String(value));
-        else if (![...images.values()].includes(String(value))) throw new Error('Unprepared Mermaid image');
+        else if (![...images.values()].includes(String(value))) { adapterFailed = true; throw new Error('Unprepared Mermaid image'); }
       }
       return setAttribute.call(this, name, value);
     };
@@ -79,10 +80,14 @@ export async function renderExportMermaidSvg(
           || typeof event.data.source !== 'string') return;
       if (!event.data.source.trim() || event.data.source.length > 20000) return;
       try {
-        mermaid.initialize({
+        if (typeof mermaid === 'undefined' || typeof mermaid.render !== 'function' || typeof mermaid.parse !== 'function') {
+          adapterFailed = true;
+          throw new Error('Mermaid adapter unavailable');
+        }
+        try { mermaid.initialize({
           layout:'dagre', theme:'default', look:'classic', startOnLoad:false,
           securityLevel:'strict', suppressErrorRendering:true, htmlLabels:false
-        });
+        }); } catch (error) { adapterFailed = true; throw error; }
         try {
           await mermaid.parse(event.data.source);
         } catch {
@@ -96,7 +101,7 @@ export async function renderExportMermaidSvg(
       } catch {
         await new Promise(resolve => setTimeout(resolve, 0));
         if (networkBlocked) return;
-        parent.postMessage({channel:${JSON.stringify(channel)}, kind:'failed'}, '*');
+        parent.postMessage({channel:${JSON.stringify(channel)}, kind:adapterFailed ? 'failed' : 'render-error'}, '*');
       }
     }, {once:true});
     parent.postMessage({channel:${JSON.stringify(channel)}, kind:'ready'}, '*');
@@ -105,6 +110,7 @@ export async function renderExportMermaidSvg(
   return new Promise((resolve, reject) => {
     let settled = false
     let imageSequence = 0
+    const acquisitions: Promise<void>[] = []
     const finish = (error?: Error, svg?: string) => {
       if (settled) return
       settled = true
@@ -147,17 +153,21 @@ export async function renderExportMermaidSvg(
           return
         }
         imageSequence = sequence
-        void acquireImage(ref).then(
-          (uri) => {
-            if (settled || signal.aborted) return
-            frame.contentWindow!.postMessage(
-              { channel, kind: 'image', sequence, ref, uri },
-              '*',
-            )
-          },
-          () =>
-            finish(
-              resourceError('Mermaid export attempted a forbidden resource'),
+        const acquire = acquireImage
+        acquisitions.push(
+          Promise.resolve()
+            .then(() => acquire(ref))
+            .then((uri) => {
+              if (settled || signal.aborted) return
+              frame.contentWindow!.postMessage(
+                { channel, kind: 'image', sequence, ref, uri },
+                '*',
+              )
+            })
+            .catch(() =>
+              finish(
+                resourceError('Mermaid export attempted a forbidden resource'),
+              ),
             ),
         )
       } else if (event.data.kind === 'ready')
@@ -172,6 +182,10 @@ export async function renderExportMermaidSvg(
         finish(resourceError('Mermaid export attempted a forbidden resource'))
       } else if (event.data.kind === 'failed')
         finish(resourceError('Mermaid rendering failed'))
+      else if (event.data.kind === 'render-error')
+        void Promise.all(acquisitions).then(() =>
+          finish(new Error('Mermaid rendering failed')),
+        )
       else if (event.data.kind === 'invalid-source')
         finish(new Error('Mermaid source is invalid'))
     }

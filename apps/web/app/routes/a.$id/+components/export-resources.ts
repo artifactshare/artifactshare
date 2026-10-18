@@ -1,3 +1,4 @@
+import { MARKDOWN_PRINT_STYLE } from '@artifactshare/viewer-kit/markdown-print-style'
 import printViewportStyle from '~/styles/print-viewport.css?raw'
 import DOMPurify from 'dompurify'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
@@ -93,6 +94,15 @@ const ACTIVE_ATTRIBUTES = new Set([
   'crossorigin',
 ])
 
+function isExportStylesheet(el: Element): boolean {
+  const relations =
+    el
+      .getAttribute('rel')
+      ?.toLowerCase()
+      .split(/[\t\n\f\r ]+/) ?? []
+  return relations.includes('stylesheet')
+}
+
 export function sanitizeExportDocument(doc: InertExportDocument) {
   doc
     .querySelectorAll(
@@ -106,6 +116,38 @@ export function sanitizeExportDocument(doc: InertExportDocument) {
     })
   }
   for (const el of doc.querySelectorAll('*')) {
+    if (
+      el.namespaceURI === 'http://www.w3.org/1999/xhtml' &&
+      el.localName === 'img'
+    ) {
+      const source = el.getAttribute('src')?.trim() ?? ''
+      // A fragment-only HTML image resolves to the document, not an image.
+      // Remove placeholders while still inert, leaving alt text, dimensions
+      // and picture/srcset candidates available for normal browser selection.
+      if (!source || source.startsWith('#')) el.removeAttribute('src')
+    }
+    if (
+      el.namespaceURI === 'http://www.w3.org/1999/xhtml' &&
+      (el.localName === 'img' ||
+        (el.localName === 'source' &&
+          el.parentElement?.localName === 'picture' &&
+          el.parentElement.namespaceURI === 'http://www.w3.org/1999/xhtml')) &&
+      el.hasAttribute('srcset')
+    ) {
+      // Validate every descriptor before removing document-only placeholders.
+      // Keep the parser's data-URI handling and real candidate descriptors.
+      const candidates = parseExportSrcset(el.getAttribute('srcset')!).filter(
+        ({ url }) => !url.startsWith('#'),
+      )
+      if (candidates.length)
+        el.setAttribute(
+          'srcset',
+          candidates
+            .map(({ url, descriptor }) => `${url} ${descriptor}`.trim())
+            .join(', '),
+        )
+      else el.removeAttribute('srcset')
+    }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase()
       if (/^on/.test(name) || ACTIVE_ATTRIBUTES.has(name))
@@ -129,11 +171,7 @@ export function sanitizeExportDocument(doc: InertExportDocument) {
       el.setAttribute('tabindex', '-1')
     if (el.matches('button,input,select,textarea'))
       el.setAttribute('disabled', '')
-    if (
-      el.localName === 'link' &&
-      el.getAttribute('rel')?.toLowerCase() !== 'stylesheet'
-    )
-      el.remove()
+    if (el.localName === 'link' && !isExportStylesheet(el)) el.remove()
   }
 }
 
@@ -273,7 +311,7 @@ export async function rewriteExportCss(
     while (tokens[i]?.kind === 'space') i++
     return i
   }
-  const edits: Array<Promise<void>> = []
+  const edits: Array<() => Promise<void>> = []
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i]
     if (t.text === '@') {
@@ -312,10 +350,29 @@ export async function rewriteExportCss(
         i = end - 1
         continue
       }
+      if (tokens[name]?.value.toLowerCase() === 'namespace') {
+        let parentheses = 0
+        while (i < tokens.length) {
+          const text = tokens[i].text
+          if (parentheses === 0 && [';', '{'].includes(text)) break
+          if (text === '(' || text === '[') parentheses++
+          if (text === ')' || text === ']') parentheses--
+          i++
+        }
+        if (tokens[i]?.text === '{') {
+          let depth = 1
+          while (++i < tokens.length && depth) {
+            if (tokens[i].text === '{') depth++
+            if (tokens[i].text === '}') depth--
+          }
+          i--
+        }
+        continue
+      }
       if (tokens[name]?.value.toLowerCase() === 'import') {
         const ref = next(name + 1)
         if (tokens[ref]?.kind === 'string') {
-          edits.push(
+          edits.push(() =>
             resolve(tokens[ref].value, true).then((uri) => {
               tokens[ref].text = JSON.stringify(uri)
             }),
@@ -342,7 +399,7 @@ export async function rewriteExportCss(
       while (tokens[before]?.kind === 'space') before--
       const imported = tokens[before]?.value.toLowerCase() === 'import'
       const at = i
-      edits.push(
+      edits.push(() =>
         resolve(ref, imported).then((uri) => {
           tokens[at].text = `url(${JSON.stringify(uri)})`
         }),
@@ -357,7 +414,7 @@ export async function rewriteExportCss(
         if (tokens[j].text === ')' && --depth === 0) break
         if (depth === 1 && tokens[j].kind === 'string') {
           const token = tokens[j]
-          edits.push(
+          edits.push(() =>
             resolve(token.value, false).then((uri) => {
               token.text = JSON.stringify(uri)
             }),
@@ -366,7 +423,7 @@ export async function rewriteExportCss(
       }
     }
   }
-  await Promise.all(edits)
+  await Promise.all(edits.map((edit) => edit()))
   return tokens.map((t) => t.text).join('')
 }
 
@@ -388,7 +445,18 @@ export function parseExportSrcset(
     }
     const comma = rest.indexOf(',')
     const descriptor = (comma < 0 ? rest : rest.slice(0, comma)).trim()
-    if (descriptor && !/^\d+(?:\.\d+)?[wx]$/.test(descriptor))
+    // Width descriptors must be positive integers; density descriptors may
+    // use HTML floating-point syntax (including exponents and negative zero).
+    // Reject nonfinite/negative values and validate before placeholder filtering.
+    if (
+      descriptor &&
+      !(
+        (/^\d+w$/.test(descriptor) && Number(descriptor.slice(0, -1)) > 0) ||
+        (/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?x$/.test(descriptor) &&
+          Number.isFinite(Number(descriptor.slice(0, -1))) &&
+          Number(descriptor.slice(0, -1)) >= 0)
+      )
+    )
       throw new Error('Invalid srcset')
     result.push({ url, descriptor })
     rest = comma < 0 ? '' : rest.slice(comma + 1)
@@ -445,6 +513,34 @@ async function prepareDocument(
   const cache = new Map<string, Promise<string>>()
   const origin = window.location.origin
   const dependencies = new Map<string, Set<string>>()
+  // Check composed paths even when a subtree was first acquired at shallow depth.
+  function addDependency(parent: string | undefined, key: string) {
+    if (!dependencies.has(key)) dependencies.set(key, new Set())
+    if (parent) {
+      const edges = dependencies.get(parent) ?? new Set<string>()
+      edges.add(key)
+      dependencies.set(parent, edges)
+    }
+    const depths = new Map<string, number>()
+    const depth = (node: string, visiting: Set<string>): number => {
+      if (visiting.has(node)) throw new Error('Cyclic export CSS')
+      const cached = depths.get(node)
+      if (cached !== undefined) return cached
+      const path = new Set(visiting).add(node)
+      const result =
+        1 +
+        Math.max(
+          0,
+          ...Array.from(dependencies.get(node) ?? [], (child) =>
+            depth(child, path),
+          ),
+        )
+      if (result > MAX_DEPTH) throw new Error('Deeply nested export resources')
+      depths.set(node, result)
+      return result
+    }
+    for (const node of dependencies.keys()) depth(node, new Set())
+  }
   async function resource(
     ref: string,
     base: string,
@@ -457,8 +553,9 @@ async function prepareDocument(
     if (ancestors.length >= MAX_DEPTH)
       throw new Error('Deeply nested export resources')
     if (/^data:/i.test(value)) {
-      embedded(value)
       if (++count > MAX_RESOURCES) throw new Error('Too many export assets')
+      const inlineKey = `inline-${count}`
+      addDependency(ancestors.at(-1), inlineKey)
       if (/^data:(?:text\/css|image\/svg\+xml)[;,]/i.test(value)) {
         const comma = value.indexOf(',')
         const decoded = /;base64$/i.test(value.slice(0, comma))
@@ -470,18 +567,20 @@ async function prepareDocument(
           : decodeURIComponent(value.slice(comma + 1))
         bytes += new TextEncoder().encode(decoded).byteLength
         if (bytes > MAX_BYTES) throw new Error('Export exceeds resource budget')
-        const nested = [...ancestors, `inline-${count}`]
+        const nested = [...ancestors, inlineKey]
         if (css && /^data:text\/css[;,]/i.test(value)) {
-          return dataUri(
-            new Blob(
-              [
-                await rewriteExportCss(
-                  decoded,
-                  (url, imported) => resource(url, base, imported, nested),
-                  forPrint,
-                ),
-              ],
-              { type: 'text/css' },
+          return embedded(
+            await dataUri(
+              new Blob(
+                [
+                  await rewriteExportCss(
+                    decoded,
+                    (url, imported) => resource(url, base, imported, nested),
+                    forPrint,
+                  ),
+                ],
+                { type: 'text/css' },
+              ),
             ),
           )
         }
@@ -492,9 +591,10 @@ async function prepareDocument(
           const svg = svgDoc.querySelector('svg')
           if (!svg) throw new Error('Invalid inline SVG')
           svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-          return embeddedAsset(
-            new Blob([svg.outerHTML], { type: 'image/svg+xml' }),
+          const uri = embedded(
+            await dataUri(new Blob([svg.outerHTML], { type: 'image/svg+xml' })),
           )
+          return decodeEmbeddedImage(uri)
         }
         throw new Error('Unexpected inline resource type')
       }
@@ -505,6 +605,7 @@ async function prepareDocument(
         )
       )
         throw new Error('Unsafe inline asset')
+      embedded(value)
       return /^data:image\//i.test(value) ? decodeEmbeddedImage(value) : value
     }
     const external =
@@ -533,25 +634,7 @@ async function prepareDocument(
     const key = `${css}:${fetchUrl}`
     if (ancestors.includes(key) || ancestors.length >= MAX_DEPTH)
       throw new Error('Cyclic or deeply nested export CSS')
-    const parent = ancestors.at(-1)
-    if (parent) {
-      const reaches = (
-        from: string,
-        target: string,
-        visited = new Set<string>(),
-      ): boolean => {
-        if (from === target) return true
-        if (visited.has(from)) return false
-        visited.add(from)
-        return Array.from(dependencies.get(from) ?? []).some((next) =>
-          reaches(next, target, visited),
-        )
-      }
-      if (reaches(key, parent)) throw new Error('Cyclic export CSS')
-      const edges = dependencies.get(parent) ?? new Set<string>()
-      edges.add(key)
-      dependencies.set(parent, edges)
-    }
+    addDependency(ancestors.at(-1), key)
     let pending = cache.get(key)
     if (!pending) {
       if (++count > MAX_RESOURCES) throw new Error('Too many export assets')
@@ -615,7 +698,7 @@ async function prepareDocument(
     base: string,
     ancestors: string[] = [],
   ) {
-    const pending: Promise<unknown>[] = []
+    const pending: Array<() => Promise<unknown>> = []
     for (const el of resourceDoc.querySelectorAll('*')) {
       if (forPrint && ['style', 'link', 'source'].includes(el.localName)) {
         const media = el.getAttribute('media')
@@ -623,21 +706,21 @@ async function prepareDocument(
       }
       if (
         ['script', 'iframe', 'object', 'embed'].includes(el.localName) ||
-        (el.localName === 'link' &&
-          el.getAttribute('rel')?.toLowerCase() !== 'stylesheet')
+        (el.localName === 'link' && !isExportStylesheet(el))
       )
         continue
       for (const attr of [
         'src',
         'poster',
         'background',
-        ...(el.namespaceURI === 'http://www.w3.org/2000/svg'
+        ...(el.namespaceURI === 'http://www.w3.org/2000/svg' &&
+        ['image', 'feImage', 'use'].includes(el.localName)
           ? ['href', 'xlink:href']
           : []),
       ]) {
         const value = el.getAttribute(attr)
         if (value && preparedImageReferences.get(el)?.get(attr) !== value)
-          pending.push(
+          pending.push(() =>
             resource(value, base, false, ancestors).then((uri) =>
               el.setAttribute(attr, uri),
             ),
@@ -648,21 +731,23 @@ async function prepareDocument(
         el.removeAttribute('integrity')
         const href = el.getAttribute('href')
         if (href)
-          pending.push(
+          pending.push(() =>
             resource(href, base, true, ancestors).then((uri) =>
               el.setAttribute('href', uri),
             ),
           )
       }
       const srcset = el.getAttribute('srcset')
-      if (srcset)
-        pending.push(
+      if (srcset) {
+        const candidates = parseExportSrcset(srcset)
+        pending.push(() =>
           Promise.all(
-            parseExportSrcset(srcset).map(async (c) =>
+            candidates.map(async (c) =>
               `${await resource(c.url, base, false, ancestors)} ${c.descriptor}`.trim(),
             ),
           ).then((c) => el.setAttribute('srcset', c.join(', '))),
         )
+      }
       for (const attr of [
         'fill',
         'stroke',
@@ -675,7 +760,7 @@ async function prepareDocument(
       ]) {
         const value = el.getAttribute(attr)
         if (value)
-          pending.push(
+          pending.push(() =>
             rewriteExportCss(value, (url, css) =>
               resource(url, base, css, ancestors),
             ).then((rewritten) => el.setAttribute(attr, rewritten)),
@@ -683,7 +768,7 @@ async function prepareDocument(
       }
       const style = el.getAttribute('style')
       if (style)
-        pending.push(
+        pending.push(() =>
           rewriteExportCss(
             style,
             (url, css) => resource(url, base, css, ancestors),
@@ -691,7 +776,7 @@ async function prepareDocument(
           ).then((css) => el.setAttribute('style', css)),
         )
       if (el.localName === 'style')
-        pending.push(
+        pending.push(() =>
           rewriteExportCss(
             el.textContent ?? '',
             (url, css) => resource(url, base, css, ancestors),
@@ -701,7 +786,7 @@ async function prepareDocument(
           }),
         )
     }
-    await Promise.all(pending)
+    await Promise.all(pending.map((operation) => operation()))
   }
   await renderMermaidInDocument(
     doc,
@@ -736,6 +821,17 @@ async function prepareDocument(
   // Renderer output is still untrusted resource-bearing content.
   await rewriteDocumentResources(doc, data.path)
   if (forPrint) {
+    if (data.kind === 'markdown') {
+      doc
+        .querySelectorAll('.md-code-toolbar > button[data-code-copy]')
+        .forEach((button) => button.remove())
+      doc
+        .querySelectorAll('details.md-toc-mobile')
+        .forEach((toc) => toc.setAttribute('open', ''))
+      const presentation = doc.createElement('style')
+      presentation.textContent = MARKDOWN_PRINT_STYLE
+      doc.head.appendChild(presentation)
+    }
     const { PRINT_FONT_STYLE, PRINT_FONT_FAMILY } = await loadPrintFont()
     signal.throwIfAborted()
     const style = doc.createElement('style')

@@ -84,3 +84,63 @@ test('required bundle failure fails document preparation instead of invalid-sour
     vi.resetModules()
   }
 })
+
+test.each(['render-error', 'failed', 'blocked'])(
+  'renderer status %s distinguishes ordinary fallback from hard failures',
+  async (kind) => {
+    const result = renderExportMermaidSvg(
+      'flowchart LR\nA --> B',
+      new AbortController().signal,
+    )
+    const rejected = expect(result).rejects.toMatchObject({
+      name: kind === 'render-error' ? 'Error' : 'MermaidResourceError',
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('iframe')).not.toBeNull(),
+    )
+    const frame = document.querySelector('iframe')!
+    const channel = /channel:"([^"]+)"/.exec(frame.srcdoc)![1]
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'null',
+        data: { channel, kind },
+      }),
+    )
+    await rejected
+    expect(frame.isConnected).toBe(false)
+  },
+)
+
+test('ordinary render failure cannot hide an outstanding image acquisition failure', async () => {
+  let rejectImage!: (error: Error) => void
+  const image = new Promise<string>((_resolve, reject) => {
+    rejectImage = reject
+  })
+  const result = renderExportMermaidSvg(
+    'flowchart LR\nA --> B',
+    new AbortController().signal,
+    () => image,
+  )
+  const rejected = expect(result).rejects.toMatchObject({
+    name: 'MermaidResourceError',
+  })
+  await vi.waitFor(() =>
+    expect(document.querySelector('iframe')).not.toBeNull(),
+  )
+  const frame = document.querySelector('iframe')!
+  const channel = /channel:"([^"]+)"/.exec(frame.srcdoc)![1]
+  const send = (data: object) =>
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'null',
+        data: { channel, ...data },
+      }),
+    )
+  send({ kind: 'image', sequence: 1, ref: 'image.png' })
+  send({ kind: 'render-error' })
+  rejectImage(new Error('Image unavailable'))
+  await rejected
+  expect(frame.isConnected).toBe(false)
+})

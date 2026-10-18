@@ -8,6 +8,7 @@ import {
 } from './+components/export-actions'
 import {
   inertExportDocument,
+  sanitizeExportDocument,
   rewriteExportCss,
 } from './+components/export-resources'
 
@@ -362,6 +363,8 @@ test('revoked access prevents repeat printing even when every resource is embedd
   )
   expect(spy).toHaveBeenCalledOnce()
   expect(button.disabled).toBe(true)
+  expect(popup!.getComputedStyle(button).cursor).toBe('default')
+  expect(popup!.document.querySelector('.asx-print-hint')!.textContent).toBe('')
   expect(
     popup!.document.getElementById('artifactshare-print-status')!.textContent,
   ).toBe(labels.failed)
@@ -1149,3 +1152,242 @@ test.each(['application', 'credentials', 'redirect', 'allowed'])(
   },
   25_000,
 )
+
+test('HTML image placeholder normalization retains the existing SVG boundary', () => {
+  const doc = inertExportDocument(
+    '<img src="#" alt="Placeholder"><svg><image href="#image"/><use href="#shape"/></svg>',
+  )
+  sanitizeExportDocument(doc)
+  expect(doc.querySelector('img')!.hasAttribute('src')).toBe(false)
+  expect(doc.querySelector('image')!.getAttribute('href')).toBe('#image')
+  expect(doc.querySelector('use')).toBeNull()
+})
+
+test.each([
+  '<img data-src="photo.jpg" alt="Placeholder">',
+  '<img src="" alt="Placeholder">',
+  '<img src="#" alt="Placeholder">',
+  '<img src=" #placeholder " alt="Placeholder">',
+  '<img src="   " alt="Placeholder">',
+  '<img src="#" srcset="# 1x" alt="Placeholder">',
+  '<img srcset="  #placeholder 1x, #other 2x  " alt="Placeholder">',
+  '<img srcset="   " alt="Placeholder">',
+  '<picture><source srcset="# 1x"><img src="#" alt="Placeholder"></picture>',
+  '<picture><source srcset="  #placeholder 1x, #other 2x  "><img alt="Placeholder"></picture>',
+  '<picture><source srcset=""><img alt="Placeholder"></picture>',
+  '<picture><source srcset="   "><img alt="Placeholder"></picture>',
+])(
+  'harmless image placeholders retain visible content and reach print: %s',
+  async (html) => {
+    const printed = await print(source(`<h1>Placeholder report</h1>${html}`))
+    expect(printed).toHaveBeenCalledOnce()
+    expect(popup!.document.body.dataset.exportState).toBe('ready')
+    expect(popup!.document.querySelector('iframe')!.srcdoc).toContain(
+      'alt="Placeholder"',
+    )
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+  15000,
+)
+
+test('generated Markdown PDF is legible in light/dark print media with readable TOC and no copy controls', async () => {
+  const { renderMarkdownDocument } = await import('~/lib/markdown-render')
+  const { resolveExportHtml } = await import('./+components/export-actions')
+  const markdown =
+    '# Report\nBody text\n## Source\n```js\nconst answer = 42\n```\n## PDF\n```mermaid\nflowchart LR\nSource --> PDF\n```'
+  const data = {
+    ...source(markdown),
+    kind: 'markdown' as const,
+    artifactKind: 'markdown_page',
+    path: '/index.md',
+    renderedHtml: renderMarkdownDocument(markdown),
+  }
+  const printed = await print(data)
+  expect(printed).toHaveBeenCalledOnce()
+  for (const scheme of ['light', 'dark'] as const) {
+    const inspected = await server.commands.inspectExportPdf(true, scheme)
+    expect(inspected.markdownPresentation).toMatchObject({
+      bodyColor: 'rgb(55, 53, 47)',
+      codeColor: 'rgb(55, 53, 47)',
+      keywordColor: 'rgb(207, 34, 46)',
+      copyControls: 0,
+      tocOpen: true,
+    })
+    expect(inspected.markdownPresentation.tocHeight).toBeGreaterThan(40)
+    expect(inspected.svgCount).toBeGreaterThan(0)
+    expect(inspected.text).toContain('Source')
+    expect(inspected.text).toContain('PDF')
+    for (const name of ['Source', 'PDF']) {
+      const label = inspected.markdownPresentation.svgLabels.find(
+        (candidate) => candidate.text === name,
+      )
+      expect(label).toBeDefined()
+      expect(label!.height).toBeGreaterThan(0)
+      expect(label!.fill).not.toBe('rgb(255, 255, 255)')
+    }
+  }
+  const downloaded = await resolveExportHtml('artifact-1', data)
+  expect(downloaded).toContain('data-code-copy')
+  expect(downloaded).toContain('<details class="md-toc-mobile">')
+  expect(downloaded).toContain('prefers-color-scheme: dark')
+}, 30000)
+
+test.each([32, 65])(
+  'transformed inline SVG charges its final embedded output (%i MiB)',
+  async (size) => {
+    const { prepareExportDocument } =
+      await import('./+components/export-resources')
+    const { PDF_FIXTURE_IMAGE } =
+      await import('~/services/dev-pdf-export-fixtures')
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><image href="${PDF_FIXTURE_IMAGE}" width="80" height="40"/></svg>`
+    const uri = 'data:image/svg+xml,' + encodeURIComponent(svg)
+    const encode = TextEncoder.prototype.encode
+    // Scale only the final transformed URI's byte cost. Real SVG sanitation,
+    // nested raster decoding and serialized output still run in each engine.
+    vi.spyOn(TextEncoder.prototype, 'encode').mockImplementation(
+      function (this: TextEncoder, input) {
+        const bytes = encode.call(this, input)
+        if (input?.startsWith('data:image/svg+xml;base64,'))
+          Object.defineProperty(bytes, 'byteLength', {
+            value: size * 1024 * 1024,
+          })
+        return bytes
+      },
+    )
+    const result = prepareExportDocument(
+      'artifact-1',
+      source(`<img src="${uri}">`),
+      AbortSignal.timeout(10000),
+    )
+    if (size === 32)
+      expect((await result).querySelector('img')!.getAttribute('src')).toMatch(
+        /^data:image\/svg\+xml;base64,/,
+      )
+    else await expect(result).rejects.toThrow('embedded resource budget')
+  },
+  15000,
+)
+
+test('picture-selected images decode even when the fallback src is a placeholder', async () => {
+  const { PDF_FIXTURE_IMAGE } =
+    await import('~/services/dev-pdf-export-fixtures')
+  const printed = await print(
+    source(
+      `<picture><source srcset="${PDF_FIXTURE_IMAGE}"><img src="#" alt="Selected image"></picture>`,
+    ),
+  )
+  expect(printed).toHaveBeenCalledOnce()
+  expect((await server.commands.inspectExportPdf()).imageLoaded).toBe(true)
+}, 15000)
+
+test.each(['img', 'picture', 'fallback'])(
+  'real image candidates survive placeholder normalization: %s',
+  async (kind) => {
+    const { PDF_FIXTURE_IMAGE } =
+      await import('~/services/dev-pdf-export-fixtures')
+    const html =
+      kind === 'img'
+        ? `<img src="#" srcset="# 2x, ${PDF_FIXTURE_IMAGE} 1x">`
+        : kind === 'picture'
+          ? `<picture><source srcset="# 2x, ${PDF_FIXTURE_IMAGE} 1x"><img src="#"></picture>`
+          : `<picture><source srcset="# 1x, #other 2x"><img src="${PDF_FIXTURE_IMAGE}"></picture>`
+    const printed = await print(source(html))
+    expect(printed).toHaveBeenCalledOnce()
+    expect((await server.commands.inspectExportPdf()).imageLoaded).toBe(true)
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+  15000,
+)
+
+test.each(
+  ['.5x', '1e0x', '1E+0x', '1e-1x', '-0x'].flatMap((descriptor) =>
+    ['img', 'picture'].flatMap((kind) =>
+      [false, true].map((mixed) => ({ descriptor, kind, mixed })),
+    ),
+  ),
+)(
+  'prints valid density $descriptor in $kind with fragment placeholders: $mixed',
+  async ({ descriptor, kind, mixed }) => {
+    const { PDF_FIXTURE_IMAGE } =
+      await import('~/services/dev-pdf-export-fixtures')
+    const candidates = `${mixed ? '#placeholder 2x, ' : ''}${PDF_FIXTURE_IMAGE} ${descriptor}`
+    const html =
+      kind === 'img'
+        ? `<img srcset="${candidates}">`
+        : `<picture><source srcset="${candidates}"><img src="#"></picture>`
+    const printed = await print(source(html))
+    expect(printed).toHaveBeenCalledOnce()
+    expect(popup!.document.body.dataset.exportState).toBe('ready')
+    // Real helper readiness awaits image.decode(); density-corrected intrinsic
+    // dimensions are not a decode oracle for a valid zero-density candidate.
+    expect(popup!.document.querySelector('iframe')!.srcdoc).toContain(
+      `${PDF_FIXTURE_IMAGE} ${descriptor}`,
+    )
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+  },
+  15000,
+)
+
+test.each([
+  '<img srcset="# 2x, data:image/png;base64,Y29ycnVwdA== 1x">',
+  '<picture><source srcset="# 2x, data:image/png;base64,Y29ycnVwdA== 1x"><img src="#"></picture>',
+  '<img srcset="# 2x, /missing.png 1x">',
+  '<picture><source srcset="# 2x, /missing.png 1x"><img src="#"></picture>',
+  '<img srcset="# 2x, /api/private 1x">',
+  ...[
+    '1q',
+    '0w',
+    '00w',
+    '0.5w',
+    '1.5w',
+    '1.0w',
+    '+1x',
+    '1.x',
+    '-1x',
+    'NaNx',
+    '1e309x',
+  ].flatMap((descriptor) => [
+    `<img srcset="# ${descriptor}">`,
+    `<picture><source srcset="# ${descriptor}"><img src="#"></picture>`,
+  ]),
+])(
+  'invalid or required real candidates still fail: %s',
+  async (html) => {
+    const data = source(html)
+    await server.commands.exportPdfObservation('start', data)
+    popup = await openPopup()
+    const printed = vi.spyOn(popup!, 'print').mockImplementation(() => {})
+    await expect(
+      writePrintPdf(popup!, 'artifact-1', data, labels),
+    ).rejects.toThrow()
+    expect(printed).not.toHaveBeenCalled()
+    expect(popup!.document.body.dataset.exportState).toBe('failed')
+  },
+  15000,
+)
+
+test('corrupt required picture candidates still fail preparation', async () => {
+  const data = source(
+    '<picture><source srcset="data:image/png;base64,Y29ycnVwdA=="><img alt="Required image"></picture>',
+  )
+  await server.commands.exportPdfObservation('start', data)
+  popup = await openPopup()
+  const printed = vi.spyOn(popup!, 'print').mockImplementation(() => {})
+  await expect(
+    writePrintPdf(popup!, 'artifact-1', data, labels),
+  ).rejects.toThrow()
+  expect(printed).not.toHaveBeenCalled()
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+}, 15000)
+
+test('an unmatched picture source leaves a harmless placeholder', async () => {
+  const { PDF_FIXTURE_IMAGE } =
+    await import('~/services/dev-pdf-export-fixtures')
+  const printed = await print(
+    source(
+      `<picture><source media="(min-width:99999px)" srcset="${PDF_FIXTURE_IMAGE}"><img alt="Placeholder"></picture>`,
+    ),
+  )
+  expect(printed).toHaveBeenCalledOnce()
+  expect((await server.commands.inspectExportPdf()).imageHeights).toEqual([0])
+}, 15000)

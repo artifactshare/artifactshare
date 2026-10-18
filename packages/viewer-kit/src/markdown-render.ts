@@ -1,3 +1,4 @@
+import { MD_LIGHT_STYLE } from './markdown-print-style.js'
 import {
   MARKDOWN_HIGHLIGHT_CSS,
   renderMarkdownBody,
@@ -102,31 +103,7 @@ function escapeHtml(value: string) {
 }
 
 // Inlined so the sandbox iframe doesn't pay a stylesheet fetch before first paint.
-const MD_STYLES = `
-:root {
-  color-scheme: light dark;
-  --md-text: #37352f;
-  --md-muted: rgba(55, 53, 47, 0.78);
-  --md-faint: rgba(55, 53, 47, 0.72);
-  --md-border: rgba(55, 53, 47, 0.12);
-  --md-border-strong: rgba(55, 53, 47, 0.18);
-  --md-bg: #fbfaf8;
-  --md-surface: #ffffff;
-  --md-muted-bg: #f7f6f3;
-  --md-accent-bg: rgba(55, 53, 47, 0.04);
-  --md-link-soft: rgba(35, 131, 226, 0.1);
-  --md-code-bg: #f7f6f3;
-  --md-code-block-bg: #0d1117;
-  --md-code-block-surface: #161b22;
-  --md-code-block-text: #f0f6fc;
-  --md-code-block-muted: #9da7b3;
-  --md-code-block-border: rgba(240, 246, 252, 0.14);
-  --md-link: #116bb1;
-  --md-link-hover: #125892;
-  --md-radius-sm: 3px;
-  --md-radius-md: 6px;
-  --md-shadow-sm: rgba(15, 15, 15, 0.04) 0 0 0 1px, rgba(15, 15, 15, 0.04) 0 1px 2px;
-}
+const MD_STYLES = `${MD_LIGHT_STYLE}
 @media (prefers-color-scheme: dark) {
   :root {
     --md-text: #e7e2d8;

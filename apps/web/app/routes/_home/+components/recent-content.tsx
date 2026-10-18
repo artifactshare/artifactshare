@@ -337,6 +337,7 @@ export function RecentListBody({
                       hash: location.hash,
                     })
               }
+              className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
               aria-disabled={page <= 1}
               tabIndex={page <= 1 ? -1 : undefined}
             >
@@ -358,6 +359,7 @@ export function RecentListBody({
                       hash: location.hash,
                     })
               }
+              className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
               aria-disabled={page * 20 >= total}
               tabIndex={page * 20 >= total ? -1 : undefined}
             >

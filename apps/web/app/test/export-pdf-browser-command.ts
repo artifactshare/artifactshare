@@ -315,12 +315,16 @@ export const exportPdfDiagnostics = defineBrowserCommand(
 )
 
 export const inspectExportPdf = defineBrowserCommand(
-  async ({ page }, printLayout = false) => {
+  async ({ page }, printLayout = false, colorScheme?: 'light' | 'dark') => {
     const popup = page.context().pages().at(-1)!
     const frame = popup
       .frames()
       .find((candidate) => candidate.parentFrame() === popup.mainFrame())!
-    if (printLayout) await popup.emulateMedia({ media: 'print' })
+    if (printLayout || colorScheme)
+      await popup.emulateMedia({
+        media: printLayout ? 'print' : null,
+        colorScheme,
+      })
     try {
       return await frame.evaluate(() => {
         let parentDenied = false
@@ -331,6 +335,31 @@ export const inspectExportPdf = defineBrowserCommand(
         }
         return {
           parentDenied,
+          markdownPresentation: {
+            bodyColor: getComputedStyle(document.body).color,
+            codeColor: document.querySelector('pre code')
+              ? getComputedStyle(document.querySelector('pre code')!).color
+              : null,
+            keywordColor: document.querySelector('pre .th-keyword')
+              ? getComputedStyle(document.querySelector('pre .th-keyword')!)
+                  .color
+              : null,
+            copyControls: document.querySelectorAll('[data-code-copy]').length,
+            svgLabels: Array.from(document.querySelectorAll('svg text')).map(
+              (text) => ({
+                text: text.textContent ?? '',
+                fill: getComputedStyle(text).fill,
+                height: text.getBoundingClientRect().height,
+              }),
+            ),
+            tocHeight:
+              document
+                .querySelector('.md-toc-mobile nav')
+                ?.getBoundingClientRect().height ?? 0,
+            tocOpen:
+              document.querySelector('.md-toc-mobile')?.hasAttribute('open') ??
+              false,
+          },
           layoutHeight: Math.max(
             document.body.scrollHeight,
             ...Array.from(document.body.querySelectorAll('*')).map(
@@ -372,7 +401,8 @@ export const inspectExportPdf = defineBrowserCommand(
         }
       })
     } finally {
-      if (printLayout) await popup.emulateMedia({ media: null })
+      if (printLayout || colorScheme)
+        await popup.emulateMedia({ media: null, colorScheme: null })
     }
   },
 )
@@ -483,7 +513,19 @@ declare module 'vitest/browser' {
     printExportPdfWithKeyboard: () => Promise<void>
     probeExportPdfBoundary: () => Promise<void>
     stallExportPdfFonts: () => Promise<void>
-    inspectExportPdf: (printLayout?: boolean) => Promise<{
+    inspectExportPdf: (
+      printLayout?: boolean,
+      colorScheme?: 'light' | 'dark',
+    ) => Promise<{
+      markdownPresentation: {
+        bodyColor: string
+        codeColor: string | null
+        keywordColor: string | null
+        copyControls: number
+        svgLabels: Array<{ text: string; fill: string; height: number }>
+        tocHeight: number
+        tocOpen: boolean
+      }
       layoutHeight: number
       parentDenied: boolean
       origin: string
