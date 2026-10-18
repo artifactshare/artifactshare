@@ -1,3 +1,8 @@
+import {
+  reportArtifactId,
+  prepareSandboxBlockReport,
+  finishSandboxBlockReport,
+} from '../app/services/sandbox-block-report.server'
 import { createRequestHandler, RouterContextProvider } from 'react-router'
 import {
   APEX_HOST,
@@ -196,6 +201,25 @@ export default {
         env.VIEWER_RATELIMIT,
       )
       if (limited) return limited
+    }
+
+    const reportId = reportArtifactId(new URL(routedRequest.url).pathname)
+    if (reportId !== null && hostname !== WWW_HOST) {
+      const reportRequest = requestWithDevelopmentOriginPort(routedRequest, env)
+      const prepared = await prepareSandboxBlockReport(
+        reportRequest,
+        reportId,
+        env.SANDBOX_BLOCK_REPORT_RATELIMIT,
+      )
+      let response: Response
+      if (prepared instanceof Response) response = prepared
+      else if (
+        await isMaintenanceEnabled(env, new URL(reportRequest.url), hostname)
+      )
+        response = maintenanceResponse(new URL(reportRequest.url))
+      else response = await finishSandboxBlockReport(reportRequest, prepared)
+      response.headers.set('Cache-Control', 'private, no-store')
+      return linkShareableId ? withLinkHostRobotsHeader(response) : response
     }
 
     // Lazy initialization (better-auth init, React Router server build) is

@@ -40,9 +40,19 @@ vi.mock('./bundle-sandbox', () => ({
   handleArtifactSandboxRequest: sandboxHandlerMock,
 }))
 
-vi.mock('../app/services/db.server', () => ({
-  createDb: () => ({}),
-}))
+const reportQuery = vi.hoisted(() => vi.fn(async () => undefined))
+const reportDb = vi.hoisted(() =>
+  vi.fn(() => {
+    const chain = {
+      selectFrom: () => chain,
+      select: () => chain,
+      where: () => chain,
+      executeTakeFirst: reportQuery,
+    }
+    return chain
+  }),
+)
+vi.mock('../app/services/db.server', () => ({ createDb: reportDb }))
 
 const anchorAuthInitMock = vi.hoisted(() => vi.fn())
 
@@ -82,6 +92,8 @@ import { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 import { discoverRoutes } from '../app/routes'
 
 beforeEach(() => {
+  reportDb.mockClear()
+  reportQuery.mockClear()
   getBrowserSessionContextMock.mockReset()
   loadCommentAccessMock.mockReset()
   requestHandlerMock.mockClear()
@@ -427,11 +439,11 @@ describe('app worker scheduled cleanup', () => {
 
     await expect(waitUntil.mock.calls[0]?.[0]).resolves.toBeUndefined()
     expect(cleanupExpiredAnonymousViewSignalsMock).toHaveBeenCalledWith(
-      {},
+      reportDb.mock.results[0]?.value,
       new Date('2026-09-06T00:00:00.000Z'),
     )
     expect(cleanupExpiredLinkPublicationsMock).toHaveBeenCalledWith(
-      {},
+      reportDb.mock.results[0]?.value,
       '2026-09-06T00:00:00.000Z',
     )
     expect(runReconciliationMock).toHaveBeenCalledTimes(1)
@@ -1524,3 +1536,106 @@ function workerRequest(input: string, init?: RequestInit) {
     IncomingRequestCfProperties<unknown>
   >
 }
+
+describe('report Worker admission before initialization', () => {
+  const path = '/api/shareables/abc123def4/sandbox-block-report'
+  function reportRequest(
+    pathname = path,
+    host = 'artifactshare.com',
+    body = '{',
+  ) {
+    return workerRequest(`https://${host}${pathname}?alreadyLimited=true`, {
+      method: 'POST',
+      headers: {
+        Origin: `https://${host}`,
+        'CF-Connecting-IP': '203.0.113.10',
+        'X-Sandbox-Block-Report-Admitted': 'true',
+        'X-Forwarded-Host': 'localhost',
+        cookie: 'better-auth.session_token=secret',
+      },
+      body,
+    })
+  }
+  test.each([
+    path,
+    path + '.data',
+    path + '/',
+    path + '/_.data',
+    path.toUpperCase(),
+    '/%61pi/shareables/abc123def4/sandbox-block-report',
+  ])(
+    'rejects %s before auth, router, body parsing, and D1',
+    async (pathname) => {
+      const limit = vi.fn(async () => ({ success: false }))
+      const viewer = vi.fn()
+      const env = {
+        ...productionEnv({ maintenance: false }),
+        SANDBOX_BLOCK_REPORT_RATELIMIT: { limit },
+        VIEWER_RATELIMIT: { limit: viewer },
+      }
+      const response = await app.fetch(
+        reportRequest(pathname),
+        env,
+        executionContext(),
+      )
+      expect(response.status).toBe(429)
+      expect(limit).toHaveBeenCalledExactlyOnceWith({ key: '203.0.113.10' })
+      expect(viewer).not.toHaveBeenCalled()
+      expect(anchorAuthInitMock).not.toHaveBeenCalled()
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+      expect(reportDb).not.toHaveBeenCalled()
+    },
+  )
+  test('missing binding fails closed despite spoofed markers', async () => {
+    const response = await app.fetch(
+      reportRequest(),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(response.status).toBe(503)
+    expect(anchorAuthInitMock).not.toHaveBeenCalled()
+    expect(reportDb).not.toHaveBeenCalled()
+  })
+  test.each([false, true])(
+    'valid report respects maintenance %s before D1',
+    async (maintenance) => {
+      const limit = vi.fn(async () => ({ success: true }))
+      const body = JSON.stringify({
+        artifactId: 'abc123def4',
+        failureType: 'forbidden',
+        confirmedAt: '2026-07-04T00:00:00.000Z',
+      })
+      const response = await app.fetch(
+        reportRequest(path, 'abc123def4.artifactshare.link', body),
+        {
+          ...productionEnv({ maintenance }),
+          SANDBOX_BLOCK_REPORT_RATELIMIT: { limit },
+        },
+        executionContext(),
+      )
+      expect(response.status).toBe(maintenance ? 503 : 200)
+      expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow')
+      expect(limit).toHaveBeenCalledOnce()
+      expect(reportDb).toHaveBeenCalledTimes(maintenance ? 0 : 1)
+      expect(anchorAuthInitMock).not.toHaveBeenCalled()
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+    },
+  )
+  test.each([
+    path + '.data',
+    path + '/',
+    path.replace('abc123def4', 'link123abc'),
+  ])('link host continues forbidding %s', async (pathname) => {
+    const limit = vi.fn()
+    const response = await app.fetch(
+      reportRequest(pathname, 'abc123def4.artifactshare.link'),
+      {
+        ...productionEnv({ maintenance: false }),
+        SANDBOX_BLOCK_REPORT_RATELIMIT: { limit },
+      },
+      executionContext(),
+    )
+    expect(response.status).toBe(404)
+    expect(limit).not.toHaveBeenCalled()
+  })
+})

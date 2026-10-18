@@ -31,6 +31,30 @@ Viewer and Open Graph image requests share a Cloudflare Workers Rate Limiting bi
 
 The limiter is an abuse and database-load backstop, not the bearer credential itself. Binding failures fail open so an infrastructure fault does not revoke working share links; the application logs the binding failure without the requested URL. Local requests without the Cloudflare client-IP header or binding are not limited.
 
+## Sandbox-block telemetry admission
+
+Sandbox-block reports have a separate fail-closed Cloudflare rate-limit binding,
+configured for 20 reports per 60 seconds per ingress client IP. Artifact ids do
+not change that source budget, and reports never consume viewer admission.
+The deployment must receive requests through Cloudflare ingress, which supplies
+`CF-Connecting-IP`; forwarded headers and browser origin checks are not sender
+authentication. Missing or invalid ingress identity or unavailable admission
+returns a non-cacheable 503, including in local development without that identity.
+
+Admission has a 1-second total deadline. Admitted report bodies have a strict
+1024-byte limit and a 2-second total read deadline, with fatal UTF-8 decoding.
+Excess bodies return 413, stalled reads 408, and aborted or malformed bodies 400.
+Exhausted admission returns 429 with `Retry-After: 60`. Rejections cancel body
+consumption without waiting for cancellation hooks. All report responses are
+private and non-cacheable. Maintenance is checked after preparation and before
+artifact lookup. Report failures do not affect viewer access or sandbox recovery.
+
+[Cloudflare Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+is location-local and permissive/eventually consistent; this is not an exact
+global 20-request quota. Tests verify configuration, source keying, and budget
+isolation, not global accounting. The existing bounded cooldown suppresses logs
+and is not a replacement admission limit.
+
 ## Report a vulnerability privately
 
 Use GitHub Private Vulnerability Reporting for this repository. If that channel is unavailable, email `support@artifactshare.com`.

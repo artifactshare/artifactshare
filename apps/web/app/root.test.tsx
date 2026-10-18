@@ -10,7 +10,13 @@ vi.mock('cloudflare:workers', () => ({
   },
 }))
 
-import { isProjectTimezoneRoute, links, loader, shouldRevalidate } from './root'
+import {
+  isProjectTimezoneRoute,
+  links,
+  loader,
+  shouldRevalidate,
+  middleware,
+} from './root'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 
@@ -300,3 +306,9 @@ function loaderArgs(
     pattern: '',
   } as unknown as Parameters<typeof loader>[0]
 }
+
+import { sandboxBlockReportMiddleware } from '~/middleware/sandbox-block-report.server'
+import { sessionMiddleware } from '~/middleware/auth'
+test('report admission precedes session middleware', () => {
+  expect(middleware).toEqual([sandboxBlockReportMiddleware, sessionMiddleware])
+})
