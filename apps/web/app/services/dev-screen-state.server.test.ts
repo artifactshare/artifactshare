@@ -34,6 +34,7 @@ import {
 } from './home.server'
 import { listWorkspaceBots } from './bot-members.server'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
+import { recordViewerRecency } from './views.server'
 
 async function expectWorkspaceExpiryStarts(db: Kysely<DB>) {
   expect(
@@ -210,7 +211,7 @@ describe('viewer revisit-context dev screen state', () => {
     await db?.destroy()
   })
 
-  test('seeds an ordinal version clue and two new messages', async () => {
+  test('restores the returning-reader timeline after acknowledgment and an aged reseed', async () => {
     ;({ db } = createMigratedInMemoryDb())
     const now = '2026-08-17T12:00:00.000Z'
     const { workspaceId } = await ensureDevScreenState(
@@ -243,7 +244,7 @@ describe('viewer revisit-context dev screen state', () => {
     )
     const shareableId = devShareableId(`${workspaceId}-${userId}-file-1`)
 
-    await expect(
+    const load = () =>
       loadViewerRevisitContext(db, {
         shareableId,
         viewerUserId: userId,
@@ -252,8 +253,8 @@ describe('viewer revisit-context dev screen state', () => {
           { id: `${shareableId}-v2`, ordinal: 2 },
           { id: `${shareableId}-v1`, ordinal: 1 },
         ],
-      }),
-    ).resolves.toEqual({
+      })
+    const expectedContext = {
       entryCurrentVersionId: `${shareableId}-v2`,
       version: { kind: 'ordinal', from: 1, to: 2 },
       commentCount: 2,
@@ -267,7 +268,232 @@ describe('viewer revisit-context dev screen state', () => {
           threadId: `${shareableId}-thread-2`,
         },
       ],
+    }
+    const rows = async (artifactId = shareableId) => ({
+      artifact: await db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', artifactId)
+        .executeTakeFirstOrThrow(),
+      versions: await db
+        .selectFrom('versions')
+        .selectAll()
+        .where('shareable_id', '=', artifactId)
+        .orderBy('id')
+        .execute(),
+      threads: await db
+        .selectFrom('comment_threads')
+        .selectAll()
+        .where('shareable_id', '=', artifactId)
+        .orderBy('id')
+        .execute(),
+      messages: await db
+        .selectFrom('comment_messages')
+        .selectAll()
+        .where(
+          'thread_id',
+          'in',
+          db
+            .selectFrom('comment_threads')
+            .select('id')
+            .where('shareable_id', '=', artifactId),
+        )
+        .orderBy('id')
+        .execute(),
     })
+    const initial = await rows()
+    const ownerId = `${workspaceId}-revisit-owner`
+    expect(initial.artifact.owner_user_id).toBe(ownerId)
+    expect(initial.artifact.version_sequence).toBe(2)
+    expect(
+      initial.versions.map(({ id, number, status, created_by_id }) => ({
+        id,
+        number,
+        status,
+        created_by_id,
+      })),
+    ).toEqual(
+      [1, 2].map((number) => ({
+        id: `${shareableId}-v${number}`,
+        number,
+        status: 'published',
+        created_by_id: ownerId,
+      })),
+    )
+    expect(
+      initial.threads.map(({ id, status, created_by_id }) => ({
+        id,
+        status,
+        created_by_id,
+      })),
+    ).toEqual(
+      [1, 2, 3].map((index) => ({
+        id: `${shareableId}-thread-${index}`,
+        status: 'open',
+        created_by_id: userId,
+      })),
+    )
+    expect(
+      initial.messages.map(({ id, body, created_by_id }) => ({
+        id,
+        body,
+        created_by_id,
+      })),
+    ).toEqual([
+      {
+        id: `${shareableId}-thread-1-opening`,
+        body: '確認ポイント 1',
+        created_by_id: userId,
+      },
+      {
+        id: `${shareableId}-thread-1-reply`,
+        body: '反映しました。',
+        created_by_id: ownerId,
+      },
+      {
+        id: `${shareableId}-thread-2-opening`,
+        body: '確認ポイント 2',
+        created_by_id: ownerId,
+      },
+      {
+        id: `${shareableId}-thread-3-opening`,
+        body: '確認ポイント 3',
+        created_by_id: ownerId,
+      },
+      {
+        id: `${shareableId}-thread-3-reply`,
+        body: '確認します。',
+        created_by_id: userId,
+      },
+    ])
+    const acknowledge = async (viewedAt: string) => {
+      const current = await rows()
+      await recordViewerRecency(db, shareableId, userId, {
+        now: viewedAt,
+        versionSeenThroughAt: current.versions[1].published_at,
+        commentSeenThroughAt: current.messages
+          .map((message) => message.created_at)
+          .sort()
+          .at(-1),
+      })
+      await expect(load()).resolves.toBeNull()
+    }
+    await expect(load()).resolves.toEqual(expectedContext)
+    // Reading context does not acknowledge it.
+    await expect(load()).resolves.toEqual(expectedContext)
+    await acknowledge(now)
+
+    const unrelatedId = devShareableId('unrelated-revisit-control')
+    await db
+      .insertInto('shareables')
+      .values({
+        ...initial.artifact,
+        id: unrelatedId,
+        current_version_id: null,
+      })
+      .execute()
+    await db
+      .insertInto('versions')
+      .values({
+        ...initial.versions[0],
+        id: `${unrelatedId}-v1`,
+        shareable_id: unrelatedId,
+      })
+      .execute()
+    await db
+      .insertInto('comment_threads')
+      .values({
+        ...initial.threads[0],
+        id: `${unrelatedId}-thread`,
+        shareable_id: unrelatedId,
+      })
+      .execute()
+    await db
+      .insertInto('comment_messages')
+      .values({
+        ...initial.messages[0],
+        id: `${unrelatedId}-message`,
+        thread_id: `${unrelatedId}-thread`,
+      })
+      .execute()
+    const unrelated = await rows(unrelatedId)
+    await recordViewerRecency(db, shareableId, ownerId, {
+      now,
+      versionSeenThroughAt: now,
+      commentSeenThroughAt: now,
+    })
+    const otherRecency = () =>
+      db
+        .selectFrom('shareable_viewer_recency')
+        .selectAll()
+        .where('shareable_id', '=', shareableId)
+        .where('viewer_user_id', '=', ownerId)
+        .executeTakeFirstOrThrow()
+    const otherBefore = await otherRecency()
+    const later = new Date(Date.parse(now) + 6 * 3_600_000).toISOString()
+    for (let iteration = 0; iteration < 2; iteration += 1) {
+      await seedDevScreenState(
+        db,
+        'viewer/revisit-context',
+        workspaceId,
+        userId,
+        later,
+      )
+      await expect(load()).resolves.toEqual(expectedContext)
+      const current = await rows()
+      // All non-timestamp fields, including IDs, numbering, authors and bodies, survive.
+      const withoutTimes = (row: Record<string, unknown>) =>
+        Object.fromEntries(
+          Object.entries(row).filter(([key]) => !key.endsWith('_at')),
+        )
+      for (const key of ['versions', 'threads', 'messages'] as const) {
+        expect(current[key].map(withoutTimes)).toEqual(
+          initial[key].map(withoutTimes),
+        )
+      }
+      expect(current.artifact.version_sequence).toBe(2)
+      expect(current.artifact.owner_user_id).toBe(ownerId)
+      const recency = await db
+        .selectFrom('shareable_viewer_recency')
+        .selectAll()
+        .where('shareable_id', '=', shareableId)
+        .where('viewer_user_id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(current.versions[0].published_at).toBe(
+        recency.version_seen_through_at,
+      )
+      expect(
+        current.versions[1].published_at! > recency.version_seen_through_at!,
+      ).toBe(true)
+      for (const version of current.versions)
+        expect(version.created_at).toBe(version.published_at)
+      for (const thread of current.threads) {
+        expect(thread.created_at < recency.comment_seen_through_at!).toBe(true)
+        expect(thread.updated_at > recency.comment_seen_through_at!).toBe(true)
+        const messages = current.messages.filter(
+          (message) => message.thread_id === thread.id,
+        )
+        expect(thread.updated_at).toBe(
+          messages
+            .map((message) => message.created_at)
+            .sort()
+            .at(-1),
+        )
+        for (const message of messages) {
+          expect(message.updated_at).toBe(message.created_at)
+          expect(message.created_at >= thread.created_at).toBe(true)
+        }
+      }
+      for (const pair of expectedContext.newCommentMessages) {
+        expect(
+          current.messages.find((message) => message.id === pair.messageId)!
+            .created_at > recency.comment_seen_through_at!,
+        ).toBe(true)
+      }
+      await expect(rows(unrelatedId)).resolves.toEqual(unrelated)
+      await expect(otherRecency()).resolves.toEqual(otherBefore)
+      await acknowledge(later)
+    }
   })
 })
 

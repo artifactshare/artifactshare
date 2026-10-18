@@ -1788,7 +1788,12 @@ export async function seedDevScreenState(
           created_at: publishedAt,
           published_at: publishedAt,
         })
-        .onConflict((oc) => oc.column('id').doNothing())
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet({
+            created_at: publishedAt,
+            published_at: publishedAt,
+          }),
+        )
         .execute()
     }
     await db
@@ -1824,7 +1829,11 @@ export async function seedDevScreenState(
           created_at: openingAt,
           updated_at: updateAt,
         })
-        .onConflict((oc) => oc.column('id').doNothing())
+        .onConflict((oc) =>
+          oc
+            .column('id')
+            .doUpdateSet({ created_at: openingAt, updated_at: updateAt }),
+        )
         .execute()
       await db
         .insertInto('comment_messages')
@@ -1837,7 +1846,12 @@ export async function seedDevScreenState(
           created_at: index === 2 ? updateAt : openingAt,
           updated_at: index === 2 ? updateAt : openingAt,
         })
-        .onConflict((oc) => oc.column('id').doNothing())
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet({
+            created_at: index === 2 ? updateAt : openingAt,
+            updated_at: index === 2 ? updateAt : openingAt,
+          }),
+        )
         .execute()
       if (index !== 2) {
         await db
@@ -1851,7 +1865,11 @@ export async function seedDevScreenState(
             created_at: updateAt,
             updated_at: updateAt,
           })
-          .onConflict((oc) => oc.column('id').doNothing())
+          .onConflict((oc) =>
+            oc
+              .column('id')
+              .doUpdateSet({ created_at: updateAt, updated_at: updateAt }),
+          )
           .execute()
       }
     }
