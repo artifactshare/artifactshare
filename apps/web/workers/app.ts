@@ -539,6 +539,7 @@ async function handleArtifactLiveRequest(
     )
   } catch {
     // Includes constructor/storage failure before the room can return a response.
+    console.error('artifact_live_admission_failed')
     return new Response('Live connection unavailable', {
       status: 503,
       headers: { 'Cache-Control': 'private, no-store' },

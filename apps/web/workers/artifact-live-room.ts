@@ -54,6 +54,7 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
   private alarmUpdate: Promise<void> = Promise.resolve()
   private budgetUpdate: Promise<unknown> = Promise.resolve()
   private budget: AdmissionBudget | null = null
+  private budgetNeedsPersistence = false
   private persistedPresence: string | null = null
   private readonly records = new Map<WebSocket, RetainedSocket>()
   private readonly users = new Map<string, Set<RetainedSocket>>()
@@ -94,11 +95,15 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       }
       for (const socket of this.ctx.getWebSockets()) {
         if (socket.readyState === WebSocket.CLOSED) continue
-        const attachment = readValidAttachment(socket, Date.now())
+        const attachment = readAttachment(socket)
         const record = { socket, attachment, eligible: false }
         this.records.set(socket, record)
         if (attachment) this.adjustOccupancy(attachment.presence.id, 1)
-        if (attachment && socket.readyState === WebSocket.OPEN) {
+        if (
+          attachment &&
+          attachment.authorizationDeadlineMs > Date.now() &&
+          socket.readyState === WebSocket.OPEN
+        ) {
           this.activate(record, false)
         } else {
           this.invalidate(record)
@@ -194,9 +199,16 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
           (timestamp - this.budget.timestamp) * BUCKET_REFILL_PER_MS,
       )
       const allowed = available >= 1
-      this.budget = { tokens: allowed ? available - 1 : available, timestamp }
-      // Keep the consumed in-memory value even when persistence fails.
-      await this.ctx.storage.put(BUDGET_KEY, this.budget)
+      if (allowed) {
+        this.budget = { tokens: available - 1, timestamp }
+        this.budgetNeedsPersistence = true
+      }
+      // Unconsumed refill can be recomputed from the last charged state.
+      // Retry a failed charge write even when the next attempt is exhausted.
+      if (this.budgetNeedsPersistence) {
+        await this.ctx.storage.put(BUDGET_KEY, this.budget)
+        this.budgetNeedsPersistence = false
+      }
       return allowed
     })
     this.budgetUpdate = operation.catch(() => {})
@@ -342,6 +354,7 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       record.socket,
       record.closeReason.code,
       record.closeReason.reason,
+      record.attachment,
     )
     if (record.socket.readyState === WebSocket.CLOSED) this.forget(record)
     else {
@@ -460,9 +473,16 @@ function isValidOriginValue(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
-function invalidateAttachment(ws: WebSocket): void {
+function invalidateAttachment(
+  ws: WebSocket,
+  attachment: ArtifactLiveAttachmentV1 | null,
+): void {
   try {
-    ws.serializeAttachment(null)
+    // Preserve trustworthy ownership for retained-capacity accounting, while
+    // the zero deadline keeps this V1 attachment ineligible after reconstruction.
+    ws.serializeAttachment(
+      attachment ? { ...attachment, authorizationDeadlineMs: 0 } : null,
+    )
   } catch {
     // The retained record is already ineligible; send-time deadlines remain authoritative.
   }
@@ -472,8 +492,9 @@ function invalidateSocket(
   ws: WebSocket,
   code = AUTHORIZATION_EXPIRED_CODE,
   reason = AUTHORIZATION_EXPIRED_REASON,
+  attachment: ArtifactLiveAttachmentV1 | null = null,
 ): void {
-  invalidateAttachment(ws)
+  invalidateAttachment(ws, attachment)
   try {
     ws.close(code, reason)
   } catch {
@@ -516,6 +537,14 @@ function readValidAttachment(
   socket: WebSocket,
   now: number,
 ): ArtifactLiveAttachmentV1 | null {
+  const attachment = readAttachment(socket)
+  return attachment && attachment.authorizationDeadlineMs > now
+    ? attachment
+    : null
+}
+
+// Structural ownership remains useful after authorization expires or is cleared.
+function readAttachment(socket: WebSocket): ArtifactLiveAttachmentV1 | null {
   let value: unknown
   try {
     value = socket.deserializeAttachment()
@@ -529,7 +558,7 @@ function readValidAttachment(
     !isValidPresence(attachment.presence) ||
     !Number.isSafeInteger(attachment.authorizationDeadlineMs) ||
     !Number.isFinite(attachment.authorizationDeadlineMs) ||
-    (attachment.authorizationDeadlineMs ?? 0) <= now
+    (attachment.authorizationDeadlineMs ?? -1) < 0
   ) {
     return null
   }

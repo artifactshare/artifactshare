@@ -321,6 +321,121 @@ describe('ArtifactLiveRoom bounded admission and delivery', () => {
     expect(budget(fixture).tokens).toBe(15)
   })
 
+  test('exhausted bursts avoid writes while fractional refill survives reconstruction', async () => {
+    const fixture = await setup(
+      Array.from({ length: 8 }, () =>
+        socket(attachment('viewer', epoch + 60_000)),
+      ),
+    )
+    for (let i = 0; i < 512; i++)
+      expect((await fixture.room.fetch(admission())).status).toBe(429)
+    const writes = () =>
+      fixture.storage.put.mock.calls.filter(
+        ([key]) => key === 'admission-budget',
+      ).length
+    expect(writes()).toBe(512)
+    for (let i = 0; i < 10; i++) {
+      const response = await fixture.room.fetch(admission())
+      expect(response.status).toBe(429)
+      expect(response.headers.get('cache-control')).toBe('private, no-store')
+    }
+    clock.mockReturnValue(epoch + 31)
+    expect((await fixture.room.fetch(admission())).status).toBe(429)
+    let room = await reconstruct(fixture)
+    clock.mockReturnValue(epoch + 62)
+    expect((await room.fetch(admission())).status).toBe(429)
+    expect(writes()).toBe(512)
+    expect(budget(fixture)).toEqual({ tokens: 0, timestamp: epoch })
+    room = await reconstruct(fixture)
+    clock.mockReturnValue(epoch + 63)
+    expect((await room.fetch(admission('other'))).status).toBe(101)
+    expect(writes()).toBe(513)
+    expect(budget(fixture).tokens).toBeCloseTo(0.008)
+    room = await reconstruct(fixture)
+    expect((await room.fetch(admission('other'))).status).toBe(429)
+    expect(writes()).toBe(513)
+  })
+
+  test('an exhausted attempt retries an unpersisted charge without refunding it', async () => {
+    const fixture = await setup()
+    fixture.data.set('admission-budget', { tokens: 1, timestamp: epoch })
+    const room = await reconstruct(fixture)
+    fixture.storage.put.mockRejectedValueOnce(new Error('storage unavailable'))
+    expect((await room.fetch(admission())).status).toBe(503)
+    expect((await room.fetch(admission())).status).toBe(429)
+    expect(budget(fixture)).toEqual({ tokens: 0, timestamp: epoch })
+    const restarted = await reconstruct(fixture)
+    expect((await restarted.fetch(admission())).status).toBe(429)
+    expect(allocated).toHaveLength(0)
+  })
+
+  test.each(['send failure', 'expired', 'closing'] as const)(
+    'retains known user capacity across reconstruction after %s until transport removal',
+    async (cause) => {
+      const peers = Array.from({ length: 8 }, () =>
+        socket(
+          attachment('viewer', cause === 'expired' ? epoch : epoch + 60_000),
+          { closeThrows: true },
+        ),
+      )
+      if (cause === 'closing')
+        for (const peer of peers)
+          Object.defineProperty(peer, 'readyState', {
+            value: 2,
+            writable: true,
+          })
+      const fixture = await setup([...peers])
+      if (cause === 'send failure') {
+        for (const peer of peers)
+          peer.send.mockImplementationOnce(() => {
+            throw new Error('send failed')
+          })
+        await fixture.room.notifyCommentsChanged()
+      }
+      for (const peer of peers) {
+        expect(peer.attachment).toEqual(attachment('viewer', 0))
+        peer.send.mockClear()
+      }
+      expect((await fixture.room.fetch(admission())).status).toBe(429)
+      let room = await reconstruct(fixture)
+      room = await reconstruct(fixture)
+      expect((await room.fetch(admission())).status).toBe(429)
+      expect(allocated).toHaveLength(0)
+      // A known user's retained transports do not quarantine other users.
+      expect((await room.fetch(admission('other'))).status).toBe(101)
+      await room.notifyCommentsChanged()
+      await room.notifyVersionChanged('version-2')
+      clock.mockReturnValue(epoch + 1_000)
+      await room.alarm()
+      expect(peers.every((peer) => peer.send.mock.calls.length === 0)).toBe(
+        true,
+      )
+      // Runtime removal and confirmed CLOSED state both release occupancy.
+      fixture.sockets.splice(fixture.sockets.indexOf(peers[0]), 1)
+      Object.defineProperty(peers[1], 'readyState', {
+        value: 3,
+        writable: true,
+      })
+      clock.mockReturnValue(epoch + 2_000)
+      await room.alarm()
+      expect((await room.fetch(admission())).status).toBe(101)
+      expect((await room.fetch(admission())).status).toBe(101)
+      expect((await room.fetch(admission())).status).toBe(429)
+    },
+  )
+
+  test('unidentified retained transports still constrain room capacity after reconstruction', async () => {
+    const peers = Array.from({ length: 128 }, () =>
+      socket(null, { closeThrows: true }),
+    )
+    const fixture = await setup(peers)
+    const room = await reconstruct(fixture)
+    expect((await room.fetch(admission())).status).toBe(429)
+    await room.notifyCommentsChanged()
+    expect(peers.every((peer) => peer.send.mock.calls.length === 0)).toBe(true)
+    expect(allocated).toHaveLength(0)
+  })
+
   test('corrupt persisted budget fails closed instead of resetting', async () => {
     const fixture = await setup()
     fixture.data.set('admission-budget', {
@@ -401,7 +516,7 @@ describe('ArtifactLiveRoom bounded admission and delivery', () => {
     expect((await fixture.room.fetch(admission())).status).toBe(429)
     for (const ws of sockets) {
       expect(ws.send).toHaveBeenCalledTimes(1)
-      expect(ws.attachment).toBeNull()
+      expect(ws.attachment).toEqual(attachment('viewer', 0))
     }
     const calls = sockets.map((ws) => ws.close.mock.calls.length)
     clock.mockReturnValue(epoch + 1_000)

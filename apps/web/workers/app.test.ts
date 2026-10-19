@@ -926,6 +926,7 @@ describe('app worker artifact live route', () => {
   test.each([429, 503, 'exception'] as const)(
     'returns private room overload/setup responses for %s',
     async (status) => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
       getBrowserSessionContextMock.mockResolvedValue({
         user: {
           id: 'user-1',
@@ -959,6 +960,11 @@ describe('app worker artifact live route', () => {
       expect(response.status).toBe(expectedStatus)
       expect(response.headers.get('cache-control')).toBe('private, no-store')
       expect(await response.text()).toBe('Live connection unavailable')
+      if (status === 'exception') {
+        expect(error.mock.calls).toEqual([['artifact_live_admission_failed']])
+      } else {
+        expect(error).not.toHaveBeenCalled()
+      }
     },
   )
 
