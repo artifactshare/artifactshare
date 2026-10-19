@@ -10,10 +10,7 @@ import {
   canUseOsHandler,
 } from './csp-reporter'
 import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
-import {
-  buildPrintDocument,
-  resolveExportHtml,
-} from '../routes/a.$id/+components/export-actions'
+import { resolveExportHtml } from '../routes/a.$id/+components/export-actions'
 
 type ReporterMessage = { kind?: string; [key: string]: unknown }
 
@@ -872,7 +869,7 @@ describe('CSP reporter runtime behavior', () => {
     )
   })
 
-  test('uses the same Mermaid rendering for HTML and print exports', async () => {
+  test('preserves Mermaid SVG and hidden source in HTML export', async () => {
     const source = 'flowchart LR\nA --> B'
     const data = {
       kind: 'markdown' as const,
@@ -888,15 +885,6 @@ describe('CSP reporter runtime behavior', () => {
     expect(html).toContain('class="mermaid-diagram"')
     expect(html).toContain('<svg')
     expect(html).toContain('data-mermaid-rendered="true" hidden')
-
-    const print = await buildPrintDocument('artifact-1', data, {
-      savePdf: 'Save PDF',
-      backgroundHint: 'Print backgrounds',
-      preparing: 'Preparing',
-      heightLimited: 'Height limited',
-    })
-    expect(print.querySelector('.mermaid-diagram svg')).not.toBeNull()
-    expect(print.querySelector('pre')?.hidden).toBe(true)
   })
 
   test('keyboard link activation and script clicks ignore highlight geometry at the origin', async () => {

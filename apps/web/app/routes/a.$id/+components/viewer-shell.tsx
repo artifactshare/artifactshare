@@ -78,12 +78,9 @@ import {
   fetchExportSource,
   htmlDownloadFileName,
   markdownDownloadFileName,
-  openPrintWindow,
   resolveExportHtml,
   resolveExportMarkdown,
-  type ExportPrintLabels,
   type ExportSourceData,
-  writePrintPdf,
 } from './export-actions'
 import {
   cfRayFrom,
@@ -2196,19 +2193,9 @@ function useViewerShellController({
     [exportResetKey],
   )
 
-  const exportPrintLabels = useMemo<ExportPrintLabels>(
-    () => ({
-      savePdf: t('export.printSavePdf'),
-      backgroundHint: t('export.printBackgroundHint'),
-      preparing: t('export.printPreparing'),
-      heightLimited: t('export.printHeightLimited'),
-    }),
-    [t],
-  )
-
   const runExportAction = useCallback(
     async (
-      action: 'copy' | 'download' | 'pdf',
+      action: 'copy' | 'download',
       run: (source: ExportSourceData) => Promise<void> | void,
     ): Promise<boolean> => {
       if (!exportSupported) {
@@ -2277,19 +2264,6 @@ function useViewerShellController({
       )
     })
   }, [artifact.id, runExportAction])
-
-  const handleDownloadPdf = useCallback(() => {
-    const printWindow = openPrintWindow()
-    if (!printWindow) {
-      toast.error(t('toast.exportPopupBlocked'))
-      return
-    }
-    void runExportAction('pdf', async (source) => {
-      await writePrintPdf(printWindow, artifact.id, source, exportPrintLabels)
-    }).then((ok) => {
-      if (!ok) printWindow.close()
-    })
-  }, [artifact.id, exportPrintLabels, runExportAction, t])
 
   useEffect(() => {
     if (!targetCommentId) return
@@ -2452,7 +2426,6 @@ function useViewerShellController({
             copyMarkdown: handleCopyMarkdown,
             downloadHtml: handleDownloadHtml,
             downloadMarkdown: handleDownloadMarkdown,
-            downloadPdf: handleDownloadPdf,
           }
         : null,
     currentVersionHref,
@@ -2596,7 +2569,6 @@ function ViewerShellView({
         onCopyMarkdown={exportActions?.copyMarkdown}
         onDownloadHtml={exportActions?.downloadHtml}
         onDownloadMarkdown={exportActions?.downloadMarkdown}
-        onDownloadPdf={exportActions?.downloadPdf}
       />
       {isHistoricalVersion ? (
         <div className="border-border bg-background flex min-h-11 items-center justify-between gap-3 border-b px-3 py-2 text-sm">
