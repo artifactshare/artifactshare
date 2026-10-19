@@ -40,7 +40,7 @@ export function InlineCommentPopover({
   onOpenConversation: (threadId: string) => void
 }) {
   const translator = useT()
-  const { t, tPlural, locale } = translator
+  const { t, locale } = translator
   const [replyBody, setReplyBody] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const popoverRef = useRef<HTMLElement | null>(null)
@@ -204,7 +204,7 @@ export function InlineCommentPopover({
               className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
               onClick={() => onOpenConversation(thread.id)}
             >
-              {tPlural('comments.previousReplyCount', hiddenReplyCount)}
+              {t('comments.openConversationTitle')}
             </button>
           ) : null}
           {visibleReplyMessages.length > 0 ? (

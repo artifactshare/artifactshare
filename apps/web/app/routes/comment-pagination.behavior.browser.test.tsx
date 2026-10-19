@@ -6,15 +6,19 @@ import { toast, Toaster } from 'sonner'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
+import en from '~/i18n/en.json'
+import ja from '~/i18n/ja.json'
+import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPanel } from './a.$id/+components/comment-panel'
 import {
   patchCommentThreads,
   type CommentThreadPatch,
 } from './a.$id/+components/comment-history'
 
+const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('en') }
+  return { useT: () => bindI18n(locale.value) }
 })
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
@@ -57,7 +61,7 @@ const older: CommentThreadView = {
   olderCursor: null,
   messages: [0, 1, 2, 3, 4, 5, 6].map(message),
 }
-function Harness() {
+function Harness({ showNewThreadComposer = true }) {
   const [threads, setThreads] = useState([initial])
   const returnFocus = useRef<HTMLElement | null>(null)
   const change = useCallback(
@@ -76,7 +80,7 @@ function Harness() {
         onThreadsChange={change}
         isCurrentShareableId={() => true}
         open
-        showNewThreadComposer
+        showNewThreadComposer={showNewThreadComposer}
         onOpenChange={() => {}}
         targetThreadId={null}
         targetThreadScroll="start"
@@ -90,16 +94,17 @@ function Harness() {
   )
 }
 let root: Root | undefined
-async function mount() {
+async function mount(showNewThreadComposer = true) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  root.render(<Harness />)
+  root.render(<Harness showNewThreadComposer={showNewThreadComposer} />)
   await expect
     .element(page.getByText('Review message 9', { exact: true }))
     .toBeVisible()
 }
 afterEach(() => {
+  locale.value = 'en'
   toast.dismiss()
   root?.unmount()
   document.body.replaceChildren()
@@ -174,7 +179,7 @@ test.each([
     .element(
       page.getByText(
         code === 'thread-capacity'
-          ? 'This thread has 500 messages. Start a new thread.'
+          ? en['comments.threadCapacityArtifact']
           : 'Posting limit reached. Retry in 12 seconds.',
       ),
     )
@@ -184,3 +189,87 @@ test.each([
     .element(page.getByRole('button', { name: 'Post', exact: true }))
     .toBeEnabled()
 })
+
+test.each([
+  ['en', false],
+  ['en', true],
+  ['ja', false],
+  ['ja', true],
+] as const)(
+  'capacity recovery matches the %s composer context (%s)',
+  async (language, showComposer) => {
+    locale.value = language
+    const copy = language === 'en' ? en : ja
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { error: { code: 'thread-capacity' } },
+            { status: 409 },
+          ),
+        ),
+    )
+    await mount(showComposer)
+    await page
+      .getByRole('button', { name: copy['comments.reply'], exact: true })
+      .click()
+    const draft = page.getByRole('textbox', {
+      name: copy['comments.replyLabel'],
+      exact: true,
+    })
+    await draft.fill('Unsent reply')
+    await page
+      .getByRole('button', { name: copy['comments.reply'], exact: true })
+      .click()
+    await expect
+      .element(
+        page.getByText(
+          copy[
+            showComposer
+              ? 'comments.threadCapacityArtifact'
+              : 'comments.threadCapacity'
+          ],
+          { exact: true },
+        ),
+      )
+      .toBeVisible()
+    await expect.element(draft).toHaveValue('Unsent reply')
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'inline hidden replies open the conversation (%s)',
+  async (language) => {
+    locale.value = language
+    const copy = language === 'en' ? en : ja
+    const onOpenConversation = vi.fn()
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    root.render(
+      <TooltipProvider>
+        <InlineCommentPopover
+          shareableId="synthetic-artifact"
+          thread={initial}
+          rect={{ top: 100, left: 100, width: 20, height: 10 }}
+          isCurrentShareableId={() => true}
+          onThreadsChange={() => {}}
+          onClose={() => {}}
+          onOpenConversation={onOpenConversation}
+        />
+      </TooltipProvider>,
+    )
+    await page
+      .getByRole('button', {
+        name: copy['comments.openConversationTitle'],
+        exact: true,
+      })
+      .click()
+    expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith('thread')
+    expect(fetch).not.toHaveBeenCalled()
+  },
+)

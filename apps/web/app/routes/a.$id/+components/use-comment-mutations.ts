@@ -77,10 +77,12 @@ export function useCommentMutations({
   shareableId,
   isCurrentShareableId,
   onThreadsChange,
+  showNewThreadComposer = false,
 }: {
   shareableId: string
   isCurrentShareableId: (shareableId: string) => boolean
   onThreadsChange: ChangeCommentThreads
+  showNewThreadComposer?: boolean
 }) {
   const { t } = useT()
   const revalidator = useRevalidator()
@@ -126,7 +128,13 @@ export function useCommentMutations({
       const response = result.response
       if (!response.ok) {
         if (result.body?.error?.code === 'thread-capacity') {
-          toast.error(t('comments.threadCapacity'))
+          toast.error(
+            t(
+              showNewThreadComposer
+                ? 'comments.threadCapacityArtifact'
+                : 'comments.threadCapacity',
+            ),
+          )
           return false
         }
         if (result.body?.error?.code === 'rate-limited') {

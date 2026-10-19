@@ -131,6 +131,7 @@ export function CommentPanel({
     shareableId,
     isCurrentShareableId,
     onThreadsChange,
+    showNewThreadComposer,
   })
 
   const handleOpenAutoFocus = useRevisitCommentFocus({

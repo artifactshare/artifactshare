@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { toast } from 'sonner'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
+import { useCommentMutations } from './use-comment-mutations'
 import { TextSelectionCommentPopover } from './text-selection-comment-popover'
 
 const revalidate = vi.hoisted(() => vi.fn())
@@ -101,6 +102,74 @@ test.each([
         expect(revalidate).not.toHaveBeenCalled()
       }
       expect(reload).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  },
+)
+
+function CapacityReply({
+  showNewThreadComposer,
+}: {
+  showNewThreadComposer: boolean
+}) {
+  const { mutate } = useCommentMutations({
+    shareableId: 'synthetic-artifact',
+    isCurrentShareableId: () => true,
+    onThreadsChange: () => {},
+    showNewThreadComposer,
+  })
+  return (
+    <button
+      onClick={() =>
+        void mutate({
+          intent: 'reply',
+          threadId: 'thread',
+          body: 'Draft reply',
+        })
+      }
+    >
+      Reply
+    </button>
+  )
+}
+
+test.each([
+  [false, 'comments.threadCapacity'],
+  [true, 'comments.threadCapacityArtifact'],
+] as const)(
+  'capacity guidance uses the available composer (%s)',
+  async (showNewThreadComposer, guidance) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { error: { code: 'thread-capacity' } },
+            { status: 409 },
+          ),
+        ),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      await act(async () =>
+        root.render(
+          <CapacityReply showNewThreadComposer={showNewThreadComposer} />,
+        ),
+      )
+      await act(async () => host.querySelector('button')!.click())
+      await act(async () =>
+        waitForRealTaskCondition(
+          () => vi.mocked(toast.error).mock.calls.length > 0,
+          'capacity refusal consumed',
+        ),
+      )
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance)
     } finally {
       await act(async () => root.unmount())
       host.remove()
