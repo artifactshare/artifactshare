@@ -46,7 +46,6 @@ vi.mock('~/hooks/use-t', () => ({
         'vw.copyMarkdown': 'Copy Markdown',
         'vw.downloadHtml': 'Download HTML',
         'vw.downloadMarkdown': 'Download Markdown',
-        'vw.downloadPdf': 'Download PDF',
         'vw.move': 'Move to another place',
         'vw.collapseChrome': 'Collapse Artifact Share',
         'vw.expandChrome': 'Show Artifact Share',
@@ -409,28 +408,92 @@ describe('ViewerChrome', () => {
     expect(toggle).not.toContain('>Artifact Share<')
   })
 
-  test('logged-in user sees export actions in the more menu', () => {
+  test.each(['html', 'md', 'static_site'] as const)(
+    'signed-in viewers retain three exports for %s',
+    (renderType) => {
+      for (const owner of [true, false]) {
+        const html = renderChrome({
+          artifact: {
+            ...artifact,
+            canReplaceFile: owner,
+            canChangeVisibility: owner,
+          },
+          user: {
+            id: owner ? 'u1' : 'u2',
+            email: 'coji@example.com',
+            name: 'Coji',
+            image: null,
+            initial: 'C',
+          },
+          renderType,
+          onCopyMarkdown: () => {},
+          onDownloadHtml: () => {},
+          onDownloadMarkdown: () => {},
+        })
+
+        expect(html).toContain('Export')
+        expect(html).toContain('Copy Markdown')
+        expect(html).toContain('Download HTML')
+        expect(html).toContain('Download Markdown')
+        expect(html).not.toMatch(/PDF|print/i)
+      }
+    },
+  )
+
+  test('ignores the removed PDF callback, including export-section visibility', () => {
+    // Simulate the former caller without restoring the removed prop to the public type.
+    const formerExportProps = { onDownloadPdf: vi.fn() }
+    const html = renderChrome({
+      ...formerExportProps,
+      artifact,
+      user: {
+        id: 'u1',
+        email: 'owner@example.com',
+        name: 'Owner',
+        image: null,
+        initial: 'O',
+      },
+      renderType: 'html',
+    })
+    expect(html).toContain('aria-label="More"')
+    expect(html).not.toContain('>Export<')
+    expect(html).not.toMatch(/pdf|print/i)
+    expect(formerExportProps.onDownloadPdf).not.toHaveBeenCalled()
+  })
+
+  test('omits the export section when no export callbacks exist', () => {
     const html = renderChrome({
       artifact,
       user: {
         id: 'u1',
-        email: 'coji@example.com',
-        name: 'Coji',
+        email: 'owner@example.com',
+        name: 'Owner',
         image: null,
-        initial: 'C',
+        initial: 'O',
       },
+      renderType: null,
+    })
+    expect(html).toContain('aria-label="More"')
+    expect(html).not.toContain('>Export<')
+    expect(html).not.toMatch(
+      /Copy Markdown|Download HTML|Download Markdown|PDF|print/i,
+    )
+  })
+
+  test('anonymous viewers have no More trigger even with export callbacks', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
       renderType: 'html',
       onCopyMarkdown: () => {},
       onDownloadHtml: () => {},
       onDownloadMarkdown: () => {},
-      onDownloadPdf: () => {},
     })
-
-    expect(html).toContain('Export')
-    expect(html).toContain('Copy Markdown')
-    expect(html).toContain('Download HTML')
-    expect(html).toContain('Download Markdown')
-    expect(html).toContain('Download PDF')
+    expect(html).not.toContain('aria-label="More"')
+    expect(html).not.toContain('>Export<')
+    expect(html).not.toMatch(
+      /Copy Markdown|Download HTML|Download Markdown|PDF|print/i,
+    )
   })
 
   test('desktop and mobile visibility chips use the same glossary label', () => {

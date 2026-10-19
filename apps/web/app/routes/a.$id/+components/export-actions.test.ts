@@ -1,20 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import * as exportActions from './export-actions'
 import {
-  assetRouteHref,
-  containsAppOriginCssUrl,
-  containsUnsafeCssUrl,
   fetchExportSource,
-  isAppOriginPrintUrl,
-  isRootRelativeAssetRef,
-  isSafePrintUrl,
   markdownDownloadFileName,
   normalizeExportPath,
   normalizeReadabilityUrls,
   normalizeStaticSiteFramePath,
-  stripAppOriginSrcset,
-  sanitizePrintSrcset,
   sourceDirectory,
-  splitAssetRef,
 } from './export-actions'
 
 afterEach(() => {
@@ -22,6 +14,13 @@ afterEach(() => {
 })
 
 describe('export-actions helpers', () => {
+  test('exposes text downloads without a print or PDF entry point', () => {
+    expect(exportActions.downloadText).toBeTypeOf('function')
+    expect(
+      Object.keys(exportActions).filter((name) => /print|pdf/i.test(name)),
+    ).toEqual([])
+  })
+
   test('normalizeExportPath defaults empty paths', () => {
     expect(normalizeExportPath('', '/index.html')).toBe('/index.html')
     expect(normalizeExportPath('/', '/index.html')).toBe('/index.html')
@@ -59,28 +58,6 @@ describe('export-actions helpers', () => {
     expect(sourceDirectory('/index.html')).toBe('/')
   })
 
-  test('assetRouteHref encodes static site asset paths', () => {
-    expect(
-      assetRouteHref('abc123', '/assets/logo.png', 'https://example.com'),
-    ).toBe(
-      'https://example.com/api/shareables/abc123/export-asset/assets/logo.png',
-    )
-  })
-
-  test('splitAssetRef preserves query and hash suffixes', () => {
-    expect(splitAssetRef('/a.css?v=1#frag')).toEqual({
-      pathname: '/a.css',
-      suffix: '?v=1#frag',
-    })
-  })
-
-  test('isRootRelativeAssetRef accepts root-relative refs only', () => {
-    expect(isRootRelativeAssetRef('/assets/a.png')).toBe(true)
-    expect(isRootRelativeAssetRef('//cdn.example/a.png')).toBe(false)
-    expect(isRootRelativeAssetRef('https://example.com/a.png')).toBe(false)
-    expect(isRootRelativeAssetRef('mailto:hi@example.com')).toBe(false)
-  })
-
   test('fetchExportSource maps structured unsupported-kind errors', async () => {
     vi.stubGlobal('window', {
       location: { origin: 'https://artifactshare.test' },
@@ -104,46 +81,5 @@ describe('export-actions helpers', () => {
       ok: false,
       reason: 'unsupported',
     })
-  })
-
-  test('print URL sanitizer rejects active schemes', () => {
-    expect(isSafePrintUrl('https://example.com/')).toBe(true)
-    expect(isSafePrintUrl('/assets/image.png')).toBe(true)
-    expect(isSafePrintUrl('data:image/png;base64,aaa')).toBe(true)
-    expect(isSafePrintUrl('java\nscript:alert(1)')).toBe(false)
-    expect(isSafePrintUrl('data:text/html,<script>alert(1)</script>')).toBe(
-      false,
-    )
-    expect(sanitizePrintSrcset('/safe.png 1x, javascript:alert(1) 2x')).toBe(
-      '/safe.png 1x',
-    )
-    expect(containsUnsafeCssUrl('background: url(javascript:alert(1))')).toBe(
-      true,
-    )
-  })
-
-  test('app-origin print URL sanitizer keeps relative refs inert', () => {
-    const appOrigin = 'https://artifactshare.test'
-
-    expect(isAppOriginPrintUrl('/api/me', appOrigin)).toBe(false)
-    expect(isAppOriginPrintUrl('assets/image.png', appOrigin)).toBe(false)
-    expect(
-      isAppOriginPrintUrl('https://artifactshare.test/api/me', appOrigin),
-    ).toBe(true)
-    expect(isAppOriginPrintUrl('//artifactshare.test/api/me', appOrigin)).toBe(
-      true,
-    )
-    expect(
-      stripAppOriginSrcset(
-        'https://artifactshare.test/a.png 1x, https://cdn.example/a.png 2x',
-        appOrigin,
-      ),
-    ).toBe('https://cdn.example/a.png 2x')
-    expect(
-      containsAppOriginCssUrl(
-        'background: url("https://artifactshare.test/api/me")',
-        appOrigin,
-      ),
-    ).toBe(true)
   })
 })

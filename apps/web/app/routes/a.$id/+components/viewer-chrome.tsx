@@ -190,7 +190,6 @@ interface ViewerChromeProps {
   onCopyMarkdown?: () => void
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
-  onDownloadPdf?: () => void
   onAccessRequestsOpen?: () => void
   accessRequestsOpen?: boolean
   onAccessRequestsOpenChange?: (open: boolean) => void
@@ -270,7 +269,6 @@ export function ViewerChrome({
   onCopyMarkdown,
   onDownloadHtml,
   onDownloadMarkdown,
-  onDownloadPdf,
   onAccessRequestsOpen,
   accessRequestsOpen,
   onAccessRequestsOpenChange,
@@ -467,7 +465,6 @@ export function ViewerChrome({
           onCopyMarkdown={onCopyMarkdown}
           onDownloadHtml={onDownloadHtml}
           onDownloadMarkdown={onDownloadMarkdown}
-          onDownloadPdf={onDownloadPdf}
           onAccessRequestsOpen={onAccessRequestsOpen}
           accessRequestsOpen={accessRequestsOpen}
           onAccessRequestsOpenChange={onAccessRequestsOpenChange}
@@ -1134,7 +1131,6 @@ interface ViewerActionsProps {
   onCopyMarkdown?: () => void
   onDownloadHtml?: () => void
   onDownloadMarkdown?: () => void
-  onDownloadPdf?: () => void
   onAccessRequestsOpen?: () => void
   accessRequestsOpen?: boolean
   onAccessRequestsOpenChange?: (open: boolean) => void
@@ -1170,7 +1166,6 @@ function ViewerActions({
   onCopyMarkdown,
   onDownloadHtml,
   onDownloadMarkdown,
-  onDownloadPdf,
   onAccessRequestsOpen,
   accessRequestsOpen,
   onAccessRequestsOpenChange,
@@ -1329,10 +1324,7 @@ function ViewerActions({
                 event.preventDefault()
               }}
             >
-              {onCopyMarkdown ||
-              onDownloadHtml ||
-              onDownloadMarkdown ||
-              onDownloadPdf ? (
+              {onCopyMarkdown || onDownloadHtml || onDownloadMarkdown ? (
                 <>
                   <DropdownMenuLabel>{t('vw.exportGroup')}</DropdownMenuLabel>
                   {onCopyMarkdown ? (
@@ -1348,11 +1340,6 @@ function ViewerActions({
                   {onDownloadMarkdown ? (
                     <DropdownMenuItem onSelect={() => onDownloadMarkdown()}>
                       {t('vw.downloadMarkdown')}
-                    </DropdownMenuItem>
-                  ) : null}
-                  {onDownloadPdf ? (
-                    <DropdownMenuItem onSelect={() => onDownloadPdf()}>
-                      {t('vw.downloadPdf')}
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuSeparator />
