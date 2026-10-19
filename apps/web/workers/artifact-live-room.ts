@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { DurableObject } from 'cloudflare:workers'
 
 export interface ArtifactLivePresence {
@@ -28,13 +29,43 @@ const AUTHORIZATION_EXPIRED_REASON = 'live-authorization-expired'
 const MIN_ADMISSION_REMAINING_MS = 5_000
 const MAX_ADMISSION_REMAINING_MS = 65_000
 
-type SocketSnapshot = {
-  eligible: Array<{ socket: WebSocket; attachment: ArtifactLiveAttachmentV1 }>
-  rejected: WebSocket[]
+const ROOM_CAP = 128
+const USER_CAP = 8
+const BUCKET_CAPACITY = 512
+const BUCKET_REFILL_PER_MS = 16 / 1_000
+const PRESENCE_INTERVAL_MS = 1_000
+const BUDGET_KEY = 'admission-budget'
+const PRESENCE_KEY = 'presence-schedule'
+
+type RetainedSocket = {
+  socket: WebSocket
+  attachment: ArtifactLiveAttachmentV1 | null
+  eligible: boolean
+  closeReason?: { code: number; reason: string }
+}
+type AdmissionBudget = { tokens: number; timestamp: number }
+type PresenceSchedule = {
+  due: number | null
+  last: number
+  published: string | null // SHA-256 of the last shared snapshot; null means unknown.
 }
 
 export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
   private alarmUpdate: Promise<void> = Promise.resolve()
+  private budgetUpdate: Promise<unknown> = Promise.resolve()
+  private budget: AdmissionBudget | null = null
+  private budgetNeedsPersistence = false
+  private persistedPresence: string | null = null
+  private readonly records = new Map<WebSocket, RetainedSocket>()
+  private readonly users = new Map<string, Set<RetainedSocket>>()
+  private readonly occupancy = new Map<string, number>()
+  private nextExpiry: number | null = null
+  private expiryDirty = false
+  private readonly expirations = new Map<number, Set<RetainedSocket>>()
+  private readonly cleanup = new Set<RetainedSocket>()
+  private reservations = 0
+  private cleanupDue: number | null = null
+  private presence: PresenceSchedule = { due: null, last: 0, published: null }
 
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env)
@@ -42,6 +73,49 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
       new WebSocketRequestResponsePair('ping', 'pong'),
     )
     this.ctx.blockConcurrencyWhile(async () => {
+      const saved = await this.ctx.storage.get<AdmissionBudget>(BUDGET_KEY)
+      if (saved === undefined) {
+        this.budget = { tokens: BUCKET_CAPACITY, timestamp: Date.now() }
+      } else if (
+        saved &&
+        Number.isFinite(saved.tokens) &&
+        saved.tokens >= 0 &&
+        saved.tokens <= BUCKET_CAPACITY &&
+        Number.isSafeInteger(saved.timestamp) &&
+        saved.timestamp >= 0
+      ) {
+        this.budget = saved
+      }
+      // Corrupt persisted budget fails admission closed; it never refills from full.
+      const schedule =
+        await this.ctx.storage.get<PresenceSchedule>(PRESENCE_KEY)
+      if (schedule) {
+        this.presence = schedule
+        this.persistedPresence = JSON.stringify(schedule)
+      }
+      for (const socket of this.ctx.getWebSockets()) {
+        if (socket.readyState === WebSocket.CLOSED) continue
+        const attachment = readAttachment(socket)
+        const record = { socket, attachment, eligible: false }
+        this.records.set(socket, record)
+        if (attachment) this.adjustOccupancy(attachment.presence.id, 1)
+        if (
+          attachment &&
+          attachment.authorizationDeadlineMs > Date.now() &&
+          socket.readyState === WebSocket.OPEN
+        ) {
+          this.activate(record, false)
+        } else {
+          this.invalidate(record)
+        }
+      }
+      // Base-version storage cannot tell us what retained viewers last saw.
+      // Only an empty room has no recipients needing a corrective snapshot.
+      if (!schedule && this.users.size === 0) {
+        this.presence.published = presenceDigest(this.presenceBody())
+      }
+      if (this.presence.published !== presenceDigest(this.presenceBody()))
+        this.markPresenceDirty()
       await this.queueAlarmUpdate()
     })
   }
@@ -50,25 +124,95 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Expected WebSocket', { status: 426 })
     }
-
-    const now = Date.now()
-    const attachment = parseArtifactLiveAdmission(new URL(request.url), now)
+    const attachment = parseArtifactLiveAdmission(
+      new URL(request.url),
+      Date.now(),
+    )
     if (!attachment) return new Response('Not Found', { status: 404 })
 
-    const pair = new WebSocketPair()
-    const [client, server] = Object.values(pair)
-    try {
-      server.serializeAttachment(attachment)
-      this.ctx.acceptWebSocket(server)
-      await this.queueAlarmUpdate()
-    } catch {
-      invalidateSocket(server)
-      this.broadcastPresence(new Set([server]))
-      return new Response('Live connection unavailable', { status: 503 })
+    this.expire()
+    const id = attachment.presence.id
+    const capacity =
+      this.records.size + this.reservations < ROOM_CAP &&
+      (this.occupancy.get(id) ?? 0) < USER_CAP
+    // Reserve before the first await, including budget persistence.
+    if (capacity) {
+      this.reservations += 1
+      this.adjustOccupancy(id, 1)
     }
+    let reserved = capacity
+    let record: RetainedSocket | undefined
+    let server: WebSocket | undefined
+    try {
+      if (!(await this.chargeAttempt())) return unavailable(429)
+      if (!capacity) return unavailable(429)
+      if (Date.now() >= attachment.authorizationDeadlineMs)
+        return unavailable(503)
+      const pair = new WebSocketPair()
+      const [client, accepted] = Object.values(pair)
+      server = accepted
+      server.serializeAttachment(attachment)
+      // Track even a partially failing acceptance until closure is confirmed.
+      record = { socket: server, attachment, eligible: false }
+      this.records.set(server, record)
+      this.reservations -= 1
+      reserved = false
+      this.ctx.acceptWebSocket(server)
+      this.activate(record)
+      await this.queueAlarmUpdate()
+      if (!this.valid(record))
+        throw new Error('Live authorization expired during setup')
+      const body = this.presenceBody()
+      this.send(record, body)
+      // A direct snapshot may differ from what existing viewers last saw.
+      // Even a return to that old projection must then reach this newcomer.
+      if (presenceDigest(body) !== this.presence.published) {
+        this.presence.published = null
+        this.markPresenceDirty()
+        await this.queueAlarmUpdate()
+      }
+      if (!this.valid(record))
+        throw new Error('Initial presence delivery failed')
+      return new Response(null, { status: 101, webSocket: client })
+    } catch {
+      if (record) this.invalidate(record, 1011, 'Live connection setup failed')
+      else if (server)
+        invalidateSocket(server, 1011, 'Live connection setup failed')
+      // Keep cleanup/presence obligations if a setup storage operation failed.
+      await this.queueAlarmUpdate().catch(() => {})
+      return unavailable(503)
+    } finally {
+      if (reserved) {
+        this.reservations -= 1
+        this.adjustOccupancy(id, -1)
+      }
+    }
+  }
 
-    this.broadcastPresence()
-    return new Response(null, { status: 101, webSocket: client })
+  private chargeAttempt(): Promise<boolean> {
+    const operation = this.budgetUpdate.then(async () => {
+      if (!this.budget) throw new Error('Invalid admission budget')
+      const timestamp = Math.max(this.budget.timestamp, Date.now())
+      const available = Math.min(
+        BUCKET_CAPACITY,
+        this.budget.tokens +
+          (timestamp - this.budget.timestamp) * BUCKET_REFILL_PER_MS,
+      )
+      const allowed = available >= 1
+      if (allowed) {
+        this.budget = { tokens: available - 1, timestamp }
+        this.budgetNeedsPersistence = true
+      }
+      // Unconsumed refill can be recomputed from the last charged state.
+      // Retry a failed charge write even when the next attempt is exhausted.
+      if (this.budgetNeedsPersistence) {
+        await this.ctx.storage.put(BUDGET_KEY, this.budget)
+        this.budgetNeedsPersistence = false
+      }
+      return allowed
+    })
+    this.budgetUpdate = operation.catch(() => {})
+    return operation
   }
 
   async notifyCommentsChanged(
@@ -100,84 +244,189 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
     _reason: string,
     _wasClean: boolean,
   ): Promise<void> {
-    invalidateAttachment(ws)
-    this.broadcastPresence(new Set([ws]))
+    const record = this.records.get(ws)
+    if (record) {
+      this.invalidate(record)
+      this.forget(record)
+    }
     await this.queueAlarmUpdate()
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    invalidateSocket(ws, 1011, 'WebSocket error')
-    this.broadcastPresence(new Set([ws]))
+    const record = this.records.get(ws)
+    if (record) this.invalidate(record, 1011, 'WebSocket error')
     await this.queueAlarmUpdate()
   }
 
   async alarm(): Promise<void> {
-    this.broadcastPresence()
+    this.expire()
+    if (this.cleanupDue !== null && this.cleanupDue <= Date.now()) {
+      const retained = new Set(this.ctx.getWebSockets())
+      for (const record of this.cleanup) {
+        if (
+          !retained.has(record.socket) ||
+          record.socket.readyState === WebSocket.CLOSED
+        )
+          this.forget(record)
+        else this.invalidate(record)
+      }
+      this.cleanupDue = this.cleanup.size
+        ? Date.now() + PRESENCE_INTERVAL_MS
+        : null
+    }
+    if (this.presence.due !== null && this.presence.due <= Date.now()) {
+      // One validation pass, then one send pass. Send failures queue the next sweep.
+      for (const record of this.records.values()) this.valid(record)
+      const body = this.presenceBody()
+      this.presence.due = null
+      this.presence.last = Date.now()
+      const digest = presenceDigest(body)
+      if (digest !== this.presence.published) {
+        this.presence.published = digest
+        for (const record of this.records.values()) this.send(record, body)
+      }
+    }
     await this.queueAlarmUpdate()
   }
 
-  private snapshot(
-    now: number,
-    excluded: ReadonlySet<WebSocket>,
-  ): SocketSnapshot {
-    const eligible: SocketSnapshot['eligible'] = []
-    const rejected: WebSocket[] = []
-    for (const socket of this.ctx.getWebSockets()) {
-      if (excluded.has(socket)) continue
-      const attachment = readValidAttachment(socket, now)
-      if (socket.readyState === WebSocket.OPEN && attachment) {
-        eligible.push({ socket, attachment })
-      } else if (!attachment) {
-        rejected.push(socket)
+  private adjustOccupancy(id: string, delta: number): void {
+    const count = (this.occupancy.get(id) ?? 0) + delta
+    if (count) this.occupancy.set(id, count)
+    else this.occupancy.delete(id)
+  }
+
+  private activate(record: RetainedSocket, changed = true): void {
+    const attachment = record.attachment!
+    record.eligible = true
+    let tabs = this.users.get(attachment.presence.id)
+    if (!tabs) {
+      tabs = new Set()
+      this.users.set(attachment.presence.id, tabs)
+      if (changed) this.markPresenceDirty()
+    }
+    tabs.add(record)
+    const deadline = attachment.authorizationDeadlineMs
+    let expiring = this.expirations.get(deadline)
+    if (!expiring) {
+      expiring = new Set()
+      this.expirations.set(deadline, expiring)
+    }
+    expiring.add(record)
+    this.nextExpiry = Math.min(this.nextExpiry ?? deadline, deadline)
+  }
+
+  private markPresenceDirty(): void {
+    this.presence.due ??= Math.max(
+      Date.now() + PRESENCE_INTERVAL_MS,
+      this.presence.last + PRESENCE_INTERVAL_MS,
+    )
+  }
+
+  private invalidate(
+    record: RetainedSocket,
+    code = AUTHORIZATION_EXPIRED_CODE,
+    reason = AUTHORIZATION_EXPIRED_REASON,
+  ): void {
+    if (record.eligible) {
+      record.eligible = false
+      const id = record.attachment!.presence.id
+      const tabs = this.users.get(id)!
+      const previous = tabs.values().next().value
+      tabs.delete(record)
+      if (!tabs.size) this.users.delete(id)
+      if (
+        !tabs.size ||
+        (previous === record &&
+          JSON.stringify(previous.attachment!.presence) !==
+            JSON.stringify(tabs.values().next().value?.attachment?.presence))
+      )
+        this.markPresenceDirty()
+      const deadline = record.attachment!.authorizationDeadlineMs
+      const expiring = this.expirations.get(deadline)!
+      expiring.delete(record)
+      if (!expiring.size) {
+        this.expirations.delete(deadline)
+        if (deadline === this.nextExpiry) this.expiryDirty = true
       }
     }
-    for (const socket of rejected) invalidateSocket(socket)
-    return { eligible, rejected }
+    record.closeReason ??= { code, reason }
+    invalidateSocket(
+      record.socket,
+      record.closeReason.code,
+      record.closeReason.reason,
+      record.attachment,
+    )
+    if (record.socket.readyState === WebSocket.CLOSED) this.forget(record)
+    else {
+      this.cleanup.add(record)
+      this.cleanupDue ??= Date.now() + PRESENCE_INTERVAL_MS
+    }
+  }
+
+  private forget(record: RetainedSocket): void {
+    if (!this.records.delete(record.socket)) return
+    if (record.attachment)
+      this.adjustOccupancy(record.attachment.presence.id, -1)
+    this.cleanup.delete(record)
+    if (!this.cleanup.size) this.cleanupDue = null
+  }
+
+  private expire(): void {
+    const now = Date.now()
+    if (
+      !this.expiryDirty &&
+      (this.nextExpiry === null || this.nextExpiry > now)
+    )
+      return
+    this.nextExpiry = null
+    // Visit deadline buckets only when the earliest one is due or removed.
+    // This also keeps legacy reconstruction linear, without sorting L records.
+    for (const [deadline, expiring] of this.expirations) {
+      if (deadline <= now) {
+        for (const record of expiring) this.invalidate(record)
+      } else {
+        this.nextExpiry = Math.min(this.nextExpiry ?? deadline, deadline)
+      }
+    }
+    this.expiryDirty = false
+  }
+
+  private valid(record: RetainedSocket): boolean {
+    if (!record.eligible) return false
+    if (
+      record.socket.readyState !== WebSocket.OPEN ||
+      Date.now() >= record.attachment!.authorizationDeadlineMs ||
+      !readValidAttachment(record.socket, Date.now())
+    ) {
+      this.invalidate(record)
+      return false
+    }
+    return true
+  }
+
+  private presenceBody(): string {
+    return JSON.stringify({
+      type: 'presence',
+      users: [...this.users.values()].map(
+        (tabs) => tabs.values().next().value!.attachment!.presence,
+      ),
+    } satisfies ArtifactLiveMessage)
+  }
+
+  private send(record: RetainedSocket, body: string): void {
+    if (!this.valid(record)) return
+    try {
+      record.socket.send(body)
+    } catch {
+      this.invalidate(record, 1011, 'WebSocket send failed')
+    }
   }
 
   private broadcastProduct(
     message: Exclude<ArtifactLiveMessage, { type: 'presence' }>,
   ): void {
-    const excluded = new Set<WebSocket>()
-    const snapshot = this.snapshot(Date.now(), excluded)
-    for (const rejected of snapshot.rejected) excluded.add(rejected)
     const body = JSON.stringify(message)
-    for (const { socket } of snapshot.eligible) {
-      try {
-        socket.send(body)
-      } catch {
-        excluded.add(socket)
-        invalidateSocket(socket, 1011, 'WebSocket send failed')
-      }
-    }
-    if (excluded.size > 0) this.broadcastPresence(excluded)
-  }
-
-  private broadcastPresence(
-    initialExcluded: ReadonlySet<WebSocket> = new Set(),
-    now = Date.now(),
-  ): void {
-    const excluded = new Set(initialExcluded)
-    while (true) {
-      const snapshot = this.snapshot(now, excluded)
-      for (const rejected of snapshot.rejected) excluded.add(rejected)
-      const users = uniquePresence(snapshot.eligible)
-      const body = JSON.stringify({
-        type: 'presence',
-        users,
-      } satisfies ArtifactLiveMessage)
-      let failed = false
-      for (const { socket } of snapshot.eligible) {
-        try {
-          socket.send(body)
-        } catch {
-          failed = true
-          excluded.add(socket)
-          invalidateSocket(socket, 1011, 'WebSocket send failed')
-        }
-      }
-      if (!failed) return
-    }
+    for (const record of this.records.values()) this.send(record, body)
   }
 
   private queueAlarmUpdate(): Promise<void> {
@@ -188,37 +437,54 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
 
   private async updateAlarm(): Promise<void> {
     const installed = await this.ctx.storage.getAlarm()
-    // Recompute after the storage read, while alarm updates remain serialized.
-    const now = Date.now()
-    const snapshot = this.snapshot(now, new Set())
-    if (snapshot.rejected.length > 0) {
-      this.broadcastPresence(new Set(snapshot.rejected), now)
+    this.expire()
+    const schedule = { ...this.presence }
+    const serialized = JSON.stringify(schedule)
+    if (serialized !== this.persistedPresence) {
+      await this.ctx.storage.put(PRESENCE_KEY, schedule)
+      this.persistedPresence = serialized
     }
-    let earliest: number | null = null
-    for (const { attachment } of snapshot.eligible) {
-      earliest =
-        earliest === null
-          ? attachment.authorizationDeadlineMs
-          : Math.min(earliest, attachment.authorizationDeadlineMs)
-    }
+    // State can change while the write is pending; the queued successor persists it.
+    const obligations = [
+      this.nextExpiry,
+      this.presence.due,
+      this.cleanupDue,
+    ].filter((value): value is number => value != null)
+    const earliest = obligations.length ? Math.min(...obligations) : null
     if (installed === earliest) return
-    if (earliest === null) {
-      await this.ctx.storage.deleteAlarm()
-    } else {
-      await this.ctx.storage.setAlarm(earliest)
-    }
+    if (earliest === null) await this.ctx.storage.deleteAlarm()
+    else await this.ctx.storage.setAlarm(earliest)
   }
+}
+
+// Synchronous hashing keeps projection comparison and publication in one turn.
+function presenceDigest(body: string): string {
+  return createHash('sha256').update(body).digest('hex')
+}
+
+function unavailable(status: 429 | 503): Response {
+  return new Response('Live connection unavailable', {
+    status,
+    headers: { 'Cache-Control': 'private, no-store' },
+  })
 }
 
 function isValidOriginValue(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
-function invalidateAttachment(ws: WebSocket): void {
+function invalidateAttachment(
+  ws: WebSocket,
+  attachment: ArtifactLiveAttachmentV1 | null,
+): void {
   try {
-    ws.serializeAttachment(null)
+    // Preserve trustworthy ownership for retained-capacity accounting, while
+    // the zero deadline keeps this V1 attachment ineligible after reconstruction.
+    ws.serializeAttachment(
+      attachment ? { ...attachment, authorizationDeadlineMs: 0 } : null,
+    )
   } catch {
-    // Exclusion is determined from this operation's set and fresh validation.
+    // The retained record is already ineligible; send-time deadlines remain authoritative.
   }
 }
 
@@ -226,8 +492,9 @@ function invalidateSocket(
   ws: WebSocket,
   code = AUTHORIZATION_EXPIRED_CODE,
   reason = AUTHORIZATION_EXPIRED_REASON,
+  attachment: ArtifactLiveAttachmentV1 | null = null,
 ): void {
-  invalidateAttachment(ws)
+  invalidateAttachment(ws, attachment)
   try {
     ws.close(code, reason)
   } catch {
@@ -270,6 +537,14 @@ function readValidAttachment(
   socket: WebSocket,
   now: number,
 ): ArtifactLiveAttachmentV1 | null {
+  const attachment = readAttachment(socket)
+  return attachment && attachment.authorizationDeadlineMs > now
+    ? attachment
+    : null
+}
+
+// Structural ownership remains useful after authorization expires or is cleared.
+function readAttachment(socket: WebSocket): ArtifactLiveAttachmentV1 | null {
   let value: unknown
   try {
     value = socket.deserializeAttachment()
@@ -283,7 +558,7 @@ function readValidAttachment(
     !isValidPresence(attachment.presence) ||
     !Number.isSafeInteger(attachment.authorizationDeadlineMs) ||
     !Number.isFinite(attachment.authorizationDeadlineMs) ||
-    (attachment.authorizationDeadlineMs ?? 0) <= now
+    (attachment.authorizationDeadlineMs ?? -1) < 0
   ) {
     return null
   }
@@ -310,16 +585,4 @@ function boundedNonblankString(
     value.trim().length > 0 &&
     value.length <= maxLength
   )
-}
-
-function uniquePresence(
-  eligible: SocketSnapshot['eligible'],
-): ArtifactLivePresence[] {
-  const users = new Map<string, ArtifactLivePresence>()
-  for (const { attachment } of eligible) {
-    if (!users.has(attachment.presence.id)) {
-      users.set(attachment.presence.id, attachment.presence)
-    }
-  }
-  return [...users.values()]
 }

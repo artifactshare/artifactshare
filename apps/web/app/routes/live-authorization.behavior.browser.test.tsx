@@ -193,6 +193,7 @@ describe('bounded live authorization browser lifecycle', () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true
     vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
     ControlledWebSocket.instances = []
     authorizedBodies = []
     vi.stubGlobal('WebSocket', ControlledWebSocket)
@@ -1157,6 +1158,60 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(ControlledWebSocket.instances).toHaveLength(5)
       await act(async () => ControlledWebSocket.instances[4]!.open())
       expect(host.querySelector('output')?.dataset.connected).toBe('true')
+    },
+  )
+
+  test.each([0, 1])(
+    'controlled opaque handshake retries use bounded jitter at random=%i',
+    async (random) => {
+      vi.mocked(Math.random).mockReturnValue(random)
+      await act(async () => {
+        ControlledWebSocket.instances[0]!.dispatchEvent(new Event('error'))
+        ControlledWebSocket.instances[0]!.fail()
+      })
+      for (const base of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+        const count = ControlledWebSocket.instances.length
+        const delay = base + random * 250
+        await advance(delay - 1)
+        expect(ControlledWebSocket.instances).toHaveLength(count)
+        await advance(1)
+        expect(ControlledWebSocket.instances).toHaveLength(count + 1)
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+      }
+      const count = ControlledWebSocket.instances.length
+      await advance(29_999)
+      expect(ControlledWebSocket.instances).toHaveLength(count)
+      await advance(1)
+      await settleAuthorizedResponses()
+      expect(ControlledWebSocket.instances).toHaveLength(count + 1)
+    },
+  )
+
+  test.each([0, 1])(
+    'controlled renewal retries jitter without adding attempts at random=%i',
+    async (random) => {
+      vi.mocked(Math.random).mockReturnValue(random)
+      await act(async () => ControlledWebSocket.instances[0]!.open())
+      await act(async () =>
+        ControlledWebSocket.instances[0]!.fail(
+          4401,
+          'live-authorization-expired',
+        ),
+      )
+      const first = ControlledWebSocket.instances.at(-1)!
+      await act(async () => first.fail())
+      await settleAuthorizedResponses()
+      for (const base of [2_000, 4_000]) {
+        const count = ControlledWebSocket.instances.length
+        await advance(base + random * 250 - 1)
+        expect(ControlledWebSocket.instances).toHaveLength(count)
+        await advance(1)
+        expect(ControlledWebSocket.instances).toHaveLength(count + 1)
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+      }
+      const count = ControlledWebSocket.instances.length
+      await advance(120_000)
+      expect(ControlledWebSocket.instances).toHaveLength(count)
     },
   )
 
