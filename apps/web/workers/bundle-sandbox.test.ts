@@ -219,7 +219,7 @@ test.each([
 )
 
 const expectedPermissionsPolicy =
-  'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com" "https://platform.twitter.com" "https://embed.bsky.app" "https://www.tiktok.com" "https://www.instagram.com" "https://www.threads.com" "https://www.threads.net"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()'
+  'fullscreen=(self "https://www.youtube-nocookie.com" "https://www.youtube.com" "https://platform.twitter.com" "https://embed.bsky.app" "https://www.tiktok.com" "https://www.instagram.com" "https://www.threads.com" "https://www.threads.net"), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=(), language-model=(self), summarizer=(self), translator=(self), language-detector=(self)'
 
 function sandboxOrigin(
   versionId = 'v-bundle',
