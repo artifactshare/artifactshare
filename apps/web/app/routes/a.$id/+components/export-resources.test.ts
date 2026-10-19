@@ -3,11 +3,20 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import DOMPurify from 'dompurify'
 import * as mermaidExport from '~/lib/mermaid-export.client'
-import { isolatedPrintHtml } from './export-print-frame'
+import {
+  isolatedPrintHtml,
+  mountPrintDocument,
+  printFrameHelper,
+} from './export-print-frame'
 import {
   inertExportDocument,
+  isExportCssType,
+  printViewportRegistrations,
+  printFontFaces,
   sanitizeExportDocument,
   stripExportNoscript,
+  replaceExportCssImports,
+  type PrintViewportRegistration,
 } from './export-resources'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
 import {
@@ -314,6 +323,7 @@ test('external embedding uses anonymous CORS with no redirects and rejects app-o
     'artifact-1',
     data('<img src="https://example.com/image.png">'),
     AbortSignal.timeout(1000),
+    true,
   )
   expect(fetch).toHaveBeenCalledWith(
     'https://example.com/image.png',
@@ -427,7 +437,15 @@ test('PDF embeds bundled Japanese fonts without runtime acquisition', async () =
   const style = doc.head.querySelector('style')!.textContent!
   expect(style).toContain('ArtifactSharePrintJP')
   expect(style).toContain('SIL OPEN FONT LICENSE')
-  expect(style.match(/data:font\/woff2;base64,/g)).toHaveLength(4)
+  const faces = printFontFaces.get(doc)!
+  expect(faces).toHaveLength(4)
+  expect(faces.map((face) => face.weight)).toEqual(['400', '700', '400', '700'])
+  expect(style).not.toContain('@font-face')
+  const html = isolatedPrintHtml(doc, 'font-channel')
+  for (const face of faces) {
+    expect(atob(face.data).slice(0, 4)).toBe('wOF2')
+    expect(html).toContain(face.data)
+  }
   expect(style).not.toContain('fonts.gstatic.com')
   expect(fetcher).not.toHaveBeenCalled()
 })
@@ -495,11 +513,11 @@ test('print viewport lengths use a fixed basis without changing strings, URLs, q
   const printCss = await rewriteExportCss(css, resolve)
   expect(printCss).toContain('@media (min-height:100vh)')
   expect(printCss).toContain(
-    '.hero:hover{height:760px;min-height:calc(760px + 20px);padding:11.4px;gap:3.8px;max-width:450px;width:380px;--spacing:76px;content:"100vh";background:url("100vh")}',
+    '.hero:hover{height:calc(100 * var(--artifactshare-print-vh));min-height:calc(calc(100 * var(--artifactshare-print-vh)) + 20px);padding:calc(1.5 * var(--artifactshare-print-vh));gap:calc(0.5 * var(--artifactshare-print-vh));max-width:450px;width:calc(50 * var(--artifactshare-print-vh));--spacing:calc(10 * var(--artifactshare-print-vh));content:"100vh";background:url("100vh")}',
   )
   expect(resolve).toHaveBeenCalledWith('100vh', false)
   expect(await rewriteExportCss('height:100v\\68', resolve)).toBe(
-    'height:760px',
+    'height:calc(100 * var(--artifactshare-print-vh))',
   )
   expect(await rewriteExportCss('height:100vh;gap:.5dvh', resolve, false)).toBe(
     'height:100vh;gap:.5dvh',
@@ -781,6 +799,7 @@ test.each([
       'artifact-1',
       data('<img src="https://example.com/image.png">'),
       AbortSignal.timeout(1000),
+      true,
     )
     expect(fetch).toHaveBeenCalledTimes(1)
   },
@@ -905,6 +924,9 @@ test.each([false, true])(
         doc.querySelector('link[rel*="stylesheet"]')!.getAttribute('href')!,
       ),
     ).toBe('h1{color:red}')
+    expect(doc.querySelector('link')!.getAttribute('crossorigin')).toBe(
+      forPrint ? 'anonymous' : null,
+    )
   },
 )
 
@@ -1718,3 +1740,830 @@ test.each([
     ).toThrow('Ambiguous foreign export closing tag')
   },
 )
+
+test.each(['http', 'https'])(
+  'HTML download retains %s display URLs while PDF requires acquisition',
+  async (scheme) => {
+    const input = data(`<img src="${scheme}://example.com/image.png">`)
+    const fetch = vi.fn(async (url: string) => {
+      if (String(url).includes('export-source')) return Response.json(input)
+      throw new Error('CORS denied')
+    })
+    vi.stubGlobal('fetch', fetch)
+    expect(await resolveExportHtml('artifact-1', input)).toContain(
+      `${scheme}://example.com/image.png`,
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await expect(
+      prepareExportDocument(
+        'artifact-1',
+        input,
+        AbortSignal.timeout(5000),
+        true,
+      ),
+    ).rejects.toThrow(
+      scheme === 'https' ? 'CORS denied' : 'Unsafe external asset',
+    )
+  },
+)
+
+test.each([0, 1])(
+  'Markdown source shares the acquired byte budget at boundary +%i',
+  async (extra) => {
+    const size = 1024
+    const input: ExportSourceData = {
+      ...data(' '.repeat(32 * 1024 * 1024 - size + extra)),
+      kind: 'markdown',
+      renderedHtml: '<img src="image.png">',
+    }
+    const fetch = vi.fn(
+      async () =>
+        new Response(new Uint8Array(size), {
+          headers: { 'content-type': 'image/png' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const result = prepareExportDocument(
+      'artifact-1',
+      input,
+      AbortSignal.timeout(5000),
+      true,
+    )
+    if (extra)
+      await expect(result).rejects.toThrow('Export exceeds resource budget')
+    else
+      expect((await result).querySelector('img')!.getAttribute('src')).toMatch(
+        /^data:image\/png/,
+      )
+    expect(fetch).toHaveBeenCalledOnce()
+  },
+)
+
+test.each([
+  'application/font-woff',
+  'application/font-woff2',
+  'application/javascript',
+])('inline font policy: %s', async (mime) => {
+  const result = prepareExportDocument(
+    'artifact-1',
+    data(
+      `<style>@font-face{font-family:Fixture;src:url(data:${mime};base64,YQ==)}</style>`,
+    ),
+    AbortSignal.timeout(5000),
+    true,
+  )
+  if (mime === 'application/javascript')
+    await expect(result).rejects.toThrow('Unsafe inline asset')
+  else expect((await result).querySelector('style')!.textContent).toBeTruthy()
+})
+
+test('PDF acquires the video poster but excludes nonprinting media sources', async () => {
+  const fetch = vi.fn(
+    async (_url: string) =>
+      new Response('png', { headers: { 'content-type': 'image/png' } }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  const doc = await prepareExportDocument(
+    'artifact-1',
+    data(
+      '<video poster="poster.png" src="movie.mp4"><source src="movie.webm"><track src="captions.vtt"></video><audio src="sound.mp3"></audio><p>Final marker</p>',
+    ),
+    AbortSignal.timeout(5000),
+    true,
+  )
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(String(fetch.mock.calls[0][0])).toContain(
+    '/poster.png?versionId=version-1',
+  )
+  expect(doc.querySelector('video')!.getAttribute('poster')).toMatch(
+    /^data:image\/png/,
+  )
+  expect(doc.querySelectorAll('[src]')).toHaveLength(0)
+  expect(doc.body.textContent).toContain('Final marker')
+})
+
+test('separate SVG documents retain native viewport lengths while HTML keeps height probes', async () => {
+  const resolve = vi.fn(async (ref: string) => ref)
+  const css = 'rect{height:10vh;width:10vw;margin:1vb;padding:1vi}'
+  expect(await rewriteExportCss(css, resolve, true, false)).toBe(css)
+  expect(await rewriteExportCss(css, resolve)).toContain(
+    'height:calc(10 * var(--artifactshare-print-vh))',
+  )
+})
+
+test('registered initial values stay independent without disabling other height probes', async () => {
+  const resolve = vi.fn(async (ref: string) => ref)
+  const css =
+    '@property --height{syntax:"<length>";inherits:false;initial-value:100vh}section{height:100vh}'
+  expect(await rewriteExportCss(css, resolve)).toBe(
+    '@property --height{syntax:"<length>";inherits:false;initial-value:760px}section{height:calc(100 * var(--artifactshare-print-vh))}',
+  )
+  expect(await rewriteExportCss(css, resolve, false)).toBe(css)
+})
+
+test.each(['balanced', 'unclosed'])(
+  'rejects excessively nested %s property rules within the CSS depth budget',
+  async (kind) => {
+    const css =
+      '@property --height{'.repeat(129) +
+      'initial-value:100vh;' +
+      (kind === 'balanced' ? '}'.repeat(129) : '')
+    await expect(rewriteExportCss(css, async (ref) => ref)).rejects.toThrow(
+      'Deeply nested export CSS',
+    )
+  },
+)
+
+test('property descriptor traversal preserves nested rules, comments and string braces', async () => {
+  const css =
+    '@media print{@property /* rule */ --height{syntax:"<length>";inherits:false;initial-value:100vh}section{height:100vh;content:"{ @property }"}}'
+  expect(await rewriteExportCss(css, async (ref) => ref)).toBe(
+    '@media all{@property /* rule */ --height{syntax:"<length>";inherits:false;initial-value:760px}section{height:calc(100 * var(--artifactshare-print-vh));content:"{ @property }"}}',
+  )
+})
+
+test('allows property descriptors at the CSS nesting limit', async () => {
+  const css =
+    '@media print{'.repeat(127) +
+    '@property --height{syntax:"<length>";initial-value:100vh}' +
+    '}'.repeat(127)
+  expect(await rewriteExportCss(css, async (ref) => ref)).toContain(
+    'initial-value:760px',
+  )
+})
+
+test('print transition rules precede artifact layers without editing source style attributes', () => {
+  const doc = inertExportDocument(
+    '<html><head><style>@layer artifact{p{transition:all .2s!important}}</style></head><body><p>Plain</p><p style="color:red">Styled</p></body></html>',
+  )
+  isolatedPrintHtml(doc, 'channel')
+  expect(doc.head.firstElementChild!.tagName).toBe('META')
+  expect(doc.head.children[1].textContent).toBe(
+    '@layer{*,*::before,*::after{transition:none!important}}',
+  )
+  expect(doc.head.children[2].textContent).toContain('@layer artifact')
+  expect(doc.querySelector('p')!.hasAttribute('style')).toBe(false)
+  expect(doc.querySelectorAll('p')[1].getAttribute('style')).toBe('color:red')
+})
+
+test('shares passive acquisitions between the HTML frame and an embedded SVG stylesheet', async () => {
+  // happy-dom lacks in-place SVG sanitization; real engines cover that boundary.
+  vi.spyOn(DOMPurify, 'sanitize').mockReturnValue('')
+  const fetch = vi.fn(
+    async () =>
+      new Response('shared-image-bytes', {
+        headers: { 'content-type': 'image/png' },
+      }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  const svg =
+    'data:image/svg+xml,' +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" style="background:url(shared.png)" width="10" height="10"></svg>',
+    )
+  const prepared = await prepareExportDocument(
+    'artifact-1',
+    data(`<img src="shared.png"><img src="${svg}">`),
+    AbortSignal.timeout(1000),
+    true,
+  )
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(fetch.mock.calls[0]).toEqual([
+    expect.stringContaining(
+      '/export-asset/guide/shared.png?versionId=version-1',
+    ),
+    expect.objectContaining({
+      cache: 'no-store',
+      redirect: 'error',
+      credentials: 'same-origin',
+    }),
+  ])
+  const images = prepared.querySelectorAll('img')
+  expect(cssText(images[1].getAttribute('src')!)).toContain(
+    images[0].getAttribute('src')!,
+  )
+})
+
+test('registered viewport variants retain embedded resources and both logical axes', async () => {
+  const registrations: PrintViewportRegistration[] = []
+  const css =
+    '@property --size{syntax:"*";inherits:true;initial-value:100vi 100vb url(image.png)}'
+  const result = await rewriteExportCss(
+    css,
+    async () => 'data:image/png;base64,YQ==',
+    true,
+    true,
+    registrations,
+  )
+  expect(registrations).toHaveLength(1)
+  expect(result).toBe(
+    `@supports ${registrations[0].condition}{${registrations[0].variants[0]}}`,
+  )
+  expect(registrations[0].variants[1]).toContain('900px 792px')
+  expect(registrations[0].variants[2]).toContain('760px 900px')
+  expect(registrations[0].variants[3]).toContain('792px 900px')
+  for (const variant of registrations[0].variants) {
+    expect(variant).toContain('url("data:image/png;base64,YQ==")')
+    expect(variant).not.toContain('image.png')
+  }
+})
+
+test('registration metadata round-trips through the nonce helper without a script terminator', async () => {
+  const prepared = await prepareExportDocument(
+    'artifact-1',
+    data(
+      '<style>@property --height{syntax:"<length>";inherits:true;initial-value:100vh}</style>',
+    ),
+    AbortSignal.timeout(1000),
+    true,
+  )
+  const html = isolatedPrintHtml(prepared, 'channel')
+  const payload = /\)\("channel","[^"]*",(\[[\s\S]*\]),sheetUrls,/.exec(
+    html,
+  )![1]
+  const registrations = JSON.parse(payload) as PrintViewportRegistration[]
+  expect(payload).not.toContain('<')
+  expect(registrations[0].variants[0]).toContain('syntax:"<length>"')
+  expect(registrations[0].variants[1]).toContain('initial-value:792px')
+})
+
+test('registration provenance distinguishes equal frozen values and leaves fixed rules untouched', async () => {
+  const registrations: PrintViewportRegistration[] = []
+  const fixed =
+    '@property --height{syntax:"<length>";inherits:true;initial-value:760px}'
+  const css = await rewriteExportCss(
+    '@property --height{syntax:"<length>";inherits:true;initial-value:100vh}' +
+      '@property --height{syntax:"<length>";inherits:true;initial-value:100vb}' +
+      fixed,
+    async (ref) => ref,
+    true,
+    true,
+    registrations,
+  )
+  expect(registrations).toHaveLength(2)
+  expect(registrations[0].variants[0]).toBe(registrations[1].variants[0])
+  expect(registrations[0].condition).not.toBe(registrations[1].condition)
+  expect(css).toBe(
+    registrations
+      .map(
+        ({ condition, variants }) => `@supports ${condition}{${variants[0]}}`,
+      )
+      .join('') + fixed,
+  )
+  expect(registrations[0].variants[2]).toContain('initial-value:760px')
+  expect(registrations[1].variants[2]).toContain('initial-value:900px')
+})
+
+test('at-keywords inside property descriptors cannot reset registration provenance', async () => {
+  const registrations: PrintViewportRegistration[] = []
+  const css = await rewriteExportCss(
+    '@media print{@property /* registration */ --tokens{syntax:"*";inherits:true;initial-value:100vh @x}}',
+    async (ref) => ref,
+    true,
+    true,
+    registrations,
+  )
+  expect(registrations).toHaveLength(1)
+  expect(registrations[0].variants[0]).toBe(
+    '@property /* registration */ --tokens{syntax:"*";inherits:true;initial-value:760px @x}',
+  )
+  expect(registrations[0].variants[1]).toContain('initial-value:792px @x')
+  expect(css).toBe(
+    `@media all{@supports ${registrations[0].condition}{${registrations[0].variants[0]}}}`,
+  )
+})
+
+test.each(['', '@media print{'])(
+  'EOF closes a registered viewport property inside %j without losing its probe',
+  async (prefix) => {
+    const registrations: PrintViewportRegistration[] = []
+    const source =
+      prefix +
+      '.app{height:var(--app-h, 0px);overflow:auto}' +
+      '@property --app-h{syntax:"<length>";inherits:true;initial-value:100vh'
+    const css = await rewriteExportCss(
+      source,
+      async (ref) => ref,
+      true,
+      true,
+      registrations,
+    )
+    expect(registrations).toHaveLength(1)
+    expect(registrations[0].variants[0]).toBe(
+      '@property --app-h{syntax:"<length>";inherits:true;initial-value:760px}',
+    )
+    expect(registrations[0].variants[1]).toContain('initial-value:792px}')
+    expect(css).toBe(
+      (prefix ? '@media all{' : '') +
+        '.app{height:var(--app-h, 0px);overflow:auto}' +
+        `@supports ${registrations[0].condition}{${registrations[0].variants[0]}}` +
+        (prefix ? '}' : ''),
+    )
+    expect(await rewriteExportCss(source, async (ref) => ref, false)).toBe(
+      source,
+    )
+  },
+)
+
+test('EOF closes a viewport function before capturing its property registration', async () => {
+  const registrations: PrintViewportRegistration[] = []
+  const css = await rewriteExportCss(
+    '@property --app-h{syntax:"<length>";inherits:true;initial-value:calc(100vh',
+    async (ref) => ref,
+    true,
+    true,
+    registrations,
+  )
+  expect(registrations).toHaveLength(1)
+  expect(registrations[0].variants[0]).toContain('initial-value:calc(760px)}')
+  expect(registrations[0].variants[1]).toContain('initial-value:calc(792px)}')
+  expect(css).toBe(
+    `@supports ${registrations[0].condition}{${registrations[0].variants[0]}}`,
+  )
+})
+
+test('print CSS localization touches import destinations, not namespace or content strings', () => {
+  const uri = 'data:text/css;base64,YQ=='
+  const css = `@namespace url("${uri}");.example{content:"${uri}"}/* @import "${uri}"; */\n@import/*gap*/url("${uri}") layer(report) supports(display:grid) all;`
+  const replace = vi.fn(() => 'blob:local')
+  expect(replaceExportCssImports(css, replace)).toBe(
+    css.replace(
+      '@import/*gap*/url("' + uri + '")',
+      '@import/*gap*/url("blob:local")',
+    ),
+  )
+  expect(replace).toHaveBeenCalledExactlyOnceWith(uri)
+})
+
+test('opaque print bootstrap waits for document load and revokes nested CSS blobs on disposal', async () => {
+  // happy-dom lacks in-place SVG sanitization; browser cases use the real sanitizer.
+  vi.spyOn(DOMPurify, 'sanitize').mockReturnValue('')
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () =>
+        new Response('@import "nested.css" layer(report);', {
+          headers: { 'Content-Type': 'text/css' },
+        }),
+    ),
+  )
+  const fetcher = vi.mocked(fetch)
+  fetcher.mockResolvedValueOnce(
+    new Response('@import "nested.css" layer(report);', {
+      headers: { 'Content-Type': 'text/css' },
+    }),
+  )
+  fetcher.mockResolvedValueOnce(
+    new Response(
+      '@namespace svg "http://www.w3.org/2000/svg";@property --sheet-height{syntax:"<length>";inherits:true;initial-value:100vh}svg|text{fill:red}',
+      { headers: { 'Content-Type': 'text/css' } },
+    ),
+  )
+  const doc = await prepareExportDocument(
+    'artifact-1',
+    data(
+      '<link rel="stylesheet" disabled href="disabled.css"><link rel="stylesheet"><link rel="stylesheet" href=""><link rel="stylesheet" href="#theme"><link rel="stylesheet" type="text/plain" href="unused.css"><link rel=" alternate STYLESHEET \t" href="main.css"><style>@import "main.css";</style><svg><style>@import "main.css";</style></svg><p>Report</p>',
+    ),
+    AbortSignal.timeout(1000),
+    true,
+  )
+  const html = isolatedPrintHtml(doc, 'channel')
+  expect(html).toContain("style-src 'unsafe-inline' data: blob:")
+  const payload = /\)\(\.\.\.(\[[\s\S]*\]),\(sheetUrls\)=>\{/.exec(html)![1]
+  expect(payload).not.toContain('<')
+  const [content, sheets] = JSON.parse(payload) as Parameters<
+    typeof mountPrintDocument
+  >
+  expect(content).toContain('<style>')
+  expect(sheets).toHaveLength(2)
+  expect(sheets[0].css).toContain('@namespace svg')
+  expect(sheets[1].css).toContain(sheets[0].token)
+  const registrationPayload =
+    /\)\("channel","[^"]*",(\[[\s\S]*\]),sheetUrls,/.exec(html)![1]
+  expect(JSON.parse(registrationPayload)[0].stylesheet).toBe(sheets[0].token)
+  expect(fetcher).toHaveBeenCalledTimes(2)
+  const blobs: Blob[] = []
+  vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+    blobs.push(blob as Blob)
+    return `blob:local-${blobs.length}`
+  })
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  const mount = vi
+    .spyOn(document.documentElement, 'replaceWith')
+    .mockImplementation(() => {})
+  const ready = vi.fn()
+  const pending = mountPrintDocument(content, sheets, ready, isExportCssType)
+  const root = mount.mock.calls[0][0] as HTMLElement
+  expect(ready).not.toHaveBeenCalled()
+  // SVG styles need not emit an individual load event. The document waits
+  // for the whole stylesheet graph before signaling bootstrap readiness.
+  window.dispatchEvent(new Event('load'))
+  await pending
+  expect(ready).toHaveBeenCalledOnce()
+  expect(await blobs[1].text()).toContain(
+    '@import "blob:local-1" layer(report)',
+  )
+  expect(root.outerHTML).toContain('@import "blob:local-2"')
+  expect(root.outerHTML).toContain('href="blob:local-2"')
+  expect(root.outerHTML).not.toContain('urn:artifactshare:print-css:')
+  window.dispatchEvent(new Event('pagehide'))
+  expect(revoke.mock.calls).toEqual([['blob:local-1'], ['blob:local-2']])
+})
+
+test.each([false, true])(
+  'disabled theme acquisition preserves download behavior (print=%s)',
+  async (forPrint) => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response('h1{color:green}', {
+          headers: { 'Content-Type': 'text/css' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data('<link rel="stylesheet" disabled href="theme.css">'),
+      AbortSignal.timeout(1000),
+      forPrint,
+    )
+    expect(doc.querySelector('link')!.getAttribute('href')).toBe(
+      forPrint
+        ? 'theme.css'
+        : 'data:text/css;base64,' + btoa('h1{color:green}'),
+    )
+    expect(fetcher).toHaveBeenCalledTimes(forPrint ? 0 : 1)
+  },
+)
+
+test.each(['text/plain', 'application/json'])(
+  'non-CSS %s styles acquire no resources or registrations',
+  async (type) => {
+    // happy-dom lacks in-place SVG sanitization; browser cases use the real sanitizer.
+    vi.spyOn(DOMPurify, 'sanitize').mockReturnValue('')
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const css =
+      '@import "unused.css";@property --unused-height{syntax:"<length>";inherits:true;initial-value:100vh}'
+    const doc = await prepareExportDocument(
+      'artifact-1',
+      data(
+        `<style type="${type}">${css}</style><svg><style type="${type}">${css}</style></svg>`,
+      ),
+      AbortSignal.timeout(1000),
+      true,
+    )
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(printViewportRegistrations.get(doc)).toEqual([])
+    const inactive = Array.from(doc.querySelectorAll(`style[type="${type}"]`))
+    expect(inactive.length).toBeGreaterThan(0)
+    for (const style of inactive) expect(style.textContent).toBe(css)
+    expect(() => isolatedPrintHtml(doc, 'channel')).not.toThrow()
+    expect(doc.querySelectorAll(`style[type="${type}"]`)).toHaveLength(0)
+  },
+)
+
+test.each([
+  ['style', 'text/css', true],
+  ['svg', 'text/css', true],
+  ['link', 'text/css; charset=utf-8', true],
+] as const)(
+  'stylesheet type policy for %s with %s is %s',
+  (kind, type, expected) => {
+    const element =
+      kind === 'svg'
+        ? document.createElementNS('http://www.w3.org/2000/svg', 'style')
+        : document.createElement(kind)
+    element.setAttribute('type', type)
+    expect(isExportCssType(element)).toBe(expected)
+  },
+)
+
+test.each([true, false])(
+  'a missing live import fails measurement, initially active=%s',
+  async (initiallyActive) => {
+    // happy-dom has no import-rule CSSOM. Model an observed live rule whose
+    // resource failed; real-engine suites cover conditional import parsing.
+    class MissingImport {
+      styleSheet = null
+      supportsText = null
+      media = { mediaText: '(min-height: 1000px)' }
+    }
+    let active = initiallyActive
+    vi.stubGlobal('matchMedia', () => ({ matches: active }))
+    vi.stubGlobal('CSSImportRule', MissingImport)
+    const sheet = new CSSStyleSheet()
+    const imported = new MissingImport()
+    Object.defineProperty(sheet, 'cssRules', { value: [imported] })
+    vi.spyOn(document, 'styleSheets', 'get').mockReturnValue([
+      sheet,
+    ] as unknown as StyleSheetList)
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0)
+      return 0
+    })
+    const originalDocument = document
+    vi.stubGlobal(
+      'document',
+      new Proxy(originalDocument, {
+        get(target, key) {
+          if (key === 'images') return []
+          if (key === 'getAnimations') return () => []
+          if (key === 'fonts')
+            return Object.assign([], {
+              ready: Promise.resolve(),
+              load: vi.fn().mockResolvedValue([]),
+            })
+          return Reflect.get(target, key, target)
+        },
+      }),
+    )
+    const sent = vi
+      .spyOn(window.parent, 'postMessage')
+      .mockImplementation(() => {})
+    const listeners = vi.spyOn(window, 'addEventListener')
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    printFrameHelper('import-check', window.location.origin)
+    const receive = listeners.mock.calls.find(
+      ([type]) => String(type) === 'message',
+    )![1] as EventListener
+    try {
+      const measure = (sequence: number) =>
+        receive(
+          new MessageEvent('message', {
+            source: window.parent,
+            origin: window.location.origin,
+            data: { kind: 'measure', channel: 'import-check', sequence },
+          }),
+        )
+      if (!initiallyActive) {
+        measure(1)
+        await vi.waitFor(() =>
+          expect(
+            sent.mock.calls.some(([message]) => message.kind === 'measured'),
+          ).toBe(true),
+        )
+        active = true
+        sent.mockClear()
+      }
+      measure(initiallyActive ? 1 : 2)
+      await vi.waitFor(() =>
+        expect(sent).toHaveBeenCalledWith(
+          {
+            kind: 'failed',
+            channel: 'import-check',
+            sequence: initiallyActive ? 1 : 2,
+          },
+          '*',
+        ),
+      )
+      expect(
+        sent.mock.calls.some(([message]) => message.kind === 'measured'),
+      ).toBe(false)
+      expect(errors).toHaveBeenCalledWith(
+        'Print frame preparation failed',
+        expect.objectContaining({
+          message: 'Print imported stylesheet missing',
+        }),
+      )
+    } finally {
+      window.removeEventListener('message', receive)
+    }
+  },
+)
+
+test.each([false, true])(
+  'ambiguous style types follow native style application (%s) using only trusted probe CSS',
+  (supported) => {
+    const source = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'style',
+    )
+    source.setAttribute('type', 'TEXT/CSS')
+    source.textContent = '@import "never-attach.css";'
+    const probeId = '00000000-0000-4000-8000-000000000001'
+    const randomId = vi.spyOn(crypto, 'randomUUID').mockReturnValue(probeId)
+    let probeRoot!: ShadowRoot
+    const attachShadow = HTMLElement.prototype.attachShadow
+    vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(
+      function (this: HTMLElement, options) {
+        probeRoot = attachShadow.call(this, options)
+        return probeRoot
+      },
+    )
+    const mount = vi
+      .spyOn(document.documentElement, 'appendChild')
+      .mockImplementation((node) => {
+        const probe = probeRoot.querySelector('style')!
+        const marker = probeRoot.querySelector('text')!
+        expect(probeRoot.mode).toBe('closed')
+        expect(probe.parentElement).toBe(marker.parentElement)
+        expect((node as HTMLElement).shadowRoot).toBeNull()
+        expect(marker.id).toBe(`asx-export-type-${probeId}`)
+        expect(probe.textContent).toBe(`#${marker.id}{opacity:0.5!important}`)
+        expect(probe.getAttribute('type')).toBe('TEXT/CSS')
+        return node
+      })
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      opacity: supported ? '0.5' : '1',
+    } as CSSStyleDeclaration)
+    expect(isExportCssType(source)).toBe(supported)
+    expect(randomId).toHaveBeenCalledOnce()
+    expect(mount).toHaveBeenCalledOnce()
+    expect(source.isConnected).toBe(false)
+  },
+)
+
+test('fragment aliases share CSS blob identity and registration provenance', () => {
+  const rule =
+    '@property --alias-height{syntax:"<length>";inherits:true;initial-value:760px}'
+  const condition = '(--artifactshare-print-registration-alias: 0)'
+  const uri = 'data:text/css;base64,' + btoa(`@supports ${condition}{${rule}}`)
+  const doc = inertExportDocument(
+    `<style>@import "${uri}#active";@import "${uri}#inactive" supports(display: impossible);</style>`,
+  )
+  printViewportRegistrations.set(doc, [
+    { condition, variants: [rule, rule, rule, rule] },
+  ])
+  const html = isolatedPrintHtml(doc, 'channel')
+  const payload = /\)\(\.\.\.(\[[\s\S]*\]),\(sheetUrls\)=>\{/.exec(html)![1]
+  const [content, sheets] = JSON.parse(payload) as Parameters<
+    typeof mountPrintDocument
+  >
+  expect(sheets).toHaveLength(1)
+  expect(content.split(sheets[0].token)).toHaveLength(3)
+  const registrationPayload =
+    /\)\("channel","[^"]*",(\[[\s\S]*\]),sheetUrls,/.exec(html)![1]
+  expect(JSON.parse(registrationPayload)[0].stylesheet).toBe(sheets[0].token)
+})
+
+test.each([
+  'disabled href="unused.css"',
+  '',
+  'href=""',
+  'href="#theme"',
+  'type="text/plain" href="unused.css"',
+])(
+  'print serialization removes unacquired stylesheet links: %s',
+  (attributes) => {
+    const doc = inertExportDocument(
+      `<link rel="stylesheet" ${attributes}><p>Report</p>`,
+    )
+    const html = isolatedPrintHtml(doc, 'channel')
+    expect(html).not.toContain('<link')
+    expect(html).toContain('<p>Report</p>')
+  },
+)
+
+test('measurement waits for bundled font activation even when fonts.ready already resolved', async () => {
+  let rejectFont!: (error: Error) => void
+  const pendingFont = new Promise<FontFace[]>((_resolve, reject) => {
+    rejectFont = reject
+  })
+  const load = vi.fn(() => pendingFont)
+  const constructed: {
+    family: string
+    bytes: Uint8Array
+    descriptors: FontFaceDescriptors
+  }[] = []
+  vi.stubGlobal(
+    'FontFace',
+    class {
+      constructor(
+        family: string,
+        bytes: Uint8Array,
+        descriptors: FontFaceDescriptors,
+      ) {
+        constructed.push({ family, bytes, descriptors })
+      }
+      load = load
+    },
+  )
+  const add = vi.fn()
+  const originalDocument = document
+  vi.stubGlobal(
+    'document',
+    new Proxy(originalDocument, {
+      get(target, key) {
+        if (key === 'images') return []
+        if (key === 'getAnimations') return () => []
+        if (key === 'styleSheets') return []
+        if (key === 'fonts')
+          return Object.assign([], { ready: Promise.resolve(), add })
+        return Reflect.get(target, key, target)
+      },
+    }),
+  )
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callback(0)
+    return 0
+  })
+  const sent = vi
+    .spyOn(window.parent, 'postMessage')
+    .mockImplementation(() => {})
+  const listeners = vi.spyOn(window, 'addEventListener')
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+  printFrameHelper(
+    'font-check',
+    window.location.origin,
+    [],
+    new Map(),
+    undefined,
+    [
+      { weight: '400', data: 'AAEC' },
+      { weight: '700', data: 'AwQF' },
+    ],
+  )
+  const receive = listeners.mock.calls.find(
+    ([type]) => String(type) === 'message',
+  )![1] as EventListener
+  try {
+    sent.mockClear()
+    receive(
+      new MessageEvent('message', {
+        source: window.parent,
+        origin: window.location.origin,
+        data: { kind: 'measure', channel: 'font-check', sequence: 1 },
+      }),
+    )
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(add).toHaveBeenCalledTimes(2)
+    expect(constructed).toEqual([
+      {
+        family: 'ArtifactSharePrintJP',
+        bytes: new Uint8Array([0, 1, 2]),
+        descriptors: { weight: '400', style: 'normal', display: 'block' },
+      },
+      {
+        family: 'ArtifactSharePrintJP',
+        bytes: new Uint8Array([3, 4, 5]),
+        descriptors: { weight: '700', style: 'normal', display: 'block' },
+      },
+    ])
+    expect(sent).not.toHaveBeenCalled()
+    rejectFont(new Error('Font decode failed'))
+    await vi.waitFor(() =>
+      expect(sent).toHaveBeenCalledWith(
+        { kind: 'failed', channel: 'font-check', sequence: 1 },
+        '*',
+      ),
+    )
+    expect(
+      sent.mock.calls.some(([message]) => message.kind === 'measured'),
+    ).toBe(false)
+    expect(errors).toHaveBeenCalledWith(
+      'Print frame preparation failed',
+      expect.objectContaining({
+        message: 'Bundled print font 400 (Japanese) failed to decode',
+      }),
+    )
+  } finally {
+    window.removeEventListener('message', receive)
+  }
+})
+
+test('SVG sanitization preserves inactive style type whitespace', () => {
+  const doc = inertExportDocument('<p>Report</p>')
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+  style.setAttribute('type', ' text/css ')
+  style.textContent = 'text{fill:green}'
+  svg.appendChild(style)
+  doc.body.appendChild(svg)
+  // Model the sanitizer's attribute normalization independently of happy-dom's
+  // SVG support. Real-browser type cases exercise the actual sanitizer.
+  vi.spyOn(DOMPurify, 'sanitize').mockImplementation((node) => {
+    const sanitizedStyle = (node as Element).querySelector('style')!
+    sanitizedStyle.setAttribute(
+      'type',
+      sanitizedStyle.getAttribute('type')!.trim(),
+    )
+    return node as never
+  })
+  sanitizeExportDocument(doc)
+  expect(doc.querySelector('style')!.getAttribute('type')).toBe(' text/css ')
+})
+
+test('print serialization drops inactive inline styles with unacquired imports', () => {
+  const doc = inertExportDocument(
+    '<style type="text/plain">@import "unused.css";</style><p>Report</p>',
+  )
+  const html = isolatedPrintHtml(doc, 'channel')
+  expect(html).not.toContain('unused.css')
+  expect(html).toContain('<p>Report</p>')
+})
+
+test('SVG sanitization does not resurrect a rejected style type or activate its CSS', () => {
+  const doc = inertExportDocument('<p>Report</p>')
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+  style.setAttribute('type', 'text/plain')
+  style.textContent = 'text{fill:green}'
+  svg.appendChild(style)
+  doc.body.appendChild(svg)
+  vi.spyOn(DOMPurify, 'sanitize').mockImplementation((node) => {
+    ;(node as Element).querySelector('style')!.removeAttribute('type')
+    return node as never
+  })
+  sanitizeExportDocument(doc)
+  expect(doc.querySelector('style')).toBeNull()
+})

@@ -135,6 +135,10 @@ export function LinkVisibilitySection({
       <div className="flex flex-col gap-1 text-sm">
         <label htmlFor={expiryInputId} className="font-medium">
           {t('visibilityDialog.link.expiry')}
+          <span className="text-muted-foreground font-normal">
+            {' '}
+            ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+          </span>
         </label>
         <Input
           id={expiryInputId}

@@ -397,6 +397,10 @@ export async function writePrintPdf(
         paperHeight > PRINT_HEIGHT_LIMIT ? 'height-limited' : 'ready'
       status.textContent =
         paperHeight > PRINT_HEIGHT_LIMIT ? labels.heightLimited : ''
+      // Native dialogs can keep the opener event loop running. Preparation
+      // deadlines must not expire while the user is choosing a destination.
+      window.clearTimeout(timer)
+      window.clearTimeout(deadline)
       printWindow.print()
     } finally {
       window.clearTimeout(deadline)
@@ -431,6 +435,7 @@ export async function writePrintPdf(
     const fonts = target.createElement('style')
     fonts.textContent = PRINT_FONT_STYLE
     target.head.appendChild(fonts)
+    const frameHtml = isolatedPrintHtml(doc, channel)
     await new Promise<void>((resolve, reject) => {
       // about:blank can fire load before the srcdoc helper is listening. Only
       // the nonce helper in the expected opaque frame can acknowledge startup.
@@ -458,7 +463,7 @@ export async function writePrintPdf(
       }
       controller.signal.addEventListener('abort', abort, { once: true })
       printWindow.addEventListener('message', ready)
-      frame.srcdoc = isolatedPrintHtml(doc, channel)
+      frame.srcdoc = frameHtml
       target.body.appendChild(frame)
     })
     button.addEventListener('click', repeat)
@@ -476,6 +481,9 @@ function createPrintFrame(doc: Document, title: string): HTMLIFrameElement {
   // react-doctor-disable-next-line react-doctor/iframe-missing-sandbox
   const frame = doc.createElement('iframe')
   frame.setAttribute('sandbox', 'allow-scripts')
+  // The parent expands the viewport to fit all content. A classic child
+  // scrollbar must not consume any of the 900px print layout width.
+  frame.setAttribute('scrolling', 'no')
   frame.title = title
   frame.setAttribute('tabindex', '-1')
   frame.setAttribute('inert', '')
@@ -487,7 +495,7 @@ function installPrintChrome(doc: Document, labels: ExportPrintLabels) {
   const csp = doc.createElement('meta')
   csp.httpEquiv = 'Content-Security-Policy'
   csp.content =
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data:; font-src data:; media-src data:; frame-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data: blob:; img-src data:; font-src data:; media-src data:; frame-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
   doc.head.appendChild(csp)
   const brandMarkUri =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='357.22 354.97 539.12 539.12'%3E%3Cpath fill='%23F76B58' d='M473.7 355.404C492.329 354.467 518.221 355.342 537.528 355.346L664.857 355.342 744.53 355.322C758.365 355.32 781.891 354.646 794.68 356.84 814.258 360.247 832.577 368.799 847.761 381.618 870.909 400.841 886.232 428.791 889.234 458.874 889.99 466.447 889.721 476.442 889.723 484.264L889.707 523.333 889.694 646.17 889.696 743.131C889.698 756.565 890.454 784.421 888.465 796.608 885.102 817.301 876.173 836.689 862.635 852.696 841.224 878.324 814.191 890.952 781.434 893.88L565.737 893.959 503.207 893.994C488.842 893.998 472.593 894.674 458.537 892.317 438.796 889.007 418.763 878.481 403.763 865.457 382.223 846.94 365.658 816.682 364.362 787.897 363.289 764.083 363.872 738.745 363.893 714.722L363.901 584.398 363.884 503.047C363.882 489.206 363.172 464.523 365.493 451.533 369.257 430.264 378.813 410.445 393.111 394.255 414.518 370.051 441.638 357.245 473.7 355.404Z'/%3E%3Cpath fill='%23F9F6F2' d='M541.413 517.037C551.831 516.276 562.305 516.897 572.56 518.885 588.67 522.044 604.109 528.889 615.98 540.414 657.87 581.083 624.348 639.167 646.741 671.649 656.823 686.274 676.078 691.85 692.692 694.699 708.04 697.331 736.423 699.548 749.683 689.685 754.033 686.449 756.98 681.684 757.607 676.246 759.781 657.407 727.749 651.942 714.462 648.22 706.498 645.988 698.589 643.595 690.922 640.468 679.054 635.628 668.153 628.987 659.921 619.001 650.03 607.001 646.123 591.049 647.686 575.699 649.433 559.59 657.556 544.852 670.242 534.773 706.622 505.357 773.816 512.758 802.603 549.634 805.783 553.708 811.591 559.82 810.994 565.023 809.231 568.312 780.652 588.946 775.987 591.585 768.63 584.162 766.236 578.474 756.905 570.771 744.155 560.246 711.674 555.844 702.176 571.679 686.313 598.126 743.074 604.594 758.24 610.618 769.805 615.211 776.876 617.391 787.856 625.078 804.114 637.719 812.899 654.617 811.928 675.459 809.264 732.69 750.809 745.568 703.518 742.414 664.873 739.836 629.023 734.456 601.355 704.205 588.631 721.307 573.424 732.782 552.777 738.684 515.018 749.478 462.653 740.219 450.647 697.088 446.328 681.573 447.558 663.093 455.81 649.078 481.51 605.431 539.111 607.646 582.205 596.011 582.084 592.818 582.01 588.707 581.305 585.773 573.376 552.76 522.899 558.305 510.313 584.868 508.736 588.196 506.33 592.305 504.4 595.282L504.025 595.852C503.551 595.746 503.078 595.633 502.607 595.512 496.392 593.865 457.668 581.89 455.629 578.416 455.444 571.268 465.999 555.263 470.892 549.698 489.759 528.24 513.675 519.243 541.413 517.037Z'/%3E%3Cpath fill='%23F76B58' d='M579.612 638.78C581.407 638.551 580.622 638.317 582.081 639.158 584.565 648.251 581.017 664.406 576.409 672.672 565.116 692.926 535.557 703.893 514.612 692.012 505.116 685.676 502.56 672.802 509.072 664.223 521.965 647.235 560.399 642.884 579.612 638.78Z'/%3E%3C/svg%3E"

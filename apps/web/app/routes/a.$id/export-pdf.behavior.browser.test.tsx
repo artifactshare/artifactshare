@@ -9,6 +9,7 @@ import {
 } from './+components/export-actions'
 import {
   inertExportDocument,
+  isExportCssType,
   sanitizeExportDocument,
   rewriteExportCss,
 } from './+components/export-resources'
@@ -64,8 +65,11 @@ async function openPopup() {
   }
 }
 
-async function print(data: ExportSourceData) {
-  await server.commands.exportPdfObservation('start', data)
+async function print(
+  data: ExportSourceData,
+  assets: Parameters<typeof server.commands.exportPdfObservation>[2] = [],
+) {
+  await server.commands.exportPdfObservation('start', data, assets)
   popup = await openPopup()
   expect(popup).not.toBeNull()
   const toolbar = popup!.document
@@ -684,29 +688,50 @@ test('navigation during acquisition leaves the replacement document alone', asyn
   expect(popup!.document.body.textContent).toBe('Replacement document')
 }, 15_000)
 
-test('bundled Japanese regular and bold fonts decode in chrome and opaque content without a font host', async () => {
-  const spy = await print(source('<h1>日本語の印刷</h1><p>日本語の本文</p>'))
-  expect(spy).toHaveBeenCalledTimes(1)
-  for (const weight of [400, 700]) {
-    const faces = await popup!.document.fonts.load(
-      `${weight} 16px ArtifactSharePrintJP`,
-      '日本語',
+test.each([false, true])(
+  'bundled Japanese regular and bold fonts decode in chrome and opaque content without a font host (imported=%s)',
+  async (imported) => {
+    const spy = await print(
+      source(
+        `${imported ? '<link rel="stylesheet" href="main.css">' : ''}<h1>日本語の印刷</h1><p>日本語の本文</p>`,
+      ),
+      imported
+        ? [
+            {
+              path: '/main.css',
+              mime: 'text/css',
+              body: '@import "theme.css";',
+            },
+            {
+              path: '/theme.css',
+              mime: 'text/css',
+              body: 'h1{color:rgb(0,128,0)}',
+            },
+          ]
+        : [],
     )
-    expect(faces.length).toBeGreaterThan(0)
-    expect(faces.every((face) => face.status === 'loaded')).toBe(true)
-  }
-  const frame = await server.commands.inspectExportPdf()
-  expect(frame.printFontsLoaded).toBe(true)
-  expect(
-    popup!.document
-      .querySelector('meta[http-equiv="Content-Security-Policy"]')!
-      .getAttribute('content'),
-  ).toContain('font-src data:;')
-  const requests = await server.commands.exportPdfObservation('read')
-  expect(
-    requests.filter((request) => request.url.includes('fonts.gstatic.com')),
-  ).toEqual([])
-})
+    expect(spy).toHaveBeenCalledTimes(1)
+    for (const weight of [400, 700]) {
+      const faces = await popup!.document.fonts.load(
+        `${weight} 16px ArtifactSharePrintJP`,
+        '日本語',
+      )
+      expect(faces.length).toBeGreaterThan(0)
+      expect(faces.every((face) => face.status === 'loaded')).toBe(true)
+    }
+    const frame = await server.commands.inspectExportPdf()
+    expect(frame.printFontsLoaded).toBe(true)
+    expect(
+      popup!.document
+        .querySelector('meta[http-equiv="Content-Security-Policy"]')!
+        .getAttribute('content'),
+    ).toContain('font-src data:;')
+    const requests = await server.commands.exportPdfObservation('read')
+    expect(
+      requests.filter((request) => request.url.includes('fonts.gstatic.com')),
+    ).toEqual([])
+  },
+)
 
 test('real redirect negative control reaches the observed destination with synthetic authentication', async () => {
   await server.commands.exportPdfObservation(
@@ -2400,3 +2425,899 @@ test.each([
     expect(await server.commands.exportPdfObservation('read')).toEqual([])
   },
 )
+
+test.each([3000, 41000])(
+  'normal-flow page scroller prints its final marker at %i px',
+  async (height) => {
+    await print(
+      source(
+        `<style>html,body{height:100%}.app{height:100%;overflow:auto}</style><div class="app"><div style="height:${height}px">Report</div><p id="pdf-final-marker">FINAL-FLOW-MARKER</p></div>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    const frameHeight = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(frameHeight).toBeGreaterThan(height)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(frameHeight)
+  },
+)
+
+test('video poster prints without acquiring playback or caption files', async () => {
+  const { PDF_FIXTURE_IMAGE } =
+    await import('~/services/dev-pdf-export-fixtures')
+  const printed = await print(
+    source(
+      `<video poster="${PDF_FIXTURE_IMAGE}" src="movie.mp4"><source src="movie.webm"><track src="captions.vtt"></video><p id="pdf-final-marker">FINAL-POSTER-MARKER</p>`,
+    ),
+  )
+  expect(printed).toHaveBeenCalledOnce()
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(inspected.finalMarker!.visible).toBe(true)
+  expect(
+    (await server.commands.exportPdfObservation('read')).filter((request) =>
+      /movie|captions/.test(request.url),
+    ),
+  ).toEqual([])
+})
+
+test.each(['application/font-woff', 'application/font-woff2'])(
+  'valid inline font decodes with %s',
+  async (mime) => {
+    const { PDF_FIXTURE_FONT } =
+      await import('~/services/dev-pdf-export-fixtures')
+    const font =
+      mime === 'application/font-woff'
+        ? (
+            await import('@fontsource/line-seed-jp/files/line-seed-jp-latin-400-normal.woff?inline')
+          ).default
+        : PDF_FIXTURE_FONT
+    const uri = font.replace(/^data:[^;,]+/, `data:${mime}`)
+    await print(
+      source(
+        `<style>@font-face{font-family:ExportFixture;src:url('${uri}')}h1{font-family:ExportFixture}</style><h1>Embedded font</h1>`,
+      ),
+    )
+    expect((await server.commands.inspectExportPdf()).fontLoaded).toBe(true)
+  },
+)
+
+test('preparation deadlines are cleared before native print and renewed for repeat print', async () => {
+  const data = source('<p>Print dialog deadline</p>')
+  await server.commands.exportPdfObservation('start', data)
+  popup = await openPopup()
+  const timers = vi.spyOn(window, 'setTimeout')
+  const cleared = vi.spyOn(window, 'clearTimeout')
+  const printed = vi.spyOn(popup!, 'print').mockImplementation(() => {
+    const deadlines = timers.mock.calls.flatMap((call, index) =>
+      call[1] === 30_000 || call[1] === 40_000
+        ? [timers.mock.results[index].value]
+        : [],
+    )
+    expect(deadlines.length).toBeGreaterThanOrEqual(2)
+    for (const deadline of deadlines)
+      expect(cleared).toHaveBeenCalledWith(deadline)
+  })
+  await writePrintPdf(popup!, 'artifact-1', data, labels)
+  await server.commands.printExportPdfWithKeyboard()
+  await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+})
+
+test.each([
+  [
+    'flex body',
+    'html,body{height:100%}body{display:flex;flex-direction:column}main{flex:1;overflow:auto}',
+    false,
+  ],
+  [
+    'viewport flex',
+    '.app{height:100vh;display:flex;flex-direction:column}main{flex:1;overflow:auto}',
+    true,
+  ],
+  ['viewport scroller', '.app{height:100vh;overflow:auto}', true],
+  [
+    'clipped wrapper',
+    'html,body,.app{height:100%}.app{overflow:hidden}main{height:100%;overflow:auto}',
+    true,
+  ],
+  [
+    'clipped flex wrapper',
+    'html,body,.app{height:100%}.app{overflow:hidden;display:flex;flex-direction:column}main{flex:1;min-height:0;overflow:auto}',
+    true,
+  ],
+  [
+    'clipped grid wrapper',
+    'html,body,.app{height:100%}.app{overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr)}main{overflow:auto}',
+    true,
+  ],
+])(
+  'normal-flow %s exposes the final marker through all clipping ancestors',
+  async (_name, css, wrapper) => {
+    const content =
+      '<header>Header</header><main><div style="height:41000px">Report</div><p id="pdf-final-marker">FINAL-PAINTED-MARKER</p></main>'
+    const printed = await print(
+      source(
+        `<style>${css}</style>${wrapper ? `<div class="app">${content}</div>` : content}`,
+      ),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(41000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(['static', 'sticky'])(
+  'independent %s clipped box remains clipped on short paper',
+  async (position) => {
+    await print(
+      source(
+        `<div style="position:${position};top:0;height:200px;overflow:auto"><div style="height:3000px">Log</div><p id="pdf-final-marker">INTENTIONALLY-CLIPPED-MARKER</p></div>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.finalMarker!.clipped).toBe(true)
+    expect(
+      parseFloat(popup!.document.querySelector('iframe')!.style.height),
+    ).toBeLessThanOrEqual(760)
+  },
+)
+
+test.each(['vh', 'dvh', 'svh', 'vb'])(
+  'header-offset %s scroller exposes the final marker on first and repeat print',
+  async (unit) => {
+    const printed = await print(
+      source(
+        `<style>header{height:64px}main{height:calc(100${unit} - 64px);overflow:auto}</style><header>Header</header><main><div style="height:41000px">Report</div><p id="pdf-final-marker">FINAL-OFFSET-MARKER</p></main>`,
+      ),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(41000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(['vh', 'dvh', 'svh'])(
+  'padded content-box %s shell exposes the final marker',
+  async (unit) => {
+    await print(
+      source(
+        `<style>.app{box-sizing:content-box;height:100${unit};padding:16px;overflow:auto}</style><div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-PADDED-MARKER</p></div>`,
+      ),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+      parseFloat(popup!.document.querySelector('iframe')!.style.height),
+    )
+  },
+)
+
+test('viewport padding does not expand an independently bounded scroll box', async () => {
+  await print(
+    source(
+      '<div style="box-sizing:content-box;height:200px;padding:2vh;overflow:auto"><div style="height:3000px">Log</div><p id="pdf-final-marker">INTENTIONALLY-CLIPPED-PADDED-MARKER</p></div>',
+    ),
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(inspected.finalMarker!.clipped).toBe(true)
+  expect(
+    parseFloat(popup!.document.querySelector('iframe')!.style.height),
+  ).toBeLessThanOrEqual(760)
+})
+
+test.each([
+  ['percentage hero', 'height:100%', '<p>Hero</p>', 41000],
+  [
+    'intrinsically tall minimum',
+    'min-height:100%',
+    '<div style="height:3000px">Report</div>',
+    100,
+  ],
+  [
+    'nested percentage hero',
+    'height:100%',
+    '<div style="height:100%">Nested hero</div>',
+    3000,
+  ],
+])(
+  'expanded shell freezes %s feedback and prints the unclipped final marker',
+  async (_name, constraint, content, tailHeight) => {
+    const printed = await print(
+      source(
+        `<style>html,body,.app{height:100%}.app{overflow:auto}</style><div class="app"><section style="${constraint}">${content}</section><div style="height:${tailHeight}px">Following content</div><p id="pdf-final-marker">FINAL-PERCENTAGE-FEEDBACK-MARKER</p></div>`,
+      ),
+    )
+    let firstHeight = 0
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        firstHeight = height
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      } else expect(height).toBe(firstHeight)
+    }
+  },
+)
+
+test('expanded scroll shells resize again for viewport-dependent content before first and repeat print', async () => {
+  const printed = await print(
+    source(`<style>
+    html,body,.app{height:100%}.app{overflow:hidden}main{height:100%;overflow:auto}
+    .content{height:1800px}@media(min-height:1000px){.content{height:41000px}}
+  </style><div class="app"><main><div class="content">Responsive report</div><p id="pdf-final-marker">FINAL-RESPONSIVE-SHELL-MARKER</p></main></div>`),
+  )
+  let initialHeight = 0
+  for (const count of [1, 2]) {
+    const inspected = await server.commands.inspectExportPdf(true)
+    const height = parseFloat(
+      popup!.document.querySelector('iframe')!.style.height,
+    )
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.bottom).toBeGreaterThan(41000)
+    expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+    expect(printed).toHaveBeenCalledTimes(count)
+    if (count === 1) {
+      initialHeight = height
+      await server.commands.printExportPdfWithKeyboard()
+      await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+    } else expect(height).toBe(initialHeight)
+  }
+})
+
+test.each(
+  ['auto', 'scroll'].flatMap((overflow) =>
+    ['content-box', 'border-box'].map((boxSizing) => ({ overflow, boxSizing })),
+  ),
+)(
+  'expanded $boxSizing shell reserves horizontal scrollbar space with overflow $overflow',
+  async ({ overflow, boxSizing }) => {
+    const printed = await print(
+      source(`<style>
+      html,body{height:100%}.app{height:100%;overflow:${overflow};box-sizing:${boxSizing};padding:16px;border:3px solid black}
+      .app::-webkit-scrollbar{height:24px;width:24px}
+    </style><div class="app"><div style="width:1200px;height:3000px">Wide report</div><p id="pdf-final-marker">FINAL-SCROLLBAR-MARKER</p></div>`),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(['none', 'height .2s', 'all .2s'])(
+  'sticky page scroller with transition %s prints completely and repeatedly',
+  async (transition) => {
+    const printed = await print(
+      source(`<style>
+      html,body{height:100%}.app{position:sticky;top:0;height:100%;overflow:auto;transition:${transition}}
+      </style><div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-STICKY-MARKER</p></div>`),
+    )
+    let firstHeight = 0
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        firstHeight = height
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      } else expect(height).toBe(firstHeight)
+    }
+  },
+)
+
+test.each(['row', 'column'])(
+  'expanded %s flex panes preserve width and complete content',
+  async (direction) => {
+    const printed = await print(
+      source(`<style>
+      body{display:flex;flex-direction:${direction};height:100vh}
+      nav{flex:0 0 200px;overflow:auto}main{flex:1;overflow:auto}
+      </style><nav><div style="height:3000px">Sidebar</div></nav><main>
+      <section style="height:100%">${'Wrapping report text '.repeat(30)}</section>
+      <div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-FLEX-WIDTH-MARKER</p></main>`),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.viewport).toEqual({
+        innerWidth: 900,
+        clientWidth: 900,
+        bodyWidth: 900,
+      })
+      expect(inspected.flowWidths).toEqual(
+        direction === 'row' ? [200, 700] : [900, 900],
+      )
+      expect(inspected.finalMarker!.left).toBeGreaterThanOrEqual(0)
+      expect(inspected.finalMarker!.right).toBeLessThanOrEqual(900)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(['vh', 'vw', 'vi', 'vb', 'vmin', 'vmax'])(
+  'embedded SVG %s lengths preserve the source image viewport',
+  async (unit) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><style>rect{width:10${unit};height:10${unit};fill:red}</style><rect/></svg>`
+    const uri = `data:image/svg+xml,${encodeURIComponent(svg)}`
+    const original = new Image()
+    original.src = uri
+    await original.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 100
+    const context = canvas.getContext('2d')!
+    const samples = () =>
+      [5, 20, 70].map((point) =>
+        Array.from(context.getImageData(point, point, 1, 1).data),
+      )
+    context.fillStyle = 'white'
+    context.fillRect(0, 0, 100, 100)
+    context.drawImage(original, 0, 0, 100, 100)
+    const sourcePixels = samples()
+    expect(sourcePixels).toEqual([
+      [255, 0, 0, 255],
+      [255, 255, 255, 255],
+      [255, 255, 255, 255],
+    ])
+    await print(source(`<img src="${uri}">`))
+    const inspected = await server.commands.inspectExportPdf(
+      false,
+      'light',
+      true,
+    )
+    const screenshot = new Image()
+    screenshot.src = `data:image/png;base64,${inspected.imageScreenshots[0]}`
+    await screenshot.decode()
+    context.drawImage(screenshot, 0, 0, 100, 100)
+    expect(samples()).toEqual(sourcePixels)
+  },
+)
+
+test.each(['100vh', 'var(--unregistered, 0px)'])(
+  'registered viewport property requires an independent initial value: %s',
+  async (initialValue) => {
+    await print(
+      source(`<style>
+      @property --report-height{syntax:"<length>";inherits:false;initial-value:${initialValue}}
+      section{height:var(--report-height, 0px)}
+      </style><section>Registered height</section><p id="pdf-final-marker">FINAL-PROPERTY-MARKER</p>`),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    // A rejected registration uses zero, so the fallback cannot mask a broken
+    // viewport rewrite. var() is invalid in a registered initial value.
+    if (initialValue === '100vh') {
+      expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(760)
+      expect(inspected.finalMarker!.top).toBeLessThan(800)
+    } else expect(inspected.finalMarker!.top).toBeLessThan(100)
+  },
+)
+
+test.each([
+  { selector: 'h1:not([style])', attributes: '', transition: '' },
+  {
+    selector: 'h1[style="color:red"]',
+    attributes: 'style="color:red"',
+    transition: '',
+  },
+  {
+    selector: 'h1[style$="red"]',
+    attributes: 'style="color:red"',
+    transition: 'style="transition:all .2s!important"',
+  },
+])(
+  'print transition suppression preserves $selector styling and complete repeat output',
+  async ({ selector, attributes, transition }) => {
+    const printed = await print(
+      source(`<style>
+      html,body{height:100%}.app{height:100%;overflow:auto}
+      @layer artifact{.app{transition:height .2s!important}}
+      ${selector}{color:rgb(0,128,0)!important}
+      </style><div class="app" ${transition}><h1 ${attributes}>Styled report</h1><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-SELECTOR-MARKER</p></div>`),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.color).toBe('rgb(0, 128, 0)')
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(
+  ['static', 'sticky', 'fixed'].flatMap((position) =>
+    ['inline', 'imported', 'style-import', 'svg-style-import'].map(
+      (placement) => ({ position, placement }),
+    ),
+  ),
+)(
+  'registered viewport property expands a $position scroll shell from $placement CSS on first and repeat print',
+  async ({ position, placement }) => {
+    // A rejected registration collapses the shell, so the fallback cannot
+    // hide missing content or substitute for the registered viewport height.
+    const css = `@property --app-h { syntax:"<length>"; inherits:true; initial-value:100vh }
+      .app{position:${position};top:0;height:var(--app-h, 0px);overflow:auto}`
+    const data =
+      source(`${placement === 'inline' ? `<style>${css}</style>` : placement === 'style-import' ? '<style>@import "main.css";</style>' : placement === 'svg-style-import' ? '<svg><style>@import "main.css";</style></svg>' : '<link rel="stylesheet" href="main.css">'}
+      <div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-REGISTERED-MARKER</p></div>`)
+    const printed = await print(data, [
+      {
+        path: '/main.css',
+        mime: 'text/css',
+        body: '@import "nested/registered.css" layer(report);',
+      },
+      {
+        path: '/nested/registered.css',
+        mime: 'text/css',
+        body: '@namespace svg "http://www.w3.org/2000/svg";' + css,
+      },
+    ])
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+      expect(height).toBeLessThan(4000)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each([
+  ['vi', 760],
+  ['vb', 900],
+] as const)(
+  'registered %s initial value uses the vertical root axis',
+  async (unit, expected) => {
+    await print(
+      source(`<style>
+      html{writing-mode:vertical-rl}.report{writing-mode:horizontal-tb}
+      @property --report-height{syntax:"<length>";inherits:false;initial-value:100${unit}}
+      section{height:var(--report-height, 0px)}
+      </style><div class="report"><section>Registered height</section><p id="pdf-final-marker">FINAL-LOGICAL-PROPERTY</p></div>`),
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.rootWritingMode).toBe('vertical-rl')
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(expected)
+    expect(inspected.finalMarker!.top).toBeLessThan(expected + 40)
+  },
+)
+
+test.each([
+  { first: '100vh', last: '760px', clipped: true },
+  { first: '760px', last: '100vh', clipped: false },
+  { first: '100vh', last: '100vb', clipped: false },
+])(
+  'duplicate registrations preserve the winning $last initial value after $first',
+  async ({ first, last, clipped }) => {
+    const printed = await print(
+      source(`<style>
+      @property --app-h{syntax:"<length>";inherits:true;initial-value:${first}}
+      @property --app-h{syntax:"<length>";inherits:true;initial-value:${last}}
+      .app{height:var(--app-h, 0px);overflow:auto}
+      </style><div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-DUPLICATE-REGISTRATION</p></div>`),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(clipped)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      if (clipped) {
+        // The registration controls the scroll box, not the frame's total
+        // intrinsic extent (which can include browser overflow allowances).
+        expect(inspected.registeredShellHeight).toBe(760)
+        expect(height).toBeGreaterThanOrEqual(760)
+        expect(height).toBeLessThan(inspected.finalMarker!.top)
+      } else {
+        expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+        expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+        expect(height).toBeLessThan(4000)
+      }
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(
+  ['inline', 'imported'].flatMap((placement) =>
+    ['100vh', 'calc(100vh'].map((initialValue) => ({
+      placement,
+      initialValue,
+    })),
+  ),
+)(
+  'EOF-closed $initialValue registration exposes the final marker from $placement CSS on repeat print',
+  async ({ placement, initialValue }) => {
+    const css =
+      '.app{height:var(--app-h, 0px);overflow:auto}' +
+      `@property --app-h{syntax:"<length>";inherits:true;initial-value:${initialValue}`
+    const printed = await print(
+      source(
+        `${placement === 'inline' ? `<style>${css}</style>` : '<link rel="stylesheet" href="main.css">'}<div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-EOF-REGISTRATION</p></div>`,
+      ),
+      [
+        {
+          path: '/main.css',
+          mime: 'text/css',
+          body: '@import "registered.css";',
+        },
+        { path: '/registered.css', mime: 'text/css', body: css },
+      ],
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(3000)
+      const height = parseFloat(
+        popup!.document.querySelector('iframe')!.style.height,
+      )
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(height)
+      expect(height).toBeLessThan(4000)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test.each(['section', '@scope (.report)', '@starting-style'])(
+  'a registration rejected inside %s does not fail ordinary printing',
+  async (context) => {
+    const printed = await print(
+      source(`<style>
+      ${context}{@property --ignored-height{syntax:"<length>";inherits:true;initial-value:100vh}}
+      </style><div class="report"><section style="height:900px">Report</section><p id="pdf-final-marker">FINAL-CONTEXT-REGISTRATION</p></div>`),
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(900)
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test('a registration missing from CSSOM fails preparation instead of returning clipped output', async () => {
+  const { printViewportRegistrations } =
+    await import('./+components/export-resources')
+  const rule =
+    '@property --app-h{syntax:"<length>";inherits:true;initial-value:760px}'
+  vi.spyOn(printViewportRegistrations, 'get').mockReturnValue([
+    {
+      condition: '(--missing-registration: 0)',
+      variants: [rule, rule.replace('760px', '792px'), rule, rule],
+    },
+  ])
+  await expect(
+    print(
+      source(
+        '<style>@property --app-h{syntax:"<length>";inherits:true;initial-value:100vh}.app{height:var(--app-h, 0px);overflow:auto}</style><div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-MISSING-REGISTRATION</p></div>',
+      ),
+    ),
+  ).rejects.toThrow('Print resources failed')
+})
+
+test.each([
+  'disabled href="unused.css"',
+  '',
+  'href=""',
+  'href="#theme"',
+  'type="text/plain" href="unused.css"',
+])(
+  'inactive stylesheet link %s does not block an imported sheet',
+  async (attributes) => {
+    const printed = await print(
+      source(`<link rel="stylesheet" ${attributes}>
+    <link rel="stylesheet" href="main.css"><h1>Report</h1>
+    <section style="height:1000px">Content</section><p id="pdf-final-marker">FINAL-LINK</p>`),
+      [
+        { path: '/main.css', mime: 'text/css', body: '@import "theme.css";' },
+        {
+          path: '/theme.css',
+          mime: 'text/css',
+          body: 'h1{color:rgb(0,128,0)}',
+        },
+      ],
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.color).toBe('rgb(0, 128, 0)')
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(1000)
+    expect(printed).toHaveBeenCalledTimes(1)
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+    expect(await server.commands.exportPdfObservation('attempts')).toEqual([])
+  },
+)
+
+test.each([
+  '@import "inactive.css" supports(display: impossible);',
+  'h1{color:rgb(0,128,0)} @import "inactive.css";',
+])('inactive import preserves complete output: %s', async (css) => {
+  const printed = await print(
+    source(`<link rel="stylesheet" href="main.css">
+    <h1>Report</h1><section style="height:3000px">Content</section>
+    <p id="pdf-final-marker">FINAL-INACTIVE-IMPORT</p>`),
+    [
+      { path: '/main.css', mime: 'text/css', body: css },
+      {
+        path: '/inactive.css',
+        mime: 'text/css',
+        body: '@property --inactive-height{syntax:"<length>";inherits:true;initial-value:100vh} section{height:var(--inactive-height, 0px)!important}',
+      },
+    ],
+  )
+  for (const count of [1, 2]) {
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(3000)
+    expect(printed).toHaveBeenCalledTimes(count)
+    if (count === 1) {
+      await server.commands.printExportPdfWithKeyboard()
+      await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+    }
+  }
+})
+
+test('serialization failure does not install a startup listener or deadline', async () => {
+  const { printViewportRegistrations } =
+    await import('./+components/export-resources')
+  const data = source('<p>Report</p>')
+  await server.commands.exportPdfObservation('start', data)
+  popup = await openPopup()
+  expect(popup).not.toBeNull()
+  const listeners = vi.spyOn(popup!, 'addEventListener')
+  const removed = vi.spyOn(popup!, 'removeEventListener')
+  const deadlines = vi.spyOn(window, 'setTimeout')
+  const printed = vi.spyOn(popup!, 'print').mockImplementation(() => {})
+  vi.spyOn(printViewportRegistrations, 'get').mockImplementation(() => {
+    throw new Error('Serialization failed')
+  })
+  await expect(
+    writePrintPdf(popup!, 'artifact-1', data, labels),
+  ).rejects.toThrow('Serialization failed')
+  for (const [type, listener] of listeners.mock.calls)
+    if (type === 'message') expect(removed).toHaveBeenCalledWith(type, listener)
+  expect(deadlines.mock.calls.filter(([, delay]) => delay === 10_000)).toEqual(
+    [],
+  )
+  expect(popup!.document.body.dataset.exportState).toBe('failed')
+  expect(popup!.document.querySelector('iframe')).toBeNull()
+  expect(printed).not.toHaveBeenCalled()
+})
+
+// Independent, request-free reference in an ordinary document, like srcdoc.
+// In particular the HTML marker is a document sibling of the SVG style, not
+// a sibling in a shadow tree (whose SVG stylesheet scoping differs).
+async function nativeStyleTypeApplies(type: string, svg: boolean) {
+  const frame = document.createElement('iframe')
+  frame.setAttribute('sandbox', 'allow-same-origin')
+  frame.style.cssText =
+    'position:fixed;visibility:hidden;width:900px;height:760px'
+  const loaded = new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => reject(new Error('Native style reference timeout')),
+      5000,
+    )
+    frame.onload = () => {
+      window.clearTimeout(timeout)
+      resolve()
+    }
+  })
+  frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><body><h1 id="type-probe" style="color:rgb(0,0,0)">Type reference</h1></body>`
+  document.body.appendChild(frame)
+  try {
+    await loaded
+    const doc = frame.contentDocument!
+    const style = svg
+      ? doc.createElementNS('http://www.w3.org/2000/svg', 'style')
+      : doc.createElement('style')
+    style.setAttribute('type', type)
+    style.textContent = '#type-probe{color:rgb(0,128,0)!important}'
+    if (svg) {
+      const root = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      root.appendChild(style)
+      doc.body.insertBefore(root, doc.body.firstChild)
+    } else doc.head.appendChild(style)
+    return (
+      frame.contentWindow!.getComputedStyle(doc.querySelector('h1')!).color ===
+      'rgb(0, 128, 0)'
+    )
+  } finally {
+    frame.remove()
+  }
+}
+
+test.each(
+  [
+    'text/plain',
+    'application/json',
+    'text/css; charset=utf-8',
+    ' text/css ',
+    'TEXT/CSS',
+  ].flatMap((type) => [false, true].map((svg) => ({ type, svg }))),
+)(
+  'inline type $type in SVG=$svg preserves native styling and complete content',
+  async ({ type, svg }) => {
+    const applies = await nativeStyleTypeApplies(type, svg)
+    const probe = svg
+      ? document.createElementNS('http://www.w3.org/2000/svg', 'style')
+      : document.createElement('style')
+    probe.setAttribute('type', type)
+    expect(isExportCssType(probe)).toBe(applies)
+    const css =
+      '@import "theme.css";@property --unused-height{syntax:"<length>";inherits:true;initial-value:100vh}'
+    const style = `<style type="${type}">${css}</style>`
+    const printed = await print(
+      source(`${svg ? `<svg>${style}</svg>` : style}<h1>Report</h1>
+      <section style="height:3000px">Report</section><p id="pdf-final-marker">FINAL-TYPED-STYLE</p>`),
+      [
+        {
+          path: '/theme.css',
+          mime: 'text/css',
+          body: 'h1{color:rgb(0,128,0)}',
+        },
+      ],
+    )
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.color === 'rgb(0, 128, 0)').toBe(applies)
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(3000)
+    expect(printed).toHaveBeenCalledTimes(1)
+    expect(await server.commands.exportPdfObservation('read')).toEqual([])
+    expect(await server.commands.exportPdfObservation('attempts')).toEqual([])
+  },
+)
+
+test('CSS link MIME parameters preserve stylesheet output', async () => {
+  const printed = await print(
+    source(
+      '<link rel="stylesheet" type="text/css; charset=utf-8" href="theme.css"><h1>Report</h1>',
+    ),
+    [{ path: '/theme.css', mime: 'text/css', body: 'h1{color:rgb(0,128,0)}' }],
+  )
+  const inspected = await server.commands.inspectExportPdf(true)
+  expect(inspected.color).toBe('rgb(0, 128, 0)')
+  expect(printed).toHaveBeenCalledTimes(1)
+})
+
+test.each(['(min-height: 1000px)', '(orientation: portrait)'])(
+  'a registration in import %s is discovered after frame expansion',
+  async (media) => {
+    const printed = await print(
+      source(`<link rel="stylesheet" href="main.css">
+      <style>.app{height:var(--app-h,0px);overflow:auto}</style>
+      <section style="height:1200px">Introduction</section>
+      <div class="app"><div style="height:3000px">Report</div><p id="pdf-final-marker">FINAL-ACTIVATED-IMPORT</p></div>`),
+      [
+        {
+          path: '/main.css',
+          mime: 'text/css',
+          body: `@import "registered.css" ${media};`,
+        },
+        {
+          path: '/registered.css',
+          mime: 'text/css',
+          body: '@property --app-h{syntax:"<length>";inherits:true;initial-value:100vh}',
+        },
+      ],
+    )
+    for (const count of [1, 2]) {
+      const inspected = await server.commands.inspectExportPdf(true)
+      expect(inspected.finalMarker!.clipped).toBe(false)
+      expect(inspected.registeredShellHeight).toBeGreaterThan(3000)
+      expect(inspected.finalMarker!.bottom).toBeGreaterThan(4200)
+      expect(inspected.finalMarker!.bottom).toBeLessThanOrEqual(
+        parseFloat(popup!.document.querySelector('iframe')!.style.height),
+      )
+      expect(printed).toHaveBeenCalledTimes(count)
+      if (count === 1) {
+        await server.commands.printExportPdfWithKeyboard()
+        await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+      }
+    }
+  },
+)
+
+test('artifact cascade cannot change stylesheet type detection during frame measurement', async () => {
+  const type = 'TEXT/CSS'
+  const applies = await nativeStyleTypeApplies(type, false)
+  expect(applies).toBe(true)
+  const printed = await print(
+    source(`
+    <style>@layer artifact {span,text{opacity:1!important}}</style>
+    <style type="${type}">
+      @import "theme.css";
+      @property --app-h{syntax:"<length>";inherits:true;initial-value:100vh}
+      .report{height:var(--app-h,0px);overflow:auto}
+    </style>
+    <h1>Report</h1><div class="report"><section style="height:3000px">Content</section>
+    <p id="pdf-final-marker">FINAL-TYPE-CASCADE</p></div>`),
+    [{ path: '/theme.css', mime: 'text/css', body: 'h1{color:rgb(0,128,0)}' }],
+  )
+  for (const count of [1, 2]) {
+    const inspected = await server.commands.inspectExportPdf(true)
+    expect(inspected.color).toBe('rgb(0, 128, 0)')
+    expect(inspected.finalMarker!.clipped).toBe(false)
+    expect(inspected.finalMarker!.top).toBeGreaterThanOrEqual(3000)
+    expect(printed).toHaveBeenCalledTimes(count)
+    if (count === 1) {
+      await server.commands.printExportPdfWithKeyboard()
+      await vi.waitFor(() => expect(printed).toHaveBeenCalledTimes(2))
+    }
+  }
+})

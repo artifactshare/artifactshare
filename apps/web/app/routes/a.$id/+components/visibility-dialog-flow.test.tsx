@@ -184,6 +184,25 @@ describe('VisibilityDialog link save flow', () => {
     vi.unstubAllGlobals()
   })
 
+  test('identifies the local calendar timezone for an expiry crossing the UTC date', async () => {
+    const previous = process.env.TZ
+    process.env.TZ = 'Asia/Tokyo'
+    try {
+      await renderDialog({
+        currentVisibility: 'link',
+        linkExpiresAt: '2026-11-17T23:00:00.000Z',
+      })
+      expect(
+        host.querySelector<HTMLInputElement>('input[type="date"]')!.value,
+      ).toBe('2026-11-18')
+      expect(host.textContent).toContain('(Asia/Tokyo)')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      if (previous === undefined) delete process.env.TZ
+      else process.env.TZ = previous
+    }
+  })
+
   function renderDialog(
     overrides: Partial<React.ComponentProps<typeof VisibilityDialog>> = {},
   ) {
@@ -948,7 +967,9 @@ describe('VisibilityDialog link save flow', () => {
     description: string,
   ) {
     expect(input.labels).toHaveLength(1)
-    expect(input.labels?.[0]?.textContent).toBe('visibilityDialog.link.expiry')
+    expect(input.labels?.[0]?.textContent).toBe(
+      `visibilityDialog.link.expiry (${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
+    )
     const descriptionId = input.getAttribute('aria-describedby')
     expect(descriptionId).toBeTruthy()
     const descriptionElement = document.getElementById(descriptionId!)!

@@ -173,3 +173,46 @@ test('stalled request header observation fails with a deadline and still release
     vi.useRealTimers()
   }
 })
+
+test('request observation includes app-origin stylesheets outside probe paths', async () => {
+  let observe!: (request: unknown) => void
+  const context = {
+    on: vi.fn((event, listener) => {
+      if (event === 'request') observe = listener
+    }),
+    off: vi.fn(),
+    addCookies: vi.fn(),
+    clearCookies: vi.fn(),
+    route: vi.fn(),
+    unroute: vi.fn(),
+    request: {
+      get: vi.fn(async () => ({ ok: () => true, json: async () => [] })),
+      delete: vi.fn(),
+    },
+  }
+  const command = {
+    page: {
+      context: () => context,
+      url: () => 'http://localhost/a/artifact-1',
+    },
+  } as unknown as Parameters<typeof exportPdfObservation>[0]
+  try {
+    await exportPdfObservation(command, 'start', {})
+    observe({
+      url: () => 'http://localhost/a/artifact-1#theme',
+      method: () => 'GET',
+      resourceType: () => 'stylesheet',
+      allHeaders: async () => ({}),
+    })
+    expect(await exportPdfObservation(command, 'attempts')).toEqual([
+      {
+        url: 'http://localhost/a/artifact-1#theme',
+        method: 'GET',
+        cookie: '',
+        referrer: '',
+      },
+    ])
+  } finally {
+    await exportPdfObservation(command, 'stop')
+  }
+})

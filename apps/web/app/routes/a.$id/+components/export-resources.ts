@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify'
 import { canonicalExportPath, exportAssetHref } from '~/lib/export-path'
 import { renderExportMermaidSvg } from '~/lib/mermaid-export.client'
 import { renderMermaidInDocument } from '~/lib/mermaid-render.client'
+import type { PrintFontFace } from '~/lib/export-print-font'
 import type { ExportSourceData } from './export-actions'
 
 // Bounds cover acquisition, decoding and rendering, not the user's print dialog.
@@ -14,6 +15,7 @@ const MAX_RESOURCES = 128
 const MAX_BYTES = 32 * 1024 * 1024
 const MAX_EMBEDDED_BYTES = 64 * 1024 * 1024
 const MAX_DEPTH = 12
+const MAX_CSS_NESTING = 128
 // Vite removes the import from the server build; ordinary Viewer imports and
 // non-PDF exports never evaluate or download the embedded font module.
 export function loadPrintFont() {
@@ -32,6 +34,23 @@ export type InertExportDocument = Pick<
   | 'querySelector'
   | 'querySelectorAll'
 >
+
+// Kept outside artifact markup: only the preparation pipeline supplies these
+// registration variants to the trusted measurement helper.
+export type PrintViewportRegistration = {
+  condition: string
+  variants: [string, string, string, string]
+}
+export const printViewportRegistrations = new WeakMap<
+  InertExportDocument,
+  PrintViewportRegistration[]
+>()
+
+// Fixed application font bytes never come from artifact markup or messages.
+export const printFontFaces = new WeakMap<
+  InertExportDocument,
+  PrintFontFace[]
+>()
 
 // Fragment parsing differs across engines for noscript. Remove its scripting-
 // enabled raw text before inert parsing; markup inside it is never tokenized.
@@ -383,6 +402,51 @@ const ACTIVE_ATTRIBUTES = new Set([
   'crossorigin',
 ])
 
+export function isExportCssType(el: Element): boolean {
+  const type = el.getAttribute('type') ?? ''
+  if (el.localName === 'style') {
+    if (type === '' || type === 'text/css') return true
+    if (type.split(';', 1)[0].trim().toLowerCase() !== 'text/css') return false
+    // Engines differ on inline type hints, especially SVG case/parameters.
+    // Isolate the fixed probe from document CSS, including artifact CSS when
+    // this function runs in the print frame. An SVG probe must style a marker
+    // inside that SVG; HTML siblings across its shadow scope are not equivalent.
+    const host = document.createElement('div')
+    host.style.cssText =
+      'position:fixed;visibility:hidden;pointer-events:none;width:0;height:0;overflow:hidden'
+    const shadow = host.attachShadow({ mode: 'closed' })
+    const probeId = `asx-export-type-${crypto.randomUUID()}`
+    const probe = document.createElementNS(el.namespaceURI, 'style') as
+      | HTMLStyleElement
+      | SVGStyleElement
+    probe.setAttribute('type', type)
+    probe.textContent = `#${probeId}{opacity:0.5!important}`
+    const svgStyle = el.namespaceURI === 'http://www.w3.org/2000/svg'
+    const marker = svgStyle
+      ? document.createElementNS(el.namespaceURI!, 'text')
+      : document.createElement('span')
+    marker.id = probeId
+    marker.setAttribute('style', 'opacity:1')
+    if (svgStyle) {
+      const svg = document.createElementNS(el.namespaceURI, 'svg')
+      svg.appendChild(probe)
+      svg.appendChild(marker)
+      shadow.appendChild(svg)
+    } else {
+      shadow.appendChild(probe)
+      shadow.appendChild(marker)
+    }
+    try {
+      document.documentElement.appendChild(host)
+      return getComputedStyle(marker).opacity === '0.5'
+    } finally {
+      host.remove()
+    }
+  }
+  const essence = type.split(';', 1)[0].trim().toLowerCase()
+  return essence === '' || essence === 'text/css'
+}
+
 function isExportStylesheet(el: Element): boolean {
   const relations =
     el
@@ -414,6 +478,13 @@ function outermostExportElements(doc: InertExportDocument, name: string) {
 }
 
 export function sanitizeExportDocument(doc: InertExportDocument) {
+  // DOMPurify trims SVG attributes. For style type, whitespace can determine
+  // whether a browser activates CSS. Preserve this inert hint exactly instead
+  // of turning an inactive source stylesheet into an active one.
+  const styleTypes = Array.from(
+    doc.querySelectorAll('style[type]'),
+    (style) => [style, style.getAttribute('type')!] as const,
+  )
   // Comments never paint, but their serialized text can cross a raw-text
   // boundary when srcdoc is reparsed with scripting enabled (notably noscript).
   const comments = doc.documentElement.ownerDocument.createTreeWalker(
@@ -446,6 +517,14 @@ export function sanitizeExportDocument(doc: InertExportDocument) {
       IN_PLACE: true,
       USE_PROFILES: { svg: true, svgFilters: true },
     })
+  }
+  for (const [style, type] of styleTypes) {
+    if (!doc.documentElement.contains(style)) continue
+    const sanitizedType = style.getAttribute('type')
+    if (sanitizedType === type.trim()) style.setAttribute('type', type)
+    // Never restore an attribute the sanitizer rejected. Leaving the style
+    // without its original type could activate previously inert CSS.
+    else if (sanitizedType !== type) style.remove()
   }
   for (const el of doc.querySelectorAll('*')) {
     if (
@@ -544,6 +623,34 @@ function cssTokens(css: string): Token[] {
   })
 }
 
+// Revisit only import destinations after acquisition. The token walk preserves
+// namespaces, strings, comments, and all import layer/support/media qualifiers.
+export function replaceExportCssImports(
+  css: string,
+  replace: (uri: string) => string,
+): string {
+  const tokens = cssTokens(css)
+  const next = (index: number) => {
+    while (tokens[index]?.kind === 'space') index++
+    return index
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].text !== '@') continue
+    const name = next(i + 1)
+    if (tokens[name]?.value.toLowerCase() !== 'import') continue
+    let ref = next(name + 1)
+    if (tokens[ref]?.value.toLowerCase() === 'url') {
+      const open = next(ref + 1)
+      if (tokens[open]?.text !== '(') continue
+      ref = next(open + 1)
+    }
+    // Resource preparation emits every embedded import as a quoted URI.
+    if (tokens[ref]?.kind === 'string')
+      tokens[ref].text = JSON.stringify(replace(tokens[ref].value))
+  }
+  return tokens.map((token) => token.text).join('')
+}
+
 // The opaque document is a print preview throughout its lifetime. Evaluate media
 // types as print before decoding/fonts/layout, rather than sizing a screen-only
 // layout and clipping content when the browser later enters print media.
@@ -570,7 +677,88 @@ export function printMediaQuery(query: string): string {
 // grow 100vh heroes, padding, or gaps. Resolve viewport lengths in declaration
 // values against the fixed print layout viewport, never against content height.
 // Strings, URL tokens, selectors and media feature conditions are not lengths.
-function freezePrintViewportValues(tokens: Token[]) {
+function freezePrintViewportValues(
+  tokens: Token[],
+  vertical = false,
+  height = PRINT_VIEWPORT_HEIGHT,
+  registrations?: PrintViewportRegistration[],
+) {
+  // Registered property initial values must be computationally independent.
+  // They cannot refer to the HTML helper's custom properties.
+  const descriptors = new Set<Token>()
+  let blockDepth = 0
+  let valueDepth = 0
+  const valueClosers: string[] = []
+  let descriptorDepth = 0
+  let atStart = -1
+  let propertyPrelude = false
+  let propertyStart = 0
+  const propertyRules: Array<{ start: number; end: number; tokens: Token[] }> =
+    []
+  // Visit each token once, including malformed/unclosed property rules. Never
+  // rescan the remainder for every nested @property. The depth limit bounds
+  // CSS nesting independently of the shared resource byte/dependency budgets.
+  for (const [index, token] of tokens.entries()) {
+    if (descriptorDepth) descriptors.add(token)
+    if (token.kind === 'space' || token.kind === 'string') continue
+    if (token.text === '(' || token.text === '[') {
+      valueDepth++
+      valueClosers.push(token.text === '(' ? ')' : ']')
+    }
+    if (token.text === ')' || token.text === ']') {
+      valueDepth = Math.max(0, valueDepth - 1)
+      valueClosers.pop()
+    }
+    if (blockDepth + valueDepth > MAX_CSS_NESTING)
+      throw new Error('Deeply nested export CSS')
+    if (valueDepth) continue
+    if (atStart >= 0) {
+      propertyPrelude = token.value.toLowerCase() === 'property'
+      if (propertyPrelude) propertyStart = atStart
+      atStart = -1
+    }
+    // At-keywords in an initial value belong to that descriptor, not a new
+    // registration. Preserve the outer rule's provenance until its closing brace.
+    if (token.text === '@' && !descriptorDepth) atStart = index
+    if (token.text === '{') {
+      if (++blockDepth > MAX_CSS_NESTING)
+        throw new Error('Deeply nested export CSS')
+      if (propertyPrelude && !descriptorDepth) descriptorDepth = blockDepth
+      propertyPrelude = false
+    } else if (token.text === '}') {
+      if (descriptorDepth === blockDepth) {
+        if (registrations)
+          propertyRules.push({
+            start: propertyStart,
+            end: index,
+            tokens: tokens
+              .slice(propertyStart, index + 1)
+              .map((t) => ({ ...t })),
+          })
+        descriptorDepth = 0
+      }
+      blockDepth = Math.max(0, blockDepth - 1)
+      propertyPrelude = false
+    } else if (token.text === ';') propertyPrelude = false
+  }
+  if (registrations && descriptorDepth) {
+    // CSS closes open functions and blocks at EOF. Include that accepted registration in the
+    // same provenance/probe path as an explicitly closed rule. Close its outer
+    // groups too so the inserted supports group does not consume their braces.
+    const closing = [
+      ...valueClosers.reverse(),
+      ...Array<string>(blockDepth).fill('}'),
+    ].map((text) => ({ text, value: text, kind: 'punct' as const }))
+    const end = tokens.length + valueDepth + blockDepth - descriptorDepth
+    tokens.push(...closing)
+    propertyRules.push({
+      start: propertyStart,
+      end,
+      tokens: tokens
+        .slice(propertyStart, end + 1)
+        .map((token) => ({ ...token })),
+    })
+  }
   let nesting = 0
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
@@ -615,20 +803,54 @@ function freezePrintViewportValues(tokens: Token[]) {
         )
       if (!dimension) continue
       const unit = dimension[2].toLowerCase()
-      if (unit.endsWith('b') || unit.endsWith('i')) {
+      const useProbe = !descriptors.has(value)
+      if (useProbe && (unit.endsWith('b') || unit.endsWith('i'))) {
         value.text = `calc(${Number(dimension[1])} * var(--artifactshare-print-v${unit.slice(-1)}))`
         continue
       }
-      const basis =
-        unit.endsWith('w') || unit.endsWith('max')
-          ? PRINT_VIEWPORT_WIDTH
-          : PRINT_VIEWPORT_HEIGHT
+      const widthAxis =
+        unit.endsWith('w') ||
+        unit.endsWith('max') ||
+        (unit.endsWith('i') && !vertical) ||
+        (unit.endsWith('b') && vertical)
+      const basis = widthAxis ? PRINT_VIEWPORT_WIDTH : height
       const pixels = (Number(dimension[1]) * basis) / 100
       if (!Number.isFinite(pixels))
         throw new Error('Invalid print viewport length')
-      value.text = `${Number(pixels.toFixed(6))}px`
+      // Retain height dependence for the helper's temporary sizing probe.
+      // The normal basis stays fixed while the iframe grows for printing.
+      value.text =
+        useProbe && !widthAxis
+          ? `calc(${Number(dimension[1])} * var(--artifactshare-print-vh))`
+          : `${Number(pixels.toFixed(6))}px`
     }
     i = end - 1
+  }
+  for (const rule of propertyRules) {
+    const variants = [
+      [false, 760],
+      [false, 792],
+      [true, 760],
+      [true, 792],
+    ].map(([verticalAxis, viewportHeight]) => {
+      const copy = rule.tokens.map((t) => ({ ...t }))
+      freezePrintViewportValues(
+        copy,
+        Boolean(verticalAxis),
+        Number(viewportHeight),
+      )
+      return copy.map((t) => t.text).join('')
+    }) as PrintViewportRegistration['variants']
+    if (variants.some((variant) => variant !== variants[0])) {
+      // A custom-property supports declaration is always true. This neutral
+      // group retains the rule's cascade/conditional position while giving it
+      // per-export identity, even when distinct source values freeze identically.
+      const condition = `(--artifactshare-print-registration-${crypto.randomUUID()}: 0)`
+      tokens[rule.start].text =
+        `@supports ${condition}{${tokens[rule.start].text}`
+      tokens[rule.end].text += '}'
+      registrations!.push({ condition, variants })
+    }
   }
 }
 
@@ -636,9 +858,14 @@ export async function rewriteExportCss(
   css: string,
   resolve: (ref: string, css: boolean) => Promise<string>,
   forPrint = true,
+  frameViewport = true,
+  registrations?: PrintViewportRegistration[],
 ): Promise<string> {
   const tokens = cssTokens(css)
-  if (forPrint) freezePrintViewportValues(tokens)
+  // An SVG image is a separate document with its own fixed viewport. Its
+  // lengths must remain native; only the growing HTML frame needs freezing.
+  if (forPrint && frameViewport)
+    freezePrintViewportValues(tokens, false, PRINT_VIEWPORT_HEIGHT)
   const next = (i: number) => {
     while (tokens[i]?.kind === 'space') i++
     return i
@@ -756,6 +983,15 @@ export async function rewriteExportCss(
     }
   }
   await Promise.all(edits.map((edit) => edit()))
+  // Collect only fully embedded rules; helper variants must never reintroduce
+  // source resource URLs after acquisition and sanitization.
+  if (forPrint && frameViewport && registrations)
+    freezePrintViewportValues(
+      tokens,
+      false,
+      PRINT_VIEWPORT_HEIGHT,
+      registrations,
+    )
   return tokens.map((t) => t.text).join('')
 }
 
@@ -844,10 +1080,16 @@ async function prepareDocument(
   // the asynchronous deadline cannot interrupt work. UTF-8 is at least as long
   // as the UTF-16 code-unit count, so reject huge strings before allocating it.
   if (html.length > MAX_BYTES) throw new Error('Export exceeds resource budget')
-  let bytes = new TextEncoder().encode(html).length
+  if (new TextEncoder().encode(html).length > MAX_BYTES)
+    throw new Error('Export exceeds resource budget')
+  if (data.source.length > MAX_BYTES)
+    throw new Error('Export exceeds resource budget')
+  let bytes = new TextEncoder().encode(data.source).length
   if (bytes > MAX_BYTES) throw new Error('Export exceeds resource budget')
   const doc = inertExportDocument(html, forPrint)
   if (forPrint) sanitizeExportDocument(doc)
+  const registrations: PrintViewportRegistration[] = []
+  printViewportRegistrations.set(doc, registrations)
   let count = 0
   let embeddedBytes = 0
   const embedded = (uri: string) => {
@@ -896,6 +1138,7 @@ async function prepareDocument(
     base: string,
     css = false,
     ancestors: string[] = [],
+    frameViewport = true,
   ): Promise<string> {
     signal.throwIfAborted()
     const value = ref.trim()
@@ -935,8 +1178,11 @@ async function prepareDocument(
                 [
                   await rewriteExportCss(
                     decoded,
-                    (url, imported) => resource(url, base, imported, nested),
+                    (url, imported) =>
+                      resource(url, base, imported, nested, frameViewport),
                     forPrint,
+                    frameViewport,
+                    registrations,
                   ),
                 ],
                 { type: 'text/css' },
@@ -947,7 +1193,7 @@ async function prepareDocument(
         if (!css && /^data:image\/svg\+xml[;,]/i.test(value)) {
           const svgDoc = inertExportDocument(decoded)
           sanitizeExportDocument(svgDoc)
-          await rewriteDocumentResources(svgDoc, base, nested)
+          await rewriteDocumentResources(svgDoc, base, nested, false)
           const svg = svgDoc.querySelector('svg')
           if (!svg) throw new Error('Invalid inline SVG')
           svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
@@ -964,7 +1210,7 @@ async function prepareDocument(
       }
       if (
         css ||
-        !/^data:(?:image\/(?:png|jpeg|gif|webp|avif|bmp)|font\/[\w-]+|audio\/[\w-]+|video\/[\w-]+)[;,]/i.test(
+        !/^data:(?:image\/(?:png|jpeg|gif|webp|avif|bmp)|font\/[\w-]+|application\/(?:font-woff2?|woff2?|vnd.ms-fontobject)|audio\/[\w-]+|video\/[\w-]+)[;,]/i.test(
           value,
         )
       )
@@ -980,12 +1226,15 @@ async function prepareDocument(
     if (external) {
       const url = new URL(value, /^https:/.test(base) ? base : origin)
       if (
-        url.protocol !== 'https:' ||
+        !['https:', ...(!forPrint ? ['http:'] : [])].includes(url.protocol) ||
         url.origin === origin ||
         url.username ||
         url.password
       )
         throw new Error('Unsafe external asset')
+      // Downloads retain external display URLs without requiring CORS. Only
+      // PDF preparation acquires these anonymously into its closed frame.
+      if (!forPrint) return url.href
       fragment = url.hash
       url.hash = ''
       fetchUrl = url.href
@@ -995,7 +1244,7 @@ async function prepareDocument(
       fetchUrl = exportAssetHref(id, data.versionId, assetBase, origin)
       fragment = value.includes('#') ? value.slice(value.indexOf('#')) : ''
     }
-    const key = `${css}:${fetchUrl}`
+    const key = `${css}:${css && frameViewport}:${fetchUrl}`
     if (ancestors.includes(key) || ancestors.length >= MAX_DEPTH)
       throw new Error('Cyclic or deeply nested export CSS')
     addDependency(ancestors.at(-1), key)
@@ -1040,8 +1289,16 @@ async function prepareDocument(
           const rewritten = await rewriteExportCss(
             await blob.text(),
             (url, imported) =>
-              resource(url, assetBase, imported, [...ancestors, key]),
+              resource(
+                url,
+                assetBase,
+                imported,
+                [...ancestors, key],
+                frameViewport,
+              ),
             forPrint,
+            frameViewport,
+            registrations,
           )
           return dataUri(new Blob([rewritten], { type: 'text/css' }))
         }
@@ -1061,7 +1318,20 @@ async function prepareDocument(
     resourceDoc: InertExportDocument,
     base: string,
     ancestors: string[] = [],
+    frameViewport = true,
   ) {
+    if (forPrint) {
+      // Captions and moving media do not paint on paper. Keep the video box
+      // and poster, but never acquire playback bytes or leave live sources.
+      resourceDoc
+        .querySelectorAll('audio,video,track,audio source,video source')
+        .forEach((el) => {
+          el.removeAttribute('src')
+          el.removeAttribute('srcset')
+          el.removeAttribute('autoplay')
+          el.setAttribute('preload', 'none')
+        })
+    }
     const pending: Array<() => Promise<unknown>> = []
     for (const el of resourceDoc.querySelectorAll('*')) {
       if (forPrint && ['style', 'link', 'source'].includes(el.localName)) {
@@ -1070,6 +1340,7 @@ async function prepareDocument(
       }
       if (
         ['script', 'iframe', 'object', 'embed'].includes(el.localName) ||
+        (['style', 'link'].includes(el.localName) && !isExportCssType(el)) ||
         (el.localName === 'link' && !isExportStylesheet(el))
       )
         continue
@@ -1094,11 +1365,19 @@ async function prepareDocument(
         // Rewritten CSS bytes no longer match a source-page integrity hash.
         el.removeAttribute('integrity')
         const href = el.getAttribute('href')
-        if (href)
+        if (
+          href?.trim() &&
+          !href.trim().startsWith('#') &&
+          (!forPrint || !el.hasAttribute('disabled'))
+        )
           pending.push(() =>
-            resource(href, base, true, ancestors).then((uri) =>
-              el.setAttribute('href', uri),
-            ),
+            resource(href, base, true, ancestors, frameViewport).then((uri) => {
+              // Keep stylesheet loads anonymous. The print bootstrap creates
+              // frame-local blobs for CSSOM access; data: imports alone are
+              // not origin-clean in every supported engine.
+              if (forPrint) el.setAttribute('crossorigin', 'anonymous')
+              el.setAttribute('href', uri)
+            }),
           )
       }
       const srcset = el.getAttribute('srcset')
@@ -1125,8 +1404,12 @@ async function prepareDocument(
         const value = el.getAttribute(attr)
         if (value)
           pending.push(() =>
-            rewriteExportCss(value, (url, css) =>
-              resource(url, base, css, ancestors),
+            rewriteExportCss(
+              value,
+              (url, css) => resource(url, base, css, ancestors, frameViewport),
+              forPrint,
+              frameViewport,
+              registrations,
             ).then((rewritten) => el.setAttribute(attr, rewritten)),
           )
       }
@@ -1135,16 +1418,20 @@ async function prepareDocument(
         pending.push(() =>
           rewriteExportCss(
             style,
-            (url, css) => resource(url, base, css, ancestors),
+            (url, css) => resource(url, base, css, ancestors, frameViewport),
             forPrint,
+            frameViewport,
+            registrations,
           ).then((css) => el.setAttribute('style', css)),
         )
       if (el.localName === 'style')
         pending.push(() =>
           rewriteExportCss(
             el.textContent ?? '',
-            (url, css) => resource(url, base, css, ancestors),
+            (url, css) => resource(url, base, css, ancestors, frameViewport),
             forPrint,
+            frameViewport,
+            registrations,
           ).then((css) => {
             el.textContent = css
           }),
@@ -1196,12 +1483,19 @@ async function prepareDocument(
       presentation.textContent = MARKDOWN_PRINT_STYLE
       doc.head.appendChild(presentation)
     }
-    const { PRINT_FONT_STYLE, PRINT_FONT_FAMILY } = await loadPrintFont()
+    const { PRINT_FONT_ATTRIBUTION, PRINT_FONT_FAMILY, PRINT_FONT_FACES } =
+      await loadPrintFont()
     signal.throwIfAborted()
     const style = doc.createElement('style')
-    style.textContent = `${PRINT_FONT_STYLE} ${printViewportStyle} html,body{background:#fff!important;color:#37352f;font-family:${PRINT_FONT_FAMILY},sans-serif!important;margin:0!important;min-height:0!important} img,svg,canvas,video{max-width:100%}`
+    printFontFaces.set(doc, PRINT_FONT_FACES)
+    style.textContent = `${PRINT_FONT_ATTRIBUTION} ${printViewportStyle} html,body{background:#fff!important;color:#37352f;font-family:${PRINT_FONT_FAMILY},sans-serif!important;margin:0!important;min-height:0!important} img,svg,canvas,video{max-width:100%}`
     doc.head.insertBefore(style, doc.head.firstChild)
   }
+  // The helper carries four numeric registration variants. Charge those
+  // serialized bytes too, independently of deduplicated acquisition bytes.
+  for (const registration of registrations)
+    for (const variant of [registration.condition, ...registration.variants])
+      embedded(variant)
   signal.throwIfAborted()
   return doc
 }

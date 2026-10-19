@@ -78,7 +78,10 @@ export const exportPdfObservation = defineBrowserCommand(
       const listen = (request: Request) => {
         const url = new URL(request.url())
         if (url.protocol === 'data:') return
-        if (url.pathname.startsWith('/__pdf_probe')) {
+        if (
+          url.pathname.startsWith('/__pdf_probe') ||
+          (url.origin === origin && request.resourceType() === 'stylesheet')
+        ) {
           // Some engines emit request events even for CSP-blocked attempts.
           // Keep those diagnostics separate from dispatch to the route below.
           recordRequest(request, attempts)
@@ -362,6 +365,9 @@ export const inspectExportPdf = defineBrowserCommand(
         }
         return {
           parentDenied,
+          registeredShellHeight:
+            document.querySelector('.app')?.getBoundingClientRect().height ??
+            null,
           mathLayout: {
             fractions: document.querySelectorAll('math mfrac').length,
             namespace: document.querySelector('math')?.namespaceURI ?? null,
@@ -401,6 +407,8 @@ export const inspectExportPdf = defineBrowserCommand(
                 }
               : null
           })(),
+          rootWritingMode: getComputedStyle(document.documentElement)
+            .writingMode,
           rootScrollHeight: document.documentElement.scrollHeight,
           rootAfterContent: getComputedStyle(
             document.documentElement,
@@ -444,11 +452,47 @@ export const inspectExportPdf = defineBrowserCommand(
               (element) => element.getBoundingClientRect().bottom + scrollY,
             ),
           ),
+          viewport: {
+            innerWidth,
+            clientWidth: document.documentElement.clientWidth,
+            bodyWidth: document.body.getBoundingClientRect().width,
+          },
+          flowWidths: Array.from(document.querySelectorAll('nav, main')).map(
+            (element) => element.getBoundingClientRect().width,
+          ),
           finalMarker: (() => {
             const marker = document.getElementById('pdf-final-marker')
             if (!marker) return null
             const rect = marker.getBoundingClientRect()
+            let clipped = false
+            for (
+              let node = marker.parentElement;
+              node && node !== document.documentElement;
+              node = node.parentElement
+            ) {
+              const style = getComputedStyle(node)
+              const root = getComputedStyle(document.documentElement)
+              const viewport =
+                node === document.body &&
+                root.overflowX === 'visible' &&
+                root.overflowY === 'visible'
+              if (
+                !viewport &&
+                ['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowY)
+              ) {
+                const box = node.getBoundingClientRect()
+                const top = box.top + node.clientTop
+                if (
+                  rect.top < top - 1 ||
+                  rect.bottom > top + node.clientHeight + 1
+                )
+                  clipped = true
+              }
+            }
             return {
+              clipped,
+              left: rect.left,
+              right: rect.right,
               top: rect.top,
               bottom: rect.bottom,
               visible:
@@ -660,9 +704,20 @@ declare module 'vitest/browser' {
       activeNavigationCount: number
       imageSources: string[]
       imageScreenshots: string[]
-      finalMarker: { top: number; bottom: number; visible: boolean } | null
+      viewport: { innerWidth: number; clientWidth: number; bodyWidth: number }
+      flowWidths: number[]
+      finalMarker: {
+        left: number
+        right: number
+        top: number
+        bottom: number
+        visible: boolean
+        clipped: boolean
+      } | null
+      rootWritingMode: string
       layoutHeight: number
       parentDenied: boolean
+      registeredShellHeight: number | null
       origin: string
       text: string
       svgCount: number
