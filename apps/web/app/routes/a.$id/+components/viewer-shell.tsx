@@ -1122,6 +1122,7 @@ export function useViewerComments({
       kind: 'renewal' | 'bounded',
       delay: number,
     ) => {
+      delay += Math.random() * Math.min(250, delay / 4)
       const attempt =
         kind === 'renewal' ? renewalAttempts + 1 : boundedAttempts + 1
       logViewerNetworkEvent({
@@ -1194,7 +1195,11 @@ export function useViewerComments({
         stopRecovery()
         return
       }
-      let delay = Math.min(1000 * 2 ** reconnectAttempt, 30_000)
+      const base = Math.min(1000 * 2 ** reconnectAttempt, 30_000)
+      let delay = Math.min(
+        base + Math.random() * Math.min(250, base / 4),
+        30_000,
+      )
       reconnectAttempt += 1
       if (ordinaryIndeterminate && boundary !== null) {
         delay = Math.min(delay, Math.max(0, boundary - Date.now()))

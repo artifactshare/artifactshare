@@ -533,9 +533,17 @@ async function handleArtifactLiveRequest(
     String(authorizationDeadlineMs),
   )
 
-  return env.ARTIFACT_LIVE.getByName(shareableId).fetch(
-    new Request(liveUrl, request),
-  )
+  try {
+    return await env.ARTIFACT_LIVE.getByName(shareableId).fetch(
+      new Request(liveUrl, request),
+    )
+  } catch {
+    // Includes constructor/storage failure before the room can return a response.
+    return new Response('Live connection unavailable', {
+      status: 503,
+      headers: { 'Cache-Control': 'private, no-store' },
+    })
+  }
 }
 
 function livePresenceFromUser(user: {

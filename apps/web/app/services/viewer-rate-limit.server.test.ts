@@ -118,6 +118,7 @@ describe('isViewerRateLimitedPath', () => {
     ['GET', '/a/example/%2Fversions'],
     ['GET', '/a/example/%ZZ'],
     ['GET', '/about'],
+    ['GET', '/api/shareables/abc123def4/live'],
   ])('excludes %s %s', (method, pathname) => {
     expect(
       isViewerRateLimitedPath(

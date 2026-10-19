@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Bound artifact live connections to eight tabs per viewer and 128 per room, coalesce presence updates, and stagger reconnect retries while preserving HTTP viewing and comments.
+
 - Revoke API tokens and AI tool OAuth credentials when a workspace member is removed.
 
 - Preserve every version people added when applying retention to publisher-managed artifacts; update bundled retention guidance and CLI help.

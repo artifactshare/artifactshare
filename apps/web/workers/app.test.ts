@@ -923,6 +923,163 @@ describe('app worker lazy-init anchoring', () => {
 })
 
 describe('app worker artifact live route', () => {
+  test.each([429, 503, 'exception'] as const)(
+    'returns private room overload/setup responses for %s',
+    async (status) => {
+      getBrowserSessionContextMock.mockResolvedValue({
+        user: {
+          id: 'user-1',
+          email: 'owner@example.com',
+          name: 'Owner',
+          image: null,
+        },
+        sessionExpiresAtMs: null,
+      })
+      loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
+      const expectedStatus = status === 'exception' ? 503 : status
+      const roomResponse = new Response('Live connection unavailable', {
+        status: expectedStatus,
+        headers: { 'Cache-Control': 'private, no-store' },
+      })
+      const roomFetch = vi.fn(async () => {
+        if (status === 'exception') throw new Error('room unavailable')
+        return roomResponse
+      })
+      const response = await app.fetch(
+        workerRequest(
+          'https://artifactshare.com/api/shareables/abc123def4/live',
+          { headers: { upgrade: 'websocket' } },
+        ),
+        {
+          ...productionEnv({ maintenance: false }),
+          ARTIFACT_LIVE: { getByName: () => ({ fetch: roomFetch }) },
+        } as unknown as Cloudflare.Env,
+        executionContext(),
+      )
+      expect(response.status).toBe(expectedStatus)
+      expect(response.headers.get('cache-control')).toBe('private, no-store')
+      expect(await response.text()).toBe('Live connection unavailable')
+    },
+  )
+
+  test('real room cap rejections preserve the HTTP viewer budget and comment route', async () => {
+    const now = 1_800_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    vi.stubGlobal('WebSocket', { OPEN: 1, CLOSING: 2, CLOSED: 3 })
+    vi.stubGlobal('WebSocketRequestResponsePair', class {})
+    try {
+      const { ArtifactLiveRoom } = await import('./artifact-live-room')
+      const retained = Array.from({ length: 8 }, () => ({
+        readyState: 1,
+        deserializeAttachment: () => ({
+          version: 1,
+          presence: { id: 'user-1', name: 'Owner', initial: 'O', image: null },
+          authorizationDeadlineMs: now + 60_000,
+        }),
+        send: vi.fn(),
+        close: vi.fn(),
+      }))
+      const data = new Map<string, unknown>()
+      let alarm: number | null = null
+      let initialized = Promise.resolve()
+      const room = new ArtifactLiveRoom(
+        {
+          setWebSocketAutoResponse: vi.fn(),
+          getWebSockets: () => retained,
+          blockConcurrencyWhile: (callback: () => Promise<void>) => {
+            initialized = callback()
+            return initialized
+          },
+          storage: {
+            get: async (key: string) => data.get(key),
+            put: async (key: string, value: unknown) => {
+              data.set(key, structuredClone(value))
+            },
+            getAlarm: async () => alarm,
+            setAlarm: async (deadline: number) => {
+              alarm = deadline
+            },
+            deleteAlarm: async () => {
+              alarm = null
+            },
+          },
+        } as unknown as DurableObjectState,
+        {} as Cloudflare.Env,
+      )
+      await initialized
+      getBrowserSessionContextMock.mockResolvedValue({
+        user: {
+          id: 'user-1',
+          email: 'owner@example.com',
+          name: 'Owner',
+          image: null,
+        },
+        sessionExpiresAtMs: now + 60_000,
+      })
+      loadCommentAccessMock.mockResolvedValue({ shareableId: 'abc123def4' })
+      // One HTTP view is available; live attempts must not spend it.
+      const limit = vi
+        .fn()
+        .mockResolvedValueOnce({ success: true })
+        .mockResolvedValue({ success: false })
+      const env = {
+        ...productionEnv({ maintenance: false }),
+        VIEWER_RATELIMIT: { limit },
+        ARTIFACT_LIVE: { getByName: () => room },
+      } as unknown as Cloudflare.Env
+      const headers = { 'cf-connecting-ip': '203.0.113.10' }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const response = await app.fetch(
+          workerRequest(
+            'https://artifactshare.com/api/shareables/abc123def4/live',
+            { headers: { ...headers, upgrade: 'websocket' } },
+          ),
+          env,
+          executionContext(),
+        )
+        expect(response.status).toBe(429)
+        expect(response.headers.get('cache-control')).toBe('private, no-store')
+      }
+      expect(data.get('admission-budget')).toMatchObject({ tokens: 509 })
+      expect(limit).not.toHaveBeenCalled()
+      expect(
+        retained.every(
+          (ws) =>
+            ws.close.mock.calls.length === 0 && ws.send.mock.calls.length === 0,
+        ),
+      ).toBe(true)
+      const view = await app.fetch(
+        workerRequest('https://artifactshare.com/a/abc123def4', { headers }),
+        env,
+        executionContext(),
+      )
+      expect(view.status).toBe(200)
+      expect(limit).toHaveBeenCalledTimes(1)
+      const comment = await app.fetch(
+        workerRequest(
+          'https://artifactshare.com/api/shareables/abc123def4/comments',
+          { method: 'POST', headers },
+        ),
+        env,
+        executionContext(),
+      )
+      expect(comment.status).toBe(200)
+      expect(limit).toHaveBeenCalledTimes(1)
+      expect(requestHandlerMock).toHaveBeenCalledTimes(2)
+      // The HTTP handlers are controlled here; their authorization/mutation
+      // behavior is covered by the comments service and route suites.
+      const limitedView = await app.fetch(
+        workerRequest('https://artifactshare.com/a/abc123def4', { headers }),
+        env,
+        executionContext(),
+      )
+      expect(limitedView.status).toBe(429)
+      expect(limit).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   test('authenticates and proxies websocket upgrades to the live room', async () => {
     getBrowserSessionContextMock.mockResolvedValue({
       user: {
