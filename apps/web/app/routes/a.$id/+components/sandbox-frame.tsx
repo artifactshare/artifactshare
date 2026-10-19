@@ -144,6 +144,9 @@ type SandboxFrameProps = {
   children?: ReactNode
 }
 
+export const SANDBOX_FRAME_ALLOW =
+  'fullscreen; clipboard-write; language-model; summarizer; translator; language-detector'
+
 const SANDBOX_FRAME_BASE_CLASS_NAME = 'block h-full w-full border-0'
 const AUTOMATIC_RECOVERY_ATTEMPT_LIMIT = 1
 
@@ -201,7 +204,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
           data-src={controller.frameUrl.split('#')[0]}
           src={frameSrc}
           suppressHydrationWarning
-          allow="fullscreen; clipboard-write"
+          allow={SANDBOX_FRAME_ALLOW}
           sandbox={sandboxPermissions}
           referrerPolicy="no-referrer"
           className={`${sandboxFrameSurfaceClassName(props.followsAppTheme)} ${controller.loadState !== 'ready' && controller.loadState !== 'loading' ? 'hidden' : ''}`}
@@ -216,7 +219,7 @@ export function SandboxFrame(props: SandboxFrameProps) {
           <iframe
             title={name}
             src={props.url.split('#')[0]}
-            allow="fullscreen; clipboard-write"
+            allow={SANDBOX_FRAME_ALLOW}
             sandbox={sandboxPermissions}
             referrerPolicy="no-referrer"
             className={`absolute inset-0 z-10 ${sandboxFrameSurfaceClassName(props.followsAppTheme)}`}

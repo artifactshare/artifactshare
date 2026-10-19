@@ -21,7 +21,7 @@ const EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES =
   EMBED_FRAME_CSP_SOURCES.split(' ')
     .map((source) => `"${source}"`)
     .join(' ')
-export const PERMISSIONS_POLICY = `fullscreen=(self ${EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES}), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=()`
+export const PERMISSIONS_POLICY = `fullscreen=(self ${EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES}), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=(), language-model=(self), summarizer=(self), translator=(self), language-detector=(self)`
 const MEDIA_CSP_SOURCES = "'self' https: data: blob:"
 
 export function artifactContentSecurityPolicy(
