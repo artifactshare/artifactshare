@@ -1,3 +1,4 @@
+import { parseCommentPageQuery } from '../comment-message-window.server'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   ARTIFACT_APPEND_REQUEST_SCHEMA,
@@ -81,6 +82,7 @@ import {
   loadCommentAccess,
   loadCommentAccessForThread,
   loadCommentThreads,
+  loadCommentThreadPage,
   postArtifactComment,
   type ChangeCommentInput,
   type CommentMutationResult,
@@ -96,7 +98,10 @@ import {
 } from './identity.server'
 import { findRecentPublish, recordArtifactPost } from './posts.server'
 import { ARTIFACT_PREVIEW_TEMPLATE_URI } from './preview-widget.server'
-import { toAgentCommentThread } from '~/services/artifact-readback.server'
+import {
+  toAgentCommentThread,
+  toAgentCommentMessage,
+} from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
 import { securityAuditInsertQuery } from '~/services/security-audit.server'
@@ -245,6 +250,9 @@ const VERSION_ITEM_SCHEMA = mcpOutputField(
 
 const COMMENT_THREAD_SCHEMA = mcpOutputField(
   z.object({
+    message_count: z.number(),
+    reply_count: z.number(),
+    older_cursor: z.string().nullable(),
     id: z.string(),
     status: z.enum(['open', 'resolved']),
     resolved_at: z.string().nullable(),
@@ -354,7 +362,9 @@ const POST_COMMENT_OUTPUT_SCHEMA = {
     COMMENT_POST_RESPONSE_SCHEMA.shape.thread_id,
   ),
   reply: COMMENT_POST_RESPONSE_SCHEMA.shape.reply,
-  thread: COMMENT_THREAD_SCHEMA,
+  thread: COMMENT_THREAD_SCHEMA.optional(),
+  changed_message: COMMENT_THREAD_SCHEMA.shape.messages.element.optional(),
+  refresh_required: z.boolean().optional(),
 }
 
 const UPDATE_COMMENT_OUTPUT_SCHEMA = {
@@ -362,7 +372,9 @@ const UPDATE_COMMENT_OUTPUT_SCHEMA = {
     z.string(),
     COMMENT_ACTION_RESPONSE_SCHEMA.shape.thread_id,
   ),
-  thread: COMMENT_THREAD_SCHEMA,
+  thread: COMMENT_THREAD_SCHEMA.optional(),
+  changed_message: COMMENT_THREAD_SCHEMA.shape.messages.element.optional(),
+  refresh_required: z.boolean().optional(),
 }
 
 const LIST_COMMENTS_OUTPUT_SCHEMA = {
@@ -389,6 +401,7 @@ const DELETE_COMMENT_OUTPUT_SCHEMA = {
   ),
   thread_deleted: COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread_deleted,
   thread: COMMENT_THREAD_SCHEMA.optional(),
+  refresh_required: z.boolean().optional(),
 }
 
 const PROJECT_CREATE_FIELDS = PROJECT_CREATE_RESPONSE_SCHEMA.shape.project.shape
@@ -1223,11 +1236,15 @@ export function registerArtifactTools(
     {
       title: 'List comments',
       description: toolDescription(
-        'List comment threads on an artifact you can view in your workspace. Returns thread ids, message ids, authors, bodies, and resolution status — use those ids with post_comment, update_comment, delete_comment, resolve_comment, or reopen_comment. Does not return the artifact source; call get_artifact for that. If you do not know the id, call list_artifacts first.',
+        'List comment threads on an artifact you can view in your workspace. Returns at most 50 open-first threads, each with its first message and latest three replies, message_count, reply_count and older_cursor. For older replies pass thread_id and before=older_cursor (limit 1–50); repeat until older_cursor is null. around_message_id retrieves a bounded target-containing page and cannot be combined with before. Returns thread ids, message ids, authors, bodies, and resolution status — use those ids with post_comment, update_comment, delete_comment, resolve_comment, or reopen_comment. Does not return the artifact source; call get_artifact for that. If you do not know the id, call list_artifacts first.',
       ),
       outputSchema: LIST_COMMENTS_OUTPUT_SCHEMA,
       annotations: READ_ONLY_ANNOTATIONS,
       inputSchema: {
+        thread_id: z.string().max(128).optional(),
+        before: z.string().max(1024).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        around_message_id: z.string().max(128).optional(),
         id: ArtifactIdParamsSchema.shape.id.describe(
           'The artifact id from list_artifacts or share_artifact.',
         ),
@@ -1243,12 +1260,47 @@ export function registerArtifactTools(
       const access = await loadCommentAccess(ctx.db, sessionUser, args.id)
       if (!access) return artifactNotViewableError()
 
-      const threads = await loadCommentThreads(ctx.db, access, sessionUser)
+      const params = new URLSearchParams()
+      for (const key of [
+        'thread_id',
+        'before',
+        'limit',
+        'around_message_id',
+      ] as const) {
+        if (args[key] !== undefined) params.set(key, String(args[key]))
+      }
+      const page = parseCommentPageQuery(params)
+      if (page.kind === 'invalid-page')
+        return toolError({
+          code: 'invalid-page',
+          message:
+            'Use thread_id with before or around_message_id, and limit 1–50.',
+          recoverable_by: 'agent',
+        })
+      let threads
+      if (page.kind === 'thread') {
+        const result = await loadCommentThreadPage(
+          ctx.db,
+          access,
+          sessionUser,
+          page.threadId,
+          page.request,
+        )
+        if (result.kind === 'not-found') return threadNotFoundError()
+        if (result.kind === 'invalid-page')
+          return toolError({
+            code: 'invalid-page',
+            message: 'Invalid comment cursor or limit.',
+            recoverable_by: 'agent',
+          })
+        threads = [result.thread]
+      } else threads = await loadCommentThreads(ctx.db, access, sessionUser)
       return jsonResult({
         artifact_id: args.id,
         share_url: shareUrl(ctx.baseUrl, args.id, access.visibility),
         comments: threads.map(toAgentCommentThread),
-        comments_has_more: threads.length >= COMMENT_THREAD_LIST_LIMIT,
+        comments_has_more:
+          page.kind === 'panel' && threads.length >= COMMENT_THREAD_LIST_LIMIT,
       })
     },
   )
@@ -1333,7 +1385,13 @@ export function registerArtifactTools(
         share_url: shareUrl(ctx.baseUrl, args.id, result.visibility),
         thread_id: result.threadId,
         reply: result.reply,
-        thread: toAgentCommentThread(result.thread),
+        ...(result.thread
+          ? { thread: toAgentCommentThread(result.thread) }
+          : {}),
+        ...('changedMessage' in result && result.changedMessage
+          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
       })
     },
   )
@@ -1388,7 +1446,13 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        thread: toAgentCommentThread(result.thread),
+        ...(result.thread
+          ? { thread: toAgentCommentThread(result.thread) }
+          : {}),
+        ...('changedMessage' in result && result.changedMessage
+          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
       })
     },
   )
@@ -1438,7 +1502,13 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        thread: toAgentCommentThread(result.thread),
+        ...(result.thread
+          ? { thread: toAgentCommentThread(result.thread) }
+          : {}),
+        ...('changedMessage' in result && result.changedMessage
+          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
       })
     },
   )
@@ -1488,7 +1558,13 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        thread: toAgentCommentThread(result.thread),
+        ...(result.thread
+          ? { thread: toAgentCommentThread(result.thread) }
+          : {}),
+        ...('changedMessage' in result && result.changedMessage
+          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
       })
     },
   )
@@ -1550,6 +1626,10 @@ export function registerArtifactTools(
         thread_id: args.thread_id,
         deleted: true,
         thread_deleted: result.threadDeleted,
+        ...(result.deletedMessageId
+          ? { deleted_message_id: result.deletedMessageId }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
         ...(result.thread
           ? { thread: toAgentCommentThread(result.thread) }
           : {}),
@@ -1899,6 +1979,8 @@ function toolError(error: {
   recoverable_by: 'agent' | 'human'
   hint?: string
   upgrade_request?: UpgradeRequest
+  retry_after_seconds?: number
+  retry_at?: string
 }): ToolTextResult {
   return { isError: true, content: textContent({ error }) }
 }
@@ -2224,6 +2306,20 @@ function commentMutationError(
   result: Exclude<CommentMutationResult, { kind: 'ok' }>,
 ): ToolTextResult {
   switch (result.kind) {
+    case 'thread-capacity':
+      return toolError({
+        code: result.kind,
+        message: 'This thread has 500 messages. Start a new thread.',
+        recoverable_by: 'agent',
+      })
+    case 'rate-limited':
+      return toolError({
+        code: result.kind,
+        message: 'Posting limit reached. Wait before retrying.',
+        recoverable_by: 'agent',
+        retry_after_seconds: result.retry_after_seconds,
+        retry_at: result.retry_at,
+      })
     case 'invalid-body':
       return toolError({
         code: 'invalid-comment',
@@ -2315,6 +2411,9 @@ function commentActionError(
   result: Exclude<CommentMutationResult, { kind: 'ok' }>,
 ): ToolTextResult {
   switch (result.kind) {
+    case 'thread-capacity':
+    case 'rate-limited':
+      return commentMutationError(result)
     case 'invalid-body':
       return toolError({
         code: 'invalid-comment',

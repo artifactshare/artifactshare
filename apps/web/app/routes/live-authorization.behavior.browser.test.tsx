@@ -7,7 +7,38 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
 import type { CommentThreadView } from '~/lib/comments'
 import { VIEWER_FETCH_TIMEOUT_MS } from '~/lib/viewer-network'
-import { COMMENT_MUTATION_SETTLED_EVENT } from './a.$id/+components/use-comment-mutations'
+import {
+  COMMENT_MUTATION_SETTLED_EVENT,
+  useCommentMutations,
+  type CommentMutationPayload,
+} from './a.$id/+components/use-comment-mutations'
+import type { ChangeCommentThreads } from './a.$id/+components/comment-history'
+
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useRevalidator: () => ({ revalidate: vi.fn() }),
+}))
+vi.mock('~/hooks/use-t', async () => {
+  const { bindI18n } = await import('~/lib/i18n')
+  return { useT: () => bindI18n('en') }
+})
+
+function LocalWriter({
+  onThreadsChange,
+  payload,
+}: {
+  onThreadsChange: ChangeCommentThreads
+  payload: CommentMutationPayload
+}) {
+  const { mutate } = useCommentMutations({
+    shareableId: 'artifact-1',
+    isCurrentShareableId: () => true,
+    onThreadsChange,
+  })
+  return (
+    <button onClick={() => void mutate(payload)}>Commit local mutation</button>
+  )
+}
 
 class ControlledWebSocket extends EventTarget {
   static readonly CONNECTING = 0
@@ -70,6 +101,9 @@ const localThread: CommentThreadView = {
   updatedAt: '2026-09-19T00:00:00Z',
   resolvedAt: null,
   canResolve: true,
+  messageCount: 0,
+  replyCount: 0,
+  olderCursor: null,
   messages: [],
 }
 
@@ -77,10 +111,18 @@ const oldThread: CommentThreadView = { ...localThread, id: 'old-thread' }
 
 function Harness({
   artifactId = 'artifact-1',
+  initialThreads = [],
   mutation,
+  liveEnabled = true,
+  localMutation,
+  showDraft = false,
 }: {
   artifactId?: string
+  initialThreads?: CommentThreadView[]
   mutation?: { requiresReconcile: boolean }
+  liveEnabled?: boolean
+  localMutation?: CommentMutationPayload
+  showDraft?: boolean
 }) {
   const [connected, setConnected] = useState(false)
   const comments = useViewerComments({
@@ -88,14 +130,17 @@ function Harness({
     artifactId,
     currentUserId: 'user-1',
     currentVersionId: 'version-1',
-    initialThreads: [],
+    initialThreads,
     targetCommentId: null,
-    liveEnabled: true,
+    liveEnabled,
     onLiveConnectionChanged: setConnected,
   })
   return (
     <>
       <output
+        data-messages={JSON.stringify(
+          comments.state.threads.flatMap((thread) => thread.messages),
+        )}
         data-connected={String(connected)}
         data-threads={comments.state.threads
           .map((thread) => thread.id)
@@ -103,6 +148,18 @@ function Harness({
       >
         {comments.presence.map((presence) => presence.name).join(',')}
       </output>
+      {(localMutation || showDraft) && (
+        <textarea
+          aria-label="Unrelated draft"
+          defaultValue="Keep this unsent reply"
+        />
+      )}
+      {localMutation && (
+        <LocalWriter
+          onThreadsChange={comments.replaceThreads}
+          payload={localMutation}
+        />
+      )}
       {mutation && (
         <button
           onClick={() => {
@@ -124,6 +181,50 @@ function Harness({
       )}
     </>
   )
+}
+
+function expandedFixture(): CommentThreadView {
+  const at = '2026-05-01T00:00:00.000Z'
+  const cursor = btoa(
+    JSON.stringify([1, localThread.id, at, 'message-4']),
+  ).replace(/=+$/, '')
+  return {
+    ...localThread,
+    messageCount: 7,
+    replyCount: 6,
+    olderCursor: null,
+    loadedPages: [{ before: cursor, limit: 50 }],
+    messages: Array.from({ length: 7 }, (_, i) => ({
+      id: `message-${i}`,
+      body: `Reply ${i}`,
+      createdAt: at,
+      updatedAt: at,
+      agent: null,
+      author: {
+        id: 'user-1',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: true,
+      canDelete: true,
+    })),
+  }
+}
+
+function initialWindow(thread: CommentThreadView): CommentThreadView {
+  return thread.loadedPages?.length
+    ? {
+        ...thread,
+        messages: [thread.messages[0], ...thread.messages.slice(-3)],
+        olderCursor: thread.loadedPages[0].before!,
+        loadedPages: undefined,
+      }
+    : thread
+}
+
+function authorizedResponseForMutation(body: unknown) {
+  return Promise.resolve(observeAuthorizedBody(Response.json(body)))
 }
 
 // Retain native JSON reads, including reads from deliberately aborted fetches.
@@ -220,6 +321,548 @@ describe('bounded live authorization browser lifecycle', () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = false
     vi.useRealTimers()
+  })
+
+  test.each([
+    { intent: 'create-thread', liveEnabled: false, stopped: false },
+    { intent: 'delete-thread', liveEnabled: false, stopped: false },
+    { intent: 'resolve', liveEnabled: false, stopped: false },
+    { intent: 'create-thread', liveEnabled: true, stopped: false },
+    { intent: 'delete-thread', liveEnabled: true, stopped: false },
+    { intent: 'resolve', liveEnabled: true, stopped: false },
+    { intent: 'create-thread', liveEnabled: true, stopped: true },
+    { intent: 'delete-thread', liveEnabled: true, stopped: true },
+    { intent: 'resolve', liveEnabled: true, stopped: true },
+    { intent: 'create-thread', liveEnabled: true, stopped: true, hidden: true },
+    { intent: 'delete-thread', liveEnabled: true, stopped: true, hidden: true },
+  ] as const)(
+    'reconciles local $intent at the 50-thread boundary (live=$liveEnabled, stopped=$stopped, hidden=$hidden)',
+    async (scenario) => {
+      const { intent, liveEnabled, stopped } = scenario
+      const hidden = 'hidden' in scenario && scenario.hidden
+      const initial = Array.from({ length: 50 }, (_, i) => ({
+        ...localThread,
+        id: `selected-${i}`,
+      }))
+      const retained = expandedFixture()
+      initial[1] = retained
+      const added = { ...localThread, id: 'newly-selected' }
+      const selected = [added, ...initial.slice(1)].map((thread) =>
+        thread.id === retained.id ? initialWindow(thread) : thread,
+      )
+      const changed =
+        intent === 'create-thread'
+          ? added
+          : { ...initial[0], status: 'resolved' as const }
+      const payload: CommentMutationPayload =
+        intent === 'create-thread'
+          ? { intent, body: 'New thread' }
+          : { intent, threadId: initial[0].id }
+      await act(async () =>
+        root.render(
+          <Harness
+            key="local-boundary"
+            initialThreads={initial}
+            liveEnabled={liveEnabled}
+            localMutation={payload}
+          />,
+        ),
+      )
+      fetchMock.mockImplementation(() => authorizedResponse(initial))
+      if (liveEnabled) {
+        // The initial connection uses bounded windows; retain the existing page.
+        fetchMock.mockImplementation((input: string) =>
+          authorizedResponse(
+            input.includes('?') ? [retained] : initial.map(initialWindow),
+          ),
+        )
+        await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+        await waitForThreads(initial.map((thread) => thread.id).join(','))
+      }
+      if (stopped) {
+        fetchMock.mockResolvedValueOnce(new Response(null, { status: 403 }))
+        await act(async () =>
+          ControlledWebSocket.instances
+            .at(-1)!
+            .fail(4401, 'live-authorization-expired'),
+        )
+        await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+        await flush()
+        expect(host.querySelector('output')!.dataset.connected).toBe('false')
+      }
+      if (hidden) {
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+        await act(async () =>
+          document.dispatchEvent(new Event('visibilitychange')),
+        )
+      }
+      fetchMock.mockClear()
+      fetchMock.mockImplementation((input: string, init: RequestInit) =>
+        init?.method === 'POST'
+          ? authorizedResponseForMutation(
+              intent === 'delete-thread'
+                ? {
+                    threads: [],
+                    threadId: initial[0].id,
+                    deletedThreadId: initial[0].id,
+                  }
+                : { threads: [changed], threadId: changed.id },
+            )
+          : authorizedResponse(input.includes('?') ? [retained] : selected),
+      )
+      await act(async () =>
+        [...host.querySelectorAll('button')]
+          .find((button) => button.textContent === 'Commit local mutation')!
+          .click(),
+      )
+      if (hidden) {
+        await settleAuthorizedResponses()
+        expect(
+          fetchMock.mock.calls.filter((call) => call[1]?.method !== 'POST'),
+        ).toHaveLength(0)
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+        await act(async () =>
+          document.dispatchEvent(new Event('visibilitychange')),
+        )
+      }
+      await waitForThreads(selected.map((thread) => thread.id).join(','))
+      if (stopped) {
+        // Never open any replacement socket. HTTP reconciliation must already
+        // have restored membership, and survive exhaustion of all retries.
+        for (const delay of [2_000, 4_000, 0]) {
+          await act(async () => ControlledWebSocket.instances.at(-1)!.fail())
+          if (delay) await advance(delay)
+        }
+        await flush()
+        expect(host.querySelector('output')!.dataset.connected).toBe('false')
+        expect(host.querySelector('output')!.dataset.threads).toBe(
+          selected.map((thread) => thread.id).join(','),
+        )
+      }
+      expect(
+        host.querySelector('output')!.dataset.threads!.split(','),
+      ).toHaveLength(50)
+      expect(host.querySelector('output')!.dataset.messages).toContain(
+        'Reply 2',
+      )
+      expect(host.querySelector('textarea')!.value).toBe(
+        'Keep this unsent reply',
+      )
+      expect(
+        fetchMock.mock.calls
+          .filter((call) => call[1]?.method !== 'POST')
+          .map((call) => String(call[0])),
+      ).toEqual(
+        stopped
+          ? [
+              '/api/shareables/artifact-1/comments',
+              '/api/shareables/artifact-1/comments',
+              `/api/shareables/artifact-1/comments?thread_id=${retained.id}&before=${encodeURIComponent(retained.loadedPages![0].before!)}&limit=50`,
+            ]
+          : ['/api/shareables/artifact-1/comments'],
+      )
+      if (!liveEnabled)
+        expect(ControlledWebSocket.instances.at(-1)!.readyState).toBe(
+          ControlledWebSocket.CLOSED,
+        )
+    },
+  )
+
+  test.each([3, 50])(
+    'reconciles displaced rows in a %i-reply page across later and stale refreshes',
+    async (size) => {
+      const base = expandedFixture()
+      const first = size === 3 ? 101 : 51
+      const makeMessage = (i: number) => ({
+        ...base.messages[0],
+        id: `message-${String(i).padStart(3, '0')}`,
+        body: `Reply ${i}`,
+      })
+      const cursor = (id: string) =>
+        btoa(
+          JSON.stringify([1, base.id, base.messages[0].createdAt, id]),
+        ).replace(/=+$/, '')
+      const indices = Array.from({ length: size }, (_, i) => first + i)
+      const initial: CommentThreadView = {
+        ...base,
+        messages: [0, ...indices, 201, 202, 203].map(makeMessage),
+        latestReplyIds: [201, 202, 203].map((i) => makeMessage(i).id),
+        olderCursor: cursor(makeMessage(first).id),
+        loadedPages: [
+          {
+            ...(size === 3
+              ? { through: cursor(makeMessage(103).id) }
+              : { before: cursor(makeMessage(101).id) }),
+            limit: size,
+            coverageStart: cursor(makeMessage(first).id),
+          },
+        ],
+      }
+      let stored = [makeMessage(first - 1), ...initial.messages.slice(1)]
+      let hold = false
+      let release: (() => void) | undefined
+      const requestedLimits: number[] = []
+      fetchMock.mockImplementation((input: string) => {
+        const params = new URL(input, 'https://example.com').searchParams
+        const edge = params.get('before') ?? params.get('through')
+        let rows = stored.slice(-3)
+        if (edge) {
+          const id = JSON.parse(atob(edge))[3] as string
+          const limit = Number(params.get('limit'))
+          requestedLimits.push(limit)
+          rows = stored
+            .filter((m) => (params.has('before') ? m.id < id : m.id <= id))
+            .slice(-limit)
+        }
+        const snapshot = {
+          ...base,
+          loadedPages: undefined,
+          messages: [makeMessage(0), ...rows],
+          messageCount: stored.length + 1,
+          replyCount: stored.length,
+          olderCursor:
+            rows[0] && stored.some((m) => m.id < rows[0].id)
+              ? cursor(rows[0].id)
+              : null,
+        }
+        if (
+          hold &&
+          params.get('before') === cursor(`${makeMessage(first).id}a`)
+        ) {
+          hold = false
+          return new Promise<Response>((resolve) => {
+            release = () => void authorizedResponse([snapshot]).then(resolve)
+          })
+        }
+        return authorizedResponse(edge ? [snapshot] : [snapshot, oldThread])
+      })
+      await act(async () =>
+        root.render(
+          <Harness
+            key={`displacement-${size}`}
+            initialThreads={[initial, oldThread]}
+            showDraft
+          />,
+        ),
+      )
+      await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+      await settleAuthorizedResponses()
+      const notify = async (id: string) => {
+        await act(async () =>
+          ControlledWebSocket.instances.at(-1)!.message({
+            type: 'comments-changed',
+            threadId: base.id,
+            originUserId: 'other-user',
+            originMutationId: id,
+          }),
+        )
+      }
+      const displayed = () =>
+        JSON.parse(host.querySelector('output')!.dataset.messages!) as Array<{
+          id: string
+          body: string
+        }>
+      const inserted = {
+        ...makeMessage(first),
+        id: `${makeMessage(first).id}a`,
+        body: 'Inserted at tied timestamp',
+      }
+      stored = [...stored, inserted].sort((a, b) => a.id.localeCompare(b.id))
+      stored = stored.map((m) =>
+        m.id === makeMessage(first).id
+          ? { ...m, body: 'Edited displaced row' }
+          : m,
+      )
+      await notify('insert-and-edit')
+      await settleAuthorizedResponses(() =>
+        displayed().some((m) => m.body === 'Edited displaced row'),
+      )
+      expect(displayed().some((m) => m.id === inserted.id)).toBe(true)
+      // Leave an older continuation in flight, then deliver a deletion notification.
+      hold = true
+      await notify('older-refresh')
+      await settleAuthorizedResponses(() => release !== undefined)
+      stored = stored.filter((m) => m.id !== makeMessage(first).id)
+      await notify('delete-displaced')
+      release!()
+      await settleAuthorizedResponses(
+        () => !displayed().some((m) => m.id === makeMessage(first).id),
+      )
+      await notify('later-refresh')
+      await settleAuthorizedResponses()
+      expect(displayed().some((m) => m.id === makeMessage(first).id)).toBe(
+        false,
+      )
+      expect(
+        indices
+          .slice(1)
+          .every((i) => displayed().some((m) => m.id === makeMessage(i).id)),
+      ).toBe(true)
+      expect(requestedLimits.every((limit) => limit >= 1 && limit <= 50)).toBe(
+        true,
+      )
+      expect(host.querySelector('textarea')!.value).toBe(
+        'Keep this unsent reply',
+      )
+      expect(host.querySelector('output')!.dataset.threads).toContain(
+        oldThread.id,
+      )
+    },
+  )
+
+  test('authorized recovery revalidates expanded history after a remote edit and deletion', async () => {
+    const expanded = expandedFixture()
+    const latest = initialWindow(expanded)
+    await act(async () =>
+      root.render(
+        <Harness
+          key="recovery-history"
+          showDraft
+          initialThreads={[expanded, oldThread]}
+        />,
+      ),
+    )
+    fetchMock.mockImplementation((input: string) =>
+      authorizedResponse(
+        input.includes('?') ? [expanded] : [latest, oldThread],
+      ),
+    )
+    await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+    await settleAuthorizedResponses(() =>
+      host.querySelector('output')!.dataset.messages!.includes('Reply 2'),
+    )
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+    visibility.mockReturnValue('hidden')
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+    const changedPage = {
+      ...expanded,
+      messages: expanded.messages
+        .slice(0, 4)
+        .filter((message) => message.body !== 'Reply 2')
+        .map((message) =>
+          message.body === 'Reply 1'
+            ? { ...message, body: 'Edited during interruption' }
+            : message,
+        ),
+      olderCursor: null,
+    }
+    fetchMock.mockClear()
+    fetchMock.mockImplementation((input: string) =>
+      authorizedResponse(
+        input.includes('?') ? [changedPage] : [latest, oldThread],
+      ),
+    )
+    visibility.mockReturnValue('visible')
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+    await settleAuthorizedResponses()
+    await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+    await settleAuthorizedResponses(() =>
+      host
+        .querySelector('output')!
+        .dataset.messages!.includes('Edited during interruption'),
+    )
+    const messages = JSON.parse(
+      host.querySelector('output')!.dataset.messages!,
+    ) as Array<{ body: string }>
+    expect(messages.map((message) => message.body)).toEqual([
+      'Reply 0',
+      'Edited during interruption',
+      'Reply 3',
+      'Reply 4',
+      'Reply 5',
+      'Reply 6',
+    ])
+    expect(host.querySelector('textarea')!.value).toBe('Keep this unsent reply')
+    expect(
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes('?')),
+    ).toHaveLength(1)
+    expect(host.querySelector('output')!.dataset.threads).toBe(
+      `${localThread.id},${oldThread.id}`,
+    )
+  })
+
+  test('reconciles selected membership and refreshes only the changed thread history', async () => {
+    const expanded = {
+      ...localThread,
+      loadedPages: [{ before: 'older-boundary', limit: 50 }],
+    }
+    await act(async () =>
+      root.render(
+        <Harness key="expanded" initialThreads={[expanded, oldThread]} />,
+      ),
+    )
+    fetchMock.mockImplementationOnce(() =>
+      authorizedResponse([localThread, oldThread]),
+    )
+    fetchMock.mockImplementationOnce(() => authorizedResponse([localThread]))
+    await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+    await waitForThreads(`${localThread.id},${oldThread.id}`)
+    fetchMock.mockClear()
+    fetchMock.mockImplementation((input: string) =>
+      authorizedResponse(
+        input.includes('?') ? [localThread] : [localThread, oldThread],
+      ),
+    )
+    await act(async () =>
+      ControlledWebSocket.instances.at(-1)!.message({
+        type: 'comments-changed',
+        threadId: localThread.id,
+        originUserId: 'another-user',
+        originMutationId: 'remote-edit',
+      }),
+    )
+    await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 2)
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      `/api/shareables/artifact-1/comments`,
+      `/api/shareables/artifact-1/comments?thread_id=${localThread.id}&before=older-boundary&limit=50`,
+    ])
+    expect(host.querySelector('output')?.dataset.threads).toContain(
+      oldThread.id,
+    )
+  })
+
+  test('keeps the server-selected 50 threads across new-thread and status notifications', async () => {
+    const initial = Array.from({ length: 50 }, (_, i) => ({
+      ...localThread,
+      id: `selected-${i}`,
+    }))
+    await act(async () =>
+      root.render(<Harness key="membership" initialThreads={initial} />),
+    )
+    fetchMock.mockImplementation(() => authorizedResponse(initial))
+    await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+    await waitForThreads(initial.map((thread) => thread.id).join(','))
+    const added = { ...localThread, id: 'added-thread' }
+    const next = [added, ...initial.slice(0, 49)]
+    for (const selected of [
+      next,
+      [...initial.slice(1), { ...added, status: 'resolved' }],
+    ]) {
+      fetchMock.mockClear()
+      fetchMock.mockImplementation(() => authorizedResponse(selected))
+      await act(async () =>
+        ControlledWebSocket.instances.at(-1)!.message({
+          type: 'comments-changed',
+          threadId: added.id,
+          originUserId: 'another-user',
+          originMutationId: `change-${selected[0].id}`,
+        }),
+      )
+      await waitForThreads(selected.map((thread) => thread.id).join(','))
+      expect(
+        host.querySelector('output')!.dataset.threads!.split(','),
+      ).toHaveLength(50)
+      expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+        '/api/shareables/artifact-1/comments',
+      ])
+    }
+  })
+
+  test('revalidates replies displaced from the latest window on later remote edits and deletions', async () => {
+    const at = '2026-05-01T00:00:00.000Z'
+    const message = (i: number) => ({
+      id: `message-${i}`,
+      body: `Reply ${i}`,
+      createdAt: at,
+      updatedAt: at,
+      agent: null,
+      author: {
+        id: 'reviewer',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: true,
+      canDelete: true,
+    })
+    const cursor = (i: number) =>
+      btoa(JSON.stringify([1, localThread.id, at, message(i).id])).replace(
+        /=+$/,
+        '',
+      )
+    const initial = {
+      ...localThread,
+      messages: [0, 1, 2, 3].map(message),
+      messageCount: 4,
+      replyCount: 3,
+      olderCursor: null,
+    }
+    await act(async () =>
+      root.render(
+        <Harness key="displaced" initialThreads={[initial, oldThread]} />,
+      ),
+    )
+    fetchMock.mockImplementation(() => authorizedResponse([initial, oldThread]))
+    await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+    await waitForThreads(`${localThread.id},${oldThread.id}`)
+    const latest = {
+      ...initial,
+      messages: [0, 4, 5, 6].map(message),
+      messageCount: 7,
+      replyCount: 6,
+      olderCursor: cursor(4),
+    }
+    let edited = false
+    const notify = async (id: string) => {
+      await act(async () =>
+        ControlledWebSocket.instances.at(-1)!.message({
+          type: 'comments-changed',
+          threadId: localThread.id,
+          originUserId: 'another-user',
+          originMutationId: id,
+        }),
+      )
+    }
+    fetchMock.mockClear()
+    fetchMock.mockImplementation((input: string) => {
+      const url = new URL(input, 'https://example.com')
+      return authorizedResponse([
+        url.searchParams.has('through')
+          ? {
+              ...latest,
+              olderCursor: null,
+              messages: edited
+                ? [
+                    message(0),
+                    message(1),
+                    { ...message(2), body: 'Edited remotely' },
+                  ]
+                : initial.messages,
+            }
+          : latest,
+        ...(url.searchParams.has('through') ? [] : [oldThread]),
+      ])
+    })
+    await notify('remote-additions')
+    await settleAuthorizedResponses(
+      () =>
+        JSON.parse(host.querySelector('output')!.dataset.messages!).length ===
+        7,
+    )
+    edited = true
+    fetchMock.mockClear()
+    await notify('remote-edit-and-delete')
+    await settleAuthorizedResponses(() =>
+      host
+        .querySelector('output')!
+        .dataset.messages!.includes('Edited remotely'),
+    )
+    const messages = JSON.parse(
+      host.querySelector('output')!.dataset.messages!,
+    ) as Array<{ id: string }>
+    expect(messages.map((item) => item.id)).toEqual(
+      [0, 1, 2, 4, 5, 6].map((i) => message(i).id),
+    )
+    expect(
+      fetchMock.mock.calls.map((call) =>
+        new URL(String(call[0]), 'https://example.com').searchParams.get(
+          'through',
+        ),
+      ),
+    ).toEqual([null, cursor(3)])
+    expect(host.querySelector('output')!.dataset.threads).toContain(
+      oldThread.id,
+    )
   })
 
   test('reconciles a comment with its notification withheld once per direct renewal without a recovery check', async () => {
@@ -1515,6 +2158,8 @@ describe('bounded live authorization browser lifecycle', () => {
     await advance(VIEWER_FETCH_TIMEOUT_MS)
     expect(recovered.readyState).toBe(ControlledWebSocket.OPEN)
     expect(host.querySelector('output')?.dataset.connected).toBe('true')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // The authorized mutation check reconciles before open; open then performs
+    // its normal bounded refresh for changes since that HTTP response.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })

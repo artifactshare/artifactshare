@@ -44,6 +44,9 @@ vi.mock('~/services/comments.server', () => ({
 import { action, loader, middleware } from './api.cli.artifacts.$id.comments'
 
 const THREAD = {
+  messageCount: 1,
+  replyCount: 0,
+  olderCursor: null,
   id: 'thr1',
   status: 'open' as const,
   subject: { kind: 'artifact' as const },
@@ -71,6 +74,9 @@ const THREAD = {
 }
 
 const AGENT_THREAD = {
+  message_count: 1,
+  reply_count: 0,
+  older_cursor: null,
   id: 'thr1',
   status: 'open',
   resolved_at: null,
@@ -106,6 +112,26 @@ function postArgs(payload: unknown) {
 }
 
 describe('/api/cli/artifacts/:id/comments', () => {
+  test('returns Retry-After and structured timing for shared posting admission refusal', async () => {
+    postArtifactCommentMock.mockResolvedValue({
+      kind: 'rate-limited',
+      retry_after_seconds: 17,
+      retry_at: '2026-10-20T00:01:00.000Z',
+    })
+    const response = await action(postArgs({ body: 'Keep this draft' }))
+    expect(response.status).toBe(429)
+    expect(response.headers.get('Retry-After')).toBe('17')
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'rate-limited',
+        details: {
+          retry_after_seconds: 17,
+          retry_at: '2026-10-20T00:01:00.000Z',
+        },
+      },
+    })
+  })
+
   beforeEach(() => {
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()

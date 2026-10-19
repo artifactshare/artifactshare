@@ -1,3 +1,12 @@
+import {
+  loadMessageWindow,
+  type CommentPageRequest,
+} from './comment-message-window.server'
+import {
+  admitCommentPost,
+  commentInsertFailure,
+  type CommentPostRefusal,
+} from './comment-post-admission.server'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
 import type { Compilable, Kysely, Selectable } from 'kysely'
@@ -58,6 +67,7 @@ type ArtifactLiveBinding = {
     notifyCommentsChanged(
       originMutationId?: string,
       originUserId?: string,
+      threadId?: string,
     ): Promise<void>
   }
 }
@@ -128,7 +138,16 @@ export interface VerifiedCommentShareable {
 }
 
 export type CommentMutationResult =
-  | { kind: 'ok'; threads: CommentThreadView[] }
+  | CommentPostRefusal
+  | {
+      kind: 'ok'
+      threadId: string
+      threads: CommentThreadView[]
+      refreshRequired?: boolean
+      changedMessage?: CommentMessageView
+      deletedMessageId?: string
+      deletedThreadId?: string
+    }
   | { kind: 'not-found' }
   | { kind: 'forbidden' }
   | { kind: 'invalid-body' }
@@ -143,7 +162,7 @@ export type CommentMutationResult =
 // position there isn't contractual). Additive over the shared ok variant; other
 // callers ignore it.
 export type CreateCommentThreadResult =
-  | { kind: 'ok'; threadId: string; threads: CommentThreadView[] }
+  | (Extract<CommentMutationResult, { kind: 'ok' }> & { threadId: string })
   | { kind: 'version-conflict' }
   | Exclude<CommentMutationResult, { kind: 'ok' }>
 
@@ -169,14 +188,19 @@ export type ChangeCommentResult =
   | {
       kind: 'ok'
       threadId: string
-      thread: CommentThreadView
+      thread?: CommentThreadView
+      refreshRequired?: boolean
+      changedMessage?: CommentMessageView
       threads: CommentThreadView[]
     }
   | {
       kind: 'ok'
       threadId: string
       deleted: true
+      refreshRequired?: boolean
       threadDeleted: boolean
+      deletedMessageId?: string
+      deletedThreadId?: string
       thread?: CommentThreadView
       threads: CommentThreadView[]
     }
@@ -398,6 +422,7 @@ function loadCommentThreadRows(
       'status',
       'created_by_id',
       'resolved_at',
+      'message_count',
       'created_at',
       'updated_at',
     ])
@@ -414,6 +439,7 @@ function loadCommentThreadRows(
 }
 
 type CommentThreadRow = {
+  message_count: number
   id: string
   status: CommentThreadStatus
   created_by_id: string
@@ -428,22 +454,60 @@ export async function loadCommentThread(
   user: Pick<SessionUser, 'id'>,
   threadId: string,
 ): Promise<CommentThreadView | null> {
-  const row = await db
+  const row = await loadCommentThreadRow(db, access.shareableId, threadId)
+  if (!row) return null
+  const threads = await loadCommentThreadViews(db, access, user, [row])
+  return threads[0] ?? null
+}
+
+function loadCommentThreadRow(
+  db: Kysely<DB>,
+  shareableId: string,
+  threadId: string,
+) {
+  return db
     .selectFrom('comment_threads')
     .select([
       'id',
       'status',
       'created_by_id',
       'resolved_at',
+      'message_count',
       'created_at',
       'updated_at',
     ])
-    .where('shareable_id', '=', access.shareableId)
+    .where('shareable_id', '=', shareableId)
     .where('id', '=', threadId)
     .executeTakeFirst()
-  if (!row) return null
-  const threads = await loadCommentThreadViews(db, access, user, [row])
-  return threads[0] ?? null
+}
+
+/** Callers must resolve current access before requesting a page. Thread ownership
+ * is checked before parsing cursors, so inaccessible IDs reveal no cursor errors. */
+export async function loadCommentThreadPage(
+  db: Kysely<DB>,
+  access: CommentAccess,
+  user: Pick<SessionUser, 'id'>,
+  threadId: string,
+  request: CommentPageRequest = {},
+) {
+  const row = await loadCommentThreadRow(db, access.shareableId, threadId)
+  if (!row) return { kind: 'not-found' } as const
+  const window = await loadMessageWindow(
+    db,
+    threadId,
+    user.id,
+    access.isOwner || access.isTeamWorkspaceAdmin,
+    request,
+  )
+  if (window.kind !== 'ok') return window
+  const [thread] = await loadCommentThreadViews(
+    db,
+    access,
+    user,
+    [row],
+    [window],
+  )
+  return { kind: 'ok', thread, page: window.page } as const
 }
 
 async function loadCommentThreadViews(
@@ -451,31 +515,23 @@ async function loadCommentThreadViews(
   access: CommentAccess,
   user: Pick<SessionUser, 'id'>,
   rows: CommentThreadRow[],
+  loadedWindows?: Awaited<ReturnType<typeof loadMessageWindow>>[],
 ): Promise<CommentThreadView[]> {
   if (rows.length === 0) return []
 
   const threadIds = rows.map((row) => row.id)
-  const [messages, anchors] = await Promise.all([
-    db
-      .selectFrom('comment_messages')
-      .innerJoin('users', 'users.id', 'comment_messages.created_by_id')
-      .select([
-        'comment_messages.id',
-        'comment_messages.thread_id',
-        'comment_messages.body',
-        'comment_messages.agent',
-        'comment_messages.created_at',
-        'comment_messages.updated_at',
-        'users.id as author_id',
-        'users.email as author_email',
-        'users.name as author_name',
-        'users.image as author_image',
-        'users.kind as author_kind',
-      ])
-      .where('comment_messages.thread_id', 'in', threadIds)
-      .orderBy('comment_messages.created_at', 'asc')
-      .orderBy('comment_messages.id', 'asc')
-      .execute(),
+  const [windows, anchors] = await Promise.all([
+    loadedWindows ??
+      Promise.all(
+        rows.map((row) =>
+          loadMessageWindow(
+            db,
+            row.id,
+            user.id,
+            access.isOwner || access.isTeamWorkspaceAdmin,
+          ),
+        ),
+      ),
     db
       .selectFrom('comment_anchors')
       .select([
@@ -497,34 +553,9 @@ async function loadCommentThreadViews(
       .execute(),
   ])
 
-  const messagesByThread = new Map<string, CommentMessageView[]>()
-  for (const message of messages) {
-    const list = messagesByThread.get(message.thread_id) ?? []
-    list.push({
-      id: message.id,
-      body: message.body,
-      agent: message.agent,
-      createdAt: message.created_at,
-      updatedAt: message.updated_at,
-      author: {
-        id: message.author_id,
-        email: message.author_email,
-        name: message.author_name,
-        image: message.author_image,
-        kind: message.author_kind,
-      },
-      canEdit: message.author_id === user.id,
-      canDelete:
-        message.author_id === user.id ||
-        access.isOwner ||
-        access.isTeamWorkspaceAdmin,
-    })
-    messagesByThread.set(message.thread_id, list)
-  }
-
   const subjectsByThread = await resolveCommentSubjects(db, access, anchors)
 
-  return rows.map((row) => ({
+  return rows.map((row, index) => ({
     id: row.id,
     status: row.status,
     subject: subjectsByThread.get(row.id) ?? { kind: 'artifact' },
@@ -532,7 +563,11 @@ async function loadCommentThreadViews(
     updatedAt: row.updated_at,
     resolvedAt: row.resolved_at,
     canResolve: canResolveCommentThread(access, user.id, row.created_by_id),
-    messages: messagesByThread.get(row.id) ?? [],
+    messageCount: row.message_count,
+    replyCount: Math.max(0, row.message_count - 1),
+    olderCursor:
+      windows[index].kind === 'ok' ? windows[index].olderCursor : null,
+    messages: windows[index].kind === 'ok' ? windows[index].messages : [],
   }))
 }
 
@@ -555,6 +590,9 @@ export async function createCommentThread(
   ) {
     return { kind: 'version-conflict' }
   }
+
+  const admission = await admitCommentPost(db, user.id, access.shareableId)
+  if (admission.kind !== 'ok') return admission
 
   const now = nowIso()
   const threadId = nanoid()
@@ -627,11 +665,11 @@ export async function createCommentThread(
     return { kind: 'commit-failed' }
   }
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
+  await scheduleCommentThreadsChanged(access.shareableId, options, threadId)
   return {
     kind: 'ok',
     threadId,
-    threads: await loadCommentThreads(db, access, user),
+    ...(await changedThreadWindow(db, access, user, threadId, messageId)),
   }
 }
 
@@ -650,6 +688,9 @@ export async function replyToCommentThread(
   const thread = await loadThread(db, access.shareableId, threadId)
   if (!thread) return { kind: 'invalid-thread' }
   if (thread.status === 'resolved') return { kind: 'closed-thread' }
+  if (thread.message_count >= 500) return { kind: 'thread-capacity' }
+  const admission = await admitCommentPost(db, user.id, access.shareableId)
+  if (admission.kind !== 'ok') return admission
 
   const now = nowIso()
   const messageId = nanoid()
@@ -678,12 +719,16 @@ export async function replyToCommentThread(
         createdAt: now,
       }),
     )
-  } catch {
-    return { kind: 'commit-failed' }
+  } catch (error) {
+    return commentInsertFailure(error)
   }
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
-  return { kind: 'ok', threads: await loadCommentThreads(db, access, user) }
+  await scheduleCommentThreadsChanged(access.shareableId, options, threadId)
+  return {
+    kind: 'ok',
+    threadId,
+    ...(await changedThreadWindow(db, access, user, threadId, messageId)),
+  }
 }
 
 export async function setCommentThreadResolved(
@@ -706,7 +751,11 @@ export async function setCommentThreadResolved(
   )
   if (result.kind !== 'ok') return result
 
-  return { kind: 'ok', threads: await loadCommentThreads(db, access, user) }
+  return {
+    kind: 'ok',
+    threadId,
+    ...(await changedThreadWindow(db, access, user, threadId)),
+  }
 }
 
 export async function updateCommentMessage(
@@ -732,7 +781,17 @@ export async function updateCommentMessage(
   )
   if (result.kind !== 'ok') return result
 
-  return { kind: 'ok', threads: await loadCommentThreads(db, access, user) }
+  return {
+    kind: 'ok',
+    threadId: message.thread_id,
+    ...(await changedThreadWindow(
+      db,
+      access,
+      user,
+      message.thread_id,
+      messageId,
+    )),
+  }
 }
 
 export async function deleteCommentMessage(
@@ -755,7 +814,12 @@ export async function deleteCommentMessage(
   )
   if (result.kind !== 'ok') return result
 
-  return { kind: 'ok', threads: await loadCommentThreads(db, access, user) }
+  return {
+    kind: 'ok',
+    threadId: message.thread_id,
+    deletedMessageId: messageId,
+    ...(await changedThreadWindow(db, access, user, message.thread_id)),
+  }
 }
 
 async function mutateLoadedCommentThreadResolved(
@@ -788,7 +852,7 @@ async function mutateLoadedCommentThreadResolved(
     .where('shareable_id', '=', access.shareableId)
     .execute()
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
+  await scheduleCommentThreadsChanged(access.shareableId, options, thread.id)
   return { kind: 'ok' }
 }
 
@@ -821,7 +885,11 @@ async function mutateLoadedCommentMessage(
     return { kind: 'commit-failed' }
   }
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
+  await scheduleCommentThreadsChanged(
+    access.shareableId,
+    options,
+    message.thread_id,
+  )
   return { kind: 'ok' }
 }
 
@@ -895,7 +963,11 @@ async function mutateLoadedCommentMessageDelete(
     return { kind: 'commit-failed' }
   }
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
+  await scheduleCommentThreadsChanged(
+    access.shareableId,
+    options,
+    message.thread_id,
+  )
   return { kind: 'ok' }
 }
 
@@ -931,8 +1003,8 @@ export async function deleteCommentThread(
     return { kind: 'commit-failed' }
   }
 
-  await scheduleCommentThreadsChanged(access.shareableId, options)
-  return { kind: 'ok', threads: await loadCommentThreads(db, access, user) }
+  await scheduleCommentThreadsChanged(access.shareableId, options, threadId)
+  return { kind: 'ok', threadId, deletedThreadId: threadId, threads: [] }
 }
 
 export function changeComment(
@@ -958,14 +1030,14 @@ async function updateExistingComment(
   options?: CommentMutationOptions,
 ): Promise<ChangeCommentResult> {
   let threadId: string | null | undefined = input.threadId
-  let threads: CommentThreadView[] | null = null
 
   if (input.messageId !== undefined && input.body !== undefined) {
     const body = normalizeCommentBody(input.body)
     if (!body) return { kind: 'invalid-body' }
 
     const message = await loadMessage(db, access.shareableId, input.messageId)
-    if (!message) return { kind: 'invalid-message' }
+    if (!message || (threadId !== undefined && threadId !== message.thread_id))
+      return { kind: 'invalid-message' }
     threadId ??= message.thread_id
 
     const result = await mutateLoadedCommentMessage(
@@ -996,13 +1068,17 @@ async function updateExistingComment(
 
   if (!threadId) return { kind: 'invalid-thread' }
 
-  threads = await loadCommentThreads(db, access, user)
-  const thread =
-    findCommentThread(threads, threadId) ??
-    (await loadCommentThread(db, access, user, threadId))
-  return thread
-    ? { kind: 'ok', threadId, thread, threads }
-    : { kind: 'commit-failed' }
+  const { threads, changedMessage, refreshRequired } =
+    await changedThreadWindow(db, access, user, threadId, input.messageId)
+  const thread = threads[0]
+  return {
+    kind: 'ok',
+    threadId,
+    thread,
+    threads,
+    changedMessage,
+    ...(refreshRequired ? { refreshRequired } : {}),
+  }
 }
 
 async function deleteExistingComment(
@@ -1027,15 +1103,21 @@ async function deleteExistingComment(
     )
     if (result.kind !== 'ok') return result
 
-    const threads = await loadCommentThreads(db, access, user)
-    const thread =
-      findCommentThread(threads, threadId) ??
-      (await loadCommentThread(db, access, user, threadId))
+    const { threads, refreshRequired } = await changedThreadWindow(
+      db,
+      access,
+      user,
+      threadId,
+    )
+    const thread = threads[0]
     return {
       kind: 'ok',
       threadId,
       deleted: true,
-      threadDeleted: !thread,
+      threadDeleted: !thread && !refreshRequired,
+      ...(refreshRequired ? { refreshRequired } : {}),
+      deletedMessageId: input.messageId,
+      ...(!thread && !refreshRequired ? { deletedThreadId: threadId } : {}),
       threads,
       ...(thread ? { thread } : {}),
     }
@@ -1055,29 +1137,68 @@ async function deleteExistingComment(
     threadId: input.threadId,
     deleted: true,
     threadDeleted: true,
+    deletedThreadId: input.threadId,
     threads: result.threads,
   }
 }
 
-function findCommentThread(
-  threads: CommentThreadView[],
+async function changedThreadWindow(
+  db: Kysely<DB>,
+  access: CommentAccess,
+  user: Pick<SessionUser, 'id'>,
   threadId: string,
-): CommentThreadView | null {
-  return threads.find((thread) => thread.id === threadId) ?? null
+  messageId?: string,
+) {
+  try {
+    const thread = await loadCommentThread(db, access, user, threadId)
+    let changedMessage = thread?.messages.find(
+      (message) => message.id === messageId,
+    )
+    if (messageId && thread && !changedMessage) {
+      const window = await loadMessageWindow(
+        db,
+        threadId,
+        user.id,
+        access.isOwner || access.isTeamWorkspaceAdmin,
+        { aroundMessageId: messageId, limit: 1 },
+      )
+      if (window.kind === 'ok')
+        changedMessage = window.messages.find(
+          (message) => message.id === messageId,
+        )
+    }
+    return {
+      threads: thread ? [thread] : [],
+      ...(changedMessage ? { changedMessage } : {}),
+    }
+  } catch {
+    // A committed write stays successful when advisory readback fails.
+    return {
+      threads: [] as CommentThreadView[],
+      changedMessage: undefined,
+      refreshRequired: true,
+    }
+  }
 }
 
 async function scheduleCommentThreadsChanged(
   shareableId: string,
   options?: CommentMutationOptions,
+  threadId?: string,
 ): Promise<void> {
   const promise = notifyCommentThreadsChanged(
     shareableId,
     options?.live,
     options?.originMutationId,
     options?.originUserId,
+    threadId,
   )
   if (options?.waitUntil) {
-    options.waitUntil(promise)
+    try {
+      options.waitUntil(promise)
+    } catch {
+      /* Advisory delivery cannot undo the commit. */
+    }
     return
   }
   await promise
@@ -1090,12 +1211,13 @@ export async function notifyCommentThreadsChanged(
   ).ARTIFACT_LIVE,
   originMutationId?: string,
   originUserId?: string,
+  threadId?: string,
 ): Promise<void> {
   if (!live) return
   try {
     await live
       .getByName(shareableId)
-      .notifyCommentsChanged(originMutationId, originUserId)
+      .notifyCommentsChanged(originMutationId, originUserId, threadId)
   } catch {
     // Realtime delivery is advisory; D1 remains the source of truth.
   }
@@ -1517,7 +1639,7 @@ export async function storeAnchorResolutions(
 function loadThread(db: Kysely<DB>, shareableId: string, threadId: string) {
   return db
     .selectFrom('comment_threads')
-    .select(['id', 'created_by_id', 'status'])
+    .select(['id', 'created_by_id', 'status', 'message_count'])
     .where('id', '=', threadId)
     .where('shareable_id', '=', shareableId)
     .executeTakeFirst()
@@ -1560,7 +1682,9 @@ export type PostArtifactCommentResult =
       kind: 'ok'
       threadId: string
       reply: boolean
-      thread: CommentThreadView
+      changedMessage?: CommentMessageView
+      thread?: CommentThreadView
+      refreshRequired?: boolean
       visibility: Visibility
     }
   | { kind: 'quote-on-reply' }
@@ -1611,6 +1735,8 @@ export async function postArtifactComment(
 
   let threadId: string
   let threads: CommentThreadView[]
+  let changedMessage: CommentMessageView | undefined
+  let refreshRequired: boolean | undefined
   const normalizedAgent =
     input.agent && input.agent.trim() ? input.agent.trim() : null
 
@@ -1627,6 +1753,8 @@ export async function postArtifactComment(
     if (result.kind !== 'ok') return result
     threadId = input.replyTo
     threads = result.threads
+    changedMessage = result.changedMessage
+    refreshRequired = result.refreshRequired
   } else {
     const result = await createCommentThread(
       db,
@@ -1641,17 +1769,19 @@ export async function postArtifactComment(
     if (result.kind !== 'ok') return result
     threadId = result.threadId
     threads = result.threads
+    changedMessage = result.changedMessage
+    refreshRequired = result.refreshRequired
   }
 
-  // The thread just written bubbles to the newest, so it's always within the
-  // capped set the mutation returned; the guard is for the type.
+  // Readback is restricted to this thread, independently of panel membership.
   const thread = threads.find((candidate) => candidate.id === threadId)
-  if (!thread) return { kind: 'commit-failed' }
   return {
     kind: 'ok',
     threadId,
     reply: input.replyTo !== undefined,
     thread,
+    changedMessage,
+    ...(refreshRequired ? { refreshRequired } : {}),
     visibility: access.visibility,
   }
 }

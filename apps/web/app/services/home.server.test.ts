@@ -654,7 +654,7 @@ describe('listRecentArtifactsLimited unread counts', () => {
       {
         id: 'window-resolved-hidden',
         shareable_id: 's-unread',
-        status: 'resolved' as const,
+        status: 'open' as const,
         created_by_id: 'u-owner',
         resolved_by_id: 'u-owner',
         resolved_at: '2026-06-19T00:00:00.000Z',
@@ -695,6 +695,11 @@ describe('listRecentArtifactsLimited unread counts', () => {
         .execute()
     }
 
+    await db
+      .updateTable('comment_threads')
+      .set({ status: 'resolved' })
+      .where('id', '=', 'window-resolved-hidden')
+      .execute()
     let row = (await listRecentArtifactsLimited(db, viewer, 10))[0]
     const summary = JSON.parse(String(row?.unread_comment_summary))
     const commentViewer: SessionUser = {

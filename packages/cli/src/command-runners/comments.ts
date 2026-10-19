@@ -39,6 +39,35 @@ export async function runCommentsList(
   if (target.error) return writeFailure(command, target.error, mode, 1)
   const artifactId = target.artifactId
 
+  const page = new URLSearchParams()
+  for (const [key, value] of Object.entries({
+    thread_id: parsed.options.threadId,
+    before: parsed.options.before,
+    limit: parsed.options.limit,
+    around_message_id: parsed.options.aroundMessageId,
+  })) {
+    if (value !== undefined) page.set(key, value)
+  }
+  if (
+    (page.size > 0 && !parsed.options.threadId) ||
+    (parsed.options.before !== undefined &&
+      parsed.options.aroundMessageId !== undefined) ||
+    (parsed.options.limit !== undefined &&
+      (!/^[1-9]\d*$/.test(parsed.options.limit) ||
+        Number(parsed.options.limit) > 50 ||
+        (!parsed.options.before && !parsed.options.aroundMessageId)))
+  ) {
+    return writeFailure(
+      command,
+      validationError(
+        'Invalid comment page options.',
+        'Use --thread-id with --before or --around-message-id and a limit from 1 to 50.',
+      ),
+      mode,
+      1,
+    )
+  }
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -52,7 +81,7 @@ export async function runCommentsList(
     parsed.options,
     async (current) => {
       const comments = await apiGet(
-        `/api/cli/artifacts/${encodeURIComponent(artifactId)}/comments`,
+        `/api/cli/artifacts/${encodeURIComponent(artifactId)}/comments${page.size ? `?${page}` : ''}`,
         current.token,
         parsed.options,
         request.init,
@@ -207,6 +236,10 @@ export async function runCommentsPost(
     thread_id: threadId,
     reply: (postedResponse?.reply ?? postedRaw?.reply) === true,
     thread: postedResponse?.thread ?? postedRaw?.thread ?? null,
+    changed_message:
+      postedResponse?.changed_message ?? postedRaw?.changed_message,
+    refresh_required:
+      postedResponse?.refresh_required ?? postedRaw?.refresh_required,
   }
   writeSuccess(command, data, mode)
 }
@@ -255,7 +288,7 @@ export async function runCommentsEdit(
     actionResponse?.thread_id ?? actionRaw?.thread_id,
   )
   const thread = actionResponse?.thread ?? actionRaw?.thread
-  if (!threadId || thread === undefined) {
+  if (!threadId) {
     return writeFailure(
       command,
       serviceError('Comment was changed but the response had no thread.'),
@@ -272,6 +305,10 @@ export async function runCommentsEdit(
       ),
       thread_id: threadId,
       thread,
+      changed_message:
+        actionResponse?.changed_message ?? actionRaw?.changed_message,
+      refresh_required:
+        actionResponse?.refresh_required ?? actionRaw?.refresh_required,
     } satisfies CommentsActionData,
     mode,
   )
@@ -366,6 +403,10 @@ export async function runCommentsDelete(
       ),
       thread_id: responseThreadId,
       deleted: true,
+      deleted_message_id:
+        deleteResponse?.deleted_message_id ?? deleteRaw?.deleted_message_id,
+      refresh_required:
+        deleteResponse?.refresh_required ?? deleteRaw?.refresh_required,
       thread_deleted:
         (deleteResponse?.thread_deleted ?? deleteRaw?.thread_deleted) === true,
       ...((deleteResponse?.thread ?? deleteRaw?.thread) !== undefined
@@ -419,7 +460,7 @@ async function runCommentsStatus(
     actionResponse?.thread_id ?? actionRaw?.thread_id,
   )
   const thread = actionResponse?.thread ?? actionRaw?.thread
-  if (!responseThreadId || thread === undefined) {
+  if (!responseThreadId) {
     return writeFailure(
       command,
       serviceError('Comment was changed but the response had no thread.'),
@@ -436,6 +477,10 @@ async function runCommentsStatus(
       ),
       thread_id: responseThreadId,
       thread,
+      changed_message:
+        actionResponse?.changed_message ?? actionRaw?.changed_message,
+      refresh_required:
+        actionResponse?.refresh_required ?? actionRaw?.refresh_required,
     } satisfies CommentsActionData,
     mode,
   )

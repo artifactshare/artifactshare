@@ -46,25 +46,26 @@ The browser share page opens HTML, Markdown, and static sites with its URL fragm
 
 ## Quick reference
 
-| Task                     | Command                                                                   |
-| ------------------------ | ------------------------------------------------------------------------- |
-| Share a file or folder   | `share <path> --json`                                                     |
-| Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json` |
-| Replace with same URL    | `update <target> <path> --json`                                           |
-| Append to same URL       | `append <target> <path> --json`                                           |
-| Read back source         | `artifacts get <target> --json`                                           |
-| Download a site bundle   | `download <target> --output ./out --json`                                 |
-| Download a whole project | `download --project-id <id> --output ./out --json`                        |
-| List your artifacts      | `artifacts list --json`                                                   |
-| Post a comment           | `comments post <target> --body '<text>' --json`                           |
-| Read comments            | `comments list <target> --json`                                           |
-| Change title or sharing  | `edit <target> --title 'New' --json`                                      |
-| Move to a project        | `edit <target> --project-id <id> --json`                                  |
-| Create a project         | `projects create 'Name' --json`                                           |
-| Find an ID from a title  | `resolve <value> --json`                                                  |
-| Open a share URL         | `open <url> --json`                                                       |
-| Preview a local file     | `preview <file> --json` (local, no sign-in)                               |
-| Log out                  | `logout --profile <name> --json`                                          |
+| Task                     | Command                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| Share a file or folder   | `share <path> --json`                                                               |
+| Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json`           |
+| Replace with same URL    | `update <target> <path> --json`                                                     |
+| Append to same URL       | `append <target> <path> --json`                                                     |
+| Read back source         | `artifacts get <target> --json`                                                     |
+| Download a site bundle   | `download <target> --output ./out --json`                                           |
+| Download a whole project | `download --project-id <id> --output ./out --json`                                  |
+| List your artifacts      | `artifacts list --json`                                                             |
+| Post a comment           | `comments post <target> --body '<text>' --json`                                     |
+| Read comments            | `comments list <target> --json`                                                     |
+| Read older replies       | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
+| Change title or sharing  | `edit <target> --title 'New' --json`                                                |
+| Move to a project        | `edit <target> --project-id <id> --json`                                            |
+| Create a project         | `projects create 'Name' --json`                                                     |
+| Find an ID from a title  | `resolve <value> --json`                                                            |
+| Open a share URL         | `open <url> --json`                                                                 |
+| Preview a local file     | `preview <file> --json` (local, no sign-in)                                         |
+| Log out                  | `logout --profile <name> --json`                                                    |
 
 ## Authentication
 
@@ -676,3 +677,34 @@ move, projects, append and upsert remain denied. Existing presets' download and
 readback responses are unchanged. CLI publisher login/resume and publishing/download
 workflows remain unsupported; use the API. Credentials retain their client across
 rotation and can be revoked from Settings → CLI sessions.
+
+## Comment windows and posting limits
+
+`comments list <target> --json` returns at most 50 threads, open first. Each
+thread contains its current first message and latest three replies, plus
+`message_count`, `reply_count` and `older_cursor`. These are partial histories.
+Use `comments list <target> --thread-id <id> --before <older_cursor> --limit 50
+--json` for older replies. Repeat with the returned cursor until it is null;
+merge by message ID and display in `(created_at, message_id)` order. Each page
+also includes the current first message. Cursors remain usable after their
+boundary message is deleted. `--around-message-id <id>` selects a bounded page
+containing a message; do not combine it with `--before`.
+
+A thread holds 500 currently stored messages, including its first message.
+`thread_capacity` means start a new thread. Existing excess messages are kept;
+deletions can restore space. Deleting the first message promotes the next
+earliest message; deleting the last removes the thread and anchor. Resolved
+threads still refuse replies.
+
+Creation and replies share 20 admissions per authenticated user and artifact
+per fixed UTC minute across browser, CLI, MCP and API tokens. Adjacent minute
+boundaries can admit 40 posts within a sliding 60 seconds. `rate_limited`
+includes `retry_after_seconds` and UTC `retry_at`; HTTP also sends `Retry-After`.
+Keep unsent content and retry after that time. Invalid requests, capacity refusals
+and closed-thread refusals observed before admission consume nothing. Rate
+refusals do not increment the counter; quota storage failures refuse the post.
+Once admitted, commit failures and status/version/capacity races consume the admission without a
+refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
+Mutation readback contains only the affected thread window and changed message.
+`refresh_required: true` means the write committed but advisory readback failed:
+read that thread by ID; do not replay the write automatically.

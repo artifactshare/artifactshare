@@ -50,6 +50,25 @@ export function mapApiError(
   options: ApiErrorOptions = {},
 ): CliError {
   const { code: apiCode, message: apiMessage } = apiError(body)
+  if (apiCode === 'rate-limited' || apiCode === 'thread-capacity') {
+    const raw = isRecord(body) && isRecord(body.error) ? body.error : undefined
+    const details = raw && isRecord(raw.details) ? raw.details : undefined
+    return cliError({
+      code: apiCode === 'rate-limited' ? 'rate_limited' : 'thread_capacity',
+      message: apiMessage ?? 'Comment posting refused.',
+      why: 'The comment posting limit was reached.',
+      hint:
+        apiCode === 'rate-limited'
+          ? 'Wait until retry_at before retrying the unsent comment.'
+          : 'Start a new thread.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: {
+        kind: apiCode === 'rate-limited' ? 'retry_later' : 'change_input',
+      },
+      ...(details ? { details } : {}),
+    })
+  }
   if (status === 401) {
     if (!options.authenticated) {
       return authRequiredError(options.baseUrl ?? DEFAULT_BASE_URL)

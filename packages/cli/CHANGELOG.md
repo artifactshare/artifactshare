@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Paginate comments with first/latest-three windows, counts, older cursors and targeted reads. Enforce 500 stored messages per thread and 20 combined create/reply admissions per user/artifact per fixed UTC minute, with structured retry guidance.
+
 - Bound artifact live connections to eight tabs per viewer and 128 per room, coalesce presence updates, and stagger reconnect retries while preserving HTTP viewing and comments.
 
 - Revoke API tokens and AI tool OAuth credentials when a workspace member is removed.

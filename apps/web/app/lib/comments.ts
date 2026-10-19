@@ -42,6 +42,20 @@ export interface CommentMessageView {
 }
 
 export interface CommentThreadView {
+  messageCount: number
+  replyCount: number
+  olderCursor: string | null
+  /** Client-only latest server window, excluding disjoint around-page rows. */
+  latestReplyIds?: string[]
+  /** Client-only bounded page requests retained for revalidation. */
+  loadedPages?: Array<{
+    through?: string
+    before?: string
+    aroundMessageId?: string
+    limit?: number
+    /** Lower tuple of the retained interval; refreshes may need continuation pages. */
+    coverageStart?: string | null
+  }>
   id: string
   status: CommentThreadStatus
   subject: CommentThreadSubject

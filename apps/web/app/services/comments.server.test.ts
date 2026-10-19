@@ -1,3 +1,5 @@
+import { messageCursor } from './comment-message-window.server'
+import { admitCommentPost } from './comment-post-admission.server'
 import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 import { Window } from 'happy-dom'
 import type { DatabaseSync } from 'node:sqlite'
@@ -16,8 +18,10 @@ import {
   deleteCommentThread,
   loadCommentAccess,
   loadCommentThreads,
+  loadCommentThreadPage,
   latestOtherCommentCreatedAt,
   replyToCommentThread,
+  postArtifactComment,
   setCommentThreadResolved,
   updateCommentMessage,
 } from './comments.server'
@@ -25,6 +29,7 @@ import {
 const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
   failNextBatch: false,
+  afterNextBatch: null as (() => void) | null,
   bucketText: '<p>Updated body keeps the selected words here.</p>',
   failBucketGet: false,
   bucketGetCount: 0,
@@ -1070,7 +1075,7 @@ describe('comments server', () => {
     expect(edited.kind === 'ok' ? edited.threadId : '').toBe(threadId)
     expect(
       edited.kind === 'ok' && !('deleted' in edited)
-        ? edited.thread.messages[0]?.body
+        ? edited.thread!.messages[0]?.body
         : '',
     ).toBe('Edited comment')
 
@@ -1083,7 +1088,7 @@ describe('comments server', () => {
     expect(resolved.kind).toBe('ok')
     expect(
       resolved.kind === 'ok' && !('deleted' in resolved)
-        ? resolved.thread.status
+        ? resolved.thread!.status
         : '',
     ).toBe('resolved')
   })
@@ -1170,7 +1175,7 @@ describe('comments server', () => {
       undefined,
     )
 
-    expect(deleted).toEqual({ kind: 'ok', threads: [] })
+    expect(deleted).toMatchObject({ kind: 'ok', threads: [] })
     const anchorCount = await fixture.db
       .selectFrom('comment_anchors')
       .select((eb) => eb.fn.count<number>('id').as('count'))
@@ -1215,7 +1220,7 @@ describe('comments server', () => {
       threadId,
     )
 
-    expect(deleted).toEqual({ kind: 'ok', threads: [] })
+    expect(deleted).toMatchObject({ kind: 'ok', threads: [] })
     const messageCount = await fixture.db
       .selectFrom('comment_messages')
       .select((eb) => eb.fn.count<number>('id').as('count'))
@@ -1314,6 +1319,437 @@ describe('comments server', () => {
     expect(Number(threads.count)).toBe(0)
     expect(Number(messages.count)).toBe(0)
     expect(Number(anchors.count)).toBe(0)
+  })
+
+  async function seedHistory(count: number, id = 'history') {
+    const at = '2026-05-28T00:00:00.000Z'
+    await fixture.db
+      .insertInto('comment_threads')
+      .values({
+        id,
+        shareable_id: 's1',
+        status: 'open',
+        created_by_id: viewerUser.id,
+        resolved_by_id: null,
+        resolved_at: null,
+        created_at: at,
+        updated_at: at,
+      })
+      .execute()
+    const insert = fixture.sqlite.prepare(
+      'INSERT INTO comment_messages (id, thread_id, body, created_by_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    for (let i = 0; i < count; i++)
+      insert.run(
+        `${id}-${String(i).padStart(4, '0')}`,
+        id,
+        `Message ${i}`,
+        viewerUser.id,
+        at,
+        at,
+      )
+    return (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+  }
+
+  test.each([0, 1, 3, 4, 200])(
+    'bounds initial windows with %i replies before loading bodies',
+    async (replies) => {
+      const access = await seedHistory(replies + 1)
+      const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+      const [thread] = await loadCommentThreads(fixture.db, access, viewerUser)
+      expect(thread.messageCount).toBe(replies + 1)
+      expect(thread.replyCount).toBe(replies)
+      expect(thread.messages.map((message) => message.body)).toEqual([
+        'Message 0',
+        ...Array.from(
+          { length: Math.min(3, replies) },
+          (_, i) => `Message ${Math.max(1, replies - 2) + i}`,
+        ),
+      ])
+      expect(Boolean(thread.olderCursor)).toBe(replies > 3)
+      const bodies = prepare.mock.calls
+        .map(([query]) => query)
+        .filter((query) => query.includes('"comment_messages"."body"'))
+      expect(bodies).toHaveLength(1)
+      expect(bodies[0]).toContain('"comment_messages"."id" in (')
+      expect(
+        prepare.mock.calls.some(([query]) => query.includes('count(')),
+      ).toBe(false)
+      prepare.mockRestore()
+    },
+  )
+
+  test('keyset pages handle ties, deleted cursor rows and concurrent additions without duplicates', async () => {
+    const access = await seedHistory(105)
+    const [initial] = await loadCommentThreads(fixture.db, access, viewerUser)
+    const cursor = initial.olderCursor!
+    await fixture.db
+      .deleteFrom('comment_messages')
+      .where('id', '=', 'history-0102')
+      .execute()
+    const first = await loadCommentThreadPage(
+      fixture.db,
+      access,
+      viewerUser,
+      'history',
+      { before: cursor },
+    )
+    expect(first.kind).toBe('ok')
+    if (first.kind !== 'ok') throw new Error('page failed')
+    expect(first.thread.messages).toHaveLength(51)
+    expect(first.thread.messages[1].id).toBe('history-0052')
+    expect(first.thread.messages.at(-1)?.id).toBe('history-0101')
+    await replyToCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'history',
+      'Concurrent reply',
+    )
+    await fixture.db
+      .deleteFrom('comment_messages')
+      .where('id', '=', 'history-0052')
+      .execute()
+    await fixture.db
+      .deleteFrom('comment_messages')
+      .where('id', '=', 'history-0020')
+      .execute()
+    const second = await loadCommentThreadPage(
+      fixture.db,
+      access,
+      viewerUser,
+      'history',
+      { before: first.thread.olderCursor! },
+    )
+    if (second.kind !== 'ok') throw new Error('page failed')
+    expect(second.thread.messages).toHaveLength(51)
+    expect(second.thread.messages[1].id).toBe('history-0001')
+    expect(second.thread.messages.at(-1)?.id).toBe('history-0051')
+    expect(second.thread.olderCursor).toBeNull()
+    expect(
+      new Set(
+        [
+          ...first.thread.messages.slice(1),
+          ...second.thread.messages.slice(1),
+        ].map((message) => message.id),
+      ).size,
+    ).toBe(100)
+  })
+
+  test('refuses malformed, cross-thread and oversized pages after verifying the thread', async () => {
+    const access = await seedHistory(10)
+    const otherCursor = messageCursor('other', {
+      id: 'history-0004',
+      createdAt: '2026-05-28T00:00:00.000Z',
+    })
+    for (const request of [
+      { before: 'not-a-cursor' },
+      { before: otherCursor },
+      { before: otherCursor, limit: 51 },
+    ]) {
+      expect(
+        (
+          await loadCommentThreadPage(
+            fixture.db,
+            access,
+            viewerUser,
+            'history',
+            request,
+          )
+        ).kind,
+      ).toBe('invalid-page')
+      expect(
+        (
+          await loadCommentThreadPage(
+            fixture.db,
+            access,
+            viewerUser,
+            'missing',
+            request,
+          )
+        ).kind,
+      ).toBe('not-found')
+    }
+    expect(
+      (
+        await loadCommentThreadPage(
+          fixture.db,
+          { ...access, shareableId: 'other-artifact' },
+          viewerUser,
+          'history',
+          { before: 'invalid' },
+        )
+      ).kind,
+    ).toBe('not-found')
+    const around = await loadCommentThreadPage(
+      fixture.db,
+      access,
+      viewerUser,
+      'history',
+      { aroundMessageId: 'history-0004', limit: 2 },
+    )
+    if (around.kind !== 'ok') throw new Error('around page failed')
+    expect(around.thread.messages.map((message) => message.id)).toEqual([
+      'history-0000',
+      'history-0004',
+      'history-0005',
+    ])
+    expect(
+      (
+        await loadCommentThreadPage(fixture.db, access, viewerUser, 'history', {
+          aroundMessageId: 'missing',
+        })
+      ).kind,
+    ).toBe('not-found')
+  })
+
+  test('capacity is current stored count, including first-message promotion, with bounded mutation results', async () => {
+    const access = await seedHistory(500)
+    await seedHistory(1, 'unrelated')
+    expect(
+      await replyToCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'history',
+        'Full',
+      ),
+    ).toEqual({ kind: 'thread-capacity' })
+    expect(
+      await fixture.db.selectFrom('comment_post_windows').selectAll().execute(),
+    ).toEqual([])
+    const deleted = await deleteCommentMessage(
+      fixture.db,
+      access,
+      viewerUser,
+      'history-0000',
+    )
+    expect(deleted.kind).toBe('ok')
+    if (deleted.kind !== 'ok') throw new Error('delete failed')
+    expect(deleted.threads).toHaveLength(1)
+    expect(deleted.threads[0].messages[0].id).toBe('history-0001')
+    const reply = await replyToCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'history',
+      'One free slot',
+    )
+    if (reply.kind !== 'ok') throw new Error('reply failed')
+    expect(reply.threads).toHaveLength(1)
+    expect(reply.threads[0].messageCount).toBe(500)
+    expect(reply.threads[0].messages).toHaveLength(4)
+    expect(reply.changedMessage?.body).toBe('One free slot')
+    expect(
+      await replyToCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'history',
+        'Full again',
+      ),
+    ).toEqual({ kind: 'thread-capacity' })
+  })
+
+  test('combines creation/replies in one durable minute allowance and charges admitted failures', async () => {
+    const access = await seedHistory(1)
+    expect(
+      await createCommentThread(fixture.db, access, viewerUser, ' '),
+    ).toEqual({ kind: 'invalid-body' })
+    for (let i = 0; i < 19; i++) {
+      const result =
+        i % 2
+          ? await createCommentThread(
+              fixture.db,
+              access,
+              viewerUser,
+              'New thread',
+            )
+          : await replyToCommentThread(
+              fixture.db,
+              access,
+              viewerUser,
+              'history',
+              'Reply',
+            )
+      expect(result.kind).toBe('ok')
+    }
+    sqliteRef.failNextBatch = true
+    expect(
+      await replyToCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'history',
+        'Failed commit',
+      ),
+    ).toEqual({ kind: 'commit-failed' })
+    expect(
+      await replyToCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'history',
+        'Rate limited',
+      ),
+    ).toEqual({
+      kind: 'rate-limited',
+      retry_after_seconds: 60,
+      retry_at: '2026-05-29T00:01:00.000Z',
+    })
+    expect(
+      (
+        await updateCommentMessage(
+          fixture.db,
+          access,
+          viewerUser,
+          'history-0000',
+          'Edited',
+        )
+      ).kind,
+    ).toBe('ok')
+    expect(
+      (
+        await setCommentThreadResolved(
+          fixture.db,
+          access,
+          viewerUser,
+          'history',
+          true,
+        )
+      ).kind,
+    ).toBe('ok')
+    expect(
+      (
+        await setCommentThreadResolved(
+          fixture.db,
+          access,
+          viewerUser,
+          'history',
+          false,
+        )
+      ).kind,
+    ).toBe('ok')
+    const quota = await fixture.db
+      .selectFrom('comment_post_windows')
+      .selectAll()
+      .where('user_id', '=', viewerUser.id)
+      .executeTakeFirstOrThrow()
+    expect(quota.admissions).toBe(20)
+    expect(
+      (
+        await replyToCommentThread(
+          fixture.db,
+          access,
+          otherViewerUser,
+          'history',
+          'Independent actor',
+        )
+      ).kind,
+    ).toBe('ok')
+    vi.setSystemTime(new Date('2026-05-29T00:01:00.000Z'))
+    expect(
+      (
+        await replyToCommentThread(
+          fixture.db,
+          access,
+          viewerUser,
+          'history',
+          'Next minute',
+        )
+      ).kind,
+    ).toBe('ok')
+  })
+
+  test('delayed admissions never rewind the durable minute or its retry deadline', async () => {
+    await seedHistory(1)
+    const now = Date.parse('2100-06-01T00:01:30.000Z')
+    const admit = (time: number) =>
+      admitCommentPost(fixture.db, viewerUser.id, 's1', time)
+    for (let i = 0; i < 18; i++)
+      expect(await admit(now)).toEqual({ kind: 'ok' })
+    expect(await admit(now - 60_000)).toEqual({ kind: 'ok' })
+    expect(await admit(now)).toEqual({ kind: 'ok' })
+    expect(await admit(now - 60_000)).toEqual({
+      kind: 'rate-limited',
+      retry_after_seconds: 90,
+      retry_at: '2100-06-01T00:02:00.000Z',
+    })
+    expect(await admit(now)).toMatchObject({
+      kind: 'rate-limited',
+      retry_after_seconds: 30,
+    })
+    const row = await fixture.db
+      .selectFrom('comment_post_windows')
+      .selectAll()
+      .where('user_id', '=', viewerUser.id)
+      .where('shareable_id', '=', 's1')
+      .executeTakeFirstOrThrow()
+    expect(row.minute_start).toBe(now - 30_000)
+    expect(row.admissions).toBe(20)
+    expect(await admit(now + 30_000)).toEqual({ kind: 'ok' })
+    expect(await admit(now)).toEqual({ kind: 'ok' })
+    const advanced = await fixture.db
+      .selectFrom('comment_post_windows')
+      .selectAll()
+      .where('user_id', '=', viewerUser.id)
+      .where('shareable_id', '=', 's1')
+      .executeTakeFirstOrThrow()
+    expect(advanced.minute_start).toBe(now + 30_000)
+    expect(advanced.admissions).toBe(2)
+  })
+
+  test('concurrent admissions stop at 20 and retry rounding is integral', async () => {
+    await seedHistory(1)
+    const now = Date.parse('2026-05-29T00:00:59.001Z')
+    const results = await Promise.all(
+      Array.from({ length: 21 }, () =>
+        admitCommentPost(fixture.db, viewerUser.id, 's1', now),
+      ),
+    )
+    expect(results.filter((result) => result.kind === 'ok')).toHaveLength(20)
+    expect(results.filter((result) => result.kind === 'rate-limited')).toEqual([
+      {
+        kind: 'rate-limited',
+        retry_after_seconds: 1,
+        retry_at: '2026-05-29T00:01:00.000Z',
+      },
+    ])
+    fixture.sqlite.exec('DROP TABLE comment_post_windows')
+    expect(
+      await admitCommentPost(fixture.db, viewerUser.id, 's1', now),
+    ).toEqual({ kind: 'commit-failed' })
+  })
+
+  test('a committed post stays successful if its advisory readback fails', async () => {
+    let restore = () => {}
+    sqliteRef.afterNextBatch = () => {
+      const original = fixture.sqlite.prepare.bind(fixture.sqlite)
+      const spy = vi
+        .spyOn(fixture.sqlite, 'prepare')
+        .mockImplementation((query) => {
+          if (
+            query.startsWith('select') &&
+            query.includes('from "comment_threads"')
+          )
+            throw new Error('Readback unavailable')
+          return original(query)
+        })
+      restore = () => spy.mockRestore()
+    }
+    try {
+      const result = await postArtifactComment(fixture.db, viewerUser, 's1', {
+        body: 'Committed',
+      })
+      expect(result.kind).toBe('ok')
+      expect(result).toMatchObject({ refreshRequired: true })
+    } finally {
+      restore()
+    }
+    expect(
+      await fixture.db.selectFrom('comment_messages').select('body').execute(),
+    ).toEqual([{ body: 'Committed' }])
+    expect(sqliteRef.liveNotifications).toHaveLength(1)
   })
 
   test('denies comment access when the viewer cannot open the shareable', async () => {

@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({
   access: vi.fn(),
   write: vi.fn(),
   create: vi.fn(),
+  page: vi.fn(),
 }))
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/middleware/auth', () => ({ requireUserApiMiddleware: vi.fn() }))
@@ -16,8 +17,9 @@ vi.mock('~/services/comments.server', async (importOriginal) => ({
   loadCommentAccess: mocks.access,
   storeAnchorResolutions: mocks.write,
   createCommentThread: mocks.create,
+  loadCommentThreadPage: mocks.page,
 }))
-import { action } from './api.shareables.$id.comments'
+import { action, loader } from './api.shareables.$id.comments'
 import { isAnchorResolution } from '~/services/comments.server'
 
 const payload = {
@@ -138,5 +140,54 @@ test('accepts the pre-deploy text selection payload as a legacy selector', async
     'Check',
     expect.objectContaining({ ...anchor, selectorFormat: undefined }),
     expect.anything(),
+  )
+})
+
+test('browser posting returns durable retry timing and the capacity distinction', async () => {
+  mocks.create.mockResolvedValue({
+    kind: 'rate-limited',
+    retry_after_seconds: 12,
+    retry_at: '2026-10-20T00:01:00.000Z',
+  })
+  const limited = await post({ intent: 'create-thread', body: 'Unsent' })
+  expect(limited.status).toBe(429)
+  expect(limited.headers.get('Retry-After')).toBe('12')
+  expect(await limited.json()).toMatchObject({
+    error: { code: 'rate-limited', details: { retry_after_seconds: 12 } },
+  })
+  mocks.create.mockResolvedValue({ kind: 'thread-capacity' })
+  const full = await post({ intent: 'create-thread', body: 'Unsent' })
+  expect(full.status).toBe(409)
+  expect(await full.json()).toMatchObject({
+    error: { code: 'thread-capacity' },
+  })
+})
+
+test('browser page reads check current access before cursor errors and load only the target', async () => {
+  const get = () =>
+    loader({
+      request: new Request(
+        'https://example.com/api/shareables/artifact/comments?thread_id=thread&before=cursor&limit=50',
+      ),
+      params: { id: 'artifact' },
+      context: new Map(),
+    } as never)
+  mocks.access.mockResolvedValue(null)
+  expect((await get()).status).toBe(404)
+  expect(mocks.page).not.toHaveBeenCalled()
+  mocks.access.mockResolvedValue({ shareableId: 'artifact' })
+  mocks.page.mockResolvedValue({ kind: 'invalid-page' })
+  expect((await get()).status).toBe(400)
+  expect(mocks.page).toHaveBeenCalledWith(
+    {},
+    { shareableId: 'artifact' },
+    { id: 'viewer' },
+    'thread',
+    {
+      before: 'cursor',
+      aroundMessageId: undefined,
+      through: undefined,
+      limit: 50,
+    },
   )
 })

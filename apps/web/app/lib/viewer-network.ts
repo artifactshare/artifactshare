@@ -24,7 +24,7 @@ class ViewerFetchInvalidJsonError extends Error {
 export async function fetchJsonWithViewerTimeout<T>(
   input: RequestInfo | URL,
   init: RequestInit = {},
-  options: { requireJson?: boolean } = {},
+  options: { requireJson?: boolean; parseErrorJson?: boolean } = {},
 ): Promise<{ response: Response; body: T | null }> {
   const timeoutController = new AbortController()
   const callerSignal = init.signal
@@ -50,13 +50,14 @@ export async function fetchJsonWithViewerTimeout<T>(
       signal: timeoutController.signal,
     })
     let body: T | null = null
-    if (response.ok) {
+    if (response.ok || options.parseErrorJson) {
       try {
         body = (await response.json()) as T
       } catch (error) {
         if (timedOut) throw new ViewerFetchTimeoutError()
         if (callerSignal?.aborted) throw new ViewerFetchAbortError()
-        if (options.requireJson) throw new ViewerFetchInvalidJsonError()
+        if (response.ok && options.requireJson)
+          throw new ViewerFetchInvalidJsonError()
         body = null
       }
     }

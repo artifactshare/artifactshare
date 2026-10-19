@@ -427,6 +427,9 @@ describe('@artifactshare/contract', () => {
     // Each comment mutation runner passes share_url through configString.
     const thread = {
       id: 'thr1',
+      message_count: 0,
+      reply_count: 0,
+      older_cursor: null,
       status: 'open',
       resolved_at: null,
       created_at: '2026-06-10T00:00:00.000Z',
@@ -611,6 +614,9 @@ describe('@artifactshare/contract', () => {
       comments: [
         {
           id: 'thr1',
+          message_count: 1,
+          reply_count: 0,
+          older_cursor: null,
           status: 'open',
           resolved_at: null,
           created_at: '2026-06-10T00:00:00.000Z',

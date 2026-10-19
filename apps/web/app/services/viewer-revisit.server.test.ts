@@ -40,11 +40,21 @@ function message(
   createdAt = after,
   author = 'u2',
 ) {
+  // Seed historical messages before restoring the thread's resolved status.
+  const status = fixture.sqlite
+    .prepare('SELECT status FROM comment_threads WHERE id = ?')
+    .get(threadId) as { status: string }
+  fixture.sqlite
+    .prepare("UPDATE comment_threads SET status = 'open' WHERE id = ?")
+    .run(threadId)
   fixture.sqlite
     .prepare(
       'INSERT INTO comment_messages (id, thread_id, body, created_by_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     )
     .run(id, threadId, id, author, createdAt, createdAt)
+  fixture.sqlite
+    .prepare('UPDATE comment_threads SET status = ? WHERE id = ?')
+    .run(status.status, threadId)
 }
 const load = () => loadViewerRevisitContext(fixture.db, input)
 

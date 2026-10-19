@@ -569,6 +569,9 @@ describe('new-comment target order', () => {
       updatedAt: '2026-01-01T00:00:00Z',
       resolvedAt: null,
       canResolve: false,
+      messageCount: count,
+      replyCount: Math.max(0, count - 1),
+      olderCursor: null,
       messages: Array.from({ length: count }, (_, index) => ({
         id: `${id}-${index}`,
         body: 'Review',

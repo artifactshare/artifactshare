@@ -335,7 +335,13 @@
               "Delete a single comment, or a whole comment thread, identified by thread_id (from list_comments). Pa"
             ],
             "mcp_input": ["thread_id", "message_id"],
-            "mcp_output": ["thread_id", "deleted", "thread_deleted", "thread"],
+            "mcp_output": [
+              "thread_id",
+              "deleted",
+              "thread_deleted",
+              "thread",
+              "refresh_required"
+            ],
             "mcp_recovery": ["This cannot be undone"]
           }
         }
@@ -411,7 +417,12 @@
               "Edit a comment you wrote. Identify the thread with thread_id and the message with message_id (both f"
             ],
             "mcp_input": ["thread_id", "message_id", "body"],
-            "mcp_output": ["thread_id", "thread"],
+            "mcp_output": [
+              "thread_id",
+              "thread",
+              "changed_message",
+              "refresh_required"
+            ],
             "mcp_recovery": ["you can only edit your own comments"]
           }
         }
@@ -484,9 +495,15 @@
           "contract_identifiers": {
             "mcp_name": ["'list_comments'"],
             "mcp_description": [
-              "List comment threads on an artifact you can view in your workspace. Returns thread ids, message ids,"
+              "List comment threads on an artifact you can view in your workspace. Returns at most 50 open-first threads,"
             ],
-            "mcp_input": ["id"],
+            "mcp_input": [
+              "thread_id",
+              "before",
+              "limit",
+              "around_message_id",
+              "id"
+            ],
             "mcp_output": [
               "artifact_id",
               "share_url",
@@ -520,7 +537,11 @@
           "--token",
           "--profile",
           "--allow-plaintext-token-store",
-          "--insecure-localhost"
+          "--insecure-localhost",
+          "--thread-id",
+          "--before",
+          "--limit",
+          "--around-message-id"
         ]
       }
     },
@@ -581,7 +602,9 @@
               "share_url",
               "thread_id",
               "reply",
-              "thread"
+              "thread",
+              "changed_message",
+              "refresh_required"
             ],
             "mcp_recovery": ["if the same text appears more than once"]
           }
@@ -662,7 +685,12 @@
               "Reopen a resolved comment thread. Pass thread_id from list_comments. The thread author, the artifact"
             ],
             "mcp_input": ["thread_id"],
-            "mcp_output": ["thread_id", "thread"],
+            "mcp_output": [
+              "thread_id",
+              "thread",
+              "changed_message",
+              "refresh_required"
+            ],
             "mcp_recovery": [
               "The thread author, the artifact owner, or a workspace admin"
             ]
@@ -739,7 +767,12 @@
               "Mark a comment thread as resolved. Pass thread_id from list_comments. The thread author, the artifac"
             ],
             "mcp_input": ["thread_id"],
-            "mcp_output": ["thread_id", "thread"],
+            "mcp_output": [
+              "thread_id",
+              "thread",
+              "changed_message",
+              "refresh_required"
+            ],
             "mcp_recovery": [
               "The thread author, the artifact owner, or a workspace admin"
             ]

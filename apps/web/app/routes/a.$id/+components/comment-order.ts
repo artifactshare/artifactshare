@@ -13,7 +13,8 @@ export function firstNewCommentThread(
         pairs.some(
           (pair) =>
             pair.threadId === thread.id &&
-            thread.messages.some((message) => message.id === pair.messageId),
+            (thread.messages.length < thread.messageCount ||
+              thread.messages.some((message) => message.id === pair.messageId)),
         ),
       )?.id ?? null
   )
@@ -39,5 +40,5 @@ export function compareCommentThreads(
   }
   const rankDiff = rank(left) - rank(right)
   if (rankDiff !== 0) return rankDiff
-  return right.messages.length - left.messages.length
+  return right.messageCount - left.messageCount
 }

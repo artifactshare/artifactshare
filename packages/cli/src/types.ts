@@ -39,6 +39,9 @@ export type CliOptions = {
   quote?: string
   quoteAfter?: string
   quoteBefore?: string
+  before?: string
+  limit?: string
+  aroundMessageId?: string
   replyTo?: string
   messageId?: string
   name?: string
@@ -607,6 +610,8 @@ export type CommentsPostData = {
   thread_id: string
   reply: boolean
   thread: unknown
+  changed_message?: unknown
+  refresh_required?: unknown
 }
 
 export type CommentsActionData = {
@@ -614,6 +619,8 @@ export type CommentsActionData = {
   share_url: string | null
   thread_id: string
   thread: unknown
+  changed_message?: unknown
+  refresh_required?: unknown
 }
 
 export type CommentsDeleteData = {
@@ -621,6 +628,8 @@ export type CommentsDeleteData = {
   share_url: string | null
   thread_id: string
   deleted: true
+  deleted_message_id?: unknown
+  refresh_required?: unknown
   thread_deleted: boolean
   thread?: unknown
 }

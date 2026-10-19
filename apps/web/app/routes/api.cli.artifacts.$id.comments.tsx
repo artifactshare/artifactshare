@@ -1,3 +1,5 @@
+import { parseCommentPageQuery } from '~/services/comment-message-window.server'
+import { commentPostRefusalResponse } from '~/lib/api-errors'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import {
   ArtifactIdParamsSchema,
@@ -18,12 +20,14 @@ import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   shareUrl,
   toAgentCommentThread,
+  toAgentCommentMessage,
 } from '~/services/artifact-readback.server'
 import {
   COMMENT_THREAD_LIST_LIMIT,
   changeComment,
   loadCommentAccess,
   loadCommentThreads,
+  loadCommentThreadPage,
   postArtifactComment,
   type ChangeCommentInput,
   type CommentMutationResult,
@@ -63,7 +67,24 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       agentRead?.kind === 'authorized' ? agentRead.authorization : undefined,
     )
     if (!access) return errorResponse('not-found', 'Artifact not found.', 404)
-    const threads = await loadCommentThreads(db, access, user)
+    const page = parseCommentPageQuery(url.searchParams)
+    if (page.kind === 'invalid-page')
+      return errorResponse('invalid-page', 'Invalid comment page.', 400)
+    let threads
+    if (page.kind === 'thread') {
+      const result = await loadCommentThreadPage(
+        db,
+        access,
+        user,
+        page.threadId,
+        page.request,
+      )
+      if (result.kind === 'not-found')
+        return errorResponse('not-found', 'Comment not found.', 404)
+      if (result.kind === 'invalid-page')
+        return errorResponse('invalid-page', 'Invalid comment page.', 400)
+      threads = [result.thread]
+    } else threads = await loadCommentThreads(db, access, user)
     return Response.json(
       CommentsListResponseSchema.parse({
         artifact_id: id,
@@ -71,7 +92,8 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
         comments: threads.map(toAgentCommentThread),
         // loadCommentThreads caps at the limit, so a full page can only signal
         // ">= limit"; exactly-limit reads as has_more (same as MCP get_artifact).
-        has_more: threads.length >= COMMENT_THREAD_LIST_LIMIT,
+        has_more:
+          page.kind === 'panel' && threads.length >= COMMENT_THREAD_LIST_LIMIT,
       }),
     )
   })
@@ -132,6 +154,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         commentChangeInput(actionPayload),
         options,
       )
+      if (result.kind === 'rate-limited' || result.kind === 'thread-capacity')
+        return commentPostRefusalResponse(result)
       if (result.kind !== 'ok') return actionErrorResponse(result.kind)
 
       if ('deleted' in result) {
@@ -142,6 +166,10 @@ export async function action({ context, params, request }: Route.ActionArgs) {
             thread_id: result.threadId,
             deleted: true,
             thread_deleted: result.threadDeleted,
+            ...(result.deletedMessageId
+              ? { deleted_message_id: result.deletedMessageId }
+              : {}),
+            ...(result.refreshRequired ? { refresh_required: true } : {}),
             ...(result.thread
               ? { thread: toAgentCommentThread(result.thread) }
               : {}),
@@ -154,7 +182,13 @@ export async function action({ context, params, request }: Route.ActionArgs) {
           artifact_id: id,
           share_url: shareUrl(url.origin, id, access.visibility),
           thread_id: result.threadId,
-          thread: toAgentCommentThread(result.thread),
+          ...(result.thread
+            ? { thread: toAgentCommentThread(result.thread) }
+            : {}),
+          ...('changedMessage' in result && result.changedMessage
+            ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+            : {}),
+          ...(result.refreshRequired ? { refresh_required: true } : {}),
         }),
       )
     }
@@ -195,6 +229,8 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         waitUntil: (promise) => context.get(ctxContext).waitUntil(promise),
       },
     )
+    if (result.kind === 'rate-limited' || result.kind === 'thread-capacity')
+      return commentPostRefusalResponse(result)
     if (result.kind !== 'ok') return postErrorResponse(result.kind)
     return Response.json(
       CommentPostResponseSchema.parse({
@@ -202,7 +238,13 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         share_url: shareUrl(url.origin, id, result.visibility),
         thread_id: result.threadId,
         reply: result.reply,
-        thread: toAgentCommentThread(result.thread),
+        ...(result.thread
+          ? { thread: toAgentCommentThread(result.thread) }
+          : {}),
+        ...('changedMessage' in result && result.changedMessage
+          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+          : {}),
+        ...(result.refreshRequired ? { refresh_required: true } : {}),
       }),
     )
   })
@@ -263,7 +305,10 @@ function isCommentActionRequest(
 }
 
 function actionErrorResponse(
-  kind: Exclude<CommentMutationResult['kind'], 'ok'>,
+  kind: Exclude<
+    CommentMutationResult['kind'],
+    'ok' | 'thread-capacity' | 'rate-limited'
+  >,
 ): Response {
   switch (kind) {
     case 'invalid-body':
@@ -294,7 +339,10 @@ function actionErrorResponse(
 }
 
 function postErrorResponse(
-  kind: Exclude<PostArtifactCommentResult['kind'], 'ok'>,
+  kind: Exclude<
+    PostArtifactCommentResult['kind'],
+    'ok' | 'thread-capacity' | 'rate-limited'
+  >,
 ): Response {
   switch (kind) {
     case 'quote-on-reply':

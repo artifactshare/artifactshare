@@ -1,3 +1,7 @@
+import type {
+  ChangeCommentThreads,
+  CommentThreadPatch,
+} from './comment-history'
 import { useState } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
@@ -33,6 +37,14 @@ export type CommentMutationPayload =
   | { intent: 'delete-message'; messageId: string }
   | { intent: 'delete-thread'; threadId: string }
 
+const mutationEpochs = new Map<string, number>()
+export function advanceCommentEpoch(id: string) {
+  mutationEpochs.set(id, getCommentMutationEpoch(id) + 1)
+}
+export function getCommentMutationEpoch(id: string): number {
+  return mutationEpochs.get(id) ?? 0
+}
+
 const activeMutationsByShareable = new Map<string, number>()
 const activeMutationIdsByShareable = new Map<string, Set<string>>()
 const overlappingMutationsByShareable = new Set<string>()
@@ -43,6 +55,7 @@ export type CommentMutationSettledDetail = {
   shareableId: string
   clientMutationId: string
   appliedThreads: boolean
+  threadId?: string
   requiresReconcile: boolean
 }
 
@@ -67,7 +80,7 @@ export function useCommentMutations({
 }: {
   shareableId: string
   isCurrentShareableId: (shareableId: string) => boolean
-  onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
+  onThreadsChange: ChangeCommentThreads
 }) {
   const { t } = useT()
   const revalidator = useRevalidator()
@@ -82,15 +95,23 @@ export function useCommentMutations({
     const requestShareableId = shareableId
     const clientMutationId = createClientMutationId()
     let appliedThreads = false
+    let threadId: string | undefined
+    mutationEpochs.set(
+      requestShareableId,
+      getCommentMutationEpoch(requestShareableId) + 1,
+    )
     incrementActiveMutation(requestShareableId, clientMutationId)
     if (pendingKey) {
       setPendingKeys((current) => new Set(current).add(pendingKey))
     }
     try {
-      const result = await fetchJsonWithViewerTimeout<{
-        threads?: ReadonlyArray<CommentThreadView>
-        error?: { code?: string }
-      }>(
+      const result = await fetchJsonWithViewerTimeout<
+        CommentThreadPatch & {
+          refreshRequired?: boolean
+          threads?: ReadonlyArray<CommentThreadView>
+          error?: { code?: string; details?: { retry_after_seconds?: number } }
+        }
+      >(
         `/api/shareables/${encodeURIComponent(requestShareableId)}/comments`,
         {
           method: 'POST',
@@ -100,10 +121,22 @@ export function useCommentMutations({
           },
           body: JSON.stringify({ ...payload, clientMutationId }),
         },
-        { requireJson: true },
+        { requireJson: true, parseErrorJson: true },
       )
       const response = result.response
       if (!response.ok) {
+        if (result.body?.error?.code === 'thread-capacity') {
+          toast.error(t('comments.threadCapacity'))
+          return false
+        }
+        if (result.body?.error?.code === 'rate-limited') {
+          toast.error(
+            t('comments.rateLimited', {
+              seconds: result.body.error.details?.retry_after_seconds ?? 60,
+            }),
+          )
+          return false
+        }
         if (result.body?.error?.code === 'version_conflict') {
           if (!isCurrentShareableId(requestShareableId)) return false
           toast.error(t('comments.versionConflict'), {
@@ -129,9 +162,14 @@ export function useCommentMutations({
       }
       if (!isCurrentShareableId(requestShareableId)) return false
       const body = result.body
+      threadId =
+        body?.threadId ?? body?.deletedThreadId ?? body?.threads?.[0]?.id
       if (body?.threads) {
-        onThreadsChange(body.threads)
-        appliedThreads = true
+        if (!overlappingMutationsByShareable.has(requestShareableId))
+          onThreadsChange(body.threads, body)
+        appliedThreads =
+          !body.refreshRequired &&
+          !overlappingMutationsByShareable.has(requestShareableId)
       }
       return true
     } catch (error) {
@@ -148,9 +186,14 @@ export function useCommentMutations({
       toast.error(t('comments.errorSave'))
       return false
     } finally {
+      mutationEpochs.set(
+        requestShareableId,
+        getCommentMutationEpoch(requestShareableId) + 1,
+      )
       decrementActiveMutation(requestShareableId, {
         clientMutationId,
         appliedThreads,
+        threadId,
       })
       if (pendingKey) {
         setPendingKeys((current) => {
@@ -194,7 +237,8 @@ function decrementActiveMutation(
 
   const next = (activeMutationsByShareable.get(shareableId) ?? 0) - 1
   const requiresReconcile =
-    next <= 0 && overlappingMutationsByShareable.has(shareableId)
+    detail.appliedThreads ||
+    (next <= 0 && overlappingMutationsByShareable.has(shareableId))
   if (next > 0) {
     activeMutationsByShareable.set(shareableId, next)
   } else {

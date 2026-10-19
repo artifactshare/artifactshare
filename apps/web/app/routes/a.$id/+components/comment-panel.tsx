@@ -1,3 +1,5 @@
+import { useCommentPage } from './use-comment-page'
+import type { ChangeCommentThreads } from './comment-history'
 import {
   useLayoutEffect,
   useEffect,
@@ -57,7 +59,7 @@ interface CommentPanelProps {
   shareableId: string
   viewerUserId: string
   threads: ReadonlyArray<CommentThreadView>
-  onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
+  onThreadsChange: ChangeCommentThreads
   isCurrentShareableId: (shareableId: string) => boolean
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -216,6 +218,8 @@ export function CommentPanel({
             <ThreadCard
               key={thread.id}
               thread={thread}
+              shareableId={shareableId}
+              onThreadsChange={onThreadsChange}
               newCommentMessages={newCommentMessages}
               locale={locale}
               target={thread.id === targetThreadId}
@@ -514,6 +518,8 @@ function NewThreadComposer({
 
 function ThreadCard({
   thread,
+  shareableId,
+  onThreadsChange,
   newCommentMessages,
   locale,
   target,
@@ -533,6 +539,8 @@ function ThreadCard({
   onReplyCancel,
 }: {
   thread: CommentThreadView
+  shareableId: string
+  onThreadsChange: ChangeCommentThreads
   newCommentMessages: ReadonlyArray<NewCommentMessage>
   locale: Parameters<typeof formatRelative>[1]
   target: boolean
@@ -552,6 +560,7 @@ function ThreadCard({
   onReplyCancel: () => void
 }) {
   const { t, tPlural } = useT()
+  const page = useCommentPage(shareableId, thread.id, onThreadsChange)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [repliesExpanded, setRepliesExpanded] = useState(false)
   const [replyLimit, setReplyLimit] = useState(EXPANDED_REPLY_PAGE_SIZE)
@@ -569,9 +578,20 @@ function ThreadCard({
   for (const pair of newCommentMessages) {
     if (pair.threadId === thread.id) newMessageIds.add(pair.messageId)
   }
-  const hasNewMessages = thread.messages.some((message) =>
-    newMessageIds.has(message.id),
-  )
+  const hasNewMessages =
+    thread.messages.some((message) => newMessageIds.has(message.id)) ||
+    (thread.messages.length < thread.messageCount && newMessageIds.size > 0)
+  const missingSelectedId = target
+    ? newCommentMessages.find(
+        (pair) =>
+          pair.threadId === thread.id &&
+          !thread.messages.some((message) => message.id === pair.messageId),
+      )?.messageId
+    : undefined
+  useEffect(() => {
+    if (missingSelectedId)
+      void page.load({ aroundMessageId: missingSelectedId, limit: 50 })
+  }, [missingSelectedId, page.load])
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
 
@@ -604,7 +624,10 @@ function ThreadCard({
       ? replyMessages.length - firstNewReplyIndex
       : 0,
   )
-  const hiddenReplyCount = Math.max(0, replyMessages.length - visibleReplyLimit)
+  const hiddenReplyCount = Math.max(
+    0,
+    thread.replyCount - Math.min(replyMessages.length, visibleReplyLimit),
+  )
   const displayedReplyMessages = replyMessages.slice(-visibleReplyLimit)
   const canNavigateToText =
     thread.subject.kind === 'text' && thread.subject.state === 'attached'
@@ -727,23 +750,30 @@ function ThreadCard({
             <button
               type="button"
               className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
+              disabled={page.pending}
+              aria-busy={page.pending}
               onClick={() => {
-                if (!showAllReplies) {
-                  setRepliesExpanded(true)
-                  setReplyLimit(EXPANDED_REPLY_PAGE_SIZE)
-                  return
-                }
-                setReplyLimit((current) =>
-                  Math.min(
-                    replyMessages.length,
-                    Math.max(current, visibleReplyLimit) +
-                      EXPANDED_REPLY_PAGE_SIZE,
-                  ),
-                )
+                setRepliesExpanded(true)
+                const nextLimit = showAllReplies
+                  ? Math.max(replyLimit, visibleReplyLimit) +
+                    EXPANDED_REPLY_PAGE_SIZE
+                  : EXPANDED_REPLY_PAGE_SIZE
+                setReplyLimit(nextLimit)
+                if (thread.olderCursor && replyMessages.length < nextLimit)
+                  void page.load({ before: thread.olderCursor, limit: 50 })
               }}
             >
-              {tPlural('comments.previousReplyCount', hiddenReplyCount)}
+              {page.pending
+                ? t('comments.loadingReplies')
+                : page.failed
+                  ? t('comments.retryReplies')
+                  : tPlural('comments.previousReplyCount', hiddenReplyCount)}
             </button>
+          ) : null}
+          {page.failed ? (
+            <span role="status" className="text-muted-foreground text-xs">
+              {t('comments.errorReplies')}
+            </span>
           ) : null}
           {displayedReplyMessages.map((message) => (
             <CommentMessageItem

@@ -1,4 +1,5 @@
-import { errorResponse } from '~/lib/api-errors'
+import { parseCommentPageQuery } from '~/services/comment-message-window.server'
+import { errorResponse, commentPostRefusalResponse } from '~/lib/api-errors'
 import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { ctxContext, requireUser } from '~/middleware/context'
@@ -9,6 +10,7 @@ import {
   createCommentThread,
   loadCommentAccess,
   loadCommentThreads,
+  loadCommentThreadPage,
   replyToCommentThread,
 } from '~/services/comments.server'
 import { createDb } from '~/services/db.server'
@@ -16,11 +18,28 @@ import type { Route } from './+types/api.shareables.$id.comments'
 
 export const middleware = [requireUserApiMiddleware]
 
-export async function loader({ context, params }: Route.LoaderArgs) {
+export async function loader({ context, params, request }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
   const access = await loadCommentAccess(db, user, params.id)
   if (!access) return errorResponse('not-found', 'Shareable not found.', 404)
+  const page = parseCommentPageQuery(new URL(request.url).searchParams)
+  if (page.kind === 'invalid-page')
+    return errorResponse('invalid-page', 'Invalid comment page.', 400)
+  if (page.kind === 'thread') {
+    const result = await loadCommentThreadPage(
+      db,
+      access,
+      user,
+      page.threadId,
+      page.request,
+    )
+    if (result.kind === 'not-found')
+      return errorResponse('not-found', 'Comment not found.', 404)
+    if (result.kind === 'invalid-page')
+      return errorResponse('invalid-page', 'Invalid comment page.', 400)
+    return Response.json({ threads: [result.thread], page: result.page })
+  }
   return Response.json({
     threads: await loadCommentThreads(db, access, user),
   })
@@ -84,7 +103,10 @@ export async function action({ request, context, params }: Route.ActionArgs) {
 
   switch (result.kind) {
     case 'ok':
-      return Response.json({ threads: result.threads })
+      return Response.json(result)
+    case 'thread-capacity':
+    case 'rate-limited':
+      return commentPostRefusalResponse(result)
     case 'version-conflict':
       return errorResponse(
         'version_conflict',

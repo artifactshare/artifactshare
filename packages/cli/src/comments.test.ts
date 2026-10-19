@@ -10,6 +10,9 @@ import {
 } from './test/helpers.js'
 
 const THREAD = {
+  message_count: 1,
+  reply_count: 0,
+  older_cursor: null,
   id: 'thr1',
   status: 'open',
   resolved_at: null,
@@ -781,3 +784,263 @@ test('comments JSON preserves optional position_state for strict deferred resolu
     },
   )
 })
+
+test('comments list sends a bounded thread cursor request and keeps pagination metadata', async () => {
+  await withServer(
+    (request, response) => {
+      const url = new URL(request.url!, 'http://example.com')
+      assert.equal(url.searchParams.get('thread_id'), 'thr1')
+      assert.equal(url.searchParams.get('before'), 'opaque-cursor')
+      assert.equal(url.searchParams.get('limit'), '50')
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifact_id: 'abc123def4',
+          comments: [
+            {
+              ...THREAD,
+              message_count: 100,
+              reply_count: 99,
+              older_cursor: 'next-cursor',
+            },
+          ],
+          has_more: false,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'comments',
+          'list',
+          'abc123def4',
+          '--thread-id',
+          'thr1',
+          '--before',
+          'opaque-cursor',
+          '--limit',
+          '50',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const payload = expectSuccess(result, 'comments list')
+      assert.equal(payload.data.comments[0].older_cursor, 'next-cursor')
+      assert.equal(payload.data.comments[0].message_count, 100)
+    },
+  )
+})
+
+for (const options of [
+  ['--thread-id', 'thr1'],
+  ['--thread-id', 'thr1', '--around-message-id', 'msg1'],
+  ...['--before', '--around-message-id'].flatMap((selector) =>
+    ['1', '50'].map((limit) => [
+      '--thread-id',
+      'thr1',
+      selector,
+      'boundary',
+      '--limit',
+      limit,
+    ]),
+  ),
+]) {
+  test(`comments list accepts valid page options before resolving credentials ${options.join(' ')}`, () => {
+    expectFailure(
+      run(['comments', 'list', 'abc123def4', ...options, '--json'], {
+        ARTIFACTSHARE_TOKEN: '',
+        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      }),
+      { command: 'comments list', code: 'auth_required' },
+    )
+  })
+  test(`comments list sends valid page options ${options.join(' ')}`, async () => {
+    const requests: URL[] = []
+    await withServer(
+      (request, response) => {
+        requests.push(new URL(request.url!, 'http://example.com'))
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            artifact_id: 'abc123def4',
+            comments: [THREAD],
+            has_more: false,
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'comments',
+            'list',
+            'abc123def4',
+            ...options,
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          {
+            ARTIFACTSHARE_TOKEN: 'test-token',
+            ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+          },
+        )
+        assert.deepEqual(expectSuccess(result, 'comments list').data.comments, [
+          THREAD,
+        ])
+      },
+    )
+    assert.equal(requests.length, 1)
+    assert.equal(
+      requests[0]!.pathname,
+      '/api/cli/artifacts/abc123def4/comments',
+    )
+    assert.deepEqual(
+      Object.fromEntries(requests[0]!.searchParams),
+      Object.fromEntries(
+        Array.from({ length: options.length / 2 }, (_, i) => [
+          options[i * 2]!.slice(2).replaceAll('-', '_'),
+          options[i * 2 + 1],
+        ]),
+      ),
+    )
+  })
+}
+
+test('comments list refuses oversized and incompatible pages before authentication', () => {
+  for (const options of [
+    ['--thread-id', 'thr1', '--before', 'cursor', '--limit', '51'],
+    ...['0', '-1', '1.5', 'abc', '51'].map((limit) => [
+      '--thread-id',
+      'thr1',
+      '--before',
+      'cursor',
+      '--limit',
+      limit,
+    ]),
+    ['--thread-id', 'thr1', '--limit', '1'],
+    ['--thread-id=', '--before', 'cursor'],
+    ['--thread-id', 'thr1', '--before='],
+    ['--thread-id', 'thr1', '--around-message-id='],
+    ['--around-message-id', 'msg1'],
+    ['--before', 'cursor'],
+    [
+      '--thread-id',
+      'thr1',
+      '--before',
+      'cursor',
+      '--around-message-id',
+      'msg1',
+    ],
+  ]) {
+    expectFailure(
+      run(['comments', 'list', 'abc123def4', ...options, '--json'], {
+        ARTIFACTSHARE_TOKEN: '',
+        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      }),
+      { command: 'comments list', code: 'validation_failed' },
+    )
+  }
+})
+
+test('comments post keeps structured rate retry timing without replaying the request', async () => {
+  let calls = 0
+  await withServer(
+    (_request, response) => {
+      calls++
+      response.statusCode = 429
+      response.setHeader('Retry-After', '17')
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'rate-limited',
+            message: 'Wait before retrying.',
+            details: {
+              retry_after_seconds: 17,
+              retry_at: '2026-10-20T00:01:00.000Z',
+            },
+          },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const payload = expectFailure(
+        await runAsync(
+          [
+            'comments',
+            'post',
+            'abc123def4',
+            '--body',
+            'Unsent comment',
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        ),
+        { command: 'comments post', code: 'rate_limited' },
+      )
+      assert.equal(payload.error.details.retry_after_seconds, 17)
+      assert.equal(payload.error.details.retry_at, '2026-10-20T00:01:00.000Z')
+      assert.equal(calls, 1)
+    },
+  )
+})
+
+for (const action of ['post', 'edit', 'resolve', 'reopen', 'delete']) {
+  for (const refreshRequired of [false, true]) {
+    test(`comments ${action} preserves committed success and refresh metadata (${refreshRequired})`, async () => {
+      let calls = 0
+      const changedMessage = THREAD.messages[0]
+      const responseBody = {
+        artifact_id: 'abc123def4',
+        thread_id: 'thr1',
+        ...(action === 'post' ? { reply: true } : {}),
+        ...(action === 'delete'
+          ? { deleted: true, thread_deleted: false, deleted_message_id: 'msg1' }
+          : { changed_message: changedMessage }),
+        refresh_required: refreshRequired,
+        ...(refreshRequired ? {} : { thread: THREAD }),
+      }
+      await withServer(
+        (_request, response) => {
+          calls += 1
+          response.setHeader('content-type', 'application/json')
+          response.end(JSON.stringify(responseBody))
+        },
+        async (baseUrl) => {
+          const options =
+            action === 'post'
+              ? ['--body', 'Reply', '--reply-to', 'thr1']
+              : action === 'edit'
+                ? ['--message-id', 'msg1', '--body', 'Edited']
+                : ['--thread-id', 'thr1']
+          const result = await runAsync(
+            [
+              'comments',
+              action,
+              'abc123def4',
+              ...options,
+              '--base-url',
+              baseUrl,
+              '--json',
+            ],
+            {
+              ARTIFACTSHARE_TOKEN: 'test-token',
+              ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+            },
+          )
+          const data = expectSuccess(result, `comments ${action}`).data
+          assert.equal(data.thread_id, 'thr1')
+          assert.equal(data.refresh_required, refreshRequired)
+          if (action === 'delete') assert.equal(data.deleted_message_id, 'msg1')
+          else assert.deepEqual(data.changed_message, changedMessage)
+          if (!refreshRequired) assert.deepEqual(data.thread, THREAD)
+        },
+      )
+      assert.equal(calls, 1)
+    })
+  }
+}
