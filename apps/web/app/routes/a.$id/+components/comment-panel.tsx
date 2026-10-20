@@ -58,7 +58,6 @@ type TargetThreadScroll = 'center' | 'start'
 
 const COMMENT_PAGE_SIZE = 50
 const COLLAPSED_REPLY_COUNT = 3
-const EXPANDED_REPLY_PAGE_SIZE = 50
 
 interface CommentPanelProps {
   shareableId: string
@@ -580,7 +579,6 @@ function ThreadCard({
   const { t } = useT()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [repliesExpanded, setRepliesExpanded] = useState(false)
-  const [replyLimit, setReplyLimit] = useState(EXPANDED_REPLY_PAGE_SIZE)
   const pendingReply = pendingKeys.has(`reply:${thread.id}`)
   const pendingResolve = pendingKeys.has(`resolve:${thread.id}`)
   const pendingDelete = pendingKeys.has(`thread:${thread.id}`)
@@ -633,22 +631,14 @@ function ThreadCard({
     if (await onDeleteThread()) setDeleteConfirmOpen(false)
   }
 
-  const showAllReplies = target || repliesExpanded
-  const firstNewReplyIndex = replyMessages.findIndex((message) =>
-    newMessageIds.has(message.id),
-  )
-  // Keep normal reply pagination, but expose every selected reply at the target.
-  const visibleReplyLimit = Math.max(
-    showAllReplies ? replyLimit : COLLAPSED_REPLY_COUNT,
-    target && firstNewReplyIndex >= 0
-      ? replyMessages.length - firstNewReplyIndex
-      : 0,
-  )
+  const displayedReplyMessages =
+    target || repliesExpanded
+      ? replyMessages
+      : replyMessages.slice(-COLLAPSED_REPLY_COUNT)
   const hiddenReplyCount = Math.max(
     0,
-    thread.replyCount - Math.min(replyMessages.length, visibleReplyLimit),
+    thread.replyCount - displayedReplyMessages.length,
   )
-  const displayedReplyMessages = replyMessages.slice(-visibleReplyLimit)
   const canNavigateToText =
     thread.subject.kind === 'text' && thread.subject.state === 'attached'
 
@@ -779,16 +769,14 @@ function ThreadCard({
           onDeleteMessage={onDeleteMessage}
           onExpand={() => {
             setRepliesExpanded(true)
-            const nextLimit = showAllReplies
-              ? Math.max(replyLimit, visibleReplyLimit) +
-                EXPANDED_REPLY_PAGE_SIZE
-              : EXPANDED_REPLY_PAGE_SIZE
-            setReplyLimit(nextLimit)
-            if (thread.olderCursor && replyMessages.length < nextLimit)
+            if (
+              thread.olderCursor &&
+              displayedReplyMessages.length === replyMessages.length
+            )
               void page.load({ before: thread.olderCursor, limit: 50 })
           }}
           onGap={(request) => {
-            setReplyLimit((value) => value + 50)
+            setRepliesExpanded(true)
             void page.load(request)
           }}
         />

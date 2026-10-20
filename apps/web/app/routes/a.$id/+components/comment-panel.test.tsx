@@ -1,7 +1,10 @@
+// @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactNode } from 'react'
+import { act, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
+import { messageCursor } from '~/lib/comment-cursor'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
 vi.mock('react-router', async (importOriginal) => ({
@@ -332,14 +335,14 @@ test('a target reveals selected replies older than its reply page while ordinary
   const target = renderThreads([thread], pairs, thread.id, 'all')
   expect(target).toContain('Reply body 2.')
   expect(target).toContain('Reply body 54.')
-  expect(target).not.toContain('Reply body 1.')
+  expect(target).toContain('Reply body 1.')
   expect(target.match(/data-new-comment-message="true"/g)).toHaveLength(2)
   const ordinary = renderThreads([thread], pairs)
   expect(ordinary).not.toContain('Reply body 2.')
   expect(ordinary.match(/data-new-comment-message="true"/g)).toHaveLength(1)
   expect(ordinary).toContain('data-new-comment-thread="true"')
   const unmarkedTarget = renderThreads([thread], [], thread.id, 'all')
-  expect(unmarkedTarget).not.toContain('Reply body 2.')
+  expect(unmarkedTarget).toContain('Reply body 2.')
   expect(unmarkedTarget).not.toContain('data-new-comment-message')
 })
 
@@ -394,3 +397,110 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+function pagedThread(start: number, end: number): CommentThreadView {
+  const at = '2026-05-01T00:00:00.000Z'
+  const row = (i: number) => ({
+    id: `message-${String(i).padStart(3, '0')}`,
+    body: `Paged reply ${i}.`,
+    createdAt: at,
+    updatedAt: at,
+    agent: null,
+    author: {
+      id: 'reviewer',
+      name: 'Reviewer',
+      email: 'reviewer@example.com',
+      image: null,
+    },
+    canEdit: false,
+    canDelete: false,
+  })
+  const cursor = (i: number) => messageCursor('thread', row(i))
+  return {
+    ...textThread('attached', 'thread'),
+    messageCount: 301,
+    replyCount: 300,
+    olderCursor: cursor(start),
+    messages: [
+      0,
+      ...Array.from({ length: end - start + 1 }, (_, i) => start + i),
+      298,
+      299,
+      300,
+    ].map(row),
+    latestReplyIds: [298, 299, 300].map((i) => row(i).id),
+    loadedPages: [
+      { before: cursor(end + 1), limit: 50, coverageStart: cursor(start) },
+    ],
+  }
+}
+
+test('an around target displays all cached replies with the gap in chronological position', () => {
+  const thread = pagedThread(100, 149)
+  const html = renderThreads([thread], [], thread.id, 'all')
+  expect(html.match(/Paged reply \d+\./g)).toHaveLength(54)
+  expect(html).toContain('Paged reply 100.')
+  expect(html).toContain('Show 247 more replies')
+  const gap = html.indexOf(en['comments.loadReplyGap'])
+  expect(gap).toBeGreaterThan(html.indexOf('Paged reply 149.'))
+  expect(gap).toBeLessThan(html.indexOf('Paged reply 298.'))
+})
+
+test('expansion reveals cached replies without fetching and retains all 53 when the resolved target clears', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const thread = pagedThread(248, 297)
+  const fetchPage = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ threads: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const panel = (target: boolean, resolved = false) => (
+    <CommentPanel
+      shareableId="artifact"
+      viewerUserId="viewer"
+      threads={[{ ...thread, status: resolved ? 'resolved' : 'open' }]}
+      onThreadsChange={() => {}}
+      isCurrentShareableId={() => true}
+      open
+      onOpenChange={() => {}}
+      targetThreadId={target ? thread.id : null}
+      requestedFilter="all"
+      targetThreadScroll="center"
+      onThreadNavigate={() => {}}
+    />
+  )
+  const earlier = (label: string) => {
+    const button = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent === label,
+    )
+    expect(button, host.textContent ?? label).toBeDefined()
+    return button!
+  }
+  try {
+    await act(async () => root.render(panel(false)))
+    expect(host.textContent).not.toContain('Paged reply 248.')
+    await act(async () => earlier('Show 297 earlier replies').click())
+    expect(fetchPage).not.toHaveBeenCalled()
+    expect(host.textContent?.match(/Paged reply \d+\./g)).toHaveLength(54)
+    await act(async () => root.render(panel(true)))
+    await act(async () => root.render(panel(false, true)))
+    expect(host.textContent?.match(/Paged reply \d+\./g)).toHaveLength(54)
+    expect(host.textContent).toContain('Paged reply 248.')
+    await act(async () => earlier('Show 247 earlier replies').click())
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+    const url = new URL(
+      String(fetchPage.mock.calls[0][0]),
+      'https://example.com',
+    )
+    expect(url.searchParams.get('before')).toBe(thread.olderCursor)
+    expect(url.searchParams.get('limit')).toBe('50')
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetchPage.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
