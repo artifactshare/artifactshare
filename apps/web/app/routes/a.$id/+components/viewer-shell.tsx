@@ -610,9 +610,17 @@ export function useViewerComments({
   const threadsRef = useLatestRef(state.threads)
   const selectedThreadIdRef = useLatestRef(state.targetThreadId)
 
-  if (state.artifactId !== artifactId) {
+  const committedCommentArtifactRef = useRef(artifactId)
+  useEffect(() => {
+    if (committedCommentArtifactRef.current === artifactId) return
+    committedCommentArtifactRef.current = artifactId
+    // Error visibility is already artifact-scoped; discard retained errors only on commit.
+    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
     setTargetFetchError(null)
     commentRefreshScope.mark()
+  }, [artifactId, commentRefreshScope])
+
+  if (state.artifactId !== artifactId) {
     dispatchComment({
       type: 'artifact-changed',
       artifactId,

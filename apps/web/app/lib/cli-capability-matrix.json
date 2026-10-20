@@ -339,6 +339,7 @@
               "thread_id",
               "deleted",
               "thread_deleted",
+              "deleted_message_id",
               "thread",
               "refresh_required"
             ],

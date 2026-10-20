@@ -1,3 +1,4 @@
+import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 export function errorResponse(
   code: string,
   message: string,
@@ -247,7 +248,7 @@ export function commentPostRefusalResponse(
   if (result.kind === 'thread-capacity') {
     return errorResponse(
       result.kind,
-      'This thread has 500 messages. Start a new thread.',
+      `This thread has ${COMMENT_THREAD_MESSAGE_LIMIT} messages. Start a new thread.`,
       409,
     )
   }

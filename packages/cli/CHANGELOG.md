@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Declare the optional `deleted_message_id` in the MCP `delete_comment` output schema to match existing deletion responses.
+
 ## 0.16.0 - 2026-10-20
 
 - Paginate comments with first/latest-three windows, counts, older cursors and targeted reads. Enforce 500 stored messages per thread and 20 combined create/reply admissions per user/artifact per fixed UTC minute, with structured retry guidance.

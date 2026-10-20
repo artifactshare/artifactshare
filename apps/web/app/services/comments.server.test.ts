@@ -1851,6 +1851,67 @@ describe('comments server', () => {
     ).toEqual({ kind: 'commit-failed' })
   })
 
+  test.each(['removed', 'survives', 'uncertain'] as const)(
+    'direct message deletion marks only a confirmed removed thread: %s',
+    async (outcome) => {
+      const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
+      const created = await createCommentThread(
+        fixture.db,
+        access!,
+        viewerUser,
+        'First',
+      )
+      if (created.kind !== 'ok') throw new Error('Expected thread')
+      if (outcome === 'survives') {
+        await replyToCommentThread(
+          fixture.db,
+          access!,
+          viewerUser,
+          created.threadId,
+          'Reply',
+        )
+      }
+      let restore = () => {}
+      if (outcome === 'uncertain') {
+        sqliteRef.afterNextBatch = () => {
+          const original = fixture.sqlite.prepare.bind(fixture.sqlite)
+          const spy = vi
+            .spyOn(fixture.sqlite, 'prepare')
+            .mockImplementation((query) => {
+              if (
+                query.startsWith('select') &&
+                query.includes('from "comment_threads"')
+              )
+                throw new Error('Readback unavailable')
+              return original(query)
+            })
+          restore = () => spy.mockRestore()
+        }
+      }
+      try {
+        const result = await deleteCommentMessage(
+          fixture.db,
+          access!,
+          viewerUser,
+          created.threads[0]!.messages[0]!.id,
+        )
+        expect(result.kind).toBe('ok')
+        if (outcome === 'removed')
+          expect(result).toMatchObject({
+            deletedThreadId: created.threadId,
+            threads: [],
+          })
+        else expect(result).not.toHaveProperty('deletedThreadId')
+        if (outcome === 'uncertain')
+          expect(result).toMatchObject({ refreshRequired: true })
+        if (outcome === 'survives' && result.kind === 'ok')
+          expect(result.threads).toHaveLength(1)
+      } finally {
+        restore()
+      }
+    },
+  )
+
   test('a committed post stays successful if its advisory readback fails', async () => {
     let restore = () => {}
     sqliteRef.afterNextBatch = () => {
