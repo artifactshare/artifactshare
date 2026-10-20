@@ -1065,12 +1065,22 @@ async function resolveBrowserSessionContext(
   headers: Headers,
 ): Promise<BrowserSessionContext | null> {
   const session = await getSession(headers).catch((error: unknown) => {
+    if (error instanceof APIError && error.status === 'UNAUTHORIZED')
+      return null
     console.warn('artifactshare_auth_session_error', {
       errorName: error instanceof Error ? error.name : 'UnknownError',
       errorMessage:
         error instanceof Error
           ? error.message
           : 'Unexpected session lookup failure',
+      ...(error instanceof APIError
+        ? {
+            status: error.status,
+            ...(typeof error.body?.code === 'string'
+              ? { code: error.body.code }
+              : {}),
+          }
+        : {}),
     })
     return null
   })

@@ -74,6 +74,47 @@ test('uses fixed fallback fields for a non-Error rejection', async () => {
   )
 })
 
+test('does not warn for an unauthorized APIError', async () => {
+  const { APIError } = await import('better-auth/api')
+  mocks.getSession.mockRejectedValue(
+    new APIError('UNAUTHORIZED', {
+      message: 'Failed to get session',
+      code: 'FAILED_TO_GET_SESSION',
+    }),
+  )
+  await expect(readSession()).resolves.toBeNull()
+  expect(console.warn).not.toHaveBeenCalled()
+})
+
+test.each([true, false])(
+  'logs an unexpected APIError with status and optional code (code present: %s)',
+  async (includeCode) => {
+    const { APIError } = await import('better-auth/api')
+    mocks.getSession.mockRejectedValue(
+      new APIError(
+        'INTERNAL_SERVER_ERROR',
+        {
+          message: 'Failed to get session',
+          ...(includeCode ? { code: 'FAILED_TO_GET_SESSION' } : {}),
+          cause: { token: 'test-secret' },
+          user: { id: 'u1', email: 'user@example.com' },
+        },
+        { 'set-cookie': 'better-auth.session_token=test-secret' },
+      ),
+    )
+    await expect(readSession()).resolves.toBeNull()
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith(
+      'artifactshare_auth_session_error',
+      {
+        errorName: 'APIError',
+        errorMessage: 'Failed to get session',
+        status: 'INTERNAL_SERVER_ERROR',
+        ...(includeCode ? { code: 'FAILED_TO_GET_SESSION' } : {}),
+      },
+    )
+  },
+)
+
 test('does not warn for an ordinary unauthenticated session', async () => {
   mocks.getSession.mockResolvedValue(null)
   await expect(readSession()).resolves.toBeNull()
