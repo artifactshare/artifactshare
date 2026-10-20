@@ -1,13 +1,20 @@
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+const isAgentPublishableDestinationMock = vi.hoisted(() =>
+  vi.fn(async () => true),
+)
+vi.mock('~/services/agent-scope.server', () => ({
+  isAgentPublishableDestination: isAgentPublishableDestinationMock,
+}))
+
 const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createProjectContainerMock = vi.hoisted(() => vi.fn())
-const listWorkspaceProjectsMock = vi.hoisted(() => vi.fn())
+const listPlacementProjectsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 vi.mock('~/middleware/auth', () => ({
@@ -28,7 +35,7 @@ vi.mock('~/services/projects.server', async () => {
   return {
     ...actual,
     createProjectContainer: createProjectContainerMock,
-    listWorkspaceProjects: listWorkspaceProjectsMock,
+    listPlacementProjects: listPlacementProjectsMock,
   }
 })
 vi.mock('~/services/upload-access.server', () => ({
@@ -39,13 +46,14 @@ import { action, loader } from './api.cli.projects'
 
 describe('/api/cli/projects', () => {
   beforeEach(() => {
+    isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     requireUserMock.mockReset()
     getCliAuthorityMock.mockReset()
     getCliAuthorityMock.mockReturnValue(null)
     createDbMock.mockReset()
     checkUploadAccessMock.mockReset()
     createProjectContainerMock.mockReset()
-    listWorkspaceProjectsMock.mockReset()
+    listPlacementProjectsMock.mockReset()
     createDbMock.mockReturnValue({})
     checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
     createProjectContainerMock.mockResolvedValue({ kind: 'ok', id: 'prj_new' })
@@ -72,7 +80,7 @@ describe('/api/cli/projects', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'scope-denied' },
     })
-    expect(listWorkspaceProjectsMock).not.toHaveBeenCalled()
+    expect(listPlacementProjectsMock).not.toHaveBeenCalled()
   })
 
   test('denies an unknown authority for POST before accessing artifact or project data', async () => {
@@ -95,8 +103,8 @@ describe('/api/cli/projects', () => {
     expect(createProjectContainerMock).not.toHaveBeenCalled()
   })
 
-  test('returns the viewer-scoped workspace projects', async () => {
-    listWorkspaceProjectsMock.mockResolvedValue([
+  test('returns the placement-authorized workspace projects', async () => {
+    listPlacementProjectsMock.mockResolvedValue([
       {
         id: 'prj1',
         name: 'Launch review',
@@ -110,7 +118,7 @@ describe('/api/cli/projects', () => {
     const response = await loader({ context: new Map() } as never)
     const body = (await response.json()) as { projects: unknown[] }
 
-    expect(listWorkspaceProjectsMock).toHaveBeenCalledWith(
+    expect(listPlacementProjectsMock).toHaveBeenCalledWith(
       expect.anything(),
       'ws1',
       expect.objectContaining({ id: 'u1', email: 'owner@example.com' }),

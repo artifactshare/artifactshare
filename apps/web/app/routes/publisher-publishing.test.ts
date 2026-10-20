@@ -1696,3 +1696,18 @@ test.each(['html_page', 'static_site'])(
     ).toEqual({ id: created.versionId })
   },
 )
+
+test('publisher cannot turn human project ownership into destination or move authority', async () => {
+  const created = await create()
+  const before = snapshot()
+  const bodies = []
+  for (const id of ['project1', 'missing']) {
+    const response = await move(
+      jsonArgs(created.id, 'POST', { destination: { project_id: id } }),
+    )
+    expect(response.status).toBe(403)
+    bodies.push(await response.json())
+    expect(snapshot()).toEqual(before)
+  }
+  expect(bodies[0]).toEqual(bodies[1])
+})

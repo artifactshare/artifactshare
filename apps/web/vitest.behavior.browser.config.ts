@@ -9,6 +9,7 @@ import {
   staticSiteWasm,
 } from './app/test/static-site-wasm-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
+import { projectPlacementDestinations } from './app/test/project-placement-browser-command'
 import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
@@ -37,6 +38,7 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       commands: {
+        projectPlacementDestinations,
         selectAnchorText,
         staticSiteWasm,
         staticSiteExtensions,

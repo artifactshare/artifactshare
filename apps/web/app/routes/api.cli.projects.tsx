@@ -1,3 +1,4 @@
+import { isAgentPublishableDestination } from '~/services/agent-scope.server'
 import {
   allowsHumanCliMutation,
   cliReadAuthority,
@@ -16,7 +17,7 @@ import { uploadPermissionFailureResponse } from '~/lib/upload-permission-respons
 import { withDb } from '~/services/db.server'
 import {
   createProjectContainer,
-  listWorkspaceProjects,
+  listPlacementProjects,
   normalizeProjectDescription,
   normalizeProjectName,
   parseProjectBaseVisibility,
@@ -32,18 +33,23 @@ export async function loader({ context }: Route.LoaderArgs) {
   const authority = cliReadAuthority(getCliAuthority(context))
   if (authority === 'denied') return cliScopeDeniedResponse()
   if (authority !== null) {
+    const eligible = await withDb((db) =>
+      isAgentPublishableDestination(db, user, authority, authority.projectId),
+    )
     return Response.json(
       ProjectsListResponseSchema.parse({
-        projects: [
-          {
-            id: authority.projectId,
-            name: authority.projectNameSnapshot,
-            description: null,
-            base_visibility: 'restricted',
-            file_count: null,
-            updated_at: null,
-          },
-        ],
+        projects: eligible
+          ? [
+              {
+                id: authority.projectId,
+                name: authority.projectNameSnapshot,
+                description: null,
+                base_visibility: 'restricted',
+                file_count: null,
+                updated_at: null,
+              },
+            ]
+          : [],
       }),
     )
   }
@@ -51,7 +57,7 @@ export async function loader({ context }: Route.LoaderArgs) {
   // MCP list_projects tool: projects are a small curated set, and the token
   // must not reach outside its own workspace.
   const projects = await withDb(
-    async (db) => await listWorkspaceProjects(db, user.workspaceId, user),
+    async (db) => await listPlacementProjects(db, user.workspaceId, user),
   )
   return Response.json(
     ProjectsListResponseSchema.parse({

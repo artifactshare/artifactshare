@@ -71,7 +71,7 @@ import {
   createProjectContainer,
   editProjectContainerSettings,
   type EditProjectContainerSettingsResult,
-  listWorkspaceProjects,
+  listPlacementProjects,
   normalizeProjectDescription,
   normalizeProjectName,
   parseProjectBaseVisibility,
@@ -1616,7 +1616,7 @@ export function registerArtifactTools(
     {
       title: 'List projects',
       description: toolDescription(
-        'List the projects in your workspace, each with its id, name, and sharing scope. Sharing scope is "workspace" (everyone in your workspace can view the project\'s artifacts) or "private" (only the project audience can). Projects group related artifacts; the unfiled inbox is not a project and is not listed.',
+        'List the active projects in your workspace that you can post into, each with its id, name, and sharing scope. Private destinations require creator access, active team-plan owner/admin access, or a verified contributor/manager grant. Free/plus admin status, viewer access and artifact-only grants do not authorize placement. Sharing scope is "workspace" (everyone in your workspace can view the project\'s artifacts) or "private" (only the project audience can). Projects group related artifacts; the unfiled inbox is not a project and is not listed.',
       ),
       outputSchema: LIST_PROJECTS_OUTPUT_SCHEMA,
       annotations: READ_ONLY_ANNOTATIONS,
@@ -1631,7 +1631,7 @@ export function registerArtifactTools(
       // reach outside its own workspace, and they aren't valid publish / move
       // targets anyway. Returned unpaginated — projects are a small curated set,
       // unlike artifacts, so there's nothing to page past.
-      const projects = await listWorkspaceProjects(
+      const projects = await listPlacementProjects(
         ctx.db,
         user.workspaceId,
         user,

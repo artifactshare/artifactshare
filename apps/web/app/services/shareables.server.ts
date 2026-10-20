@@ -73,7 +73,10 @@ import {
   ACTIVE_SUBSCRIPTION_STATUSES,
   allowsStorageOverage,
 } from '~/lib/billing-plan.server'
-import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
+import {
+  externalPostingAllowedSql,
+  isExternalPostingAllowedForWorkspace,
+} from '~/lib/project-external-posting.server'
 import {
   buildLinkPublishRateLimitFailure,
   isLinkPublicationError,
@@ -85,7 +88,10 @@ import {
   canEditProjectContainer,
   getOrCreateInboxContainerId,
   INBOX_CONTAINER_NAME,
-  listWorkspaceProjects,
+  listPlacementProjects,
+  projectPlacementSql,
+  uploadPlacementSql,
+  placementAssertionQueries,
   projectContainerEditAuthoritySql,
   resolveUploadContainer,
 } from './projects.server'
@@ -262,11 +268,19 @@ function artifactKeyInsertQuery(
   })
 }
 
-function artifactKeyTouchQuery(db: Kysely<DB>, keyId: string, now: string) {
+function artifactKeyTouchQuery(
+  db: Kysely<DB>,
+  keyId: string,
+  now: string,
+  versionId: string,
+) {
   return db
     .updateTable('artifact_keys')
     .set({ updated_at: now })
     .where('id', '=', keyId)
+    .where(
+      sql<boolean>`EXISTS (SELECT 1 FROM versions WHERE id = ${versionId})`,
+    )
 }
 
 function hasShareableIdPrimaryKeyConflictMessage(err: unknown): boolean {
@@ -589,7 +603,7 @@ async function commitSharingChanges(
   user: Parameters<typeof commitDialogChanges>[1],
   shareableId: string,
   payload: CommitDialogChangesPayload,
-  projectEdit?: { title?: string; projectId?: string },
+  projectEdit?: { title?: string; projectId?: string; inbox?: boolean },
 ): Promise<
   | CommitDialogChangesResult
   | { kind: 'invalid-visibility' }
@@ -602,12 +616,18 @@ async function commitSharingChanges(
   // placement read. Dialog callers retain their existing coercion behavior.
   let containerKind = owned.container_kind
   if (projectEdit?.projectId !== undefined) {
+    if (owned.workspace_id !== user.workspaceId) return { kind: 'not-found' }
     const project = await db
       .selectFrom('artifact_containers')
       .select('kind')
       .where('id', '=', projectEdit.projectId)
+      .where(
+        projectEdit.inbox
+          ? uploadPlacementSql(user, projectEdit.projectId)
+          : projectPlacementSql(user, projectEdit.projectId),
+      )
       .where('workspace_id', '=', owned.workspace_id)
-      .where('kind', '=', 'project')
+      .where('kind', '=', projectEdit.inbox ? 'inbox' : 'project')
       .where('archived_at', 'is', null)
       .executeTakeFirst()
     if (!project) return { kind: 'invalid-destination' }
@@ -622,20 +642,36 @@ async function commitSharingChanges(
 
   const now = nowIso()
 
+  const preserveVisibility =
+    projectEdit !== undefined &&
+    payload.visibility === undefined &&
+    payload.linkExpiresAt === undefined
   let newVisibility = payload.visibility ?? owned.visibility
-  if (newVisibility === 'workspace' && !isOrgWorkspace(user)) {
+  if (
+    !preserveVisibility &&
+    newVisibility === 'workspace' &&
+    !isOrgWorkspace(user)
+  ) {
     return { kind: 'workspace-unavailable' }
   }
   newVisibility = visibilityForContainer(newVisibility, containerKind)
-  const linkWrite = await resolveLinkSharingWrite(db, {
-    workspaceId: owned.workspace_id,
-    shareableId,
-    currentVisibility: owned.visibility,
-    currentLinkExpiresAt: owned.link_expires_at,
-    nextVisibility: newVisibility,
-    requestedLinkExpiresAt: payload.linkExpiresAt,
-    now,
-  })
+  const linkWrite = preserveVisibility
+    ? {
+        kind: 'ok' as const,
+        linkExpiresAt:
+          containerKind === 'inbox' && owned.visibility === 'project'
+            ? null
+            : owned.link_expires_at,
+      }
+    : await resolveLinkSharingWrite(db, {
+        workspaceId: owned.workspace_id,
+        shareableId,
+        currentVisibility: owned.visibility,
+        currentLinkExpiresAt: owned.link_expires_at,
+        nextVisibility: newVisibility,
+        requestedLinkExpiresAt: payload.linkExpiresAt,
+        now,
+      })
   if (linkWrite.kind !== 'ok') return linkWrite
 
   const addEmails = normalizeGrantEmails(payload.addEmails ?? [], user.email)
@@ -671,10 +707,13 @@ async function commitSharingChanges(
           sql<boolean>`shareables.id = ${shareableId}`,
           sql<boolean>`shareables.owner_user_id = ${user.id}`,
           sql<boolean>`shareables.workspace_id = ${owned.workspace_id}`,
+          projectEdit.projectId === undefined
+            ? sql<boolean>`1 = 1`
+            : sql<boolean>`shareables.workspace_id = ${user.workspaceId}`,
           sql<boolean>`NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}`,
           projectEdit.projectId === undefined
             ? sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = shareables.container_id AND kind = 'project')`
-            : sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${projectEdit.projectId} AND workspace_id = shareables.workspace_id AND kind = 'project' AND archived_at IS NULL)`,
+            : sql<boolean>`${projectEdit.inbox ? uploadPlacementSql(user, projectEdit.projectId) : projectPlacementSql(user, projectEdit.projectId)} AND EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${projectEdit.projectId} AND workspace_id = shareables.workspace_id)`,
         )
   const attemptValues =
     writesLinkVisibility || addEmails.length > 0 || projectMutationPredicate
@@ -730,17 +769,32 @@ async function commitSharingChanges(
       visibilityChangePredicate(sql<boolean>`id = ${shareableId}`)
     const visibilityEvent = visibilityChangedEvent(db, {
       actorUserId: user.id,
-      to: newVisibility,
+      to: preserveVisibility && projectEdit?.inbox ? 'private' : newVisibility,
       changedAt: now,
-      predicate: visibilityPredicate,
+      predicate:
+        preserveVisibility && projectEdit?.inbox
+          ? sql<boolean>`${visibilityPredicate} AND visibility = 'project'`
+          : visibilityPredicate,
     })
     queries.push(
-      visibilityEvent.query,
+      ...(!preserveVisibility || projectEdit?.inbox
+        ? [visibilityEvent.query]
+        : []),
       db
         .updateTable('shareables')
         .set({
-          visibility: newVisibility,
-          link_expires_at: linkWrite.linkExpiresAt,
+          visibility: preserveVisibility
+            ? projectEdit?.inbox
+              ? sql<Visibility>`CASE WHEN visibility = 'project' THEN 'private' ELSE visibility END`
+              : sql<Visibility>`visibility`
+            : newVisibility,
+          link_expires_at: preserveVisibility
+            ? projectEdit?.inbox
+              ? sql<
+                  string | null
+                >`CASE WHEN visibility = 'project' THEN NULL ELSE link_expires_at END`
+              : sql<string | null>`link_expires_at`
+            : linkWrite.linkExpiresAt,
           updated_at: now,
           ...(projectEdit?.projectId !== undefined
             ? { container_id: projectEdit.projectId }
@@ -774,7 +828,12 @@ async function commitSharingChanges(
         .where(lowerEmail('granted_email'), 'in', removeEmails),
     )
   }
-  if (ownerGrantEmail) {
+  if (
+    ownerGrantEmail &&
+    (!preserveVisibility ||
+      payload.addEmails !== undefined ||
+      payload.removeEmails !== undefined)
+  ) {
     queries.push(
       db
         .deleteFrom('shareable_grants')
@@ -859,6 +918,11 @@ export async function beginStaticSiteBundleUploadSession(
   stableKey: string | null = null,
   options?: UploadOptions,
 ): Promise<StaticSiteBundleUploadSessionResult> {
+  if (
+    containerId === null &&
+    (await isWorkspaceAccessRevoked(db, user.workspaceId, user.id))
+  )
+    return { kind: 'workspace-access-revoked' }
   if (
     options?.authority?.kind === 'publisher' &&
     (containerId !== null ||
@@ -1693,6 +1757,7 @@ export async function moveShareableContainer(
       .selectFrom('artifact_containers')
       .select(['id', 'name'])
       .where('id', '=', destination.projectId)
+      .where(projectPlacementSql(user, destination.projectId))
       .where('workspace_id', '=', user.workspaceId)
       .where('kind', '=', 'project')
       .where('archived_at', 'is', null)
@@ -1702,85 +1767,87 @@ export async function moveShareableContainer(
     destName = project.name
   }
 
-  const originalContainerId = shareable.container_id
-  const moved = originalContainerId !== destContainerId
-  let visibility = shareable.visibility
+  const moved = shareable.container_id !== destContainerId
+  const sourceAuthority = sql<boolean>`(
+    ${writableShareableSql(user, null)} OR EXISTS (
+      SELECT 1 FROM workspace_members move_admin
+      JOIN workspaces move_workspace ON move_workspace.id = move_admin.workspace_id
+      JOIN users move_owner ON move_owner.id = shareables.owner_user_id
+      WHERE move_admin.workspace_id = shareables.workspace_id
+        AND move_admin.user_id = ${user.id} AND move_admin.status = 'active'
+        AND move_admin.role IN ('owner', 'admin')
+        AND (move_workspace.plan = 'team' OR move_owner.kind = 'bot')
+    )
+  )`
+  const sourcePredicate = sql<boolean>`shareables.id = ${shareableId}
+    AND shareables.workspace_id = ${user.workspaceId} AND ${sourceAuthority}`
+  const destinationPredicate =
+    destination.type === 'project'
+      ? projectPlacementSql(user, destContainerId)
+      : sql<boolean>`EXISTS (
+        SELECT 1 FROM artifact_containers move_home
+        JOIN users move_owner ON move_owner.id = move_home.owner_user_id
+        WHERE move_home.id = ${destContainerId} AND move_home.kind = 'inbox'
+          AND move_home.workspace_id = shareables.workspace_id
+          AND move_home.owner_user_id = shareables.owner_user_id AND move_owner.kind = 'human'
+      )`
+  const mutationPredicate = sql<boolean>`${sourcePredicate} AND ${destinationPredicate}`
+  const queries = placementAssertionQueries(
+    db,
+    user.workspaceId,
+    shareableId,
+    sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE ${mutationPredicate})`,
+    now,
+  )
   if (moved) {
-    // inbox には関係者がいないため visibility='project' を保てない。inbox へ移す
-    // ときは private に落とし、移動前の所有者と個別共有だけが見える状態にする。
-    // 別プロジェクトへの移動では 'project' のまま移動先の関係者を参照させる。
-    const resetProjectVisibility =
-      destination.type === 'inbox' && visibility === 'project'
-    if (resetProjectVisibility) visibility = 'private'
-    let moveVisibilityEvent: ReturnType<typeof visibilityChangedEvent> | null =
-      null
-    let update
-    if (resetProjectVisibility) {
-      const movePredicate = visibilityChangePredicate(
-        sql<boolean>`id = ${shareableId}`,
-        sql<boolean>`workspace_id = ${user.workspaceId}`,
-        ...(!privileged ? [writableShareableSql(user, null)] : []),
+    if (destination.type === 'inbox') {
+      queries.push(
+        visibilityChangedEvent(db, {
+          actorUserId: user.id,
+          to: 'private',
+          changedAt: now,
+          predicate: sql<boolean>`${mutationPredicate} AND visibility = 'project'`,
+        }).query,
       )
-      moveVisibilityEvent = visibilityChangedEvent(db, {
-        actorUserId: user.id,
-        to: visibility,
-        changedAt: now,
-        predicate: movePredicate,
-      })
-      update = db
+    }
+    queries.push(
+      db
         .updateTable('shareables')
         .set({
           container_id: destContainerId,
           updated_at: now,
-          visibility: 'private',
-          link_expires_at: null,
+          ...(destination.type === 'inbox'
+            ? {
+                visibility: sql<Visibility>`CASE WHEN visibility = 'project' THEN 'private' ELSE visibility END`,
+                link_expires_at: sql<
+                  string | null
+                >`CASE WHEN visibility = 'project' THEN NULL ELSE link_expires_at END`,
+              }
+            : {}),
         })
-        .where(movePredicate)
-    } else {
-      update = db
-        .updateTable('shareables')
-        .set({ container_id: destContainerId, updated_at: now })
-        .where('id', '=', shareableId)
-        .where('workspace_id', '=', user.workspaceId)
-        .$if(!privileged, (q) => q.where(writableShareableSql(user, null)))
-    }
-    if (!resetProjectVisibility && destination.type === 'project') {
-      // Re-check the destination is still a non-archived project at write time,
-      // closing the window between the validation read above and this update
-      // where another request could archive it. The owner's inbox is always
-      // valid, so only project destinations need the guard.
-      update = update.where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom('artifact_containers')
-            .select('id')
-            .where('id', '=', destContainerId)
-            .where('workspace_id', '=', user.workspaceId)
-            .where('kind', '=', 'project')
-            .where('archived_at', 'is', null),
-        ),
-      )
-    }
-    await runD1Batch(
-      db,
-      ...(moveVisibilityEvent ? [moveVisibilityEvent.query] : []),
-      update,
-      db
-        .deleteFrom('project_pins')
-        .where('shareable_id', '=', shareableId)
-        .where(
-          sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE id = ${shareableId} AND container_id = ${destContainerId})`,
-        ),
+        .where(mutationPredicate),
+      db.deleteFrom('project_pins').where('shareable_id', '=', shareableId),
     )
-    const movedShareable = await db
-      .selectFrom('shareables')
-      .select('container_id')
-      .where('id', '=', shareableId)
-      .where('workspace_id', '=', user.workspaceId)
-      .executeTakeFirst()
-    if (movedShareable?.container_id !== destContainerId) {
-      return { kind: 'invalid-destination' }
-    }
   }
+  try {
+    await runD1Batch(db, ...queries)
+  } catch (err) {
+    if (isLinkPublicationError(err, 'link publication mutation missing')) {
+      const source = await db
+        .selectFrom('shareables')
+        .select('id')
+        .where(sourcePredicate)
+        .executeTakeFirst()
+      return { kind: source ? 'invalid-destination' : 'not-found' }
+    }
+    throw err
+  }
+  const after = await db
+    .selectFrom('shareables')
+    .select('visibility')
+    .where('id', '=', shareableId)
+    .executeTakeFirst()
+  const visibility = after?.visibility ?? shareable.visibility
 
   return {
     kind: 'ok',
@@ -1835,7 +1902,7 @@ export async function listMoveDestinations(
   if (!allowed) return { kind: 'not-found' }
 
   const [projects, externalRows] = await Promise.all([
-    listWorkspaceProjects(db, user.workspaceId, {
+    listPlacementProjects(db, user.workspaceId, {
       id: user.id,
       email: user.email,
       emailVerified: user.emailVerified,
@@ -2220,7 +2287,28 @@ export class StaticSiteBundleUploadSession {
                 ),
               ),
           )
-      : this.db.insertInto('shareables').values(shareableValues)
+      : this.db
+          .insertInto('shareables')
+          .columns(
+            Object.keys(shareableValues) as (keyof typeof shareableValues)[],
+          )
+          .expression((eb) =>
+            eb
+              .selectFrom('users')
+              .where('users.id', '=', this.user.id)
+              .where(
+                uploadPlacementSql(
+                  this.user,
+                  shareableValues.container_id,
+                  this.target.authority,
+                ),
+              )
+              .select(
+                Object.entries(shareableValues).map(([column, value]) =>
+                  eb.val(value).as(column),
+                ),
+              ),
+          )
     const attemptValues =
       effectiveVisibility === 'link'
         ? await linkPublicationAttemptValues(this.db, {
@@ -2229,7 +2317,17 @@ export class StaticSiteBundleUploadSession {
             now: this.now,
           })
         : null
-    const queries: Compilable<unknown>[] = []
+    const queries: Compilable<unknown>[] = placementAssertionQueries(
+      this.db,
+      this.accounting.workspaceId,
+      this.shareableId,
+      uploadPlacementSql(
+        this.user,
+        shareableValues.container_id,
+        this.target.authority,
+      ),
+      this.now,
+    )
     if (attemptValues) {
       queries.push(
         this.db.insertInto('link_publication_attempts').values(attemptValues),
@@ -2339,6 +2437,8 @@ export class StaticSiteBundleUploadSession {
           this.now,
         ),
       ])
+      if (isLinkPublicationError(err, 'link publication mutation missing'))
+        return { kind: 'invalid-container' }
       if (isLinkPublicationError(err, 'link publication quota exceeded')) {
         return await buildLinkPublishRateLimitFailure(this.db, {
           workspaceId: this.accounting.workspaceId,
@@ -2551,6 +2651,15 @@ export class StaticSiteBundleUploadSession {
                 'version',
               ),
             )
+            .$if(versionTarget.touchArtifactKeyId !== null, (q) =>
+              q.where(
+                uploadPlacementSql(
+                  this.user,
+                  sql.ref('shareables.container_id'),
+                  versionTarget.authority,
+                ),
+              ),
+            )
             .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
               q.where(
                 'current_version_id',
@@ -2696,6 +2805,15 @@ export class StaticSiteBundleUploadSession {
         .where(
           writableShareableSql(this.user, versionTarget.authority, 'version'),
         )
+        .$if(versionTarget.touchArtifactKeyId !== null, (q) =>
+          q.where(
+            uploadPlacementSql(
+              this.user,
+              sql.ref('shareables.container_id'),
+              versionTarget.authority,
+            ),
+          ),
+        )
         .$if(versionTarget.expectedCurrentVersionId !== null, (q) =>
           q.where(
             'current_version_id',
@@ -2710,6 +2828,7 @@ export class StaticSiteBundleUploadSession {
           this.db,
           versionTarget.touchArtifactKeyId,
           this.now,
+          this.versionId,
         ),
       )
     }
@@ -2721,13 +2840,32 @@ export class StaticSiteBundleUploadSession {
     try {
       const results = await runD1BatchWithResults(
         this.db,
+        ...placementAssertionQueries(
+          this.db,
+          this.accounting.workspaceId,
+          this.shareableId,
+          sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE id = ${this.shareableId}
+            AND ${writableShareableSql(this.user, versionTarget.authority, 'version')}
+          AND (shareables.workspace_id = ${this.user.workspaceId} OR ${externalPostingAllowedSql(sql.ref('shareables.workspace_id'))})
+            AND ${
+              agentAuthority !== null ||
+              versionTarget.touchArtifactKeyId !== null
+                ? uploadPlacementSql(
+                    this.user,
+                    sql.ref('shareables.container_id'),
+                    versionTarget.authority,
+                  )
+                : sql<boolean>`1 = 1`
+            })`,
+          this.now,
+        ),
         ...versionQueries,
         this.db
           .selectFrom('versions')
           .select('number')
           .where('id', '=', this.versionId),
       )
-      versionInsertResult = results[0]
+      versionInsertResult = results[2]
       // A guarded insert can be empty; that path returns a conflict below.
       number = batchRows<{ number: number }>(results.at(-1))[0]?.number
     } catch (err) {
@@ -3486,6 +3624,9 @@ async function findWritableShareable(
       'c.archived_at as container_archived_at',
     ])
     .where('shareables.id', '=', shareableId)
+    .$if(authority?.kind === 'agent', (q) =>
+      q.where(writableShareableSql(user, authority, access)),
+    )
     .executeTakeFirst()
   if (!shareable) return null
   if (authority?.kind === 'publisher')
@@ -3503,7 +3644,7 @@ async function findWritableShareable(
       shareable.container_id !== writeAuthority.projectId ||
       !(await isAgentPublishableDestination(
         db,
-        { workspaceId: user.workspaceId, email: user.email ?? '' },
+        { id: user.id, workspaceId: user.workspaceId, email: user.email ?? '' },
         writeAuthority,
         shareable.container_id,
       ))
@@ -3604,26 +3745,9 @@ function writableShareableSql(
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
   if (writeAuthority) {
-    return sql<boolean>`
-      shareables.workspace_id = ${writeAuthority.workspaceId}
-      AND shareables.container_id = ${writeAuthority.projectId}
+    return sql<boolean>`shareables.workspace_id = ${writeAuthority.workspaceId}
       AND shareables.visibility IN ('workspace', 'project')
-      AND EXISTS (
-        SELECT 1 FROM artifact_containers writable_project
-        WHERE writable_project.id = shareables.container_id
-          AND writable_project.workspace_id = ${writeAuthority.workspaceId}
-          AND writable_project.kind = 'project'
-          AND writable_project.archived_at IS NULL
-          AND (
-            writable_project.base_visibility = 'workspace'
-            OR EXISTS (
-              SELECT 1 FROM project_share_defaults writable_agent_grant
-              WHERE writable_agent_grant.project_container_id = writable_project.id
-                AND lower(writable_agent_grant.email) = ${user.email?.toLowerCase() ?? ''}
-                AND writable_agent_grant.role IN ('contributor', 'manager')
-            )
-          )
-      )`
+      AND ${uploadPlacementSql(user, sql.ref('shareables.container_id'), authority)}`
   }
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')
@@ -3990,6 +4114,7 @@ export async function editShareableSettings(
         .selectFrom('artifact_containers')
         .select(['id', 'kind'])
         .where('id', '=', payload.destination.projectId)
+        .where(projectPlacementSql(user, payload.destination.projectId))
         .where('workspace_id', '=', current.workspace_id)
         .where('kind', '=', 'project')
         .where('archived_at', 'is', null)
@@ -4063,9 +4188,7 @@ export async function editShareableSettings(
         sql<boolean>`owner_user_id = ${current.owner_user_id}`,
       ]
       if (payload.destination?.type === 'project') {
-        conditions.push(
-          sql<boolean>`EXISTS (SELECT 1 FROM artifact_containers WHERE id = ${targetContainerId} AND workspace_id = ${current.workspace_id} AND kind = 'project' AND archived_at IS NULL)`,
-        )
+        conditions.push(projectPlacementSql(user, targetContainerId!))
       }
       const mutationPredicate = visibilityChangePredicate(...conditions)
       const visibilityEvent = visibilityChangedEvent(db, {
@@ -4187,6 +4310,63 @@ export async function editShareableSettings(
         return { kind: 'ok', shareable: before }
       }
     }
+  }
+
+  if (payload.destination !== undefined && !isCollaborativeEdit) {
+    const source = await db
+      .selectFrom('shareables')
+      .select('workspace_id')
+      .where('id', '=', shareableId)
+      .executeTakeFirst()
+    if (source?.workspace_id !== user.workspaceId) return { kind: 'not-found' }
+    if (!wantsShareChange && payload.title === undefined) {
+      const moved = await moveShareableContainer(
+        db,
+        user,
+        shareableId,
+        payload.destination,
+        authority,
+      )
+      if (moved.kind !== 'ok') return moved
+      return {
+        kind: 'ok',
+        shareable:
+          (await getOwnedShareableSummary(db, user, shareableId)) ?? before,
+      }
+    }
+    let containerId: string
+    const inbox = payload.destination.type === 'inbox'
+    if (payload.destination.type === 'inbox') {
+      const owner = await db
+        .selectFrom('users')
+        .select('kind')
+        .where('id', '=', user.id)
+        .executeTakeFirst()
+      if (owner?.kind === 'bot') return { kind: 'bot-home-unavailable' }
+      containerId = await getOrCreateInboxContainerId(
+        db,
+        user.workspaceId,
+        user.id,
+        nowIso(),
+      )
+    } else {
+      containerId = payload.destination.projectId
+    }
+    const result = await commitSharingChanges(
+      db,
+      user,
+      shareableId,
+      {
+        visibility: payload.visibility,
+        linkExpiresAt: payload.linkExpiresAt,
+        addEmails: payload.addEmails,
+        removeEmails: payload.removeEmails,
+      },
+      { projectId: containerId, inbox, title: payload.title },
+    )
+    if (result.kind !== 'ok') return result
+    const after = await getOwnedShareableSummary(db, user, shareableId)
+    return { kind: 'ok', shareable: after ?? before }
   }
 
   const projectEdit = payload.visibility === 'project'

@@ -1,3 +1,4 @@
+import { projectPlacementSql } from './projects.server'
 import { sql, type Expression, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import {
@@ -241,6 +242,7 @@ export async function createWorkspaceBot(
         .as('grantCount'),
     ])
     .where('id', '=', input.projectId)
+    .where(projectPlacementSql(actor, input.projectId))
     .where('workspace_id', '=', actor.workspaceId)
     .where('kind', '=', 'project')
     .where('archived_at', 'is', null)
@@ -284,6 +286,10 @@ export async function createWorkspaceBot(
       eb
         .selectFrom('workspaces')
         .where('workspaces.id', '=', actor.workspaceId)
+        .where(projectPlacementSql(actor, input.projectId))
+        .where(sql<boolean>`EXISTS (SELECT 1 FROM workspace_members bot_creator
+          WHERE bot_creator.workspace_id = ${actor.workspaceId} AND bot_creator.user_id = ${actor.id}
+            AND bot_creator.status = 'active' AND bot_creator.role IN ('owner', 'admin'))`)
         .where(
           activeBotCountQuery(db, actor.workspaceId),
           '<',
@@ -539,6 +545,15 @@ export async function createWorkspaceBot(
     .where('id', '=', botUserId)
     .executeTakeFirst()
   if (!created) {
+    if ((await requireWorkspaceAdmin(db, actor)).kind !== 'ok')
+      return { kind: 'forbidden' }
+    const destination = await db
+      .selectFrom('artifact_containers')
+      .select('id')
+      .where('id', '=', input.projectId)
+      .where(projectPlacementSql(actor, input.projectId))
+      .executeTakeFirst()
+    if (!destination) return { kind: 'bot-destination-invalid' }
     // Head INSERT selected 0 rows: the cap predicate (or a raced workspace
     // delete) blocked it without an SQL error.
     return await classifyCreateFailure(db, actor.workspaceId, name)

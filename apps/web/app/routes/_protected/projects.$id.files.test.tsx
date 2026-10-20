@@ -135,6 +135,125 @@ beforeEach(() => {
 })
 
 describe('project files subpage loader', () => {
+  test.each(['allowed', 'unverified', 'removed', 'disabled'] as const)(
+    'external contributor upload uses live facts: %s',
+    async (state) => {
+      const { db } = await fixture()
+
+      await db
+        .updateTable('workspaces')
+        .set({
+          plan: 'team',
+          external_posting_enabled: state === 'disabled' ? 0 : 1,
+        })
+        .where('id', '=', 'w2')
+        .execute()
+      await db
+        .updateTable('artifact_containers')
+        .set({
+          workspace_id: 'w2',
+          created_by_id: 'u2',
+          base_visibility: 'private',
+        })
+        .where('id', '=', 'proj1')
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'external-grant',
+          project_container_id: 'proj1',
+          email: 'u1@example.com',
+          role: 'contributor',
+          created_by_id: 'u2',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      if (state === 'unverified')
+        await db
+          .updateTable('users')
+          .set({ email_verified: 0 })
+          .where('id', '=', 'u1')
+          .execute()
+      if (state === 'removed')
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'w2',
+            user_id: 'u1',
+            role: 'member',
+            status: 'removed',
+            created_at: '2026-01-01',
+            updated_at: '2026-01-01',
+          })
+          .execute()
+      const data = await loader(args())
+      expect(data.ctx.access).toBe('shared')
+      expect(data.ctx.canUpload).toBe(state === 'allowed')
+      await db.destroy()
+    },
+  )
+
+  test.each([
+    'creator',
+    'viewer',
+    'free-admin',
+    'plus-admin',
+    'contributor',
+    'unverified',
+  ])('upload eligibility for %s follows placement authority', async (actor) => {
+    const { db } = await fixture()
+    await db
+      .updateTable('artifact_containers')
+      .set({
+        base_visibility: 'private',
+        created_by_id: actor === 'creator' ? 'u1' : 'u2',
+      })
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'grant',
+        project_container_id: 'proj1',
+        email: 'u1@example.com',
+        role: ['contributor', 'unverified'].includes(actor)
+          ? 'contributor'
+          : 'viewer',
+        created_by_id: 'u2',
+        created_at: '2026-01-01',
+        updated_at: '2026-01-01',
+      })
+      .execute()
+    if (actor.endsWith('admin')) {
+      await db
+        .updateTable('workspaces')
+        .set({ plan: actor === 'plus-admin' ? 'plus' : 'free' })
+        .where('id', '=', 'w1')
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: 'w1',
+          user_id: 'u1',
+          role: 'admin',
+          status: 'active',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+    }
+    if (actor === 'unverified')
+      await db
+        .updateTable('users')
+        .set({ email_verified: 0 })
+        .where('id', '=', 'u1')
+        .execute()
+    const result = await loader(args())
+    expect(result.ctx.canUpload).toBe(
+      ['creator', 'contributor'].includes(actor),
+    )
+    await db.destroy()
+  })
   test('keyset paging returns every row exactly once across a same-created-at boundary', async () => {
     const { db } = await fixture()
     // 60 件全部を同じ created_at にして、50 件境界がタイムスタンプ内で割れる状態を作る

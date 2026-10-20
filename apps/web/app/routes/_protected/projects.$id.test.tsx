@@ -193,6 +193,106 @@ beforeEach(() => {
 })
 
 describe('project detail loader', () => {
+  test.each(['allowed', 'unverified', 'removed', 'disabled'] as const)(
+    'external contributor upload uses live facts: %s',
+    async (state) => {
+      const { db } = await fixture()
+      await db
+        .insertInto('workspaces')
+        .values({ id: 'w2', name: 'External', created_at: '2026-01-01' })
+        .execute()
+      await db
+        .updateTable('workspaces')
+        .set({
+          plan: 'team',
+          external_posting_enabled: state === 'disabled' ? 0 : 1,
+        })
+        .where('id', '=', 'w2')
+        .execute()
+      await db
+        .updateTable('artifact_containers')
+        .set({
+          workspace_id: 'w2',
+          created_by_id: 'u2',
+          base_visibility: 'private',
+        })
+        .where('id', '=', 'proj1')
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'external-grant',
+          project_container_id: 'proj1',
+          email: 'u1@example.com',
+          role: 'contributor',
+          created_by_id: 'u2',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      if (state === 'unverified')
+        await db
+          .updateTable('users')
+          .set({ email_verified: 0 })
+          .where('id', '=', 'u1')
+          .execute()
+      if (state === 'removed')
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'w2',
+            user_id: 'u1',
+            role: 'member',
+            status: 'removed',
+            created_at: '2026-01-01',
+            updated_at: '2026-01-01',
+          })
+          .execute()
+      const data = await loader(loaderArgs())
+      if (data.access !== 'shared') throw new Error('expected shared access')
+      expect(data.canPost).toBe(state === 'allowed')
+      await db.destroy()
+    },
+  )
+
+  test.each(['creator', 'viewer', 'free-admin', 'plus-admin', 'contributor'])(
+    'detail upload eligibility follows placement for %s',
+    async (actor) => {
+      const { db } = await fixture()
+      await db
+        .updateTable('artifact_containers')
+        .set({
+          base_visibility: 'private',
+          created_by_id: actor === 'creator' ? 'u1' : 'u2',
+        })
+        .execute()
+      await db
+        .updateTable('workspaces')
+        .set({ plan: actor === 'plus-admin' ? 'plus' : 'free' })
+        .execute()
+      await db
+        .updateTable('workspace_members')
+        .set({ role: actor.endsWith('admin') ? 'admin' : 'member' })
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'grant',
+          project_container_id: 'proj1',
+          email: 'u1@example.com',
+          role: actor === 'contributor' ? 'contributor' : 'viewer',
+          created_by_id: 'u2',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      const data = await loader(loaderArgs())
+      if (data.access !== 'member') throw new Error('expected member access')
+      expect(data.canUpload).toBe(['creator', 'contributor'].includes(actor))
+      await db.destroy()
+    },
+  )
+
   test('returns pins, feed, ranking, and now', async () => {
     const { db } = await fixture()
     await insertShareable(db, 's1')
@@ -684,6 +784,16 @@ describe('project action menu', () => {
     shareDefaultsActionLabel: 'projectShareDefaults.actionEmpty',
     showShareDefaultsAction: false,
   })
+
+  test.each([true, false])(
+    'upload action reflects placement eligibility %s',
+    (canUpload) => {
+      const html = renderToStaticMarkup(
+        createElement(MemberDetailActions, props({ canUpload }) as never),
+      )
+      expect(html.includes('tb.addFile')).toBe(canUpload)
+    },
+  )
 
   test('viewer sees Slack notification menu item without edit permission', () => {
     const html = renderToStaticMarkup(

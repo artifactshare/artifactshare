@@ -1423,7 +1423,11 @@ const projectsListDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
 
 is_default marks the working-directory default project from .artifactshare/config.json.
-Use a project id with share --project-id or init --project-id.`,
+Use a project id with share --project-id or init --project-id.
+Only active, authorized destinations are listed. Private projects require creator access,
+team-plan owner/admin access, or a verified contributor/manager grant. Free/plus
+admin status and viewer or artifact-only grants do not authorize placement.
+Agents and bots retain their fixed-project and verified-grant limits; publishers cannot select projects.`,
 })
 
 const projectsCreateDefinition = define({

@@ -254,6 +254,30 @@ describe('publish', () => {
     expect(appendShareableMock).not.toHaveBeenCalled()
   })
 
+  test('carries agent authority through append to the final version service', async () => {
+    const authority = {
+      kind: 'agent' as const,
+      familyId: 'family-1',
+      workspaceId: user.workspaceId,
+      projectId: 'project-1',
+      projectNameSnapshot: 'Project',
+      agentProfileId: 'agent-1',
+    }
+    await publish({
+      db,
+      actor: { kind: 'agent', user, authority },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content: '<p>next</p>' },
+    })
+    expect(appendShareableMock).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ id: user.id }),
+      'artifact-1',
+      '<p>next</p>',
+      { authority },
+    )
+  })
+
   test('denies append outside an agent owned scope before reading content', async () => {
     const authority = {
       kind: 'agent' as const,
@@ -276,7 +300,7 @@ describe('publish', () => {
     expect(result).toEqual({ kind: 'forbidden' })
     expect(isAgentOwnedArtifactMock).toHaveBeenCalledWith(
       db,
-      { workspaceId: user.workspaceId, email: user.email },
+      { id: user.id, workspaceId: user.workspaceId, email: user.email },
       authority,
       'artifact-1',
     )
@@ -437,7 +461,7 @@ describe('publish', () => {
 
     expect(isAgentPublishableDestinationMock).toHaveBeenCalledWith(
       db,
-      { workspaceId: user.workspaceId, email: '' },
+      { id: user.id, workspaceId: user.workspaceId, email: '' },
       authority,
       'project-1',
     )

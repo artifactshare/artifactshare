@@ -16,7 +16,7 @@ import { isLinkSharingAllowedByPolicy } from '~/services/link-sharing.server'
 import {
   findSharedProjectForViewer,
   findWorkspaceProject,
-  getProjectShareRoleForEmail,
+  canPlaceIntoProject,
   listProjectShareDefaults,
   visibleShareableToViewerSql,
   visibleSharedProjectShareableToViewerSql,
@@ -122,7 +122,7 @@ export async function loadProjectSubpageContext(
       workspaceName,
       workspaceHd,
       user: toUserInfo(user),
-      canUpload: !own.archivedAt,
+      canUpload: await canPlaceIntoProject(db, user, own.id),
       defaultVisibility: defaultVisibilityFor(isOrgWorkspace(user), 'project'),
       availableVisibilities: availableVisibilitiesFor(
         isOrgWorkspace(user),
@@ -135,8 +135,7 @@ export async function loadProjectSubpageContext(
   }
   const shared = await findSharedProjectForViewer(db, projectId, user)
   if (!shared) throw new Response('Not found', { status: 404 })
-  const role = await getProjectShareRoleForEmail(db, projectId, user.email)
-  const canUpload = role === 'contributor' || role === 'manager'
+  const canUpload = await canPlaceIntoProject(db, user, projectId)
   const sourceHd = shared.sourceWorkspaceHd
   const shareDefaults = canUpload
     ? await listProjectShareDefaults(

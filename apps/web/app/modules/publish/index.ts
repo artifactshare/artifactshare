@@ -394,6 +394,7 @@ async function publishWithDb(
       !(await isAgentOwnedArtifact(
         db,
         {
+          id: normalizedUser.id,
           workspaceId: normalizedUser.workspaceId,
           email: normalizedUser.email ?? '',
         },
@@ -422,7 +423,12 @@ async function publishWithDb(
       normalizedUser,
       intent.target.artifactId,
       content,
-      intent.waitUntil ? { waitUntil: intent.waitUntil } : undefined,
+      intent.waitUntil || authority
+        ? {
+            ...(intent.waitUntil ? { waitUntil: intent.waitUntil } : {}),
+            ...(authority ? { authority } : {}),
+          }
+        : undefined,
     )
     if (result.kind !== 'ok') return result
     return { ...result, visibility: shareable.visibility }
@@ -488,6 +494,7 @@ async function publishWithDb(
 
   if (agentAuthority !== null) {
     const agentUser = {
+      id: normalizedUser.id,
       workspaceId: normalizedUser.workspaceId,
       email: normalizedUser.email ?? '',
     }

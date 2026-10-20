@@ -708,3 +708,5 @@ refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
 Mutation readback contains only the affected thread window and changed message.
 `refresh_required: true` means the write committed but advisory readback failed:
 read that thread by ID; do not replay the write automatically.
+
+Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Agents and bots still require their fixed project and a verified contributor/manager grant for private projects; publisher credentials cannot select projects.

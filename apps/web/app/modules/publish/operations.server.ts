@@ -41,8 +41,15 @@ import {
   resolveLinkSharingWrite,
   type LinkSharingWriteFailure,
 } from '~/services/link-sharing.server'
-import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
-import { resolveUploadContainer } from '~/services/projects.server'
+import {
+  externalPostingAllowedSql,
+  isExternalPostingAllowedForWorkspace,
+} from '~/lib/project-external-posting.server'
+import {
+  resolveUploadContainer,
+  uploadPlacementSql,
+  placementAssertionQueries,
+} from '~/services/projects.server'
 import { slackNotificationEnqueueQuery } from '~/services/slack-notifications.server'
 import { deleteArtifact, putArtifact } from '~/services/storage.server'
 import {
@@ -233,6 +240,11 @@ export async function appendShareable(
     preserveName: true,
     expectedCurrentVersionId: current.current_version_id,
     waitUntil: options?.waitUntil,
+    authority: options?.authority,
+    agentProfileId:
+      options?.authority?.kind === 'agent'
+        ? options.authority.agentProfileId
+        : undefined,
   })
 }
 
@@ -379,76 +391,64 @@ export async function createVersion(
   }
 
   const versionQueries: Compilable<unknown>[] = []
-  if (commitExpectedVersionId !== undefined) {
-    versionQueries.push(
-      db
-        .insertInto('versions')
-        .columns([
-          'id',
-          'shareable_id',
-          'artifact_kind',
-          'status',
-          'entrypoint_path',
-          'r2_key',
-          'size_bytes',
-          'sha256',
-          'created_by_id',
-          'created_by_agent_profile_id',
-          'created_by_publisher_client_id',
-          'created_at',
-          'published_at',
-          'label',
-        ])
-        .expression((eb) =>
-          eb
-            .selectFrom('shareables')
-            .select((sel) => [
-              sel.val(prepared.versionId).as('id'),
-              sel.val(shareableId).as('shareable_id'),
-              sel.val(prepared.artifactKind).as('artifact_kind'),
-              sel.val('published').as('status'),
-              sel.val(prepared.entrypointPath).as('entrypoint_path'),
-              sel.val(prepared.r2Key).as('r2_key'),
-              sel.val(prepared.sizeBytes).as('size_bytes'),
-              sel.val(prepared.sha256).as('sha256'),
-              sel.val(user.id).as('created_by_id'),
-              sel
-                .val(publisher ? null : (agentProfileId ?? null))
-                .as('created_by_agent_profile_id'),
-              sel
-                .val(publisher?.publisherClientId ?? null)
-                .as('created_by_publisher_client_id'),
-              sel.val(prepared.now).as('created_at'),
-              sel.val(prepared.now).as('published_at'),
-              sel.val(args.label ?? null).as('label'),
-            ])
-            .where('id', '=', shareableId)
-            .where('current_version_id', '=', commitExpectedVersionId)
-            .where(writableShareableSql(user, authority ?? null, 'version')),
-        ),
-    )
-  } else {
-    versionQueries.push(
-      db.insertInto('versions').values({
-        id: prepared.versionId,
-        label: args.label ?? null,
-        shareable_id: shareableId,
-        artifact_kind: prepared.artifactKind,
-        status: 'published',
-        entrypoint_path: prepared.entrypointPath,
-        r2_key: prepared.r2Key,
-        size_bytes: prepared.sizeBytes,
-        sha256: prepared.sha256,
-        created_by_id: user.id,
-        created_by_agent_profile_id: publisher
-          ? null
-          : (agentProfileId ?? null),
-        created_by_publisher_client_id: publisher?.publisherClientId ?? null,
-        created_at: prepared.now,
-        published_at: prepared.now,
-      }),
-    )
-  }
+  versionQueries.push(
+    db
+      .insertInto('versions')
+      .columns([
+        'id',
+        'shareable_id',
+        'artifact_kind',
+        'status',
+        'entrypoint_path',
+        'r2_key',
+        'size_bytes',
+        'sha256',
+        'created_by_id',
+        'created_by_agent_profile_id',
+        'created_by_publisher_client_id',
+        'created_at',
+        'published_at',
+        'label',
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom('shareables')
+          .select((sel) => [
+            sel.val(prepared.versionId).as('id'),
+            sel.val(shareableId).as('shareable_id'),
+            sel.val(prepared.artifactKind).as('artifact_kind'),
+            sel.val('published').as('status'),
+            sel.val(prepared.entrypointPath).as('entrypoint_path'),
+            sel.val(prepared.r2Key).as('r2_key'),
+            sel.val(prepared.sizeBytes).as('size_bytes'),
+            sel.val(prepared.sha256).as('sha256'),
+            sel.val(user.id).as('created_by_id'),
+            sel
+              .val(publisher ? null : (agentProfileId ?? null))
+              .as('created_by_agent_profile_id'),
+            sel
+              .val(publisher?.publisherClientId ?? null)
+              .as('created_by_publisher_client_id'),
+            sel.val(prepared.now).as('created_at'),
+            sel.val(prepared.now).as('published_at'),
+            sel.val(args.label ?? null).as('label'),
+          ])
+          .where('id', '=', shareableId)
+          .$if(commitExpectedVersionId !== undefined, (q) =>
+            q.where('current_version_id', '=', commitExpectedVersionId!),
+          )
+          .$if(touchArtifactKeyId != null, (q) =>
+            q.where(
+              uploadPlacementSql(
+                user,
+                sql.ref('shareables.container_id'),
+                authority ?? null,
+              ),
+            ),
+          )
+          .where(writableShareableSql(user, authority ?? null, 'version')),
+      ),
+  )
   versionQueries.push(
     db
       .updateTable('shareables')
@@ -513,21 +513,40 @@ export async function createVersion(
     }
     const results = await runD1BatchWithResults(
       db,
+      ...placementAssertionQueries(
+        db,
+        accounting.workspaceId,
+        shareableId,
+        sql<boolean>`EXISTS (SELECT 1 FROM shareables WHERE id = ${shareableId}
+          AND ${writableShareableSql(user, authority ?? null, 'version')}
+          AND (shareables.workspace_id = ${user.workspaceId} OR ${externalPostingAllowedSql(sql.ref('shareables.workspace_id'))})
+          AND ${commitExpectedVersionId === undefined ? sql<boolean>`1 = 1` : sql<boolean>`current_version_id = ${commitExpectedVersionId}`}
+          AND ${
+            agentAuthority !== null || touchArtifactKeyId != null
+              ? uploadPlacementSql(
+                  user,
+                  sql.ref('shareables.container_id'),
+                  authority ?? null,
+                )
+              : sql<boolean>`1 = 1`
+          })`,
+        prepared.now,
+      ),
       ...versionQueries,
       db
         .selectFrom('versions')
         .select('number')
         .where('id', '=', prepared.versionId),
     )
-    versionInsertResult = results[0]
+    versionInsertResult = results[2]
     // A guarded insert can be empty; that path returns a conflict below.
     number = batchRows<{ number: number }>(results.at(-1))[0]?.number
-  } catch {
-    await deleteArtifact(env.BUCKET, prepared.r2Key).catch((err) => {
+  } catch (err) {
+    await deleteArtifact(env.BUCKET, prepared.r2Key).catch((deleteError) => {
       console.error('r2_compensation_failed', {
         shareable_id: shareableId,
         r2_key: prepared.r2Key,
-        err,
+        err: deleteError,
       })
     })
     await releaseQuota(
@@ -536,6 +555,31 @@ export async function createVersion(
       prepared.sizeBytes,
       prepared.now,
     )
+    if (isLinkPublicationError(err, 'link publication mutation missing')) {
+      const external = await checkExternalVersionUploadAllowed(
+        db,
+        accounting.workspaceId,
+        user.workspaceId,
+      )
+      if (external.kind !== 'ok') return external
+      const writable = await findWritableShareable(
+        db,
+        user,
+        shareableId,
+        authority ?? null,
+        'version',
+      )
+      if (
+        writable &&
+        commitExpectedVersionId !== undefined &&
+        writable.current_version_id !== commitExpectedVersionId
+      )
+        return {
+          kind: 'version-conflict',
+          currentVersionId: writable.current_version_id,
+        }
+      return { kind: 'not-found' }
+    }
     return { kind: 'storage-failed' }
   }
 
@@ -606,6 +650,11 @@ async function createNewShareableFromFile(
   stableKey: string | null,
   options?: UploadOptions,
 ): Promise<UploadShareableResult> {
+  if (
+    requestedContainerId === null &&
+    (await isWorkspaceAccessRevoked(db, user.workspaceId, user.id))
+  )
+    return { kind: 'workspace-access-revoked' }
   const publisher =
     options?.authority?.kind === 'publisher' ? options.authority : null
   if (
@@ -795,7 +844,28 @@ async function createNewShareableFromFile(
                 ),
               ),
           )
-      : db.insertInto('shareables').values(shareableValues)
+      : db
+          .insertInto('shareables')
+          .columns(
+            Object.keys(shareableValues) as (keyof typeof shareableValues)[],
+          )
+          .expression((eb) =>
+            eb
+              .selectFrom('users')
+              .where('users.id', '=', user.id)
+              .where(
+                uploadPlacementSql(
+                  user,
+                  destination.containerId,
+                  options?.authority ?? null,
+                ),
+              )
+              .select(
+                Object.entries(shareableValues).map(([column, value]) =>
+                  eb.val(value).as(column),
+                ),
+              ),
+          )
     const attemptValues =
       effectiveVisibility === 'link'
         ? await linkPublicationAttemptValues(db, {
@@ -804,7 +874,17 @@ async function createNewShareableFromFile(
             now: prepared.now,
           })
         : null
-    const queries: Compilable<unknown>[] = []
+    const queries: Compilable<unknown>[] = placementAssertionQueries(
+      db,
+      accounting.workspaceId,
+      shareableId,
+      uploadPlacementSql(
+        user,
+        destination.containerId,
+        options?.authority ?? null,
+      ),
+      prepared.now,
+    )
     if (attemptValues) {
       queries.push(
         db.insertInto('link_publication_attempts').values(attemptValues),
@@ -920,6 +1000,8 @@ async function createNewShareableFromFile(
           prepared.now,
         ),
       ])
+      if (isLinkPublicationError(err, 'link publication mutation missing'))
+        return { kind: 'invalid-container' }
       if (isLinkPublicationError(err, 'link publication quota exceeded')) {
         return await buildLinkPublishRateLimitFailure(db, {
           workspaceId: accounting.workspaceId,
@@ -1174,6 +1256,9 @@ async function findWritableShareable(
       'c.archived_at as container_archived_at',
     ])
     .where('shareables.id', '=', shareableId)
+    .$if(authority?.kind === 'agent', (q) =>
+      q.where(writableShareableSql(user, authority, access)),
+    )
     .executeTakeFirst()
   if (!shareable) return null
   if (authority?.kind === 'publisher')
@@ -1191,7 +1276,7 @@ async function findWritableShareable(
       shareable.container_id !== writeAuthority.projectId ||
       !(await isAgentPublishableDestination(
         db,
-        { workspaceId: user.workspaceId, email: user.email ?? '' },
+        { id: user.id, workspaceId: user.workspaceId, email: user.email ?? '' },
         writeAuthority,
         shareable.container_id,
       ))
@@ -1292,26 +1377,9 @@ function writableShareableSql(
   const writeAuthority = cliWriteAuthority(authority)
   if (writeAuthority === 'denied') return sql<boolean>`0 = 1`
   if (writeAuthority) {
-    return sql<boolean>`
-      shareables.workspace_id = ${writeAuthority.workspaceId}
-      AND shareables.container_id = ${writeAuthority.projectId}
+    return sql<boolean>`shareables.workspace_id = ${writeAuthority.workspaceId}
       AND shareables.visibility IN ('workspace', 'project')
-      AND EXISTS (
-        SELECT 1 FROM artifact_containers writable_project
-        WHERE writable_project.id = shareables.container_id
-          AND writable_project.workspace_id = ${writeAuthority.workspaceId}
-          AND writable_project.kind = 'project'
-          AND writable_project.archived_at IS NULL
-          AND (
-            writable_project.base_visibility = 'workspace'
-            OR EXISTS (
-              SELECT 1 FROM project_share_defaults writable_agent_grant
-              WHERE writable_agent_grant.project_container_id = writable_project.id
-                AND lower(writable_agent_grant.email) = ${user.email?.toLowerCase() ?? ''}
-                AND writable_agent_grant.role IN ('contributor', 'manager')
-            )
-          )
-      )`
+      AND ${uploadPlacementSql(user, sql.ref('shareables.container_id'), authority)}`
   }
   const verifiedEmail = user.emailVerified
     ? (user.email?.toLowerCase() ?? '')

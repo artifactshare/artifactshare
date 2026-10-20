@@ -91,6 +91,7 @@ import {
   findSharedProjectForViewer,
   findWorkspaceProject,
   getProjectShareRoleForEmail,
+  canPlaceIntoProject,
   listProjectShareDefaults,
   normalizeProjectDescription,
   normalizeProjectName,
@@ -245,6 +246,7 @@ type MemberLoaderData = {
   files: FileRowData[]
   shareDefaults: ProjectShareDefault[]
   slackChannel: Awaited<ReturnType<typeof getContainerSlackChannel>>
+  canUpload: boolean
   canEditProject: boolean
   externalPostingEnabled: boolean
   projectArtifactCount: number
@@ -423,6 +425,7 @@ export async function loader({
 
   return {
     access: 'member',
+    canUpload: await canPlaceIntoProject(db, user, project.id),
     project,
     user: toUserInfo(user),
     workspaceId: user.workspaceId,
@@ -486,7 +489,7 @@ async function loadSharedProject(
   const role = externalPostingEnabled
     ? await getProjectShareRoleForEmail(db, project.id, user.email)
     : null
-  const canPost = role === 'contributor' || role === 'manager'
+  const canPost = await canPlaceIntoProject(db, user, project.id)
   const canManage = role === 'manager'
   const defaults = canPost
     ? await listProjectShareDefaults(
@@ -931,22 +934,24 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
           ranking={loaderData.projectActivity.ranking}
           now={loaderData.projectActivity.now}
           canPin
-          canUpload
+          canUpload={loaderData.canUpload}
           archived={Boolean(project.archivedAt)}
           onUpload={() => setOpenDialog('upload')}
           homeOwnerName={loaderData.user.name ?? loaderData.user.email}
         />
       </main>
-      <UploadArtifactDialog
-        open={openDialog === 'upload'}
-        onOpenChange={(v) => setOpenDialog(v ? 'upload' : null)}
-        defaultVisibility={loaderData.defaultVisibility}
-        workspaceHd={loaderData.workspaceHd}
-        availableVisibilities={loaderData.availableVisibilities}
-        linkSharingAvailable={loaderData.linkSharingAvailable}
-        user={loaderData.user}
-        destination={uploadDestination}
-      />
+      {loaderData.canUpload ? (
+        <UploadArtifactDialog
+          open={openDialog === 'upload'}
+          onOpenChange={(v) => setOpenDialog(v ? 'upload' : null)}
+          defaultVisibility={loaderData.defaultVisibility}
+          workspaceHd={loaderData.workspaceHd}
+          availableVisibilities={loaderData.availableVisibilities}
+          linkSharingAvailable={loaderData.linkSharingAvailable}
+          user={loaderData.user}
+          destination={uploadDestination}
+        />
+      ) : null}
       <EditProjectDialog
         open={openDialog === 'edit'}
         onOpenChange={handleEditOpenChange}
@@ -1031,15 +1036,17 @@ export function MemberDetailActions({
           {shareDefaultsActionLabel}
         </Button>
       ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => setOpenDialog('upload')}
-      >
-        <IconPlus size={14} aria-hidden="true" />
-        {t('tb.addFile')}
-      </Button>
+      {loaderData.canUpload ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setOpenDialog('upload')}
+        >
+          <IconPlus size={14} aria-hidden="true" />
+          {t('tb.addFile')}
+        </Button>
+      ) : null}
       {loaderData.canEditProject || loaderData.projectActivity.joined ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
