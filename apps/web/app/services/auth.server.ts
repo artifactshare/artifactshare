@@ -39,7 +39,10 @@ import {
   linkExpiryStartingColumns,
 } from '~/lib/link-sharing-policy'
 import { associateD1Database } from '~/lib/d1-database-registry.server'
-import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
+import {
+  ConcurrentD1Dialect,
+  d1CompatibilityPlugin,
+} from '~/lib/d1-compatibility.server'
 import type { SessionUser } from '~/lib/user'
 import { isReservedBotEmailDomain } from '~/lib/bot-account'
 import {
@@ -146,7 +149,7 @@ interface MicrosoftOrganization {
 }
 
 function buildAuth() {
-  const dialect = new D1Dialect({ database: env.DB })
+  const dialect = new ConcurrentD1Dialect({ database: env.DB })
   // Share this guarded Kysely instance with better-auth. Passing only the
   // dialect would make its adapter construct a second, unguarded instance.
   const db = new Kysely<DB>({ dialect, plugins: [d1CompatibilityPlugin] })
@@ -1061,7 +1064,16 @@ export function normalizeBrowserSessionExpiry(value: unknown): number | null {
 async function resolveBrowserSessionContext(
   headers: Headers,
 ): Promise<BrowserSessionContext | null> {
-  const session = await getSession(headers).catch(() => null)
+  const session = await getSession(headers).catch((error: unknown) => {
+    console.warn('artifactshare_auth_session_error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      errorMessage:
+        error instanceof Error
+          ? error.message
+          : 'Unexpected session lookup failure',
+    })
+    return null
+  })
   if (!session) return null
   const sessionExpiresAtMs = normalizeBrowserSessionExpiry(
     (session.session as { expiresAt?: unknown } | undefined)?.expiresAt,

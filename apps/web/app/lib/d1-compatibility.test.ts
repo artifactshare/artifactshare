@@ -2,6 +2,12 @@ import { type Kysely, sql } from 'kysely'
 import { afterEach, describe, expect, test } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
+import { ConcurrentD1Dialect } from './d1-compatibility.server'
+
+test('ConcurrentD1Dialect supports concurrent connections', () => {
+  const dialect = new ConcurrentD1Dialect({ database: {} as D1Database })
+  expect(dialect.createAdapter().supportsMultipleConnections).toBe(true)
+})
 
 describe('d1CompatibilityPlugin', () => {
   let db: Kysely<DB> | undefined

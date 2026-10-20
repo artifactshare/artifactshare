@@ -1,5 +1,6 @@
 import {
   OperationNodeTransformer,
+  SqliteAdapter,
   type KyselyPlugin,
   type OperationNode,
   type PrimitiveValueListNode,
@@ -10,6 +11,21 @@ import {
   type UnknownRow,
   type ValueNode,
 } from 'kysely'
+import { D1Dialect } from 'kysely-d1'
+
+class ConcurrentD1Adapter extends SqliteAdapter {
+  override get supportsMultipleConnections(): boolean {
+    // Isolate-shared Kysely must not share request-created lock promises.
+    // D1 connections are stateless, so concurrent acquisition needs no mutex.
+    return true
+  }
+}
+
+export class ConcurrentD1Dialect extends D1Dialect {
+  override createAdapter(): SqliteAdapter {
+    return new ConcurrentD1Adapter()
+  }
+}
 
 const MAX_COMPOUND_OPERATIONS = 4
 const MAX_BOUND_PARAMETERS = 100
