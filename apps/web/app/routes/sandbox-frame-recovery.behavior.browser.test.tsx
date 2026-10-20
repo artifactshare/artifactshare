@@ -3,15 +3,19 @@ import { act, Profiler, type ProfilerOnRenderCallback } from 'react'
 import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { CommentThreadView } from '~/lib/comments'
+import { VIOLATION_REPORTER_SCRIPT_BODY } from '~/lib/csp-reporter'
 import { SandboxFrame } from './a.$id/+components/sandbox-frame'
 
 const realNow = performance.now.bind(performance)
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+const i18n = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
+
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('en') }
+  return { useT: () => bindI18n(i18n.locale) }
 })
 
 vi.mock('react-router', async (importOriginal) => ({
@@ -35,6 +39,7 @@ function deferred<T>(): Deferred<T> {
 let root: Root | undefined
 
 afterEach(async () => {
+  i18n.locale = 'en'
   vi.useRealTimers()
   vi.unstubAllGlobals()
   if (root) await act(async () => root?.unmount())
@@ -362,6 +367,7 @@ async function renderFrame(
   onRender: ProfilerOnRenderCallback = () => {},
   options: {
     host?: HTMLElement
+    commentThreads?: CommentThreadView[]
     renderType?: string | null
     beforeHydrate?: (host: HTMLElement) => void
   } = {},
@@ -389,11 +395,11 @@ async function renderFrame(
           url={`${window.location.origin}/sandbox-frame-test?t=old`}
           name="Recovery test"
           mermaidEnabled={false}
-          textAnchorsEnabled={false}
+          textAnchorsEnabled={Boolean(options.commentThreads)}
           linkNavigationMode={siteNavigation ? 'site' : 'document'}
           bundlePaths={siteNavigation ? ['/next.html'] : []}
           fallbackToIndex={false}
-          commentThreads={[]}
+          commentThreads={options.commentThreads ?? []}
           targetThreadId={null}
           highlightThreadId={null}
           followsAppTheme={false}
@@ -867,5 +873,91 @@ test.each([false, true])(
     expect(host.textContent).toContain('inline-survives')
     expect(host.textContent?.includes('cdn-noise-200')).toBe(privileged)
     expect(host.querySelectorAll('aside li')).toHaveLength(privileged ? 101 : 1)
+  },
+)
+
+test.each([
+  ['en', 'Open 7 unresolved comments on this text: Selected words'],
+  ['ja', 'この本文範囲の未解決コメント7件を開く: Selected words'],
+] as const)(
+  'inline totals stay stable as older replies load (%s)',
+  async (locale, label) => {
+    i18n.locale = locale
+    const messages = Array.from({ length: 7 }, (_, index) => ({
+      id: `message-${index}`,
+      body: `Comment ${index}`,
+      agent: null,
+      createdAt: `2026-01-01T00:00:0${index}Z`,
+      updatedAt: `2026-01-01T00:00:0${index}Z`,
+      author: {
+        id: 'viewer',
+        name: 'Viewer',
+        email: 'viewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    }))
+    const thread: CommentThreadView = {
+      id: 'inline-thread',
+      status: 'open',
+      createdAt: messages[0].createdAt,
+      updatedAt: messages[6].createdAt,
+      resolvedAt: null,
+      canResolve: false,
+      messageCount: 7,
+      replyCount: 6,
+      olderCursor: 'older-page',
+      messages: [messages[0], ...messages.slice(-3)],
+      subject: {
+        kind: 'text',
+        state: 'attached',
+        quotedText: 'Selected words',
+        prefixText: '',
+        suffixText: '',
+        targetPath: '/sandbox-frame-test',
+        versionId: 'v1',
+        textStart: null,
+        textEnd: null,
+        cssPath: null,
+      },
+    }
+    const host = await renderFrame(undefined, false, false, undefined, {
+      commentThreads: [thread],
+    })
+    const frame = host.querySelector('iframe')!
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        frame.addEventListener('load', () => resolve(), { once: true })
+        frame.srcdoc = `<!doctype html><body><main data-comment-content><p>Selected words</p></main><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+      })
+    })
+    const assertBadge = () => {
+      const badge = frame.contentDocument!.querySelector(
+        '.ash-comment-highlight-badge',
+      )
+      expect(badge?.getAttribute('data-count')).toBe('7')
+      expect(badge?.getAttribute('aria-label')).toBe(label)
+    }
+    await vi.waitFor(assertBadge)
+    const sent = vi.spyOn(frame.contentWindow!, 'postMessage')
+    try {
+      await renderFrame(undefined, false, false, undefined, {
+        host,
+        commentThreads: [{ ...thread, messages, olderCursor: null }],
+      })
+      await vi.waitFor(() =>
+        expect(
+          sent.mock.calls.some(
+            ([message]) =>
+              message.kind === 'comment-highlights' &&
+              message.highlights[0]?.count === 7,
+          ),
+        ).toBe(true),
+      )
+      await vi.waitFor(assertBadge)
+    } finally {
+      sent.mockRestore()
+    }
   },
 )

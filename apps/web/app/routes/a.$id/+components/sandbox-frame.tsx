@@ -481,7 +481,7 @@ function useSandboxFrameController({
         threadId: thread.id,
         status: thread.status,
         target: thread.id === highlightThreadId,
-        count: thread.messages.length,
+        count: thread.messageCount,
       }
     })
     return textHighlights
