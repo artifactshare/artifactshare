@@ -1,3 +1,4 @@
+import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import { validateCommentPageRequest } from '~/lib/comment-page'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
@@ -101,6 +102,7 @@ import { ARTIFACT_PREVIEW_TEMPLATE_URI } from './preview-widget.server'
 import {
   toAgentCommentThread,
   agentCommentMutationFields,
+  agentCommentDeletionFields,
 } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
@@ -400,6 +402,10 @@ const DELETE_COMMENT_OUTPUT_SCHEMA = {
     COMMENT_DELETE_RESPONSE_SCHEMA.shape.deleted,
   ),
   thread_deleted: COMMENT_DELETE_RESPONSE_SCHEMA.shape.thread_deleted,
+  deleted_message_id: mcpOutputField(
+    z.string(),
+    COMMENT_DELETE_RESPONSE_SCHEMA.shape.deleted_message_id.unwrap(),
+  ).optional(),
   thread: COMMENT_THREAD_SCHEMA.optional(),
   refresh_required: z.boolean().optional(),
 }
@@ -1600,7 +1606,7 @@ export function registerArtifactTools(
         ...(result.deletedMessageId
           ? { deleted_message_id: result.deletedMessageId }
           : {}),
-        ...agentCommentMutationFields(result),
+        ...agentCommentDeletionFields(result),
       })
     },
   )
@@ -2277,7 +2283,7 @@ function commentMutationError(
     case 'thread-capacity':
       return toolError({
         code: result.kind,
-        message: 'This thread has 500 messages. Start a new thread.',
+        message: `This thread has ${COMMENT_THREAD_MESSAGE_LIMIT} messages. Start a new thread.`,
         recoverable_by: 'agent',
       })
     case 'rate-limited':

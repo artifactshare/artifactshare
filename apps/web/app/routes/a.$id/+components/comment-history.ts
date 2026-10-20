@@ -1,3 +1,4 @@
+import { COMMENT_REPLY_PAGE_LIMIT } from '~/lib/comment-page'
 import {
   messageCursor as throughCursor,
   parseMessageCursor as boundary,
@@ -72,7 +73,10 @@ function compactTailPages(
     )
     return start < 0
       ? []
-      : coveredReplies.slice(start, start + (page.limit ?? 50))
+      : coveredReplies.slice(
+          start,
+          start + (page.limit ?? COMMENT_REPLY_PAGE_LIMIT),
+        )
   }
   for (const page of explicit)
     for (const message of rowsFor(page)) covered.add(message.id)
@@ -117,7 +121,7 @@ function compactTailPages(
         continue
       }
       chunk.push(message)
-      if (chunk.length === 50) flush()
+      if (chunk.length === COMMENT_REPLY_PAGE_LIMIT) flush()
     }
     flush()
   }
@@ -186,7 +190,7 @@ export async function revalidateCommentPage(
       limit: Math.max(
         1,
         Math.min(
-          50,
+          COMMENT_REPLY_PAGE_LIMIT,
           merged.messages.filter(
             (message) =>
               compareCommentMessages(message, lower) >= 0 &&
@@ -377,7 +381,7 @@ export function commentGapRequests(
     )
       gaps.set(next.id, {
         before: throughCursor(thread.id, next),
-        limit: 50,
+        limit: COMMENT_REPLY_PAGE_LIMIT,
         interiorGap: true,
       })
   }

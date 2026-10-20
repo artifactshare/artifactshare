@@ -1,3 +1,7 @@
+import {
+  COMMENT_THREAD_MESSAGE_LIMIT,
+  COMMENT_POST_ADMISSION_LIMIT,
+} from '~/lib/comment-limits'
 import { sql, type Kysely } from 'kysely'
 import type { DB } from '~/types/db'
 
@@ -35,7 +39,11 @@ export async function admitCommentPost(
           .where((eb) =>
             eb.or([
               eb('comment_post_windows.minute_start', '<', minute),
-              eb('comment_post_windows.admissions', '<', 20),
+              eb(
+                'comment_post_windows.admissions',
+                '<',
+                COMMENT_POST_ADMISSION_LIMIT,
+              ),
             ]),
           ),
       )
@@ -89,7 +97,7 @@ export async function commentInsertFailure(
       if (
         (signal === 'thread-capacity' &&
           thread &&
-          thread.message_count >= 500) ||
+          thread.message_count >= COMMENT_THREAD_MESSAGE_LIMIT) ||
         (signal === 'closed-thread' && thread?.status === 'resolved')
       )
         return { kind: signal }

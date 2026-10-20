@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs'
+import {
+  COMMENT_THREAD_MESSAGE_LIMIT,
+  COMMENT_POST_ADMISSION_LIMIT,
+} from '~/lib/comment-limits'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from 'vitest'
 import { applyMigrations, loadMigrations } from '~/test/sqlite-fixture'
@@ -49,3 +54,23 @@ test('comment bounds backfill preserves legacy excess and counters follow author
     sqlite.close()
   }
 })
+
+test.each(['migrations/0117_comment_bounds.sql', 'schema.sql'])(
+  'SQL bounds in %s match shared limits',
+  (file) => {
+    const sql = readFileSync(
+      new URL(`../../db/${file}`, import.meta.url),
+      'utf8',
+    )
+    expect(
+      Number(
+        sql.match(
+          /WHERE \(SELECT message_count FROM comment_threads WHERE id = NEW.thread_id\) >= (\d+)/,
+        )?.[1],
+      ),
+    ).toBe(COMMENT_THREAD_MESSAGE_LIMIT)
+    expect(
+      Number(sql.match(/CHECK \(admissions BETWEEN 1 AND (\d+)\)/)?.[1]),
+    ).toBe(COMMENT_POST_ADMISSION_LIMIT)
+  },
+)

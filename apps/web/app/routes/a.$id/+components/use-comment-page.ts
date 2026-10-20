@@ -1,4 +1,4 @@
-import { commentPageUrl } from '~/lib/comment-page'
+import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
 import { useCallback, useEffect, useRef, useState, useReducer } from 'react'
 import type { CommentThreadView } from '~/lib/comments'
 import { fetchJsonWithViewerTimeout } from '~/lib/viewer-network'
@@ -20,7 +20,10 @@ export function useCommentPage(
   targetMessageId?: string,
   onTargetMissing?: (messageId: string) => void,
 ) {
-  const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const [status, setStatus] = useState<
+    | { kind: 'idle' | 'loading' }
+    | { kind: 'failed'; request: CommentPageRequest }
+  >({ kind: 'idle' })
   const queued = useRef<CommentPageRequest | null>(null)
   const active = useRef<AbortController | null>(null)
   const activeTarget = useRef<string | undefined>(undefined)
@@ -58,7 +61,7 @@ export function useCommentPage(
       if (active.current) return false
       if (hasPendingCommentMutation(shareableId)) {
         queued.current = page
-        setStatus('loading')
+        setStatus({ kind: 'loading' })
         return false
       }
       queued.current = null
@@ -66,7 +69,7 @@ export function useCommentPage(
       active.current = controller
       activeTarget.current = page.aroundMessageId
       const epoch = getCommentMutationEpoch(shareableId, threadId)
-      setStatus('loading')
+      setStatus({ kind: 'loading' })
       let outcome: 'idle' | 'failed' = 'failed'
       try {
         const result = await fetchJsonWithViewerTimeout<{
@@ -139,7 +142,11 @@ export function useCommentPage(
         if (active.current === controller) {
           active.current = null
           activeTarget.current = undefined
-          setStatus(controller.signal.aborted ? 'idle' : outcome)
+          setStatus(
+            controller.signal.aborted || outcome === 'idle'
+              ? { kind: 'idle' }
+              : { kind: 'failed', request: page },
+          )
         }
       }
     },
@@ -165,7 +172,15 @@ export function useCommentPage(
     )
       return
     attemptedTarget.current = targetMessageId
-    void load({ aroundMessageId: targetMessageId, limit: 50 })
+    void load({
+      aroundMessageId: targetMessageId,
+      limit: COMMENT_REPLY_PAGE_LIMIT,
+    })
   }, [targetMessageId, shareableId, threadId, load, status, settled])
-  return { load, pending: status === 'loading', failed: status === 'failed' }
+  return {
+    load,
+    pending: status.kind === 'loading',
+    failed: status.kind === 'failed',
+    failedRequest: status.kind === 'failed' ? status.request : undefined,
+  }
 }

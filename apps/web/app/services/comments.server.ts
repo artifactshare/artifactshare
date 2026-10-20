@@ -1,3 +1,4 @@
+import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import {
   loadMessageWindow,
   loadInitialMessageWindows,
@@ -676,10 +677,11 @@ export async function replyToCommentThread(
   const body = normalizeCommentBody(rawBody)
   if (!body) return { kind: 'invalid-body' }
 
-  const thread = await loadThread(db, access.shareableId, threadId)
+  const thread = await loadCommentThreadRow(db, access.shareableId, threadId)
   if (!thread) return { kind: 'invalid-thread' }
   if (thread.status === 'resolved') return { kind: 'closed-thread' }
-  if (thread.message_count >= 500) return { kind: 'thread-capacity' }
+  if (thread.message_count >= COMMENT_THREAD_MESSAGE_LIMIT)
+    return { kind: 'thread-capacity' }
   const admission = await admitCommentPost(db, user.id, access.shareableId)
   if (admission.kind !== 'ok') return admission
 
@@ -730,7 +732,7 @@ export async function setCommentThreadResolved(
   resolved: boolean,
   options?: CommentMutationOptions,
 ): Promise<CommentMutationResult> {
-  const thread = await loadThread(db, access.shareableId, threadId)
+  const thread = await loadCommentThreadRow(db, access.shareableId, threadId)
   if (!thread) return { kind: 'invalid-thread' }
   const result = await mutateLoadedCommentThreadResolved(
     db,
@@ -805,11 +807,15 @@ export async function deleteCommentMessage(
   )
   if (result.kind !== 'ok') return result
 
+  const window = await changedThreadWindow(db, access, user, message.thread_id)
   return {
     kind: 'ok',
     threadId: message.thread_id,
     deletedMessageId: messageId,
-    ...(await changedThreadWindow(db, access, user, message.thread_id)),
+    ...window,
+    ...(!window.threads.length && !window.refreshRequired
+      ? { deletedThreadId: message.thread_id }
+      : {}),
   }
 }
 
@@ -969,7 +975,7 @@ export async function deleteCommentThread(
   threadId: string,
   options?: CommentMutationOptions,
 ): Promise<CommentMutationResult> {
-  const thread = await loadThread(db, access.shareableId, threadId)
+  const thread = await loadCommentThreadRow(db, access.shareableId, threadId)
   if (!thread) return { kind: 'invalid-thread' }
   const isOwner = await liveOwnerAccess(db, access, user.id)
   if (
@@ -1044,7 +1050,7 @@ async function updateExistingComment(
 
   if (input.resolved !== undefined) {
     if (!threadId) return { kind: 'invalid-thread' }
-    const thread = await loadThread(db, access.shareableId, threadId)
+    const thread = await loadCommentThreadRow(db, access.shareableId, threadId)
     if (!thread) return { kind: 'invalid-thread' }
     const result = await mutateLoadedCommentThreadResolved(
       db,
@@ -1627,11 +1633,9 @@ export async function storeAnchorResolutions(
   return true
 }
 
-function loadThread(db: Kysely<DB>, shareableId: string, threadId: string) {
-  return loadCommentThreadRow(db, shareableId, threadId)
-}
-
-type LoadedCommentThread = NonNullable<Awaited<ReturnType<typeof loadThread>>>
+type LoadedCommentThread = NonNullable<
+  Awaited<ReturnType<typeof loadCommentThreadRow>>
+>
 
 function loadMessage(db: Kysely<DB>, shareableId: string, messageId: string) {
   return db

@@ -72,7 +72,6 @@ export type CommentMutationSettledDetail = {
   clientMutationId: string
   appliedThreads: boolean
   threadId?: string
-  requiresReconcile: boolean
 }
 
 export function hasPendingCommentMutation(shareableId: string): boolean {
@@ -247,19 +246,13 @@ function incrementActiveMutation(
 
 function decrementActiveMutation(
   shareableId: string,
-  detail: Omit<
-    CommentMutationSettledDetail,
-    'shareableId' | 'requiresReconcile'
-  >,
+  detail: Omit<CommentMutationSettledDetail, 'shareableId'>,
 ) {
   const ids = activeMutationIdsByShareable.get(shareableId)
   ids?.delete(detail.clientMutationId)
   if (ids?.size === 0) activeMutationIdsByShareable.delete(shareableId)
 
   const next = (activeMutationsByShareable.get(shareableId) ?? 0) - 1
-  const requiresReconcile =
-    detail.appliedThreads ||
-    (next <= 0 && overlappingMutationsByShareable.has(shareableId))
   if (next > 0) {
     activeMutationsByShareable.set(shareableId, next)
   } else {
@@ -268,7 +261,7 @@ function decrementActiveMutation(
   }
   window.dispatchEvent(
     new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-      detail: { shareableId, ...detail, requiresReconcile },
+      detail: { shareableId, ...detail },
     }),
   )
 }

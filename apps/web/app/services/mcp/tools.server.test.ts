@@ -794,6 +794,12 @@ describe('headless publish wiring', () => {
         expect(json, `${tool.name}: ${keyword}`).not.toContain(`"${keyword}":`)
       }
     }
+    const deletion = byName.get('delete_comment')!.outputSchema
+    expect(deletion.properties.deleted_message_id).toEqual({ type: 'string' })
+    expect(deletion).not.toHaveProperty(
+      'required',
+      expect.arrayContaining(['deleted_message_id']),
+    )
     const read = byName.get('get_artifact')!.outputSchema.properties
     expect(read.next_offset).toEqual({ type: ['number', 'null'] })
     expect(read.size_bytes).toEqual({ type: 'number' })
@@ -840,6 +846,11 @@ describe('headless publish wiring', () => {
         expect(offset.safeParse(value).success).toBe(true)
       for (const value of [-1, 0.5])
         expect(offset.safeParse(value).success).toBe(false)
+      const deletedMessage = fields('delete_comment').deleted_message_id!
+      expect(deletedMessage.safeParse(undefined).success).toBe(true)
+      expect(deletedMessage.safeParse('message-a').success).toBe(true)
+      expect(deletedMessage.safeParse('').success).toBe(false)
+      expect(deletedMessage.safeParse(1).success).toBe(false)
       const deleted = fields('delete_artifact').deleted!
       expect(deleted.safeParse(true).success).toBe(true)
       expect(deleted.safeParse(false).success).toBe(false)
@@ -3772,6 +3783,10 @@ describe('headless publish wiring', () => {
       }
     }
     expect(result.isError).toBeFalsy()
+    expect(result.structuredContent).toHaveProperty(
+      'deleted_message_id',
+      messageId,
+    )
     expect(result.structuredContent?.thread_deleted).toBe(false)
     const bodies = result.structuredContent?.thread?.messages?.map(
       (m) => m.body,
@@ -3843,6 +3858,10 @@ describe('headless publish wiring', () => {
     const result = body.result as {
       structuredContent?: { thread_deleted?: boolean }
     }
+    expect(result.structuredContent).toHaveProperty(
+      'deleted_message_id',
+      messageId,
+    )
     expect(result.structuredContent?.thread_deleted).toBe(true)
     const rows = await db
       .selectFrom('comment_threads')

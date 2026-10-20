@@ -570,3 +570,168 @@ test('a deleted unread target advances to the next surviving unloaded reply with
     vi.unstubAllGlobals()
   }
 })
+
+test('a failed interior gap keeps the older control normal and retries the same gap', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initial = pagedThread(100, 149)
+  const fetchPage = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+    .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+    .mockResolvedValueOnce(Response.json({ threads: [pagedThread(248, 297)] }))
+  function Harness() {
+    const [thread, setThread] = useState(initial)
+    return (
+      <CommentPanel
+        shareableId="synthetic-artifact"
+        viewerUserId="viewer"
+        threads={[thread]}
+        onThreadsChange={(rows, patch) =>
+          setThread((current) =>
+            mergeCommentWindow(current, rows[0], patch?.page),
+          )
+        }
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId="thread"
+        requestedFilter="all"
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+      />
+    )
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const button = (label: string) => {
+    const found = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent === label,
+    )
+    expect(found, host.textContent ?? label).toBeDefined()
+    return found!
+  }
+  const settled = () =>
+    waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes(en['comments.errorReplies']) === true
+    }, 'failed reply request displayed')
+  try {
+    await act(async () => root.render(<Harness />))
+    await act(async () => button(en['comments.loadReplyGap']).click())
+    await settled()
+    expect(host.textContent).not.toContain(en['comments.retryReplies'])
+    const failedGap = String(fetchPage.mock.calls[0][0])
+    expect(
+      new URL(failedGap, 'https://example.com').searchParams.get('before'),
+    ).not.toBe(initial.olderCursor)
+    await act(async () => button('Show 247 more replies').click())
+    await settled()
+    const older = new URL(
+      String(fetchPage.mock.calls[1][0]),
+      'https://example.com',
+    )
+    expect(older.searchParams.get('before')).toBe(initial.olderCursor)
+    expect(older.searchParams.get('limit')).toBe('50')
+    await act(async () => button(en['comments.loadReplyGap']).click())
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes('Paged reply 248.') === true
+    }, 'gap replies recovered')
+    expect(String(fetchPage.mock.calls[2][0])).toBe(failedGap)
+    expect(host.textContent!.indexOf('Paged reply 149.')).toBeLessThan(
+      host.textContent!.indexOf('Paged reply 248.'),
+    )
+    expect(host.textContent!.indexOf('Paged reply 297.')).toBeLessThan(
+      host.textContent!.indexOf('Paged reply 298.'),
+    )
+    expect(host.textContent).not.toContain(en['comments.errorReplies'])
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetchPage.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a failed older page retains its normal expand label and offers an exact request retry', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initial = pagedThread(248, 297)
+  let finish!: (response: Response) => void
+  const fetchPage = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve
+        }),
+    )
+    .mockResolvedValueOnce(Response.json({ threads: [pagedThread(198, 247)] }))
+  function Harness() {
+    const [thread, setThread] = useState(initial)
+    return (
+      <CommentPanel
+        shareableId="synthetic-artifact"
+        viewerUserId="viewer"
+        threads={[thread]}
+        onThreadsChange={(rows, patch) =>
+          setThread((current) =>
+            mergeCommentWindow(current, rows[0], patch?.page),
+          )
+        }
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId="thread"
+        requestedFilter="all"
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+      />
+    )
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const button = (label: string) => {
+    const found = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent === label,
+    )
+    expect(found, host.textContent ?? label).toBeDefined()
+    return found!
+  }
+  try {
+    await act(async () => root.render(<Harness />))
+    await act(async () => button('Show 247 earlier replies').click())
+    expect(button(en['comments.loadingReplies']).disabled).toBe(true)
+    expect(host.textContent).toContain('Paged reply 248.')
+    finish(Response.json({}, { status: 503 }))
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes(en['comments.retryReplies']) === true
+    }, 'older page retry displayed')
+    expect(button('Show 247 earlier replies').disabled).toBe(false)
+    expect(host.textContent).toContain('Paged reply 248.')
+    await act(async () => button(en['comments.retryReplies']).click())
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes('Paged reply 198.') === true
+    }, 'older page recovered')
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    expect(String(fetchPage.mock.calls[1][0])).toBe(
+      String(fetchPage.mock.calls[0][0]),
+    )
+    const requested = new URL(
+      String(fetchPage.mock.calls[1][0]),
+      'https://example.com',
+    )
+    expect(requested.searchParams.get('before')).toBe(initial.olderCursor)
+    expect(requested.searchParams.get('limit')).toBe('50')
+    expect(host.textContent).toContain('Paged reply 248.')
+    expect(host.textContent).not.toContain(en['comments.retryReplies'])
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetchPage.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})

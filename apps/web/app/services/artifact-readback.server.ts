@@ -102,13 +102,21 @@ export function agentCommentMutationFields(result: {
     ? { thread: toAgentCommentThread(result.thread) }
     : {}
   const refresh = result.refreshRequired ? { refresh_required: true } : {}
-  // Preserve the existing serialized field order of deletion responses too.
-  if ('deleted' in result) return { ...refresh, ...thread }
   return {
     ...thread,
     ...(result.changedMessage
       ? { changed_message: toAgentCommentMessage(result.changedMessage) }
       : {}),
     ...refresh,
+  }
+}
+
+export function agentCommentDeletionFields(result: {
+  thread?: CommentThreadView
+  refreshRequired?: boolean
+}) {
+  return {
+    ...(result.refreshRequired ? { refresh_required: true } : {}),
+    ...(result.thread ? { thread: toAgentCommentThread(result.thread) } : {}),
   }
 }

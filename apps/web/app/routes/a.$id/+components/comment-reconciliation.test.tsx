@@ -1,6 +1,7 @@
 import { messageCursor } from '~/lib/comment-cursor'
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, StrictMode, Suspense } from 'react'
+import * as refreshScopes from './comment-refresh-scope'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
@@ -61,11 +62,13 @@ function Harness({
   artifact = 'synthetic-artifact',
   navigationTarget = 'selected',
   liveEnabled = false,
+  suspend,
 }: {
   target?: string
   artifact?: string
   navigationTarget?: string | null
   liveEnabled?: boolean
+  suspend?: Promise<never>
 }) {
   comments = useViewerComments({
     framePresent: false,
@@ -82,6 +85,7 @@ function Harness({
     isCurrentShareableId: comments.isCurrentArtifactId,
     onThreadsChange: comments.replaceThreads,
   })
+  if (suspend) throw suspend
   return null
 }
 let root: Root | undefined
@@ -114,7 +118,6 @@ function reconcile(threadId = 'other') {
         shareableId: 'synthetic-artifact',
         clientMutationId: 'synthetic-mutation',
         appliedThreads: true,
-        requiresReconcile: true,
         threadId,
       },
     }),
@@ -1460,3 +1463,61 @@ test.each([404, 410])(
     expect(comments.targetFetchFailed).toBe(false)
   },
 )
+
+test('only committed artifact changes invalidate refresh scope, including StrictMode and suspended renders', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.includes('thread_id=')
+        ? Response.json({}, { status: 503 })
+        : Response.json({ threads: [initial[1]] }),
+    ),
+  )
+  const scope = refreshScopes.createCommentRefreshScope()
+  const factory = vi
+    .spyOn(refreshScopes, 'createCommentRefreshScope')
+    .mockReturnValue(scope)
+  const mark = vi.spyOn(scope, 'mark')
+  const pending = new Promise<never>(() => {})
+  root = createRoot(document.createElement('div'))
+  const view = (artifact: string, suspend?: Promise<never>) => (
+    <StrictMode>
+      <Suspense fallback={null}>
+        <Harness
+          artifact={artifact}
+          navigationTarget={
+            artifact === 'synthetic-artifact' ? 'selected' : null
+          }
+          suspend={suspend}
+        />
+      </Suspense>
+    </StrictMode>
+  )
+  try {
+    await act(async () => root!.render(view('synthetic-artifact')))
+    await act(async () => reconcile())
+    await until(() => comments.targetFetchFailed)
+    mark.mockClear()
+    scope.snapshot().complete()
+    await act(async () => root!.render(view('abandoned-artifact', pending)))
+    expect(mark).not.toHaveBeenCalled()
+    expect(scope.snapshot().has('thread-a')).toBe(false)
+    await act(async () => root!.render(view('synthetic-artifact')))
+    expect(comments.targetFetchFailed).toBe(true)
+    expect(mark).not.toHaveBeenCalled()
+    await act(async () => root!.render(view('different-artifact')))
+    expect(mark).toHaveBeenCalledTimes(1)
+    expect(scope.snapshot().has('thread-a')).toBe(true)
+    expect(comments.state.artifactId).toBe('different-artifact')
+    expect(comments.targetFetchFailed).toBe(false)
+    await act(async () => root!.render(view('different-artifact')))
+    expect(mark).toHaveBeenCalledTimes(1)
+    await act(async () => root!.render(view('synthetic-artifact')))
+    expect(comments.targetFetchFailed).toBe(false)
+    expect(mark).toHaveBeenCalledTimes(2)
+  } finally {
+    mark.mockRestore()
+    factory.mockRestore()
+  }
+})

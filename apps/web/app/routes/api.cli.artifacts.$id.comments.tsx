@@ -21,6 +21,7 @@ import {
   shareUrl,
   toAgentCommentThread,
   agentCommentMutationFields,
+  agentCommentDeletionFields,
 } from '~/services/artifact-readback.server'
 import {
   COMMENT_THREAD_LIST_LIMIT,
@@ -158,7 +159,9 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         return commentPostRefusalResponse(result)
       if (result.kind !== 'ok') return actionErrorResponse(result.kind)
 
-      if ('deleted' in result) {
+      if (actionPayload.action === 'delete') {
+        // Unreachable: changeComment's delete operation always returns deleted: true.
+        if (!('deleted' in result)) return actionErrorResponse('commit-failed')
         return Response.json(
           CommentDeleteResponseSchema.parse({
             artifact_id: id,
@@ -169,7 +172,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
             ...(result.deletedMessageId
               ? { deleted_message_id: result.deletedMessageId }
               : {}),
-            ...agentCommentMutationFields(result),
+            ...agentCommentDeletionFields(result),
           }),
         )
       }
