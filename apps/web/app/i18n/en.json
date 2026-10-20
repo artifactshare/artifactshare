@@ -731,6 +731,7 @@
   "comments.rateLimited": "Posting limit reached. Retry in {seconds} seconds.",
   "comments.loadingReplies": "Loading earlier replies…",
   "comments.retryReplies": "Retry loading earlier replies",
+  "comments.errorGapReplies": "Replies between these messages could not be loaded.",
   "comments.errorReplies": "Earlier replies could not be loaded. Your loaded replies are still here.",
   "comments.loadReplyGap": "Load replies between these messages",
   "comments.errorThread": "Could not refresh some comments. Your draft is still here.",

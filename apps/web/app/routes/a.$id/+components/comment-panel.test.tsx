@@ -571,6 +571,103 @@ test('a deleted unread target advances to the next surviving unloaded reply with
   }
 })
 
+test.each([100, 201])(
+  'an unread entry starting at %i loads only the first unread page even when the tail is unread',
+  async (firstUnread) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const history = pagedThread(firstUnread, firstUnread + 49)
+    const initial = {
+      ...history,
+      messages: history.messages.filter((row) =>
+        ['message-000', 'message-298', 'message-299', 'message-300'].includes(
+          row.id,
+        ),
+      ),
+      loadedPages: undefined,
+    }
+    const fetchPage = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (input) => {
+        const url = new URL(String(input), 'https://example.com')
+        const start = Number(
+          url.searchParams.get('around_message_id')?.split('-')[1],
+        )
+        const page = pagedThread(start, start + 49)
+        return Response.json({
+          threads: [page],
+          page: { through: messageCursor('thread', page.messages[50]) },
+        })
+      })
+    function Harness() {
+      const [thread, setThread] = useState<CommentThreadView>(initial)
+      return (
+        <CommentPanel
+          shareableId="synthetic-artifact"
+          viewerUserId="viewer"
+          threads={[thread]}
+          newCommentMessages={Array.from({ length: 100 }, (_, i) => ({
+            threadId: 'thread',
+            messageId: `message-${firstUnread + i}`,
+          }))}
+          onThreadsChange={(rows, patch) =>
+            setThread((current) =>
+              mergeCommentWindow(current, rows[0], patch?.page),
+            )
+          }
+          isCurrentShareableId={() => true}
+          open
+          onOpenChange={() => {}}
+          targetThreadId="thread"
+          requestedFilter="all"
+          targetThreadScroll="center"
+          onThreadNavigate={() => {}}
+        />
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<Harness />))
+      await waitForRealTaskCondition(async () => {
+        await act(async () => {})
+        return (
+          host.textContent?.includes(`Paged reply ${firstUnread + 49}.`) ===
+          true
+        )
+      }, 'first unread page displayed')
+      expect(fetchPage).toHaveBeenCalledTimes(1)
+      const url = new URL(
+        String(fetchPage.mock.calls[0][0]),
+        'https://example.com',
+      )
+      expect(url.searchParams.get('around_message_id')).toBe(
+        `message-${firstUnread}`,
+      )
+      expect(url.searchParams.get('limit')).toBe('50')
+      expect(host.textContent).toContain(`Paged reply ${firstUnread}.`)
+      expect(host.textContent).not.toContain(`Paged reply ${firstUnread + 50}.`)
+      const gaps = Array.from(host.querySelectorAll('button')).filter(
+        (button) => button.textContent === en['comments.loadReplyGap'],
+      )
+      expect(gaps).toHaveLength(1)
+      expect(
+        host.textContent!.indexOf(en['comments.loadReplyGap']),
+      ).toBeGreaterThan(
+        host.textContent!.indexOf(`Paged reply ${firstUnread + 49}.`),
+      )
+      expect(
+        host.textContent!.indexOf(en['comments.loadReplyGap']),
+      ).toBeLessThan(host.textContent!.indexOf('Paged reply 298.'))
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      fetchPage.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  },
+)
+
 test('a failed interior gap keeps the older control normal and retries the same gap', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const initial = pagedThread(100, 149)
@@ -611,22 +708,29 @@ test('a failed interior gap keeps the older control normal and retries the same 
     expect(found, host.textContent ?? label).toBeDefined()
     return found!
   }
-  const settled = () =>
+  const settled = (key: 'comments.errorReplies' | 'comments.errorGapReplies') =>
     waitForRealTaskCondition(async () => {
       await act(async () => {})
-      return host.textContent?.includes(en['comments.errorReplies']) === true
+      return host.textContent?.includes(en[key]) === true
     }, 'failed reply request displayed')
   try {
     await act(async () => root.render(<Harness />))
     await act(async () => button(en['comments.loadReplyGap']).click())
-    await settled()
+    await settled('comments.errorGapReplies')
+    expect(host.textContent).not.toContain(en['comments.errorReplies'])
+    const status = host.querySelector('[role="status"]')!
+    expect(status.textContent).toBe(en['comments.errorGapReplies'])
+    expect(status.nextElementSibling).toBe(button(en['comments.loadReplyGap']))
+    expect(
+      host.textContent!.indexOf(en['comments.errorGapReplies']),
+    ).toBeGreaterThan(host.textContent!.indexOf('Paged reply 149.'))
     expect(host.textContent).not.toContain(en['comments.retryReplies'])
     const failedGap = String(fetchPage.mock.calls[0][0])
     expect(
       new URL(failedGap, 'https://example.com').searchParams.get('before'),
     ).not.toBe(initial.olderCursor)
     await act(async () => button('Show 247 more replies').click())
-    await settled()
+    await settled('comments.errorReplies')
     const older = new URL(
       String(fetchPage.mock.calls[1][0]),
       'https://example.com',
@@ -709,6 +813,12 @@ test('a failed older page retains its normal expand label and offers an exact re
       await act(async () => {})
       return host.textContent?.includes(en['comments.retryReplies']) === true
     }, 'older page retry displayed')
+    const retry = button(en['comments.retryReplies'])
+    expect(retry.getAttribute('data-variant')).toBe('outline')
+    expect(retry.parentElement?.classList.contains('grid')).toBe(true)
+    expect(retry.parentElement?.classList.contains('justify-items-start')).toBe(
+      true,
+    )
     expect(button('Show 247 earlier replies').disabled).toBe(false)
     expect(host.textContent).toContain('Paged reply 248.')
     await act(async () => button(en['comments.retryReplies']).click())

@@ -731,6 +731,7 @@
   "comments.rateLimited": "投稿回数の上限に達しました。{seconds}秒後にもう一度お試しください。",
   "comments.loadingReplies": "以前の返信を読み込み中…",
   "comments.retryReplies": "以前の返信を再読み込み",
+  "comments.errorGapReplies": "この間の返信を読み込めませんでした。",
   "comments.errorReplies": "以前の返信を読み込めませんでした。読み込み済みの返信は表示したままです。",
   "comments.loadReplyGap": "この間の返信を読み込む",
   "comments.errorThread": "一部のコメントを更新できませんでした。下書きは保持されています。",

@@ -604,14 +604,14 @@ function ThreadCard({
   const hasNewMessages =
     thread.messages.some((message) => newMessageIds.has(message.id)) ||
     (thread.messages.length < thread.messageCount && newMessageIds.size > 0)
-  const missingSelectedId = target
-    ? newCommentMessages.find(
-        (pair) =>
-          pair.threadId === thread.id &&
-          !missingMessageIds.has(pair.messageId) &&
-          !thread.messages.some((message) => message.id === pair.messageId),
-      )?.messageId
-    : undefined
+  const firstUnreadId = newCommentMessages.find(
+    (pair) =>
+      pair.threadId === thread.id && !missingMessageIds.has(pair.messageId),
+  )?.messageId
+  const missingSelectedId =
+    target && !thread.messages.some((message) => message.id === firstUnreadId)
+      ? firstUnreadId
+      : undefined
   const page = useCommentPage(
     shareableId,
     thread.id,
@@ -943,12 +943,15 @@ function CommentReplyList({
               )}
         </button>
       ) : null}
-      {page.failed ? (
-        <div role="status" className="text-muted-foreground text-xs">
+      {page.failed && !page.failedRequest?.interiorGap ? (
+        <div
+          role="status"
+          className="text-muted-foreground grid justify-items-start gap-2 text-xs"
+        >
           {t('comments.errorReplies')}
           {retryRequest ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => void page.load(retryRequest)}
             >
@@ -960,17 +963,27 @@ function CommentReplyList({
       {displayedReplyMessages.map((message, index) => (
         <Fragment key={message.id}>
           {index > 0 && gaps.has(message.id) ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={page.pending}
-              aria-busy={page.pending}
-              onClick={() => onGap(gaps.get(message.id)!)}
-            >
-              {page.pending
-                ? t('comments.loadingReplies')
-                : t('comments.loadReplyGap')}
-            </Button>
+            <>
+              {page.failed &&
+              page.failedRequest?.interiorGap &&
+              page.failedRequest.before === gaps.get(message.id)?.before &&
+              page.failedRequest.limit === gaps.get(message.id)?.limit ? (
+                <div role="status" className="text-muted-foreground text-xs">
+                  {t('comments.errorGapReplies')}
+                </div>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page.pending}
+                aria-busy={page.pending}
+                onClick={() => onGap(gaps.get(message.id)!)}
+              >
+                {page.pending
+                  ? t('comments.loadingReplies')
+                  : t('comments.loadReplyGap')}
+              </Button>
+            </>
           ) : null}
           <CommentMessageItem
             message={message}
