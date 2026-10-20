@@ -1,3 +1,5 @@
+import { createCommentRefreshScope } from './comment-refresh-scope'
+import { commentPageUrl } from '~/lib/comment-page'
 import { advanceCommentEpoch } from './use-comment-mutations'
 import {
   mergeCommentWindow,
@@ -162,6 +164,7 @@ type ViewerCommentAction =
   | {
       type: 'threads-replaced'
       threads: ReadonlyArray<CommentThreadView>
+      deletedThreadId?: string
     }
   | {
       type: 'presence-replaced'
@@ -368,18 +371,14 @@ export function shouldPromoteLatestVersionRetry(
   return existingKind === 'fallback' && requestedKind === 'reconcile'
 }
 
-export function shouldRefreshAfterAppliedCommentMutation({
-  hasDeferredRefresh,
-  requiresReconcile,
-}: {
-  hasDeferredRefresh: boolean
-  requiresReconcile: boolean
-}): boolean {
-  return hasDeferredRefresh || requiresReconcile
-}
-
 function isCommentAuthErrorStatus(status: number): boolean {
   return status === 401 || status === 403 || status === 404
+}
+
+function isDefinitiveCommentThreadError(status: number): boolean {
+  // Request timeout and rate refusals remain retryable; other client refusals
+  // must not keep a deleted or inaccessible target visible from the cache.
+  return status >= 400 && status < 500 && status !== 408 && status !== 429
 }
 
 function waitForCommentAuthRecheck(
@@ -436,9 +435,10 @@ export function viewerCommentReducer(
         null,
       )
     case 'threads-replaced': {
-      const hasTargetThread = action.threads.some(
-        (thread) => thread.id === state.targetThreadId,
-      )
+      const hasTargetThread =
+        state.targetThreadId !== action.deletedThreadId &&
+        (action.threads.some((thread) => thread.id === state.targetThreadId) ||
+          !state.threads.some((thread) => thread.id === state.targetThreadId))
       const hasInlineThread = action.threads.some(
         (thread) => thread.id === state.inlineThreadId,
       )
@@ -594,7 +594,14 @@ export function useViewerComments({
     () => new Map(),
   )
   const deferredCommentRefreshDuringMutationRef = useRef(false)
-  const dirtyThreadIdsRef = useRef(new Set<string>())
+  const [commentRefreshScope] = useState(createCommentRefreshScope)
+  const schedulerRef = useRef<ReturnType<
+    typeof createCommentRefreshScheduler
+  > | null>(null)
+  const [targetFetchError, setTargetFetchError] = useState<{
+    artifactId: string
+    threadIds: string[]
+  } | null>(null)
   const fetchSeqRef = useRef(0)
   const fetchAbortRef = useRef<AbortController | null>(null)
   const [state, dispatchComment] = useReducer(viewerCommentReducer, null, () =>
@@ -610,6 +617,8 @@ export function useViewerComments({
   const selectedThreadIdRef = useLatestRef(state.targetThreadId)
 
   if (state.artifactId !== artifactId) {
+    setTargetFetchError(null)
+    commentRefreshScope.mark()
     dispatchComment({
       type: 'artifact-changed',
       artifactId,
@@ -634,13 +643,20 @@ export function useViewerComments({
 
   const replaceThreads = useCallback(
     (threads: ReadonlyArray<CommentThreadView>, patch?: CommentThreadPatch) => {
+      if (!patch) setTargetFetchError(null)
+      const interruptedRefresh = patch?.page && fetchAbortRef.current !== null
       fetchSeqRef.current += 1
       fetchAbortRef.current?.abort()
+      if (interruptedRefresh) void schedulerRef.current?.request()
       const next = patch
         ? patchCommentThreads(threadsRef.current, threads, patch)
         : threads
       threadsRef.current = next
-      dispatchComment({ type: 'threads-replaced', threads: next })
+      dispatchComment({
+        type: 'threads-replaced',
+        threads: next,
+        deletedThreadId: patch?.deletedThreadId,
+      })
     },
     [threadsRef],
   )
@@ -648,25 +664,6 @@ export function useViewerComments({
     (requestArtifactId: string) => artifactIdRef.current === requestArtifactId,
     [artifactIdRef],
   )
-
-  useEffect(() => {
-    if (
-      !targetCommentId ||
-      initialThreads.some((thread) => thread.id === targetCommentId)
-    )
-      return
-    const controller = new AbortController()
-    void fetchJsonWithViewerTimeout<{ threads: CommentThreadView[] }>(
-      `/api/shareables/${encodeURIComponent(artifactId)}/comments?thread_id=${encodeURIComponent(targetCommentId)}`,
-      { signal: controller.signal },
-    )
-      .then((result) => {
-        if (!controller.signal.aborted && result.response.ok && result.body)
-          replaceThreads(result.body.threads, { threadId: targetCommentId })
-      })
-      .catch(() => undefined)
-    return () => controller.abort()
-  }, [artifactId, targetCommentId, initialThreads, replaceThreads])
 
   const consumeTargetFocus = useCallback(() => {
     dispatchComment({ type: 'target-focus-consumed' })
@@ -723,11 +720,20 @@ export function useViewerComments({
   }, [])
 
   const replaceThreadsIfChanged = useCallback(
-    (threads: ReadonlyArray<CommentThreadView>) => {
-      if (JSON.stringify(threadsRef.current) === JSON.stringify(threads)) return
+    (
+      threads: ReadonlyArray<CommentThreadView>,
+      deletedThreadId?: string,
+      authoritative = true,
+    ) => {
+      if (authoritative) setTargetFetchError(null)
+      if (
+        !deletedThreadId &&
+        JSON.stringify(threadsRef.current) === JSON.stringify(threads)
+      )
+        return
       advanceCommentEpoch(artifactId)
       threadsRef.current = threads
-      dispatchComment({ type: 'threads-replaced', threads })
+      dispatchComment({ type: 'threads-replaced', threads, deletedThreadId })
     },
     [threadsRef, artifactId],
   )
@@ -807,7 +813,7 @@ export function useViewerComments({
           },
         }
       })
-      replaceThreadsIfChanged(next)
+      replaceThreadsIfChanged(next, undefined, false)
     },
     [threadsRef, replaceThreadsIfChanged],
   )
@@ -821,7 +827,7 @@ export function useViewerComments({
 
   const fetchLatestThreadsOnce = useCallback(async () => {
     const requestArtifactId = artifactId
-    const changedThreadIds = new Set(dirtyThreadIdsRef.current)
+    const refreshScope = commentRefreshScope.snapshot()
     const seq = fetchSeqRef.current + 1
     fetchSeqRef.current = seq
     fetchAbortRef.current?.abort()
@@ -859,7 +865,23 @@ export function useViewerComments({
         })
         return null
       })
-      if (seq !== fetchSeqRef.current) return 'transient-error'
+      if (
+        seq !== fetchSeqRef.current ||
+        !isCurrentArtifactId(requestArtifactId)
+      )
+        return 'transient-error'
+      const missingTarget = selectedThreadIdRef.current
+      if (
+        (!result?.response.ok || !result.body) &&
+        missingTarget &&
+        !threadsRef.current.some((thread) => thread.id === missingTarget)
+      ) {
+        commentRefreshScope.mark(missingTarget)
+        setTargetFetchError({
+          artifactId: requestArtifactId,
+          threadIds: [missingTarget],
+        })
+      }
       const response = result?.response
       if (!response) {
         deferIfPending('missing-response')
@@ -902,6 +924,9 @@ export function useViewerComments({
       }
       if (body.threads) {
         const incoming = [...body.threads]
+        const failedIds = new Set<string>()
+        let retainedSelectedId: string | undefined
+        let deletedSelectedId: string | undefined
         const selectedId = selectedThreadIdRef.current
         if (
           selectedId &&
@@ -909,23 +934,67 @@ export function useViewerComments({
         ) {
           const selected = await fetchJsonWithViewerTimeout<{
             threads: CommentThreadView[]
-          }>(
-            `/api/shareables/${encodeURIComponent(requestArtifactId)}/comments?thread_id=${encodeURIComponent(selectedId)}`,
-            { signal: controller.signal },
+          }>(commentPageUrl(requestArtifactId, selectedId), {
+            signal: controller.signal,
+          }).catch(() => null)
+          if (
+            seq !== fetchSeqRef.current ||
+            !isCurrentArtifactId(requestArtifactId)
           )
-          if (selected.response.ok && selected.body)
+            return 'transient-error'
+          if (selectedId !== selectedThreadIdRef.current) {
+            // Selection-specific data is obsolete; the independent summary is not.
+            const currentSelected = threadsRef.current.find(
+              (thread) => thread.id === selectedThreadIdRef.current,
+            )
+            if (
+              currentSelected &&
+              !incoming.some((thread) => thread.id === currentSelected.id)
+            ) {
+              incoming.push(currentSelected)
+              retainedSelectedId = currentSelected.id
+            }
+            if (
+              (selectedThreadIdRef.current &&
+                !incoming.some(
+                  (thread) => thread.id === selectedThreadIdRef.current,
+                )) ||
+              retainedSelectedId
+            )
+              void schedulerRef.current?.request()
+          } else if (selected?.response.ok && selected.body) {
             incoming.push(...selected.body.threads)
+          } else if (
+            selected &&
+            isDefinitiveCommentThreadError(selected.response.status)
+          ) {
+            deletedSelectedId = selectedId
+          } else {
+            // A targeted read is independent of the valid panel summary. Keep
+            // its cached pages and draft mounted while offering an explicit retry.
+            const retained = threadsRef.current.find(
+              (thread) => thread.id === selectedId,
+            )
+            if (retained) incoming.push(retained)
+            retainedSelectedId = selectedId
+            failedIds.add(selectedId)
+          }
         }
         const refreshed: CommentThreadView[] = []
         const currentById = new Map(
           threadsRef.current.map((thread) => [thread.id, thread]),
         )
         for (const thread of incoming) {
+          if (thread.id === retainedSelectedId) {
+            refreshed.push(thread)
+            continue
+          }
           let merged = mergeCommentWindow(currentById.get(thread.id), thread)
-          const pages =
-            changedThreadIds.size === 0 || changedThreadIds.has(thread.id)
-              ? (merged.loadedPages ?? [])
-              : []
+          const pages = refreshScope.has(thread.id)
+            ? (merged.loadedPages ?? [])
+            : []
+          let removed = false
+          let authError = false
           for (const page of pages) {
             try {
               merged = await revalidateCommentPage(
@@ -934,36 +1003,83 @@ export function useViewerComments({
                 async (request) => {
                   if (seq !== fetchSeqRef.current || controller.signal.aborted)
                     throw new Error('Comment refresh superseded')
-                  const params = new URLSearchParams({ thread_id: thread.id })
-                  if (request.through) params.set('through', request.through)
-                  if (request.before) params.set('before', request.before)
-                  if (request.aroundMessageId)
-                    params.set('around_message_id', request.aroundMessageId)
-                  if (request.limit) params.set('limit', String(request.limit))
                   const pageResult = await fetchJsonWithViewerTimeout<{
                     threads?: CommentThreadView[]
-                  }>(
-                    `/api/shareables/${encodeURIComponent(requestArtifactId)}/comments?${params}`,
-                    { signal: controller.signal },
-                  )
+                  }>(commentPageUrl(requestArtifactId, thread.id, request), {
+                    signal: controller.signal,
+                  })
+                  if (
+                    pageResult.response.status === 401 ||
+                    pageResult.response.status === 403
+                  ) {
+                    authError = true
+                    throw new Error('Comment session needs recovery')
+                  }
+                  if (
+                    pageResult.response.status === 404 ||
+                    pageResult.response.status === 410
+                  ) {
+                    removed = true
+                    throw new Error('Comment thread removed')
+                  }
                   if (!pageResult.response.ok || !pageResult.body?.threads?.[0])
                     throw new Error('Comment page needs retry')
                   return pageResult.body.threads[0]
                 },
               )
             } catch {
-              return 'transient-error'
+              if (seq !== fetchSeqRef.current || controller.signal.aborted)
+                return 'transient-error'
+              if (authError) return 'auth-error'
+              if (removed) {
+                failedIds.delete(thread.id)
+                if (thread.id === selectedThreadIdRef.current)
+                  deletedSelectedId = thread.id
+                break
+              }
+              // Retain this range and its retry intent, while applying independent
+              // summary updates and any ranges that were successfully refreshed.
+              failedIds.add(thread.id)
             }
           }
-          refreshed.push(merged)
+          if (!removed) refreshed.push(merged)
         }
         if (
           seq !== fetchSeqRef.current ||
           hasPendingCommentMutation(requestArtifactId)
         )
           return 'transient-error'
-        for (const id of changedThreadIds) dirtyThreadIdsRef.current.delete(id)
-        replaceThreadsIfChanged(refreshed)
+        // A selection can change during any retained-range request, after the
+        // selected read above. Keep a newly selected cache omitted by the summary
+        // until the scheduler can authoritatively fetch it. Threads present in
+        // incoming already had their result handled, including definitive removal.
+        const currentSelectedId = selectedThreadIdRef.current
+        if (
+          currentSelectedId &&
+          currentSelectedId !== selectedId &&
+          !incoming.some((thread) => thread.id === currentSelectedId)
+        ) {
+          const retained = threadsRef.current.find(
+            (thread) => thread.id === currentSelectedId,
+          )
+          if (retained) {
+            refreshed.push(retained)
+            retainedSelectedId = currentSelectedId
+          }
+          void schedulerRef.current?.request()
+        }
+        if (failedIds.size === 0) refreshScope.complete()
+        if (retainedSelectedId) commentRefreshScope.mark(retainedSelectedId)
+        for (const id of failedIds) commentRefreshScope.mark(id)
+        replaceThreadsIfChanged(refreshed, deletedSelectedId)
+        setTargetFetchError(
+          failedIds.size
+            ? {
+                artifactId: requestArtifactId,
+                threadIds: [...failedIds],
+              }
+            : null,
+        )
       }
       return 'success'
     }
@@ -986,6 +1102,7 @@ export function useViewerComments({
     artifactId,
     isCurrentArtifactId,
     replaceThreadsIfChanged,
+    commentRefreshScope,
     selectedThreadIdRef,
     threadsRef,
   ])
@@ -995,9 +1112,49 @@ export function useViewerComments({
     createCommentRefreshScheduler(() => fetchLatestThreadsOnceRef.current()),
   )
 
+  useEffect(() => {
+    schedulerRef.current = fetchScheduler
+    return () => {
+      schedulerRef.current = null
+    }
+  }, [fetchScheduler])
+
   const fetchLatestThreads = useCallback(() => {
     return fetchScheduler.request()
   }, [fetchScheduler])
+
+  // Accepted navigation survives URL cleanup. Missing targets and explicit
+  // retries share the refresh owner, including its mutation and range guards.
+  const acceptedTargetId = state.targetThreadId
+  useEffect(() => {
+    if (
+      !acceptedTargetId ||
+      threadsRef.current.some((thread) => thread.id === acceptedTargetId)
+    )
+      return
+    commentRefreshScope.mark(acceptedTargetId)
+    void fetchLatestThreads()
+  }, [
+    artifactId,
+    acceptedTargetId,
+    fetchLatestThreads,
+    threadsRef,
+    commentRefreshScope,
+  ])
+
+  const retryTargetFetch = useCallback(() => {
+    if (targetFetchError?.artifactId === artifactId)
+      for (const id of targetFetchError.threadIds) commentRefreshScope.mark(id)
+    if (selectedThreadIdRef.current)
+      commentRefreshScope.mark(selectedThreadIdRef.current)
+    void fetchLatestThreads()
+  }, [
+    artifactId,
+    targetFetchError,
+    selectedThreadIdRef,
+    fetchLatestThreads,
+    commentRefreshScope,
+  ])
 
   useEffect(() => {
     return () => {
@@ -1196,7 +1353,7 @@ export function useViewerComments({
         (selectedThreadIdRef.current &&
           !threads.some((thread) => thread.id === selectedThreadIdRef.current))
       ) {
-        dirtyThreadIdsRef.current.clear()
+        commentRefreshScope.mark()
         return false
       }
       if (hasPendingCommentMutation(artifactId)) {
@@ -1522,6 +1679,7 @@ export function useViewerComments({
 
         const reusedRecovery = applyRecoveryThreads()
         if (!reusedRecovery) {
+          commentRefreshScope.mark()
           abortLatestThreadFetch()
           requestCommentRefresh(currentSocket)
         }
@@ -1556,7 +1714,7 @@ export function useViewerComments({
           advanceCommentEpoch(artifactId)
           fetchSeqRef.current += 1
           fetchAbortRef.current?.abort()
-          if (message.threadId) dirtyThreadIdsRef.current.add(message.threadId)
+          commentRefreshScope.mark(message.threadId)
           requestCommentRefresh(currentSocket)
         } else if (message.type === 'view-count-changed') {
           onViewCountChangedRef.current?.(message.viewCount)
@@ -1643,7 +1801,10 @@ export function useViewerComments({
         // availability. Reuse the same bounded windows/ranges as socket open.
         if (reconcileAfterRecovery) {
           reconcileAfterRecovery = false
-          if (!applyRecoveryThreads()) requestCommentRefresh(null)
+          if (!applyRecoveryThreads()) {
+            commentRefreshScope.mark()
+            requestCommentRefresh(null)
+          }
         }
         reconnectStopped = false
         if (!hiddenInterrupted) boundedAttempts = 0
@@ -1669,7 +1830,9 @@ export function useViewerComments({
         event as CustomEvent<Partial<CommentMutationSettledDetail>>
       ).detail
       if (detail?.shareableId !== artifactId) return
-      if (detail.threadId) dirtyThreadIdsRef.current.add(detail.threadId)
+      // A lost response can hide a committed edit or deletion in any retained
+      // page. Without a confirmed thread identity, reconcile all loaded ranges.
+      commentRefreshScope.mark(detail.threadId)
       // Preserve in-flight reconciliation before invalidating its response so
       // settlement can replace it without overwriting mutation-provided threads.
       if (fetchAbortRef.current) {
@@ -1692,20 +1855,6 @@ export function useViewerComments({
       }
       if (reconnectStopped && !socket) {
         explicitRecovery(true)
-        return
-      }
-      if (appliedMutation) {
-        if (recoveryPromise || recoveryThreads?.invalidated) return
-        if (
-          !shouldRefreshAfterAppliedCommentMutation({
-            hasDeferredRefresh: deferredCommentRefreshDuringMutationRef.current,
-            requiresReconcile: detail.requiresReconcile === true,
-          })
-        ) {
-          return
-        }
-        deferredCommentRefreshDuringMutationRef.current = false
-        requestCommentRefresh(socket)
         return
       }
       if (recoveryPromise || recoveryThreads?.invalidated) return
@@ -1748,6 +1897,7 @@ export function useViewerComments({
     onVersionReconcileRef,
     onViewCountChangedRef,
     replaceThreadsIfChanged,
+    commentRefreshScope,
     selectedThreadIdRef,
     threadsRef,
   ])
@@ -1759,6 +1909,8 @@ export function useViewerComments({
     returnFocusRef,
     requestedFilter: requestedFilterRef.current,
     focusTargetOnOpen: state.focusTargetOnOpen,
+    targetFetchFailed: targetFetchError?.artifactId === artifactId,
+    retryTargetFetch,
     consumeTargetFocus,
     isCurrentArtifactId,
     openPanel,
@@ -2943,6 +3095,8 @@ function ViewerCommentPanel({
       isCurrentShareableId={comments.isCurrentArtifactId}
       open={comments.state.panelOpen}
       onOpenChange={comments.changePanelOpen}
+      targetFetchFailed={comments.targetFetchFailed}
+      onRetryTarget={comments.retryTargetFetch}
       targetThreadId={comments.state.targetThreadId}
       targetThreadScroll={comments.state.targetThreadScroll}
       onThreadNavigate={(thread) =>

@@ -1,3 +1,4 @@
+import { d1DatabaseFor } from '~/lib/d1-database-registry.server'
 import { messageCursor } from './comment-message-window.server'
 import { admitCommentPost } from './comment-post-admission.server'
 import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
@@ -1378,6 +1379,44 @@ describe('comments server', () => {
       prepare.mockRestore()
     },
   )
+
+  test('a full 50-thread panel uses two bounded indexed message batches', async () => {
+    let access
+    for (let i = 0; i < 50; i++) access = await seedHistory(8, `panel-${i}`)
+    const database = d1DatabaseFor(fixture.db)!
+    const batch = vi.spyOn(database, 'batch')
+    const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+    const threads = await loadCommentThreads(fixture.db, access!, viewerUser)
+    expect(threads).toHaveLength(50)
+    expect(
+      threads.every(
+        (thread) =>
+          thread.messages.length === 4 &&
+          thread.replyCount === 7 &&
+          thread.olderCursor,
+      ),
+    ).toBe(true)
+    expect(batch).toHaveBeenCalledTimes(2)
+    expect(batch.mock.calls.map(([statements]) => statements.length)).toEqual([
+      25, 25,
+    ])
+    const queries = prepare.mock.calls
+      .map(([query]) => query)
+      .filter((query) => query.includes('"comment_messages"."body"'))
+    expect(queries).toHaveLength(50)
+    for (const query of queries) {
+      expect(query).toContain('limit ?')
+      expect(query).not.toMatch(/row_number|count\(/i)
+      // Bind values do not affect the selected indexed query plan.
+      const plan = fixture.sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${query}`)
+        .all('panel-0', 1, 'panel-0', 'panel-0', 1, 4)
+      expect(JSON.stringify(plan)).toContain('comment_messages_thread_tuple')
+      expect(JSON.stringify(plan)).not.toMatch(/SCAN comment_messages/)
+    }
+    batch.mockRestore()
+    prepare.mockRestore()
+  })
 
   test('keyset pages handle ties, deleted cursor rows and concurrent additions without duplicates', async () => {
     const access = await seedHistory(105)

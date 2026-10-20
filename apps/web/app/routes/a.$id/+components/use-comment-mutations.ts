@@ -98,10 +98,7 @@ export function useCommentMutations({
     const clientMutationId = createClientMutationId()
     let appliedThreads = false
     let threadId: string | undefined
-    mutationEpochs.set(
-      requestShareableId,
-      getCommentMutationEpoch(requestShareableId) + 1,
-    )
+    advanceCommentEpoch(requestShareableId)
     incrementActiveMutation(requestShareableId, clientMutationId)
     if (pendingKey) {
       setPendingKeys((current) => new Set(current).add(pendingKey))
@@ -194,10 +191,7 @@ export function useCommentMutations({
       toast.error(t('comments.errorSave'))
       return false
     } finally {
-      mutationEpochs.set(
-        requestShareableId,
-        getCommentMutationEpoch(requestShareableId) + 1,
-      )
+      advanceCommentEpoch(requestShareableId)
       decrementActiveMutation(requestShareableId, {
         clientMutationId,
         appliedThreads,

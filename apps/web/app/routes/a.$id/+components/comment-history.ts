@@ -1,12 +1,14 @@
+import {
+  messageCursor as throughCursor,
+  parseMessageCursor as boundary,
+} from '~/lib/comment-cursor'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 
-export type CommentPageRequest = {
-  through?: string
-  before?: string
-  aroundMessageId?: string
-  limit?: number
-  coverageStart?: string | null
-}
+export type CommentPageRequest =
+  import('~/lib/comment-page').CommentPageRequest & {
+    coverageStart?: string | null
+    interiorGap?: boolean
+  }
 export type CommentThreadPatch = {
   threadId?: string
   changedMessage?: CommentMessageView
@@ -20,8 +22,8 @@ export type ChangeCommentThreads = (
 ) => void
 
 export function compareCommentMessages(
-  a: CommentMessageView,
-  b: CommentMessageView,
+  a: Pick<CommentMessageView, 'createdAt' | 'id'>,
+  b: Pick<CommentMessageView, 'createdAt' | 'id'>,
 ) {
   return a.createdAt < b.createdAt
     ? -1
@@ -32,31 +34,6 @@ export function compareCommentMessages(
         : a.id > b.id
           ? 1
           : 0
-}
-
-function boundary(cursor: string): CommentMessageView | undefined {
-  try {
-    const value: unknown = JSON.parse(
-      atob(cursor.replaceAll('-', '+').replaceAll('_', '/')),
-    )
-    if (
-      !Array.isArray(value) ||
-      value.length !== 4 ||
-      typeof value[2] !== 'string' ||
-      typeof value[3] !== 'string'
-    )
-      return undefined
-    return { createdAt: value[2], id: value[3] } as CommentMessageView
-  } catch {
-    return undefined
-  }
-}
-
-function throughCursor(threadId: string, message: CommentMessageView) {
-  return btoa(JSON.stringify([1, threadId, message.createdAt, message.id]))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/, '')
 }
 
 /** Compact retained tail coverage by tuple, not by notification count. Existing
@@ -72,14 +49,16 @@ function compactTailPages(
   const rowsFor = (page: CommentPageRequest) => {
     // Requested limits do not establish coverage: an around lookup near the
     // latest message may return fewer rows than requested, across a cache gap.
-    const lower = page.coverageStart ? boundary(page.coverageStart) : undefined
+    const lower = page.coverageStart
+      ? boundary(page.coverageStart, thread.id)
+      : undefined
     if (!lower) return []
     const coveredReplies = replies.filter(
       (message) => compareCommentMessages(message, lower) >= 0,
     )
     const edge = page.through ?? page.before
     if (edge) {
-      const upper = boundary(edge)
+      const upper = boundary(edge, thread.id)
       if (!upper) return []
       return coveredReplies.filter((message) =>
         page.before
@@ -163,7 +142,9 @@ export async function revalidateCommentPage(
   page: CommentPageRequest,
   load: (request: CommentPageRequest) => Promise<CommentThreadView>,
 ): Promise<CommentThreadView> {
-  const lower = page.coverageStart ? boundary(page.coverageStart) : undefined
+  const lower = page.coverageStart
+    ? boundary(page.coverageStart, current.id)
+    : undefined
   let request = page
   let merged = current
   let previousOldest: CommentMessageView | undefined
@@ -180,7 +161,10 @@ export async function revalidateCommentPage(
         samePageRequest(owner, page) &&
         oldest &&
         (!owner.coverageStart ||
-          compareCommentMessages(oldest, boundary(owner.coverageStart)!) < 0)
+          compareCommentMessages(
+            oldest,
+            boundary(owner.coverageStart, current.id)!,
+          ) < 0)
           ? { ...owner, coverageStart: throughCursor(current.id, oldest) }
           : owner,
       )
@@ -227,7 +211,7 @@ export function mergeCommentWindow(
     samePageRequest(value, page),
   )
   const previousLower = previousPage?.coverageStart
-    ? boundary(previousPage.coverageStart)
+    ? boundary(previousPage.coverageStart, incoming.id)
     : undefined
   const coverageStart =
     previousLower && oldest && compareCommentMessages(previousLower, oldest) < 0
@@ -256,9 +240,9 @@ export function mergeCommentWindow(
       loadedPages: coveredPage ? [coveredPage] : [],
     }
   const upper = page?.before
-    ? boundary(page.before)
+    ? boundary(page.before, incoming.id)
     : page?.through
-      ? boundary(page.through)
+      ? boundary(page.through, incoming.id)
       : page?.aroundMessageId
         ? replies.at(-1)
         : undefined
@@ -315,7 +299,7 @@ export function mergeCommentWindow(
     messages: [...messages.values()].sort(compareCommentMessages),
     // Around pages can be disjoint; they must not skip the contiguous older path.
     olderCursor:
-      page?.aroundMessageId || page?.through
+      page?.aroundMessageId || page?.through || page?.interiorGap
         ? current.olderCursor
         : page
           ? incoming.olderCursor
@@ -352,4 +336,46 @@ export function patchCommentThreads(
     })
   }
   return [...byId.values()]
+}
+
+/** Only a server window proves continuity. Sorted cached rows alone do not. */
+export function commentGapRequests(
+  thread: CommentThreadView,
+): Map<string, CommentPageRequest> {
+  const gaps = new Map<string, CommentPageRequest>()
+  if (thread.messages.length >= thread.messageCount) return gaps
+  const replies = thread.messages.slice(1)
+  const latestIds = new Set(
+    thread.latestReplyIds ?? replies.slice(-3).map((message) => message.id),
+  )
+  const tail = replies.filter((message) => latestIds.has(message.id))
+  const intervals = (thread.loadedPages ?? []).flatMap((page) => {
+    const lower = page.coverageStart
+      ? boundary(page.coverageStart, thread.id)
+      : undefined
+    const upper =
+      page.through || page.before
+        ? boundary((page.through ?? page.before)!, thread.id)
+        : undefined
+    return lower && upper ? [{ lower, upper }] : []
+  })
+  if (tail.length)
+    intervals.push({ lower: tail[0], upper: tail[tail.length - 1] })
+  for (let index = 1; index < replies.length; index++) {
+    const previous = replies[index - 1]
+    const next = replies[index]
+    if (
+      !intervals.some(
+        ({ lower, upper }) =>
+          compareCommentMessages(previous, lower) >= 0 &&
+          compareCommentMessages(next, upper) <= 0,
+      )
+    )
+      gaps.set(next.id, {
+        before: throughCursor(thread.id, next),
+        limit: 50,
+        interiorGap: true,
+      })
+  }
+  return gaps
 }

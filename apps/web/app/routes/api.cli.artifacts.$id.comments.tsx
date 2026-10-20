@@ -20,7 +20,7 @@ import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
   shareUrl,
   toAgentCommentThread,
-  toAgentCommentMessage,
+  agentCommentMutationFields,
 } from '~/services/artifact-readback.server'
 import {
   COMMENT_THREAD_LIST_LIMIT,
@@ -169,10 +169,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
             ...(result.deletedMessageId
               ? { deleted_message_id: result.deletedMessageId }
               : {}),
-            ...(result.refreshRequired ? { refresh_required: true } : {}),
-            ...(result.thread
-              ? { thread: toAgentCommentThread(result.thread) }
-              : {}),
+            ...agentCommentMutationFields(result),
           }),
         )
       }
@@ -182,13 +179,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
           artifact_id: id,
           share_url: shareUrl(url.origin, id, access.visibility),
           thread_id: result.threadId,
-          ...(result.thread
-            ? { thread: toAgentCommentThread(result.thread) }
-            : {}),
-          ...('changedMessage' in result && result.changedMessage
-            ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-            : {}),
-          ...(result.refreshRequired ? { refresh_required: true } : {}),
+          ...agentCommentMutationFields(result),
         }),
       )
     }
@@ -238,13 +229,7 @@ export async function action({ context, params, request }: Route.ActionArgs) {
         share_url: shareUrl(url.origin, id, result.visibility),
         thread_id: result.threadId,
         reply: result.reply,
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
-        ...('changedMessage' in result && result.changedMessage
-          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-          : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
+        ...agentCommentMutationFields(result),
       }),
     )
   })

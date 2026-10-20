@@ -16,7 +16,10 @@ vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
     t: (key: keyof typeof en) => (locale.value === 'en' ? en : ja)[key],
-    tPlural: () => 'comments',
+    tPlural: (key: string, count: number) =>
+      (locale.value === 'en' ? en : ja)[
+        `${key}${count === 1 ? 'One' : 'Other'}` as keyof typeof en
+      ].replace('{n}', String(count)),
   }),
 }))
 vi.mock('~/components/app/analytics-consent-provider', () => ({
@@ -339,3 +342,55 @@ test('a target reveals selected replies older than its reply page while ordinary
   expect(unmarkedTarget).not.toContain('Reply body 2.')
   expect(unmarkedTarget).not.toContain('data-new-comment-message')
 })
+
+test.each(['en', 'ja'] as const)(
+  'cached but collapsed replies are counted as more, not unloaded (%s)',
+  (language) => {
+    locale.value = language
+    const at = '2026-05-01T00:00:00.000Z'
+    const row = (i: number) => ({
+      id: `message-${i}`,
+      body: `Cached reply ${i}`,
+      createdAt: at,
+      updatedAt: at,
+      agent: null,
+      author: {
+        id: 'reviewer',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    })
+    const cursor = (i: number) =>
+      btoa(JSON.stringify([1, 'thread', at, row(i).id]))
+    const cached: CommentThreadView = {
+      ...textThread('attached', 'thread'),
+      messageCount: 21,
+      replyCount: 20,
+      olderCursor: null,
+      messages: [0, 1, 2, 7, 8, 9].map(row),
+      latestReplyIds: [7, 8, 9].map((i) => row(i).id),
+      loadedPages: [{ through: cursor(2), limit: 2, coverageStart: cursor(1) }],
+    }
+    const html = renderThreads([cached])
+    expect(html).toContain(
+      language === 'en' ? 'Show 17 more replies' : '返信をあと17件表示',
+    )
+    expect(html).not.toContain('Cached reply 1')
+    expect(html).toContain('Cached reply 9')
+    const expanded = renderThreads(
+      [cached],
+      [{ threadId: 'thread', messageId: row(1).id }],
+      'thread',
+    )
+    expect(expanded).toContain('Cached reply 1')
+    expect(expanded).toContain(
+      (language === 'en' ? en : ja)['comments.loadReplyGap'],
+    )
+    expect(expanded).not.toContain(
+      language === 'en' ? 'Show 15 more replies' : '返信をあと15件表示',
+    )
+  },
+)

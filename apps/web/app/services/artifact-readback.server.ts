@@ -92,3 +92,23 @@ export function shareUrl(
 ): string {
   return shareableUrl(baseUrl, id, visibility, isProduction(env))
 }
+
+export function agentCommentMutationFields(result: {
+  thread?: CommentThreadView
+  changedMessage?: CommentThreadView['messages'][number]
+  refreshRequired?: boolean
+}) {
+  const thread = result.thread
+    ? { thread: toAgentCommentThread(result.thread) }
+    : {}
+  const refresh = result.refreshRequired ? { refresh_required: true } : {}
+  // Preserve the existing serialized field order of deletion responses too.
+  if ('deleted' in result) return { ...refresh, ...thread }
+  return {
+    ...thread,
+    ...(result.changedMessage
+      ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+      : {}),
+    ...refresh,
+  }
+}

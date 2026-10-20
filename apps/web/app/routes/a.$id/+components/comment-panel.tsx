@@ -1,6 +1,11 @@
 import { useCommentPage } from './use-comment-page'
-import type { ChangeCommentThreads } from './comment-history'
 import {
+  commentGapRequests,
+  type ChangeCommentThreads,
+  type CommentPageRequest,
+} from './comment-history'
+import {
+  Fragment,
   useLayoutEffect,
   useEffect,
   useEffectEvent,
@@ -66,6 +71,8 @@ interface CommentPanelProps {
   newCommentMessages?: ReadonlyArray<NewCommentMessage>
   focusTargetOnOpen?: boolean
   onTargetFocusConsumed?: () => void
+  targetFetchFailed?: boolean
+  onRetryTarget?: () => void
   targetThreadId: string | null
   targetThreadScroll: TargetThreadScroll
   onThreadNavigate: (thread: CommentThreadView) => void
@@ -89,6 +96,8 @@ export function CommentPanel({
   newCommentMessages = [],
   focusTargetOnOpen = false,
   onTargetFocusConsumed,
+  targetFetchFailed = false,
+  onRetryTarget,
   targetThreadId,
   targetThreadScroll,
   onThreadNavigate,
@@ -202,6 +211,14 @@ export function CommentPanel({
 
   const commentList = (
     <div className="pb-comment-panel-bottom flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 pt-3">
+      {targetFetchFailed ? (
+        <div role="status" className="text-muted-foreground text-sm">
+          {t('comments.errorThread')}
+          <Button variant="ghost" size="sm" onClick={onRetryTarget}>
+            {t('comments.retryThread')}
+          </Button>
+        </div>
+      ) : null}
       {visibleThreads.length === 0 ? (
         <div className="bg-muted border-border flex flex-col gap-1 rounded-[var(--r-md)] border p-3.5">
           <strong className="text-sm">{t('comments.emptyTitle')}</strong>
@@ -560,8 +577,7 @@ function ThreadCard({
   onReplyChange: (value: string) => void
   onReplyCancel: () => void
 }) {
-  const { t, tPlural } = useT()
-  const page = useCommentPage(shareableId, thread.id, onThreadsChange)
+  const { t } = useT()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [repliesExpanded, setRepliesExpanded] = useState(false)
   const [replyLimit, setReplyLimit] = useState(EXPANDED_REPLY_PAGE_SIZE)
@@ -589,10 +605,13 @@ function ThreadCard({
           !thread.messages.some((message) => message.id === pair.messageId),
       )?.messageId
     : undefined
-  useEffect(() => {
-    if (missingSelectedId)
-      void page.load({ aroundMessageId: missingSelectedId, limit: 50 })
-  }, [missingSelectedId, page.load])
+  const page = useCommentPage(
+    shareableId,
+    thread.id,
+    onThreadsChange,
+    missingSelectedId,
+  )
+  const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
 
@@ -742,52 +761,37 @@ function ThreadCard({
           />
         </div>
       ) : null}
-      {replyMessages.length > 0 ? (
-        <div
-          className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid min-w-0 gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
-          data-thread-content=""
-        >
-          {hiddenReplyCount > 0 ? (
-            <button
-              type="button"
-              className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
-              disabled={page.pending}
-              aria-busy={page.pending}
-              onClick={() => {
-                setRepliesExpanded(true)
-                const nextLimit = showAllReplies
-                  ? Math.max(replyLimit, visibleReplyLimit) +
-                    EXPANDED_REPLY_PAGE_SIZE
-                  : EXPANDED_REPLY_PAGE_SIZE
-                setReplyLimit(nextLimit)
-                if (thread.olderCursor && replyMessages.length < nextLimit)
-                  void page.load({ before: thread.olderCursor, limit: 50 })
-              }}
-            >
-              {page.pending
-                ? t('comments.loadingReplies')
-                : page.failed
-                  ? t('comments.retryReplies')
-                  : tPlural('comments.previousReplyCount', hiddenReplyCount)}
-            </button>
-          ) : null}
-          {page.failed ? (
-            <span role="status" className="text-muted-foreground text-xs">
-              {t('comments.errorReplies')}
-            </span>
-          ) : null}
-          {displayedReplyMessages.map((message) => (
-            <CommentMessageItem
-              key={message.id}
-              message={message}
-              isNew={newMessageIds.has(message.id)}
-              locale={locale}
-              pending={pendingKeys.has(`message:${message.id}`)}
-              onUpdate={onUpdateMessage}
-              onDelete={onDeleteMessage}
-            />
-          ))}
-        </div>
+      {replyMessages.length > 0 || missingSelectedId ? (
+        <CommentReplyList
+          displayedReplyMessages={displayedReplyMessages}
+          hiddenReplyCount={hiddenReplyCount}
+          canExpand={
+            displayedReplyMessages.length < replyMessages.length ||
+            thread.olderCursor !== null
+          }
+          page={page}
+          missingSelectedId={missingSelectedId}
+          gaps={gaps}
+          newMessageIds={newMessageIds}
+          locale={locale}
+          pendingKeys={pendingKeys}
+          onUpdateMessage={onUpdateMessage}
+          onDeleteMessage={onDeleteMessage}
+          onExpand={() => {
+            setRepliesExpanded(true)
+            const nextLimit = showAllReplies
+              ? Math.max(replyLimit, visibleReplyLimit) +
+                EXPANDED_REPLY_PAGE_SIZE
+              : EXPANDED_REPLY_PAGE_SIZE
+            setReplyLimit(nextLimit)
+            if (thread.olderCursor && replyMessages.length < nextLimit)
+              void page.load({ before: thread.olderCursor, limit: 50 })
+          }}
+          onGap={(request) => {
+            setReplyLimit((value) => value + 50)
+            void page.load(request)
+          }}
+        />
       ) : null}
       {thread.status === 'open' && replyOpen ? (
         <div data-thread-content="">
@@ -871,6 +875,109 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
       <span className="[overflow-wrap:anywhere]">
         {quoteCommentText(thread.subject.quotedText)}
       </span>
+    </div>
+  )
+}
+
+function CommentReplyList({
+  displayedReplyMessages,
+  hiddenReplyCount,
+  canExpand,
+  page,
+  missingSelectedId,
+  gaps,
+  newMessageIds,
+  locale,
+  pendingKeys,
+  onUpdateMessage,
+  onDeleteMessage,
+  onExpand,
+  onGap,
+}: {
+  displayedReplyMessages: CommentThreadView['messages']
+  hiddenReplyCount: number
+  canExpand: boolean
+  page: ReturnType<typeof useCommentPage>
+  missingSelectedId?: string
+  gaps: ReturnType<typeof commentGapRequests>
+  newMessageIds: Set<string>
+  locale: Parameters<typeof formatRelative>[1]
+  pendingKeys: ReadonlySet<string>
+  onUpdateMessage: (messageId: string, body: string) => Promise<boolean>
+  onDeleteMessage: (messageId: string) => Promise<boolean>
+  onExpand: () => void
+  onGap: (request: CommentPageRequest) => void
+}) {
+  const { t, tPlural } = useT()
+  return (
+    <div
+      className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid min-w-0 gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
+      data-thread-content=""
+    >
+      {hiddenReplyCount > 0 && canExpand ? (
+        <button
+          type="button"
+          className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
+          disabled={page.pending}
+          aria-busy={page.pending}
+          onClick={onExpand}
+        >
+          {page.pending
+            ? t('comments.loadingReplies')
+            : page.failed && !missingSelectedId
+              ? t('comments.retryReplies')
+              : tPlural(
+                  gaps.size
+                    ? 'comments.moreReplyCount'
+                    : 'comments.previousReplyCount',
+                  hiddenReplyCount,
+                )}
+        </button>
+      ) : null}
+      {page.failed ? (
+        <div role="status" className="text-muted-foreground text-xs">
+          {t('comments.errorReplies')}
+          {missingSelectedId ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                void page.load({
+                  aroundMessageId: missingSelectedId,
+                  limit: 50,
+                })
+              }
+            >
+              {t('comments.retryReplies')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {displayedReplyMessages.map((message, index) => (
+        <Fragment key={message.id}>
+          {index > 0 && gaps.has(message.id) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={page.pending}
+              aria-busy={page.pending}
+              onClick={() => onGap(gaps.get(message.id)!)}
+            >
+              {page.pending
+                ? t('comments.loadingReplies')
+                : t('comments.loadReplyGap')}
+            </Button>
+          ) : null}
+          <CommentMessageItem
+            message={message}
+            isNew={newMessageIds.has(message.id)}
+            locale={locale}
+            pending={pendingKeys.has(`message:${message.id}`)}
+            onUpdate={onUpdateMessage}
+            onDelete={onDeleteMessage}
+          />
+        </Fragment>
+      ))}
     </div>
   )
 }

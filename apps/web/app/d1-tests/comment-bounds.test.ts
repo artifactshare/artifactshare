@@ -9,6 +9,7 @@ import { admitCommentPost } from '../services/comment-post-admission.server'
 import {
   deleteCommentMessage,
   loadCommentThreadPage,
+  loadCommentThreads,
   replyToCommentThread,
   type CommentAccess,
 } from '../services/comments.server'
@@ -349,4 +350,33 @@ describe('D1 comment bounds', () => {
     expect(await stored('last')).toBeNull()
     await db.destroy()
   })
+})
+
+it('reads 50 initial windows in bounded batches on real D1', async () => {
+  for (let i = 0; i < 50; i++) await seedThread(`panel-${i}`, 8)
+  // The harness binding is an RPC proxy: replacing its method with spyOn does
+  // not intercept property reads. Observe calls at the connection boundary and
+  // forward every statement to the real D1 binding, as the race tests above do.
+  const batch = vi.fn((statements: D1PreparedStatement[]) =>
+    database.batch(statements),
+  )
+  const observedDatabase = new Proxy(database, {
+    get(target, property) {
+      if (property === 'batch') return batch
+      const value = Reflect.get(target, property)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const db = createDb(observedDatabase)
+  try {
+    const threads = await loadCommentThreads(db, access, actor)
+    expect(threads).toHaveLength(50)
+    expect(threads.every((thread) => thread.messages.length <= 4)).toBe(true)
+    expect(batch).toHaveBeenCalledTimes(2)
+    expect(batch.mock.calls.map(([statements]) => statements.length)).toEqual([
+      25, 25,
+    ])
+  } finally {
+    await db.destroy()
+  }
 })

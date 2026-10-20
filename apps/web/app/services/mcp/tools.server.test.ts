@@ -3351,6 +3351,14 @@ describe('headless publish wiring', () => {
     )
     if (created.kind !== 'ok') throw new Error('seed thread failed')
 
+    // Fast bounded readback can put both writes in one millisecond. Establish
+    // chronology explicitly instead of depending on random IDs to break the tie.
+    await db
+      .updateTable('comment_messages')
+      .set({ created_at: new Date(Date.now() - 1000).toISOString() })
+      .where('thread_id', '=', created.threadId)
+      .execute()
+
     const body = await callTool(db, 'post_comment', {
       id,
       body: 'Replying to the note',

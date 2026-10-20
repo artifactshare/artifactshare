@@ -1,4 +1,4 @@
-import { parseCommentPageQuery } from '../comment-message-window.server'
+import { validateCommentPageRequest } from '~/lib/comment-page'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   ARTIFACT_APPEND_REQUEST_SCHEMA,
@@ -100,7 +100,7 @@ import { findRecentPublish, recordArtifactPost } from './posts.server'
 import { ARTIFACT_PREVIEW_TEMPLATE_URI } from './preview-widget.server'
 import {
   toAgentCommentThread,
-  toAgentCommentMessage,
+  agentCommentMutationFields,
 } from '~/services/artifact-readback.server'
 import { getArtifactReadback } from '~/services/artifact-readback-service.server'
 import { recordFirstArtifactPost } from '~/services/first-post-analytics.server'
@@ -1260,16 +1260,11 @@ export function registerArtifactTools(
       const access = await loadCommentAccess(ctx.db, sessionUser, args.id)
       if (!access) return artifactNotViewableError()
 
-      const params = new URLSearchParams()
-      for (const key of [
-        'thread_id',
-        'before',
-        'limit',
-        'around_message_id',
-      ] as const) {
-        if (args[key] !== undefined) params.set(key, String(args[key]))
-      }
-      const page = parseCommentPageQuery(params)
+      const page = validateCommentPageRequest(args.thread_id, {
+        before: args.before,
+        limit: args.limit,
+        aroundMessageId: args.around_message_id,
+      })
       if (page.kind === 'invalid-page')
         return toolError({
           code: 'invalid-page',
@@ -1385,13 +1380,7 @@ export function registerArtifactTools(
         share_url: shareUrl(ctx.baseUrl, args.id, result.visibility),
         thread_id: result.threadId,
         reply: result.reply,
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
-        ...('changedMessage' in result && result.changedMessage
-          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-          : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
+        ...agentCommentMutationFields(result),
       })
     },
   )
@@ -1446,13 +1435,7 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
-        ...('changedMessage' in result && result.changedMessage
-          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-          : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
+        ...agentCommentMutationFields(result),
       })
     },
   )
@@ -1502,13 +1485,7 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
-        ...('changedMessage' in result && result.changedMessage
-          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-          : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
+        ...agentCommentMutationFields(result),
       })
     },
   )
@@ -1558,13 +1535,7 @@ export function registerArtifactTools(
       if ('deleted' in result) return commentActionFailedError()
       return jsonResult({
         thread_id: args.thread_id,
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
-        ...('changedMessage' in result && result.changedMessage
-          ? { changed_message: toAgentCommentMessage(result.changedMessage) }
-          : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
+        ...agentCommentMutationFields(result),
       })
     },
   )
@@ -1629,10 +1600,7 @@ export function registerArtifactTools(
         ...(result.deletedMessageId
           ? { deleted_message_id: result.deletedMessageId }
           : {}),
-        ...(result.refreshRequired ? { refresh_required: true } : {}),
-        ...(result.thread
-          ? { thread: toAgentCommentThread(result.thread) }
-          : {}),
+        ...agentCommentMutationFields(result),
       })
     },
   )

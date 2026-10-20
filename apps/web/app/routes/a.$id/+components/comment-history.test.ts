@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 import {
+  commentGapRequests,
   mergeCommentWindow,
   patchCommentThreads,
   revalidateCommentPage,
@@ -421,4 +422,40 @@ describe('bounded comment page cache', () => {
       [0, 30, 31, 101, 102, 103].map((i) => message(i).id),
     )
   })
+})
+
+test('marks disjoint around ranges and fills the interior with bounded pages', () => {
+  const tail = window([0, 298, 299, 300], 301, cursor(298))
+  let current = mergeCommentWindow(
+    tail,
+    window(
+      [0, ...Array.from({ length: 50 }, (_, i) => 100 + i)],
+      301,
+      cursor(100),
+    ),
+    { through: cursor(149), limit: 50 },
+  )
+  expect([...commentGapRequests(current).keys()]).toEqual([message(298).id])
+  for (const start of [248, 198, 148]) {
+    const request = [...commentGapRequests(current).values()][0]
+    expect(request.limit).toBe(50)
+    current = mergeCommentWindow(
+      current,
+      window(
+        [0, ...Array.from({ length: 50 }, (_, i) => start + i)],
+        301,
+        cursor(start),
+      ),
+      request,
+    )
+    expect(current.olderCursor).toBe(tail.olderCursor)
+    expect(current.messages.some((row) => row.id === message(100).id)).toBe(
+      true,
+    )
+    expect(new Set(current.messages.map((row) => row.id)).size).toBe(
+      current.messages.length,
+    )
+  }
+  expect(commentGapRequests(current).size).toBe(0)
+  expect(current.messages).toHaveLength(202)
 })

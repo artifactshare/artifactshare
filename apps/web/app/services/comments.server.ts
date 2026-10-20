@@ -1,5 +1,6 @@
 import {
   loadMessageWindow,
+  loadInitialMessageWindows,
   type CommentPageRequest,
 } from './comment-message-window.server'
 import {
@@ -522,15 +523,11 @@ async function loadCommentThreadViews(
   const threadIds = rows.map((row) => row.id)
   const [windows, anchors] = await Promise.all([
     loadedWindows ??
-      Promise.all(
-        rows.map((row) =>
-          loadMessageWindow(
-            db,
-            row.id,
-            user.id,
-            access.isOwner || access.isTeamWorkspaceAdmin,
-          ),
-        ),
+      loadInitialMessageWindows(
+        db,
+        threadIds,
+        user.id,
+        access.isOwner || access.isTeamWorkspaceAdmin,
       ),
     db
       .selectFrom('comment_anchors')

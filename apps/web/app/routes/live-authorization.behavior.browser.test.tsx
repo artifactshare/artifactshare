@@ -681,6 +681,80 @@ describe('bounded live authorization browser lifecycle', () => {
     )
   })
 
+  test.each(['reconnect', 'unidentified notification'])(
+    '%s refreshes all retained pages even with another dirty thread left over',
+    async (mode) => {
+      const expanded = expandedFixture()
+      const latest = initialWindow(expanded)
+      await act(async () =>
+        root.render(
+          <Harness
+            key="dirty-reconnect"
+            showDraft
+            initialThreads={[expanded, oldThread]}
+          />,
+        ),
+      )
+      fetchMock.mockImplementation((input: string) =>
+        authorizedResponse(
+          input.includes('?') ? [expanded] : [latest, oldThread],
+        ),
+      )
+      const socket = ControlledWebSocket.instances.at(-1)!
+      await act(async () => socket.open())
+      await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 2)
+      fetchMock.mockClear()
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(new Response(null, { status: 503 })),
+      )
+      await act(async () =>
+        socket.message({ type: 'comments-changed', threadId: oldThread.id }),
+      )
+      await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 1)
+      const changed = {
+        ...expanded,
+        messages: expanded.messages
+          .slice(0, 4)
+          .filter((message) => message.id !== 'message-2'),
+      }
+      fetchMock.mockClear()
+      fetchMock.mockImplementation((input: string) =>
+        authorizedResponse(
+          input.includes('?') ? [changed] : [latest, oldThread],
+        ),
+      )
+      if (mode === 'reconnect') {
+        // Ordinary reconnect does not perform an HTTP recovery-snapshot lookup.
+        await act(async () => socket.fail())
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(ControlledWebSocket.instances.at(-1)).not.toBe(socket)
+        await act(async () => ControlledWebSocket.instances.at(-1)!.open())
+      } else {
+        await act(async () => socket.message({ type: 'comments-changed' }))
+      }
+      await settleAuthorizedResponses(
+        () =>
+          !host.querySelector('output')!.dataset.messages!.includes('Reply 2'),
+      )
+      expect(
+        fetchMock.mock.calls.filter((call) =>
+          String(call[0]).includes('before='),
+        ),
+      ).toHaveLength(1)
+      expect(host.querySelector('output')!.dataset.messages).toContain(
+        'Reply 1',
+      )
+      expect(host.querySelector('output')!.dataset.threads).toContain(
+        oldThread.id,
+      )
+      expect(host.querySelector('textarea')!.value).toBe(
+        'Keep this unsent reply',
+      )
+    },
+  )
+
   test('reconciles selected membership and refreshes only the changed thread history', async () => {
     const expanded = {
       ...localThread,
@@ -1061,17 +1135,18 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(ControlledWebSocket.instances).toHaveLength(2)
   })
 
-  test('does not fetch after an applied mutation with no in-flight or deferred refresh', async () => {
+  test('reconciles membership after an applied mutation without deferred work', async () => {
     await act(async () =>
       root.render(<Harness mutation={{ requiresReconcile: false }} />),
     )
     await act(async () => ControlledWebSocket.instances[0]!.open())
     await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    fetchMock.mockImplementation(() => authorizedResponse([localThread]))
     await act(async () => host.querySelector('button')!.click())
-    await advance(2_000)
+    await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 2)
     expect(host.querySelector('output')?.dataset.threads).toBe(localThread.id)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   test.each(['success', 'denied', 'rejected'] as const)(
