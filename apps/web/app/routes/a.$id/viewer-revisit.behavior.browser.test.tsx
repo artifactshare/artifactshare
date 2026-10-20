@@ -48,6 +48,9 @@ function thread(
     updatedAt: time,
     resolvedAt: status === 'resolved' ? time : null,
     canResolve: false,
+    messageCount: count,
+    replyCount: Math.max(0, count - 1),
+    olderCursor: null,
     messages: Array.from({ length: count }, (_, index) => ({
       id: `${id}-message-${index}`,
       body: `${id} message ${index}`,

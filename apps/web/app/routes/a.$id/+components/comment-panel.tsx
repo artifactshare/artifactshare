@@ -1,4 +1,12 @@
+import { useCommentPage } from './use-comment-page'
 import {
+  commentGapRequests,
+  type ChangeCommentThreads,
+  type CommentPageRequest,
+} from './comment-history'
+import {
+  Fragment,
+  useCallback,
   useLayoutEffect,
   useEffect,
   useEffectEvent,
@@ -51,19 +59,20 @@ type TargetThreadScroll = 'center' | 'start'
 
 const COMMENT_PAGE_SIZE = 50
 const COLLAPSED_REPLY_COUNT = 3
-const EXPANDED_REPLY_PAGE_SIZE = 50
 
 interface CommentPanelProps {
   shareableId: string
   viewerUserId: string
   threads: ReadonlyArray<CommentThreadView>
-  onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
+  onThreadsChange: ChangeCommentThreads
   isCurrentShareableId: (shareableId: string) => boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   newCommentMessages?: ReadonlyArray<NewCommentMessage>
   focusTargetOnOpen?: boolean
   onTargetFocusConsumed?: () => void
+  targetFetchFailed?: boolean
+  onRetryTarget?: () => void
   targetThreadId: string | null
   targetThreadScroll: TargetThreadScroll
   onThreadNavigate: (thread: CommentThreadView) => void
@@ -87,6 +96,8 @@ export function CommentPanel({
   newCommentMessages = [],
   focusTargetOnOpen = false,
   onTargetFocusConsumed,
+  targetFetchFailed = false,
+  onRetryTarget,
   targetThreadId,
   targetThreadScroll,
   onThreadNavigate,
@@ -129,6 +140,7 @@ export function CommentPanel({
     shareableId,
     isCurrentShareableId,
     onThreadsChange,
+    showNewThreadComposer,
   })
 
   const handleOpenAutoFocus = useRevisitCommentFocus({
@@ -199,6 +211,14 @@ export function CommentPanel({
 
   const commentList = (
     <div className="pb-comment-panel-bottom flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 pt-3">
+      {targetFetchFailed ? (
+        <div role="status" className="text-muted-foreground text-sm">
+          {t('comments.errorThread')}
+          <Button variant="ghost" size="sm" onClick={onRetryTarget}>
+            {t('comments.retryThread')}
+          </Button>
+        </div>
+      ) : null}
       {visibleThreads.length === 0 ? (
         <div className="bg-muted border-border flex flex-col gap-1 rounded-[var(--r-md)] border p-3.5">
           <strong className="text-sm">{t('comments.emptyTitle')}</strong>
@@ -216,6 +236,8 @@ export function CommentPanel({
             <ThreadCard
               key={thread.id}
               thread={thread}
+              shareableId={shareableId}
+              onThreadsChange={onThreadsChange}
               newCommentMessages={newCommentMessages}
               locale={locale}
               target={thread.id === targetThreadId}
@@ -255,13 +277,18 @@ export function CommentPanel({
               }
               onUpdateMessage={(messageId, body) =>
                 mutate(
-                  { intent: 'update-message', messageId, body },
+                  {
+                    intent: 'update-message',
+                    threadId: thread.id,
+                    messageId,
+                    body,
+                  },
                   `message:${messageId}`,
                 )
               }
               onDeleteMessage={(messageId) =>
                 mutate(
-                  { intent: 'delete-message', messageId },
+                  { intent: 'delete-message', threadId: thread.id, messageId },
                   `message:${messageId}`,
                 )
               }
@@ -271,12 +298,6 @@ export function CommentPanel({
                   `thread:${thread.id}`,
                 )
               }
-              onCopyLink={() => {
-                copyShareUrl(
-                  commentDeepLinkUrl(window.location.href, thread.id),
-                  translator,
-                )
-              }}
               onNavigate={() => onThreadNavigate(thread)}
             />
           ))}
@@ -514,6 +535,8 @@ function NewThreadComposer({
 
 function ThreadCard({
   thread,
+  shareableId,
+  onThreadsChange,
   newCommentMessages,
   locale,
   target,
@@ -524,7 +547,6 @@ function ThreadCard({
   onUpdateMessage,
   onDeleteMessage,
   onDeleteThread,
-  onCopyLink,
   onNavigate,
   replyOpen,
   replyBody,
@@ -533,6 +555,8 @@ function ThreadCard({
   onReplyCancel,
 }: {
   thread: CommentThreadView
+  shareableId: string
+  onThreadsChange: ChangeCommentThreads
   newCommentMessages: ReadonlyArray<NewCommentMessage>
   locale: Parameters<typeof formatRelative>[1]
   target: boolean
@@ -543,7 +567,6 @@ function ThreadCard({
   onUpdateMessage: (messageId: string, body: string) => Promise<boolean>
   onDeleteMessage: (messageId: string) => Promise<boolean>
   onDeleteThread: () => Promise<boolean>
-  onCopyLink: () => void
   onNavigate: () => void
   replyOpen: boolean
   replyBody: string
@@ -551,10 +574,10 @@ function ThreadCard({
   onReplyChange: (value: string) => void
   onReplyCancel: () => void
 }) {
-  const { t, tPlural } = useT()
+  const translator = useT()
+  const { t } = translator
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [repliesExpanded, setRepliesExpanded] = useState(false)
-  const [replyLimit, setReplyLimit] = useState(EXPANDED_REPLY_PAGE_SIZE)
   const pendingReply = pendingKeys.has(`reply:${thread.id}`)
   const pendingResolve = pendingKeys.has(`resolve:${thread.id}`)
   const pendingDelete = pendingKeys.has(`thread:${thread.id}`)
@@ -565,13 +588,36 @@ function ThreadCard({
     x: number
     y: number
   } | null>(null)
+  const [missingMessageIds, setMissingMessageIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  const onTargetMissing = useCallback((messageId: string) => {
+    setMissingMessageIds((current) => new Set(current).add(messageId))
+  }, [])
   const newMessageIds = new Set<string>()
   for (const pair of newCommentMessages) {
-    if (pair.threadId === thread.id) newMessageIds.add(pair.messageId)
+    if (pair.threadId === thread.id && !missingMessageIds.has(pair.messageId))
+      newMessageIds.add(pair.messageId)
   }
-  const hasNewMessages = thread.messages.some((message) =>
-    newMessageIds.has(message.id),
+  const hasNewMessages =
+    thread.messages.some((message) => newMessageIds.has(message.id)) ||
+    (thread.messages.length < thread.messageCount && newMessageIds.size > 0)
+  const missingSelectedId = target
+    ? newCommentMessages.find(
+        (pair) =>
+          pair.threadId === thread.id &&
+          !missingMessageIds.has(pair.messageId) &&
+          !thread.messages.some((message) => message.id === pair.messageId),
+      )?.messageId
+    : undefined
+  const page = useCommentPage(
+    shareableId,
+    thread.id,
+    onThreadsChange,
+    missingSelectedId,
+    onTargetMissing,
   )
+  const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
 
@@ -593,19 +639,14 @@ function ThreadCard({
     if (await onDeleteThread()) setDeleteConfirmOpen(false)
   }
 
-  const showAllReplies = target || repliesExpanded
-  const firstNewReplyIndex = replyMessages.findIndex((message) =>
-    newMessageIds.has(message.id),
+  const displayedReplyMessages =
+    target || repliesExpanded
+      ? replyMessages
+      : replyMessages.slice(-COLLAPSED_REPLY_COUNT)
+  const hiddenReplyCount = Math.max(
+    0,
+    thread.replyCount - displayedReplyMessages.length,
   )
-  // Keep normal reply pagination, but expose every selected reply at the target.
-  const visibleReplyLimit = Math.max(
-    showAllReplies ? replyLimit : COLLAPSED_REPLY_COUNT,
-    target && firstNewReplyIndex >= 0
-      ? replyMessages.length - firstNewReplyIndex
-      : 0,
-  )
-  const hiddenReplyCount = Math.max(0, replyMessages.length - visibleReplyLimit)
-  const displayedReplyMessages = replyMessages.slice(-visibleReplyLimit)
   const canNavigateToText =
     thread.subject.kind === 'text' && thread.subject.state === 'attached'
 
@@ -690,7 +731,12 @@ function ThreadCard({
             pendingDelete={pendingDelete}
             canNavigateToText={canNavigateToText}
             onNavigate={onNavigate}
-            onCopyLink={onCopyLink}
+            onCopyLink={() => {
+              copyShareUrl(
+                commentDeepLinkUrl(window.location.href, thread.id),
+                translator,
+              )
+            }}
             onDeleteRequest={() => setDeleteConfirmOpen(true)}
           />
           {thread.canResolve ? (
@@ -718,45 +764,35 @@ function ThreadCard({
           />
         </div>
       ) : null}
-      {replyMessages.length > 0 ? (
-        <div
-          className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid min-w-0 gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
-          data-thread-content=""
-        >
-          {hiddenReplyCount > 0 ? (
-            <button
-              type="button"
-              className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
-              onClick={() => {
-                if (!showAllReplies) {
-                  setRepliesExpanded(true)
-                  setReplyLimit(EXPANDED_REPLY_PAGE_SIZE)
-                  return
-                }
-                setReplyLimit((current) =>
-                  Math.min(
-                    replyMessages.length,
-                    Math.max(current, visibleReplyLimit) +
-                      EXPANDED_REPLY_PAGE_SIZE,
-                  ),
-                )
-              }}
-            >
-              {tPlural('comments.previousReplyCount', hiddenReplyCount)}
-            </button>
-          ) : null}
-          {displayedReplyMessages.map((message) => (
-            <CommentMessageItem
-              key={message.id}
-              message={message}
-              isNew={newMessageIds.has(message.id)}
-              locale={locale}
-              pending={pendingKeys.has(`message:${message.id}`)}
-              onUpdate={onUpdateMessage}
-              onDelete={onDeleteMessage}
-            />
-          ))}
-        </div>
+      {replyMessages.length > 0 || missingSelectedId ? (
+        <CommentReplyList
+          displayedReplyMessages={displayedReplyMessages}
+          hiddenReplyCount={hiddenReplyCount}
+          canExpand={
+            displayedReplyMessages.length < replyMessages.length ||
+            thread.olderCursor !== null
+          }
+          page={page}
+          missingSelectedId={missingSelectedId}
+          gaps={gaps}
+          newMessageIds={newMessageIds}
+          locale={locale}
+          pendingKeys={pendingKeys}
+          onUpdateMessage={onUpdateMessage}
+          onDeleteMessage={onDeleteMessage}
+          onExpand={() => {
+            setRepliesExpanded(true)
+            if (
+              thread.olderCursor &&
+              displayedReplyMessages.length === replyMessages.length
+            )
+              void page.load({ before: thread.olderCursor, limit: 50 })
+          }}
+          onGap={(request) => {
+            setRepliesExpanded(true)
+            void page.load(request)
+          }}
+        />
       ) : null}
       {thread.status === 'open' && replyOpen ? (
         <div data-thread-content="">
@@ -840,6 +876,109 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
       <span className="[overflow-wrap:anywhere]">
         {quoteCommentText(thread.subject.quotedText)}
       </span>
+    </div>
+  )
+}
+
+function CommentReplyList({
+  displayedReplyMessages,
+  hiddenReplyCount,
+  canExpand,
+  page,
+  missingSelectedId,
+  gaps,
+  newMessageIds,
+  locale,
+  pendingKeys,
+  onUpdateMessage,
+  onDeleteMessage,
+  onExpand,
+  onGap,
+}: {
+  displayedReplyMessages: CommentThreadView['messages']
+  hiddenReplyCount: number
+  canExpand: boolean
+  page: ReturnType<typeof useCommentPage>
+  missingSelectedId?: string
+  gaps: ReturnType<typeof commentGapRequests>
+  newMessageIds: Set<string>
+  locale: Parameters<typeof formatRelative>[1]
+  pendingKeys: ReadonlySet<string>
+  onUpdateMessage: (messageId: string, body: string) => Promise<boolean>
+  onDeleteMessage: (messageId: string) => Promise<boolean>
+  onExpand: () => void
+  onGap: (request: CommentPageRequest) => void
+}) {
+  const { t, tPlural } = useT()
+  return (
+    <div
+      className="before:top-timeline-top before:left-timeline-offset border-border relative mt-0.5 grid min-w-0 gap-2.5 border-t pt-2.5 pl-5 before:absolute before:bottom-0.5 before:w-0.5 before:rounded-full before:bg-[color-mix(in_srgb,var(--link)_22%,var(--divider))]"
+      data-thread-content=""
+    >
+      {hiddenReplyCount > 0 && canExpand ? (
+        <button
+          type="button"
+          className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
+          disabled={page.pending}
+          aria-busy={page.pending}
+          onClick={onExpand}
+        >
+          {page.pending
+            ? t('comments.loadingReplies')
+            : page.failed && !missingSelectedId
+              ? t('comments.retryReplies')
+              : tPlural(
+                  gaps.size
+                    ? 'comments.moreReplyCount'
+                    : 'comments.previousReplyCount',
+                  hiddenReplyCount,
+                )}
+        </button>
+      ) : null}
+      {page.failed ? (
+        <div role="status" className="text-muted-foreground text-xs">
+          {t('comments.errorReplies')}
+          {missingSelectedId ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                void page.load({
+                  aroundMessageId: missingSelectedId,
+                  limit: 50,
+                })
+              }
+            >
+              {t('comments.retryReplies')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {displayedReplyMessages.map((message, index) => (
+        <Fragment key={message.id}>
+          {index > 0 && gaps.has(message.id) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={page.pending}
+              aria-busy={page.pending}
+              onClick={() => onGap(gaps.get(message.id)!)}
+            >
+              {page.pending
+                ? t('comments.loadingReplies')
+                : t('comments.loadReplyGap')}
+            </Button>
+          ) : null}
+          <CommentMessageItem
+            message={message}
+            isNew={newMessageIds.has(message.id)}
+            locale={locale}
+            pending={pendingKeys.has(`message:${message.id}`)}
+            onUpdate={onUpdateMessage}
+            onDelete={onDeleteMessage}
+          />
+        </Fragment>
+      ))}
     </div>
   )
 }

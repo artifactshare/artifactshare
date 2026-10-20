@@ -236,3 +236,31 @@ export function linkPublishRateLimitedResponse(result: {
     },
   )
 }
+
+export function commentPostRefusalResponse(
+  result:
+    | {
+        kind: 'thread-capacity'
+      }
+    | { kind: 'rate-limited'; retry_after_seconds: number; retry_at: string },
+): Response {
+  if (result.kind === 'thread-capacity') {
+    return errorResponse(
+      result.kind,
+      'This thread has 500 messages. Start a new thread.',
+      409,
+    )
+  }
+  return errorResponse(
+    result.kind,
+    'Posting limit reached. Wait before retrying.',
+    429,
+    {
+      details: {
+        retry_after_seconds: result.retry_after_seconds,
+        retry_at: result.retry_at,
+      },
+      headers: { 'Retry-After': String(result.retry_after_seconds) },
+    },
+  )
+}

@@ -15,7 +15,6 @@ import {
   shouldClearLatestVersionRetryOnLiveAvailable,
   shouldDeferCommentRefreshDuringMutation,
   shouldPromoteLatestVersionRetry,
-  shouldRefreshAfterAppliedCommentMutation,
   viewerShellReducer,
 } from './viewer-shell'
 
@@ -218,27 +217,6 @@ describe('comment refresh deferral', () => {
         outcome: 'body-missing',
       }),
     ).toBe(false)
-  })
-
-  test('refreshes after applied mutations when deferred work or overlap reconciliation is needed', () => {
-    expect(
-      shouldRefreshAfterAppliedCommentMutation({
-        hasDeferredRefresh: false,
-        requiresReconcile: false,
-      }),
-    ).toBe(false)
-    expect(
-      shouldRefreshAfterAppliedCommentMutation({
-        hasDeferredRefresh: true,
-        requiresReconcile: false,
-      }),
-    ).toBe(true)
-    expect(
-      shouldRefreshAfterAppliedCommentMutation({
-        hasDeferredRefresh: false,
-        requiresReconcile: true,
-      }),
-    ).toBe(true)
   })
 })
 
@@ -569,6 +547,9 @@ describe('new-comment target order', () => {
       updatedAt: '2026-01-01T00:00:00Z',
       resolvedAt: null,
       canResolve: false,
+      messageCount: count,
+      replyCount: Math.max(0, count - 1),
+      olderCursor: null,
       messages: Array.from({ length: count }, (_, index) => ({
         id: `${id}-${index}`,
         body: 'Review',

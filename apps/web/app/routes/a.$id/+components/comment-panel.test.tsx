@@ -1,7 +1,10 @@
+// @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
+import { messageCursor } from '~/lib/comment-cursor'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
 vi.mock('react-router', async (importOriginal) => ({
@@ -16,7 +19,10 @@ vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
     t: (key: keyof typeof en) => (locale.value === 'en' ? en : ja)[key],
-    tPlural: () => 'comments',
+    tPlural: (key: string, count: number) =>
+      (locale.value === 'en' ? en : ja)[
+        `${key}${count === 1 ? 'One' : 'Other'}` as keyof typeof en
+      ].replace('{n}', String(count)),
   }),
 }))
 vi.mock('~/components/app/analytics-consent-provider', () => ({
@@ -34,6 +40,8 @@ vi.mock('~/components/app/app-side-panel', async () => {
 })
 import { CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
+import { mergeCommentWindow } from './comment-history'
+import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 
 type PositionState = 'attached' | 'needs-check' | 'unchecked'
 
@@ -49,6 +57,9 @@ function textThread(
     updatedAt: '2026-01-01T00:00:00Z',
     resolvedAt: null,
     canResolve: false,
+    messageCount: 0,
+    replyCount: 0,
+    olderCursor: null,
     messages: [],
     subject: {
       kind: 'text',
@@ -326,13 +337,236 @@ test('a target reveals selected replies older than its reply page while ordinary
   const target = renderThreads([thread], pairs, thread.id, 'all')
   expect(target).toContain('Reply body 2.')
   expect(target).toContain('Reply body 54.')
-  expect(target).not.toContain('Reply body 1.')
+  expect(target).toContain('Reply body 1.')
   expect(target.match(/data-new-comment-message="true"/g)).toHaveLength(2)
   const ordinary = renderThreads([thread], pairs)
   expect(ordinary).not.toContain('Reply body 2.')
   expect(ordinary.match(/data-new-comment-message="true"/g)).toHaveLength(1)
   expect(ordinary).toContain('data-new-comment-thread="true"')
   const unmarkedTarget = renderThreads([thread], [], thread.id, 'all')
-  expect(unmarkedTarget).not.toContain('Reply body 2.')
+  expect(unmarkedTarget).toContain('Reply body 2.')
   expect(unmarkedTarget).not.toContain('data-new-comment-message')
+})
+
+test.each(['en', 'ja'] as const)(
+  'cached but collapsed replies are counted as more, not unloaded (%s)',
+  (language) => {
+    locale.value = language
+    const at = '2026-05-01T00:00:00.000Z'
+    const row = (i: number) => ({
+      id: `message-${i}`,
+      body: `Cached reply ${i}`,
+      createdAt: at,
+      updatedAt: at,
+      agent: null,
+      author: {
+        id: 'reviewer',
+        name: 'Reviewer',
+        email: 'reviewer@example.com',
+        image: null,
+      },
+      canEdit: false,
+      canDelete: false,
+    })
+    const cursor = (i: number) =>
+      btoa(JSON.stringify([1, 'thread', at, row(i).id]))
+    const cached: CommentThreadView = {
+      ...textThread('attached', 'thread'),
+      messageCount: 21,
+      replyCount: 20,
+      olderCursor: null,
+      messages: [0, 1, 2, 7, 8, 9].map(row),
+      latestReplyIds: [7, 8, 9].map((i) => row(i).id),
+      loadedPages: [{ through: cursor(2), limit: 2, coverageStart: cursor(1) }],
+    }
+    const html = renderThreads([cached])
+    expect(html).toContain(
+      language === 'en' ? 'Show 17 more replies' : '返信をあと17件表示',
+    )
+    expect(html).not.toContain('Cached reply 1')
+    expect(html).toContain('Cached reply 9')
+    const expanded = renderThreads(
+      [cached],
+      [{ threadId: 'thread', messageId: row(1).id }],
+      'thread',
+    )
+    expect(expanded).toContain('Cached reply 1')
+    expect(expanded).toContain(
+      (language === 'en' ? en : ja)['comments.loadReplyGap'],
+    )
+    expect(expanded).not.toContain(
+      language === 'en' ? 'Show 15 more replies' : '返信をあと15件表示',
+    )
+  },
+)
+
+function pagedThread(start: number, end: number): CommentThreadView {
+  const at = '2026-05-01T00:00:00.000Z'
+  const row = (i: number) => ({
+    id: `message-${String(i).padStart(3, '0')}`,
+    body: `Paged reply ${i}.`,
+    createdAt: at,
+    updatedAt: at,
+    agent: null,
+    author: {
+      id: 'reviewer',
+      name: 'Reviewer',
+      email: 'reviewer@example.com',
+      image: null,
+    },
+    canEdit: false,
+    canDelete: false,
+  })
+  const cursor = (i: number) => messageCursor('thread', row(i))
+  return {
+    ...textThread('attached', 'thread'),
+    messageCount: 301,
+    replyCount: 300,
+    olderCursor: cursor(start),
+    messages: [
+      0,
+      ...Array.from({ length: end - start + 1 }, (_, i) => start + i),
+      298,
+      299,
+      300,
+    ].map(row),
+    latestReplyIds: [298, 299, 300].map((i) => row(i).id),
+    loadedPages: [
+      { before: cursor(end + 1), limit: 50, coverageStart: cursor(start) },
+    ],
+  }
+}
+
+test('an around target displays all cached replies with the gap in chronological position', () => {
+  const thread = pagedThread(100, 149)
+  const html = renderThreads([thread], [], thread.id, 'all')
+  expect(html.match(/Paged reply \d+\./g)).toHaveLength(54)
+  expect(html).toContain('Paged reply 100.')
+  expect(html).toContain('Show 247 more replies')
+  const gap = html.indexOf(en['comments.loadReplyGap'])
+  expect(gap).toBeGreaterThan(html.indexOf('Paged reply 149.'))
+  expect(gap).toBeLessThan(html.indexOf('Paged reply 298.'))
+})
+
+test('expansion reveals cached replies without fetching and retains all 53 when the resolved target clears', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const thread = pagedThread(248, 297)
+  const fetchPage = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ threads: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const panel = (target: boolean, resolved = false) => (
+    <CommentPanel
+      shareableId="artifact"
+      viewerUserId="viewer"
+      threads={[{ ...thread, status: resolved ? 'resolved' : 'open' }]}
+      onThreadsChange={() => {}}
+      isCurrentShareableId={() => true}
+      open
+      onOpenChange={() => {}}
+      targetThreadId={target ? thread.id : null}
+      requestedFilter="all"
+      targetThreadScroll="center"
+      onThreadNavigate={() => {}}
+    />
+  )
+  const earlier = (label: string) => {
+    const button = Array.from(host.querySelectorAll('button')).find(
+      (item) => item.textContent === label,
+    )
+    expect(button, host.textContent ?? label).toBeDefined()
+    return button!
+  }
+  try {
+    await act(async () => root.render(panel(false)))
+    expect(host.textContent).not.toContain('Paged reply 248.')
+    await act(async () => earlier('Show 297 earlier replies').click())
+    expect(fetchPage).not.toHaveBeenCalled()
+    expect(host.textContent?.match(/Paged reply \d+\./g)).toHaveLength(54)
+    await act(async () => root.render(panel(true)))
+    await act(async () => root.render(panel(false, true)))
+    expect(host.textContent?.match(/Paged reply \d+\./g)).toHaveLength(54)
+    expect(host.textContent).toContain('Paged reply 248.')
+    await act(async () => earlier('Show 247 earlier replies').click())
+    expect(fetchPage).toHaveBeenCalledTimes(1)
+    const url = new URL(
+      String(fetchPage.mock.calls[0][0]),
+      'https://example.com',
+    )
+    expect(url.searchParams.get('before')).toBe(thread.olderCursor)
+    expect(url.searchParams.get('limit')).toBe('50')
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetchPage.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a deleted unread target advances to the next surviving unloaded reply without retry guidance', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const history = pagedThread(70, 70)
+  const initial = {
+    ...history,
+    messages: history.messages.filter((row) => row.id !== 'message-070'),
+    loadedPages: undefined,
+  }
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async (input) => {
+      const url = new URL(String(input), 'https://example.com')
+      if (url.searchParams.get('around_message_id') === 'message-010')
+        return Response.json({}, { status: 404 })
+      if (url.searchParams.get('around_message_id') === 'message-070')
+        return Response.json({
+          threads: [history],
+          page: { through: messageCursor('thread', history.messages[1]) },
+        })
+      return Response.json({ threads: [initial] })
+    })
+  function Harness() {
+    const [thread, setThread] = useState<CommentThreadView>(initial)
+    return (
+      <CommentPanel
+        shareableId="artifact"
+        viewerUserId="viewer"
+        threads={[thread]}
+        newCommentMessages={[10, 70].map((id) => ({
+          threadId: 'thread',
+          messageId: `message-${String(id).padStart(3, '0')}`,
+        }))}
+        onThreadsChange={(rows) =>
+          setThread((current) => mergeCommentWindow(current, rows[0]))
+        }
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId="thread"
+        requestedFilter="all"
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+      />
+    )
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<Harness />))
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes('Paged reply 70.') === true
+    }, 'next unread reply displayed')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(host.textContent).not.toContain(en['comments.errorReplies'])
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetch.mockRestore()
+    vi.unstubAllGlobals()
+  }
 })

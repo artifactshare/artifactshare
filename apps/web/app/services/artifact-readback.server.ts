@@ -49,6 +49,9 @@ export function capSource(
 export function toAgentCommentThread(thread: CommentThreadView) {
   return {
     id: thread.id,
+    message_count: thread.messageCount,
+    reply_count: thread.replyCount,
+    older_cursor: thread.olderCursor,
     status: thread.status,
     resolved_at: thread.resolvedAt,
     created_at: thread.createdAt,
@@ -64,15 +67,21 @@ export function toAgentCommentThread(thread: CommentThreadView) {
               : {}),
           }
         : { kind: 'artifact' as const, quoted_text: null, state: null },
-    messages: thread.messages.map((message) => ({
-      message_id: message.id,
-      author_name: message.author.name,
-      author_email: message.author.email,
-      agent: message.agent,
-      body: message.body,
-      created_at: message.createdAt,
-      updated_at: message.updatedAt,
-    })),
+    messages: thread.messages.map(toAgentCommentMessage),
+  }
+}
+
+export function toAgentCommentMessage(
+  message: CommentThreadView['messages'][number],
+) {
+  return {
+    message_id: message.id,
+    author_name: message.author.name,
+    author_email: message.author.email,
+    agent: message.agent,
+    body: message.body,
+    created_at: message.createdAt,
+    updated_at: message.updatedAt,
   }
 }
 
@@ -82,4 +91,24 @@ export function shareUrl(
   visibility: string = 'private',
 ): string {
   return shareableUrl(baseUrl, id, visibility, isProduction(env))
+}
+
+export function agentCommentMutationFields(result: {
+  thread?: CommentThreadView
+  changedMessage?: CommentThreadView['messages'][number]
+  refreshRequired?: boolean
+}) {
+  const thread = result.thread
+    ? { thread: toAgentCommentThread(result.thread) }
+    : {}
+  const refresh = result.refreshRequired ? { refresh_required: true } : {}
+  // Preserve the existing serialized field order of deletion responses too.
+  if ('deleted' in result) return { ...refresh, ...thread }
+  return {
+    ...thread,
+    ...(result.changedMessage
+      ? { changed_message: toAgentCommentMessage(result.changedMessage) }
+      : {}),
+    ...refresh,
+  }
 }

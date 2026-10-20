@@ -34,6 +34,9 @@ const threads: CommentThreadView[] = [
     updatedAt: '2026-01-01T00:00:00Z',
     resolvedAt: null,
     canResolve: false,
+    messageCount: 0,
+    replyCount: 0,
+    olderCursor: null,
     messages: [],
     subject: {
       kind: 'text',

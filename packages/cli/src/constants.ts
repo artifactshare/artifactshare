@@ -35,6 +35,9 @@ export const BOOLEAN_FLAGS = new Set([
   'unarchive',
 ])
 export const VALUE_FLAGS = new Set([
+  'before',
+  'limit',
+  'around-message-id',
   'add-email',
   'agent',
   'base-url',

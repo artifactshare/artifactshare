@@ -11,6 +11,174 @@
     }
   ],
   "paths": {
+    "/api/cli/artifacts/{id}/comments": {
+      "get": {
+        "summary": "Read bounded comment windows",
+        "description": "Default: at most 50 threads, open first. Each contains its first message plus latest three replies. Use thread_id and before=older_cursor for older replies (limit 1–50), or mutually exclusive around_message_id for a target-containing page. Counts describe stored messages. has_more concerns threads only.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "thread_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "around_message_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 50
+            }
+          }
+        ],
+        "x-credential-presets": ["unrestricted", "agent", "browser-session"],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      },
+      "post": {
+        "summary": "Post or change a comment",
+        "description": "Creation and replies share 20 admissions per verified user/artifact per fixed UTC minute across transports and tokens. Up to 40 admissions may straddle a minute boundary. Validation and observed capacity refusals are uncharged; failures after admission consume budget. Threads allow 500 stored messages. Success readback is bounded; refresh_required indicates committed success requiring a targeted read, never an automatic replay.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "x-credential-presets": ["unrestricted", "agent", "browser-session"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "thread-capacity: start a new thread; or resolved/version conflict."
+          },
+          "429": {
+            "description": "rate-limited. error.details includes retry_after_seconds and retry_at.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "commit-failed. Do not automatically replay an uncertain write."
+          }
+        }
+      }
+    },
     "/api/cli/artifacts/{id}/adopt": {
       "post": {
         "summary": "Assign an artifact to a publisher client",
@@ -388,6 +556,122 @@
   },
   "components": {
     "schemas": {
+      "CommentThreadWindow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": ["open", "resolved"]
+          },
+          "created_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updated_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolved_at": {
+            "type": ["string", "null"]
+          },
+          "message_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reply_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "older_cursor": {
+            "type": ["string", "null"]
+          },
+          "anchor": {
+            "type": "object"
+          },
+          "messages": {
+            "type": "array",
+            "maxItems": 51,
+            "description": "Current first message plus latest three replies, or at most 50 requested replies.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "message_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "body": {
+                  "type": "string"
+                },
+                "author_name": {
+                  "type": ["string", "null"]
+                },
+                "author_email": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "agent": {
+                  "type": ["string", "null"]
+                },
+                "created_at": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "updated_at": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "message_id",
+                "body",
+                "author_name",
+                "author_email",
+                "agent",
+                "created_at",
+                "updated_at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "updated_at",
+          "resolved_at",
+          "message_count",
+          "reply_count",
+          "older_cursor",
+          "anchor",
+          "messages"
+        ]
+      },
+      "CommentsListResponse": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "share_url": {
+            "type": ["string", "null"]
+          },
+          "comments": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/CommentThreadWindow"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": ["artifact_id", "comments"]
+      },
       "PublisherAdoptRequest": {
         "type": "object",
         "properties": {

@@ -163,3 +163,15 @@ test('preserves update version conflict recovery', () => {
     'Read the current version, reapply your changes, and retry with its version id.',
   )
 })
+
+test('comment capacity explains stored messages rather than a temporary posting rate', () => {
+  const full = mapApiError(409, { error: { code: 'thread-capacity' } })
+  assert.equal(full.code, 'thread_capacity')
+  assert.match(full.why, /500 stored messages/)
+  assert.match(full.hint, /Start a new thread/)
+  assert.match(full.hint, /delete messages/)
+  assert.equal(full.recovery.kind, 'change_input')
+  const rate = mapApiError(429, { error: { code: 'rate-limited' } })
+  assert.match(rate.why, /minute/)
+  assert.equal(rate.recovery.kind, 'retry_later')
+})

@@ -61,6 +61,10 @@ export const CLI_QUICK_REFERENCE = [
   ['List your artifacts', 'artifacts list --json'],
   ['Post a comment', "comments post <target> --body '<text>' --json"],
   ['Read comments', 'comments list <target> --json'],
+  [
+    'Read older replies',
+    'comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json',
+  ],
   ['Change title or sharing', "edit <target> --title 'New' --json"],
   ['Move to a project', 'edit <target> --project-id <id> --json'],
   ['Create a project', "projects create 'Name' --json"],
@@ -206,6 +210,45 @@ const objectSchema = (
   ...(strict ? { additionalProperties: false } : {}),
 })
 export const REST_SCHEMAS = {
+  CommentThreadWindow: objectSchema({
+    id: restString,
+    status: { enum: ['open', 'resolved'] },
+    created_at: restString,
+    updated_at: restString,
+    resolved_at: nullableString,
+    message_count: { type: 'integer', minimum: 0 },
+    reply_count: { type: 'integer', minimum: 0 },
+    older_cursor: nullableString,
+    anchor: { type: 'object' },
+    messages: {
+      type: 'array',
+      maxItems: 51,
+      description:
+        'Current first message plus latest three replies, or at most 50 requested replies.',
+      items: objectSchema({
+        message_id: restString,
+        body: { type: 'string' },
+        author_name: nullableString,
+        author_email: restString,
+        agent: nullableString,
+        created_at: restString,
+        updated_at: restString,
+      }),
+    },
+  }),
+  CommentsListResponse: objectSchema(
+    {
+      artifact_id: restString,
+      share_url: nullableString,
+      comments: {
+        type: 'array',
+        maxItems: 50,
+        items: restRef('CommentThreadWindow'),
+      },
+      has_more: { type: 'boolean' },
+    },
+    ['artifact_id', 'comments'],
+  ),
   PublisherAdoptRequest: objectSchema(
     { publisher_client_id: restString },
     undefined,
@@ -351,6 +394,54 @@ const restOperation = (
   },
 })
 export const REST_OPERATIONS = {
+  '/api/cli/artifacts/{id}/comments': {
+    get: {
+      ...restOperation(
+        'Read bounded comment windows',
+        'Default: at most 50 threads, open first. Each contains its first message plus latest three replies. Use thread_id and before=older_cursor for older replies (limit 1–50), or mutually exclusive around_message_id for a target-containing page. Counts describe stored messages. has_more concerns threads only.',
+        restRef('CommentsListResponse'),
+        null,
+        ['unrestricted', 'agent', 'browser-session'],
+      ),
+      parameters: [
+        pathId,
+        ...['thread_id', 'before', 'around_message_id'].map((name) => ({
+          name,
+          in: 'query',
+          schema: restString,
+        })),
+        {
+          name: 'limit',
+          in: 'query',
+          schema: { type: 'integer', minimum: 1, maximum: 50, default: 50 },
+        },
+      ],
+    },
+    post: restOperation(
+      'Post or change a comment',
+      'Creation and replies share 20 admissions per verified user/artifact per fixed UTC minute across transports and tokens. Up to 40 admissions may straddle a minute boundary. Validation and observed capacity refusals are uncharged; failures after admission consume budget. Threads allow 500 stored messages. Success readback is bounded; refresh_required indicates committed success requiring a targeted read, never an automatic replay.',
+      { type: 'object' },
+      { type: 'object' },
+      ['unrestricted', 'agent', 'browser-session'],
+      {
+        409: {
+          description:
+            'thread-capacity: start a new thread; or resolved/version conflict.',
+        },
+        429: {
+          description:
+            'rate-limited. error.details includes retry_after_seconds and retry_at.',
+          headers: {
+            'Retry-After': { schema: { type: 'integer', minimum: 1 } },
+          },
+        },
+        502: {
+          description:
+            'commit-failed. Do not automatically replay an uncertain write.',
+        },
+      },
+    ),
+  },
   '/api/cli/artifacts/{id}/adopt': {
     post: restOperation(
       'Assign an artifact to a publisher client',

@@ -829,6 +829,27 @@ const commentsListDefinition = define({
   toKebab: true,
   args: {
     ...commonArgs,
+    threadId: {
+      type: 'string',
+      toKebab: true,
+      description: 'Read one thread, including threads outside the panel',
+    },
+    before: {
+      type: 'string',
+      description:
+        'Read older replies using older_cursor; requires --thread-id',
+    },
+    limit: {
+      type: 'string',
+      description:
+        'Replies per page (1–50, default 50); requires --before or --around-message-id',
+    },
+    aroundMessageId: {
+      type: 'string',
+      toKebab: true,
+      description:
+        'Read a bounded page containing this message; requires --thread-id',
+    },
     artifactIdOrUrl: {
       type: 'positional',
       toKebab: true,
@@ -839,7 +860,11 @@ const commentsListDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare comments list abc123def4 --json
 
 Returns up to 50 threads (open threads first); has_more reports whether more exist.
-Each thread carries its messages, status, and quoted-text anchor when present.
+Each thread carries its first message and latest three replies, message_count,
+reply_count, older_cursor, status, and quoted-text anchor when present.
+Read older replies with --thread-id <id> --before <older_cursor> --limit 50.
+Repeat with the returned older_cursor until null. --around-message-id <id>
+loads a target-containing page; do not combine it with --before.
 
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before comments list

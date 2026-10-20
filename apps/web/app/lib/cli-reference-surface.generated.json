@@ -154,7 +154,11 @@
         "--token",
         "--profile",
         "--allow-plaintext-token-store",
-        "--insecure-localhost"
+        "--insecure-localhost",
+        "--thread-id",
+        "--before",
+        "--limit",
+        "--around-message-id"
       ]
     },
     {
@@ -810,5 +814,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-11"
+  "generated_date": "2026-10-19"
 }

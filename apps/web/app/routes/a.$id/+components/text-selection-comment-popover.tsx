@@ -1,3 +1,4 @@
+import type { ChangeCommentThreads } from './comment-history'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
@@ -23,7 +24,7 @@ export function TextSelectionCommentPopover({
   shareableId: string
   anchor: PendingTextAnchor
   isCurrentShareableId: (shareableId: string) => boolean
-  onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
+  onThreadsChange: ChangeCommentThreads
   onClose: () => void
 }) {
   const { t } = useT()

@@ -64,6 +64,7 @@ export interface DB {
   }
   versions: VersionsTable
   version_files: VersionFilesTable
+  comment_post_windows: CommentPostWindowsTable
   comment_threads: CommentThreadsTable
   comment_messages: CommentMessagesTable
   comment_anchor_results: CommentAnchorResultsTable
@@ -602,7 +603,15 @@ interface VersionFilesTable {
   created_at: string
 }
 
+interface CommentPostWindowsTable {
+  user_id: string
+  shareable_id: string
+  minute_start: number
+  admissions: number
+}
+
 interface CommentThreadsTable {
+  message_count: Generated<number>
   id: string
   shareable_id: string
   status: 'open' | 'resolved'

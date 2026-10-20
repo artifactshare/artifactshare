@@ -19,6 +19,7 @@ type ArtifactLiveMessage =
   | {
       type: 'comments-changed'
       originMutationId?: string
+      threadId?: string
       originUserId?: string
     }
   | { type: 'view-count-changed'; viewCount: number }
@@ -218,11 +219,13 @@ export class ArtifactLiveRoom extends DurableObject<Cloudflare.Env> {
   async notifyCommentsChanged(
     originMutationId?: string,
     originUserId?: string,
+    threadId?: string,
   ): Promise<void> {
     const hasOrigin =
       isValidOriginValue(originMutationId) && isValidOriginValue(originUserId)
     this.broadcastProduct({
       type: 'comments-changed',
+      ...(isValidOriginValue(threadId) ? { threadId } : {}),
       ...(hasOrigin ? { originMutationId, originUserId } : {}),
     })
     await this.queueAlarmUpdate()

@@ -795,13 +795,16 @@ export const CommentMessageSchema = z.object({
 export type CommentMessage = z.infer<typeof CommentMessageSchema>
 
 export const CommentThreadSchema = z.object({
+  message_count: z.number().int().nonnegative(),
+  reply_count: z.number().int().nonnegative(),
+  older_cursor: z.string().nullable(),
   id: stringId,
   status: z.enum(['open', 'resolved']),
   resolved_at: nullableTimestamp,
   created_at: timestamp,
   updated_at: timestamp,
   anchor: CommentAnchorSchema,
-  messages: z.array(CommentMessageSchema),
+  messages: z.array(CommentMessageSchema).max(51),
 })
 export type CommentThread = z.infer<typeof CommentThreadSchema>
 
@@ -896,7 +899,9 @@ export const CommentPostResponseSchema = z.object({
   share_url: url.nullable().optional(),
   thread_id: stringId,
   reply: z.boolean(),
-  thread: CommentThreadSchema,
+  thread: CommentThreadSchema.optional(),
+  changed_message: CommentMessageSchema.optional(),
+  refresh_required: z.boolean().optional(),
 })
 export type CommentPostResponse = z.infer<typeof CommentPostResponseSchema>
 
@@ -904,7 +909,9 @@ export const CommentActionResponseSchema = z.object({
   artifact_id: stringId,
   share_url: url.nullable().optional(),
   thread_id: stringId,
-  thread: CommentThreadSchema,
+  thread: CommentThreadSchema.optional(),
+  changed_message: CommentMessageSchema.optional(),
+  refresh_required: z.boolean().optional(),
 })
 export type CommentActionResponse = z.infer<typeof CommentActionResponseSchema>
 
@@ -914,6 +921,8 @@ export const CommentDeleteResponseSchema = z.object({
   thread_id: stringId,
   deleted: z.literal(true),
   thread_deleted: z.boolean(),
+  deleted_message_id: stringId.optional(),
+  refresh_required: z.boolean().optional(),
   thread: CommentThreadSchema.optional(),
 })
 export type CommentDeleteResponse = z.infer<typeof CommentDeleteResponseSchema>
@@ -1244,14 +1253,14 @@ export const CLI_API_ENDPOINTS = {
     method: 'GET',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [401, 403, 404] as const,
+    errorStatuses: [400, 401, 403, 404] as const,
   },
   commentsPostOrAction: {
     path: '/api/cli/artifacts/:id/comments',
     method: 'POST',
     auth: 'bearer_or_session' as const,
     successStatus: 200,
-    errorStatuses: [400, 401, 403, 404, 405, 409, 502] as const,
+    errorStatuses: [400, 401, 403, 404, 405, 409, 429, 502] as const,
   },
   projectsList: {
     path: '/api/cli/projects',

@@ -83,8 +83,9 @@ export function isLocalHostname(hostname: string): boolean {
 export function apiUrl(path: string, baseUrl: string): URL {
   const url = new URL(baseUrl)
   const basePath = url.pathname.replace(/\/$/, '')
-  url.pathname = `${basePath}${path}`
-  url.search = ''
+  const queryStart = path.indexOf('?')
+  url.pathname = `${basePath}${queryStart < 0 ? path : path.slice(0, queryStart)}`
+  url.search = queryStart < 0 ? '' : path.slice(queryStart)
   url.hash = ''
   return url
 }

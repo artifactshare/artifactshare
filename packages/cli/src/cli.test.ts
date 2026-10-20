@@ -247,6 +247,24 @@ test('apiUrl preserves a path-prefixed base URL', () => {
   )
 })
 
+test('apiUrl keeps bounded comment query parameters separate from the pathname', () => {
+  const params = new URLSearchParams({
+    thread_id: 'thr1',
+    before: 'cursor+/=',
+    limit: '50',
+  })
+  const url = apiUrl(
+    `/api/cli/artifacts/abc123def4/comments?${params}`,
+    'https://example.com/prefix?discard=true#fragment',
+  )
+  assert.equal(url.pathname, '/prefix/api/cli/artifacts/abc123def4/comments')
+  assert.deepEqual(
+    Object.fromEntries(url.searchParams),
+    Object.fromEntries(params),
+  )
+  assert.equal(url.hash, '')
+})
+
 test('bare parent commands fail with validation_failed instead of silent success', () => {
   for (const parent of ['artifacts', 'comments', 'profiles', 'projects']) {
     const payload = expectFailure(run([parent, '--json']), {

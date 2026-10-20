@@ -1,3 +1,4 @@
+import type { ChangeCommentThreads } from './comment-history'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
@@ -34,12 +35,12 @@ export function InlineCommentPopover({
   thread: CommentThreadView | null
   rect: TextSelectionMessage['rect'] | null
   isCurrentShareableId: (shareableId: string) => boolean
-  onThreadsChange: (threads: ReadonlyArray<CommentThreadView>) => void
+  onThreadsChange: ChangeCommentThreads
   onClose: () => void
   onOpenConversation: (threadId: string) => void
 }) {
   const translator = useT()
-  const { t, tPlural, locale } = translator
+  const { t, locale } = translator
   const [replyBody, setReplyBody] = useState('')
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const popoverRef = useRef<HTMLElement | null>(null)
@@ -75,7 +76,7 @@ export function InlineCommentPopover({
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)
   const visibleReplyMessages = replyMessages.slice(-3)
-  const hiddenReplyCount = replyMessages.length - visibleReplyMessages.length
+  const hiddenReplyCount = thread.replyCount - visibleReplyMessages.length
   const pendingResolve = pendingKeys.has(`resolve:${thread.id}`)
   const pendingDelete = pendingKeys.has(`thread:${thread.id}`)
   const hasPendingMutation = pendingKeys.size > 0
@@ -101,7 +102,7 @@ export function InlineCommentPopover({
 
   const updateMessage = async (messageId: string, body: string) => {
     const ok = await mutate(
-      { intent: 'update-message', messageId, body },
+      { intent: 'update-message', threadId: thread.id, messageId, body },
       `message:${messageId}`,
     )
     return ok
@@ -109,7 +110,7 @@ export function InlineCommentPopover({
 
   const deleteMessage = async (messageId: string) => {
     const ok = await mutate(
-      { intent: 'delete-message', messageId },
+      { intent: 'delete-message', threadId: thread.id, messageId },
       `message:${messageId}`,
     )
     if (ok && thread.messages.length <= 1) onClose()
@@ -203,7 +204,7 @@ export function InlineCommentPopover({
               className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-bold hover:underline"
               onClick={() => onOpenConversation(thread.id)}
             >
-              {tPlural('comments.previousReplyCount', hiddenReplyCount)}
+              {t('comments.openConversationTitle')}
             </button>
           ) : null}
           {visibleReplyMessages.length > 0 ? (

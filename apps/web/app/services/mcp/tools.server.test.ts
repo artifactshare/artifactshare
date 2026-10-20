@@ -439,6 +439,9 @@ describe('capSource', () => {
 
 describe('toMcpCommentThread', () => {
   const baseThread: CommentThreadView = {
+    messageCount: 1,
+    replyCount: 0,
+    olderCursor: null,
     id: 't1',
     status: 'open',
     subject: { kind: 'artifact' },
@@ -3269,6 +3272,73 @@ describe('headless publish wiring', () => {
     )
   })
 
+  test('MCP shares the service posting allowance and exposes retry timing', async () => {
+    const { sessionUser, id } = await publishOwnerDoc()
+    const access = await loadCommentAccess(db, sessionUser, id)
+    if (!access) throw new Error('expected access')
+    const created = await createCommentThread(
+      db,
+      access,
+      sessionUser,
+      'Browser/service admission',
+    )
+    if (created.kind !== 'ok') throw new Error('seed failed')
+    for (let i = 0; i < 19; i++) {
+      const posted = await callTool(db, 'post_comment', {
+        id,
+        body: 'MCP reply',
+        reply_to: created.threadId,
+      })
+      expect((posted.result as { isError?: boolean }).isError).toBeFalsy()
+    }
+    const rejected = errorPayload(
+      await callTool(db, 'post_comment', { id, body: 'Over the shared limit' }),
+    )
+    expect(rejected).toMatchObject({
+      code: 'rate-limited',
+      retry_after_seconds: expect.any(Number),
+      retry_at: expect.any(String),
+    })
+    expect(
+      await db
+        .selectFrom('comment_post_windows')
+        .select('admissions')
+        .where('user_id', '=', sessionUser.id)
+        .where('shareable_id', '=', id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ admissions: 20 })
+    const page = await callTool(db, 'list_comments', {
+      id,
+      thread_id: created.threadId,
+    })
+    const window = (
+      page.result as {
+        structuredContent: {
+          comments: Array<{
+            message_count: number
+            older_cursor: string
+            messages: unknown[]
+          }>
+        }
+      }
+    ).structuredContent.comments[0]
+    expect(window.message_count).toBe(20)
+    expect(window.messages).toHaveLength(4)
+    const older = await callTool(db, 'list_comments', {
+      id,
+      thread_id: created.threadId,
+      before: window.older_cursor,
+      limit: 5,
+    })
+    expect(
+      (
+        older.result as {
+          structuredContent: { comments: Array<{ messages: unknown[] }> }
+        }
+      ).structuredContent.comments[0].messages,
+    ).toHaveLength(6)
+  })
+
   test('post_comment replies to an existing thread', async () => {
     const { sessionUser, id } = await publishOwnerDoc()
     const access = await loadCommentAccess(db, sessionUser, id)
@@ -3280,6 +3350,14 @@ describe('headless publish wiring', () => {
       'First note',
     )
     if (created.kind !== 'ok') throw new Error('seed thread failed')
+
+    // Fast bounded readback can put both writes in one millisecond. Establish
+    // chronology explicitly instead of depending on random IDs to break the tie.
+    await db
+      .updateTable('comment_messages')
+      .set({ created_at: new Date(Date.now() - 1000).toISOString() })
+      .where('thread_id', '=', created.threadId)
+      .execute()
 
     const body = await callTool(db, 'post_comment', {
       id,

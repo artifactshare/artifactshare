@@ -52,7 +52,8 @@ const roleByPath: Record<string, string> = {
   comments: 'Work with comments on an artifact.',
   'comments delete': 'Delete a comment message.',
   'comments edit': 'Edit a comment message.',
-  'comments list': 'List comment threads and messages.',
+  'comments list':
+    'Read first/latest-three comment windows; use --thread-id and --before for older replies (up to 50).',
   'comments post':
     'Post a comment or reply. Quote positions stay unchecked until a viewer resolves the exact context.',
   'comments reopen': 'Reopen a resolved comment thread.',
@@ -164,7 +165,8 @@ const jaRoleByPath: Record<string, string> = {
   comments: '成果物のコメントを扱います。',
   'comments delete': 'コメントメッセージを削除します。',
   'comments edit': 'コメントメッセージを編集します。',
-  'comments list': 'コメントのスレッドとメッセージを一覧表示します。',
+  'comments list':
+    '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。',
   'comments post':
     'コメントや返信を投稿します。引用位置は、その版をビューアーで開いてから完全一致で確認します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
