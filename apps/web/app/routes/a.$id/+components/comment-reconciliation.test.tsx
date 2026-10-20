@@ -370,7 +370,7 @@ test('accepted outside-window navigation survives URL cleanup and is isolated on
   expect(comments.state.targetThreadId).toBe(null)
 })
 
-test.each([401, 403, 404, 410])(
+test.each([404, 410])(
   'selected-thread %i removes cached content and selection while applying the valid list',
   async (status) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -985,5 +985,292 @@ test.each(['lost response', 'invalid JSON'])(
     expect(
       fetch.mock.calls.filter(([, init]) => init?.method === 'POST'),
     ).toHaveLength(1)
+  },
+)
+
+test.each([401, 403])(
+  'selected-thread %i preserves cached pages and selection during auth recovery',
+  async (status) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.useFakeTimers()
+    let targets = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('thread_id=')) {
+          targets++
+          return targets === 1
+            ? Response.json({}, { status })
+            : Response.json({ threads: [expandedThread] })
+        }
+        return Response.json({ threads: [initial[1]] })
+      }),
+    )
+    try {
+      await render()
+      await act(async () =>
+        comments.replaceThreads([expandedThread, initial[1]]),
+      )
+      await act(async () => reconcile('selected'))
+      await until(() => targets === 1)
+      expect(comments.state.threads[0]).toEqual(expandedThread)
+      expect(comments.state.targetThreadId).toBe('selected')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      await until(() => targets >= 2)
+      expect(comments.state.targetThreadId).toBe('selected')
+      expect(
+        comments.state.threads.find((row) => row.id === 'selected')
+          ?.loadedPages,
+      ).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
+
+test('around page survives anchor resolution, socket open and another thread change', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('WebSocket', ReconnectSocket)
+  ReconnectSocket.instances = []
+  let resolvePage!: (response: Response) => void
+  let lists = 0
+  const anchored: CommentThreadView = {
+    ...initial[0],
+    subject: {
+      kind: 'text',
+      state: 'attached',
+      positionState: 'unchecked',
+      quotedText: 'Synthetic quote',
+      prefixText: '',
+      suffixText: '',
+      targetPath: '/index.html',
+      versionId: null,
+      textStart: 0,
+      textEnd: 15,
+      cssPath: null,
+    },
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => {
+      if (url.includes('around_message_id='))
+        return new Promise<Response>((resolve) => {
+          resolvePage = resolve
+        })
+      lists++
+      return Response.json({
+        threads: [anchored, thread('other', `Update ${lists}`)],
+      })
+    }),
+  )
+  root = createRoot(document.createElement('div'))
+  await act(async () => root!.render(<Harness liveEnabled />))
+  await act(async () => comments.replaceThreads([anchored, initial[1]]))
+  await act(async () => {
+    void paging.load({ aroundMessageId: 'z2', limit: 50 })
+  })
+  await until(() => !!resolvePage)
+  await act(async () =>
+    comments.applyAnchorResolutions([
+      {
+        threadId: 'selected',
+        state: 'needs-check',
+        textStart: null,
+        textEnd: null,
+        textHash: null,
+      },
+    ]),
+  )
+  expect(comments.state.threads[0].subject).toMatchObject({
+    positionState: 'needs-check',
+  })
+  const socket = ReconnectSocket.instances.at(-1)!
+  await act(async () => socket.open())
+  await until(() => lists === 1)
+  await act(async () => socket.change('other'))
+  await until(() => lists === 2)
+  resolvePage(
+    Response.json({
+      threads: [
+        {
+          ...initial[0],
+          messageCount: 2,
+          replyCount: 1,
+          messages: [...initial[0].messages, reply('z2')],
+        },
+      ],
+      page: { through: cursor('z2') },
+    }),
+  )
+  await until(() => !paging.pending)
+  expect(paging.failed).toBe(false)
+  expect(
+    comments.state.threads
+      .find((row) => row.id === 'selected')
+      ?.messages.some((row) => row.id === 'z2'),
+  ).toBe(true)
+})
+
+test('an explicit older-page request waits for a mutation on another thread to settle', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let resolvePost!: (response: Response) => void
+  let pages = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST')
+        return new Promise<Response>((resolve) => {
+          resolvePost = resolve
+        })
+      if (url.includes('before=')) {
+        pages++
+        return Response.json({ threads: [expandedThread] })
+      }
+      return Response.json({ threads: initial })
+    }),
+  )
+  await render()
+  await act(async () => {
+    void mutations.mutate({ intent: 'reply', threadId: 'other', body: 'Draft' })
+  })
+  await act(async () => {
+    void paging.load({ before: cursor('z7'), limit: 50 })
+  })
+  expect(paging.pending).toBe(true)
+  expect(pages).toBe(0)
+  resolvePost(
+    Response.json({ error: { code: 'rate-limited' } }, { status: 429 }),
+  )
+  await until(() => pages === 1 && !paging.pending)
+  expect(paging.failed).toBe(false)
+  expect(
+    comments.state.threads[0].messages.some((row) => row.id === 'z1'),
+  ).toBe(true)
+})
+
+test.each(
+  ['reconnect', 'recovery ranges', 'recovery window'].flatMap((mode) =>
+    ['message', 'thread'].map((deletedTarget) => ({ mode, deletedTarget })),
+  ),
+)(
+  '$mode reconciliation prevents a stale page restoring a deleted $deletedTarget',
+  async ({ mode, deletedTarget }) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('WebSocket', ReconnectSocket)
+    vi.useFakeTimers()
+    ReconnectSocket.instances = []
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockReturnValue('visible')
+    let deleted = false
+    let lists = 0
+    let resolvePage!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('around_message_id='))
+          return new Promise<Response>((resolve) => {
+            resolvePage = resolve
+          })
+        if (deleted && deletedTarget === 'thread' && url.includes('thread_id='))
+          return Response.json({}, { status: 404 })
+        if (url.includes('before='))
+          return Response.json({
+            threads: [
+              {
+                ...windowThread,
+                olderCursor: null,
+                messages: [
+                  ...initial[0].messages,
+                  ...(!deleted ? [reply('z1')] : []),
+                  reply('z2'),
+                ],
+              },
+            ],
+          })
+        lists++
+        return Response.json({
+          threads:
+            deleted && deletedTarget === 'thread'
+              ? [initial[1]]
+              : [windowThread, initial[1]],
+        })
+      }),
+    )
+    try {
+      root = createRoot(document.createElement('div'))
+      await act(async () => root!.render(<Harness liveEnabled />))
+      await act(async () =>
+        comments.replaceThreads([
+          mode === 'recovery window' ? windowThread : expandedThread,
+          initial[1],
+        ]),
+      )
+      const socket = ReconnectSocket.instances.at(-1)!
+      await act(async () => socket.open())
+      await until(
+        () =>
+          lists === 1 &&
+          comments.state.threads[0].messages.some((row) => row.id === 'z9'),
+      )
+      const unchangedThread = comments.state.threads.find(
+        (row) => row.id === 'other',
+      )
+      await act(async () => {
+        if (mode === 'reconnect') socket.close()
+        else {
+          visibility.mockReturnValue('hidden')
+          document.dispatchEvent(new Event('visibilitychange'))
+        }
+      })
+      // The server answered this request before the offline deletion, but its
+      // response remains delayed until the new connection has reconciled.
+      await act(async () => {
+        void paging.load({ aroundMessageId: 'z1', limit: 50 })
+      })
+      await until(() => !!resolvePage)
+      deleted = true
+      await act(async () => {
+        if (mode === 'reconnect') await vi.advanceTimersByTimeAsync(2000)
+        else {
+          visibility.mockReturnValue('visible')
+          document.dispatchEvent(new Event('visibilitychange'))
+        }
+      })
+      await until(() => ReconnectSocket.instances.at(-1) !== socket)
+      const reconnected = ReconnectSocket.instances.at(-1)!
+      expect(reconnected).not.toBe(socket)
+      await act(async () => reconnected.open())
+      await until(
+        () =>
+          lists >= 2 &&
+          !comments.state.threads.some((row) =>
+            row.messages.some((message) => message.id === 'z1'),
+          ),
+      )
+      resolvePage(
+        Response.json({
+          threads: [expandedThread],
+          page: { through: cursor('z2') },
+        }),
+      )
+      await until(() => !paging.pending)
+      expect(
+        comments.state.threads.some((row) =>
+          row.messages.some((message) => message.id === 'z1'),
+        ),
+      ).toBe(false)
+      expect(comments.state.threads.some((row) => row.id === 'selected')).toBe(
+        deletedTarget !== 'thread',
+      )
+      expect(comments.state.threads.find((row) => row.id === 'other')).toEqual(
+        unchangedThread,
+      )
+    } finally {
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
   },
 )

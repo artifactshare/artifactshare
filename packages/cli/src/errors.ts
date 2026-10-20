@@ -56,11 +56,14 @@ export function mapApiError(
     return cliError({
       code: apiCode === 'rate-limited' ? 'rate_limited' : 'thread_capacity',
       message: apiMessage ?? 'Comment posting refused.',
-      why: 'The comment posting limit was reached.',
+      why:
+        apiCode === 'rate-limited'
+          ? 'The comment posting limit for this minute was reached.'
+          : 'This thread has reached its capacity of 500 stored messages.',
       hint:
         apiCode === 'rate-limited'
           ? 'Wait until retry_at before retrying the unsent comment.'
-          : 'Start a new thread.',
+          : 'Start a new thread, or delete messages from this thread before replying.',
       agentRecoverable: true,
       requiresHuman: false,
       recovery: {

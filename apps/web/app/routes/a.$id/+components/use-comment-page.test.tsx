@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { useCommentPage } from './use-comment-page'
+import { advanceCommentEpoch } from './use-comment-mutations'
 
 let load: ReturnType<typeof useCommentPage>['load']
 const change = vi.fn()
@@ -55,6 +56,81 @@ test.each([1, 2])(
         threadId: 'thread',
         page: { through, limit: count },
       })
+    } finally {
+      await act(async () => root.unmount())
+    }
+  },
+)
+
+test.each(['thread', 'all', 'other'] as const)(
+  '%s message changes invalidate only affected in-flight pages',
+  async (scope) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    let resolvePage!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolvePage = resolve
+          }),
+      ),
+    )
+    const root = createRoot(document.createElement('div'))
+    try {
+      await act(async () => root.render(<Harness />))
+      let result: boolean | undefined
+      await act(async () => {
+        void load({ before: 'cursor', limit: 50 }).then((value) => {
+          result = value
+        })
+      })
+      advanceCommentEpoch(
+        'synthetic-artifact',
+        scope === 'all' ? undefined : scope,
+      )
+      resolvePage(Response.json({ threads: [{ id: 'thread', messages: [] }] }))
+      await act(async () => {
+        await waitForRealTaskCondition(
+          () => result !== undefined,
+          'page settlement',
+        )
+      })
+      expect(result).toBe(scope === 'other')
+      expect(change).toHaveBeenCalledTimes(scope === 'other' ? 1 : 0)
+    } finally {
+      await act(async () => root.unmount())
+    }
+  },
+)
+
+test.each([401, 403, 404, 410])(
+  'a missing target does not advance unread navigation when its thread returns %i',
+  async (status) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const missing = vi.fn()
+    function TargetHarness() {
+      useCommentPage('synthetic-artifact', 'thread', change, 'gone', missing)
+      return null
+    }
+    const fetch = vi.fn(async (url: string) =>
+      Response.json(
+        {},
+        { status: url.includes('around_message_id=') ? 404 : status },
+      ),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const root = createRoot(document.createElement('div'))
+    try {
+      await act(async () => root.render(<TargetHarness />))
+      await act(async () => {
+        await waitForRealTaskCondition(
+          () => fetch.mock.calls.length === 2,
+          'thread access checked',
+        )
+      })
+      expect(missing).not.toHaveBeenCalled()
+      expect(change).not.toHaveBeenCalled()
     } finally {
       await act(async () => root.unmount())
     }

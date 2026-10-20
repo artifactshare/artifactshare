@@ -6,6 +6,7 @@ import {
 } from './comment-history'
 import {
   Fragment,
+  useCallback,
   useLayoutEffect,
   useEffect,
   useEffectEvent,
@@ -276,13 +277,18 @@ export function CommentPanel({
               }
               onUpdateMessage={(messageId, body) =>
                 mutate(
-                  { intent: 'update-message', messageId, body },
+                  {
+                    intent: 'update-message',
+                    threadId: thread.id,
+                    messageId,
+                    body,
+                  },
                   `message:${messageId}`,
                 )
               }
               onDeleteMessage={(messageId) =>
                 mutate(
-                  { intent: 'delete-message', messageId },
+                  { intent: 'delete-message', threadId: thread.id, messageId },
                   `message:${messageId}`,
                 )
               }
@@ -292,12 +298,6 @@ export function CommentPanel({
                   `thread:${thread.id}`,
                 )
               }
-              onCopyLink={() => {
-                copyShareUrl(
-                  commentDeepLinkUrl(window.location.href, thread.id),
-                  translator,
-                )
-              }}
               onNavigate={() => onThreadNavigate(thread)}
             />
           ))}
@@ -547,7 +547,6 @@ function ThreadCard({
   onUpdateMessage,
   onDeleteMessage,
   onDeleteThread,
-  onCopyLink,
   onNavigate,
   replyOpen,
   replyBody,
@@ -568,7 +567,6 @@ function ThreadCard({
   onUpdateMessage: (messageId: string, body: string) => Promise<boolean>
   onDeleteMessage: (messageId: string) => Promise<boolean>
   onDeleteThread: () => Promise<boolean>
-  onCopyLink: () => void
   onNavigate: () => void
   replyOpen: boolean
   replyBody: string
@@ -576,7 +574,8 @@ function ThreadCard({
   onReplyChange: (value: string) => void
   onReplyCancel: () => void
 }) {
-  const { t } = useT()
+  const translator = useT()
+  const { t } = translator
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [repliesExpanded, setRepliesExpanded] = useState(false)
   const pendingReply = pendingKeys.has(`reply:${thread.id}`)
@@ -589,9 +588,16 @@ function ThreadCard({
     x: number
     y: number
   } | null>(null)
+  const [missingMessageIds, setMissingMessageIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  const onTargetMissing = useCallback((messageId: string) => {
+    setMissingMessageIds((current) => new Set(current).add(messageId))
+  }, [])
   const newMessageIds = new Set<string>()
   for (const pair of newCommentMessages) {
-    if (pair.threadId === thread.id) newMessageIds.add(pair.messageId)
+    if (pair.threadId === thread.id && !missingMessageIds.has(pair.messageId))
+      newMessageIds.add(pair.messageId)
   }
   const hasNewMessages =
     thread.messages.some((message) => newMessageIds.has(message.id)) ||
@@ -600,6 +606,7 @@ function ThreadCard({
     ? newCommentMessages.find(
         (pair) =>
           pair.threadId === thread.id &&
+          !missingMessageIds.has(pair.messageId) &&
           !thread.messages.some((message) => message.id === pair.messageId),
       )?.messageId
     : undefined
@@ -608,6 +615,7 @@ function ThreadCard({
     thread.id,
     onThreadsChange,
     missingSelectedId,
+    onTargetMissing,
   )
   const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
@@ -723,7 +731,12 @@ function ThreadCard({
             pendingDelete={pendingDelete}
             canNavigateToText={canNavigateToText}
             onNavigate={onNavigate}
-            onCopyLink={onCopyLink}
+            onCopyLink={() => {
+              copyShareUrl(
+                commentDeepLinkUrl(window.location.href, thread.id),
+                translator,
+              )
+            }}
             onDeleteRequest={() => setDeleteConfirmOpen(true)}
           />
           {thread.canResolve ? (

@@ -375,12 +375,6 @@ function isCommentAuthErrorStatus(status: number): boolean {
   return status === 401 || status === 403 || status === 404
 }
 
-function isDefinitiveCommentThreadError(status: number): boolean {
-  // Request timeout and rate refusals remain retryable; other client refusals
-  // must not keep a deleted or inaccessible target visible from the cache.
-  return status >= 400 && status < 500 && status !== 408 && status !== 429
-}
-
 function waitForCommentAuthRecheck(
   signal: AbortSignal,
   shouldContinue: () => boolean,
@@ -731,11 +725,10 @@ export function useViewerComments({
         JSON.stringify(threadsRef.current) === JSON.stringify(threads)
       )
         return
-      advanceCommentEpoch(artifactId)
       threadsRef.current = threads
       dispatchComment({ type: 'threads-replaced', threads, deletedThreadId })
     },
-    [threadsRef, artifactId],
+    [threadsRef],
   )
 
   const [reportedAnchorCheckingAvailable, setAnchorCheckingAvailable] =
@@ -962,11 +955,17 @@ export function useViewerComments({
               retainedSelectedId
             )
               void schedulerRef.current?.request()
+          } else if (
+            selected?.response.status === 401 ||
+            selected?.response.status === 403
+          ) {
+            return 'auth-error'
           } else if (selected?.response.ok && selected.body) {
             incoming.push(...selected.body.threads)
           } else if (
             selected &&
-            isDefinitiveCommentThreadError(selected.response.status)
+            (selected.response.status === 404 ||
+              selected.response.status === 410)
           ) {
             deletedSelectedId = selectedId
           } else {
@@ -1181,6 +1180,7 @@ export function useViewerComments({
 
     let disposed = false
     let socket: WebSocket | null = null
+    let hasOpenedSocket = false
     let retryTimer: number | null = null
     let preOpenTimer: number | null = null
     let stableTimer: number | null = null
@@ -1339,6 +1339,9 @@ export function useViewerComments({
       const snapshot = recoveryThreads
       recoveryThreads = null
       if (!snapshot || snapshot.invalidated) return false
+      // Recovery covers every thread, including pages whose responses are
+      // still in flight and therefore are not yet in the retained cache.
+      advanceCommentEpoch(artifactId)
       abortLatestThreadFetch()
       // Recovery windows are bounded too. Reuse the normal range refresh when
       // history is retained, including tails displaced during the interruption.
@@ -1649,6 +1652,10 @@ export function useViewerComments({
           stopRecovery()
           return
         }
+        // The first connection's summary must not cancel initial navigation.
+        // Later connections reconcile changes missed while the socket was down.
+        if (hasOpenedSocket) advanceCommentEpoch(artifactId)
+        hasOpenedSocket = true
         opened = true
         ordinaryStartedAt = null
         ordinaryCheckUsed = false
@@ -1711,7 +1718,7 @@ export function useViewerComments({
           ) {
             return
           }
-          advanceCommentEpoch(artifactId)
+          advanceCommentEpoch(artifactId, message.threadId)
           fetchSeqRef.current += 1
           fetchAbortRef.current?.abort()
           commentRefreshScope.mark(message.threadId)
@@ -1802,6 +1809,7 @@ export function useViewerComments({
         if (reconcileAfterRecovery) {
           reconcileAfterRecovery = false
           if (!applyRecoveryThreads()) {
+            advanceCommentEpoch(artifactId)
             commentRefreshScope.mark()
             requestCommentRefresh(null)
           }

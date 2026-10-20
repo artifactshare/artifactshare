@@ -102,7 +102,7 @@ export function InlineCommentPopover({
 
   const updateMessage = async (messageId: string, body: string) => {
     const ok = await mutate(
-      { intent: 'update-message', messageId, body },
+      { intent: 'update-message', threadId: thread.id, messageId, body },
       `message:${messageId}`,
     )
     return ok
@@ -110,7 +110,7 @@ export function InlineCommentPopover({
 
   const deleteMessage = async (messageId: string) => {
     const ok = await mutate(
-      { intent: 'delete-message', messageId },
+      { intent: 'delete-message', threadId: thread.id, messageId },
       `message:${messageId}`,
     )
     if (ok && thread.messages.length <= 1) onClose()

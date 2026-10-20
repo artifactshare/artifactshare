@@ -45,26 +45,18 @@ export async function loadMessageWindow(
     if (!target) return { kind: 'not-found' } as const
     boundary = { id: target.id, createdAt: target.created_at }
   }
-  const first = await db
+  const first = db
     .selectFrom('comment_messages')
-    .select(['id', 'created_at'])
+    .select('id')
     .where('thread_id', '=', threadId)
     .orderBy('created_at')
     .orderBy('id')
     .limit(1)
-    .executeTakeFirst()
-  if (!first)
-    return {
-      kind: 'ok',
-      messages: [] as CommentMessageView[],
-      olderCursor: null,
-      page: { before: null, through: null },
-    } as const
   let ids = db
     .selectFrom('comment_messages')
     .select('id')
     .where('thread_id', '=', threadId)
-    .where('id', '!=', first.id)
+    .where('id', '!=', first)
   if (boundary) {
     ids = ids.where(
       request.aroundMessageId !== undefined
@@ -74,39 +66,59 @@ export async function loadMessageWindow(
           : sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
     )
   }
-  const direction = request.aroundMessageId ? 'asc' : 'desc'
+  const around = request.aroundMessageId !== undefined
+  const pageSize = boundary ? limit : 3
+  const direction = around ? 'asc' : 'desc'
   const replyIds = ids
     .orderBy('created_at', direction)
     .orderBy('id', direction)
-    .limit(boundary ? limit : 3)
-  const replies = await db
-    .selectFrom('comment_messages')
-    .select(['id', 'created_at'])
-    .where('id', 'in', replyIds)
-    .orderBy('created_at')
-    .orderBy('id')
-    .execute()
-  const messages = await messageRows(db)
-    .where('comment_messages.id', 'in', [
-      first.id,
-      ...replies.map((row) => row.id),
-    ])
+    .limit(around ? pageSize : pageSize + 1)
+  let selectedIds = db
+    .selectFrom(first.as('first'))
+    .select('id')
+    .unionAll(db.selectFrom(replyIds.as('replies')).select('id'))
+  if (around && boundary) {
+    // Around pages seek forward, so include one preceding ID as the older
+    // sentinel in this same statement (the target lookup remains separate).
+    const olderId = db
+      .selectFrom('comment_messages')
+      .select('id')
+      .where('thread_id', '=', threadId)
+      .where('id', '!=', first)
+      .where(
+        sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
+      )
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(1)
+    selectedIds = selectedIds.unionAll(
+      db.selectFrom(olderId.as('older')).select('id'),
+    )
+  }
+  const rows = await messageRows(db)
+    .where('comment_messages.id', 'in', selectedIds)
     .orderBy('comment_messages.created_at')
     .orderBy('comment_messages.id')
     .execute()
-  const oldest = replies[0]
-  const older = oldest
-    ? await db
-        .selectFrom('comment_messages')
-        .select('id')
-        .where('thread_id', '=', threadId)
-        .where('id', '!=', first.id)
-        .where(
-          sql<boolean>`(created_at, id) < (${oldest.created_at}, ${oldest.id})`,
+  if (!rows.length)
+    return {
+      kind: 'ok',
+      messages: [] as CommentMessageView[],
+      olderCursor: null,
+      page: { before: null, through: null },
+    } as const
+  const candidates = rows.slice(1)
+  const older =
+    around && boundary
+      ? candidates.some(
+          (row) =>
+            row.created_at < boundary.createdAt ||
+            (row.created_at === boundary.createdAt && row.id < boundary.id),
         )
-        .limit(1)
-        .executeTakeFirst()
-    : undefined
+      : candidates.length > pageSize
+  const replies = older ? candidates.slice(1) : candidates
+  const messages = [rows[0], ...replies]
+  const oldest = replies[0]
   return {
     kind: 'ok' as const,
     messages: messages.map((message) =>

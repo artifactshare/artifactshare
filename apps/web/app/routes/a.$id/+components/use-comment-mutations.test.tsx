@@ -176,3 +176,51 @@ test.each([
     }
   },
 )
+
+test.each(['reply', 'update-message', 'delete-message', 'resolve'] as const)(
+  'a refused %s settlement retains the targeted thread identity',
+  async (intent) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ error: { code: 'rate-limited' } }, { status: 429 }),
+      ),
+    )
+    let mutate!: ReturnType<typeof useCommentMutations>['mutate']
+    function Harness() {
+      mutate = useCommentMutations({
+        shareableId: 'synthetic-artifact',
+        isCurrentShareableId: () => true,
+        onThreadsChange: vi.fn(),
+      }).mutate
+      return null
+    }
+    const settled = vi.fn()
+    window.addEventListener('artifactshare:comment-mutation-settled', settled)
+    const root = createRoot(document.createElement('div'))
+    try {
+      await act(async () => root.render(<Harness />))
+      let done = false
+      await act(async () => {
+        void mutate({
+          intent,
+          threadId: 'thread-a',
+          messageId: 'message',
+          body: 'Draft',
+        }).then(() => {
+          done = true
+        })
+        await waitForRealTaskCondition(() => done, 'refusal settled')
+      })
+      expect(settled).toHaveBeenCalledOnce()
+      expect(settled.mock.calls[0][0].detail.threadId).toBe('thread-a')
+    } finally {
+      window.removeEventListener(
+        'artifactshare:comment-mutation-settled',
+        settled,
+      )
+      await act(async () => root.unmount())
+    }
+  },
+)

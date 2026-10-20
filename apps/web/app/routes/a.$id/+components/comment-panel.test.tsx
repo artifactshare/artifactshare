@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import { act, type ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
@@ -40,6 +40,8 @@ vi.mock('~/components/app/app-side-panel', async () => {
 })
 import { CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
+import { mergeCommentWindow } from './comment-history'
+import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 
 type PositionState = 'attached' | 'needs-check' | 'unchecked'
 
@@ -501,6 +503,70 @@ test('expansion reveals cached replies without fetching and retains all 53 when 
     await act(async () => root.unmount())
     host.remove()
     fetchPage.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a deleted unread target advances to the next surviving unloaded reply without retry guidance', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const history = pagedThread(70, 70)
+  const initial = {
+    ...history,
+    messages: history.messages.filter((row) => row.id !== 'message-070'),
+    loadedPages: undefined,
+  }
+  const fetch = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async (input) => {
+      const url = new URL(String(input), 'https://example.com')
+      if (url.searchParams.get('around_message_id') === 'message-010')
+        return Response.json({}, { status: 404 })
+      if (url.searchParams.get('around_message_id') === 'message-070')
+        return Response.json({
+          threads: [history],
+          page: { through: messageCursor('thread', history.messages[1]) },
+        })
+      return Response.json({ threads: [initial] })
+    })
+  function Harness() {
+    const [thread, setThread] = useState<CommentThreadView>(initial)
+    return (
+      <CommentPanel
+        shareableId="artifact"
+        viewerUserId="viewer"
+        threads={[thread]}
+        newCommentMessages={[10, 70].map((id) => ({
+          threadId: 'thread',
+          messageId: `message-${String(id).padStart(3, '0')}`,
+        }))}
+        onThreadsChange={(rows) =>
+          setThread((current) => mergeCommentWindow(current, rows[0]))
+        }
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId="thread"
+        requestedFilter="all"
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+      />
+    )
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<Harness />))
+    await waitForRealTaskCondition(async () => {
+      await act(async () => {})
+      return host.textContent?.includes('Paged reply 70.') === true
+    }, 'next unread reply displayed')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(host.textContent).not.toContain(en['comments.errorReplies'])
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+    fetch.mockRestore()
     vi.unstubAllGlobals()
   }
 })

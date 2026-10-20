@@ -1,5 +1,8 @@
 import { d1DatabaseFor } from '~/lib/d1-database-registry.server'
-import { messageCursor } from './comment-message-window.server'
+import {
+  loadMessageWindow,
+  messageCursor,
+} from './comment-message-window.server'
 import { admitCommentPost } from './comment-post-admission.server'
 import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 import { Window } from 'happy-dom'
@@ -1376,6 +1379,43 @@ describe('comments server', () => {
       expect(
         prepare.mock.calls.some(([query]) => query.includes('count(')),
       ).toBe(false)
+      prepare.mockRestore()
+    },
+  )
+
+  test.each(['initial', 'before', 'through', 'around'] as const)(
+    '%s message window selects bounded bodies in one statement after any target lookup',
+    async (mode) => {
+      await seedHistory(200)
+      const boundary = messageCursor('history', {
+        id: 'history-0100',
+        createdAt: '2026-05-28T00:00:00.000Z',
+      })
+      const request =
+        mode === 'initial'
+          ? {}
+          : mode === 'around'
+            ? { aroundMessageId: 'history-0100', limit: 50 }
+            : { [mode]: boundary, limit: 50 }
+      const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+      const result = await loadMessageWindow(
+        fixture.db,
+        'history',
+        viewerUser.id,
+        false,
+        request,
+      )
+      expect(result.kind).toBe('ok')
+      const queries = prepare.mock.calls.map(([query]) => query)
+      expect(queries).toHaveLength(mode === 'around' ? 2 : 1)
+      expect(
+        queries.filter((query) => query.includes('"comment_messages"."body"')),
+      ).toHaveLength(1)
+      expect(result.kind === 'ok' && result.messages).toHaveLength(
+        mode === 'initial' ? 4 : 51,
+      )
+      expect(result.kind === 'ok' && result.olderCursor).toBeTruthy()
+      expect(queries.at(-1)).not.toMatch(/row_number|count\(/i)
       prepare.mockRestore()
     },
   )

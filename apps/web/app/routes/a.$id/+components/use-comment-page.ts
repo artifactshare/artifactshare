@@ -18,8 +18,10 @@ export function useCommentPage(
   threadId: string,
   onThreadsChange: ChangeCommentThreads,
   targetMessageId?: string,
+  onTargetMissing?: (messageId: string) => void,
 ) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const queued = useRef<CommentPageRequest | null>(null)
   const active = useRef<AbortController | null>(null)
   const activeTarget = useRef<string | undefined>(undefined)
   const attemptedTarget = useRef<string | undefined>(undefined)
@@ -46,17 +48,24 @@ export function useCommentPage(
     () => () => {
       active.current?.abort()
       active.current = null
+      queued.current = null
       attemptedTarget.current = undefined
     },
     [shareableId, threadId],
   )
   const load = useCallback(
     async (page: CommentPageRequest): Promise<boolean> => {
-      if (active.current || hasPendingCommentMutation(shareableId)) return false
+      if (active.current) return false
+      if (hasPendingCommentMutation(shareableId)) {
+        queued.current = page
+        setStatus('loading')
+        return false
+      }
+      queued.current = null
       const controller = new AbortController()
       active.current = controller
       activeTarget.current = page.aroundMessageId
-      const epoch = getCommentMutationEpoch(shareableId)
+      const epoch = getCommentMutationEpoch(shareableId, threadId)
       setStatus('loading')
       let outcome: 'idle' | 'failed' = 'failed'
       try {
@@ -70,9 +79,34 @@ export function useCommentPage(
         )
         if (controller.signal.aborted) return false
         if (
+          result.response.status === 404 &&
+          page.aroundMessageId &&
+          onTargetMissing
+        ) {
+          // A missing message and an inaccessible/deleted thread share a 404.
+          // Advance unread navigation only after confirming the thread survives.
+          const thread = await fetchJsonWithViewerTimeout<{
+            threads: CommentThreadView[]
+          }>(
+            commentPageUrl(shareableId, threadId),
+            { signal: controller.signal },
+            { requireJson: true },
+          )
+          if (controller.signal.aborted) return false
+          if (
+            thread.response.ok &&
+            thread.body?.threads.some((item) => item.id === threadId) &&
+            epoch === getCommentMutationEpoch(shareableId, threadId)
+          ) {
+            onTargetMissing(page.aroundMessageId)
+            outcome = 'idle'
+            return true
+          }
+        }
+        if (
           !result.response.ok ||
           !result.body?.threads ||
-          epoch !== getCommentMutationEpoch(shareableId)
+          epoch !== getCommentMutationEpoch(shareableId, threadId)
         )
           throw new Error('Comment page needs retry')
         onThreadsChange(result.body.threads, {
@@ -100,8 +134,16 @@ export function useCommentPage(
         }
       }
     },
-    [shareableId, threadId, onThreadsChange],
+    [shareableId, threadId, onThreadsChange, onTargetMissing],
   )
+  useEffect(() => {
+    if (
+      queued.current &&
+      !active.current &&
+      !hasPendingCommentMutation(shareableId)
+    )
+      void load(queued.current)
+  }, [settled, load, shareableId])
   useEffect(() => {
     if (!targetMessageId) {
       attemptedTarget.current = undefined

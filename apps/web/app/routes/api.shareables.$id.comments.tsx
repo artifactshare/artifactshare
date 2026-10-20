@@ -18,12 +18,12 @@ import type { Route } from './+types/api.shareables.$id.comments'
 
 export const middleware = [requireUserApiMiddleware]
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
+export async function loader({ context, params, url }: Route.LoaderArgs) {
   const user = requireUser(context)
   const db = createDb()
   const access = await loadCommentAccess(db, user, params.id)
   if (!access) return errorResponse('not-found', 'Shareable not found.', 404)
-  const page = parseCommentPageQuery(new URL(request.url).searchParams)
+  const page = parseCommentPageQuery(url.searchParams)
   if (page.kind === 'invalid-page')
     return errorResponse('invalid-page', 'Invalid comment page.', 400)
   if (page.kind === 'thread') {

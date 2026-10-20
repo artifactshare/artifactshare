@@ -166,9 +166,10 @@ test('browser posting returns durable retry timing and the capacity distinction'
 test('browser page reads check current access before cursor errors and load only the target', async () => {
   const get = () =>
     loader({
-      request: new Request(
+      url: new URL(
         'https://example.com/api/shareables/artifact/comments?thread_id=thread&before=cursor&limit=50',
       ),
+      request: new Request('https://example.com/raw-path?thread_id=wrong'),
       params: { id: 'artifact' },
       context: new Map(),
     } as never)

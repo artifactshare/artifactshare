@@ -33,16 +33,32 @@ export type CommentMutationPayload =
     }
   | { intent: 'reply'; threadId: string; body: string }
   | { intent: 'resolve' | 'reopen'; threadId: string }
-  | { intent: 'update-message'; messageId: string; body: string }
-  | { intent: 'delete-message'; messageId: string }
+  | {
+      intent: 'update-message'
+      messageId: string
+      body: string
+      threadId?: string
+    }
+  | { intent: 'delete-message'; messageId: string; threadId?: string }
   | { intent: 'delete-thread'; threadId: string }
 
 const mutationEpochs = new Map<string, number>()
-export function advanceCommentEpoch(id: string) {
-  mutationEpochs.set(id, getCommentMutationEpoch(id) + 1)
+const threadMutationEpochs = new Map<string, Map<string, number>>()
+let mutationEpoch = 0
+export function advanceCommentEpoch(id: string, threadId?: string) {
+  mutationEpoch += 1
+  if (!threadId) mutationEpochs.set(id, mutationEpoch)
+  else {
+    const threads = threadMutationEpochs.get(id) ?? new Map<string, number>()
+    threads.set(threadId, mutationEpoch)
+    threadMutationEpochs.set(id, threads)
+  }
 }
-export function getCommentMutationEpoch(id: string): number {
-  return mutationEpochs.get(id) ?? 0
+export function getCommentMutationEpoch(id: string, threadId: string): number {
+  return Math.max(
+    mutationEpochs.get(id) ?? 0,
+    threadMutationEpochs.get(id)?.get(threadId) ?? 0,
+  )
 }
 
 const activeMutationsByShareable = new Map<string, number>()
@@ -97,8 +113,8 @@ export function useCommentMutations({
     const requestShareableId = shareableId
     const clientMutationId = createClientMutationId()
     let appliedThreads = false
-    let threadId: string | undefined
-    advanceCommentEpoch(requestShareableId)
+    let threadId = 'threadId' in payload ? payload.threadId : undefined
+    advanceCommentEpoch(requestShareableId, threadId)
     incrementActiveMutation(requestShareableId, clientMutationId)
     if (pendingKey) {
       setPendingKeys((current) => new Set(current).add(pendingKey))
@@ -168,7 +184,10 @@ export function useCommentMutations({
       if (!isCurrentShareableId(requestShareableId)) return false
       const body = result.body
       threadId =
-        body?.threadId ?? body?.deletedThreadId ?? body?.threads?.[0]?.id
+        body?.threadId ??
+        body?.deletedThreadId ??
+        body?.threads?.[0]?.id ??
+        threadId
       if (body?.threads) {
         if (!overlappingMutationsByShareable.has(requestShareableId))
           onThreadsChange(body.threads, body)
@@ -191,7 +210,7 @@ export function useCommentMutations({
       toast.error(t('comments.errorSave'))
       return false
     } finally {
-      advanceCommentEpoch(requestShareableId)
+      advanceCommentEpoch(requestShareableId, threadId)
       decrementActiveMutation(requestShareableId, {
         clientMutationId,
         appliedThreads,
