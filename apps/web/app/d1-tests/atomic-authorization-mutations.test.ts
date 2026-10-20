@@ -745,6 +745,7 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
     'agent-file-version',
     'agent-bundle-version',
     'keyed-version',
+    'keyed-bundle-version',
   ] as const
   it.each([
     ...families.flatMap((family) =>
@@ -819,11 +820,15 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
       let artifactId = ''
       let versionId = ''
       let keyId: string | undefined
-      if (family === 'agent-bundle-version') {
+      if (
+        family === 'agent-bundle-version' ||
+        family === 'keyed-bundle-version'
+      ) {
         const started = await beginStaticSiteBundleUploadSession(
           db,
           user,
           projectId,
+          family === 'keyed-bundle-version' ? 'stable' : null,
         )
         if (started.kind !== 'ok') throw new Error(`setup: ${started.kind}`)
         expect((await started.session.addFile(file())).kind).toBe('ok')
@@ -863,6 +868,14 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
           expect(home.kind).toBe('ok')
         }
       }
+      if (family === 'keyed-bundle-version')
+        keyId = (
+          await db
+            .selectFrom('artifact_keys')
+            .select('id')
+            .where('shareable_id', '=', artifactId)
+            .executeTakeFirstOrThrow()
+        ).id
       const before = await placementSnapshot(user.workspaceId)
       const used = await database
         .prepare('SELECT storage_used_bytes FROM workspaces WHERE id = ?')
@@ -956,13 +969,18 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
           result = await started.session.commit('project', [
             'viewer@example.com',
           ])
-        } else if (family === 'agent-bundle-version') {
+        } else if (
+          family === 'agent-bundle-version' ||
+          family === 'keyed-bundle-version'
+        ) {
           const started = await beginStaticSiteBundleVersionUploadSession(
             guardedDb,
             user,
             artifactId,
-            null,
-            { authority, agentProfileId: `${prefix}-profile` },
+            family === 'keyed-bundle-version' ? keyId! : null,
+            family === 'keyed-bundle-version'
+              ? { expectedCurrentVersionId: versionId }
+              : { authority, agentProfileId: `${prefix}-profile` },
           )
           if (started.kind !== 'ok') throw new Error(`begin: ${started.kind}`)
           expect((await started.session.addFile(file())).kind).toBe('ok')
@@ -1016,6 +1034,91 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
       }
     },
   )
+  it.each([false, true])(
+    'link edit to home checks membership at D1 commit: removed=%s',
+    async (removed) => {
+      const prefix = `home-link-${removed}`
+      await seedProject(prefix)
+      const user = {
+        id: `${prefix}-owner`,
+        workspaceId: `${prefix}-ws`,
+        email: `${prefix}@example.com`,
+        emailVerified: true,
+        hd: 'example.com',
+      }
+      await database
+        .prepare('UPDATE workspaces SET link_sharing_enabled = 1 WHERE id = ?')
+        .bind(user.workspaceId)
+        .run()
+      await database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES (?, ?, 'member', 'active', ?, ?)",
+        )
+        .bind(user.workspaceId, user.id, at, at)
+        .run()
+      const db = createDb(database)
+      const created = await uploadShareable(
+        db,
+        user,
+        new File(['<p>home</p>'], 'index.html', { type: 'text/html' }),
+        'project',
+        [],
+        `${prefix}-project`,
+      )
+      if (created.kind !== 'ok') throw new Error(`setup: ${created.kind}`)
+      const before = await placementSnapshot(user.workspaceId)
+      let intercepted = false
+      const guardedDb = createDb(
+        beforeFirstBatch(database, async () => {
+          intercepted = true
+          if (removed)
+            await database
+              .prepare(
+                "UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?",
+              )
+              .bind(user.workspaceId, user.id)
+              .run()
+        }),
+      )
+      try {
+        const result = await editShareableSettings(
+          guardedDb,
+          user,
+          created.id,
+          { destination: { type: 'inbox' }, visibility: 'link' },
+        )
+        expect(intercepted).toBe(true)
+        expect(result.kind).toBe(removed ? 'invalid-destination' : 'ok')
+        if (removed)
+          expect(await placementSnapshot(user.workspaceId)).toEqual(before)
+        else {
+          expect(
+            await db
+              .selectFrom('shareables')
+              .innerJoin(
+                'artifact_containers',
+                'artifact_containers.id',
+                'shareables.container_id',
+              )
+              .select(['shareables.visibility', 'artifact_containers.kind'])
+              .where('shareables.id', '=', created.id)
+              .executeTakeFirstOrThrow(),
+          ).toEqual({ visibility: 'link', kind: 'inbox' })
+          expect(
+            await db
+              .selectFrom('link_publications')
+              .select('shareable_id')
+              .where('shareable_id', '=', created.id)
+              .execute(),
+          ).toHaveLength(1)
+        }
+      } finally {
+        await guardedDb.destroy()
+        await db.destroy()
+      }
+    },
+  )
+
   it.each(['file', 'bundle'] as const)(
     'external posting policy is live in the final %s create',
     async (kind) => {

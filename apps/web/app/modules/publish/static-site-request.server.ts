@@ -171,7 +171,10 @@ async function publishStaticSiteCreate(
           context.user,
           context.containerId,
           context.idempotencyKey,
-          { agentProfileId: agentAuthority.agentProfileId },
+          {
+            agentProfileId: agentAuthority.agentProfileId,
+            authority: context.authority,
+          },
         )
       : await beginStaticSiteBundleUploadSession(
           context.db,

@@ -107,9 +107,10 @@ export async function loadProjectSubpageContext(
   const workspaceName = workspace?.name ?? workspace?.hd ?? 'Files'
   if (own) {
     const workspaceHd = workspace?.hd ?? user.hd
-    const [linkSharingAvailable, shareDefaults] = await Promise.all([
+    const [linkSharingAvailable, shareDefaults, canUpload] = await Promise.all([
       isLinkSharingAllowedByPolicy(db, user.workspaceId),
       listProjectShareDefaults(db, user.workspaceId, own.id, workspaceHd),
+      canPlaceIntoProject(db, user, own.id),
     ])
     return {
       access: 'member',
@@ -122,7 +123,7 @@ export async function loadProjectSubpageContext(
       workspaceName,
       workspaceHd,
       user: toUserInfo(user),
-      canUpload: await canPlaceIntoProject(db, user, own.id),
+      canUpload,
       defaultVisibility: defaultVisibilityFor(isOrgWorkspace(user), 'project'),
       availableVisibilities: availableVisibilitiesFor(
         isOrgWorkspace(user),

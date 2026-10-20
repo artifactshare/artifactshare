@@ -140,11 +140,17 @@ describe('createWorkspaceBot', () => {
     },
   )
 
-  test.each(['placement', 'admin'] as const)(
+  test.each(['placement', 'admin', 'demoted-admin'] as const)(
     'bot creation rechecks %s at INSERT',
     async (change) => {
       seedProject('private', { visibility: 'private' })
       seedUser(sqlite, 'creator')
+      if (change === 'demoted-admin')
+        sqlite
+          .prepare(
+            "UPDATE workspace_members SET role = 'admin' WHERE user_id = 'admin1'",
+          )
+          .run()
       d1BatchHook.callback = () => {
         d1BatchHook.callback = null
         if (change === 'placement')
@@ -165,8 +171,16 @@ describe('createWorkspaceBot', () => {
         projectId: 'private',
       })
       expect(result.kind).toBe(
-        change === 'placement' ? 'bot-destination-invalid' : 'bot-conflict',
+        change === 'placement' ? 'bot-destination-invalid' : 'forbidden',
       )
+      if (change !== 'placement')
+        expect(
+          sqlite
+            .prepare(
+              "SELECT role FROM workspace_members WHERE user_id = 'admin1'",
+            )
+            .get(),
+        ).toEqual({ role: 'member' })
       expect(
         sqlite
           .prepare("SELECT count(*) AS n FROM users WHERE kind = 'bot'")

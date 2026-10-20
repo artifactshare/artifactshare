@@ -545,8 +545,15 @@ export async function createWorkspaceBot(
     .where('id', '=', botUserId)
     .executeTakeFirst()
   if (!created) {
-    if ((await requireWorkspaceAdmin(db, actor)).kind !== 'ok')
-      return { kind: 'forbidden' }
+    const stillAdmin = await db
+      .selectFrom('workspace_members')
+      .select('user_id')
+      .where('workspace_id', '=', actor.workspaceId)
+      .where('user_id', '=', actor.id)
+      .where('role', 'in', ['owner', 'admin'])
+      .where('status', '=', 'active')
+      .executeTakeFirst()
+    if (!stillAdmin) return { kind: 'forbidden' }
     const destination = await db
       .selectFrom('artifact_containers')
       .select('id')

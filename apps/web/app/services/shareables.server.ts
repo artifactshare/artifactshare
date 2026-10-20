@@ -2869,13 +2869,18 @@ export class StaticSiteBundleUploadSession {
       // A guarded insert can be empty; that path returns a conflict below.
       number = batchRows<{ number: number }>(results.at(-1))[0]?.number
     } catch (err) {
-      console.error('static_site_version_d1_commit_failed', {
-        shareable_id: this.shareableId,
-        version_id: this.versionId,
-        file_count: this.files.length,
-        total_size_bytes: this.#totalSizeBytes,
+      const placementDenied = isLinkPublicationError(
         err,
-      })
+        'link publication mutation missing',
+      )
+      if (!placementDenied)
+        console.error('static_site_version_d1_commit_failed', {
+          shareable_id: this.shareableId,
+          version_id: this.versionId,
+          file_count: this.files.length,
+          total_size_bytes: this.#totalSizeBytes,
+          err,
+        })
       await this.abortUploadedFiles()
       await releaseQuota(
         this.db,
@@ -2918,6 +2923,7 @@ export class StaticSiteBundleUploadSession {
           }
         }
       }
+      if (placementDenied) return { kind: 'not-found' }
       return { kind: 'storage-failed' }
     }
 
@@ -4187,8 +4193,8 @@ export async function editShareableSettings(
         sql<boolean>`workspace_id = ${current.workspace_id}`,
         sql<boolean>`owner_user_id = ${current.owner_user_id}`,
       ]
-      if (payload.destination?.type === 'project') {
-        conditions.push(projectPlacementSql(user, targetContainerId!))
+      if (payload.destination !== undefined) {
+        conditions.push(uploadPlacementSql(user, targetContainerId!))
       }
       const mutationPredicate = visibilityChangePredicate(...conditions)
       const visibilityEvent = visibilityChangedEvent(db, {

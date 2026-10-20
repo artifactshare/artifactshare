@@ -391,6 +391,7 @@ export async function loader({
     projectArtifactCount,
     linkSharingAvailable,
     slackChannel,
+    canUpload,
   ] = await Promise.all([
     db
       .selectFrom('workspaces')
@@ -414,6 +415,7 @@ export async function loader({
     countProjectVisibilityArtifacts(db, project.id),
     isLinkSharingAllowedByPolicy(db, user.workspaceId),
     getContainerSlackChannel(db, project.id),
+    canPlaceIntoProject(db, user, project.id),
   ])
   const workspaceHd = workspace?.hd ?? user.hd
   const shareDefaults = await listProjectShareDefaults(
@@ -425,7 +427,7 @@ export async function loader({
 
   return {
     access: 'member',
-    canUpload: await canPlaceIntoProject(db, user, project.id),
+    canUpload,
     project,
     user: toUserInfo(user),
     workspaceId: user.workspaceId,
@@ -491,14 +493,15 @@ async function loadSharedProject(
     : null
   const canPost = await canPlaceIntoProject(db, user, project.id)
   const canManage = role === 'manager'
-  const defaults = canPost
-    ? await listProjectShareDefaults(
-        db,
-        project.workspaceId,
-        project.id,
-        project.sourceWorkspaceHd,
-      )
-    : []
+  const defaults =
+    canPost || canManage
+      ? await listProjectShareDefaults(
+          db,
+          project.workspaceId,
+          project.id,
+          project.sourceWorkspaceHd,
+        )
+      : []
   // 投稿者自身は「共有先」に数えない (関係者リストには自分も含まれるため除く)。
   const viewerEmail = normalizeGrantEmail(user.email)
   const audienceOthers = defaults.filter((d) => d.email !== viewerEmail)

@@ -156,23 +156,53 @@ export async function attachAgentBootstrapAuthority(
     )
     const results = await runD1BatchWithResults(
       db,
-      {
-        compile: () =>
-          sql`INSERT OR IGNORE INTO agent_profiles (id, user_id, workspace_id, created_at)
-        SELECT ${profileId}, ${row.user_id}, ${row.workspace_id}, ${now} WHERE ${permission}`.compile(
-            db,
-          ),
-      },
-      {
-        compile: () =>
-          sql`INSERT INTO cli_session_authorities (
-        session_id, family_id, kind, preset, workspace_id, project_id,
-        agent_profile_id, expires_at, bearer_only, created_at)
-        SELECT ${row.session_id}, NULL, 'bootstrap', 'agent', ${row.workspace_id}, ${intent.selectedProjectId}, agent_profiles.id, ${bootstrapExpiry}, 1, ${now}
-        FROM agent_profiles WHERE user_id = ${row.user_id} AND workspace_id = ${row.workspace_id} AND ${permission}`.compile(
-            db,
-          ),
-      },
+      db
+        .insertInto('agent_profiles')
+        .orIgnore()
+        .columns(['id', 'user_id', 'workspace_id', 'created_at'])
+        .expression(
+          db
+            .selectNoFrom([
+              sql<string>`${profileId}`.as('id'),
+              sql<string>`${row.user_id}`.as('user_id'),
+              sql<string>`${row.workspace_id}`.as('workspace_id'),
+              sql<string>`${now}`.as('created_at'),
+            ])
+            .where(permission),
+        ),
+      db
+        .insertInto('cli_session_authorities')
+        .columns([
+          'session_id',
+          'family_id',
+          'kind',
+          'preset',
+          'workspace_id',
+          'project_id',
+          'agent_profile_id',
+          'expires_at',
+          'bearer_only',
+          'created_at',
+        ])
+        .expression(
+          db
+            .selectFrom('agent_profiles')
+            .select((eb) => [
+              eb.val(row.session_id).as('session_id'),
+              eb.val(null).as('family_id'),
+              eb.val('bootstrap' as const).as('kind'),
+              eb.val('agent' as const).as('preset'),
+              eb.val(row.workspace_id).as('workspace_id'),
+              eb.val(intent.selectedProjectId).as('project_id'),
+              'id as agent_profile_id',
+              eb.val(bootstrapExpiry).as('expires_at'),
+              eb.val(1).as('bearer_only'),
+              eb.val(now).as('created_at'),
+            ])
+            .where('user_id', '=', row.user_id)
+            .where('workspace_id', '=', row.workspace_id)
+            .where(permission),
+        ),
     )
     return (
       results.every((result) => (result as D1Result).success) &&
@@ -342,7 +372,7 @@ export async function selectAgentApprovalProject(input: {
         ),
       )
       .executeTakeFirst()
-    return result.numUpdatedRows === 1n
+    return Number(result.numUpdatedRows) === 1
   })
 }
 

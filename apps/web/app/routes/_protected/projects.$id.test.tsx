@@ -25,9 +25,9 @@ vi.mock('~/middleware/context', () => ({
   requireUser: () => userState.user,
   userContext: Symbol('userContext'),
 }))
-vi.mock('~/services/link-sharing.server', () => ({
+vi.mock('~/services/link-sharing.server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/services/link-sharing.server')>()),
   isLinkSharingAllowedByPolicy: async () => false,
-  loadWorkspaceLinkPolicy: async () => null,
 }))
 vi.mock('react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router')>()
@@ -251,6 +251,95 @@ describe('project detail loader', () => {
       const data = await loader(loaderArgs())
       if (data.access !== 'shared') throw new Error('expected shared access')
       expect(data.canPost).toBe(state === 'allowed')
+      await db.destroy()
+    },
+  )
+
+  test.each(['allowed', 'unverified', 'removed', 'disabled'] as const)(
+    'external manager keeps audience while upload uses live facts: %s',
+    async (state) => {
+      const { db } = await fixture()
+      await db
+        .insertInto('workspaces')
+        .values({ id: 'w2', name: 'External', created_at: '2026-01-01' })
+        .execute()
+      await db
+        .updateTable('workspaces')
+        .set({
+          plan: 'team',
+          external_posting_enabled: 1,
+        })
+        .where('id', '=', 'w2')
+        .execute()
+      await db
+        .updateTable('artifact_containers')
+        .set({
+          workspace_id: 'w2',
+          created_by_id: 'u2',
+          base_visibility: 'private',
+        })
+        .where('id', '=', 'proj1')
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'external-grant',
+          project_container_id: 'proj1',
+          email: 'u1@example.com',
+          role: 'manager',
+          created_by_id: 'u2',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'audience-grant',
+          project_container_id: 'proj1',
+          email: 'viewer@example.com',
+          role: 'viewer',
+          created_by_id: 'u2',
+          created_at: NOW,
+          updated_at: NOW,
+        })
+        .execute()
+      if (state === 'disabled') {
+        const enabled = await loader(loaderArgs())
+        if (enabled.access !== 'shared')
+          throw new Error('expected shared access')
+        expect(enabled.canPost).toBe(true)
+        expect(enabled.canManage).toBe(true)
+        expect(enabled.audienceCount).toBe(1)
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0 })
+          .where('id', '=', 'w2')
+          .execute()
+      }
+      if (state === 'unverified')
+        await db
+          .updateTable('users')
+          .set({ email_verified: 0 })
+          .where('id', '=', 'u1')
+          .execute()
+      if (state === 'removed')
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'w2',
+            user_id: 'u1',
+            role: 'member',
+            status: 'removed',
+            created_at: '2026-01-01',
+            updated_at: '2026-01-01',
+          })
+          .execute()
+      const data = await loader(loaderArgs())
+      if (data.access !== 'shared') throw new Error('expected shared access')
+      expect(data.canPost).toBe(state === 'allowed')
+      expect(data.canManage).toBe(state !== 'disabled')
+      expect(data.audienceCount).toBe(state === 'disabled' ? 0 : 1)
       await db.destroy()
     },
   )

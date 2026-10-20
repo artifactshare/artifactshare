@@ -102,6 +102,7 @@ import {
 import {
   appendShareable,
   createVersion,
+  staticSiteRequestContent,
   uploadShareable,
 } from '~/modules/publish'
 import {
@@ -3038,6 +3039,85 @@ describe('StaticSiteBundleUploadSession', () => {
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
   })
+
+  test.each([true, false])(
+    'bot multipart site create respects its fixed project: %s',
+    async (allowed) => {
+      await seedProjectContainer(db)
+      const bot = {
+        ...OWNER,
+        id: 'site-bot',
+        email: 'bot-site@bots.artifactshare.invalid',
+      }
+      await db
+        .insertInto('users')
+        .values({
+          id: bot.id,
+          email: bot.email,
+          email_verified: 1,
+          kind: 'bot',
+          workspace_id: bot.workspaceId,
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: bot.workspaceId,
+          user_id: bot.id,
+          role: 'member',
+          status: 'active',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      await db
+        .insertInto('agent_profiles')
+        .values({
+          id: 'bot-profile',
+          user_id: bot.id,
+          workspace_id: OWNER.workspaceId,
+          created_at: '2026-01-01',
+        })
+        .execute()
+      const authority: CliAuthority = {
+        kind: 'agent',
+        familyId: 'bot-family',
+        workspaceId: OWNER.workspaceId,
+        projectId: allowed ? 'project-a' : 'other-project',
+        projectNameSnapshot: 'Project',
+        agentProfileId: 'bot-profile',
+      }
+      const form = new FormData()
+      form.set('visibility', 'project')
+      form.set('container_id', 'project-a')
+      form.set(
+        'file',
+        new File(['<p>bot</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const content = staticSiteRequestContent(
+        new Request('https://example.com/api/shareables/uploads', {
+          method: 'POST',
+          body: form,
+        }),
+        { expectedContainerId: 'project-a' },
+      )
+      const result = await content.session.publish({
+        db,
+        user: { ...bot, emailVerified: true, msTenantId: null },
+        authority,
+        target: { kind: 'create' },
+        containerId: 'project-a',
+        idempotencyKey: null,
+        touchArtifactKeyId: null,
+      })
+      expect(result.kind).toBe(allowed ? 'ok' : 'invalid-container')
+      expect(
+        await db.selectFrom('shareables').select('id').execute(),
+      ).toHaveLength(allowed ? 1 : 0)
+    },
+  )
 
   test('records a link-visible static-site creation in the durable ledger', async () => {
     await db
@@ -9720,6 +9800,7 @@ describe('destination commit races', () => {
     'agent-bundle-version',
     'keyed-file-version',
     'keyed-bundle-version',
+    'keyed-human-bundle-version',
   ] as const
   test.each(
     families.flatMap((family) => changes.map((change) => ({ family, change }))),
@@ -9838,8 +9919,9 @@ describe('destination commit races', () => {
         id,
         keyId,
         {
-          authority: agent,
-          agentProfileId: agent.agentProfileId,
+          ...(family === 'keyed-human-bundle-version'
+            ? {}
+            : { authority: agent, agentProfileId: agent.agentProfileId }),
           ...(keyId ? { expectedCurrentVersionId: versionId } : {}),
         },
       )
@@ -10059,6 +10141,44 @@ describe('destination commit races', () => {
       expect(
         await db.selectFrom('link_publication_attempts').selectAll().execute(),
       ).toEqual([])
+    },
+  )
+
+  test.each([false, true])(
+    'link edit to home checks live membership: removed=%s',
+    async (removed) => {
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>source</p>'),
+        'project',
+        [],
+        'project-a',
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const before = snapshot()
+      sqliteRef.beforeNextBatch = async () => {
+        if (removed)
+          await db
+            .updateTable('workspace_members')
+            .set({ status: 'removed' })
+            .where('user_id', '=', OWNER.id)
+            .execute()
+      }
+      const result = await editShareableSettings(db, OWNER, created.id, {
+        destination: { type: 'inbox' },
+        visibility: 'link',
+      })
+      expect(result.kind).toBe(removed ? 'invalid-destination' : 'ok')
+      if (removed) expect(snapshot()).toEqual(before)
+      else
+        expect(
+          await db
+            .selectFrom('shareables')
+            .select('visibility')
+            .where('id', '=', created.id)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ visibility: 'link' })
     },
   )
 
