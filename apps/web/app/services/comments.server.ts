@@ -412,21 +412,23 @@ export async function loadCommentThreads(
   return await loadCommentThreadViews(db, access, user, rows)
 }
 
+const COMMENT_THREAD_COLUMNS = [
+  'id',
+  'status',
+  'created_by_id',
+  'resolved_at',
+  'message_count',
+  'created_at',
+  'updated_at',
+] as const
+
 function loadCommentThreadRows(
   db: Kysely<DB>,
   shareableId: string,
 ): Promise<CommentThreadRow[]> {
   return db
     .selectFrom('comment_threads')
-    .select([
-      'id',
-      'status',
-      'created_by_id',
-      'resolved_at',
-      'message_count',
-      'created_at',
-      'updated_at',
-    ])
+    .select(COMMENT_THREAD_COLUMNS)
     .where('shareable_id', '=', shareableId)
     .where(
       commentThreadWindowExpression(sql.val(shareableId), 'comment_threads'),
@@ -468,15 +470,7 @@ function loadCommentThreadRow(
 ) {
   return db
     .selectFrom('comment_threads')
-    .select([
-      'id',
-      'status',
-      'created_by_id',
-      'resolved_at',
-      'message_count',
-      'created_at',
-      'updated_at',
-    ])
+    .select(COMMENT_THREAD_COLUMNS)
     .where('shareable_id', '=', shareableId)
     .where('id', '=', threadId)
     .executeTakeFirst()
@@ -717,7 +711,7 @@ export async function replyToCommentThread(
       }),
     )
   } catch (error) {
-    return commentInsertFailure(error)
+    return commentInsertFailure(db, access.shareableId, threadId, error)
   }
 
   await scheduleCommentThreadsChanged(access.shareableId, options, threadId)
@@ -1634,12 +1628,7 @@ export async function storeAnchorResolutions(
 }
 
 function loadThread(db: Kysely<DB>, shareableId: string, threadId: string) {
-  return db
-    .selectFrom('comment_threads')
-    .select(['id', 'created_by_id', 'status', 'message_count'])
-    .where('id', '=', threadId)
-    .where('shareable_id', '=', shareableId)
-    .executeTakeFirst()
+  return loadCommentThreadRow(db, shareableId, threadId)
 }
 
 type LoadedCommentThread = NonNullable<Awaited<ReturnType<typeof loadThread>>>

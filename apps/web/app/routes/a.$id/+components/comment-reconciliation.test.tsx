@@ -1176,7 +1176,7 @@ test.each(
           })
         if (deleted && deletedTarget === 'thread' && url.includes('thread_id='))
           return Response.json({}, { status: 404 })
-        if (url.includes('before='))
+        if (url.includes('before=') || url.includes('through='))
           return Response.json({
             threads: [
               {
@@ -1257,11 +1257,13 @@ test.each(
         }),
       )
       await until(() => !paging.pending)
-      expect(
-        comments.state.threads.some((row) =>
-          row.messages.some((message) => message.id === 'z1'),
-        ),
-      ).toBe(false)
+      await until(
+        () =>
+          !comments.state.threads.some((row) =>
+            row.messages.some((message) => message.id === 'z1'),
+          ),
+      )
+      expect(paging.failed).toBe(false)
       expect(comments.state.threads.some((row) => row.id === 'selected')).toBe(
         deletedTarget !== 'thread',
       )
@@ -1272,5 +1274,189 @@ test.each(
       visibility.mockRestore()
       vi.useRealTimers()
     }
+  },
+)
+
+test.each([404, 410])(
+  'show previous removes a definitively missing thread (%i)',
+  async (status) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({}, { status })),
+    )
+    await render()
+    await act(async () => {
+      void paging.load({ before: cursor('z7'), limit: 50 })
+    })
+    await until(() => !paging.pending)
+    expect(comments.state.threads.map((row) => row.id)).toEqual(['other'])
+    expect(comments.state.targetThreadId).toBeNull()
+    expect(paging.failed).toBe(false)
+  },
+)
+
+test.each(['same-thread change', 'socket reopen'] as const)(
+  'an in-flight page survives %s and revalidates its newly loaded range',
+  async (mode) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('WebSocket', ReconnectSocket)
+    ReconnectSocket.instances = []
+    let resolvePage!: (response: Response) => void
+    let rangeReads = 0
+    let lists = 0
+    let loading = false
+    let resolveRefresh!: (response: Response) => void
+    const fetched = {
+      ...windowThread,
+      olderCursor: null,
+      messages: [...initial[0].messages, reply('z1'), reply('z2')],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (
+          url.includes('before=') ||
+          url.includes('around_message_id=') ||
+          url.includes('through=')
+        ) {
+          rangeReads++
+          if (rangeReads === 1)
+            return new Promise<Response>((resolve) => {
+              resolvePage = resolve
+            })
+          return new Promise<Response>((resolve) => {
+            resolveRefresh = resolve
+          })
+        }
+        lists++
+        return Response.json({ threads: [windowThread, initial[1]] })
+      }),
+    )
+    root = createRoot(document.createElement('div'))
+    await act(async () => root!.render(<Harness liveEnabled />))
+    const socket = ReconnectSocket.instances.at(-1)!
+    await act(async () => socket.open())
+    await until(
+      () =>
+        lists === 1 &&
+        comments.state.threads[0].messageCount === windowThread.messageCount,
+    )
+    const unchangedThread = comments.state.threads[1]
+    await act(async () => {
+      void paging
+        .load(
+          mode === 'socket reopen'
+            ? { aroundMessageId: 'z1', limit: 50 }
+            : { before: cursor('z7'), limit: 50 },
+        )
+        .then(() => {
+          loading = true
+        })
+    })
+    await until(() => !!resolvePage)
+    await act(async () =>
+      mode === 'socket reopen' ? socket.open() : socket.change('selected'),
+    )
+    await until(() => lists >= 2)
+    resolvePage(
+      Response.json({
+        threads: [fetched],
+        ...(mode === 'socket reopen'
+          ? { page: { through: cursor('z2') } }
+          : {}),
+      }),
+    )
+    await until(() => loading && !!resolveRefresh)
+    expect(paging.failed).toBe(false)
+    expect(
+      comments.state.threads[0].messages.some((row) => row.id === 'z1'),
+    ).toBe(true)
+    resolveRefresh(
+      Response.json({
+        threads: [
+          { ...fetched, messages: [...initial[0].messages, reply('z2')] },
+        ],
+      }),
+    )
+    await until(
+      () => !comments.state.threads[0].messages.some((row) => row.id === 'z1'),
+    )
+    expect(
+      comments.state.threads[0].messages.some((row) => row.id === 'z2'),
+    ).toBe(true)
+    expect(comments.state.threads[1]).toEqual(unchangedThread)
+  },
+)
+
+test('a late page cannot restore a thread dropped from the unselected panel', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let resolvePage!: (response: Response) => void
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.includes('before=')
+        ? new Promise<Response>((resolve) => {
+            resolvePage = resolve
+          })
+        : Response.json({ threads: [thread('other', 'Updated')] }),
+    ),
+  )
+  await render(undefined, undefined, null)
+  await act(async () => {
+    void paging.load({ before: cursor('z7'), limit: 50 })
+  })
+  await until(() => !!resolvePage)
+  await act(async () => reconcile())
+  await until(() => comments.state.threads.length === 1)
+  resolvePage(Response.json({ threads: [expandedThread] }))
+  await until(() => !paging.pending)
+  expect(comments.state.threads.map((row) => row.id)).toEqual(['other'])
+  expect(paging.failed).toBe(false)
+})
+
+test.each([404, 410])(
+  'page removal (%i) restarts an overlapping refresh for another thread',
+  async (status) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    let resolvePage!: (response: Response) => void
+    let resolveList!: (response: Response) => void
+    let listCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('before='))
+          return new Promise<Response>((resolve) => {
+            resolvePage = resolve
+          })
+        listCalls++
+        if (listCalls === 1)
+          return new Promise<Response>((resolve) => {
+            resolveList = resolve
+          })
+        return Response.json({ threads: [thread('other', 'Remote update')] })
+      }),
+    )
+    await render()
+    await act(async () => {
+      void paging.load({ before: cursor('z7'), limit: 50 })
+    })
+    await until(() => !!resolvePage)
+    await act(async () => reconcile('other'))
+    await until(() => !!resolveList)
+    resolvePage(Response.json({}, { status }))
+    await until(() => !paging.pending)
+    expect(comments.state.threads.map((row) => row.id)).toEqual(['other'])
+    expect(comments.state.targetThreadId).toBeNull()
+    expect(paging.failed).toBe(false)
+    // The interrupted response must neither restore the removed thread nor
+    // prevent the unrelated dirty thread from receiving its replacement read.
+    resolveList(Response.json({ threads: initial }))
+    await until(
+      () => comments.state.threads[0]?.messages[0].body === 'Remote update',
+    )
+    expect(listCalls).toBe(2)
+    expect(comments.state.threads.map((row) => row.id)).toEqual(['other'])
+    expect(comments.targetFetchFailed).toBe(false)
   },
 )

@@ -3,7 +3,10 @@ import {
   loadMessageWindow,
   messageCursor,
 } from './comment-message-window.server'
-import { admitCommentPost } from './comment-post-admission.server'
+import {
+  admitCommentPost,
+  commentInsertFailure,
+} from './comment-post-admission.server'
 import { createTextAnchorEngine } from '@artifactshare/viewer-kit/reporter/anchor-engine'
 import { Window } from 'happy-dom'
 import type { DatabaseSync } from 'node:sqlite'
@@ -1581,6 +1584,54 @@ describe('comments server', () => {
       ).kind,
     ).toBe('not-found')
   })
+
+  test.each([
+    ['comment_thread_capacity', 'thread-capacity'],
+    ['comment_thread_closed', 'closed-thread'],
+  ] as const)(
+    'requires current state to corroborate %s, and fails closed if confirmation fails',
+    async (token, kind) => {
+      await seedHistory(kind === 'thread-capacity' ? 500 : 1)
+      if (kind === 'closed-thread')
+        fixture.sqlite.exec(
+          "UPDATE comment_threads SET status = 'resolved' WHERE id = 'history'",
+        )
+      const error = new Error('D1 batch failed', { cause: new Error(token) })
+      const classify = () =>
+        commentInsertFailure(fixture.db, 's1', 'history', error)
+      expect(await classify()).toEqual({ kind })
+      if (kind === 'thread-capacity')
+        fixture.sqlite.exec(
+          "DELETE FROM comment_messages WHERE id = 'history-0000'",
+        )
+      else
+        fixture.sqlite.exec(
+          "UPDATE comment_threads SET status = 'open' WHERE id = 'history'",
+        )
+      expect(await classify()).toEqual({ kind: 'commit-failed' })
+      const query = vi
+        .spyOn(fixture.db, 'selectFrom')
+        .mockImplementation(() => {
+          throw new Error('Confirmation unavailable')
+        })
+      try {
+        expect(await classify()).toEqual({ kind: 'commit-failed' })
+        expect(query).toHaveBeenCalledExactlyOnceWith('comment_threads')
+        query.mockClear()
+        expect(
+          await commentInsertFailure(
+            fixture.db,
+            's1',
+            'history',
+            new Error('unrelated constraint'),
+          ),
+        ).toEqual({ kind: 'commit-failed' })
+        expect(query).not.toHaveBeenCalled()
+      } finally {
+        query.mockRestore()
+      }
+    },
+  )
 
   test('capacity is current stored count, including first-message promotion, with bounded mutation results', async () => {
     const access = await seedHistory(500)

@@ -3,11 +3,12 @@ import type { CliOptions, ParsedArgs } from '../types.js'
 
 const mocks = vi.hoisted(() => ({
   apiPost: vi.fn(),
+  apiGet: vi.fn(),
   writeFailure: vi.fn(),
   writeSuccess: vi.fn(),
 }))
 vi.mock('../api.js', () => ({
-  apiGet: vi.fn(),
+  apiGet: mocks.apiGet,
   apiPost: mocks.apiPost,
   requestConfig: () => ({ init: {} }),
 }))
@@ -35,6 +36,7 @@ vi.mock('./auto-login.js', () => ({
   ) => request(credential),
 }))
 import {
+  runCommentsList,
   runCommentsPost,
   runCommentsEdit,
   runCommentsResolve,
@@ -98,3 +100,23 @@ for (const [action, runner] of [
     expect(mocks.apiPost).toHaveBeenCalledTimes(1)
   })
 }
+
+test.each([
+  { threadId: 'thr1', aroundMessageId: '' },
+  { threadId: 'thr1', before: '' },
+  { threadId: 'thr1', before: '', limit: '1' },
+  { threadId: 'thr1', aroundMessageId: '', limit: '1' },
+])('rejects empty pagination selectors offline: %j', async (options) => {
+  await runCommentsList(
+    { command: 'comments list', positionals: ['abc123def4'], options },
+    { json: true },
+  )
+  expect(mocks.writeFailure).toHaveBeenCalledWith(
+    'comments list',
+    expect.objectContaining({ message: 'Invalid comment page options.' }),
+    { json: true },
+    1,
+  )
+  expect(mocks.apiGet).not.toHaveBeenCalled()
+  expect(mocks.writeSuccess).not.toHaveBeenCalled()
+})

@@ -15,6 +15,7 @@ export type CommentThreadPatch = {
   deletedMessageId?: string
   deletedThreadId?: string
   page?: CommentPageRequest
+  revalidate?: boolean
 }
 export type ChangeCommentThreads = (
   threads: ReadonlyArray<CommentThreadView>,
@@ -316,11 +317,14 @@ export function patchCommentThreads(
   patch: CommentThreadPatch,
 ): CommentThreadView[] {
   const byId = new Map(current.map((thread) => [thread.id, thread]))
-  for (const thread of incoming)
+  for (const thread of incoming) {
+    // A page cannot restore membership removed by an authoritative refresh.
+    if (patch.page && !byId.has(thread.id)) continue
     byId.set(
       thread.id,
       mergeCommentWindow(byId.get(thread.id), thread, patch.page),
     )
+  }
   if (patch.deletedThreadId) byId.delete(patch.deletedThreadId)
   if (patch.threadId && byId.has(patch.threadId)) {
     const thread = byId.get(patch.threadId)!

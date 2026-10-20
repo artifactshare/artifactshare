@@ -638,10 +638,11 @@ export function useViewerComments({
   const replaceThreads = useCallback(
     (threads: ReadonlyArray<CommentThreadView>, patch?: CommentThreadPatch) => {
       if (!patch) setTargetFetchError(null)
-      const interruptedRefresh = patch?.page && fetchAbortRef.current !== null
+      const interruptedRefresh =
+        (patch?.page || patch?.deletedThreadId) &&
+        fetchAbortRef.current !== null
       fetchSeqRef.current += 1
       fetchAbortRef.current?.abort()
-      if (interruptedRefresh) void schedulerRef.current?.request()
       const next = patch
         ? patchCommentThreads(threadsRef.current, threads, patch)
         : threads
@@ -651,8 +652,11 @@ export function useViewerComments({
         threads: next,
         deletedThreadId: patch?.deletedThreadId,
       })
+      if (patch?.revalidate) commentRefreshScope.mark(patch.threadId)
+      if (interruptedRefresh || patch?.revalidate)
+        void schedulerRef.current?.request()
     },
-    [threadsRef],
+    [threadsRef, commentRefreshScope],
   )
   const isCurrentArtifactId = useCallback(
     (requestArtifactId: string) => artifactIdRef.current === requestArtifactId,

@@ -19,6 +19,32 @@ export {
   type CommentPageRequest,
 } from '~/lib/comment-page'
 
+function firstMessageId(db: Kysely<DB>, threadId: string) {
+  return db
+    .selectFrom('comment_messages')
+    .select('id')
+    .where('thread_id', '=', threadId)
+    .orderBy('created_at')
+    .orderBy('id')
+    .limit(1)
+}
+
+function replyMessageIds(
+  db: Kysely<DB>,
+  threadId: string,
+  limit: number,
+  direction: 'asc' | 'desc' = 'desc',
+) {
+  return db
+    .selectFrom('comment_messages')
+    .select('id')
+    .where('thread_id', '=', threadId)
+    .where('id', '!=', firstMessageId(db, threadId))
+    .orderBy('created_at', direction)
+    .orderBy('id', direction)
+    .limit(limit)
+}
+
 /** Select IDs using the covering tuple index before loading bodies and authors. */
 export async function loadMessageWindow(
   db: Kysely<DB>,
@@ -45,20 +71,17 @@ export async function loadMessageWindow(
     if (!target) return { kind: 'not-found' } as const
     boundary = { id: target.id, createdAt: target.created_at }
   }
-  const first = db
-    .selectFrom('comment_messages')
-    .select('id')
-    .where('thread_id', '=', threadId)
-    .orderBy('created_at')
-    .orderBy('id')
-    .limit(1)
-  let ids = db
-    .selectFrom('comment_messages')
-    .select('id')
-    .where('thread_id', '=', threadId)
-    .where('id', '!=', first)
+  const first = firstMessageId(db, threadId)
+  const around = request.aroundMessageId !== undefined
+  const pageSize = boundary ? limit : 3
+  let replyIds = replyMessageIds(
+    db,
+    threadId,
+    around ? pageSize : pageSize + 1,
+    around ? 'asc' : 'desc',
+  )
   if (boundary) {
-    ids = ids.where(
+    replyIds = replyIds.where(
       request.aroundMessageId !== undefined
         ? sql<boolean>`(created_at, id) >= (${boundary.createdAt}, ${boundary.id})`
         : request.through !== undefined
@@ -66,13 +89,6 @@ export async function loadMessageWindow(
           : sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
     )
   }
-  const around = request.aroundMessageId !== undefined
-  const pageSize = boundary ? limit : 3
-  const direction = around ? 'asc' : 'desc'
-  const replyIds = ids
-    .orderBy('created_at', direction)
-    .orderBy('id', direction)
-    .limit(around ? pageSize : pageSize + 1)
   let selectedIds = db
     .selectFrom(first.as('first'))
     .select('id')
@@ -80,17 +96,10 @@ export async function loadMessageWindow(
   if (around && boundary) {
     // Around pages seek forward, so include one preceding ID as the older
     // sentinel in this same statement (the target lookup remains separate).
-    const olderId = db
-      .selectFrom('comment_messages')
-      .select('id')
-      .where('thread_id', '=', threadId)
-      .where('id', '!=', first)
-      .where(
-        sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
-      )
-      .orderBy('created_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(1)
+    const olderId = replyMessageIds(db, threadId, 1).where(
+      sql<boolean>`(created_at, id) < (${boundary.createdAt}, ${boundary.id})`,
+    )
+
     selectedIds = selectedIds.unionAll(
       db.selectFrom(olderId.as('older')).select('id'),
     )
@@ -224,21 +233,8 @@ export async function loadInitialMessageWindows(
   moderator: boolean,
 ) {
   const queries = threadIds.map((threadId) => {
-    const first = db
-      .selectFrom('comment_messages')
-      .select('id')
-      .where('thread_id', '=', threadId)
-      .orderBy('created_at')
-      .orderBy('id')
-      .limit(1)
-    const latest = db
-      .selectFrom('comment_messages')
-      .select('id')
-      .where('thread_id', '=', threadId)
-      .where('id', '!=', first)
-      .orderBy('created_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(4)
+    const first = firstMessageId(db, threadId)
+    const latest = replyMessageIds(db, threadId, 4)
     const ids = db
       .selectFrom(first.as('first'))
       .select('id')

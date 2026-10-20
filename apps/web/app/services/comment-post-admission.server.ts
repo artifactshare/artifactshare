@@ -59,19 +59,43 @@ export async function admitCommentPost(
   }
 }
 
-export function commentInsertFailure(error: unknown): {
+export async function commentInsertFailure(
+  db: Kysely<DB>,
+  shareableId: string,
+  threadId: string,
+  error: unknown,
+): Promise<{
   kind: 'thread-capacity' | 'closed-thread' | 'commit-failed'
-} {
+}> {
   // D1 can wrap trigger errors in both message and cause; match our token only.
+  let signal: 'thread-capacity' | 'closed-thread' | undefined
   const seen = new Set<unknown>()
   while (error && !seen.has(error)) {
     seen.add(error)
     const message = error instanceof Error ? error.message : String(error)
-    if (message.includes('comment_thread_capacity'))
-      return { kind: 'thread-capacity' }
-    if (message.includes('comment_thread_closed'))
-      return { kind: 'closed-thread' }
+    if (message.includes('comment_thread_capacity')) signal = 'thread-capacity'
+    else if (message.includes('comment_thread_closed')) signal = 'closed-thread'
+    if (signal) break
     error = error instanceof Error ? error.cause : undefined
+  }
+  if (signal) {
+    try {
+      const thread = await db
+        .selectFrom('comment_threads')
+        .select(['message_count', 'status'])
+        .where('id', '=', threadId)
+        .where('shareable_id', '=', shareableId)
+        .executeTakeFirst()
+      if (
+        (signal === 'thread-capacity' &&
+          thread &&
+          thread.message_count >= 500) ||
+        (signal === 'closed-thread' && thread?.status === 'resolved')
+      )
+        return { kind: signal }
+    } catch {
+      // A failed confirmation cannot establish a policy refusal.
+    }
   }
   return { kind: 'commit-failed' }
 }

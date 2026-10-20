@@ -49,6 +49,7 @@ export async function runCommentsList(
     if (value !== undefined) page.set(key, value)
   }
   if (
+    [...page.values()].some((value) => value.length === 0) ||
     (page.size > 0 && !parsed.options.threadId) ||
     (parsed.options.before !== undefined &&
       parsed.options.aroundMessageId !== undefined) ||

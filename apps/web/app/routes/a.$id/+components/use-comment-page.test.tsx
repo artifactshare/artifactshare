@@ -63,7 +63,7 @@ test.each([1, 2])(
 )
 
 test.each(['thread', 'all', 'other'] as const)(
-  '%s message changes invalidate only affected in-flight pages',
+  '%s changes merge in-flight pages and request affected-range revalidation',
   async (scope) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     let resolvePage!: (response: Response) => void
@@ -96,8 +96,15 @@ test.each(['thread', 'all', 'other'] as const)(
           'page settlement',
         )
       })
-      expect(result).toBe(scope === 'other')
-      expect(change).toHaveBeenCalledTimes(scope === 'other' ? 1 : 0)
+      expect(result).toBe(true)
+      expect(change).toHaveBeenCalledExactlyOnceWith(
+        [{ id: 'thread', messages: [] }],
+        {
+          threadId: 'thread',
+          page: { before: 'cursor', limit: 50 },
+          ...(scope === 'other' ? {} : { revalidate: true }),
+        },
+      )
     } finally {
       await act(async () => root.unmount())
     }
@@ -130,7 +137,12 @@ test.each([401, 403, 404, 410])(
         )
       })
       expect(missing).not.toHaveBeenCalled()
-      expect(change).not.toHaveBeenCalled()
+      if (status === 404 || status === 410)
+        expect(change).toHaveBeenCalledExactlyOnceWith([], {
+          threadId: 'thread',
+          deletedThreadId: 'thread',
+        })
+      else expect(change).not.toHaveBeenCalled()
     } finally {
       await act(async () => root.unmount())
     }

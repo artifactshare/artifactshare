@@ -78,8 +78,14 @@ export function useCommentPage(
           { requireJson: true },
         )
         if (controller.signal.aborted) return false
+        const removed = (code: number) => code === 404 || code === 410
+        const removeThread = () => {
+          onThreadsChange([], { threadId, deletedThreadId: threadId })
+          outcome = 'idle'
+          return true
+        }
         if (
-          result.response.status === 404 &&
+          removed(result.response.status) &&
           page.aroundMessageId &&
           onTargetMissing
         ) {
@@ -93,24 +99,27 @@ export function useCommentPage(
             { requireJson: true },
           )
           if (controller.signal.aborted) return false
+          if (removed(thread.response.status)) return removeThread()
           if (
             thread.response.ok &&
-            thread.body?.threads.some((item) => item.id === threadId) &&
-            epoch === getCommentMutationEpoch(shareableId, threadId)
+            thread.body?.threads.some((item) => item.id === threadId)
           ) {
             onTargetMissing(page.aroundMessageId)
+            if (epoch !== getCommentMutationEpoch(shareableId, threadId))
+              onThreadsChange([], { threadId, revalidate: true })
             outcome = 'idle'
             return true
           }
         }
-        if (
-          !result.response.ok ||
-          !result.body?.threads ||
-          epoch !== getCommentMutationEpoch(shareableId, threadId)
-        )
+        if (!page.aroundMessageId && removed(result.response.status))
+          return removeThread()
+        if (!result.response.ok || !result.body?.threads)
           throw new Error('Comment page needs retry')
         onThreadsChange(result.body.threads, {
           threadId,
+          ...(epoch !== getCommentMutationEpoch(shareableId, threadId)
+            ? { revalidate: true }
+            : {}),
           page:
             page.aroundMessageId && result.body.page?.through
               ? {

@@ -5,7 +5,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { createDb } from '../services/db.server'
-import { admitCommentPost } from '../services/comment-post-admission.server'
+import {
+  admitCommentPost,
+  commentInsertFailure,
+} from '../services/comment-post-admission.server'
 import {
   deleteCommentMessage,
   loadCommentThreadPage,
@@ -222,6 +225,65 @@ describe('D1 comment bounds', () => {
     expect(await stored('race')).toEqual({ message_count: 1, actual: 1 })
     await failing.destroy()
   })
+
+  it.each([
+    ['capacity', 'thread-capacity'],
+    ['resolved', 'closed-thread'],
+  ] as const)(
+    'confirms a real D1 %s trigger error against current thread state',
+    async (condition, kind) => {
+      const id = `confirm-${condition}`
+      await seedThread(id, condition === 'capacity' ? 500 : 1)
+      if (condition === 'resolved')
+        await database
+          .prepare(
+            "UPDATE comment_threads SET status = 'resolved' WHERE id = ?",
+          )
+          .bind(id)
+          .run()
+      const db = createDb(database)
+      let cause: unknown
+      try {
+        await database
+          .prepare(
+            'INSERT INTO comment_messages (id, thread_id, body, created_by_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+          )
+          .bind(`${id}-refused`, id, 'Refused', actor.id, at, at)
+          .run()
+      } catch (error) {
+        cause = error
+      }
+      expect(cause).toBeDefined()
+      const wrapped = new Error('D1 batch failed', { cause })
+      expect(
+        await commentInsertFailure(db, access.shareableId, id, wrapped),
+      ).toEqual({ kind })
+      expect(
+        await commentInsertFailure(db, 'other-artifact', id, wrapped),
+      ).toEqual({ kind: 'commit-failed' })
+      if (condition === 'capacity')
+        await database
+          .prepare('DELETE FROM comment_messages WHERE id = ?')
+          .bind(`${id}-0000`)
+          .run()
+      else
+        await database
+          .prepare("UPDATE comment_threads SET status = 'open' WHERE id = ?")
+          .bind(id)
+          .run()
+      expect(
+        await commentInsertFailure(db, access.shareableId, id, wrapped),
+      ).toEqual({ kind: 'commit-failed' })
+      await database
+        .prepare('DELETE FROM comment_threads WHERE id = ?')
+        .bind(id)
+        .run()
+      expect(
+        await commentInsertFailure(db, access.shareableId, id, wrapped),
+      ).toEqual({ kind: 'commit-failed' })
+      await db.destroy()
+    },
+  )
 
   it('preserves legacy excess messages and uses the tuple index for bounded pages', async () => {
     await seedThread('legacy', 500)

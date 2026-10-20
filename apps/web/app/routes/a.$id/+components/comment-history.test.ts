@@ -459,3 +459,17 @@ test('marks disjoint around ranges and fills the interior with bounded pages', (
   expect(commentGapRequests(current).size).toBe(0)
   expect(current.messages).toHaveLength(202)
 })
+
+test('a late page cannot restore a thread removed from panel membership', () => {
+  const page = window([0, 1, 2, 3])
+  expect(
+    patchCommentThreads([], [page], {
+      threadId: 'thread',
+      page: { before: cursor(4), limit: 50 },
+    }),
+  ).toEqual([])
+  // Targeted windows and new-thread mutations may still establish membership.
+  expect(patchCommentThreads([], [page], { threadId: 'thread' })).toHaveLength(
+    1,
+  )
+})
