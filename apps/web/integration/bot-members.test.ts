@@ -1,3 +1,4 @@
+import { integrationWorkerConfig } from '../app/test/integration-worker-config'
 // Bot member lifecycle against a real D1 (Workers test harness). Rollback and
 // atomicity assertions live here on purpose: the SQLite service tests run
 // batches sequentially without a transaction, so only this suite can verify
@@ -40,29 +41,23 @@ const integrationConfigUrl = new URL(
   '../build/server/wrangler.bot-members-integration.json',
   import.meta.url,
 )
-function disableRemoteBindings(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(disableRemoteBindings)
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      key === 'remote' && child === true ? false : disableRemoteBindings(child),
-    ]),
-  )
-}
 const productionConfig = JSON.parse(
   await readFile(productionConfigUrl, 'utf8'),
 ) as Record<string, unknown>
-delete productionConfig.configPath
-delete productionConfig.userConfigPath
-delete productionConfig.flagship
-// Workers AI has no local simulator either; see harness.test.ts.
-delete productionConfig.ai
-await writeFile(
-  integrationConfigUrl,
-  JSON.stringify(disableRemoteBindings(productionConfig)),
-)
 const publicIntegration = process.env.PUBLIC_INTEGRATION === '1'
+const runtimeConfig = unstable_readConfig(
+  {
+    config: new URL(
+      publicIntegration ? '../wrangler.jsonc' : '../wrangler.production.jsonc',
+      import.meta.url,
+    ).pathname,
+  },
+  { hideWarnings: true },
+)
+const integrationConfig = integrationWorkerConfig(productionConfig, {
+  ...runtimeConfig,
+})
+await writeFile(integrationConfigUrl, JSON.stringify(integrationConfig))
 const sandboxName = unstable_readConfig(
   {
     config: new URL('../wrangler.sandbox.jsonc', import.meta.url).pathname,
@@ -106,9 +101,9 @@ const harness = createTestHarness({
     },
   ],
 })
-if (typeof productionConfig.name !== 'string')
+if (typeof integrationConfig.name !== 'string')
   throw new Error('Main Worker config is missing its name')
-const worker = harness.getWorker(productionConfig.name)
+const worker = harness.getWorker(integrationConfig.name)
 if (!sandboxName) throw new Error('Sandbox Worker config is missing its name')
 
 // The services under test read env.DB through 'cloudflare:workers'. Point

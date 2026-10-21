@@ -1,3 +1,4 @@
+import { integrationWorkerConfig } from '../app/test/integration-worker-config'
 import { http, HttpResponse, passthrough } from 'msw'
 import { setupServer } from 'msw/node'
 import {
@@ -40,17 +41,6 @@ const integrationConfigUrl = new URL(
   '../build/server/wrangler.integration.json',
   import.meta.url,
 )
-function disableRemoteBindings(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(disableRemoteBindings)
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      key === 'remote' && child === true ? false : disableRemoteBindings(child),
-    ]),
-  )
-}
-
 const productionConfig = JSON.parse(
   await readFile(productionConfigUrl, 'utf8'),
 ) as Record<string, unknown> & {
@@ -59,21 +49,20 @@ const productionConfig = JSON.parse(
 if (!productionConfig.send_email?.length) {
   throw new Error('Production Worker config is missing the EMAIL binding')
 }
-delete productionConfig.configPath
-delete productionConfig.userConfigPath
-// Flagship has no local Wrangler simulator and always starts a remote proxy.
-// The application already treats the binding as optional outside production.
-delete productionConfig.flagship
-// Workers AI has no local simulator either and would start a remote proxy in
-// CI; the judgment workflow is not exercised by these tests.
-delete productionConfig.ai
-const integrationConfig = disableRemoteBindings(productionConfig)
-const integrationConfigJson = JSON.stringify(integrationConfig)
-if (integrationConfigJson.includes('"remote":true')) {
-  throw new Error('Integration Worker config contains a remote binding')
-}
-await writeFile(integrationConfigUrl, integrationConfigJson)
 const publicIntegration = process.env.PUBLIC_INTEGRATION === '1'
+const runtimeConfig = unstable_readConfig(
+  {
+    config: new URL(
+      publicIntegration ? '../wrangler.jsonc' : '../wrangler.production.jsonc',
+      import.meta.url,
+    ).pathname,
+  },
+  { hideWarnings: true },
+)
+const integrationConfig = integrationWorkerConfig(productionConfig, {
+  ...runtimeConfig,
+})
+await writeFile(integrationConfigUrl, JSON.stringify(integrationConfig))
 const sandboxName = unstable_readConfig(
   {
     config: new URL('../wrangler.sandbox.jsonc', import.meta.url).pathname,
@@ -119,9 +108,9 @@ const harness = createTestHarness({
   ],
 })
 const network = setupServer()
-if (typeof productionConfig.name !== 'string')
+if (typeof integrationConfig.name !== 'string')
   throw new Error('Main Worker config is missing its name')
-const worker = harness.getWorker(productionConfig.name)
+const worker = harness.getWorker(integrationConfig.name)
 const sandboxWorker = harness.getWorker(sandboxName)
 
 function sessionCookie(token: string): string {
@@ -231,7 +220,7 @@ async function applyProductionD1Schema() {
 
 function sandboxUrlFromHtml(html: string, shareableId: string): URL {
   const escaped = new RegExp(
-    `https://${shareableId}--v-[a-f0-9]+\\.sandbox\\.localhost:5174/(?:\\\\.|[^"'\\s<])*`,
+    `https://a-${shareableId}--v-[a-f0-9]+\\.usercontent\\.localhost:5174/(?:\\\\.|[^"'\\s<])*`,
   ).exec(html)?.[0]
   if (!escaped) throw new Error('Viewer response did not include sandbox URL')
   const decoded = JSON.parse(`"${escaped.replaceAll('&amp;', '&')}"`) as string
@@ -535,7 +524,7 @@ describe('Worker integration harness', () => {
     expect(viewer.status).toBe(200)
     const viewerHtml = await viewer.text()
     const sandboxUrl = sandboxUrlFromHtml(viewerHtml, uploaded.id)
-    expect(sandboxUrl.searchParams.get('t')).toBeTruthy()
+    expect(sandboxUrl.searchParams.get('__as_token')).toBeTruthy()
     const sandboxResponse = await sandboxWorker.fetch(sandboxUrl.toString())
     expect(sandboxResponse.status).toBe(200)
     await expect(sandboxResponse.text()).resolves.toContain(

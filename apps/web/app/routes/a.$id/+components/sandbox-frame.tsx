@@ -463,7 +463,7 @@ function useSandboxFrameController({
   const [hashSync] = useState(createViewerHashSync)
   useEffect(() => () => hashSync.clear(), [hashSync])
   const mermaidRenderChallengeRef = useRef<string | null>(null)
-  const trustedMessageOrigin = new URL(url).origin
+  const trustedMessageOrigin = new URL(frameUrl).origin
   const commentLabels = useMemo(
     () => ({
       openOne: translatePlural(locale, 'comments.highlightOpen', 1),
@@ -1144,6 +1144,15 @@ export async function refreshSandboxFrameUrl(
   if (typeof body?.sandboxUrl !== 'string') return null
   const nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
+  // Renewal never migrates an open frame between execution origins. Reload the
+  // unchanged public viewer URL after cutover to obtain a fresh origin.
+  if (
+    entrypointUrl.origin !== nextUrl.origin ||
+    nextUrl.hostname.endsWith('.sandbox.artifactshare.com') ||
+    nextUrl.hostname.endsWith('.artifactshare.link') ||
+    nextUrl.hostname.endsWith('.sandbox.localhost')
+  )
+    return null
   entrypointUrl.hash = options.navigation
     ? nextUrl.hash
     : (options.getHash?.() ?? window.location.hash)

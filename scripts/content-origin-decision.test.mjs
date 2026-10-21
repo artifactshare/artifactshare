@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import test from 'node:test'
+import { loadBoundaryManifest } from './public-development-guard.mjs'
+
+test('content-origin decision records cookie support and the rejected path capability', () => {
+  const decisionPaths = loadBoundaryManifest().canonical.filter((file) =>
+    file.endsWith('/link-share-domain.md'),
+  )
+  assert.equal(
+    decisionPaths.length,
+    1,
+    'Expected one public content-origin decision',
+  )
+  const decision = fs
+    .readFileSync(decisionPaths[0], 'utf8')
+    .replace(/\s+/gu, ' ')
+  for (const policy of [
+    'Chromium with third-party cookie restriction',
+    'WebKit/Safari ITP',
+    'Firefox default Total Cookie Protection',
+    'network.cookie.cookieBehavior=5',
+    'network.cookie.cookieBehavior=1',
+    'unsupported for private static sites',
+  ]) {
+    assert.ok(decision.includes(policy), `Missing cookie policy: ${policy}`)
+  }
+  assert.doesNotMatch(decision, /the owner chose/iu)
+  assert.match(decision, /URL-path capabilities are rejected/u)
+  assert.match(decision, /pathname-based SPA routing/u)
+  assert.match(decision, /import maps/u)
+  assert.match(decision, /Subresource Integrity \(SRI\)/u)
+})

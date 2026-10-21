@@ -15,13 +15,13 @@ import type { ArtifactType } from '../app/lib/artifact-type'
 import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
 import {
   APEX_HOST,
+  DELIVERY_UNAVAILABLE_PATH,
   APP_DEV_PORT,
   isProduction,
   MCP_EMBED_FRAME_ANCESTORS,
   linkViewerOrigin,
   requestHostname,
   sandboxVersionIdentityFromHostname,
-  SANDBOX_HOST,
   WWW_HOST,
 } from '../app/lib/hosts'
 import {
@@ -50,7 +50,8 @@ import {
   SANDBOX_PROBE_PATH,
 } from '../app/lib/sandbox-block-report'
 
-const COOKIE_NAME = 'as_bnd'
+const COOKIE_NAME = '__Host-as_bnd'
+const COOKIE_CHECK_PARAM = '__as_cookie_check'
 // Cookies bound token lifetime; every asset request rechecks D1 access and
 // resolves the immutable version manifest, including inherited object keys.
 const COOKIE_TTL_SECONDS = 10 * 60
@@ -58,6 +59,9 @@ const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
 interface BundleCookiePayload {
+  typ: 'bnd'
+  kind: 'authenticated' | 'link'
+  aud: string
   uid: string | null
   wid: string
   aid: string
@@ -83,11 +87,18 @@ export async function handleArtifactSandboxRequest(
   const url = new URL(request.url)
   const hostname = requestHostname(request, env)
   const identity = sandboxVersionIdentityFromHostname(hostname, env)
-  if (url.pathname === SANDBOX_PROBE_PATH)
-    return sandboxProbeResponse(request, identity)
   if (!identity) {
     return deniedResponse('bad_hostname', 'Not found', 404, { hostname })
   }
+
+  if (url.pathname === SANDBOX_PROBE_PATH)
+    return sandboxProbeResponse(request, identity)
+  if (url.pathname === DELIVERY_UNAVAILABLE_PATH)
+    return errorResponse(
+      'Delivery temporarily unavailable. Reload the viewer.',
+      503,
+      identity,
+    )
 
   const path = requestPath(url)
   if (!path) {
@@ -100,94 +111,108 @@ export async function handleArtifactSandboxRequest(
     )
   }
 
-  const token = url.searchParams.get('t')
-  if (token) {
-    return await handleEntrypointRequest(request, url, identity, path, token)
-  }
-
+  const cookieHeader = request.headers.get('Cookie')
+  // Only the host-only cookie is authority. An obsolete parent-domain as_bnd
+  // cookie can be written by a sibling and must neither authorize nor deny.
+  const rawCookie = cookieValue(cookieHeader, COOKIE_NAME)
   const cookieResult = await verifyBundleCookie(
-    cookieValue(request.headers.get('Cookie'), COOKIE_NAME),
+    rawCookie,
     env.BETTER_AUTH_SECRET,
   )
+  if (
+    (cookieResult.kind !== 'valid' && rawCookie !== null) ||
+    (cookieResult.kind === 'valid' &&
+      !authorityMatches(cookieResult.payload, identity, hostname))
+  ) {
+    return deniedResponse(
+      'invalid_bundle_authority',
+      'Invalid token',
+      401,
+      {},
+      identity,
+    )
+  }
+  const token = url.searchParams.get('__as_token')
+  if (token !== null) {
+    return await handleEntrypointRequest(request, url, identity, path, token)
+  }
   if (cookieResult.kind === 'valid') {
-    const cookie = cookieResult.payload
-    if (
-      identity !== null &&
-      (cookie.aid !== identity.shareableId || cookie.vid !== identity.versionId)
-    ) {
-      return deniedResponse(
-        'cookie_identity_mismatch',
-        'Invalid token',
-        401,
+    if (url.searchParams.get(COOKIE_CHECK_PARAM) === '1') {
+      url.search = withoutSearchParameters(url.search, [COOKIE_CHECK_PARAM])
+      // Only verified host-bound authority reaches this redirect. The clean
+      // request still runs current-access and manifest checks before delivery.
+      return contentResponse(
+        null,
+        'text/plain; charset=utf-8',
+        artifactCsp('static_site', false, identity),
         {
-          aid: identity.shareableId,
-          vid: identity.versionId,
-          cookieAid: cookie.aid,
-          path,
+          status: 302,
+          headers: new Headers({
+            Location: `${url.pathname}${url.search}${url.hash}`,
+          }),
         },
         identity,
       )
     }
-    if (cookie.uid === null) {
-      if (!isAnonymousBundleCookie(cookie)) {
-        return deniedResponse(
-          'anonymous_cookie_invalid',
-          'Invalid token',
-          401,
-          { aid: identity.shareableId, vid: identity.versionId, path },
-          identity,
-        )
-      }
-      if (identity.domain !== 'link' && isProduction(env)) {
-        return deniedResponse(
-          'anonymous_cookie_wrong_domain',
-          'Invalid token',
-          401,
-          {
-            aid: identity.shareableId,
-            vid: identity.versionId,
-            path,
-          },
-          anonymousResponseDomain(identity),
-        )
-      }
-      return await serveBundleAsset(
-        cookie,
-        path,
-        request,
-        anonymousResponseDomain(identity),
+    return await serveBundleAsset(cookieResult.payload, path, request, identity)
+  }
+  if (identity.domain !== 'link') {
+    if (url.searchParams.get(COOKIE_CHECK_PARAM) === '1') {
+      return contentResponse(
+        injectReadyReporter(
+          '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Private static-site preview unavailable</title><body><h1>Private static-site preview unavailable</h1><p>The preview cookie is blocked or has expired. Reload the viewer page.</p><p>If your browser blocks partitioned cookies, private static sites cannot be shown. Allow partitioned cookies, then reload the viewer. Single-file HTML, Markdown, and shared-link previews remain available.</p><section lang="ja"><h2>非公開の静的サイトを表示できません</h2><p>表示に必要な Cookie がブロックされているか、有効期限が切れています。ビューアーページを再読み込みしてください。</p><p>ブラウザーでパーティション化された Cookie をブロックしている場合、非公開の静的サイトは表示できません。この Cookie を許可してから、ビューアーを再読み込みしてください。単一ファイルの HTML、Markdown、共有リンクからの表示は引き続き利用できます。</p></section></body></html>',
+        ),
+        'text/html; charset=utf-8',
+        artifactCsp('static_site', false, identity),
+        { status: 403 },
+        identity,
       )
     }
-    if (identity.domain === 'link') {
-      // Authenticated cookies are host-scoped in normal browsers, but do not
-      // allow a manually replayed viewer cookie to become a link grant.
-      return await serveAnonymousLinkBundleAsset(identity, path, request)
-    }
-    return await serveBundleAsset(cookie, path, request)
+    return deniedResponse(
+      'missing_authority',
+      'Invalid token',
+      401,
+      {},
+      identity,
+    )
   }
-
   return await serveAnonymousLinkBundleAsset(identity, path, request)
+}
+
+function authorityMatches(
+  authority: Pick<BundleCookiePayload, 'uid' | 'aid' | 'vid' | 'kind' | 'aud'>,
+  identity: SandboxIdentity,
+  hostname: string,
+): boolean {
+  return (
+    authority.aid === identity.shareableId &&
+    authority.vid === identity.versionId &&
+    authority.aud === hostname &&
+    (identity.domain === 'link'
+      ? authority.kind === 'link' && authority.uid === null
+      : authority.kind === 'authenticated' &&
+        typeof authority.uid === 'string' &&
+        authority.uid.length > 0)
+  )
 }
 
 function sandboxProbeResponse(
   request: Request,
-  identity: SandboxIdentity | null,
+  identity: SandboxIdentity,
 ): Response {
   const origin = request.headers.get('Origin')
-  const allowed = new Set([
-    `https://${APEX_HOST}`,
-    `https://${WWW_HOST}`,
-    `https://localhost:${APP_DEV_PORT}`,
-  ])
-  if (identity && (identity.domain === 'link' || !isProduction(env))) {
-    allowed.add(linkViewerOrigin(isProduction(env), identity.shareableId))
-  }
+  const allowed = new Set(
+    identity.domain === 'link'
+      ? [linkViewerOrigin(isProduction(env), identity.shareableId)]
+      : isProduction(env)
+        ? [`https://${APEX_HOST}`, `https://${WWW_HOST}`]
+        : [`https://localhost:${APP_DEV_PORT}`],
+  )
   const headers = new Headers({
     'Cache-Control': 'private, no-store, no-transform',
     'Content-Type': 'text/plain; charset=utf-8',
     'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Resource-Policy':
-      identity?.domain === 'link' ? 'cross-origin' : 'same-site',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
     'Permissions-Policy': PERMISSIONS_POLICY,
     'Referrer-Policy': REFERRER_POLICY,
     [ROBOTS_HEADER]: ROBOTS_VALUE,
@@ -234,10 +259,7 @@ async function handleEntrypointRequest(
     )
   }
   const payload = verified.payload
-  if (
-    payload.aid !== identity.shareableId ||
-    payload.vid !== identity.versionId
-  ) {
+  if (!authorityMatches(payload, identity, requestHostname(request, env))) {
     return deniedResponse(
       'token_identity_mismatch',
       'Invalid token',
@@ -261,7 +283,7 @@ async function handleEntrypointRequest(
     )
   }
   if (payload.uid === null) {
-    const responseDomain = anonymousResponseDomain(identity)
+    const responseDomain = identity
     const db = createDb()
     const linkAccess = await checkAnonymousLinkAccess(db, payload.aid)
     if (linkAccess.kind !== 'allowed') {
@@ -283,10 +305,7 @@ async function handleEntrypointRequest(
         responseDomain,
       )
     }
-    if (
-      entrypoint.renderType === 'static_site' &&
-      (identity.domain === 'link' || !isProduction(env))
-    ) {
+    if (entrypoint.renderType === 'static_site' && identity.domain === 'link') {
       const redirectTarget = sameOriginRedirectTarget(url)
       if (redirectTarget) {
         const response = contentResponse(
@@ -374,6 +393,36 @@ async function handleEntrypointRequest(
 
   const cookie = await bundleCookieFor(payload, entrypoint)
   const redirectTarget = sameOriginRedirectTarget(url)
+  // Check browser document navigations before any artifact code or assets run.
+  // The next request has no viewer token: only the exact host's bound cookie
+  // can authorize it, with the usual current-access and manifest checks.
+  const destination = request.headers.get('Sec-Fetch-Dest')
+  if (destination === 'iframe' || destination === 'document') {
+    const target = new URL(redirectTarget ?? url.href, url.origin)
+    // Only the outer entry URL contains delivery parameters. The navigation
+    // target's raw query belongs to the artifact, including bare flags and
+    // percent-encoding; do not round-trip it through URLSearchParams.
+    if (!redirectTarget) {
+      target.search = withoutSearchParameters(target.search, [
+        '__as_token',
+        'as_next',
+      ])
+    }
+    target.search += `${target.search ? '&' : '?'}${COOKIE_CHECK_PARAM}=1`
+    const response = contentResponse(
+      null,
+      'text/plain; charset=utf-8',
+      artifactCsp('static_site', payload.emb === true),
+      {
+        status: 302,
+        headers: new Headers({
+          Location: `${target.pathname}${target.search}${target.hash}`,
+        }),
+      },
+    )
+    response.headers.append('Set-Cookie', cookie)
+    return response
+  }
   if (redirectTarget) {
     const redirect = new Response(null, {
       status: 302,
@@ -389,6 +438,22 @@ async function handleEntrypointRequest(
   if (!response.ok) return response
   response.headers.append('Set-Cookie', cookie)
   return response
+}
+
+function withoutSearchParameters(
+  search: string,
+  names: readonly string[],
+): string {
+  if (!search) return ''
+  const excluded = new Set(names)
+  const parts = search
+    .slice(1)
+    .split('&')
+    .filter((part) => {
+      const name = new URLSearchParams(part).keys().next().value
+      return name === undefined || !excluded.has(name)
+    })
+  return parts.length ? `?${parts.join('&')}` : ''
 }
 
 function sameOriginRedirectTarget(url: URL): string | null {
@@ -473,6 +538,9 @@ async function bundleCookieFor(
   entrypoint: Entrypoint,
 ): Promise<string> {
   const cookiePayload: BundleCookiePayload = {
+    typ: 'bnd',
+    kind: payload.kind,
+    aud: payload.aud,
     uid: payload.uid,
     wid: payload.wid,
     aid: payload.aid,
@@ -483,7 +551,9 @@ async function bundleCookieFor(
     cookiePayload.fallbackToIndex = entrypoint.fallbackToIndex
   }
   const value = await signBundleCookie(cookiePayload, env.BETTER_AUTH_SECRET)
-  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS}; HttpOnly; Secure; SameSite=None`
+  // Expiry is rounded down on the server; expire the browser cookie earlier
+  // so it does not reject a fresh viewer token at the signed expiry boundary.
+  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_TTL_SECONDS - 5}; HttpOnly; Secure; SameSite=None; Partitioned`
 }
 
 function artifactKindForToken(renderType: ArtifactType): ArtifactKind | null {
@@ -499,6 +569,8 @@ function sameBundle(
 ): boolean {
   return (
     cookie !== null &&
+    cookie.kind === payload.kind &&
+    cookie.aud === payload.aud &&
     cookie.uid === payload.uid &&
     cookie.wid === payload.wid &&
     cookie.aid === payload.aid &&
@@ -562,6 +634,7 @@ async function serveBundleAsset(
     )
     .select([
       'versions.fallback_to_index',
+      'shareables.current_version_id',
       'version_files.path',
       'version_files.r2_key',
       'version_files.mime_type',
@@ -573,6 +646,15 @@ async function serveBundleAsset(
     .where('versions.status', '=', 'published')
     .where('versions.artifact_kind', '=', 'static_site')
     .execute()
+  if (files[0] && !bundle.uid && files[0].current_version_id !== bundle.vid) {
+    return deniedResponse(
+      'stale_anonymous_version',
+      'Invalid token',
+      401,
+      {},
+      responseDomain,
+    )
+  }
   if (files[0]) {
     const accessFacts = await access.facts(db, {
       shareableId: bundle.aid,
@@ -649,7 +731,7 @@ async function serveAnonymousLinkBundleAsset(
   path: string,
   request: Request,
 ): Promise<Response> {
-  const responseDomain = anonymousResponseDomain(identity)
+  const responseDomain = identity
   const db = createDb()
   const bundle = await db
     .selectFrom('shareables')
@@ -971,8 +1053,7 @@ function errorResponse(
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'private, no-store, no-transform',
-      'Cross-Origin-Resource-Policy':
-        responseDomain?.domain === 'link' ? 'cross-origin' : 'same-site',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Permissions-Policy': PERMISSIONS_POLICY,
       [CSP_HEADER]: errorCsp(responseDomain),
@@ -983,23 +1064,14 @@ function errorResponse(
   })
 }
 
-function anonymousResponseDomain(
-  identity: SandboxIdentity,
-): SandboxResponseDomain {
-  return {
-    shareableId: identity.shareableId,
-    domain:
-      identity.domain === 'link' || !isProduction(env) ? 'link' : 'sandbox',
-  }
-}
-
 function cookieValue(header: string | null, name: string): string | null {
   if (!header) return null
-  for (const part of header.split(';')) {
+  const values = header.split(';').flatMap((part) => {
     const [rawName, ...rawValue] = part.trim().split('=')
-    if (rawName === name) return rawValue.join('=') || null
-  }
-  return null
+    return rawName === name ? [rawValue.join('=')] : []
+  })
+  // An ambiguous presented authority is invalid, never missing.
+  return values.length > 1 ? '' : (values[0] ?? null)
 }
 
 async function signBundleCookie(
@@ -1032,13 +1104,19 @@ async function verifyBundleCookie(
   } catch {
     return { kind: 'absent-or-invalid' }
   }
+  if (!payload || typeof payload !== 'object')
+    return { kind: 'absent-or-invalid' }
   if (
+    payload.typ !== 'bnd' ||
     (payload.uid !== null &&
       (typeof payload.uid !== 'string' || payload.uid.length === 0)) ||
+    (payload.kind !== 'authenticated' && payload.kind !== 'link') ||
+    typeof payload.aud !== 'string' ||
     typeof payload.wid !== 'string' ||
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||
     typeof payload.exp !== 'number' ||
+    !Number.isFinite(payload.exp) ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) {
     return { kind: 'absent-or-invalid' }

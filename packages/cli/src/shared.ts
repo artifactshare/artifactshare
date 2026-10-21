@@ -65,6 +65,24 @@ export function resolveArtifactId(input: string): string | null {
     return null
   }
 
+  const contentHostMatch = url.hostname.match(
+    /^[al]-([a-z0-9]{10})--v-((?:[a-f0-9]{2})+)\.(?:artifactshareusercontent\.com|usercontent\.localhost)$/,
+  )
+  const artifactId = contentHostMatch?.[1]
+  const encodedVersion = contentHostMatch?.[2]
+  if (artifactId && encodedVersion && url.hostname.indexOf('.') <= 63) {
+    try {
+      const bytes = Uint8Array.from(encodedVersion.match(/../g)!, (byte) =>
+        Number.parseInt(byte, 16),
+      )
+      const version = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      if (version && Buffer.from(version).toString('hex') === encodedVersion)
+        return artifactId
+    } catch {
+      return null
+    }
+  }
+
   const linkHostMatch = url.hostname.match(
     /^([A-Za-z0-9]{10})(?:--v-[a-f0-9]+)?\.artifactshare\.link$/,
   )
@@ -107,7 +125,7 @@ export function targetResolutionError(
     code: 'target_not_found',
     message: 'Artifact target could not be resolved.',
     why,
-    hint: 'Retry with an artifact ID, /a/<id> share URL, artifactshare.link viewer/content URL, or sandbox URL. If you only have a title, resolve it to an ID first.',
+    hint: 'Retry with an artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL. If you only have a title, resolve it to an ID first.',
     agentRecoverable: true,
     requiresHuman: false,
     recovery: { kind: 'change_input' },

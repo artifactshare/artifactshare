@@ -30,9 +30,9 @@ export function assertPublicPackageScriptsAreSafe(packages) {
     for (const [name, command] of Object.entries(packageJson.scripts ?? {})) {
       const label = `${packagePath}#${name}`
       if (label === 'apps/web/package.json#deploy:production') {
-        assert.match(
+        assert.equal(
           command,
-          /^pnpm build:production && pnpm build:alerts:production && pnpm build:og-image:production && pnpm build:sandbox:production && pnpm db:apply:remote:production && .+wrangler deploy -c wrangler\.alerts\.jsonc --env production && .+wrangler deploy -c wrangler\.og-image\.jsonc --env production && .+wrangler deploy -c wrangler\.sandbox\.jsonc --env production && .+wrangler deploy$/u,
+          'pnpm build:production && pnpm build:alerts:production && pnpm build:og-image:production && pnpm build:sandbox:production && pnpm db:apply:remote:production && WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler deploy -c wrangler.alerts.jsonc --env production && WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler deploy -c wrangler.og-image.jsonc --env production && node ../../scripts/deploy-content-cutover.mjs',
           label,
         )
         continue
@@ -974,4 +974,23 @@ test('changed browser status functions appear only in if conditions', () => {
   assert.match(summary.if, /cancelled\(\)/)
   assert.equal(summary.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
   assert.match(summary.if, /failure\(\)/)
+})
+
+test('production command exception rejects extra publishing or credential commands', () => {
+  const command = JSON.parse(fs.readFileSync('apps/web/package.json', 'utf8'))
+    .scripts['deploy:production']
+  for (const extra of [
+    ' && npm publish',
+    ' && wrangler secret put TOKEN',
+    ' && pnpm exec wrangler deploy',
+  ]) {
+    assert.throws(() =>
+      assertPublicPackageScriptsAreSafe([
+        [
+          'apps/web/package.json',
+          { scripts: { 'deploy:production': command + extra } },
+        ],
+      ]),
+    )
+  }
 })

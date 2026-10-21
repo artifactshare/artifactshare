@@ -197,3 +197,29 @@ Claude review launchers also write one-line diagnostics to stderr with the prefi
 - Production writes use only the protected deployment workflow. Local validation selection never authorizes a production operation.
 
 If a required local tool (`codex`, `claude`, `python3`, `gh`, the platform's `lockf`/`flock` utility, or the Artifact Share CLI used for spec readback) is unavailable, stop before any remote write and report the missing dependency.
+
+
+## Production content-origin cutover
+
+The protected `production` Environment runs `deploy:production`. Its content
+orchestrator first reads the uncached app delivery-stage endpoint. Confirmed
+`usercontent` deployments deploy the sandbox, verify readiness, then deploy the
+final app without an intervening refusal window. Unknown responses use the
+first-transition sequence: app refusal, sandbox readiness, then app delivery.
+A network failure aborts before content deployment. During the first transition,
+the same app build is first deployed with `--var ARTIFACT_DELIVERY_STAGE:refuse`, the safe default, and
+finally with `--var ARTIFACT_DELIVERY_STAGE:usercontent`. A refusal-stage viewer
+shell remains available and emits a token-free unavailable frame URL.
+`scripts/verify-content-cutover.mjs` checks old link refusals after the first app
+deploy, then both new probe policies and old sandbox/link refusals after the
+sandbox deploy. A failed command stops the chain before the final app deploy.
+Retries recheck the deployed stage. Retries and recovery retain refusal code;
+do not restore old content handlers or URL generators. Users recover an open viewer by reloading the same public URL.
+The production build/shadow lane performs no deploy or readiness fetch.
+
+Before enabling delivery, record real browser versions, third-party-cookie
+blocking settings, and outcomes for the cross-site viewer matrix. Unmeasured
+engines are not a passing result. The local `.localhost` harness cannot establish
+cross-site cookie behavior. See [the content-origin decision](decisions/link-share-domain.md)
+for authorization, routes, and the supported cookie-policy matrix, including the
+in-frame message when a browser blocks partitioned cookies. No local validation command authorizes production writes.

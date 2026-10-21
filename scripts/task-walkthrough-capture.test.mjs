@@ -139,15 +139,17 @@ test('keeps late request failures with their originating phase', () => {
 
 test('redacts signed sandbox tokens from retained evidence URLs', () => {
   assert.equal(
-    redactEvidenceUrl('https://artifact.sandbox.localhost/file.html?t=secret'),
-    'https://artifact.sandbox.localhost/file.html?t=%5Bredacted%5D',
+    redactEvidenceUrl(
+      'https://artifact.usercontent.localhost/file.html?__as_token=secret',
+    ),
+    'https://artifact.usercontent.localhost/file.html?__as_token=%5Bredacted%5D',
   )
   assert.equal(redactEvidenceUrl('not a URL'), 'not a URL')
   assert.equal(
     redactEvidenceText(
-      'Loading https://artifact.sandbox.localhost/file.html?t=secret&mode=html',
+      'Loading https://artifact.usercontent.localhost/file.html?__as_token=secret&mode=html',
     ),
-    'Loading https://artifact.sandbox.localhost/file.html?t=[redacted]&mode=html',
+    'Loading https://artifact.usercontent.localhost/file.html?__as_token=[redacted]&mode=html',
   )
 })
 

@@ -1,3 +1,4 @@
+import { sandboxVersionIdentityFromHostname } from '~/lib/hosts'
 import {
   ResourceTemplate,
   type McpServer,
@@ -391,6 +392,29 @@ export function registerArtifactResource(
     metadata,
     artifactResource.readCallback,
   )
+  for (const [name, origin] of [
+    ['usercontent', 'https://{identity}.artifactshareusercontent.com'],
+    ...(!isProduction(env)
+      ? [
+          [
+            'usercontent-development',
+            'https://{identity}.usercontent.localhost:5174',
+          ],
+        ]
+      : []),
+  ]) {
+    for (const [suffix, path] of [
+      ['root', '/'],
+      ['content', '/{+path}'],
+    ]) {
+      server.registerResource(
+        `artifact-${name}-${suffix}`,
+        new ResourceTemplate(`${origin}${path}`, { list: undefined }),
+        metadata,
+        artifactResource.readCallback,
+      )
+    }
+  }
   if (!isProduction(env)) {
     const developmentLinkResourceOrigin = `https://{identity}.localhost:${APP_DEV_PORT}`
     server.registerResource(
@@ -416,6 +440,11 @@ export function registerArtifactResource(
 export function artifactIdFromResourceUri(uri: URL): string | null {
   if (uri.protocol === 'https:') {
     const hostname = uri.hostname.toLowerCase()
+    const contentIdentity = sandboxVersionIdentityFromHostname(hostname, {
+      APP_ENV: hostname.endsWith('.localhost') ? 'development' : 'production',
+    })
+    if (contentIdentity && (uri.port === '' || uri.port === '5174'))
+      return contentIdentity.shareableId
     if (uri.port === '') {
       const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
       if (viewerMatch && uri.pathname === '/') return viewerMatch[1]

@@ -20,7 +20,7 @@ describe('sandbox worker', () => {
     sandboxHandlerMock.mockResolvedValue(new Response('sandbox'))
 
     const response = await app.fetch(
-      new Request('https://abc123def4.sandbox.localhost:5174/'),
+      new Request('https://a-abc123def4--v-7631.usercontent.localhost:5174/'),
       env,
       {} as ExecutionContext,
     )
@@ -39,4 +39,41 @@ describe('sandbox worker', () => {
     expect(response.status).toBe(404)
     expect(sandboxHandlerMock).not.toHaveBeenCalled()
   })
+})
+
+test.each([
+  'abc123def4--v-7631.sandbox.artifactshare.com',
+  'abc123def4--v-7631.artifactshare.link',
+  'artifactshareusercontent.com',
+  'abc123def4.artifactshareusercontent.com',
+  'a-abc123def4--v-ff.artifactshareusercontent.com',
+])('refuses every content surface on %s', async (host) => {
+  sandboxHandlerMock.mockClear()
+  for (const path of [
+    '/',
+    '/style.css',
+    '/download',
+    '/__artifactshare_probe',
+  ]) {
+    const response = await app.fetch(
+      new Request(`https://${host}${path}?t=old`, {
+        headers: { Cookie: 'as_bnd=old' },
+      }),
+      { APP_ENV: 'production' } as Env,
+    )
+    expect(response.status).toBe(404)
+    expect(response.headers.has('X-ArtifactShare-Sandbox-Probe')).toBe(false)
+  }
+  expect(sandboxHandlerMock).not.toHaveBeenCalled()
+})
+
+test.each(['a', 'l'])('dispatches the new %s execution kind', async (kind) => {
+  sandboxHandlerMock.mockResolvedValue(new Response('new content'))
+  const response = await app.fetch(
+    new Request(
+      `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com/`,
+    ),
+    { APP_ENV: 'production' } as Env,
+  )
+  expect(await response.text()).toBe('new content')
 })

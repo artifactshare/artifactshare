@@ -75,7 +75,8 @@ describe('agentSurface', () => {
     expect(agentSurface.url_patterns).toEqual([
       'https://artifactshare.com/a/...',
       'https://<id>.artifactshare.link/',
-      'https://<id>--v-<version>.artifactshare.link/...',
+      'https://a-<id>--v-<hex-version>.artifactshareusercontent.com/...',
+      'https://l-<id>--v-<hex-version>.artifactshareusercontent.com/...',
     ])
     expect(agentSurface.routing_intents.positive).toContain('as で共有して')
     expect(agentSurface.routing_intents.positive).toContain(

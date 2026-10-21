@@ -188,7 +188,9 @@ function htmlEscape(value) {
 export function redactEvidenceUrl(value) {
   try {
     const url = new URL(value)
-    if (url.searchParams.has('t')) url.searchParams.set('t', '[redacted]')
+    for (const key of ['t', '__as_token']) {
+      if (url.searchParams.has(key)) url.searchParams.set(key, '[redacted]')
+    }
     return url.toString()
   } catch {
     return value
@@ -196,7 +198,10 @@ export function redactEvidenceUrl(value) {
 }
 
 export function redactEvidenceText(value) {
-  return String(value).replaceAll(/([?&]t=)[^&\s"<>]+/gu, '$1[redacted]')
+  return String(value).replaceAll(
+    /([?&](?:t|__as_token)=)[^&\s"<>]+/gu,
+    '$1[redacted]',
+  )
 }
 
 async function collectPageEvidence(page, failedRequests) {
@@ -570,7 +575,7 @@ async function applyAction({
   const goto = async (path, waitUntil = 'networkidle') => {
     if (path.startsWith('/a/') && waitUntil === 'domcontentloaded')
       await page.route(
-        (url) => url.hostname.endsWith('.sandbox.localhost'),
+        (url) => url.hostname.endsWith('.usercontent.localhost'),
         async (route) => {
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500))
           await route.continue()
@@ -682,7 +687,7 @@ async function applyAction({
     await page.waitForLoadState('networkidle')
     if (action.captureDuringNavigation)
       await page.route(
-        (url) => url.hostname.endsWith('.sandbox.localhost'),
+        (url) => url.hostname.endsWith('.usercontent.localhost'),
         async (route) => {
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_500))
           await route.continue()

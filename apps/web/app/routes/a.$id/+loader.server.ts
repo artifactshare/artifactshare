@@ -763,6 +763,7 @@ export async function loader({
         jti: nanoid(),
       },
       env.BETTER_AUTH_SECRET,
+      env,
     )
     if (shouldRecordView) {
       const { recencyWrite, followUps } = viewFollowUps({
@@ -869,6 +870,7 @@ export async function loader({
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
+    env,
   )
 
   if (shouldRecordView) {
@@ -1222,6 +1224,7 @@ async function buildLinkAnonymousResponse(
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
+    env,
   )
 
   if (isStaticSite) {

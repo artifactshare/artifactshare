@@ -1376,7 +1376,7 @@
   "vw.sandboxBlocked.reload": "再読み込み",
   "vw.sandboxBlocked.next": "別のネットワークで開くと表示できることがあります。",
   "vw.sandboxBlocked.company": "社内ネットワークで利用する場合",
-  "vw.sandboxBlocked.admin": "IT管理者へ、artifactshare.com、*.sandbox.artifactshare.com、*.artifactshare.linkへのHTTPS通信の許可を依頼してください。後者2つは、ファイルの内容を隔離して表示するための配信用ドメインです。",
+  "vw.sandboxBlocked.admin": "IT管理者へ、表示画面用のartifactshare.comと*.artifactshare.link、ファイルの内容を隔離して配信する*.artifactshareusercontent.comへのHTTPS通信の許可を依頼してください。",
   "vw.sandboxPaused.title": "表示を一時停止しています",
   "vw.sandboxPaused.body": "読み込みを完了できなかったため、表示を一時停止しました。",
   "vw.sandboxPaused.reassurance": "ファイルと共有リンクに問題はありません",

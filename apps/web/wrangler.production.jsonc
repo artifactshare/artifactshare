@@ -103,6 +103,7 @@
     },
   ],
   "vars": {
+    "ARTIFACT_DELIVERY_STAGE": "refuse",
     "APP_ENV": "production",
     "DEFAULT_LOCALE": "en",
     "LINK_LOW_TRUST_ACCOUNT_AGE_DAYS": "14",

@@ -1,6 +1,15 @@
 import { describe, expect, test, vi } from 'vitest'
 import { encodeBase64Url } from './base64url'
-import { signSandboxToken, verifySandboxToken } from './sandbox-token'
+import {
+  signSandboxToken as signDeliveryToken,
+  verifySandboxToken,
+} from './sandbox-token'
+
+const signSandboxToken = (
+  payload: Parameters<typeof signDeliveryToken>[0],
+  secret: string,
+  ttl?: number,
+) => signDeliveryToken(payload, secret, { APP_ENV: 'production' }, ttl)
 
 const SECRET = 'test-secret-with-enough-entropy-for-hmac'
 const ENCODER = new TextEncoder()
@@ -8,7 +17,7 @@ const ENCODER = new TextEncoder()
 const VALID_PAYLOAD = {
   uid: 'u1',
   wid: 'ws1',
-  aid: 'a',
+  aid: 'abc123def4',
   vid: 'v1',
   fid: 'f',
   mt: null,
@@ -22,7 +31,7 @@ describe('sandbox-token', () => {
       {
         uid: 'u1',
         wid: 'ws1',
-        aid: 'a1',
+        aid: 'abc123def4',
         vid: 'v1',
         fid: 'f1',
         mt: '2026-01-01T00:00:00Z',
@@ -35,7 +44,7 @@ describe('sandbox-token', () => {
     expect(payload).not.toBeNull()
     expect(payload?.uid).toBe('u1')
     expect(payload?.wid).toBe('ws1')
-    expect(payload?.aid).toBe('a1')
+    expect(payload?.aid).toBe('abc123def4')
     expect(payload?.vid).toBe('v1')
     expect(payload?.fid).toBe('f1')
     expect(payload?.mt).toBe('2026-01-01T00:00:00Z')
@@ -112,7 +121,7 @@ describe('sandbox-token', () => {
 
   test('rejects old-format payloads missing uid, vid, or jti', async () => {
     const token = await signedToken({
-      aid: 'a',
+      aid: 'abc123def4',
       fid: 'f',
       mt: null,
       t: 'html',

@@ -8,15 +8,118 @@ Safe Browsing and similar systems can attach a warning to the URL shown in the a
 
 A link-shared artifact now opens at `https://<id>.artifactshare.link/`. The domain is intended for registration in the Public Suffix List, so browsers and reputation systems can treat each ID subdomain as a separate site. The viewer accepts only an exact ten-character artifact ID in the hostname.
 
-## Static content keeps the ID and version in its hostname
+## Execution uses a separate registrable domain
 
-Artifact content is served from `https://<id>--v-<hex-version>.artifactshare.link/`. Static bundles use root-relative paths, so the artifact identity cannot be moved into a path prefix without changing uploaded content. Including the version also preserves the existing immutable, version-scoped sandbox identity.
+HTML, rendered Markdown, and static sites execute only in the sandbox Worker at
+`https://a-<id>--v-<hex-version>.artifactshareusercontent.com/` (authenticated)
+or `https://l-<id>--v-<hex-version>.artifactshareusercontent.com/` (anonymous link).
+The app Worker serves the unchanged per-ID link viewer shell. The label prefix
+selects the expected authorization kind; it does not grant access. Version IDs
+are UTF-8 encoded as hex and labels must round-trip within the DNS 63-byte limit.
+Static bundles retain root-relative paths and immutable version identities.
 
-Authenticated and non-link viewing continues to use `*.sandbox.artifactshare.com`. The link-domain content path accepts anonymous link tokens only; authenticated bundle cookies cannot authorize it. A verified anonymous static-bundle entrypoint issues a signed, host-scoped bundle cookie for ten minutes. Asset requests with that cookie use R2 without a D1 access check. Requests without a valid cookie still check current access in D1.
+Both the viewer token and bundle authority bind the authorization kind, exact
+execution hostname, artifact, workspace, version, principal, and expiry. Invalid
+presented authority fails closed. An authenticated token or cookie is never
+converted to anonymous authority. Ordinary authenticated viewer tokens retain
+one-time nonce consumption and the matching-bundle reload exception. Embed-token
+verification remains supported on authenticated hosts only, with its existing
+reusable semantics and separate ancestors; the MCP card issues no embed content.
 
-## Sibling content origins use cross-origin resource policy
+The bundle cookie is `__Host-as_bnd`, with `Secure; HttpOnly; Path=/; SameSite=None;
+Partitioned`, no Domain, and a ten-minute maximum lifetime. The app authentication
+cookie is unchanged; existing sessions do not require re-login. Signed bundle
+payloads carry `typ: 'bnd'`; viewer and embed tokens cannot be used as cookies
+to bypass the token exchange. Every asset
+request, including one with a valid bundle cookie, rechecks current access in D1
+and resolves the immutable manifest. Anonymous access also requires the current
+published version. Only a link execution host permits missing authority to enter
+the anonymous access-check path; invalid or expired host-cookie authority is
+refused. The obsolete `as_bnd` cookie is ignored, never accepted as authority:
+a sibling can write a parent-domain cookie with that name, so its presence must
+not deny an otherwise authorized request. The browser cookie expires five
+seconds before the signed ten-minute limit to avoid blocking a fresh viewer
+token at the server's rounded expiry boundary.
 
-Once `artifactshare.link` is on the Public Suffix List, `<id>.artifactshare.link` and `<id>--v-<version>.artifactshare.link` are different sites. A `Cross-Origin-Resource-Policy: same-site` response would therefore prevent the viewer from loading its content. Link-domain content uses `Cross-Origin-Resource-Policy: cross-origin`; access is still limited to current `link` visibility, and the existing CSP, iframe sandbox, referrer policy, and token checks remain in force.
+The execution domain is a separate site from both viewers. Documents, assets,
+errors, and probes use CORP `cross-origin`, while server authorization remains
+mandatory. CSP ancestors allow only the app for authenticated delivery or the exact
+per-ID viewer for link delivery. Probe CORS uses that same distinction. Messages
+must match the current frame origin and frame window.
+
+Partitioned cookies are the only authority mechanism for authenticated static-site
+assets and navigation. Supported cookie policies are Chromium with third-party
+cookie restriction, WebKit/Safari ITP, and Firefox default Total Cookie Protection
+(`network.cookie.cookieBehavior=5`). The browser suite records each measured engine,
+exact version, settings, and outcome. Firefox's ordinary-cookie control proves
+partitioning across top-level sites; Chromium and WebKit controls prove blocking.
+A same-site `.localhost` run cannot establish cross-site behavior.
+
+Blocking all cross-site cookies, including partitioned cookies (Firefox
+`network.cookie.cookieBehavior=1`), is unsupported for private static sites.
+For navigations with `Sec-Fetch-Dest: iframe` or `document`, the sandbox exchanges
+the verified `__as_token` query parameter for the bundle cookie and redirects to the same host without the
+token. Ordinary artifact query parameters, including `t`, remain unchanged.
+The cookie-check request preserves the artifact pathname and version and
+validates the cookie binding, then removes its diagnostic query marker with a
+redirect. The clean request runs current-access and manifest checks before
+delivery, so artifact code never sees the marker. Without the cookie, the frame
+explains in English and Japanese that the cookie is blocked or expired and asks
+the viewer to reload the public page. It also explains the unsupported setting
+when partitioned cookies remain blocked. This happens before any
+artifact script or relative asset executes. It neither rewrites artifact code,
+import maps, or SRI nor introduces another delivery capability. Single-file HTML,
+Markdown, and anonymous link content remain available with that setting. Old
+execution origins are never a fallback. Clients that omit Fetch Metadata do not
+receive this browser cookie-setting diagnostic; their token request uses the
+direct delivery path, and subsequent assets still require the bound cookie.
+
+URL-path capabilities are rejected as a non-cookie fallback. A capability prefix
+would change the pathname visible to artifact code and break pathname-based SPA routing. Keeping relative and
+root-relative resource URLs within that prefix would require rewriting import maps
+and artifact resources; modifying integrity-protected resources would invalidate
+Subresource Integrity (SRI) hashes. Preserving uploaded sites without those
+transformations takes precedence over supporting private static sites when
+partitioned cookies are blocked.
+
+The new domain is not a public suffix. Host-prefixed authority cookies prevent
+sibling authority shadowing, but artifacts can still set ordinary parent-domain
+cookies and inflate sibling request headers. A Public Suffix List submission is
+a follow-up for this availability risk; this change does not claim to eliminate it.
+
+## Fail-closed cutover
+
+The protected production workflow first reads the app's uncached
+`/__artifactshare_delivery_stage` endpoint. Only an exact successful `usercontent`
+response selects steady-state deployment: deploy the sandbox, verify readiness
+and legacy refusals, then deploy the final app without a refusal window.
+The stage check logs its HTTP status and normalized stage; the orchestrator logs
+the selected path. Response bodies are never logged. A steady-state release must
+keep the sandbox compatible with the currently deployed app's token query name
+and signed payload format. Introduce token-format changes in a compatibility
+release that accepts both platform formats before changing the app producer;
+remove the previous format only after its outstanding tokens expire. Compatibility
+must not interpret ordinary artifact query parameters as delivery authority.
+A network failure aborts. An unknown stage or response selects the first-transition
+path, which uses the same app build twice:
+
+1. Deploy the app with `ARTIFACT_DELIVERY_STAGE=refuse` and verify legacy
+   `*.artifactshare.link` content hosts return 404. Public viewer shells remain
+   available, but their iframe points to a token-free unavailable path on the new
+   execution domain. Missing or unknown stage values also refuse delivery.
+2. Deploy the sandbox Worker, retaining old sandbox routes as refusals and owning
+   `*.artifactshareusercontent.com/*`. Verify both new kinds' cross-site probe
+   policy and old sandbox/link entrypoint, asset, download, and probe refusals.
+3. Only after both checks pass, deploy the app with
+   `ARTIFACT_DELIVERY_STAGE=usercontent` to emit fresh execution URLs and tokens.
+
+Each stage aborts on failure. Retries check the deployed stage again; a partial
+first transition remains on the refusal path until final app delivery succeeds.
+Recovery must retain refusal code and must not roll back to an old content handler
+or URL generator. Temporary unavailable frames occur only during that transition. A viewer left open across cutover
+recovers by reloading its unchanged public URL. Automatic frame renewal does not
+migrate origins. Builds and dry runs perform no production writes or readiness
+requests. No DNS, certificate, or secret changes are part of this cutover.
 
 ## Old anonymous links redirect without being cached
 
@@ -46,7 +149,7 @@ Every judgment is stored with its risk, concise reason, optional impersonated br
 
 ### Why judgment never stops sharing
 
-View spikes also occur for legitimate viral artifacts, and model judgments can be wrong or unavailable. Neither a trigger nor a judgment changes visibility, hides content, throttles traffic, or creates another artifact state. The operator investigates the alert and, when necessary, pauses the link or changes its visibility to `private`. New anonymous entrypoint requests and asset requests without a valid bundle cookie then fail their access checks. An already issued anonymous static-bundle cookie can continue to authorize assets for up to ten minutes after either action; the next request after it expires checks current access in D1.
+View spikes also occur for legitimate viral artifacts, and model judgments can be wrong or unavailable. Neither a trigger nor a judgment changes visibility, hides content, throttles traffic, or creates another artifact state. The operator investigates the alert and, when necessary, pauses the link or changes its visibility to `private`. New anonymous entrypoint and asset requests then fail their current-access checks, including requests with an unexpired bundle cookie.
 
 ### Non-goals
 

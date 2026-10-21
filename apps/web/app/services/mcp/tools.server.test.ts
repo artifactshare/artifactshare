@@ -1118,6 +1118,30 @@ describe('headless publish wiring', () => {
         description:
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
+      ...[
+        [
+          'artifact-usercontent-root',
+          'https://{identity}.artifactshareusercontent.com/',
+        ],
+        [
+          'artifact-usercontent-content',
+          'https://{identity}.artifactshareusercontent.com/{+path}',
+        ],
+        [
+          'artifact-usercontent-development-root',
+          'https://{identity}.usercontent.localhost:5174/',
+        ],
+        [
+          'artifact-usercontent-development-content',
+          'https://{identity}.usercontent.localhost:5174/{+path}',
+        ],
+      ].map(([name, uriTemplate]) => ({
+        name,
+        uriTemplate,
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      })),
       {
         name: 'artifact-link-development-root',
         uriTemplate: 'https://{identity}.localhost:5173/',
@@ -1233,7 +1257,8 @@ describe('headless publish wiring', () => {
     const contentUri = `https://${sandboxVersionLabel(
       published.id,
       published.versionId,
-    )}.artifactshare.link/index.md?t=ignored`
+      'link',
+    )}.artifactshareusercontent.com/index.md?t=ignored`
     const contentRead = await callMcp(db, 'resources/read', {
       uri: contentUri,
     })

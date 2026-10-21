@@ -101,7 +101,7 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Deploy the validated production topology
+      - name: Refuse legacy content, verify sandbox, then enable delivery
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: pnpm --filter @artifactshare/web deploy:production
@@ -114,6 +114,7 @@ jobs:
             echo
             echo "- Revision: \`$GITHUB_SHA\`"
             echo '- Environment: [production](https://artifactshare.com)'
+            echo '- Content cutover: app refusal verified, sandbox readiness verified, usercontent delivery enabled'
             echo '- Topology deployed: app, alerts, OG image, sandbox'
             echo '- Production origin smoke test: passed'
           } >> "$GITHUB_STEP_SUMMARY"

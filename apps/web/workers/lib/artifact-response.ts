@@ -86,13 +86,12 @@ export function contentResponse(
   contentType: string,
   csp: string | null,
   init?: { status?: number; headers?: Headers },
-  responseDomain?: { domain: string },
+  _responseDomain?: { domain: string },
 ): Response {
   const headers = new Headers({
     'Content-Type': contentType,
     'Cache-Control': 'private, no-store, no-transform',
-    'Cross-Origin-Resource-Policy':
-      responseDomain?.domain === 'link' ? 'cross-origin' : 'same-site',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Permissions-Policy': PERMISSIONS_POLICY,
     'Referrer-Policy': REFERRER_POLICY,

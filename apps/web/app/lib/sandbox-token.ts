@@ -7,6 +7,7 @@
  * Token = base64url(payload) "." base64url(hmac-sha256(secret, payload))
  */
 
+import { sandboxAuthority } from './hosts'
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import type { ArtifactType } from './artifact-type'
 import { constantTimeEqual, hmacSha256 } from './hmac'
@@ -16,6 +17,8 @@ const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
 export interface SandboxPayload {
+  kind: 'authenticated' | 'link'
+  aud: string
   uid: string | null
   wid: string
   aid: string
@@ -38,12 +41,14 @@ export interface SandboxPayload {
 }
 
 export async function signSandboxToken(
-  payload: Omit<SandboxPayload, 'exp'>,
+  payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
   secret: string,
+  env: { APP_ENV: string },
   ttlSeconds: number = TTL_SECONDS,
 ): Promise<string> {
   const full: SandboxPayload = {
     ...payload,
+    ...sandboxAuthority(env, payload.uid, payload.aid, payload.vid),
     exp: Math.floor(Date.now() / 1000) + ttlSeconds,
   }
   const body = encodeBase64Url(ENCODER.encode(JSON.stringify(full)))
@@ -84,7 +89,7 @@ export async function verifySandboxTokenDetailed(
 
   if (!isSandboxPayload(payload)) return { ok: false, failure: 'bad_payload' }
   const now = Math.floor(Date.now() / 1000)
-  if (payload.exp < now) {
+  if (payload.exp <= now) {
     return {
       ok: false,
       failure: 'expired',
@@ -106,7 +111,11 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
   if (!value || typeof value !== 'object') return false
   const payload = value as Partial<Record<keyof SandboxPayload, unknown>>
   return (
-    (typeof payload.uid === 'string' || payload.uid === null) &&
+    ((payload.kind === 'authenticated' &&
+      typeof payload.uid === 'string' &&
+      payload.uid.length > 0) ||
+      (payload.kind === 'link' && payload.uid === null && !payload.emb)) &&
+    typeof payload.aud === 'string' &&
     typeof payload.wid === 'string' &&
     typeof payload.aid === 'string' &&
     typeof payload.vid === 'string' &&
@@ -117,6 +126,7 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
       payload.t === 'static_site') &&
     typeof payload.jti === 'string' &&
     (payload.emb === undefined || typeof payload.emb === 'boolean') &&
-    typeof payload.exp === 'number'
+    typeof payload.exp === 'number' &&
+    Number.isFinite(payload.exp)
   )
 }
