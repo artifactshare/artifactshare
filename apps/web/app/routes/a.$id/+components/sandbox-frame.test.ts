@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import { reloadViewerPage } from './reload-viewer-page'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -94,7 +95,15 @@ describe('sandbox frame permissions', () => {
         }),
       )
       expect(markup).toContain('data-sandbox-state="delivery-unavailable"')
-      expect(markup).toContain('vw.deliveryUnavailable')
+      expect(markup).toContain('role="heading"')
+      expect(markup).toContain(
+        'role="status" aria-live="polite">vw.deliveryUnavailable.title</span>',
+      )
+      expect(markup).toContain('vw.deliveryUnavailable.title')
+      expect(markup).toContain('vw.deliveryUnavailable.body')
+      expect(markup).toMatch(
+        /<button[^>]*>vw\.deliveryUnavailable\.reload<\/button>/,
+      )
       expect(markup).not.toContain('<iframe')
       expect(markup).not.toContain('<script')
     },
@@ -273,3 +282,11 @@ test.each(['a', 'l'])(
     }
   },
 )
+
+test('reloads the public viewer page without navigating the execution frame', () => {
+  const reload = vi.fn()
+  vi.stubGlobal('window', { location: { reload } })
+  reloadViewerPage()
+  expect(reload).toHaveBeenCalledOnce()
+  expect(reload).toHaveBeenCalledWith()
+})

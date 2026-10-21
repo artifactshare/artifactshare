@@ -11,6 +11,10 @@ const realNow = performance.now.bind(performance)
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+const reloadViewerPage = vi.hoisted(() => vi.fn())
+
+vi.mock('./a.$id/+components/reload-viewer-page', () => ({ reloadViewerPage }))
+
 const i18n = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 
 vi.mock('~/hooks/use-t', async () => {
@@ -39,6 +43,7 @@ function deferred<T>(): Deferred<T> {
 let root: Root | undefined
 
 afterEach(async () => {
+  reloadViewerPage.mockClear()
   i18n.locale = 'en'
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -49,14 +54,21 @@ afterEach(async () => {
 
 describe('SandboxFrame recovery', () => {
   test.each([
-    ['en', 'Content is being updated. Please reload this page shortly.'],
+    [
+      'en',
+      'Content is being updated',
+      'Please reload this page shortly.',
+      'Reload',
+    ],
     [
       'ja',
-      'コンテンツを更新しています。少し待ってから、このページを再読み込みしてください。',
+      'コンテンツを更新しています',
+      '少し待ってから、このページを再読み込みしてください。',
+      '再読み込み',
     ],
   ] as const)(
     'shows cutover unavailability without probing or recovery in %s',
-    async (locale, message) => {
+    async (locale, title, message, reloadLabel) => {
       i18n.locale = locale
       vi.useFakeTimers()
       const fetchMock = vi.fn()
@@ -65,7 +77,10 @@ describe('SandboxFrame recovery', () => {
         url: 'https://a-abc123def4--v-7631.usercontent.localhost:5174/.well-known/artifactshare-delivery-unavailable',
       })
       expect(stateOf(host)).toBe('delivery-unavailable')
+      expect(host.querySelector('[role=heading]')?.textContent).toBe(title)
       expect(host.textContent).toContain(message)
+      const reloadButton = host.querySelector('button')!
+      expect(reloadButton.textContent).toBe(reloadLabel)
       expect(host.querySelector('iframe')).toBeNull()
       await act(async () => {
         window.dispatchEvent(
@@ -76,6 +91,14 @@ describe('SandboxFrame recovery', () => {
       })
       expect(fetchMock).not.toHaveBeenCalled()
       expect(stateOf(host)).toBe('delivery-unavailable')
+      expect(host.querySelector('[role=status]')?.textContent).toBe(title)
+      expect(
+        host.querySelector('[role=status]')?.getAttribute('aria-live'),
+      ).toBe('polite')
+      expect(reloadViewerPage).not.toHaveBeenCalled()
+      await act(async () => reloadButton.click())
+      expect(reloadViewerPage).toHaveBeenCalledOnce()
+      expect(fetchMock).not.toHaveBeenCalled()
     },
   )
 
@@ -361,6 +384,14 @@ describe('SandboxFrame recovery', () => {
       await Promise.resolve()
     })
     expect(stateOf(host)).toBe('blocked')
+    const reassurance = (message: string) => {
+      const line = Array.from(host.querySelectorAll('p')).find(
+        (element) => element.textContent === message,
+      )!
+      expect(line).toBeDefined()
+      expect(line.classList.contains('justify-center')).toBe(true)
+    }
+    reassurance('The file hasn’t been deleted')
     expect(checking).toHaveBeenLastCalledWith(false)
 
     await act(async () =>
@@ -375,6 +406,7 @@ describe('SandboxFrame recovery', () => {
       )
     })
     await expectFrameState(host, 'paused')
+    reassurance('The file and share link are unaffected')
     expect(host.textContent).toContain(
       'The last attempt did not finish. Try again or reload the page.',
     )

@@ -4,6 +4,7 @@ import {
 } from '~/lib/viewer-hash'
 import { useHydrated } from '~/hooks/use-hydrated'
 import { CspBanner } from './csp-banner'
+import { reloadViewerPage } from './reload-viewer-page'
 import { retainCspViolation } from './csp-violation-retention'
 import { classifyCspViolation } from '~/lib/csp-violation-classification'
 import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
@@ -175,9 +176,21 @@ export function SandboxFrame(props: SandboxFrameProps) {
           data-sandbox-state="delivery-unavailable"
           className="bg-background relative block h-full w-full overflow-hidden"
         >
-          <output className="text-muted-foreground absolute inset-0 flex items-center justify-center p-6 text-center text-sm">
-            {t('vw.deliveryUnavailable')}
-          </output>
+          <div className="absolute inset-0 overflow-y-auto">
+            <DeniedPanel
+              icon={<IconFile aria-hidden="true" />}
+              title={t('vw.deliveryUnavailable.title')}
+              body={t('vw.deliveryUnavailable.body')}
+              actions={
+                <Button size="sm" onClick={reloadViewerPage}>
+                  {t('vw.deliveryUnavailable.reload')}
+                </Button>
+              }
+            />
+            <span className="sr-only" role="status" aria-live="polite">
+              {t('vw.deliveryUnavailable.title')}
+            </span>
+          </div>
         </div>
         {props.children}
       </ViewerBodySurface>
@@ -330,7 +343,7 @@ function SandboxState({
           body={
             <>
               <p>{t('vw.sandboxBlocked.body')}</p>
-              <p className="text-foreground mt-2 flex items-center gap-1.5 font-medium">
+              <p className="text-foreground mt-2 flex items-center justify-center gap-1.5 font-medium">
                 <IconCheck aria-hidden="true" size={16} />
                 {t('vw.sandboxBlocked.reassurance')}
               </p>
@@ -368,7 +381,7 @@ function SandboxState({
           body={
             <>
               <p>{t('vw.sandboxPaused.body')}</p>
-              <p className="text-foreground mt-2 flex items-center gap-1.5 font-medium">
+              <p className="text-foreground mt-2 flex items-center justify-center gap-1.5 font-medium">
                 <IconCheck aria-hidden="true" size={16} />
                 {t('vw.sandboxPaused.reassurance')}
               </p>
