@@ -131,7 +131,9 @@ describe('SandboxFrame recovery', () => {
     )
 
     const checking = vi.fn()
-    const host = await renderFrame(checking)
+    const host = await renderFrame(checking, false, false, undefined, {
+      url: 'https://l-abc123def4--v-7631.usercontent.localhost:5174/sandbox-frame-test?__as_token=old',
+    })
     const initialFrame = host.querySelector('iframe')
 
     await act(async () => {
@@ -150,7 +152,8 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       tokenRequests[0].resolve(
         Response.json({
-          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=fresh`,
+          sandboxUrl:
+            'https://l-abc123def4--v-7632.usercontent.localhost:5174/sandbox-frame-test?__as_token=fresh',
           renderType: 'html',
         }),
       )
@@ -162,6 +165,9 @@ describe('SandboxFrame recovery', () => {
     expect(checking).toHaveBeenLastCalledWith(false)
     const recoveredFrame = host.querySelector('iframe')
     expect(recoveredFrame).not.toBe(initialFrame)
+    expect(new URL(recoveredFrame!.src).hostname).toBe(
+      'l-abc123def4--v-7632.usercontent.localhost',
+    )
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
@@ -181,7 +187,8 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       tokenRequests[1].resolve(
         Response.json({
-          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=retry`,
+          sandboxUrl:
+            'https://l-abc123def4--v-7632.usercontent.localhost:5174/sandbox-frame-test?__as_token=retry',
           renderType: 'html',
         }),
       )
@@ -367,6 +374,7 @@ async function renderFrame(
   onRender: ProfilerOnRenderCallback = () => {},
   options: {
     host?: HTMLElement
+    url?: string
     commentThreads?: CommentThreadView[]
     renderType?: string | null
     beforeHydrate?: (host: HTMLElement) => void
@@ -392,7 +400,9 @@ async function renderFrame(
           onAnchorCheckingChange={onAnchorCheckingChange}
           shareableId="abc123def4"
           versionId="v1"
-          url={`${window.location.origin}/sandbox-frame-test?t=old`}
+          url={
+            options.url ?? `${window.location.origin}/sandbox-frame-test?t=old`
+          }
           name="Recovery test"
           mermaidEnabled={false}
           textAnchorsEnabled={Boolean(options.commentThreads)}

@@ -86,7 +86,6 @@ export function contentResponse(
   contentType: string,
   csp: string | null,
   init?: { status?: number; headers?: Headers },
-  _responseDomain?: { domain: string },
 ): Response {
   const headers = new Headers({
     'Content-Type': contentType,
@@ -119,17 +118,12 @@ function isJavaScriptContent(contentType: string): boolean {
 // Service workers can synthesize responses without the artifact policy.
 export function staticSiteServiceWorkerRefusal(
   request: Request,
-  responseDomain?: { domain: string },
 ): Response | null {
   if (request.headers.get('Service-Worker')?.trim().toLowerCase() !== 'script')
     return null
-  return contentResponse(
-    null,
-    'text/plain; charset=utf-8',
-    null,
-    { status: 403 },
-    responseDomain,
-  )
+  return contentResponse(null, 'text/plain; charset=utf-8', null, {
+    status: 403,
+  })
 }
 
 function isXmlContent(contentType: string): boolean {
@@ -146,7 +140,6 @@ export function staticSiteAssetResponse(
   contentType: string,
   frameAncestors: string,
   init?: { status?: number; headers?: Headers },
-  responseDomain?: { domain: string },
 ): Response {
   // XML documents may have another bundle asset as their immediate ancestor.
   // Keep all viewer/embed ancestors; script responses retain their exact policy.
@@ -160,6 +153,5 @@ export function staticSiteAssetResponse(
       ? artifactContentSecurityPolicy('static_site', ancestors)
       : null,
     init,
-    responseDomain,
   )
 }

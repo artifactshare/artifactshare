@@ -1,3 +1,4 @@
+import { withoutSearchParameters } from '../app/lib/sandbox-delivery-query'
 import { env } from 'cloudflare:workers'
 import {
   artifactContentSecurityPolicy,
@@ -119,8 +120,9 @@ export async function handleArtifactSandboxRequest(
     rawCookie,
     env.BETTER_AUTH_SECRET,
   )
+  const token = url.searchParams.get('__as_token')
   if (
-    (cookieResult.kind !== 'valid' && rawCookie !== null) ||
+    (cookieResult.kind !== 'valid' && rawCookie !== null && token === null) ||
     (cookieResult.kind === 'valid' &&
       !authorityMatches(cookieResult.payload, identity, hostname))
   ) {
@@ -132,9 +134,18 @@ export async function handleArtifactSandboxRequest(
       identity,
     )
   }
-  const token = url.searchParams.get('__as_token')
+  // Fresh entry authority can replace an unverifiable cookie after rotation.
+  // Only a verified, matching cookie can grant the same-bundle replay exception.
   if (token !== null) {
-    return await handleEntrypointRequest(request, url, identity, path, token)
+    return await handleEntrypointRequest(
+      request,
+      url,
+      identity,
+      hostname,
+      path,
+      token,
+      cookieResult.kind === 'valid' ? cookieResult.payload : null,
+    )
   }
   if (cookieResult.kind === 'valid') {
     if (url.searchParams.get(COOKIE_CHECK_PARAM) === '1') {
@@ -151,7 +162,6 @@ export async function handleArtifactSandboxRequest(
             Location: `${url.pathname}${url.search}${url.hash}`,
           }),
         },
-        identity,
       )
     }
     return await serveBundleAsset(cookieResult.payload, path, request, identity)
@@ -165,7 +175,6 @@ export async function handleArtifactSandboxRequest(
         'text/html; charset=utf-8',
         artifactCsp('static_site', false, identity),
         { status: 403 },
-        identity,
       )
     }
     return deniedResponse(
@@ -238,8 +247,10 @@ async function handleEntrypointRequest(
   request: Request,
   url: URL,
   identity: SandboxIdentity,
+  hostname: string,
   path: string,
   token: string,
+  existingCookie: BundleCookiePayload | null,
 ): Promise<Response> {
   const verified = await verifySandboxTokenDetailed(
     token,
@@ -259,7 +270,7 @@ async function handleEntrypointRequest(
     )
   }
   const payload = verified.payload
-  if (!authorityMatches(payload, identity, requestHostname(request, env))) {
+  if (!authorityMatches(payload, identity, hostname)) {
     return deniedResponse(
       'token_identity_mismatch',
       'Invalid token',
@@ -313,7 +324,6 @@ async function handleEntrypointRequest(
           'text/plain; charset=utf-8',
           artifactCsp('static_site', false, responseDomain),
           { status: 302, headers: new Headers({ Location: redirectTarget }) },
-          responseDomain,
         )
         response.headers.append(
           'Set-Cookie',
@@ -337,27 +347,17 @@ async function handleEntrypointRequest(
   // expiry, and current-version checks below still gate them. Viewer tokens
   // stay one-time.
   if (!payload.emb) {
-    const existingCookie = await verifyBundleCookie(
-      cookieValue(request.headers.get('Cookie'), COOKIE_NAME),
-      env.BETTER_AUTH_SECRET,
-    )
     const consumed = await consumeJti(
       db,
       payload.jti,
       new Date(payload.exp * 1000).toISOString(),
     )
-    if (
-      !consumed &&
-      !sameBundle(
-        existingCookie.kind === 'valid' ? existingCookie.payload : null,
-        payload,
-      )
-    ) {
+    if (!consumed && !sameBundle(existingCookie, payload)) {
       return deniedResponse('jti_replayed', 'Invalid token', 401, {
         aid: payload.aid,
         vid: payload.vid,
         path,
-        hasBundleCookie: existingCookie.kind === 'valid',
+        hasBundleCookie: existingCookie !== null,
         secondsUntilExp: payload.exp - Math.floor(Date.now() / 1000),
       })
     }
@@ -399,9 +399,8 @@ async function handleEntrypointRequest(
   const destination = request.headers.get('Sec-Fetch-Dest')
   if (destination === 'iframe' || destination === 'document') {
     const target = new URL(redirectTarget ?? url.href, url.origin)
-    // Only the outer entry URL contains delivery parameters. The navigation
-    // target's raw query belongs to the artifact, including bare flags and
-    // percent-encoding; do not round-trip it through URLSearchParams.
+    // Preserve artifact query bytes. Redirect targets have already had platform
+    // tokens removed; direct entry URLs also need their routing parameter removed.
     if (!redirectTarget) {
       target.search = withoutSearchParameters(target.search, [
         '__as_token',
@@ -440,22 +439,6 @@ async function handleEntrypointRequest(
   return response
 }
 
-function withoutSearchParameters(
-  search: string,
-  names: readonly string[],
-): string {
-  if (!search) return ''
-  const excluded = new Set(names)
-  const parts = search
-    .slice(1)
-    .split('&')
-    .filter((part) => {
-      const name = new URLSearchParams(part).keys().next().value
-      return name === undefined || !excluded.has(name)
-    })
-  return parts.length ? `?${parts.join('&')}` : ''
-}
-
 function sameOriginRedirectTarget(url: URL): string | null {
   const next = url.searchParams.get('as_next')
   if (!next) return null
@@ -469,6 +452,10 @@ function sameOriginRedirectTarget(url: URL): string | null {
   if (target.origin !== url.origin) return null
   const path = requestPath(target)
   if (!path) return null
+  target.search = withoutSearchParameters(target.search, [
+    '__as_token',
+    COOKIE_CHECK_PARAM,
+  ])
   return `${encodeURI(path)}${target.search}${target.hash}`
 }
 
@@ -603,7 +590,6 @@ async function serveEntrypoint(
       renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp(entrypoint.renderType, embed, responseDomain),
-      responseDomain,
     )
   }
 
@@ -611,7 +597,6 @@ async function serveEntrypoint(
     object.body,
     contentType,
     artifactCsp(entrypoint.renderType, embed, responseDomain),
-    responseDomain,
   )
 }
 
@@ -768,7 +753,7 @@ async function serveBundleFile(
   request: Request,
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
-  const refusal = staticSiteServiceWorkerRefusal(request, responseDomain)
+  const refusal = staticSiteServiceWorkerRefusal(request)
   if (refusal) return refusal
 
   const transformsDocument =
@@ -783,7 +768,7 @@ async function serveBundleFile(
     ? rangeSatisfiabilityFor(requestedRange.get('Range'), file.size_bytes)
     : null
   if (rangeSatisfiability === false) {
-    return rangeNotSatisfiableResponse(file.size_bytes, responseDomain)
+    return rangeNotSatisfiableResponse(file.size_bytes)
   }
   const range = rangeSatisfiability === true ? requestedRange : undefined
   const object = range
@@ -808,7 +793,6 @@ async function serveBundleFile(
       object.body,
       contentType,
       artifactCsp('static_site', false, responseDomain),
-      responseDomain,
     )
   }
   if (isMarkdownContent(contentType)) {
@@ -816,7 +800,6 @@ async function serveBundleFile(
       renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp('static_site', false, responseDomain),
-      responseDomain,
     )
   }
   const rangeHeader = range?.get('Range') ?? null
@@ -828,7 +811,6 @@ async function serveBundleFile(
       status: rangeHeader ? 206 : 200,
       headers: rangeResponseHeaders(object.size, rangeHeader),
     },
-    responseDomain,
   )
 }
 
@@ -849,24 +831,15 @@ function rangeSatisfiabilityFor(
   return BigInt(endValue) >= start
 }
 
-function rangeNotSatisfiableResponse(
-  size: number,
-  responseDomain?: SandboxResponseDomain,
-): Response {
-  return contentResponse(
-    null,
-    'text/plain; charset=utf-8',
-    null,
-    {
-      status: 416,
-      headers: new Headers({
-        'Accept-Ranges': 'bytes',
-        'Content-Length': '0',
-        'Content-Range': `bytes */${size}`,
-      }),
-    },
-    responseDomain,
-  )
+function rangeNotSatisfiableResponse(size: number): Response {
+  return contentResponse(null, 'text/plain; charset=utf-8', null, {
+    status: 416,
+    headers: new Headers({
+      'Accept-Ranges': 'bytes',
+      'Content-Length': '0',
+      'Content-Range': `bytes */${size}`,
+    }),
+  })
 }
 
 function rangeResponseHeaders(size: number, value: string | null): Headers {
@@ -1006,24 +979,11 @@ function documentResponse(
   body: string | ReadableStream<Uint8Array> | null,
   contentType: string,
   csp: string,
-  responseDomain?: SandboxResponseDomain,
 ): Response {
-  const response = contentResponse(
-    body,
-    contentType,
-    csp,
-    undefined,
-    responseDomain,
-  )
+  const response = contentResponse(body, contentType, csp)
   if (typeof HTMLRewriter === 'undefined') {
     if (typeof body !== 'string') return response
-    return contentResponse(
-      injectReadyReporter(body),
-      contentType,
-      csp,
-      undefined,
-      responseDomain,
-    )
+    return contentResponse(injectReadyReporter(body), contentType, csp)
   }
   const handler = createViolationReporterHandler()
   return new HTMLRewriter()

@@ -1,4 +1,3 @@
-import { sandboxVersionIdentityFromHostname } from '~/lib/hosts'
 import {
   ResourceTemplate,
   type McpServer,
@@ -22,7 +21,14 @@ import {
   mcpUserAsSessionUser,
   type McpRequestContext,
 } from './identity.server'
-import { APP_DEV_PORT, isProduction, shareableUrl } from '~/lib/hosts'
+import {
+  APP_DEV_PORT,
+  BUNDLE_SANDBOX_DEV_PORT,
+  SANDBOX_HOST,
+  sandboxVersionIdentityFromHostname,
+  isProduction,
+  shareableUrl,
+} from '~/lib/hosts'
 
 const ARTIFACT_RESOURCE_UNAVAILABLE = 'Artifact resource is not available.'
 const ARTIFACT_RESOURCE_UNSUPPORTED = 'Artifact resource type is not supported.'
@@ -393,12 +399,12 @@ export function registerArtifactResource(
     artifactResource.readCallback,
   )
   for (const [name, origin] of [
-    ['usercontent', 'https://{identity}.artifactshareusercontent.com'],
+    ['usercontent', `https://{identity}.${SANDBOX_HOST}`],
     ...(!isProduction(env)
       ? [
           [
             'usercontent-development',
-            'https://{identity}.usercontent.localhost:5174',
+            `https://{identity}.usercontent.localhost:${BUNDLE_SANDBOX_DEV_PORT}`,
           ],
         ]
       : []),
@@ -438,13 +444,18 @@ export function registerArtifactResource(
 }
 
 export function artifactIdFromResourceUri(uri: URL): string | null {
+  const hostname = uri.hostname.toLowerCase()
+  if (
+    hostname.endsWith(`.${SANDBOX_HOST}`) ||
+    hostname.endsWith('.usercontent.localhost')
+  ) {
+    const identity = sandboxVersionIdentityFromHostname(hostname, env)
+    return uri.protocol === 'https:' &&
+      uri.port === (isProduction(env) ? '' : String(BUNDLE_SANDBOX_DEV_PORT))
+      ? (identity?.shareableId ?? null)
+      : null
+  }
   if (uri.protocol === 'https:') {
-    const hostname = uri.hostname.toLowerCase()
-    const contentIdentity = sandboxVersionIdentityFromHostname(hostname, {
-      APP_ENV: hostname.endsWith('.localhost') ? 'development' : 'production',
-    })
-    if (contentIdentity && (uri.port === '' || uri.port === '5174'))
-      return contentIdentity.shareableId
     if (uri.port === '') {
       const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
       if (viewerMatch && uri.pathname === '/') return viewerMatch[1]

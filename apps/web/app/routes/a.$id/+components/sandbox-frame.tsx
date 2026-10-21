@@ -38,7 +38,13 @@ import {
   type TextSelectionMessage,
 } from '~/lib/csp-reporter'
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
-import { APEX_HOST, WWW_HOST } from '~/lib/hosts'
+import {
+  APEX_HOST,
+  WWW_HOST,
+  BUNDLE_SANDBOX_DEV_PORT,
+  sandboxVersionIdentityFromHostname,
+} from '~/lib/hosts'
+import { withoutSearchParameters } from '~/lib/sandbox-delivery-query'
 import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
@@ -1144,15 +1150,39 @@ export async function refreshSandboxFrameUrl(
   if (typeof body?.sandboxUrl !== 'string') return null
   const nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
-  // Renewal never migrates an open frame between execution origins. Reload the
-  // unchanged public viewer URL after cutover to obtain a fresh origin.
+  // A renewal may advance the published version, but never the artifact,
+  // authorization kind, or deployment's execution domain.
+  const executionEnv = {
+    APP_ENV: nextUrl.hostname.endsWith('.usercontent.localhost')
+      ? 'development'
+      : 'production',
+  }
+  const currentIdentity = sandboxVersionIdentityFromHostname(
+    nextUrl.hostname,
+    executionEnv,
+  )
+  const renewedIdentity = sandboxVersionIdentityFromHostname(
+    entrypointUrl.hostname,
+    executionEnv,
+  )
+  const expectedPort =
+    executionEnv.APP_ENV === 'production' ? '' : String(BUNDLE_SANDBOX_DEV_PORT)
   if (
-    entrypointUrl.origin !== nextUrl.origin ||
-    nextUrl.hostname.endsWith('.sandbox.artifactshare.com') ||
-    nextUrl.hostname.endsWith('.artifactshare.link') ||
-    nextUrl.hostname.endsWith('.sandbox.localhost')
+    !currentIdentity ||
+    !renewedIdentity ||
+    currentIdentity.shareableId !== shareableId ||
+    renewedIdentity.shareableId !== shareableId ||
+    currentIdentity.domain !== renewedIdentity.domain ||
+    nextUrl.protocol !== 'https:' ||
+    entrypointUrl.protocol !== 'https:' ||
+    nextUrl.port !== expectedPort ||
+    entrypointUrl.port !== expectedPort
   )
     return null
+  nextUrl.search = withoutSearchParameters(nextUrl.search, [
+    '__as_token',
+    '__as_cookie_check',
+  ])
   entrypointUrl.hash = options.navigation
     ? nextUrl.hash
     : (options.getHash?.() ?? window.location.hash)

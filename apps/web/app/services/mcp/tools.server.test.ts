@@ -1,3 +1,5 @@
+import { env } from 'cloudflare:workers'
+import { artifactIdFromResourceUri } from './artifact-resource.server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { z } from 'zod'
 import type { DatabaseSync } from 'node:sqlite'
@@ -1258,7 +1260,7 @@ describe('headless publish wiring', () => {
       published.id,
       published.versionId,
       'link',
-    )}.artifactshareusercontent.com/index.md?t=ignored`
+    )}.usercontent.localhost:5174/index.md?t=ignored`
     const contentRead = await callMcp(db, 'resources/read', {
       uri: contentUri,
     })
@@ -4539,3 +4541,55 @@ describe('headless publish wiring', () => {
     expect(result.kind).toBe('workspace-unavailable')
   })
 })
+
+test.each(['a', 'l'])(
+  'resource execution URI uses the runtime environment for %s hosts',
+  (kind) => {
+    const original = env.APP_ENV
+    try {
+      env.APP_ENV = 'production'
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com/`,
+          ),
+        ),
+      ).toBe('abc123def4')
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/`,
+          ),
+        ),
+      ).toBeNull()
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com:5174/`,
+          ),
+        ),
+      ).toBeNull()
+      for (const uri of [
+        `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/a/abc123def4`,
+        `https://${kind}-abc123def4--v-7.artifactshareusercontent.com/a/abc123def4`,
+        `http://${kind}-abc123def4--v-7631.artifactshareusercontent.com/a/abc123def4`,
+      ])
+        expect(artifactIdFromResourceUri(new URL(uri))).toBeNull()
+      env.APP_ENV = 'development'
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/`,
+          ),
+        ),
+      ).toBe('abc123def4')
+      expect(
+        artifactIdFromResourceUri(
+          new URL(`https://${kind}-abc123def4--v-7631.usercontent.localhost/`),
+        ),
+      ).toBeNull()
+    } finally {
+      env.APP_ENV = original
+    }
+  },
+)

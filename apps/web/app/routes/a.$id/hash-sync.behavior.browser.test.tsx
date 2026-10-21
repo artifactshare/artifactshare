@@ -346,18 +346,19 @@ test.each(['html', 'md', 'static_site'])(
     const pending = refreshSandboxFrameUrl(
       'abc123def4',
       'v1',
-      'https://example.test/index.html#old',
+      'https://a-abc123def4--v-7631.usercontent.localhost:5174/index.html#old',
     )
     window.history.replaceState(null, '', '#latest')
     resolve(
       Response.json({
-        sandboxUrl: 'https://example.test/index.html?t=new',
+        sandboxUrl:
+          'https://a-abc123def4--v-7631.usercontent.localhost:5174/index.html?__as_token=new',
         renderType,
       }),
     )
     const url = new URL((await pending)!)
     expect(url.hash).toBe('#latest')
-    expect(url.searchParams.get('t')).toBe('new')
+    expect(url.searchParams.get('__as_token')).toBe('new')
     if (renderType === 'static_site')
       expect(url.searchParams.get('as_next')).toBe('/index.html#latest')
   },
@@ -370,7 +371,8 @@ test.each(['', '#subpage'])(
       'fetch',
       vi.fn(async () =>
         Response.json({
-          sandboxUrl: 'https://example.test/index.html?t=new',
+          sandboxUrl:
+            'https://a-abc123def4--v-7631.usercontent.localhost:5174/index.html?__as_token=new',
           renderType: 'static_site',
         }),
       ),
@@ -380,7 +382,8 @@ test.each(['', '#subpage'])(
       (await refreshSandboxFrameUrl(
         'abc123def4',
         'v1',
-        'https://example.test/other.html?q=1' + hash,
+        'https://a-abc123def4--v-7631.usercontent.localhost:5174/other.html?q=1' +
+          hash,
       ))!,
     )
     expect(url.searchParams.get('as_next')).toBe('/other.html?q=1' + hash)
@@ -516,7 +519,8 @@ test.each(['', '#new'])(
       'fetch',
       vi.fn(async () =>
         Response.json({
-          sandboxUrl: 'https://example.test/index.html?t=new',
+          sandboxUrl:
+            'https://a-abc123def4--v-7631.usercontent.localhost:5174/index.html?__as_token=new',
           renderType: 'static_site',
         }),
       ),
@@ -526,7 +530,8 @@ test.each(['', '#new'])(
       (await refreshSandboxFrameUrl(
         'abc123def4',
         'v1',
-        'https://example.test/index.html?q=1' + hash,
+        'https://a-abc123def4--v-7631.usercontent.localhost:5174/index.html?q=1' +
+          hash,
         { navigation: true },
       ))!,
     )

@@ -1033,6 +1033,108 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockReset()
   })
 
+  test.each(['authenticated', 'link'] as const)(
+    'renewal removes expired tokens from %s redirect targets',
+    async (kind) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const makeToken =
+        kind === 'link' ? anonymousEntrypointToken : entrypointToken
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const oldToken = await makeToken()
+        clock.mockReturnValue(now + 61_000)
+        const expired = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html?__as_token=${oldToken}`),
+        )
+        expect(expired.status).toBe(401)
+        const freshToken = await makeToken()
+        const target = `/index.html?q=a%20b&flag&__as_token=${oldToken}`
+        const entry = await handleArtifactSandboxRequest(
+          new Request(
+            `${origin}/index.html?__as_token=${freshToken}&as_next=${encodeURIComponent(target)}`,
+            { headers: { 'Sec-Fetch-Dest': 'iframe' } },
+          ),
+        )
+        expect(entry.status).toBe(302)
+        expect(entry.headers.get('Location')).toBe(
+          `/index.html?q=a%20b&flag${kind === 'link' ? '' : '&__as_cookie_check=1'}`,
+        )
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        let location = entry.headers.get('Location')!
+        if (kind !== 'link') {
+          const checked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(checked.status).toBe(302)
+          location = checked.headers.get('Location')!
+        }
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<h1>Renewed</h1>', 'text/html'),
+        )
+        const delivered = await handleArtifactSandboxRequest(
+          new Request(new URL(location, origin), {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(delivered.status).toBe(200)
+        expect(await delivered.text()).toContain('Renewed')
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each([
+    '__Host-as_bnd=invalid',
+    '__Host-as_bnd=first; __Host-as_bnd=second',
+    'rotated-secret',
+  ])('fresh entry tokens replace unverifiable cookies: %s', async (cookie) => {
+    const token = await entrypointToken()
+    if (cookie === 'rotated-secret') {
+      const original = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      const body = original.headers
+        .get('Set-Cookie')!
+        .split(';')[0]
+        .split('=')[1]
+        .split('.')[0]
+      const signature = encodeBase64Url(
+        await hmacSha256('previous-test-secret', body),
+      )
+      cookie = `__Host-as_bnd=${body}.${signature}`
+    }
+    const request = () =>
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+        headers: { Cookie: cookie, 'Sec-Fetch-Dest': 'iframe' },
+      })
+    const entry = await handleArtifactSandboxRequest(request())
+    expect(entry.status).toBe(302)
+    expect(entry.headers.get('Set-Cookie')).toMatch(/^__Host-as_bnd=/)
+    expect(entry.headers.get('Set-Cookie')).not.toContain('invalid')
+    // An invalid cookie does not provide the matching-bundle replay exception.
+    consumeJtiMock.mockResolvedValue(false)
+    expect((await handleArtifactSandboxRequest(request())).status).toBe(401)
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+    expect(asset.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
   test('checks private static-site navigation cookies before serving artifact code', async () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('<h1>Private page</h1>', 'text/html'),

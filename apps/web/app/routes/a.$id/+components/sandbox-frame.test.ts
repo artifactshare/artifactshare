@@ -106,18 +106,19 @@ test.each(['html', 'md', 'static_site'])(
     const request = refreshSandboxFrameUrl(
       'abc123def4',
       'v1',
-      'https://example.test/index.html?q=1#old',
+      'https://a-abc123def4--v-7631.artifactshareusercontent.com/index.html?q=1#old',
     )
     location.hash = '#current'
     resolve(
       Response.json({
         renderType,
-        sandboxUrl: 'https://example.test/index.html?t=new',
+        sandboxUrl:
+          'https://a-abc123def4--v-7631.artifactshareusercontent.com/index.html?__as_token=new',
       }),
     )
     const url = new URL((await request)!)
     expect(url.hash).toBe('#current')
-    expect(url.searchParams.get('t')).toBe('new')
+    expect(url.searchParams.get('__as_token')).toBe('new')
     if (renderType === 'static_site')
       expect(url.searchParams.get('as_next')).toBe('/index.html?q=1#current')
   },
@@ -132,7 +133,8 @@ test.each(['', '#subpage'])(
       vi.fn(async () =>
         Response.json({
           renderType: 'static_site',
-          sandboxUrl: 'https://example.test/index.html?t=new',
+          sandboxUrl:
+            'https://a-abc123def4--v-7631.artifactshareusercontent.com/index.html?__as_token=new',
         }),
       ),
     )
@@ -140,10 +142,73 @@ test.each(['', '#subpage'])(
       (await refreshSandboxFrameUrl(
         'abc123def4',
         'v1',
-        'https://example.test/other.html?q=1' + hash,
+        'https://a-abc123def4--v-7631.artifactshareusercontent.com/other.html?q=1' +
+          hash,
       ))!,
     )
     expect(url.searchParams.get('as_next')).toBe('/other.html?q=1' + hash)
     expect(url.hash).toBe(hash)
+  },
+)
+
+test.each(['a', 'l'])(
+  'refresh accepts a new version for the same %s authority and removes consumed tokens',
+  async (kind) => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'artifactshare.com', hash: '#current' },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          renderType: 'static_site',
+          sandboxUrl: `https://${kind}-abc123def4--v-7632.artifactshareusercontent.com/?__as_token=fresh`,
+        }),
+      ),
+    )
+    const result = await refreshSandboxFrameUrl(
+      'abc123def4',
+      'v1',
+      `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com/index.html?q=a%20b&flag&__as_token=consumed&__as_cookie_check=1#old`,
+    )
+    const url = new URL(result!)
+    expect(url.hostname).toBe(
+      `${kind}-abc123def4--v-7632.artifactshareusercontent.com`,
+    )
+    expect(url.searchParams.get('__as_token')).toBe('fresh')
+    expect(url.searchParams.get('as_next')).toBe(
+      '/index.html?q=a%20b&flag#current',
+    )
+  },
+)
+
+test.each([
+  'https://a-abc123def4--v-7632.artifactshareusercontent.com/',
+  'https://l-abc123def5--v-7632.artifactshareusercontent.com/',
+  'https://l-abc123def4--v-7.artifactshareusercontent.com/',
+  'https://abc123def4--v-7632.artifactshare.link/',
+  'https://abc123def4--v-7632.sandbox.artifactshare.com/',
+  'https://l-abc123def4--v-7632.usercontent.localhost:5174/',
+  'http://l-abc123def4--v-7632.artifactshareusercontent.com/',
+  'https://l-abc123def4--v-7632.artifactshareusercontent.com:444/',
+])(
+  'refresh rejects an unrelated or invalid renewal: %s',
+  async (sandboxUrl) => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'artifactshare.com', hash: '' },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ renderType: 'static_site', sandboxUrl }),
+      ),
+    )
+    expect(
+      await refreshSandboxFrameUrl(
+        'abc123def4',
+        'v1',
+        'https://l-abc123def4--v-7631.artifactshareusercontent.com/',
+      ),
+    ).toBeNull()
   },
 )

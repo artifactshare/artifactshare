@@ -1,3 +1,5 @@
+import { env } from 'cloudflare:workers'
+import { sandboxVersionIdentityFromHostname } from '~/lib/hosts'
 import { sql, type Kysely } from 'kysely'
 import { displayTitle } from '~/lib/display-title'
 import type { ArtifactKind, Visibility } from '~/lib/shareable-types'
@@ -333,6 +335,8 @@ function resolveArtifactIdFromUrl(value: string): string | null {
       return null
     }
   }
+  const contentIdentity = sandboxVersionIdentityFromHostname(url.hostname, env)
+  if (contentIdentity) return contentIdentity.shareableId
   const sandboxMatch = url.hostname.match(
     /^([A-Za-z0-9]+)(?:--v-[a-f0-9]+)?\.sandbox\./,
   )
