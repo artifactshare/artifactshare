@@ -84,8 +84,9 @@ partitioned cookies are blocked.
 
 The new domain is not a public suffix. Host-prefixed authority cookies prevent
 sibling authority shadowing, but artifacts can still set ordinary parent-domain
-cookies and inflate sibling request headers. A Public Suffix List submission is
-a follow-up for this availability risk; this change does not claim to eliminate it.
+cookies and inflate sibling request headers. This availability-only risk is
+accepted; host-prefixed authority cookies keep authority isolated. No Public
+Suffix List submission is planned for `artifactshareusercontent.com`.
 
 ## Fail-closed cutover
 
@@ -100,7 +101,8 @@ and signed payload format. Introduce token-format changes in a compatibility
 release that accepts both platform formats before changing the app producer;
 remove the previous format only after its outstanding tokens expire. Compatibility
 must not interpret ordinary artifact query parameters as delivery authority.
-A network failure aborts. An unknown stage or response selects the first-transition
+A network failure, unexpected status, or malformed body aborts before content writes.
+Only an exact `refuse` response or a legacy endpoint 404 selects the first-transition
 path, which uses the same app build twice:
 
 1. Deploy the app with `ARTIFACT_DELIVERY_STAGE=refuse` and verify legacy

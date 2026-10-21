@@ -40,6 +40,7 @@ import {
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
 import {
   APEX_HOST,
+  SANDBOX_DEV_SUFFIX,
   WWW_HOST,
   BUNDLE_SANDBOX_DEV_PORT,
   sandboxVersionIdentityFromHostname,
@@ -1148,12 +1149,12 @@ export async function refreshSandboxFrameUrl(
   }
   const body = result.body
   if (typeof body?.sandboxUrl !== 'string') return null
-  const nextUrl = new URL(targetUrl)
+  let nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
   // A renewal may advance the published version, but never the artifact,
   // authorization kind, or deployment's execution domain.
   const executionEnv = {
-    APP_ENV: nextUrl.hostname.endsWith('.usercontent.localhost')
+    APP_ENV: nextUrl.hostname.endsWith(SANDBOX_DEV_SUFFIX)
       ? 'development'
       : 'production',
   }
@@ -1179,6 +1180,25 @@ export async function refreshSandboxFrameUrl(
     entrypointUrl.port !== expectedPort
   )
     return null
+  // The frame src may still be the previous renewal entry URL. Recover its
+  // validated in-artifact destination before constructing the next renewal.
+  const previousNext = nextUrl.searchParams.get('as_next')
+  const isRenewalEntry = nextUrl.searchParams.has('__as_token')
+  if (isRenewalEntry) {
+    nextUrl.search = withoutSearchParameters(nextUrl.search, ['as_next'])
+    if (
+      body.renderType === 'static_site' &&
+      previousNext?.startsWith('/') &&
+      !previousNext.startsWith('//')
+    ) {
+      try {
+        const destination = new URL(previousNext, nextUrl.origin)
+        if (destination.origin === nextUrl.origin) nextUrl = destination
+      } catch {
+        return null
+      }
+    }
+  }
   nextUrl.search = withoutSearchParameters(nextUrl.search, [
     '__as_token',
     '__as_cookie_check',

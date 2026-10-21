@@ -25,6 +25,7 @@ import {
   APP_DEV_PORT,
   BUNDLE_SANDBOX_DEV_PORT,
   SANDBOX_HOST,
+  SANDBOX_DEV_SUFFIX,
   sandboxVersionIdentityFromHostname,
   isProduction,
   shareableUrl,
@@ -398,28 +399,22 @@ export function registerArtifactResource(
     metadata,
     artifactResource.readCallback,
   )
-  for (const [name, origin] of [
-    ['usercontent', `https://{identity}.${SANDBOX_HOST}`],
-    ...(!isProduction(env)
-      ? [
-          [
-            'usercontent-development',
-            `https://{identity}.usercontent.localhost:${BUNDLE_SANDBOX_DEV_PORT}`,
-          ],
-        ]
-      : []),
+  const [name, origin] = isProduction(env)
+    ? ['usercontent', `https://{identity}.${SANDBOX_HOST}`]
+    : [
+        'usercontent-development',
+        `https://{identity}${SANDBOX_DEV_SUFFIX}:${BUNDLE_SANDBOX_DEV_PORT}`,
+      ]
+  for (const [suffix, path] of [
+    ['root', '/'],
+    ['content', '/{+path}'],
   ]) {
-    for (const [suffix, path] of [
-      ['root', '/'],
-      ['content', '/{+path}'],
-    ]) {
-      server.registerResource(
-        `artifact-${name}-${suffix}`,
-        new ResourceTemplate(`${origin}${path}`, { list: undefined }),
-        metadata,
-        artifactResource.readCallback,
-      )
-    }
+    server.registerResource(
+      `artifact-${name}-${suffix}`,
+      new ResourceTemplate(`${origin}${path}`, { list: undefined }),
+      metadata,
+      artifactResource.readCallback,
+    )
   }
   if (!isProduction(env)) {
     const developmentLinkResourceOrigin = `https://{identity}.localhost:${APP_DEV_PORT}`
@@ -447,7 +442,7 @@ export function artifactIdFromResourceUri(uri: URL): string | null {
   const hostname = uri.hostname.toLowerCase()
   if (
     hostname.endsWith(`.${SANDBOX_HOST}`) ||
-    hostname.endsWith('.usercontent.localhost')
+    hostname.endsWith(SANDBOX_DEV_SUFFIX)
   ) {
     const identity = sandboxVersionIdentityFromHostname(hostname, env)
     return uri.protocol === 'https:' &&

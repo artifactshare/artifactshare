@@ -25,6 +25,20 @@ test('content-origin decision records cookie support and the rejected path capab
   ]) {
     assert.ok(decision.includes(policy), `Missing cookie policy: ${policy}`)
   }
+  assert.match(
+    decision,
+    /ordinary parent-domain cookies and inflate sibling request headers/u,
+  )
+  assert.match(decision, /availability-only risk is accepted/u)
+  assert.match(
+    decision,
+    /host-prefixed authority cookies keep authority isolated/u,
+  )
+  assert.match(
+    decision,
+    /No Public Suffix List submission is planned for `artifactshareusercontent\.com`/u,
+  )
+  assert.doesNotMatch(decision, /submission is a follow-up/u)
   assert.doesNotMatch(decision, /the owner chose/iu)
   assert.match(decision, /URL-path capabilities are rejected/u)
   assert.match(decision, /pathname-based SPA routing/u)

@@ -312,10 +312,7 @@ test('stage discovery accepts only an exact uncached successful response', async
   for (const [status, body, expected] of [
     [200, 'usercontent', 'usercontent'],
     [200, 'refuse', 'refuse'],
-    [200, '<html>usercontent</html>', 'refuse'],
     [404, 'usercontent', 'refuse'],
-    [302, 'usercontent', 'refuse'],
-    [503, 'usercontent', 'refuse'],
   ]) {
     const logs = []
     assert.equal(
@@ -337,6 +334,27 @@ test('stage discovery accepts only an exact uncached successful response', async
     assert.deepEqual(logs, [
       ['Content delivery stage check', { status, stage: expected }],
     ])
+  }
+  for (const [status, body] of [
+    [200, '<html>usercontent</html>'],
+    [200, ''],
+    [200, 'usercontent\n'],
+    [200, '{}'],
+    ...[201, 301, 302, 307, 308, 401, 403, 429, 500, 502, 503].map(
+      (responseStatus) => [responseStatus, 'usercontent'],
+    ),
+  ]) {
+    const writes = []
+    await assert.rejects(
+      deployContentCutover({
+        readStage: () =>
+          readContentDeliveryStage(() => new Response(body, { status })),
+        run: (args) => writes.push(args),
+        verify: () => writes.push('verify'),
+      }),
+      /Content delivery stage check/u,
+    )
+    assert.deepEqual(writes, [])
   }
   const calls = []
   await assert.rejects(

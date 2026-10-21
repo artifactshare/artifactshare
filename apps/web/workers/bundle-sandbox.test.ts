@@ -1094,6 +1094,212 @@ describe('handleArtifactSandboxRequest', () => {
   )
 
   test.each([
+    ['authenticated', false],
+    ['link', false],
+    ['authenticated', true],
+    ['link', true],
+  ] as const)(
+    '%s expired entry tokens recover only with matching live cookie authority (renewal: %s)',
+    async (kind, renewal) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const payload = {
+        uid: kind === 'link' ? null : 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site' as const,
+        jti: 'expired-entry',
+      }
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const token = await signSandboxToken(payload, 'test-secret')
+        const target = '/other.md?q=a%20b&flag#section'
+        const entryUrl = `${origin}/index.html?__as_token=${token}${
+          renewal
+            ? `&as_next=${encodeURIComponent(`${target.split('#')[0]}&__as_token=${token}&__as_cookie_check=1#section`)}`
+            : ''
+        }`
+        const entry = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { 'Sec-Fetch-Dest': 'iframe' },
+          }),
+        )
+        expect(entry.status).toBe(302)
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        const mismatchedTokens = await Promise.all(
+          [
+            { uid: kind === 'link' ? 'viewer-1' : 'owner-1' },
+            { wid: 'other-workspace' },
+            { aid: 'abc123def5' },
+            { vid: 'other-version' },
+          ].map((overrides) =>
+            signSandboxToken({ ...payload, ...overrides }, 'test-secret'),
+          ),
+        )
+        clock.mockReturnValue(now + 61_000)
+        consumeJtiMock.mockClear()
+        storageMock.getArtifact.mockImplementation(async () =>
+          storedArtifact('<h1>Recovered</h1>', 'text/html'),
+        )
+        // Keep the original expired token in the URL, as history/reload does.
+        const recovered = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        if (renewal) {
+          expect(recovered.status).toBe(302)
+          expect(recovered.headers.get('Location')).toBe(target)
+          expect(storageMock.getArtifact).not.toHaveBeenCalled()
+          const delivered = await handleArtifactSandboxRequest(
+            new Request(new URL(target, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(delivered.status).toBe(200)
+          expect(await delivered.text()).toContain('Recovered')
+          expect(storageMock.getArtifact).toHaveBeenLastCalledWith(
+            {},
+            'ws-a/abc123def4/v-bundle/other.md',
+          )
+        } else {
+          expect(recovered.status).toBe(200)
+          expect(await recovered.text()).toContain('Recovered')
+        }
+        expect(recovered.headers.get('Set-Cookie')).toBeNull()
+        expect(consumeJtiMock).not.toHaveBeenCalled()
+
+        storageMock.getArtifact.mockClear()
+        for (const headers of [
+          new Headers(),
+          new Headers({ Cookie: '__Host-as_bnd=invalid' }),
+        ]) {
+          const denied = await handleArtifactSandboxRequest(
+            new Request(entryUrl, { headers }),
+          )
+          expect(denied.status).toBe(401)
+        }
+        for (const invalidToken of [...mismatchedTokens, `${token}invalid`]) {
+          const denied = await handleArtifactSandboxRequest(
+            new Request(`${origin}/index.html?__as_token=${invalidToken}`, {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(denied.status).toBe(401)
+        }
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+
+        clock.mockReturnValue(now + 601_000)
+        const expiredCookie = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(expiredCookie.status).toBe(401)
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+
+        clock.mockReturnValue(now + 62_000)
+        if (kind === 'link')
+          await dbRef
+            .current!.updateTable('shareables')
+            .set({ visibility: 'private' })
+            .where('id', '=', 'abc123def4')
+            .execute()
+        else
+          await dbRef
+            .current!.deleteFrom('shareable_grants')
+            .where('shareable_id', '=', 'abc123def4')
+            .execute()
+        const revoked = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(revoked.status).toBe(401)
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each(['authenticated', 'link'] as const)(
+    '%s document entry removes the token so reload survives its expiry',
+    async (kind) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const token = await (kind === 'link'
+          ? anonymousEntrypointToken()
+          : entrypointToken())
+        const entry = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html?q=a%20b&flag&__as_token=${token}`, {
+            headers: { 'Sec-Fetch-Dest': 'iframe' },
+          }),
+        )
+        expect(entry.status).toBe(302)
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        let location = entry.headers.get('Location')!
+        expect(location).not.toContain('__as_token')
+        if (kind === 'authenticated') {
+          const checked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(checked.status).toBe(302)
+          location = checked.headers.get('Location')!
+        }
+        expect(location).toBe('/index.html?q=a%20b&flag')
+        clock.mockReturnValue(now + 61_000)
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<h1>Reloaded</h1>', 'text/html'),
+        )
+        const reloaded = await handleArtifactSandboxRequest(
+          new Request(new URL(location, origin), {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(reloaded.status).toBe(200)
+        expect(await reloaded.text()).toContain('Reloaded')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'private' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+        if (kind === 'link') {
+          storageMock.getArtifact.mockClear()
+          const revoked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(revoked.status).toBe(401)
+          expect(storageMock.getArtifact).not.toHaveBeenCalled()
+        }
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each([
     '__Host-as_bnd=invalid',
     '__Host-as_bnd=first; __Host-as_bnd=second',
     'rotated-secret',

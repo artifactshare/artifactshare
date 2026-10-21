@@ -5,7 +5,7 @@ const version = '70726f6265'
 const marker = 'artifactshare-sandbox-probe-v1'
 const probePath = '/__artifactshare_probe'
 
-/** Unknown responses never opt into the steady-state deployment path. */
+/** Only definitive stage responses may select a production deployment path. */
 export async function readContentDeliveryStage(
   fetcher = fetch,
   log = console.info,
@@ -18,10 +18,15 @@ export async function readContentDeliveryStage(
       signal: AbortSignal.timeout(10_000),
     },
   )
-  const stage =
-    response.status === 200 && (await response.text()) === 'usercontent'
-      ? 'usercontent'
-      : 'refuse'
+  let stage = 'refuse'
+  if (response.status !== 404) {
+    if (response.status !== 200)
+      throw new Error(`Content delivery stage check failed: ${response.status}`)
+    const body = await response.text()
+    if (body !== 'usercontent' && body !== 'refuse')
+      throw new Error('Content delivery stage check returned a malformed body')
+    stage = body
+  }
   log('Content delivery stage check', { status: response.status, stage })
   return stage
 }

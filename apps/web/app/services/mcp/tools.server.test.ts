@@ -1065,6 +1065,39 @@ describe('headless publish wiring', () => {
     ])
   })
 
+  test.each(['production', 'development'])(
+    'advertises only usercontent templates accepted in %s',
+    async (environment) => {
+      const original = env.APP_ENV
+      Object.assign(env, { APP_ENV: environment })
+      try {
+        const response = await callMcp(db, 'resources/templates/list')
+        expect(response.error).toBeUndefined()
+        const templates = response.result?.resourceTemplates as Array<{
+          name: string
+          uriTemplate: string
+        }>
+        const content = templates.filter((template) =>
+          template.name.startsWith('artifact-usercontent'),
+        )
+        expect(content).toHaveLength(2)
+        for (const template of content) {
+          const uri = template.uriTemplate
+            .replace('{identity}', sandboxVersionLabel('abc123def4', 'v1'))
+            .replace('{+path}', 'index.html')
+          expect(artifactIdFromResourceUri(new URL(uri))).toBe('abc123def4')
+          expect(uri).toContain(
+            environment === 'production'
+              ? '.artifactshareusercontent.com/'
+              : '.usercontent.localhost:5174/',
+          )
+        }
+      } finally {
+        Object.assign(env, { APP_ENV: original })
+      }
+    },
+  )
+
   test('advertises artifact URLs as a template and lists readable artifacts by title', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
@@ -1121,14 +1154,6 @@ describe('headless publish wiring', () => {
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
       ...[
-        [
-          'artifact-usercontent-root',
-          'https://{identity}.artifactshareusercontent.com/',
-        ],
-        [
-          'artifact-usercontent-content',
-          'https://{identity}.artifactshareusercontent.com/{+path}',
-        ],
         [
           'artifact-usercontent-development-root',
           'https://{identity}.usercontent.localhost:5174/',

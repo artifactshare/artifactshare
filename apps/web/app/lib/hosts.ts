@@ -2,6 +2,7 @@ export const APEX_HOST = 'artifactshare.com'
 export const WWW_HOST = 'www.artifactshare.com'
 export const LINK_HOST = 'artifactshare.link'
 export const SANDBOX_HOST = 'artifactshareusercontent.com'
+export const SANDBOX_DEV_SUFFIX = '.usercontent.localhost'
 export const DELIVERY_UNAVAILABLE_PATH =
   '/.well-known/artifactshare-delivery-unavailable'
 
@@ -88,7 +89,7 @@ export function artifactSandboxUrl(
   const label = sandboxVersionLabel(shareableId, versionId, options.domain)
   return isProduction(env)
     ? `https://${label}.${SANDBOX_HOST}${path}${query}`
-    : `https://${label}.usercontent.localhost:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
+    : `https://${label}${SANDBOX_DEV_SUFFIX}:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
 }
 
 export function linkViewerOrigin(
@@ -158,9 +159,7 @@ export function sandboxVersionIdentityFromHostname(
   domain: 'sandbox' | 'link'
 } | null {
   hostname = hostname.toLowerCase()
-  const suffix = isProduction(env)
-    ? `.${SANDBOX_HOST}`
-    : '.usercontent.localhost'
+  const suffix = isProduction(env) ? `.${SANDBOX_HOST}` : SANDBOX_DEV_SUFFIX
   if (!hostname.endsWith(suffix)) return null
   const label = hostname.slice(0, -suffix.length)
   const match = /^([al])-([a-z0-9]{10})--v-([a-f0-9]+)$/.exec(label)

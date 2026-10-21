@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { BOT_EMAIL_DOMAIN } from '~/lib/bot-account'
-import { verifySandboxToken } from '~/lib/sandbox-token'
+import { verifySandboxTokenDetailed } from '~/lib/sandbox-token'
 import {
   ctxContext,
   linkDomainContext,
@@ -1197,17 +1197,20 @@ describe('/a/:id loader', () => {
     expect(result.fallbackToIndex).toBe(false)
     const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'abc123def4',
-      vid: 'v1',
-      fid: 'ws1/abc123def4/v1/index.md',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'abc123def4',
+        vid: 'v1',
+        fid: 'ws1/abc123def4/v1/index.md',
+        t: 'static_site',
+      },
     })
     expect(waitUntil).toHaveBeenCalledTimes(1)
     expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledTimes(1)
@@ -1367,17 +1370,20 @@ describe('/a/:id loader', () => {
     expect(result.fallbackToIndex).toBe(true)
     const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'site123abc',
-      vid: 'v1',
-      fid: 'ws1/site123abc/v1/index.html',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'site123abc',
+        vid: 'v1',
+        fid: 'ws1/site123abc/v1/index.html',
+        t: 'static_site',
+      },
     })
   })
 
@@ -1398,17 +1404,20 @@ describe('/a/:id loader', () => {
     )
     const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'html123abc',
-      vid: 'v1',
-      fid: 'artifacts/html123abc/v1/index.html',
-      t: 'html',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'html123abc',
+        vid: 'v1',
+        fid: 'artifacts/html123abc/v1/index.html',
+        t: 'html',
+      },
     })
     expect(waitUntil).toHaveBeenCalledTimes(1)
   })

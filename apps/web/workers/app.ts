@@ -6,6 +6,8 @@ import {
 import { createRequestHandler, RouterContextProvider } from 'react-router'
 import {
   APEX_HOST,
+  SANDBOX_DEV_SUFFIX,
+  SANDBOX_HOST,
   isProduction,
   LINK_HOST,
   linkShareableIdFromHostname,
@@ -178,10 +180,10 @@ export default {
     if (
       hostname === 'sandbox.artifactshare.com' ||
       hostname.endsWith('.sandbox.artifactshare.com') ||
-      hostname === 'artifactshareusercontent.com' ||
-      hostname.endsWith('.artifactshareusercontent.com') ||
+      hostname === SANDBOX_HOST ||
+      hostname.endsWith(`.${SANDBOX_HOST}`) ||
       hostname.endsWith('.sandbox.localhost') ||
-      hostname.endsWith('.usercontent.localhost')
+      hostname.endsWith(SANDBOX_DEV_SUFFIX)
     ) {
       return linkDomainNotFound(request.method)
     }

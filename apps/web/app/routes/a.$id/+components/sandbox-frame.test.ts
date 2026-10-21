@@ -212,3 +212,31 @@ test.each([
     ).toBeNull()
   },
 )
+
+test.each(['a', 'l'])(
+  'two consecutive %s static-site renewals retain the in-artifact location',
+  async (kind) => {
+    vi.stubGlobal('window', { location: { hash: '#viewer' } })
+    const origin = `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com`
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          renderType: 'static_site',
+          sandboxUrl: `${origin}/index.html?__as_token=fresh`,
+        }),
+      ),
+    )
+    const first = await refreshSandboxFrameUrl(
+      'abc123def4',
+      'v1',
+      `${origin}/sub?q=a%20b&flag&__as_token=old&__as_cookie_check=1#section`,
+    )
+    const second = await refreshSandboxFrameUrl('abc123def4', 'v1', first!)
+    for (const renewed of [first, second]) {
+      const url = new URL(renewed!)
+      expect(url.searchParams.get('as_next')).toBe('/sub?q=a%20b&flag#section')
+      expect(url.hash).toBe('#section')
+    }
+  },
+)

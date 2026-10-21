@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { verifySandboxToken } from '~/lib/sandbox-token'
+import { verifySandboxTokenDetailed } from '~/lib/sandbox-token'
 
 vi.mock('cloudflare:workers', () => ({
   env: {
@@ -111,14 +111,20 @@ describe('/api/shareables/:id/sandbox-token', () => {
     const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
     ).resolves.toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'abc123def4',
-      vid: 'v1',
-      fid: 'ws1/abc123def4/v1/index.html',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'abc123def4',
+        vid: 'v1',
+        fid: 'ws1/abc123def4/v1/index.html',
+        t: 'static_site',
+      },
     })
   })
 
@@ -197,8 +203,14 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(new URL(body.sandboxUrl).pathname).toBe('/demo.html')
     const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
-    ).resolves.toMatchObject({ vid: 'v1', fid: 'ws1/html123abc/v1/demo.html' })
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      payload: { vid: 'v1', fid: 'ws1/html123abc/v1/demo.html' },
+    })
   })
 
   test('does not return a token when access is denied', async () => {
@@ -253,8 +265,11 @@ describe('/api/shareables/:id/sandbox-token', () => {
     )
     const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
-    ).resolves.toMatchObject({ uid: null, vid: 'v1' })
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
+    ).resolves.toMatchObject({ ok: true, payload: { uid: null, vid: 'v1' } })
     expect(checkAnonymousLinkAccessMock).toHaveBeenCalledWith(
       expect.anything(),
       'abc123def4',

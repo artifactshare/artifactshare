@@ -7,7 +7,7 @@
  * Token = base64url(payload) "." base64url(hmac-sha256(secret, payload))
  */
 
-import { sandboxAuthority } from './hosts'
+import { artifactSandboxUrl, sandboxAuthority } from './hosts'
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import type { ArtifactType } from './artifact-type'
 import { constantTimeEqual, hmacSha256 } from './hmac'
@@ -40,17 +40,54 @@ export interface SandboxPayload {
   exp: number
 }
 
-export async function signSandboxToken(
+export function signSandboxToken(
   payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
   secret: string,
   env: { APP_ENV: string },
   ttlSeconds: number = TTL_SECONDS,
 ): Promise<string> {
-  const full: SandboxPayload = {
-    ...payload,
-    ...sandboxAuthority(env, payload.uid, payload.aid, payload.vid),
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
-  }
+  return signPayload(
+    {
+      ...payload,
+      ...sandboxAuthority(env, payload.uid, payload.aid, payload.vid),
+      exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    },
+    secret,
+  )
+}
+
+/** Sign and route from one authorization decision. */
+export async function signSandboxUrl(
+  payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
+  secret: string,
+  env: { APP_ENV: string; ARTIFACT_DELIVERY_STAGE?: string },
+  entrypointPath?: string,
+): Promise<string> {
+  const authority = sandboxAuthority(env, payload.uid, payload.aid, payload.vid)
+  const token = await signPayload(
+    {
+      ...payload,
+      ...authority,
+      exp: Math.floor(Date.now() / 1000) + TTL_SECONDS,
+    },
+    secret,
+  )
+  return artifactSandboxUrl(
+    env,
+    payload.aid,
+    payload.vid,
+    token,
+    entrypointPath,
+    {
+      domain: authority.kind === 'link' ? 'link' : 'sandbox',
+    },
+  )
+}
+
+async function signPayload(
+  full: SandboxPayload,
+  secret: string,
+): Promise<string> {
   const body = encodeBase64Url(ENCODER.encode(JSON.stringify(full)))
   const sig = encodeBase64Url(await hmacSha256(secret, body))
   return `${body}.${sig}`
@@ -64,7 +101,18 @@ export type SandboxTokenFailure =
 
 export type SandboxTokenResult =
   | { ok: true; payload: SandboxPayload }
-  | { ok: false; failure: SandboxTokenFailure; expiredBySeconds?: number }
+  | {
+      ok: false
+      failure: 'expired'
+      /** Verified claims for comparison only; expired tokens never grant access. */
+      payload: SandboxPayload
+      expiredBySeconds: number
+    }
+  | {
+      ok: false
+      failure: Exclude<SandboxTokenFailure, 'expired'>
+      expiredBySeconds?: never
+    }
 
 export async function verifySandboxTokenDetailed(
   token: string,
@@ -93,18 +141,11 @@ export async function verifySandboxTokenDetailed(
     return {
       ok: false,
       failure: 'expired',
+      payload,
       expiredBySeconds: now - payload.exp,
     }
   }
   return { ok: true, payload }
-}
-
-export async function verifySandboxToken(
-  token: string,
-  secret: string,
-): Promise<SandboxPayload | null> {
-  const result = await verifySandboxTokenDetailed(token, secret)
-  return result.ok ? result.payload : null
 }
 
 function isSandboxPayload(value: unknown): value is SandboxPayload {

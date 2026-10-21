@@ -204,9 +204,9 @@ If a required local tool (`codex`, `claude`, `python3`, `gh`, the platform's `lo
 The protected `production` Environment runs `deploy:production`. Its content
 orchestrator first reads the uncached app delivery-stage endpoint. Confirmed
 `usercontent` deployments deploy the sandbox, verify readiness, then deploy the
-final app without an intervening refusal window. Unknown responses use the
+final app without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
 first-transition sequence: app refusal, sandbox readiness, then app delivery.
-A network failure aborts before content deployment. During the first transition,
+Any other status, malformed stage body, or network failure aborts before content deployment. During the first transition,
 the same app build is first deployed with `--var ARTIFACT_DELIVERY_STAGE:refuse`, the safe default, and
 finally with `--var ARTIFACT_DELIVERY_STAGE:usercontent`. A refusal-stage viewer
 shell remains available and emits a token-free unavailable frame URL.

@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import { artifactDeliveryEnabled, artifactSandboxUrl } from '~/lib/hosts'
+import { artifactDeliveryEnabled } from '~/lib/hosts'
 import { renderTypeFromKind } from '~/lib/artifact-type'
-import { signSandboxToken } from '~/lib/sandbox-token'
+import { signSandboxUrl } from '~/lib/sandbox-token'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import {
   viewerAccessAllowed,
@@ -151,7 +151,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     )
   }
 
-  const token = await signSandboxToken(
+  const sandboxUrl = await signSandboxUrl(
     {
       uid: user?.id ?? null,
       wid: shareable.workspace_id,
@@ -164,16 +164,9 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     },
     env.BETTER_AUTH_SECRET,
     env,
+    version.entrypoint_path ?? undefined,
   )
 
-  const sandboxUrl = artifactSandboxUrl(
-    env,
-    shareable.id,
-    version.id,
-    token,
-    version.entrypoint_path ?? undefined,
-    { domain: user ? 'sandbox' : 'link' },
-  )
   return Response.json(
     { sandboxUrl, renderType: versionRenderType },
     { headers: NO_STORE_HEADERS },

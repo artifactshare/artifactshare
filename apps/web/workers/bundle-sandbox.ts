@@ -257,6 +257,50 @@ async function handleEntrypointRequest(
     env.BETTER_AUTH_SECRET,
   )
   if (!verified.ok) {
+    // History/reload may retain the entry URL beyond its token's TTL. Recover
+    // only through independently valid, matching cookie authority; the asset
+    // path still rechecks current access and the immutable version manifest.
+    if (
+      verified.failure === 'expired' &&
+      existingCookie !== null &&
+      authorityMatches(verified.payload, identity, hostname) &&
+      sameBundle(existingCookie, verified.payload)
+    ) {
+      const redirectTarget = sameOriginRedirectTarget(url)
+      if (redirectTarget) {
+        const db = createDb()
+        const entrypoint = await publishedEntrypoint(
+          db,
+          verified.payload,
+          path,
+          existingCookie.uid === null,
+        )
+        const accessFacts = await access.facts(db, {
+          shareableId: existingCookie.aid,
+          viewerUserId: existingCookie.uid,
+          now: new Date().toISOString(),
+        })
+        if (!entrypoint || !sandboxAccessAllowed(accessFacts, existingCookie)) {
+          return deniedResponse(
+            'renewal_authority_unavailable',
+            'Invalid token',
+            401,
+            { aid: identity.shareableId, path },
+            identity,
+          )
+        }
+        // Retain the validated subpage, query, and fragment. Follow-up delivery
+        // rechecks cookie authority and resolves the destination's manifest file.
+        return contentResponse(
+          null,
+          'text/plain; charset=utf-8',
+          artifactCsp('static_site', false, identity),
+          { status: 302, headers: new Headers({ Location: redirectTarget }) },
+        )
+      }
+      return await serveBundleAsset(existingCookie, path, request, identity)
+    }
+
     return deniedResponse(
       `token_${verified.failure}`,
       'Invalid token',
@@ -284,17 +328,7 @@ async function handleEntrypointRequest(
       identity,
     )
   }
-  if (identity.domain === 'link' && payload.uid !== null) {
-    return deniedResponse(
-      'link_domain_requires_anonymous',
-      'Invalid token',
-      401,
-      { aid: identity.shareableId, path },
-      identity,
-    )
-  }
   if (payload.uid === null) {
-    const responseDomain = identity
     const db = createDb()
     const linkAccess = await checkAnonymousLinkAccess(db, payload.aid)
     if (linkAccess.kind !== 'allowed') {
@@ -303,7 +337,7 @@ async function handleEntrypointRequest(
         'Invalid token',
         401,
         { aid: payload.aid, linkAccess: linkAccess.kind, path },
-        responseDomain,
+        identity,
       )
     }
     const entrypoint = await publishedEntrypoint(db, payload, path, true)
@@ -313,16 +347,21 @@ async function handleEntrypointRequest(
         'Invalid token',
         401,
         { aid: payload.aid, vid: payload.vid, path },
-        responseDomain,
+        identity,
       )
     }
     if (entrypoint.renderType === 'static_site' && identity.domain === 'link') {
-      const redirectTarget = sameOriginRedirectTarget(url)
+      const destination = request.headers.get('Sec-Fetch-Dest')
+      const redirectTarget =
+        sameOriginRedirectTarget(url) ??
+        (destination === 'iframe' || destination === 'document'
+          ? cleanEntrypointTarget(url)
+          : null)
       if (redirectTarget) {
         const response = contentResponse(
           null,
           'text/plain; charset=utf-8',
-          artifactCsp('static_site', false, responseDomain),
+          artifactCsp('static_site', false, identity),
           { status: 302, headers: new Headers({ Location: redirectTarget }) },
         )
         response.headers.append(
@@ -332,7 +371,7 @@ async function handleEntrypointRequest(
         return response
       }
     }
-    const response = await serveEntrypoint(entrypoint, false, responseDomain)
+    const response = await serveEntrypoint(entrypoint, false, identity)
     if (!response.ok || entrypoint.renderType !== 'static_site') return response
     response.headers.append(
       'Set-Cookie',
@@ -437,6 +476,15 @@ async function handleEntrypointRequest(
   if (!response.ok) return response
   response.headers.append('Set-Cookie', cookie)
   return response
+}
+
+function cleanEntrypointTarget(url: URL): string {
+  const search = withoutSearchParameters(url.search, [
+    '__as_token',
+    COOKIE_CHECK_PARAM,
+    'as_next',
+  ])
+  return `${url.pathname}${search}${url.hash}`
 }
 
 function sameOriginRedirectTarget(url: URL): string | null {
@@ -716,7 +764,6 @@ async function serveAnonymousLinkBundleAsset(
   path: string,
   request: Request,
 ): Promise<Response> {
-  const responseDomain = identity
   const db = createDb()
   const bundle = await db
     .selectFrom('shareables')
@@ -738,10 +785,10 @@ async function serveAnonymousLinkBundleAsset(
       'Invalid token',
       401,
       { aid: identity.shareableId, path },
-      responseDomain,
+      identity,
     )
   }
-  return await serveBundleAsset(bundle, path, request, responseDomain)
+  return await serveBundleAsset(bundle, path, request, identity)
 }
 
 async function serveBundleFile(

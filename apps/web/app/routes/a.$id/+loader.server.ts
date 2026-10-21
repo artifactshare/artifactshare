@@ -10,18 +10,14 @@ import { normalizePlan } from '~/lib/billing-plan.server'
 import { type CommentThreadView } from '~/lib/comments'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
-import {
-  artifactSandboxUrl as buildArtifactSandboxUrl,
-  isProduction,
-  linkViewerUrl,
-} from '~/lib/hosts'
+import { isProduction, linkViewerUrl } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import {
   isLowTrustLinkWorkspace,
   linkTrustThresholdsFromEnv,
 } from '~/lib/link-trust-policy'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
-import { signSandboxToken } from '~/lib/sandbox-token'
+import { signSandboxUrl } from '~/lib/sandbox-token'
 import { normalizeEmailDomain } from '~/lib/workspace-domains'
 import {
   availableVisibilitiesFor,
@@ -751,7 +747,7 @@ export async function loader({
       .select('path')
       .where('version_id', '=', displayedVersion.id)
       .execute()
-    const token = await signSandboxToken(
+    const sandboxUrl = await signSandboxUrl(
       {
         uid: user.id,
         wid: shareable.workspace_id,
@@ -764,6 +760,7 @@ export async function loader({
       },
       env.BETTER_AUTH_SECRET,
       env,
+      displayedVersion.entrypoint_path ?? undefined,
     )
     if (shouldRecordView) {
       const { recencyWrite, followUps } = viewFollowUps({
@@ -813,13 +810,7 @@ export async function loader({
         showViewerListMetaEntry,
         viewerListCount,
       },
-      sandboxUrl: buildArtifactSandboxUrl(
-        env,
-        shareable.id,
-        displayedVersion.id,
-        token,
-        displayedVersion.entrypoint_path ?? undefined,
-      ),
+      sandboxUrl,
       bundlePaths: bundlePaths.map((file) => file.path),
       fallbackToIndex: Number(displayedVersion.fallback_to_index) === 1,
       canonicalUrl: canonicalUrlString,
@@ -858,7 +849,7 @@ export async function loader({
     }
   }
 
-  const token = await signSandboxToken(
+  const sandboxUrl = await signSandboxUrl(
     {
       uid: user.id,
       wid: shareable.workspace_id,
@@ -871,6 +862,7 @@ export async function loader({
     },
     env.BETTER_AUTH_SECRET,
     env,
+    displayedVersion.entrypoint_path ?? undefined,
   )
 
   if (shouldRecordView) {
@@ -893,14 +885,6 @@ export async function loader({
     await recencyWrite
     context.get(ctxContext).waitUntil(Promise.all(followUps))
   }
-
-  const sandboxUrl = buildArtifactSandboxUrl(
-    env,
-    shareable.id,
-    displayedVersion.id,
-    token,
-    displayedVersion.entrypoint_path ?? undefined,
-  )
 
   return {
     kind: 'ok',
@@ -1210,7 +1194,7 @@ async function buildLinkAnonymousResponse(
     )
   }
 
-  const token = await signSandboxToken(
+  const sandboxUrl = await signSandboxUrl(
     {
       uid: null,
       wid: shareable.workspace_id,
@@ -1225,6 +1209,7 @@ async function buildLinkAnonymousResponse(
     },
     env.BETTER_AUTH_SECRET,
     env,
+    shareable.entrypoint_path ?? undefined,
   )
 
   if (isStaticSite) {
@@ -1239,14 +1224,7 @@ async function buildLinkAnonymousResponse(
         canTrackView,
         user: null,
         artifact: baseArtifact,
-        sandboxUrl: buildArtifactSandboxUrl(
-          env,
-          shareable.id,
-          shareable.current_version_id!,
-          token,
-          shareable.entrypoint_path ?? undefined,
-          { domain: 'link' },
-        ),
+        sandboxUrl,
         bundlePaths: bundlePaths.map((file) => file.path),
         fallbackToIndex: Number(shareable.fallback_to_index) === 1,
         canonicalUrl,
@@ -1269,14 +1247,7 @@ async function buildLinkAnonymousResponse(
       user: null,
       artifact: baseArtifact,
       renderType,
-      sandboxUrl: buildArtifactSandboxUrl(
-        env,
-        shareable.id,
-        shareable.current_version_id!,
-        token,
-        shareable.entrypoint_path ?? undefined,
-        { domain: 'link' },
-      ),
+      sandboxUrl,
       canonicalUrl,
       appOrigin: env.BETTER_AUTH_URL,
       linkSafety: { lowTrust },
