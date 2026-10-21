@@ -1,16 +1,73 @@
 import { listMoveDestinations } from '~/services/shareables.server'
-import { createMigratedInMemoryDb } from './sqlite-fixture'
+import { env } from 'cloudflare:workers'
+import type { SessionUser } from '~/lib/user'
+import { listProjectCandidates } from '~/services/project-candidates.server'
+import {
+  createD1MockFromSqliteRef,
+  createMigratedInMemoryDb,
+} from './sqlite-fixture'
 
 // Run the actual destination query on the server; never send a hand-filtered
 // list to the browser, which would hide regressions in authorization.
-export async function projectPlacementBrowserFixture(allowOther: boolean) {
-  const { db } = createMigratedInMemoryDb()
+export function projectPlacementBrowserFixture(allowOther: boolean) {
+  return withPlacementFixture(allowOther, ({ db }, owner) =>
+    listMoveDestinations(db, owner, 'artifact'),
+  )
+}
+
+export function projectPlacementCandidatesBrowserFixture(allowOther: boolean) {
+  return withPlacementFixture(allowOther, async ({ db, sqlite }, owner) => {
+    // Bot destination discovery requires a workspace admin. On plus, that
+    // role alone still cannot place into another creator's private project.
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: owner.workspaceId,
+        user_id: owner.id,
+        role: 'admin',
+        status: 'active',
+        created_at: '2026-09-17T00:00:00.000Z',
+        updated_at: '2026-09-17T00:00:00.000Z',
+      })
+      .execute()
+    const previousDatabase = env.DB
+    env.DB = createD1MockFromSqliteRef({
+      current: sqlite,
+    }) as unknown as D1Database
+    try {
+      return await listProjectCandidates({
+        user: owner,
+        purpose: 'bot-destination',
+        query: '',
+        cursor: null,
+      })
+    } finally {
+      env.DB = previousDatabase
+    }
+  })
+}
+
+async function withPlacementFixture<T>(
+  allowOther: boolean,
+  query: (
+    fixture: ReturnType<typeof createMigratedInMemoryDb>,
+    owner: SessionUser,
+  ) => Promise<T>,
+) {
+  const fixture = createMigratedInMemoryDb()
+  const { db } = fixture
   const now = '2026-09-17T00:00:00.000Z'
-  const owner = {
+  const owner: SessionUser = {
     id: 'placement-owner',
     workspaceId: 'placement-workspace',
     email: 'owner@example.com',
     emailVerified: true,
+    name: 'Owner',
+    image: null,
+    hd: 'example.com',
+    msTenantId: null,
+    locale: 'en',
+    kind: 'human',
   }
   try {
     await db
@@ -82,7 +139,7 @@ export async function projectPlacementBrowserFixture(allowOther: boolean) {
         updated_at: now,
       })
       .execute()
-    return await listMoveDestinations(db, owner, 'artifact')
+    return await query(fixture, owner)
   } finally {
     await db.destroy()
   }

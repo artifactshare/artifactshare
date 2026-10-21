@@ -14,8 +14,8 @@ vi.mock('~/hooks/use-t', async () => {
   return { useT: () => bind(language.locale) }
 })
 
-// Move rows come from the real server query. Candidate response tests below
-// separately check the picker's filtered and empty interaction states.
+// Authorization cases use real server queries; the empty-state case below
+// separately checks the picker response interaction.
 describe('authorized destination responses', () => {
   let root: Root
   let host: HTMLDivElement
@@ -89,7 +89,50 @@ describe('authorized destination responses', () => {
   )
 
   test.each([false, true])(
-    'candidate picker supports filtered destinations (empty=%s)',
+    'candidate picker reflects live destination eligibility (allowOther=%s)',
+    async (allowOther) => {
+      language.locale = 'en'
+      const candidates = await commands.projectPlacementCandidates(allowOther)
+      const selected = vi.fn()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json(candidates)),
+      )
+      router = createMemoryRouter([
+        {
+          path: '/',
+          element: (
+            <ProjectCandidatePicker
+              id="destination"
+              purpose="bot-destination"
+              value={null}
+              onChange={selected}
+            />
+          ),
+        },
+      ])
+      await act(async () => root.render(<RouterProvider router={router} />))
+      await vi.waitFor(() =>
+        expect(host.textContent).toContain('Available destination'),
+      )
+      if (allowOther) {
+        const option = [...host.querySelectorAll('button')].find((node) =>
+          node.textContent?.includes('Unavailable destination'),
+        )
+        expect(option).toBeDefined()
+        if (!option) throw new Error('missing newly eligible candidate')
+        await act(async () => option.click())
+        expect(selected).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'unavailable' }),
+        )
+      } else {
+        expect(host.textContent).not.toContain('Unavailable destination')
+      }
+    },
+  )
+
+  test.each([false, true])(
+    'candidate picker supports empty and populated responses (empty=%s)',
     async (empty) => {
       language.locale = 'en'
       const selected = vi.fn()
@@ -142,7 +185,6 @@ describe('authorized destination responses', () => {
         await act(async () => option!.click())
         expect(selected).toHaveBeenCalledWith(project)
       }
-      expect(host.textContent).not.toContain('Unavailable destination')
     },
   )
 })
