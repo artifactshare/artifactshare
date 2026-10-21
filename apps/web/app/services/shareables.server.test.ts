@@ -102,6 +102,7 @@ import {
 import {
   appendShareable,
   createVersion,
+  staticSiteRequestContent,
   uploadShareable,
 } from '~/modules/publish'
 import {
@@ -830,6 +831,7 @@ describe('uploadShareable', () => {
 
     // The guardrail limit is already saturated by three humans; the bot's
     // upload still succeeds and neither reserves nor finalizes a slot.
+    await seedProjectContainer(db)
     const result = await uploadShareable(
       db,
       {
@@ -841,9 +843,19 @@ describe('uploadShareable', () => {
       htmlFile('bot.html', '<p>bot upload</p>'),
       'private',
       [],
+      'project-a',
       null,
-      null,
-      { contributorGuardrailLimit: 3 },
+      {
+        contributorGuardrailLimit: 3,
+        authority: {
+          kind: 'agent',
+          familyId: 'bot-family',
+          workspaceId: 'ws-a',
+          projectId: 'project-a',
+          projectNameSnapshot: 'Project A',
+          agentProfileId: 'bot-profile',
+        },
+      },
     )
     expect(result.kind).toBe('ok')
 
@@ -3027,6 +3039,85 @@ describe('StaticSiteBundleUploadSession', () => {
     sqliteRef.current = null
     sqliteRef.beforeNextBatch = null
   })
+
+  test.each([true, false])(
+    'bot multipart site create respects its fixed project: %s',
+    async (allowed) => {
+      await seedProjectContainer(db)
+      const bot = {
+        ...OWNER,
+        id: 'site-bot',
+        email: 'bot-site@bots.artifactshare.invalid',
+      }
+      await db
+        .insertInto('users')
+        .values({
+          id: bot.id,
+          email: bot.email,
+          email_verified: 1,
+          kind: 'bot',
+          workspace_id: bot.workspaceId,
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      await db
+        .insertInto('workspace_members')
+        .values({
+          workspace_id: bot.workspaceId,
+          user_id: bot.id,
+          role: 'member',
+          status: 'active',
+          created_at: '2026-01-01',
+          updated_at: '2026-01-01',
+        })
+        .execute()
+      await db
+        .insertInto('agent_profiles')
+        .values({
+          id: 'bot-profile',
+          user_id: bot.id,
+          workspace_id: OWNER.workspaceId,
+          created_at: '2026-01-01',
+        })
+        .execute()
+      const authority: CliAuthority = {
+        kind: 'agent',
+        familyId: 'bot-family',
+        workspaceId: OWNER.workspaceId,
+        projectId: allowed ? 'project-a' : 'other-project',
+        projectNameSnapshot: 'Project',
+        agentProfileId: 'bot-profile',
+      }
+      const form = new FormData()
+      form.set('visibility', 'project')
+      form.set('container_id', 'project-a')
+      form.set(
+        'file',
+        new File(['<p>bot</p>'], 'index.html', { type: 'text/html' }),
+      )
+      const content = staticSiteRequestContent(
+        new Request('https://example.com/api/shareables/uploads', {
+          method: 'POST',
+          body: form,
+        }),
+        { expectedContainerId: 'project-a' },
+      )
+      const result = await content.session.publish({
+        db,
+        user: { ...bot, emailVerified: true, msTenantId: null },
+        authority,
+        target: { kind: 'create' },
+        containerId: 'project-a',
+        idempotencyKey: null,
+        touchArtifactKeyId: null,
+      })
+      expect(result.kind).toBe(allowed ? 'ok' : 'invalid-container')
+      expect(
+        await db.selectFrom('shareables').select('id').execute(),
+      ).toHaveLength(allowed ? 1 : 0)
+    },
+  )
 
   test('records a link-visible static-site creation in the durable ledger', async () => {
     await db
@@ -6698,7 +6789,28 @@ describe('cross-workspace owner operations', () => {
     expect(result.kind).toBe('ok')
   })
 
-  test('external project posting survives target membership removal', async () => {
+  test('external placement permits a contributor with no target membership row', async () => {
+    await seedExternalProject(db)
+    expect(
+      await db
+        .selectFrom('workspace_members')
+        .select('user_id')
+        .where('workspace_id', '=', EXT_WS)
+        .where('user_id', '=', OWNER.id)
+        .execute(),
+    ).toEqual([])
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('external.html', '<p>external</p>'),
+      'private',
+      [],
+      EXT_PROJECT,
+    )
+    expect(result.kind).toBe('ok')
+  })
+
+  test('external project placement is denied after target membership removal', async () => {
     await seedExternalProject(db)
     await db
       .insertInto('workspace_members')
@@ -6721,9 +6833,7 @@ describe('cross-workspace owner operations', () => {
       [],
       EXT_PROJECT,
     )
-    expect(result.kind).toBe('ok')
-    if (result.kind !== 'ok') throw new Error('expected ok')
-    expect(result.id).toBeTruthy()
+    expect(result).toEqual({ kind: 'invalid-container' })
   })
 
   test('external artifact grant requires a verified current email and enabled posting policy', async () => {
@@ -7461,7 +7571,7 @@ describe('cross-workspace owner operations', () => {
     })
   })
 
-  test('omits publication context for rename, move, and a stale link hide', async () => {
+  test('placement assertion preserves publication history and a concurrent link hide', async () => {
     await seedProjectContainer(db)
     await db
       .insertInto('artifact_containers')
@@ -7520,7 +7630,7 @@ describe('cross-workspace owner operations', () => {
       statements.some((statement) =>
         statement.sql.includes('link_publication_attempts'),
       ),
-    ).toBe(false)
+    ).toBe(true)
     await expect(
       db
         .selectFrom('shareables')
@@ -9589,6 +9699,695 @@ describe('publisher single-file provenance', () => {
         before,
       )
       expect(storageMock.deleteArtifact).toHaveBeenCalledOnce()
+    },
+  )
+})
+
+describe('destination commit races', () => {
+  let db: Kysely<DB>
+  const now = '2026-09-17T00:00:00.000Z'
+  const agent: CliAuthority = {
+    kind: 'agent',
+    familyId: 'placement-family',
+    workspaceId: OWNER.workspaceId,
+    projectId: 'project-a',
+    projectNameSnapshot: 'Project A',
+    agentProfileId: 'placement-agent',
+  }
+  beforeEach(async () => {
+    const fixture = createD1BatchFixture({ sqlite: sqliteRef })
+    db = fixture.db
+    sqliteRef.current = fixture.sqlite
+    sqliteRef.beforeNextBatch = null
+    sqliteRef.afterNextBatch = null
+    sqliteRef.failNextBatch = false
+    nanoidMock.reset()
+    storageMock.putArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifact.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifacts.mockReset().mockResolvedValue(undefined)
+    storageMock.deleteArtifactsByPrefix.mockReset().mockResolvedValue(undefined)
+    artifactLiveMock.notifyVersionChanged.mockClear()
+    await seed(db)
+    await db
+      .updateTable('workspaces')
+      .set({ link_sharing_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    await seedProjectContainer(db)
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private', created_by_id: null })
+      .where('id', '=', 'project-a')
+      .execute()
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'placement-grant',
+        project_container_id: 'project-a',
+        email: OWNER.email,
+        role: 'contributor',
+        created_by_id: OWNER.id,
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    await db
+      .insertInto('agent_profiles')
+      .values({
+        id: 'placement-agent',
+        user_id: OWNER.id,
+        workspace_id: OWNER.workspaceId,
+        created_at: now,
+      })
+      .execute()
+  })
+  afterEach(async () => {
+    await db.destroy()
+    sqliteRef.current = null
+    sqliteRef.beforeNextBatch = null
+  })
+
+  function snapshot() {
+    return [
+      'shareables',
+      'versions',
+      'version_files',
+      'artifact_keys',
+      'shareable_grants',
+      'project_pins',
+      'events',
+      'audit_events',
+      'slack_notification_outbox',
+      'link_publication_attempts',
+      'link_publications',
+    ].map((table) =>
+      sqliteRef.current!.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+    )
+  }
+
+  const changes = [
+    'allowed',
+    'archive',
+    'grant-downgrade',
+    'unverify',
+    'email-change',
+    'removed',
+  ] as const
+  const families = [
+    'file-create',
+    'bundle-create',
+    'agent-file-version',
+    'agent-bundle-version',
+    'keyed-file-version',
+    'keyed-bundle-version',
+    'keyed-human-bundle-version',
+  ] as const
+  test.each(
+    families.flatMap((family) => changes.map((change) => ({ family, change }))),
+  )('$family / $change', async ({ family, change }) => {
+    const file = () => htmlFile('index.html', '<p>placement</p>')
+    const bundle = family.includes('bundle')
+    let id = '',
+      versionId = ''
+    let keyId: string | null = null
+    if (family.endsWith('version')) {
+      if (bundle) {
+        const started = await beginStaticSiteBundleUploadSession(
+          db,
+          OWNER,
+          'project-a',
+          family.startsWith('keyed') ? 'stable-key' : null,
+        )
+        if (started.kind !== 'ok') throw new Error('setup failed')
+        expect((await started.session.addFile(file())).kind).toBe('ok')
+        const created = await started.session.commit('project')
+        if (created.kind !== 'ok') throw new Error(`setup: ${created.kind}`)
+        id = created.id
+        versionId = created.versionId
+      } else {
+        const created = await uploadShareable(
+          db,
+          OWNER,
+          file(),
+          'project',
+          [],
+          'project-a',
+          family.startsWith('keyed') ? 'stable-key' : null,
+        )
+        if (created.kind !== 'ok') throw new Error(`setup: ${created.kind}`)
+        id = created.id
+        versionId = created.versionId
+      }
+      if (family.startsWith('keyed'))
+        keyId = (
+          await db
+            .selectFrom('artifact_keys')
+            .select('id')
+            .where('shareable_id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).id
+    }
+    const before = snapshot()
+    const used = (
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow()
+    ).storage_used_bytes
+    const notifications =
+      artifactLiveMock.notifyVersionChanged.mock.calls.length
+    let intercepted = false
+    sqliteRef.beforeNextBatch = async () => {
+      intercepted = true
+      if (change === 'archive')
+        await db
+          .updateTable('artifact_containers')
+          .set({ archived_at: now })
+          .where('id', '=', 'project-a')
+          .execute()
+      if (change === 'grant-downgrade')
+        await db
+          .updateTable('project_share_defaults')
+          .set({ role: 'viewer' })
+          .where('id', '=', 'placement-grant')
+          .execute()
+      if (change === 'unverify')
+        await db
+          .updateTable('users')
+          .set({ email_verified: 0 })
+          .where('id', '=', OWNER.id)
+          .execute()
+      if (change === 'email-change')
+        await db
+          .updateTable('users')
+          .set({ email: 'changed@example.com' })
+          .where('id', '=', OWNER.id)
+          .execute()
+      if (change === 'removed')
+        await db
+          .updateTable('workspace_members')
+          .set({ status: 'removed' })
+          .where('user_id', '=', OWNER.id)
+          .execute()
+    }
+    let result: { kind: string }
+    if (family === 'file-create')
+      result = await uploadShareable(
+        db,
+        OWNER,
+        file(),
+        'project',
+        [],
+        'project-a',
+        'stable-key',
+      )
+    else if (family === 'bundle-create') {
+      const started = await beginStaticSiteBundleUploadSession(
+        db,
+        OWNER,
+        'project-a',
+        'stable-key',
+      )
+      if (started.kind !== 'ok') throw new Error('begin failed')
+      expect((await started.session.addFile(file())).kind).toBe('ok')
+      result = await started.session.commit('project')
+    } else if (bundle) {
+      const started = await beginStaticSiteBundleVersionUploadSession(
+        db,
+        OWNER,
+        id,
+        keyId,
+        {
+          ...(family === 'keyed-human-bundle-version'
+            ? {}
+            : { authority: agent, agentProfileId: agent.agentProfileId }),
+          ...(keyId ? { expectedCurrentVersionId: versionId } : {}),
+        },
+      )
+      if (started.kind !== 'ok') throw new Error(`begin: ${started.kind}`)
+      expect((await started.session.addFile(file())).kind).toBe('ok')
+      result = await started.session.commitVersion()
+    } else
+      result = await createVersion({
+        db,
+        user: OWNER,
+        shareableId: id,
+        file: file(),
+        authority: agent,
+        agentProfileId: agent.agentProfileId,
+        ...(keyId
+          ? { touchArtifactKeyId: keyId, expectedCurrentVersionId: versionId }
+          : {}),
+      })
+    expect(intercepted).toBe(true)
+    if (change === 'allowed') expect(result.kind).toBe('ok')
+    else {
+      expect(result.kind).toBe(
+        family.endsWith('create') ? 'invalid-container' : 'not-found',
+      )
+      expect(snapshot()).toEqual(before)
+      expect(
+        (
+          await db
+            .selectFrom('workspaces')
+            .select('storage_used_bytes')
+            .where('id', '=', OWNER.workspaceId)
+            .executeTakeFirstOrThrow()
+        ).storage_used_bytes,
+      ).toBe(used)
+      expect(
+        (
+          await db
+            .selectFrom('workspace_members')
+            .select('pending_uploads')
+            .where('user_id', '=', OWNER.id)
+            .executeTakeFirstOrThrow()
+        ).pending_uploads,
+      ).toBe(0)
+      expect(
+        storageMock.deleteArtifact.mock.calls.length +
+          storageMock.deleteArtifacts.mock.calls.length +
+          storageMock.deleteArtifactsByPrefix.mock.calls.length,
+      ).toBeGreaterThan(0)
+      expect(artifactLiveMock.notifyVersionChanged.mock.calls.length).toBe(
+        notifications,
+      )
+    }
+  })
+
+  test.each([false, true])(
+    'agent append retains destination authority at commit (revoked=%s)',
+    async (revoked) => {
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>source</p>'),
+        'project',
+        [],
+        'project-a',
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const before = snapshot()
+      storageMock.getArtifact.mockResolvedValueOnce({
+        body: new Response('<p>source</p>').body,
+        size: 13,
+      })
+      sqliteRef.beforeNextBatch = async () => {
+        if (revoked) {
+          await db
+            .updateTable('project_share_defaults')
+            .set({ role: 'viewer' })
+            .where('id', '=', 'placement-grant')
+            .execute()
+        }
+      }
+      const result = await appendShareable(
+        db,
+        OWNER,
+        created.id,
+        '<p>appended</p>',
+        { authority: agent },
+      )
+      expect(result.kind).toBe(revoked ? 'not-found' : 'ok')
+      if (revoked) {
+        expect(snapshot()).toEqual(before)
+        expect(storageMock.deleteArtifact).toHaveBeenCalled()
+      }
+    },
+  )
+
+  test.each([false, true])(
+    'owner placement edits remain same-workspace when adding grants=%s',
+    async (withGrants) => {
+      await seedExternalProject(db)
+      const project = await db
+        .selectFrom('artifact_containers')
+        .selectAll()
+        .where('id', '=', EXT_PROJECT)
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('artifact_containers')
+        .values({
+          ...project,
+          id: 'external-destination',
+          name: 'External destination',
+          created_by_id: OWNER.id,
+        })
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'external-destination-grant',
+          project_container_id: 'external-destination',
+          email: OWNER.email,
+          role: 'contributor',
+          created_by_id: OWNER.id,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>external</p>'),
+        'private',
+        [],
+        EXT_PROJECT,
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const before = snapshot()
+      expect(
+        await editShareableSettings(db, OWNER, created.id, {
+          title: 'Must not change',
+          destination: { type: 'project', projectId: 'external-destination' },
+          ...(withGrants ? { addEmails: ['viewer@example.com'] } : {}),
+        }),
+      ).toEqual({ kind: 'not-found' })
+      expect(snapshot()).toEqual(before)
+      // External ownership still permits a metadata-only edit.
+      expect(
+        (
+          await editShareableSettings(db, OWNER, created.id, {
+            title: 'Allowed title',
+          })
+        ).kind,
+      ).toBe('ok')
+    },
+  )
+
+  test.each(['link', 'workspace'] as const)(
+    'placement-only title edit preserves %s after sharing policies change',
+    async (visibility) => {
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>source</p>'),
+        visibility,
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const publications = await db
+        .selectFrom('link_publications')
+        .selectAll()
+        .execute()
+      const events = await db.selectFrom('events').selectAll().execute()
+      await db
+        .updateTable('workspaces')
+        .set({ link_sharing_enabled: 0 })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+      await db
+        .insertInto('project_share_defaults')
+        .values({
+          id: 'destination-viewer',
+          project_container_id: 'project-a',
+          email: 'viewer@example.com',
+          role: 'viewer',
+          created_by_id: OWNER.id,
+          created_at: now,
+          updated_at: now,
+        })
+        .execute()
+      const edited = await editShareableSettings(
+        db,
+        { ...OWNER, hd: null },
+        created.id,
+        {
+          title: 'New title',
+          destination: { type: 'project', projectId: 'project-a' },
+        },
+      )
+      expect(edited.kind).toBe('ok')
+      expect(
+        await db
+          .selectFrom('shareables')
+          .select(['visibility', 'title_override', 'container_id'])
+          .where('id', '=', created.id)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({
+        visibility,
+        title_override: 'New title',
+        container_id: 'project-a',
+      })
+      expect(
+        await db.selectFrom('link_publications').selectAll().execute(),
+      ).toEqual(publications)
+      expect(await db.selectFrom('events').selectAll().execute()).toEqual(
+        events,
+      )
+      expect(
+        await db.selectFrom('shareable_grants').selectAll().execute(),
+      ).toEqual([])
+      expect(
+        await db.selectFrom('link_publication_attempts').selectAll().execute(),
+      ).toEqual([])
+    },
+  )
+
+  test.each([false, true])(
+    'link edit to home checks live membership: removed=%s',
+    async (removed) => {
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>source</p>'),
+        'project',
+        [],
+        'project-a',
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const before = snapshot()
+      sqliteRef.beforeNextBatch = async () => {
+        if (removed)
+          await db
+            .updateTable('workspace_members')
+            .set({ status: 'removed' })
+            .where('user_id', '=', OWNER.id)
+            .execute()
+      }
+      const result = await editShareableSettings(db, OWNER, created.id, {
+        destination: { type: 'inbox' },
+        visibility: 'link',
+      })
+      expect(result.kind).toBe(removed ? 'invalid-destination' : 'ok')
+      if (removed) expect(snapshot()).toEqual(before)
+      else
+        expect(
+          await db
+            .selectFrom('shareables')
+            .select('visibility')
+            .where('id', '=', created.id)
+            .executeTakeFirstOrThrow(),
+        ).toEqual({ visibility: 'link' })
+    },
+  )
+
+  test('home placement converts a concurrent project visibility without restoring the stale link', async () => {
+    const created = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('index.html', '<p>source</p>'),
+      'link',
+      [],
+      'project-a',
+    )
+    if (created.kind !== 'ok') throw new Error('setup failed')
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'project' })
+        .where('id', '=', created.id)
+        .execute()
+    }
+    expect(
+      (
+        await editShareableSettings(db, OWNER, created.id, {
+          title: 'Moved home',
+          destination: { type: 'inbox' },
+        })
+      ).kind,
+    ).toBe('ok')
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['visibility', 'link_expires_at'])
+        .where('id', '=', created.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ visibility: 'private', link_expires_at: null })
+    const event = await db
+      .selectFrom('events')
+      .select('payload')
+      .where('shareable_id', '=', created.id)
+      .where('type', '=', 'visibility_changed')
+      .executeTakeFirstOrThrow()
+    expect(JSON.parse(event.payload!)).toMatchObject({
+      from: 'project',
+      to: 'private',
+    })
+  })
+
+  test.each(['project', 'private', 'workspace', 'link', undefined] as const)(
+    'mixed placement / %s rolls back title, grants and visibility on denial',
+    async (visibility) => {
+      const created = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('index.html', '<p>source</p>'),
+        'private',
+      )
+      if (created.kind !== 'ok') throw new Error('setup failed')
+      const before = snapshot()
+      sqliteRef.beforeNextBatch = async () => {
+        await db
+          .updateTable('project_share_defaults')
+          .set({ role: 'viewer' })
+          .where('id', '=', 'placement-grant')
+          .execute()
+      }
+      const result = await editShareableSettings(db, OWNER, created.id, {
+        destination: { type: 'project', projectId: 'project-a' },
+        title: 'Must roll back',
+        visibility,
+        addEmails: ['viewer@example.com'],
+      })
+      expect(result).toEqual({ kind: 'invalid-destination' })
+      expect(snapshot()).toEqual(before)
+    },
+  )
+
+  test.each([
+    { kind: 'file', revoke: false },
+    { kind: 'file', revoke: true },
+    { kind: 'bundle', revoke: false },
+    { kind: 'bundle', revoke: true },
+  ])(
+    'ordinary external owner version $kind (revoke=$revoke)',
+    async ({ kind, revoke }) => {
+      await seedExternalProject(db)
+      const file = () => htmlFile('index.html', '<p>external owner</p>')
+      let id: string
+      if (kind === 'file') {
+        const created = await uploadShareable(
+          db,
+          OWNER,
+          file(),
+          'private',
+          [],
+          EXT_PROJECT,
+        )
+        if (created.kind !== 'ok') throw new Error(created.kind)
+        id = created.id
+      } else {
+        const started = await beginStaticSiteBundleUploadSession(
+          db,
+          OWNER,
+          EXT_PROJECT,
+        )
+        if (started.kind !== 'ok') throw new Error(started.kind)
+        expect((await started.session.addFile(file())).kind).toBe('ok')
+        const created = await started.session.commit('private')
+        if (created.kind !== 'ok') throw new Error(created.kind)
+        id = created.id
+      }
+      const before = snapshot()
+      const quota = await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', EXT_WS)
+        .executeTakeFirstOrThrow()
+      const notifications =
+        artifactLiveMock.notifyVersionChanged.mock.calls.length
+      let intercepted = false
+      sqliteRef.beforeNextBatch = async () => {
+        intercepted = true
+        if (revoke)
+          await db
+            .updateTable('workspaces')
+            .set({ external_posting_enabled: 0 })
+            .where('id', '=', EXT_WS)
+            .execute()
+      }
+      let result: { kind: string }
+      if (kind === 'file')
+        result = await createVersion({
+          db,
+          user: OWNER,
+          shareableId: id,
+          file: file(),
+        })
+      else {
+        const started = await beginStaticSiteBundleVersionUploadSession(
+          db,
+          OWNER,
+          id,
+          null,
+        )
+        if (started.kind !== 'ok') throw new Error(started.kind)
+        expect((await started.session.addFile(file())).kind).toBe('ok')
+        result = await started.session.commitVersion()
+      }
+      expect(intercepted).toBe(true)
+      expect(result.kind).toBe(revoke ? 'invalid-container' : 'ok')
+      if (revoke) {
+        expect(snapshot()).toEqual(before)
+        expect(
+          await db
+            .selectFrom('workspaces')
+            .select('storage_used_bytes')
+            .where('id', '=', EXT_WS)
+            .executeTakeFirstOrThrow(),
+        ).toEqual(quota)
+        expect(artifactLiveMock.notifyVersionChanged.mock.calls.length).toBe(
+          notifications,
+        )
+        expect(
+          storageMock.deleteArtifact.mock.calls.length +
+            storageMock.deleteArtifacts.mock.calls.length +
+            storageMock.deleteArtifactsByPrefix.mock.calls.length,
+        ).toBeGreaterThan(0)
+      }
+    },
+  )
+
+  test.each(['file', 'bundle'] as const)(
+    'external policy revocation denies %s create and cleans up',
+    async (kind) => {
+      await seedExternalProject(db)
+      const before = snapshot()
+      sqliteRef.beforeNextBatch = async () => {
+        await db
+          .updateTable('workspaces')
+          .set({ external_posting_enabled: 0 })
+          .where('id', '=', EXT_WS)
+          .execute()
+      }
+      let result: { kind: string }
+      if (kind === 'file')
+        result = await uploadShareable(
+          db,
+          OWNER,
+          htmlFile('index.html', '<p>external</p>'),
+          'private',
+          [],
+          EXT_PROJECT,
+        )
+      else {
+        const started = await beginStaticSiteBundleUploadSession(
+          db,
+          OWNER,
+          EXT_PROJECT,
+        )
+        if (started.kind !== 'ok') throw new Error('begin failed')
+        await started.session.addFile(htmlFile('index.html', '<p>external</p>'))
+        result = await started.session.commit('private')
+      }
+      expect(result).toEqual({ kind: 'invalid-container' })
+      expect(snapshot()).toEqual(before)
+      expect(
+        storageMock.deleteArtifact.mock.calls.length +
+          storageMock.deleteArtifacts.mock.calls.length +
+          storageMock.deleteArtifactsByPrefix.mock.calls.length,
+      ).toBeGreaterThan(0)
     },
   )
 })

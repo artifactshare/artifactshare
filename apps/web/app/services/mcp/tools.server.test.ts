@@ -3945,6 +3945,23 @@ describe('headless publish wiring', () => {
     expect(byName.get('Board deck')?.description).toBeNull()
   })
 
+  test('list_projects excludes private destinations without placement authority and retains an authorized control', async () => {
+    await seedUser(db, { id: 'other-poster', workspaceId: 'ws-a' })
+    await createTestProject(db, 'ws-a', 'other-poster', {
+      name: 'Unavailable destination',
+      description: null,
+      baseVisibility: 'private',
+    })
+    await createTestProject(db, 'ws-a', 'owner-1', {
+      name: 'Available destination',
+      description: null,
+      baseVisibility: 'private',
+    })
+    expect(
+      listProjects(await callTool(db, 'list_projects')).map((p) => p.name),
+    ).toEqual(['Available destination'])
+  })
+
   test('list_projects omits archived projects', async () => {
     await createTestProject(db, 'ws-a', 'owner-1', {
       name: 'Active',

@@ -31,7 +31,12 @@ export type ResolveArtifactKeyResult =
 
 export async function resolveArtifactKey(
   db: Kysely<DB>,
-  user: { id: string; emailVerified: boolean; workspaceId: string },
+  user: {
+    id: string
+    email?: string | null
+    emailVerified: boolean
+    workspaceId: string
+  },
   requestedContainerId: string | null,
   stableKey: string,
   expected: ArtifactKeyKindGroup,
@@ -66,7 +71,7 @@ export async function resolveArtifactKey(
 
   if (
     row.shareable_container_id !== row.key_container_id ||
-    row.shareable_workspace_id !== user.workspaceId ||
+    row.shareable_workspace_id !== destination.workspaceId ||
     row.shareable_owner_user_id !== user.id
   ) {
     return { kind: 'key-target-moved' }

@@ -1,3 +1,6 @@
+import { sql } from 'kysely'
+import { withDb } from './db.server'
+import { projectPlacementSql } from './projects.server'
 import { env } from 'cloudflare:workers'
 import type { SessionUser } from '~/lib/user'
 import { nowIso } from '~/lib/datetime'
@@ -127,62 +130,45 @@ export async function listProjectCandidates(input: {
   if (PROJECT_CANDIDATE_PAGE_SIZE <= PROJECT_CANDIDATE_SEARCH_THRESHOLD) {
     throw new Error('Project candidate page size must exceed search threshold')
   }
-  const permission =
-    purpose === 'agent-approval'
-      ? `AND (
-        c.base_visibility = 'workspace'
-        OR EXISTS (
-          SELECT 1 FROM project_share_defaults psd
-          WHERE psd.project_container_id = c.id
-            AND lower(psd.email) = lower(?)
-            AND psd.role IN ('contributor', 'manager')
-        )
-      )`
-      : ''
-  const search = query ? `AND instr(lower(c.name), lower(?)) > 0` : ''
   const historicalPreferredProjectId = cursor
     ? cursor.preferredProjectId
     : await findPreferredProjectId(user, purpose)
-  const preferredProject = cursor
-    ? null
-    : await findEligibleProject({
-        user,
-        purpose,
-        query,
-        projectId: historicalPreferredProjectId,
-      })
-  const preferredProjectId = cursor
-    ? historicalPreferredProjectId
-    : (preferredProject?.id ?? null)
-  const excludePreferred = preferredProjectId ? 'AND c.id <> ?' : ''
-  const seek = cursor
-    ? `AND (
-        c.name COLLATE NOCASE > ? COLLATE NOCASE
-        OR (c.name COLLATE NOCASE = ? COLLATE NOCASE AND c.id > ?)
-      )`
-    : ''
-  const bindings: unknown[] = [user.workspaceId]
-  if (purpose === 'agent-approval') bindings.push(user.email)
-  if (query) bindings.push(query)
-  if (preferredProjectId) bindings.push(preferredProjectId)
-  if (cursor) bindings.push(cursor.name, cursor.name, cursor.id)
-  bindings.push(PROJECT_CANDIDATE_PAGE_SIZE + 1)
-  const result = await env.DB.prepare(
-    `SELECT c.id, c.name, c.base_visibility, c.updated_at
-       FROM artifact_containers c
-      WHERE c.workspace_id = ? AND c.kind = 'project' AND c.archived_at IS NULL
-        ${permission} ${search} ${excludePreferred} ${seek}
-      ORDER BY c.name COLLATE NOCASE, c.id
-      LIMIT ?`,
-  )
-    .bind(...bindings)
-    .all<{
-      id: string
-      name: string
-      base_visibility: 'workspace' | 'private'
-      updated_at: string
-    }>()
-  const rows = result.results
+  const eligiblePreferredProject = await findEligibleProject({
+    user,
+    purpose,
+    query,
+    projectId: historicalPreferredProjectId,
+  })
+  const preferredProject = cursor ? null : eligiblePreferredProject
+  const preferredProjectId = eligiblePreferredProject?.id ?? null
+  const rows = await withDb((db) => {
+    let candidates = db
+      .selectFrom('artifact_containers as c')
+      .select(['c.id', 'c.name', 'c.base_visibility', 'c.updated_at'])
+      .where('c.workspace_id', '=', user.workspaceId)
+      .where(
+        projectPlacementSql(
+          user,
+          sql.ref('c.id'),
+          purpose === 'agent-approval',
+        ),
+      )
+    if (query)
+      candidates = candidates.where(
+        sql<boolean>`instr(lower(c.name), lower(${query})) > 0`,
+      )
+    if (preferredProjectId)
+      candidates = candidates.where('c.id', '!=', preferredProjectId)
+    if (cursor)
+      candidates =
+        candidates.where(sql<boolean>`(c.name COLLATE NOCASE > ${cursor.name} COLLATE NOCASE
+      OR (c.name COLLATE NOCASE = ${cursor.name} COLLATE NOCASE AND c.id > ${cursor.id}))`)
+    return candidates
+      .orderBy(sql`c.name COLLATE NOCASE`)
+      .orderBy('c.id')
+      .limit(PROJECT_CANDIDATE_PAGE_SIZE + 1)
+      .execute()
+  })
   // Keep the preferred project in the legacy projects array so browser tabs
   // running the previous client bundle can still select it across a deploy.
   // The current client deduplicates it when prepending preferredProject.
@@ -262,35 +248,25 @@ async function findEligibleProject(input: {
 }): Promise<ProjectCandidate | null> {
   const { user, purpose, query, projectId } = input
   if (!projectId) return null
-  const permission =
-    purpose === 'agent-approval'
-      ? `AND (
-        c.base_visibility = 'workspace'
-        OR EXISTS (
-          SELECT 1 FROM project_share_defaults psd
-          WHERE psd.project_container_id = c.id
-            AND lower(psd.email) = lower(?)
-            AND psd.role IN ('contributor', 'manager')
-        )
-      )`
-      : ''
-  const search = query ? `AND instr(lower(c.name), lower(?)) > 0` : ''
-  const bindings: unknown[] = [projectId, user.workspaceId]
-  if (purpose === 'agent-approval') bindings.push(user.email)
-  if (query) bindings.push(query)
-  const row = await env.DB.prepare(
-    `SELECT c.id, c.name, c.base_visibility, c.updated_at
-       FROM artifact_containers c
-      WHERE c.id = ? AND c.workspace_id = ? AND c.kind = 'project'
-        AND c.archived_at IS NULL ${permission} ${search}`,
-  )
-    .bind(...bindings)
-    .first<{
-      id: string
-      name: string
-      base_visibility: 'workspace' | 'private'
-      updated_at: string
-    }>()
+  const row = await withDb((db) => {
+    let candidate = db
+      .selectFrom('artifact_containers as c')
+      .select(['c.id', 'c.name', 'c.base_visibility', 'c.updated_at'])
+      .where('c.id', '=', projectId)
+      .where('c.workspace_id', '=', user.workspaceId)
+      .where(
+        projectPlacementSql(
+          user,
+          sql.ref('c.id'),
+          purpose === 'agent-approval',
+        ),
+      )
+    if (query)
+      candidate = candidate.where(
+        sql<boolean>`instr(lower(c.name), lower(${query})) > 0`,
+      )
+    return candidate.executeTakeFirst()
+  })
   return row
     ? {
         id: row.id,

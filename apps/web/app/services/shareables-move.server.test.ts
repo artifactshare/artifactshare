@@ -2,6 +2,7 @@ import type { CliAuthority } from '~/services/cli-authority.server'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { projectPlacementBrowserFixture } from '~/test/project-placement-browser-fixture'
 import type { DB } from '~/types/db'
 
 // moveShareableContainer / listMoveDestinations never touch the Workers env, but
@@ -27,6 +28,16 @@ const OTHER = {
   emailVerified: true,
 }
 const ADMIN = { id: 'u-admin', workspaceId: 'ws-a', email: 'admin@example.com' }
+
+test('browser move fixture filters real destinations and retains its authorized control', async () => {
+  for (const allowOther of [false, true]) {
+    const result = await projectPlacementBrowserFixture(allowOther)
+    if (result.kind !== 'ok') throw new Error('missing destinations')
+    expect(
+      result.projects.map((destination) => destination.containerId).sort(),
+    ).toEqual(allowOther ? ['allowed', 'unavailable'] : ['allowed'])
+  }
+})
 
 describe('moveShareableContainer', () => {
   let db: Kysely<DB>
@@ -58,6 +69,63 @@ describe('moveShareableContainer', () => {
       )
     },
   )
+
+  test('source ownership does not expose or authorize another member’s private destination', async () => {
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private', created_by_id: OTHER.id })
+      .where('id', '=', 'project-c')
+      .execute()
+    const listed = await listMoveDestinations(db, OWNER, 's1')
+    if (listed.kind !== 'ok') throw new Error('expected destinations')
+    expect(listed.projects.map((p) => p.containerId)).toContain('project-a')
+    expect(listed.projects.map((p) => p.containerId)).not.toContain('project-c')
+    expect(
+      await moveShareableContainer(db, OWNER, 's1', {
+        type: 'project',
+        projectId: 'project-c',
+      }),
+    ).toEqual(
+      await moveShareableContainer(db, OWNER, 's1', {
+        type: 'project',
+        projectId: 'unknown',
+      }),
+    )
+    expect(await containerOf(db, 's1')).toBe('inbox-owner')
+    await db
+      .insertInto('project_share_defaults')
+      .values({
+        id: 'placement-grant',
+        project_container_id: 'project-c',
+        email: OWNER.email,
+        role: 'contributor',
+        created_by_id: OTHER.id,
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    const allowed = await listMoveDestinations(db, OWNER, 's1')
+    if (allowed.kind !== 'ok') throw new Error('expected destinations')
+    expect(allowed.projects.map((p) => p.containerId)).toContain('project-c')
+    expect(
+      (
+        await moveShareableContainer(db, OWNER, 's1', {
+          type: 'project',
+          projectId: 'project-c',
+        })
+      ).kind,
+    ).toBe('ok')
+    await db
+      .deleteFrom('project_share_defaults')
+      .where('id', '=', 'placement-grant')
+      .execute()
+    expect(
+      await moveShareableContainer(db, OWNER, 's1', {
+        type: 'project',
+        projectId: 'project-c',
+      }),
+    ).toEqual({ kind: 'invalid-destination' })
+  })
 
   test('owner moves a shareable from inbox into a project', async () => {
     const result = await moveShareableContainer(db, OWNER, 's1', {

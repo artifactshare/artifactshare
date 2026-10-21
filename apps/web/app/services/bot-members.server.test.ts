@@ -112,6 +112,90 @@ afterEach(async () => {
 })
 
 describe('createWorkspaceBot', () => {
+  test.each(['free', 'plus', 'team'] as const)(
+    'another creator private bot destination on %s',
+    async (plan) => {
+      seedUser(sqlite, 'creator')
+      seedProject('private', { visibility: 'private' })
+      sqlite
+        .prepare(
+          "UPDATE artifact_containers SET created_by_id = 'creator' WHERE id = 'private'",
+        )
+        .run()
+      sqlite
+        .prepare("UPDATE workspaces SET plan = ? WHERE id = 'ws1'")
+        .run(plan)
+      const result = await createWorkspaceBot(db, ADMIN, {
+        name: 'Bot',
+        projectId: 'private',
+      })
+      expect(result.kind).toBe(
+        plan === 'team' ? 'ok' : 'bot-destination-invalid',
+      )
+      expect(
+        sqlite
+          .prepare("SELECT count(*) AS n FROM users WHERE kind = 'bot'")
+          .get(),
+      ).toEqual({ n: plan === 'team' ? 1 : 0 })
+    },
+  )
+
+  test.each(['placement', 'admin', 'demoted-admin'] as const)(
+    'bot creation rechecks %s at INSERT',
+    async (change) => {
+      seedProject('private', { visibility: 'private' })
+      seedUser(sqlite, 'creator')
+      if (change === 'demoted-admin')
+        sqlite
+          .prepare(
+            "UPDATE workspace_members SET role = 'admin' WHERE user_id = 'admin1'",
+          )
+          .run()
+      d1BatchHook.callback = () => {
+        d1BatchHook.callback = null
+        if (change === 'placement')
+          sqlite
+            .prepare(
+              "UPDATE artifact_containers SET created_by_id = 'creator' WHERE id = 'private'",
+            )
+            .run()
+        else
+          sqlite
+            .prepare(
+              "UPDATE workspace_members SET role = 'member' WHERE user_id = 'admin1'",
+            )
+            .run()
+      }
+      const result = await createWorkspaceBot(db, ADMIN, {
+        name: 'Bot',
+        projectId: 'private',
+      })
+      expect(result.kind).toBe(
+        change === 'placement' ? 'bot-destination-invalid' : 'forbidden',
+      )
+      if (change !== 'placement')
+        expect(
+          sqlite
+            .prepare(
+              "SELECT role FROM workspace_members WHERE user_id = 'admin1'",
+            )
+            .get(),
+        ).toEqual({ role: 'member' })
+      expect(
+        sqlite
+          .prepare("SELECT count(*) AS n FROM users WHERE kind = 'bot'")
+          .get(),
+      ).toEqual({ n: 0 })
+      expect(
+        sqlite
+          .prepare(
+            "SELECT count(*) AS n FROM audit_events WHERE action = 'bot.create'",
+          )
+          .get(),
+      ).toEqual({ n: 0 })
+    },
+  )
+
   test('creates the bot, member, profile, family, credential, and audit', async () => {
     seedProject('proj1')
     const result = await createWorkspaceBot(db, ADMIN, {

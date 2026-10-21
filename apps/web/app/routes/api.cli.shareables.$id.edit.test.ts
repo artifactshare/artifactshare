@@ -354,6 +354,28 @@ describe('owner version retention API', () => {
     } as never)
   }
 
+  test('unknown and unauthorized destinations have identical errors with no edits', async () => {
+    await useRealEdit()
+    fixture.sqlite.exec(
+      "INSERT INTO users (id, email, name, created_at, updated_at, workspace_id) VALUES ('other', 'other@example.com', 'Other', '2026-09-01', '2026-09-01', 'ws1'); UPDATE artifact_containers SET base_visibility = 'private', created_by_id = 'other' WHERE id = 'prj1'",
+    )
+    const before = snapshot()
+    const responses = []
+    for (const projectId of ['missing', 'prj1']) {
+      const response = await editRequest({
+        destination: { project_id: projectId },
+        title: 'Changed',
+      })
+      expect(response.status).toBe(400)
+      responses.push(await response.json())
+      expect(snapshot()).toEqual(before)
+    }
+    expect(responses[0]).toEqual(responses[1])
+    expect(responses[0]).toMatchObject({
+      error: { code: 'invalid-destination' },
+    })
+  })
+
   function snapshot() {
     const tables = fixture.sqlite
       .prepare(

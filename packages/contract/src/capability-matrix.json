@@ -2087,7 +2087,7 @@
           "contract_identifiers": {
             "mcp_name": ["'list_projects'"],
             "mcp_description": [
-              "List the projects in your workspace, each with its id, name, and sharing scope. Sharing scope is \"wo"
+              "List the active projects in your workspace that you can post into"
             ],
             "mcp_input": [],
             "mcp_output": ["projects"],

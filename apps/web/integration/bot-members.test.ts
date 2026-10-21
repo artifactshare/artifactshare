@@ -597,7 +597,10 @@ describe('bot member lifecycle on real D1', () => {
     expect(grants?.c).toBe(0)
   })
 
-  test('creation race window: an archived destination is reclaimed via the stop path', async () => {
+  test('creation race window: an archived destination denies creation atomically', async () => {
+    const auditCountBefore = await rawDb
+      .prepare('SELECT COUNT(*) AS c FROM audit_events')
+      .first<{ c: number }>()
     envRef.beforeNextBatch = async () => {
       // The destination is archived after the pre-check but before the batch.
       await rawDb
@@ -611,27 +614,29 @@ describe('bot member lifecycle on real D1', () => {
       projectId: 'proj1',
     })
     expect(result.kind).toBe('bot-destination-invalid')
-    // Defined outcome: bot.create and bot.stop remain as a pair, the stopped
-    // bot row stays, and it cannot authenticate (no active family).
+    const auditCountAfter = await rawDb
+      .prepare('SELECT COUNT(*) AS c FROM audit_events')
+      .first<{ c: number }>()
+    expect(auditCountAfter?.c).toBe(auditCountBefore?.c)
+    // The final INSERT denies creation atomically: no bot or audit rows
+    // remain, and no active family needs reclaiming.
     const audits = await rawDb
       .prepare(
         "SELECT action, COUNT(*) AS c FROM audit_events WHERE action IN ('bot.create','bot.stop') GROUP BY action",
       )
       .all<{ action: string; c: number }>()
-    expect(
-      Object.fromEntries(audits.results.map((row) => [row.action, row.c])),
-    ).toEqual({ 'bot.create': 1, 'bot.stop': 1 })
-    const bot = await rawDb
-      .prepare("SELECT bot_stopped_at FROM users WHERE kind = 'bot'")
-      .first<{ bot_stopped_at: string | null }>()
-    expect(bot?.bot_stopped_at).not.toBeNull()
+    expect(audits.results).toEqual([])
+    const bots = await rawDb
+      .prepare("SELECT COUNT(*) AS c FROM users WHERE kind = 'bot'")
+      .first<{ c: number }>()
+    expect(bots?.c).toBe(0)
     const activeFamilies = await rawDb
       .prepare(
         "SELECT COUNT(*) AS c FROM cli_family_authorities WHERE status = 'active'",
       )
       .first<{ c: number }>()
     expect(activeFamilies?.c).toBe(0)
-    // A reclaimed (stopped) bot does not count against the cap.
+    // The denied creation leaves the name and capacity available for retry.
     await rawDb
       .prepare(
         "UPDATE artifact_containers SET archived_at = NULL WHERE id = 'proj1'",

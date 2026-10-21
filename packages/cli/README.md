@@ -82,7 +82,7 @@ project's Slack channel must be reauthorized.
 | `artifacts get <target>`                                           | Read a file's content and metadata back                                                                                                                                   |
 | `download <target>`                                                | Save a file or a whole static site locally                                                                                                                                |
 | `comments list / post / edit / resolve / reopen / delete <target>` | Read, write, edit, resolve, reopen, and permanently delete comments                                                                                                       |
-| `projects list / create / edit`                                    | List, create, and edit project destinations and audience                                                                                                                  |
+| `projects list / create / edit`                                    | List eligible project destinations; create and edit projects and audience                                                                                                 |
 | `move <target>`                                                    | Move an existing file into a project or back home; `edit` is preferred for new automation                                                                                 |
 | `preview <file>` (alias of `preview start`)                        | Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded                                         |
 | `preview next` / `preview done` / `preview reply` / `preview stop` | Agent loop for a live preview: poll submitted annotation batches, report fixed/skipped outcomes from stdin, reply into a thread, and stop the session                     |
@@ -171,6 +171,8 @@ saved on disk. Sharing a snapshot happens only from the page's own share
 dialog, and local annotations are not included in what is shared.
 
 ## Where shared files are delivered
+
+Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Agents and bots still require their fixed project and a verified contributor/manager grant for private projects; publisher credentials cannot select projects.
 
 Posting to a project delivers to the audience defined by that project. With no destination, `share` posts to home. Choose the home audience by purpose:
 

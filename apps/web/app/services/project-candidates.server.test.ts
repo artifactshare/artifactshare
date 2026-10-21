@@ -24,7 +24,7 @@ const {
 
 const USER: SessionUser = {
   id: 'u1',
-  email: 'user@example.com',
+  email: 'u1@example.com',
   emailVerified: true,
   name: 'User',
   image: null,
@@ -142,7 +142,7 @@ describe('project candidate search', () => {
     sqlite
       .prepare(`INSERT INTO project_share_defaults (
       id, project_container_id, email, role, created_by_id, created_at, updated_at
-    ) VALUES ('grant-1', 'project-24', 'USER@example.com', 'contributor', 'u1',
+    ) VALUES ('grant-1', 'project-24', 'U1@example.com', 'contributor', 'u1',
       '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`)
       .run()
     const shared = await listProjectCandidates({
@@ -152,6 +152,72 @@ describe('project candidate search', () => {
       cursor: null,
     })
     expect(shared.projects.map((project) => project.id)).toEqual(['project-24'])
+  })
+
+  test('bot destinations exclude another creator’s private project on free and plus', async () => {
+    seedUser(sqlite, 'u2')
+    sqlite
+      .prepare(
+        "UPDATE artifact_containers SET created_by_id = 'u2' WHERE id = 'project-24'",
+      )
+      .run()
+    for (const plan of ['free', 'plus']) {
+      sqlite.prepare('UPDATE workspaces SET plan = ?').run(plan)
+      const page = await listProjectCandidates({
+        user: USER,
+        purpose: 'bot-destination',
+        query: '',
+        cursor: null,
+      })
+      expect(page.projects.map((p) => p.id)).toContain('project-00')
+      const hidden = await listProjectCandidates({
+        user: USER,
+        purpose: 'bot-destination',
+        query: 'Project 24',
+        cursor: null,
+      })
+      expect(hidden).toEqual({
+        projects: [],
+        preferredProject: null,
+        nextCursor: null,
+      })
+    }
+  })
+
+  test('pagination drops a preferred destination after its grant is revoked', async () => {
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults (id, project_container_id, email, role, created_by_id, created_at, updated_at)
+      VALUES ('grant-page', 'project-24', 'u1@example.com', 'contributor', 'u1', '2026-01-01', '2026-01-01')`)
+      .run()
+    const cursor = {
+      purpose: 'agent-approval' as const,
+      query: '',
+      name: 'Project 00',
+      id: 'project-00',
+      preferredProjectId: 'project-24',
+    }
+    const allowed = await listProjectCandidates({
+      user: USER,
+      purpose: 'agent-approval',
+      query: '',
+      cursor,
+    })
+    expect(
+      decodeProjectCandidateCursor(allowed.nextCursor, 'agent-approval', ''),
+    ).toMatchObject({ preferredProjectId: 'project-24' })
+    sqlite
+      .prepare("DELETE FROM project_share_defaults WHERE id = 'grant-page'")
+      .run()
+    const revoked = await listProjectCandidates({
+      user: USER,
+      purpose: 'agent-approval',
+      query: '',
+      cursor,
+    })
+    expect(revoked.projects.map((p) => p.id)).not.toContain('project-24')
+    expect(
+      decodeProjectCandidateCursor(revoked.nextCursor, 'agent-approval', ''),
+    ).toMatchObject({ preferredProjectId: null })
   })
 
   test('limits a previous browser bundle to the fixed requested project', async () => {

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Show only authorized project destinations and enforce live placement permissions when uploads, moves, edits, and agent updates commit. Preserve existing contents and clean up uploads if destination access is revoked.
+
 - Declare the optional `deleted_message_id` in the MCP `delete_comment` output schema to match existing deletion responses.
 
 ## 0.16.0 - 2026-10-20

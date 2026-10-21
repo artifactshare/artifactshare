@@ -1,5 +1,6 @@
+import { resolveArtifactKey } from './artifact-keys.server'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Kysely } from 'kysely'
+import { sql, type Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -17,6 +18,8 @@ import {
   getProjectContainerWorkspaceId,
   lookupProjectShareDefaultUsers,
   resolveUploadContainer,
+  listPlacementProjects,
+  projectPlacementSql,
   saveProjectShareDefaults as saveProjectShareDefaultsService,
   unarchiveProjectContainer,
   updateProjectContainer,
@@ -2433,3 +2436,202 @@ async function seedShareDefaultForProject(
     })
     .execute()
 }
+
+describe('live destination placement policy', () => {
+  let db: Kysely<DB>
+  const now = '2026-09-17T00:00:00.000Z'
+  const actor = {
+    id: 'u2',
+    email: 'poster@example.com',
+    emailVerified: true,
+    workspaceId: 'ws-a',
+  }
+  beforeEach(async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    await seedWorkspace(db)
+    await seedProject(db)
+    await seedUser(db, { id: actor.id, email: actor.email })
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'private' })
+      .where('id', '=', 'project-a')
+      .execute()
+  })
+  afterEach(async () => {
+    await db.destroy()
+  })
+
+  test.each([
+    ['creator', 'free', null, null, true, false, false, true],
+    ['team owner', 'team', 'owner', null, true, false, false, true],
+    ['team admin', 'team', 'admin', null, true, false, false, true],
+    ['free owner', 'free', 'owner', null, true, false, false, false],
+    ['plus admin', 'plus', 'admin', null, true, false, false, false],
+    ['unrelated', 'team', 'member', null, true, false, false, false],
+    ['viewer', 'team', 'member', 'viewer', true, false, false, false],
+    ['contributor', 'free', 'member', 'contributor', true, false, false, true],
+    ['manager', 'plus', 'member', 'manager', true, false, false, true],
+    ['unverified', 'team', 'member', 'contributor', false, false, false, false],
+    [
+      'removed contributor',
+      'team',
+      'member',
+      'contributor',
+      true,
+      true,
+      false,
+      false,
+    ],
+    ['removed creator', 'team', 'member', null, true, true, false, false],
+    ['archived creator', 'team', null, null, true, false, true, false],
+    ['archived admin', 'team', 'admin', null, true, false, true, false],
+  ] as const)(
+    '%s: discovery and upload agree',
+    async (
+      name,
+      plan,
+      memberRole,
+      grantRole,
+      verified,
+      removed,
+      archived,
+      allowed,
+    ) => {
+      await db
+        .updateTable('workspaces')
+        .set({ plan })
+        .where('id', '=', 'ws-a')
+        .execute()
+      if (name.includes('creator'))
+        await db
+          .updateTable('artifact_containers')
+          .set({ created_by_id: actor.id })
+          .where('id', '=', 'project-a')
+          .execute()
+      if (archived)
+        await db
+          .updateTable('artifact_containers')
+          .set({ archived_at: now })
+          .where('id', '=', 'project-a')
+          .execute()
+      await db
+        .updateTable('users')
+        .set({ email_verified: verified ? 1 : 0 })
+        .where('id', '=', actor.id)
+        .execute()
+      if (memberRole)
+        await db
+          .insertInto('workspace_members')
+          .values({
+            workspace_id: 'ws-a',
+            user_id: actor.id,
+            role: memberRole,
+            status: removed ? 'removed' : 'active',
+            created_at: now,
+            updated_at: now,
+          })
+          .execute()
+      if (grantRole)
+        await seedShareDefault(db, {
+          email: actor.email.toUpperCase(),
+          role: grantRole,
+        })
+      expect(
+        (await resolveUploadContainer(db, actor, 'project-a', now)).kind,
+      ).toBe(allowed ? 'ok' : 'invalid-container')
+      expect(
+        (await listPlacementProjects(db, actor.workspaceId, actor)).map(
+          (p) => p.id,
+        ),
+      ).toEqual(allowed ? ['project-a'] : [])
+      if (!allowed)
+        expect(
+          await resolveUploadContainer(db, actor, 'project-a', now),
+        ).toEqual(await resolveUploadContainer(db, actor, 'unknown', now))
+      const restricted = await db
+        .selectNoFrom(
+          sql<number>`CASE WHEN ${projectPlacementSql(actor, 'project-a', true)} THEN 1 ELSE 0 END`.as(
+            'allowed',
+          ),
+        )
+        .executeTakeFirstOrThrow()
+      expect(restricted.allowed).toBe(allowed && grantRole !== null ? 1 : 0)
+    },
+  )
+
+  test('stable-key resolution cannot authorize its destination', async () => {
+    expect(
+      await resolveArtifactKey(
+        db,
+        actor,
+        'project-a',
+        'stable-key',
+        'single_file',
+      ),
+    ).toEqual({ kind: 'invalid-container' })
+    await seedShareDefault(db, { email: actor.email, role: 'contributor' })
+    expect(
+      await resolveArtifactKey(
+        db,
+        actor,
+        'project-a',
+        'stable-key',
+        'single_file',
+      ),
+    ).toEqual({ kind: 'create', containerId: 'project-a' })
+    await db
+      .updateTable('users')
+      .set({ email_verified: 0 })
+      .where('id', '=', actor.id)
+      .execute()
+    expect(
+      await resolveArtifactKey(
+        db,
+        actor,
+        'project-a',
+        'stable-key',
+        'single_file',
+      ),
+    ).toEqual({ kind: 'invalid-container' })
+  })
+
+  test('a live email change cannot claim the old contributor grant', async () => {
+    await seedShareDefault(db, { email: actor.email, role: 'contributor' })
+    expect(
+      (await resolveUploadContainer(db, actor, 'project-a', now)).kind,
+    ).toBe('ok')
+    await db
+      .updateTable('users')
+      .set({ email: 'changed@example.com' })
+      .where('id', '=', actor.id)
+      .execute()
+    expect(await resolveUploadContainer(db, actor, 'project-a', now)).toEqual({
+      kind: 'invalid-container',
+    })
+  })
+
+  test('workspace-public placement still requires non-revoked membership', async () => {
+    await db
+      .updateTable('artifact_containers')
+      .set({ base_visibility: 'workspace' })
+      .where('id', '=', 'project-a')
+      .execute()
+    expect(
+      (await resolveUploadContainer(db, actor, 'project-a', now)).kind,
+    ).toBe('ok')
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: actor.id,
+        role: 'member',
+        status: 'removed',
+        created_at: now,
+        updated_at: now,
+      })
+      .execute()
+    expect(await resolveUploadContainer(db, actor, 'project-a', now)).toEqual({
+      kind: 'invalid-container',
+    })
+  })
+})

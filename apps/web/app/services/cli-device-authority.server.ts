@@ -1,3 +1,7 @@
+import { sql } from 'kysely'
+import { withDb } from './db.server'
+import { runD1BatchWithResults } from '~/lib/d1-batch.server'
+import { projectPlacementSql } from './projects.server'
 import {
   PublisherClientNameSchema,
   PublisherApprovalChoiceSchema,
@@ -144,30 +148,67 @@ export async function attachAgentBootstrapAuthority(
   const bootstrapExpiry = new Date(
     Math.min(new Date(row.expires_at).getTime(), Date.now() + 10 * 60 * 1000),
   ).toISOString()
-  const results = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO agent_profiles (id, user_id, workspace_id, created_at)
-       VALUES (?, ?, ?, ?)`,
-    ).bind(profileId, row.user_id, row.workspace_id, now),
-    env.DB.prepare(
-      `INSERT INTO cli_session_authorities (
-         session_id, family_id, kind, preset, workspace_id, project_id,
-         agent_profile_id, expires_at, bearer_only, created_at
-       )
-       SELECT ?, NULL, 'bootstrap', 'agent', ?, ?, agent_profiles.id, ?, 1, ?
-         FROM agent_profiles
-        WHERE user_id = ? AND workspace_id = ?`,
-    ).bind(
-      row.session_id,
-      row.workspace_id,
-      intent.selectedProjectId,
-      bootstrapExpiry,
-      now,
-      row.user_id,
-      row.workspace_id,
-    ),
-  ])
-  return results.every((result) => result.success)
+  return withDb(async (db) => {
+    const permission = projectPlacementSql(
+      { id: row.user_id, workspaceId: row.workspace_id },
+      intent.selectedProjectId!,
+      true,
+    )
+    const results = await runD1BatchWithResults(
+      db,
+      db
+        .insertInto('agent_profiles')
+        .orIgnore()
+        .columns(['id', 'user_id', 'workspace_id', 'created_at'])
+        .expression(
+          db
+            .selectNoFrom([
+              sql<string>`${profileId}`.as('id'),
+              sql<string>`${row.user_id}`.as('user_id'),
+              sql<string>`${row.workspace_id}`.as('workspace_id'),
+              sql<string>`${now}`.as('created_at'),
+            ])
+            .where(permission),
+        ),
+      db
+        .insertInto('cli_session_authorities')
+        .columns([
+          'session_id',
+          'family_id',
+          'kind',
+          'preset',
+          'workspace_id',
+          'project_id',
+          'agent_profile_id',
+          'expires_at',
+          'bearer_only',
+          'created_at',
+        ])
+        .expression(
+          db
+            .selectFrom('agent_profiles')
+            .select((eb) => [
+              eb.val(row.session_id).as('session_id'),
+              eb.val(null).as('family_id'),
+              eb.val('bootstrap' as const).as('kind'),
+              eb.val('agent' as const).as('preset'),
+              eb.val(row.workspace_id).as('workspace_id'),
+              eb.val(intent.selectedProjectId).as('project_id'),
+              'id as agent_profile_id',
+              eb.val(bootstrapExpiry).as('expires_at'),
+              eb.val(1).as('bearer_only'),
+              eb.val(now).as('created_at'),
+            ])
+            .where('user_id', '=', row.user_id)
+            .where('workspace_id', '=', row.workspace_id)
+            .where(permission),
+        ),
+    )
+    return (
+      results.every((result) => (result as D1Result).success) &&
+      (results[1] as D1Result).meta.changes === 1
+    )
+  })
 }
 
 export async function revokeSessionToken(sessionToken: string): Promise<void> {
@@ -203,6 +244,7 @@ export async function loadAgentApprovalContext(
   const fixedProject = intent.requestedProjectSelector
     ? await resolveFixedAgentApprovalProject({
         selector: intent.requestedProjectSelector,
+        userId,
         workspaceId,
         email,
       })
@@ -218,68 +260,51 @@ export async function loadAgentApprovalContext(
   }
 }
 
-async function resolveFixedAgentApprovalProject(input: {
+function resolveFixedAgentApprovalProject(input: {
+  userId: string
   selector: string
   workspaceId: string
   email: string
 }): Promise<FixedAgentApprovalProject | null> {
-  const byId = await env.DB.prepare(
-    `SELECT id, name, workspace_id, kind, archived_at, base_visibility, updated_at,
-            CASE WHEN base_visibility = 'workspace' OR EXISTS (
-              SELECT 1 FROM project_share_defaults
-               WHERE project_container_id = artifact_containers.id
-                 AND lower(email) = lower(?)
-                 AND role IN ('contributor', 'manager')
-            ) THEN 1 ELSE 0 END AS eligible
-       FROM artifact_containers
-      WHERE id = ?`,
-  )
-    .bind(input.email, input.selector)
-    .first<{
-      id: string
-      name: string
-      workspace_id: string
-      kind: string
-      archived_at: string | null
-      base_visibility: 'workspace' | 'private'
-      updated_at: string
-      eligible: number
-    }>()
-  if (byId) {
-    return byId.workspace_id === input.workspaceId &&
-      byId.kind === 'project' &&
-      byId.archived_at === null &&
-      byId.eligible === 1
-      ? fixedProjectFromRow(byId)
-      : null
-  }
-
-  const byName = await env.DB.prepare(
-    `SELECT id, name, base_visibility, updated_at
-       FROM artifact_containers
-      WHERE workspace_id = ? AND kind = 'project' AND archived_at IS NULL
-        AND name = ? COLLATE NOCASE
-        AND (
-          base_visibility = 'workspace'
-          OR EXISTS (
-            SELECT 1 FROM project_share_defaults
-             WHERE project_container_id = artifact_containers.id
-               AND lower(email) = lower(?)
-               AND role IN ('contributor', 'manager')
-          )
-        )
-      LIMIT 2`,
-  )
-    .bind(input.workspaceId, input.selector, input.email)
-    .all<{
-      id: string
-      name: string
-      base_visibility: 'workspace' | 'private'
-      updated_at: string
-    }>()
-  return byName.results.length === 1
-    ? fixedProjectFromRow(byName.results[0])
-    : null
+  return withDb(async (db) => {
+    const permission = projectPlacementSql(
+      { id: input.userId, workspaceId: input.workspaceId },
+      sql.ref('artifact_containers.id'),
+      true,
+    )
+    const byId = await db
+      .selectFrom('artifact_containers')
+      .select([
+        'id',
+        'name',
+        'workspace_id',
+        'kind',
+        'archived_at',
+        'base_visibility',
+        'updated_at',
+      ])
+      .select(
+        sql<number>`CASE WHEN ${permission} THEN 1 ELSE 0 END`.as('eligible'),
+      )
+      .where('id', '=', input.selector)
+      .executeTakeFirst()
+    if (byId)
+      return byId.workspace_id === input.workspaceId &&
+        byId.kind === 'project' &&
+        byId.archived_at === null &&
+        byId.eligible === 1
+        ? fixedProjectFromRow(byId)
+        : null
+    const byName = await db
+      .selectFrom('artifact_containers')
+      .select(['id', 'name', 'base_visibility', 'updated_at'])
+      .where('workspace_id', '=', input.workspaceId)
+      .where(sql<boolean>`name = ${input.selector} COLLATE NOCASE`)
+      .where(permission)
+      .limit(2)
+      .execute()
+    return byName.length === 1 ? fixedProjectFromRow(byName[0]) : null
+  })
 }
 
 function fixedProjectFromRow(row: {
@@ -330,39 +355,25 @@ export async function selectAgentApprovalProject(input: {
   ) {
     return false
   }
-  const result = await env.DB.prepare(
-    `UPDATE deviceCode
-        SET selectedProjectId = ?
-      WHERE userCode = ? AND userId = ? AND preset = 'agent'
-        AND status = 'pending' AND expiresAt > ?
-        AND EXISTS (
-          SELECT 1 FROM artifact_containers
-           WHERE artifact_containers.id = ?
-             AND artifact_containers.workspace_id = ?
-             AND artifact_containers.kind = 'project'
-             AND archived_at IS NULL
-             AND (
-               artifact_containers.base_visibility = 'workspace'
-               OR EXISTS (
-                 SELECT 1 FROM project_share_defaults
-                  WHERE project_container_id = artifact_containers.id
-                    AND lower(email) = lower(?)
-                    AND role IN ('contributor', 'manager')
-               )
-             )
-        )`,
-  )
-    .bind(
-      input.projectId,
-      input.userCode,
-      input.userId,
-      nowIso(),
-      input.projectId,
-      input.workspaceId,
-      input.email,
-    )
-    .run()
-  return result.meta.changes === 1
+  return withDb(async (db) => {
+    const result = await db
+      .updateTable('deviceCode')
+      .set({ selectedProjectId: input.projectId })
+      .where('userCode', '=', input.userCode)
+      .where('userId', '=', input.userId)
+      .where('preset', '=', 'agent')
+      .where('status', '=', 'pending')
+      .where('expiresAt', '>', nowIso())
+      .where(
+        projectPlacementSql(
+          { id: input.userId, workspaceId: input.workspaceId },
+          input.projectId,
+          true,
+        ),
+      )
+      .executeTakeFirst()
+    return Number(result.numUpdatedRows) === 1
+  })
 }
 
 export async function clearAgentApprovalProject(input: {

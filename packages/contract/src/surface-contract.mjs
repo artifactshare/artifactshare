@@ -109,7 +109,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'projects list / create / edit',
-    'List, create, and edit project destinations and audience',
+    'List eligible project destinations; create and edit projects and audience',
   ],
   [
     'move <target>',

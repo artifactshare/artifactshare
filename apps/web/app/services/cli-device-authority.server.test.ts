@@ -20,9 +20,23 @@ const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
 
-vi.mock('cloudflare:workers', () => ({
-  env: { DB: createD1MockFromSqliteRef(sqliteRef) },
-}))
+const attachHook = vi.hoisted(() => ({ callback: null as null | (() => void) }))
+vi.mock('cloudflare:workers', () => {
+  const database = createD1MockFromSqliteRef(sqliteRef)
+  return {
+    env: {
+      DB: {
+        ...database,
+        batch: async (statements: Parameters<typeof database.batch>[0]) => {
+          const hook = attachHook.callback
+          attachHook.callback = null
+          hook?.()
+          return database.batch(statements)
+        },
+      },
+    },
+  }
+})
 
 const {
   attachAgentBootstrapAuthority,
@@ -43,6 +57,7 @@ describe('CLI device authorization intent', () => {
   let db: Kysely<DB>
 
   beforeEach(() => {
+    attachHook.callback = null
     authHandlerMock.mockReset()
     sessionUserMock.mockReset()
     sessionUserMock.mockResolvedValue({
@@ -750,6 +765,153 @@ describe('CLI device authorization intent', () => {
       fixedProjectError: true,
     })
   })
+
+  test.each(['allowed', 'unverify', 'downgrade', 'revoke'] as const)(
+    'bootstrap attach rechecks permission inside the commit: %s',
+    async (change) => {
+      sqlite
+        .prepare("UPDATE artifact_containers SET base_visibility = 'private'")
+        .run()
+      sqlite
+        .prepare("UPDATE users SET email_verified = 1 WHERE id = 'u1'")
+        .run()
+      sqlite
+        .prepare(
+          "INSERT INTO project_share_defaults (id, project_container_id, email, role, created_by_id, created_at, updated_at) VALUES ('grant', 'project-1', 'u1@example.com', 'contributor', 'u1', '2026-01-01', '2026-01-01')",
+        )
+        .run()
+      sqlite
+        .prepare(
+          "INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at) VALUES ('s1', 'u1', 'session-1', '2099-01-01', '2026-01-01', '2026-01-01')",
+        )
+        .run()
+      attachHook.callback = () => {
+        if (change === 'unverify')
+          sqlite
+            .prepare("UPDATE users SET email_verified = 0 WHERE id = 'u1'")
+            .run()
+        if (change === 'downgrade')
+          sqlite
+            .prepare("UPDATE project_share_defaults SET role = 'viewer'")
+            .run()
+        if (change === 'revoke')
+          sqlite.prepare('DELETE FROM project_share_defaults').run()
+      }
+      const result = await attachAgentBootstrapAuthority('session-1', {
+        preset: 'agent',
+        deviceName: 'Agent',
+        projectSelector: null,
+        selectedProjectId: 'project-1',
+      })
+      expect(attachHook.callback).toBeNull()
+      expect(result).toBe(change === 'allowed')
+      expect(
+        sqlite
+          .prepare('SELECT count(*) AS n FROM cli_session_authorities')
+          .get(),
+      ).toEqual({ n: change === 'allowed' ? 1 : 0 })
+      expect(
+        sqlite.prepare('SELECT count(*) AS n FROM agent_profiles').get(),
+      ).toEqual({ n: change === 'allowed' ? 1 : 0 })
+    },
+  )
+
+  test.each([
+    'creator',
+    'admin',
+    'contributor',
+    'manager',
+    'unverified',
+    'viewer',
+    'revoked',
+  ])(
+    'private agent selection and bootstrap require a live grant: %s',
+    async (state) => {
+      sqlite
+        .prepare(
+          "UPDATE artifact_containers SET base_visibility = 'private' WHERE id = 'project-1'",
+        )
+        .run()
+      sqlite
+        .prepare("UPDATE users SET email_verified = ? WHERE id = 'u1'")
+        .run(state === 'unverified' ? 0 : 1)
+      if (state === 'admin') {
+        sqlite
+          .prepare(
+            "UPDATE artifact_containers SET created_by_id = NULL WHERE id = 'project-1'",
+          )
+          .run()
+        sqlite
+          .prepare("UPDATE workspaces SET plan = 'team' WHERE id = 'ws1'")
+          .run()
+        sqlite
+          .prepare(
+            "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES ('ws1', 'u1', 'admin', 'active', '2026-01-01', '2026-01-01')",
+          )
+          .run()
+      }
+      if (!['creator', 'admin', 'revoked'].includes(state))
+        sqlite
+          .prepare(
+            "INSERT INTO project_share_defaults (id, project_container_id, email, role, created_by_id, created_at, updated_at) VALUES ('grant', 'project-1', 'u1@example.com', ?, 'u1', '2026-01-01', '2026-01-01')",
+          )
+          .run(
+            state === 'viewer'
+              ? 'viewer'
+              : state === 'manager'
+                ? 'manager'
+                : 'contributor',
+          )
+      const allowed = state === 'contributor' || state === 'manager'
+      await storeDeviceAuthorizationIntent('device-1', {
+        preset: 'agent',
+        deviceName: 'Agent',
+        projectSelector: 'project-1',
+      })
+      expect(
+        (
+          await loadAgentApprovalContext(
+            'ABCD1234',
+            'u1',
+            'ws1',
+            'u1@example.com',
+          )
+        )?.fixedProject?.id ?? null,
+      ).toBe(allowed ? 'project-1' : null)
+      await storeDeviceAuthorizationIntent('device-1', {
+        preset: 'agent',
+        deviceName: 'Agent',
+        projectSelector: null,
+      })
+      expect(
+        await selectAgentApprovalProject({
+          userCode: 'ABCD1234',
+          userId: 'u1',
+          workspaceId: 'ws1',
+          email: 'u1@example.com',
+          projectId: 'project-1',
+        }),
+      ).toBe(allowed)
+      sqlite
+        .prepare(
+          "INSERT INTO sessions (id, user_id, token, expires_at, created_at, updated_at) VALUES ('s1', 'u1', 'session-1', '2099-01-01', '2026-01-01', '2026-01-01')",
+        )
+        .run()
+      expect(
+        await attachAgentBootstrapAuthority('session-1', {
+          preset: 'agent',
+          deviceName: 'Agent',
+          projectSelector: null,
+          selectedProjectId: 'project-1',
+        }),
+      ).toBe(allowed)
+      expect(
+        sqlite
+          .prepare('SELECT count(*) AS n FROM cli_session_authorities')
+          .get(),
+      ).toEqual({ n: allowed ? 1 : 0 })
+    },
+  )
 
   test('binds the selected project and creates a short-lived bootstrap', async () => {
     await storeDeviceAuthorizationIntent('device-1', {

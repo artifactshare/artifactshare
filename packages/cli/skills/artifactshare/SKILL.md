@@ -146,6 +146,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --
 
 ## Audience and visibility settings
 
+Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Agents and bots still require their fixed project and a verified contributor/manager grant for private projects; publisher credentials cannot select projects.
+
 Posting to a project delivers to the audience defined by that project. Without
 a destination, `share` posts to home. Choose the home audience by purpose:
 

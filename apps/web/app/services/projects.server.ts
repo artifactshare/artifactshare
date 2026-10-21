@@ -32,8 +32,14 @@ import {
   workspaceAccessRevokedSql,
 } from '~/modules/access'
 import { normalizePlan, projectLimitForPlan } from '~/lib/billing-plan.server'
-import { isExternalPostingAllowedForWorkspace } from '~/lib/project-external-posting.server'
+import {
+  externalPostingAllowedSql,
+  isExternalPostingAllowedForWorkspace,
+} from '~/lib/project-external-posting.server'
 import { resolveGrantUsersByEmail } from '~/services/grant-users.server'
+import { cliWriteAuthority } from '~/lib/cli-authority-policy'
+import type { CliAuthority } from './cli-authority.server'
+import { publisherAuthoritySql } from './publisher-scope.server'
 import type { DB } from '~/types/db'
 
 export const INBOX_CONTAINER_NAME = '未整理'
@@ -2199,6 +2205,7 @@ async function resolveCrossWorkspaceProjectContainer(
     .where('c.kind', '=', 'project')
     .where('c.archived_at', 'is', null)
     .where('c.workspace_id', '!=', user.workspaceId)
+    .where(projectPlacementSql(user, sql.ref('c.id')))
     .where(({ exists, selectFrom }) =>
       exists(
         selectFrom('project_share_defaults as d')
@@ -2224,6 +2231,122 @@ async function resolveCrossWorkspaceProjectContainer(
   }
 }
 
+/** Destination authority is independent of artifact access. All facts are live. */
+export function projectPlacementSql(
+  user: { id: string; workspaceId: string },
+  projectId: string | RawBuilder<unknown>,
+  restrictedAgent = false,
+): RawBuilder<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM artifact_containers placement_project
+    JOIN workspaces placement_workspace ON placement_workspace.id = placement_project.workspace_id
+    JOIN users placement_user ON placement_user.id = ${user.id}
+    WHERE placement_project.id = ${projectId}
+      AND placement_project.kind = 'project'
+      AND placement_project.archived_at IS NULL
+      AND NOT ${workspaceAccessRevokedSql(sql.ref('placement_project.workspace_id'), user.id)}
+      AND (
+        (placement_project.workspace_id = ${user.workspaceId} AND (
+          placement_user.workspace_id = placement_project.workspace_id
+          OR EXISTS (SELECT 1 FROM workspace_members placement_member
+            WHERE placement_member.workspace_id = placement_project.workspace_id
+              AND placement_member.user_id = placement_user.id AND placement_member.status = 'active')
+        ) AND (
+          placement_project.base_visibility = 'workspace'
+          OR (${restrictedAgent ? 0 : 1} AND placement_user.kind = 'human' AND (
+            placement_project.created_by_id = placement_user.id
+            OR (placement_workspace.plan = 'team' AND EXISTS (
+              SELECT 1 FROM workspace_members placement_admin
+              WHERE placement_admin.workspace_id = placement_project.workspace_id
+                AND placement_admin.user_id = placement_user.id
+                AND placement_admin.status = 'active' AND placement_admin.role IN ('owner', 'admin')
+            ))
+          ))
+          OR (placement_user.email_verified = 1 AND EXISTS (
+            SELECT 1 FROM project_share_defaults placement_grant
+            WHERE placement_grant.project_container_id = placement_project.id
+              AND ${lowerEmail('placement_grant.email')} = ${lowerEmail('placement_user.email')}
+              AND placement_grant.role IN ('contributor', 'manager')
+          ))
+        ))
+        OR (${restrictedAgent ? 0 : 1} AND placement_user.kind = 'human'
+          AND placement_project.workspace_id <> ${user.workspaceId}
+          AND ${externalPostingAllowedSql(sql.ref('placement_project.workspace_id'))}
+          AND placement_user.email_verified = 1 AND EXISTS (
+            SELECT 1 FROM project_share_defaults placement_external_grant
+            WHERE placement_external_grant.project_container_id = placement_project.id
+              AND ${lowerEmail('placement_external_grant.email')} = ${lowerEmail('placement_user.email')}
+              AND placement_external_grant.role IN ('contributor', 'manager')
+          ))
+      )
+  )`
+}
+
+export function uploadPlacementSql(
+  user: { id: string; workspaceId: string },
+  containerId: string | RawBuilder<unknown>,
+  authority: CliAuthority | null = null,
+): RawBuilder<boolean> {
+  if (authority?.kind === 'publisher') {
+    return sql<boolean>`${publisherAuthoritySql(user.id, authority)} AND EXISTS (SELECT 1 FROM artifact_containers placement_home
+      WHERE placement_home.id = ${containerId} AND placement_home.kind = 'inbox'
+        AND placement_home.workspace_id = ${authority.workspaceId}
+        AND placement_home.owner_user_id = ${user.id})`
+  }
+  const agent = cliWriteAuthority(authority)
+  if (agent === 'denied') return sql<boolean>`0 = 1`
+  if (agent)
+    return sql<boolean>`
+    ${user.workspaceId} = ${agent.workspaceId} AND ${containerId} = ${agent.projectId}
+    AND ${projectPlacementSql(user, containerId, true)}`
+  return sql<boolean>`EXISTS (SELECT 1 FROM users placement_human WHERE placement_human.id = ${user.id} AND placement_human.kind = 'human') AND (${projectPlacementSql(user, containerId)} OR EXISTS (
+    SELECT 1 FROM artifact_containers placement_home JOIN users placement_owner
+      ON placement_owner.id = placement_home.owner_user_id
+    WHERE placement_home.id = ${containerId} AND placement_home.kind = 'inbox'
+      AND placement_home.workspace_id = ${user.workspaceId}
+      AND placement_home.owner_user_id = ${user.id} AND placement_owner.kind = 'human'
+      AND NOT ${workspaceAccessRevokedSql(sql.ref('placement_home.workspace_id'), user.id)}
+  ))`
+}
+
+/** Reuse the batch assertion receipt; a denied predicate aborts the D1 batch. */
+export function placementAssertionQueries(
+  db: Kysely<DB>,
+  workspaceId: string,
+  shareableId: string,
+  predicate: RawBuilder<boolean>,
+  now: string,
+): Compilable<unknown>[] {
+  return [
+    db.insertInto('link_publication_attempts').values({
+      workspace_id: workspaceId,
+      shareable_id: shareableId,
+      published_at: now,
+      window_start: now,
+      daily_limit: 0,
+      limit_applies: 0,
+      consumed: sql<number>`CASE WHEN ${predicate} THEN 1 ELSE 0 END`,
+    }),
+    db
+      .deleteFrom('link_publication_attempts')
+      .where('workspace_id', '=', workspaceId)
+      .where('shareable_id', '=', shareableId),
+  ]
+}
+
+export async function listPlacementProjects(
+  db: Kysely<DB>,
+  workspaceId: string,
+  viewer: ShareableViewer,
+): Promise<ProjectSummary[]> {
+  const rows = await projectSummaryQuery(db, workspaceId, viewer)
+    .where(projectPlacementSql({ ...viewer, workspaceId }, sql.ref('c.id')))
+    .orderBy('file_updated_at', 'desc')
+    .orderBy('c.created_at', 'desc')
+    .execute()
+  return rows.map(toProjectSummary)
+}
+
 export async function resolveUploadContainer(
   db: Kysely<DB>,
   user: {
@@ -2245,6 +2368,17 @@ export async function resolveUploadContainer(
   | { kind: 'invalid-container' }
 > {
   if (!containerId) {
+    const owner = await db
+      .selectFrom('users')
+      .select('id')
+      .where('id', '=', user.id)
+      .where('kind', '=', 'human')
+      .where(
+        sql<boolean>`NOT ${workspaceAccessRevokedSql(user.workspaceId, user.id)}`,
+      )
+      .executeTakeFirst()
+    if (!owner) return { kind: 'invalid-container' }
+
     return {
       kind: 'ok',
       containerId: await getOrCreateInboxContainerId(
@@ -2266,6 +2400,7 @@ export async function resolveUploadContainer(
     .where('workspace_id', '=', user.workspaceId)
     .where('kind', '=', 'project')
     .where('archived_at', 'is', null)
+    .where(projectPlacementSql(user, containerId))
     .executeTakeFirst()
   if (!project) {
     return resolveCrossWorkspaceProjectContainer(db, user, containerId)
@@ -2278,4 +2413,19 @@ export async function resolveUploadContainer(
     workspaceId: user.workspaceId,
     isExternalPosting: false,
   }
+}
+
+export async function canPlaceIntoProject(
+  db: Kysely<DB>,
+  user: { id: string; workspaceId: string },
+  projectId: string,
+): Promise<boolean> {
+  return Boolean(
+    await db
+      .selectFrom('artifact_containers')
+      .select('id')
+      .where('id', '=', projectId)
+      .where(projectPlacementSql(user, projectId))
+      .executeTakeFirst(),
+  )
 }

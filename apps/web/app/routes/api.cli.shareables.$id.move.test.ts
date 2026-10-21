@@ -1,4 +1,5 @@
 const authorityMock = vi.hoisted(() => vi.fn())
+import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -49,6 +50,49 @@ describe('/api/cli/shareables/:id/move', () => {
       visibility: 'project',
       projectAudienceMayChange: true,
     })
+  })
+
+  test('real move service keeps unknown and unauthorized destinations indistinguishable', async () => {
+    const fixture = createMigratedInMemoryDb()
+    const actual = await vi.importActual<
+      typeof import('~/services/shareables.server')
+    >('~/services/shareables.server')
+    moveShareableContainerMock.mockImplementation(actual.moveShareableContainer)
+    createDbMock.mockReturnValue(fixture.db)
+    fixture.sqlite.exec(`
+      INSERT INTO workspaces (id, name, created_at) VALUES ('ws1', 'Workspace', '2026-01-01');
+      INSERT INTO users (id, email, name, workspace_id, created_at, updated_at) VALUES ('u1', 'owner@example.com', 'Owner', 'ws1', '2026-01-01', '2026-01-01'), ('other', 'other@example.com', 'Other', 'ws1', '2026-01-01', '2026-01-01');
+      INSERT INTO artifact_containers (id, workspace_id, kind, created_by_id, name, base_visibility, created_at, updated_at) VALUES ('private', 'ws1', 'project', 'other', 'Private', 'private', '2026-01-01', '2026-01-01');
+      INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, container_id, created_at, updated_at) VALUES ('abc123def4', 'ws1', 'u1', 'Report', 'html_page', 'private', 'private', '2026-01-01', '2026-01-01');
+    `)
+    try {
+      const before = fixture.sqlite.prepare('SELECT * FROM shareables').all()
+      const bodies = []
+      for (const id of ['missing', 'private']) {
+        const response = await action({
+          context: new Map(),
+          params: { id: 'abc123def4' },
+          request: new Request(
+            'https://example.com/api/cli/shareables/abc123def4/move',
+            {
+              method: 'POST',
+              body: JSON.stringify({ destination: { project_id: id } }),
+            },
+          ),
+        } as never)
+        expect(response.status).toBe(400)
+        bodies.push(await response.json())
+        expect(
+          fixture.sqlite.prepare('SELECT * FROM shareables').all(),
+        ).toEqual(before)
+      }
+      expect(bodies[0]).toEqual(bodies[1])
+      expect(bodies[0]).toMatchObject({
+        error: { code: 'invalid-destination' },
+      })
+    } finally {
+      await fixture.db.destroy()
+    }
   })
 
   test('denies unknown authority before mutation', async () => {
