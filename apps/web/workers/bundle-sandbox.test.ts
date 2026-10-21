@@ -1410,6 +1410,127 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
+  test.each(
+    [
+      ['//index.html', '/index.html'],
+      ['/\\index.html', '/index.html'],
+      ['/%2findex.html', '/index.html'],
+      ['/%5cindex.html', '/index.html'],
+      ['//example.test/path', '/example.test/path'],
+      ['/\\example.test/path', '/example.test/path'],
+      ['/%2fexample.test%2fpath', '/example.test/path'],
+      ['/example.test%5cpath', '/example.test/path'],
+    ].flatMap(([rawPath, path]) =>
+      ['authenticated', 'link'].map((kind) => [rawPath, path, kind]),
+    ),
+  )(
+    'redirects only normalized same-origin artifact paths: %s (%s, %s)',
+    async (rawPath, path, kind) => {
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      // Make the normalized entrypoint valid so both redirects are exercised.
+      await dbRef
+        .current!.updateTable('versions')
+        .set({ entrypoint_path: path })
+        .where('id', '=', 'v-bundle')
+        .execute()
+      await dbRef
+        .current!.updateTable('version_files')
+        .set({ path })
+        .where('version_id', '=', 'v-bundle')
+        .where('path', '=', '/index.html')
+        .execute()
+      const token = await (kind === 'link'
+        ? anonymousEntrypointToken()
+        : entrypointToken())
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${origin}${rawPath}?__as_token=${token}&q=a%20b`, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      expect(entry.status).toBe(302)
+      expect(entry.headers.get('Location')).toBe(
+        `${path}?q=a%20b${kind === 'link' ? '' : '&__as_cookie_check=1'}`,
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const checked = await handleArtifactSandboxRequest(
+        new Request(`${origin}${rawPath}?q=a%20b&__as_cookie_check=1`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(checked.status).toBe(302)
+      expect(checked.headers.get('Location')).toBe(`${path}?q=a%20b`)
+      expect(new URL(checked.headers.get('Location')!, origin).origin).toBe(
+        origin,
+      )
+    },
+  )
+
+  test.each([
+    ['authenticated', false],
+    ['link', false],
+    ['authenticated', true],
+    ['link', true],
+  ] as const)(
+    'preserves the root route for %s static sites (renewal: %s)',
+    async (kind, renewal) => {
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<h1>Root route</h1>', 'text/html'),
+      )
+      const token = await (kind === 'link'
+        ? anonymousEntrypointToken()
+        : entrypointToken())
+      const destination = '/?q=a%20b&flag#section'
+      const url = renewal
+        ? `${origin}/index.html?__as_token=${token}&as_next=${encodeURIComponent(destination)}`
+        : `${origin}/?__as_token=${token}&q=a%20b&flag#section`
+      const entry = await handleArtifactSandboxRequest(
+        new Request(url, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      expect(entry.status).toBe(302)
+      expect(entry.headers.get('Location')).toBe(
+        kind === 'link'
+          ? destination
+          : '/?q=a%20b&flag&__as_cookie_check=1#section',
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      // Both kinds may revisit the cookie-check URL on a same-host navigation.
+      const checked = await handleArtifactSandboxRequest(
+        new Request(`${origin}/?q=a%20b&flag&__as_cookie_check=1#section`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(checked.status).toBe(302)
+      expect(checked.headers.get('Location')).toBe(destination)
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      const delivered = await handleArtifactSandboxRequest(
+        new Request(new URL(checked.headers.get('Location')!, origin), {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(delivered.status).toBe(200)
+      expect(await delivered.text()).toContain('Root route')
+      expect(storageMock.getArtifact).toHaveBeenCalledWith(
+        envMock.BUCKET,
+        'ws-a/abc123def4/v-bundle/index.html',
+      )
+    },
+  )
+
   test('cookie-check navigation preserves the requested same-host path and rejects invalid authority', async () => {
     const token = await entrypointToken()
     const entry = await handleArtifactSandboxRequest(
@@ -2659,8 +2780,11 @@ describe('handleArtifactSandboxRequest', () => {
           uid: null,
           aid: 'abc123def4',
           vid: 'v-bundle',
-          fallbackToIndex: false,
         })
+
+        expect(
+          JSON.parse(new TextDecoder().decode(decodeBase64Url(body))),
+        ).not.toHaveProperty('fallbackToIndex')
 
         // The target need not exist when redirecting; follow-up delivery uses the manifest.
         await dbRef

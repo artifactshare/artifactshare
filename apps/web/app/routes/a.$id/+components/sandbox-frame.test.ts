@@ -66,6 +66,39 @@ describe('sandbox frame permissions', () => {
       }
     },
   )
+  test.each(['html', 'md', 'static_site'])(
+    'renders cutover unavailability without any %s execution frame',
+    (renderType) => {
+      const markup = renderToStaticMarkup(
+        createElement(SandboxFrame, {
+          renderType,
+          canViewEnvironmentDiagnostics: false,
+          shareableId: 'abc123def4',
+          versionId: 'v1',
+          url: 'https://a-abc123def4--v-7631.artifactshareusercontent.com/.well-known/artifactshare-delivery-unavailable',
+          name: 'Example artifact',
+          mermaidEnabled: false,
+          textAnchorsEnabled: false,
+          linkNavigationMode: 'document',
+          bundlePaths: [],
+          fallbackToIndex: false,
+          commentThreads: [],
+          targetThreadId: null,
+          highlightThreadId: null,
+          followsAppTheme: renderType === 'md',
+          sandboxPermissions: expectedSandbox,
+          onTextSelection: vi.fn(),
+          onTextSelectionClear: vi.fn(),
+          onThreadSelect: vi.fn(),
+          onOutsidePointerDown: vi.fn(),
+        }),
+      )
+      expect(markup).toContain('data-sandbox-state="delivery-unavailable"')
+      expect(markup).toContain('vw.deliveryUnavailable')
+      expect(markup).not.toContain('<iframe')
+      expect(markup).not.toContain('<script')
+    },
+  )
 })
 
 describe('sandboxFrameSurfaceClassName', () => {

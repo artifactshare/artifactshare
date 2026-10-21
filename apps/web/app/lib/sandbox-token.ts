@@ -63,15 +63,7 @@ export async function signSandboxUrl(
   env: { APP_ENV: string; ARTIFACT_DELIVERY_STAGE?: string },
   entrypointPath?: string,
 ): Promise<string> {
-  const authority = sandboxAuthority(env, payload.uid, payload.aid, payload.vid)
-  const token = await signPayload(
-    {
-      ...payload,
-      ...authority,
-      exp: Math.floor(Date.now() / 1000) + TTL_SECONDS,
-    },
-    secret,
-  )
+  const token = await signSandboxToken(payload, secret, env)
   return artifactSandboxUrl(
     env,
     payload.aid,
@@ -79,7 +71,7 @@ export async function signSandboxUrl(
     token,
     entrypointPath,
     {
-      domain: authority.kind === 'link' ? 'link' : 'sandbox',
+      domain: payload.uid === null ? 'link' : 'sandbox',
     },
   )
 }

@@ -203,14 +203,17 @@ test('uses one canonical artifact identity across URL spellings and worktrees', 
   const common = mkdtempSync(join(tmpdir(), 'spec-common-dir-'))
   try {
     const urls = [
-      'artifact123',
-      'https://example.test/a/artifact123',
-      'https://example.test/a/artifact123/?query=ignored#fragment',
-      'https://artifact123.sandbox.example.test/anything',
+      'artifact12',
+      'https://example.test/a/artifact12',
+      'https://example.test/a/artifact12/?query=ignored#fragment',
+      'https://artifact12.sandbox.example.test/anything',
+      'https://a-artifact12--v-7631.artifactshareusercontent.com/index.html',
+      'https://l-artifact12--v-7631.artifactshareusercontent.com/index.html',
+      'https://a-artifact12--v-7631.usercontent.localhost:5174/index.html',
     ]
     assert.deepEqual(
       urls.map((url) => canonicalArtifactIdentity(url)),
-      Array(urls.length).fill('artifact123'),
+      Array(urls.length).fill('artifact12'),
     )
     const paths = urls.map((url) => localStatePaths(url, () => common))
     assert.equal(new Set(paths.map(({ statePath }) => statePath)).size, 1)

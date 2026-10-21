@@ -662,6 +662,7 @@
   "vw.viewerListFooterScope": "People who are logged out or only have the link are not included.",
   "vw.viewerListFooterNotRead": "This is a record of opening the file, not confirmation it was read.",
   "vw.viewerListExternal": "External",
+  "vw.deliveryUnavailable": "Content is being updated. Please reload this page shortly.",
   "vw.frameLoading": "Loading…",
   "vw.bundleMissing.title": "Site unavailable",
   "vw.bundleMissing.body": "The bundle was removed or the current version is missing.",

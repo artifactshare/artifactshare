@@ -662,6 +662,7 @@
   "vw.viewerListFooterScope": "未ログイン、またはリンクだけで開いた人は一覧に含まれません。",
   "vw.viewerListFooterNotRead": "開いた記録であり、読了の確認ではありません。",
   "vw.viewerListExternal": "社外",
+  "vw.deliveryUnavailable": "コンテンツを更新しています。少し待ってから、このページを再読み込みしてください。",
   "vw.frameLoading": "読み込んでいます…",
   "vw.bundleMissing.title": "サイトを表示できません",
   "vw.bundleMissing.body": "サイトが削除されたか、この版は存在しません。",

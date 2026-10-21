@@ -40,6 +40,7 @@ import {
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
 import {
   APEX_HOST,
+  DELIVERY_UNAVAILABLE_PATH,
   SANDBOX_DEV_SUFFIX,
   WWW_HOST,
   BUNDLE_SANDBOX_DEV_PORT,
@@ -164,6 +165,28 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 }
 
 export function SandboxFrame(props: SandboxFrameProps) {
+  const { t } = useT()
+  // The app marks cutover unavailability before the execution Worker is ready.
+  // Do not mount the frame controller: probing or renewing cannot recover it.
+  if (new URL(props.url).pathname === DELIVERY_UNAVAILABLE_PATH) {
+    return (
+      <ViewerBodySurface>
+        <div
+          data-sandbox-state="delivery-unavailable"
+          className="bg-background relative block h-full w-full overflow-hidden"
+        >
+          <output className="text-muted-foreground absolute inset-0 flex items-center justify-center p-6 text-center text-sm">
+            {t('vw.deliveryUnavailable')}
+          </output>
+        </div>
+        {props.children}
+      </ViewerBodySurface>
+    )
+  }
+  return <ActiveSandboxFrame {...props} />
+}
+
+function ActiveSandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
   const hydrated = useHydrated()

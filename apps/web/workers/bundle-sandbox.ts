@@ -68,12 +68,6 @@ interface BundleCookiePayload {
   aid: string
   vid: string
   exp: number
-  fallbackToIndex?: boolean
-}
-
-type AnonymousBundleCookiePayload = BundleCookiePayload & {
-  uid: null
-  fallbackToIndex: boolean
 }
 
 type SandboxIdentity = NonNullable<
@@ -159,7 +153,7 @@ export async function handleArtifactSandboxRequest(
         {
           status: 302,
           headers: new Headers({
-            Location: `${url.pathname}${url.search}${url.hash}`,
+            Location: `${redirectPath(url, path)}${url.search}${url.hash}`,
           }),
         },
       )
@@ -269,17 +263,19 @@ async function handleEntrypointRequest(
       const redirectTarget = sameOriginRedirectTarget(url)
       if (redirectTarget) {
         const db = createDb()
-        const entrypoint = await publishedEntrypoint(
-          db,
-          verified.payload,
-          path,
-          existingCookie.uid === null,
-        )
-        const accessFacts = await access.facts(db, {
-          shareableId: existingCookie.aid,
-          viewerUserId: existingCookie.uid,
-          now: new Date().toISOString(),
-        })
+        const [entrypoint, accessFacts] = await Promise.all([
+          publishedEntrypoint(
+            db,
+            verified.payload,
+            path,
+            existingCookie.uid === null,
+          ),
+          access.facts(db, {
+            shareableId: existingCookie.aid,
+            viewerUserId: existingCookie.uid,
+            now: new Date().toISOString(),
+          }),
+        ])
         if (!entrypoint || !sandboxAccessAllowed(accessFacts, existingCookie)) {
           return deniedResponse(
             'renewal_authority_unavailable',
@@ -355,7 +351,7 @@ async function handleEntrypointRequest(
       const redirectTarget =
         sameOriginRedirectTarget(url) ??
         (destination === 'iframe' || destination === 'document'
-          ? cleanEntrypointTarget(url)
+          ? cleanEntrypointTarget(url, path)
           : null)
       if (redirectTarget) {
         const response = contentResponse(
@@ -364,19 +360,13 @@ async function handleEntrypointRequest(
           artifactCsp('static_site', false, identity),
           { status: 302, headers: new Headers({ Location: redirectTarget }) },
         )
-        response.headers.append(
-          'Set-Cookie',
-          await bundleCookieFor(payload, entrypoint),
-        )
+        response.headers.append('Set-Cookie', await bundleCookieFor(payload))
         return response
       }
     }
     const response = await serveEntrypoint(entrypoint, false, identity)
     if (!response.ok || entrypoint.renderType !== 'static_site') return response
-    response.headers.append(
-      'Set-Cookie',
-      await bundleCookieFor(payload, entrypoint),
-    )
+    response.headers.append('Set-Cookie', await bundleCookieFor(payload))
     return response
   }
 
@@ -430,22 +420,17 @@ async function handleEntrypointRequest(
     return await serveEntrypoint(entrypoint, payload.emb === true)
   }
 
-  const cookie = await bundleCookieFor(payload, entrypoint)
+  const cookie = await bundleCookieFor(payload)
   const redirectTarget = sameOriginRedirectTarget(url)
   // Check browser document navigations before any artifact code or assets run.
   // The next request has no viewer token: only the exact host's bound cookie
   // can authorize it, with the usual current-access and manifest checks.
   const destination = request.headers.get('Sec-Fetch-Dest')
   if (destination === 'iframe' || destination === 'document') {
-    const target = new URL(redirectTarget ?? url.href, url.origin)
-    // Preserve artifact query bytes. Redirect targets have already had platform
-    // tokens removed; direct entry URLs also need their routing parameter removed.
-    if (!redirectTarget) {
-      target.search = withoutSearchParameters(target.search, [
-        '__as_token',
-        'as_next',
-      ])
-    }
+    const target = new URL(
+      redirectTarget ?? cleanEntrypointTarget(url, path),
+      url.origin,
+    )
     target.search += `${target.search ? '&' : '?'}${COOKIE_CHECK_PARAM}=1`
     const response = contentResponse(
       null,
@@ -478,13 +463,20 @@ async function handleEntrypointRequest(
   return response
 }
 
-function cleanEntrypointTarget(url: URL): string {
+function redirectPath(url: URL, validatedPath: string): string {
+  // Manifest lookup maps the root to index.html; navigation must retain the
+  // root so client routers still see /. All other paths use the validated form.
+  const decoded = decodeURIComponent(url.pathname)
+  return decoded === '' || decoded === '/' ? '/' : encodeURI(validatedPath)
+}
+
+function cleanEntrypointTarget(url: URL, path: string): string {
   const search = withoutSearchParameters(url.search, [
     '__as_token',
     COOKIE_CHECK_PARAM,
     'as_next',
   ])
-  return `${url.pathname}${search}${url.hash}`
+  return `${redirectPath(url, path)}${search}${url.hash}`
 }
 
 function sameOriginRedirectTarget(url: URL): string | null {
@@ -504,14 +496,13 @@ function sameOriginRedirectTarget(url: URL): string | null {
     '__as_token',
     COOKIE_CHECK_PARAM,
   ])
-  return `${encodeURI(path)}${target.search}${target.hash}`
+  return `${redirectPath(target, path)}${target.search}${target.hash}`
 }
 
 interface Entrypoint {
   renderType: ArtifactType
   r2Key: string
   contentType: string | null
-  fallbackToIndex: boolean
 }
 
 async function publishedEntrypoint(
@@ -531,7 +522,6 @@ async function publishedEntrypoint(
       'versions.entrypoint_path',
       'versions.r2_key',
       'shareables.current_version_id',
-      'versions.fallback_to_index',
     ])
     .where('shareables.id', '=', payload.aid)
     .where('shareables.workspace_id', '=', payload.wid)
@@ -548,7 +538,6 @@ async function publishedEntrypoint(
       renderType: payload.t,
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
-      fallbackToIndex: false,
     }
   }
 
@@ -564,14 +553,10 @@ async function publishedEntrypoint(
     renderType: 'static_site',
     r2Key: file.r2_key,
     contentType: file.mime_type,
-    fallbackToIndex: Number(version.fallback_to_index) === 1,
   }
 }
 
-async function bundleCookieFor(
-  payload: SandboxPayload,
-  entrypoint: Entrypoint,
-): Promise<string> {
+async function bundleCookieFor(payload: SandboxPayload): Promise<string> {
   const cookiePayload: BundleCookiePayload = {
     typ: 'bnd',
     kind: payload.kind,
@@ -581,9 +566,6 @@ async function bundleCookieFor(
     aid: payload.aid,
     vid: payload.vid,
     exp: Math.floor(Date.now() / 1000) + COOKIE_TTL_SECONDS,
-  }
-  if (payload.uid === null) {
-    cookiePayload.fallbackToIndex = entrypoint.fallbackToIndex
   }
   const value = await signBundleCookie(cookiePayload, env.BETTER_AUTH_SECRET)
   // Expiry is rounded down on the server; expire the browser cookie earlier
@@ -728,12 +710,6 @@ async function serveBundleAsset(
     )
   }
   return await serveBundleFile(fallback, request, responseDomain)
-}
-
-function isAnonymousBundleCookie(
-  payload: BundleCookiePayload,
-): payload is AnonymousBundleCookiePayload {
-  return payload.uid === null && typeof payload.fallbackToIndex === 'boolean'
 }
 
 async function authenticatedSandboxAccess(
@@ -1126,9 +1102,6 @@ async function verifyBundleCookie(
     !Number.isFinite(payload.exp) ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) {
-    return { kind: 'absent-or-invalid' }
-  }
-  if (payload.uid === null && !isAnonymousBundleCookie(payload)) {
     return { kind: 'absent-or-invalid' }
   }
   return { kind: 'valid', payload }

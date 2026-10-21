@@ -48,6 +48,37 @@ afterEach(async () => {
 })
 
 describe('SandboxFrame recovery', () => {
+  test.each([
+    ['en', 'Content is being updated. Please reload this page shortly.'],
+    [
+      'ja',
+      'コンテンツを更新しています。少し待ってから、このページを再読み込みしてください。',
+    ],
+  ] as const)(
+    'shows cutover unavailability without probing or recovery in %s',
+    async (locale, message) => {
+      i18n.locale = locale
+      vi.useFakeTimers()
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      const host = await renderFrame(undefined, false, false, undefined, {
+        url: 'https://a-abc123def4--v-7631.usercontent.localhost:5174/.well-known/artifactshare-delivery-unavailable',
+      })
+      expect(stateOf(host)).toBe('delivery-unavailable')
+      expect(host.textContent).toContain(message)
+      expect(host.querySelector('iframe')).toBeNull()
+      await act(async () => {
+        window.dispatchEvent(
+          new PageTransitionEvent('pageshow', { persisted: true }),
+        )
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(30000)
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(stateOf(host)).toBe('delivery-unavailable')
+    },
+  )
+
   test('retries a lost ready-check and stops probing after the frame replies', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
