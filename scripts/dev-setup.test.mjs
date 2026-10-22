@@ -15,6 +15,7 @@ import { delimiter, join, resolve } from 'node:path'
 import {
   prepareDevEnvironment,
   prepareCerts,
+  certificateSupportsDevelopmentHosts,
   databaseObjectNames,
   resetStatements,
   schemaObjectDefinitions,
@@ -551,5 +552,49 @@ test('application schema remains identical to stored definitions on non-reset se
     }
   } finally {
     sqlite.close()
+  }
+})
+
+test('local certificate coverage requires the new execution wildcard', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'usercontent-cert-test-'))
+  try {
+    for (const [domain, expected] of [
+      ['*.sandbox.localhost', false],
+      ['*.usercontent.localhost', true],
+    ]) {
+      const cert = join(directory, 'cert.pem')
+      const result = spawnSync(
+        'openssl',
+        [
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-nodes',
+          '-keyout',
+          join(directory, 'key.pem'),
+          '-out',
+          cert,
+          '-days',
+          '1',
+          '-subj',
+          '/CN=localhost',
+          '-addext',
+          `subjectAltName=DNS:localhost,DNS:*.localhost,DNS:${domain}`,
+        ],
+        { encoding: 'utf8' },
+      )
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(
+        certificateSupportsDevelopmentHosts(readFileSync(cert)),
+        expected,
+      )
+    }
+    assert.equal(
+      certificateSupportsDevelopmentHosts('invalid certificate'),
+      false,
+    )
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
   }
 })

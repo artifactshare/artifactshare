@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, X509Certificate } from 'node:crypto'
 import { request } from 'node:https'
 import { connect } from 'node:net'
 import {
@@ -82,7 +82,8 @@ export const DEV_SERVICES = [
     origin: 'https://localhost:5174',
     path: '/',
     headers: {
-      'mf-original-hostname': 'probe00000--v-70726f6265.sandbox.localhost',
+      'mf-original-hostname':
+        'a-probe00000--v-70726f6265.usercontent.localhost',
     },
     expected: {
       status: 401,
@@ -458,12 +459,32 @@ function executeFile(target, file, persistTo) {
   ])
 }
 
+const DEV_CERT_HOSTS = ['localhost', '*.localhost', '*.usercontent.localhost']
+
+export function certificateSupportsDevelopmentHosts(pem) {
+  try {
+    const certificate = new X509Certificate(pem)
+    const names = certificate.subjectAltName?.split(/,\s*/) ?? []
+    return DEV_CERT_HOSTS.every((host) => names.includes(`DNS:${host}`))
+  } catch {
+    return false
+  }
+}
+
 export function prepareCerts(dir = join(ROOT, '.dev-certs')) {
   const cert = join(dir, 'cert.pem')
   const key = join(dir, 'key.pem')
   const hasCert = existsSync(cert)
   const hasKey = existsSync(key)
-  if (hasCert && hasKey) return []
+  if (hasCert && hasKey) {
+    if (certificateSupportsDevelopmentHosts(readFileSync(cert))) return []
+    const suffix = `.obsolete-${Date.now()}`
+    renameSync(cert, cert + suffix)
+    renameSync(key, key + suffix)
+    console.log(
+      'Preserved obsolete local HTTPS certificate and key before regenerating host coverage.',
+    )
+  }
   if (hasCert !== hasKey) {
     const existing = hasCert ? cert : key
     const backup = `${existing}.incomplete-${Date.now()}`
@@ -474,15 +495,7 @@ export function prepareCerts(dir = join(ROOT, '.dev-certs')) {
   try {
     execFileSync(
       'mkcert',
-      [
-        '-cert-file',
-        cert,
-        '-key-file',
-        key,
-        'localhost',
-        '*.localhost',
-        '*.sandbox.localhost',
-      ],
+      ['-cert-file', cert, '-key-file', key, ...DEV_CERT_HOSTS],
       { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     )
     return ['Generated HTTPS certificates with mkcert.']
@@ -512,6 +525,8 @@ export function prepareCerts(dir = join(ROOT, '.dev-certs')) {
         '365',
         '-subj',
         '/CN=localhost',
+        '-addext',
+        `subjectAltName=${DEV_CERT_HOSTS.map((host) => `DNS:${host}`).join(',')}`,
       ],
       { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     )

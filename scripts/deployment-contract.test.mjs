@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
+import {
+  inspectTree,
+  loadBoundaryManifest,
+} from './public-development-guard.mjs'
+import { deployContentCutover } from './deploy-content-cutover.mjs'
+import {
+  readContentDeliveryStage,
+  verifyContentCutover,
+} from './verify-content-cutover.mjs'
 import test from 'node:test'
 import { unstable_readConfig } from 'wrangler'
 import YAML from 'yaml'
@@ -23,6 +34,73 @@ const workflowSource = fs.readFileSync(
   'utf8',
 )
 const workflow = YAML.parse(workflowSource)
+
+test('content deployment scripts are explicitly inside the public boundary', () => {
+  const boundary = loadBoundaryManifest()
+  const files = [
+    'scripts/deploy-content-cutover.mjs',
+    'scripts/verify-content-cutover.mjs',
+  ]
+  const classified = inspectTree(
+    files.map((path) => ({ path, mode: 'file' })),
+    boundary,
+  )
+  assert.deepEqual(
+    classified.map(({ classification }) => classification),
+    ['canonical', 'canonical'],
+  )
+  assert.throws(
+    () =>
+      inspectTree(
+        [{ path: 'scripts/unclassified-deployment.mjs', mode: 'file' }],
+        boundary,
+      ),
+    /manifest outside path/u,
+  )
+})
+
+test('default deployment runner invokes only the ordered Wrangler commands and propagates failure', async (t) => {
+  for (const stage of ['refuse', 'usercontent']) {
+    const expected = [
+      ...(stage === 'usercontent'
+        ? []
+        : [['--var', 'ARTIFACT_DELIVERY_STAGE:refuse']]),
+      ['-c', 'wrangler.sandbox.jsonc', '--env', 'production'],
+      ['--var', 'ARTIFACT_DELIVERY_STAGE:usercontent'],
+    ].map((args) => ['exec', 'wrangler', 'deploy', ...args])
+    for (const failure of [null, 'status', 'signal', 'error']) {
+      const calls = []
+      const mocked = t.mock.method(
+        childProcess,
+        'spawnSync',
+        (command, args, options) => {
+          calls.push(args)
+          assert.equal(command, 'pnpm')
+          assert.deepEqual(options, {
+            stdio: 'inherit',
+            env: { ...process.env, WRANGLER_LOG_PATH: '../../.wrangler/logs' },
+          })
+          if (failure === 'error') return { error: new Error('spawn failed') }
+          if (failure === 'signal') return { status: null, signal: 'SIGTERM' }
+          return { status: failure === 'status' ? 1 : 0 }
+        },
+      )
+      syncBuiltinESMExports()
+      try {
+        const result = deployContentCutover({
+          readStage: () => stage,
+          verify: () => {},
+        })
+        if (failure) await assert.rejects(result, /Content deployment failed/u)
+        else await result
+        assert.deepEqual(calls, failure ? expected.slice(0, 1) : expected)
+      } finally {
+        mocked.mock.restore()
+        syncBuiltinESMExports()
+      }
+    }
+  }
+})
 
 test('production configs preserve the four public Worker entrypoints', () => {
   assert.match(app.main, /\/workers\/app\.ts$/u)
@@ -64,7 +142,7 @@ test('production deployment keeps migration and Workers in one order', () => {
     'db:apply:remote:production',
     'wrangler.alerts.jsonc --env production',
     'wrangler.og-image.jsonc --env production',
-    'wrangler.sandbox.jsonc --env production',
+    'node ../../scripts/deploy-content-cutover.mjs',
   ]
   let cursor = -1
   for (const marker of expectedOrder) {
@@ -72,10 +150,6 @@ test('production deployment keeps migration and Workers in one order', () => {
     assert.ok(next > cursor, `deployment marker out of order: ${marker}`)
     cursor = next
   }
-  assert.match(
-    command,
-    /WRANGLER_LOG_PATH=\.\.\/\.\.\/\.wrangler\/logs pnpm exec wrangler deploy$/u,
-  )
   assert.doesNotMatch(
     command,
     /wrangler deploy -c wrangler\.production\.jsonc/u,
@@ -168,4 +242,165 @@ test('production deploy verifies the complete public origin with retries', () =>
     /node scripts\/verify-production-origin\.mjs --retries 2 --retry-delay-ms 15000/u,
   )
   assert.doesNotMatch(deploy, /curl|sleep 30/u)
+})
+
+test('new content route and fail-closed app default are deployment owned', () => {
+  assert.ok(
+    sandbox.routes.some(
+      (route) =>
+        route.pattern === '*.artifactshareusercontent.com/*' &&
+        route.zone_name === 'artifactshareusercontent.com',
+    ),
+  )
+  assert.ok(
+    sandbox.routes.some(
+      (route) => route.pattern === '*.sandbox.artifactshare.com/*',
+    ),
+  )
+  assert.ok(
+    app.routes.some((route) => route.pattern === '*.artifactshare.link/*'),
+  )
+  assert.equal(app.vars.ARTIFACT_DELIVERY_STAGE, 'refuse')
+})
+
+for (const initialStage of ['refuse', 'usercontent', 'unknown']) {
+  test(`cutover orders deployments and aborts every failure from ${initialStage}`, async () => {
+    const expected = [
+      ...(initialStage === 'usercontent'
+        ? []
+        : [
+            ['deploy', '--var', 'ARTIFACT_DELIVERY_STAGE:refuse'],
+            ['verify', 'app-refusal'],
+          ]),
+      ['deploy', '-c', 'wrangler.sandbox.jsonc', '--env', 'production'],
+      ['verify', 'sandbox-ready'],
+      ['deploy', '--var', 'ARTIFACT_DELIVERY_STAGE:usercontent'],
+    ]
+    for (let failure = -1; failure < expected.length; failure++) {
+      const calls = []
+      const logs = []
+      const record = (call) => {
+        calls.push(call)
+        if (calls.length - 1 === failure) throw new Error('stage failed')
+      }
+      const result = deployContentCutover({
+        readStage: () => initialStage,
+        run: (args) => record(['deploy', ...args]),
+        verify: (stage) => record(['verify', stage]),
+        log: (...args) => logs.push(args),
+      })
+      if (failure === -1) await result
+      else await assert.rejects(result, /stage failed/u)
+      assert.deepEqual(
+        calls,
+        failure === -1 ? expected : expected.slice(0, failure + 1),
+      )
+      assert.deepEqual(logs, [
+        [
+          'Content deployment path',
+          {
+            path:
+              initialStage === 'usercontent' ? 'steady-state' : 'transition',
+          },
+        ],
+      ])
+    }
+  })
+}
+
+test('stage discovery accepts only an exact uncached successful response', async () => {
+  for (const [status, body, expected] of [
+    [200, 'usercontent', 'usercontent'],
+    [200, 'refuse', 'refuse'],
+    [404, 'usercontent', 'refuse'],
+  ]) {
+    const logs = []
+    assert.equal(
+      await readContentDeliveryStage(
+        (url, init) => {
+          assert.equal(
+            url,
+            'https://artifactshare.com/__artifactshare_delivery_stage',
+          )
+          assert.equal(init.redirect, 'manual')
+          assert.equal(init.cache, 'no-store')
+          assert.ok(init.signal)
+          return new Response(body, { status })
+        },
+        (...args) => logs.push(args),
+      ),
+      expected,
+    )
+    assert.deepEqual(logs, [
+      ['Content delivery stage check', { status, stage: expected }],
+    ])
+  }
+  for (const [status, body] of [
+    [200, '<html>usercontent</html>'],
+    [200, ''],
+    [200, 'usercontent\n'],
+    [200, '{}'],
+    ...[201, 301, 302, 307, 308, 401, 403, 429, 500, 502, 503].map(
+      (responseStatus) => [responseStatus, 'usercontent'],
+    ),
+  ]) {
+    const writes = []
+    await assert.rejects(
+      deployContentCutover({
+        readStage: () =>
+          readContentDeliveryStage(() => new Response(body, { status })),
+        run: (args) => writes.push(args),
+        verify: () => writes.push('verify'),
+      }),
+      /Content delivery stage check/u,
+    )
+    assert.deepEqual(writes, [])
+  }
+  const calls = []
+  await assert.rejects(
+    deployContentCutover({
+      readStage: () =>
+        readContentDeliveryStage(() => {
+          throw new Error('offline')
+        }),
+      run: (args) => calls.push(args),
+    }),
+    /offline/u,
+  )
+  assert.deepEqual(calls, [])
+})
+
+test('readiness requires both new kinds, cross-site probe policy, and legacy refusal', async () => {
+  const seen = []
+  const success = (url, init) => {
+    seen.push(url)
+    const probe = url.includes('.artifactshareusercontent.com/')
+    return new Response(
+      probe ? 'artifactshare-sandbox-probe-v1' : 'Not found',
+      {
+        status: probe ? 200 : 404,
+        headers: probe
+          ? {
+              'X-ArtifactShare-Sandbox-Probe': 'artifactshare-sandbox-probe-v1',
+              'Cross-Origin-Resource-Policy': 'cross-origin',
+              'Access-Control-Allow-Origin': init.headers.Origin,
+            }
+          : {},
+      },
+    )
+  }
+  await verifyContentCutover('sandbox-ready', success)
+  assert.equal(seen.length, 10)
+  for (const failedUrl of seen.slice()) {
+    await assert.rejects(
+      verifyContentCutover('sandbox-ready', (url, init) =>
+        url === failedUrl
+          ? new Response('unavailable', { status: 503 })
+          : success(url, init),
+      ),
+    )
+  }
+  await assert.rejects(
+    verifyContentCutover('sandbox-ready', () => new Response('legacy content')),
+  )
 })

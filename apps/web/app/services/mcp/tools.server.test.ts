@@ -1,3 +1,5 @@
+import { env } from 'cloudflare:workers'
+import { artifactIdFromResourceUri } from './artifact-resource.server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { z } from 'zod'
 import type { DatabaseSync } from 'node:sqlite'
@@ -1063,6 +1065,39 @@ describe('headless publish wiring', () => {
     ])
   })
 
+  test.each(['production', 'development'])(
+    'advertises only usercontent templates accepted in %s',
+    async (environment) => {
+      const original = env.APP_ENV
+      Object.assign(env, { APP_ENV: environment })
+      try {
+        const response = await callMcp(db, 'resources/templates/list')
+        expect(response.error).toBeUndefined()
+        const templates = response.result?.resourceTemplates as Array<{
+          name: string
+          uriTemplate: string
+        }>
+        const content = templates.filter((template) =>
+          template.name.startsWith('artifact-usercontent'),
+        )
+        expect(content).toHaveLength(2)
+        for (const template of content) {
+          const uri = template.uriTemplate
+            .replace('{identity}', sandboxVersionLabel('abc123def4', 'v1'))
+            .replace('{+path}', 'index.html')
+          expect(artifactIdFromResourceUri(new URL(uri))).toBe('abc123def4')
+          expect(uri).toContain(
+            environment === 'production'
+              ? '.artifactshareusercontent.com/'
+              : '.usercontent.localhost:5174/',
+          )
+        }
+      } finally {
+        Object.assign(env, { APP_ENV: original })
+      }
+    },
+  )
+
   test('advertises artifact URLs as a template and lists readable artifacts by title', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')
@@ -1118,6 +1153,22 @@ describe('headless publish wiring', () => {
         description:
           'Reads the current Markdown or HTML source of an Artifact Share artifact.',
       },
+      ...[
+        [
+          'artifact-usercontent-development-root',
+          'https://{identity}.usercontent.localhost:5174/',
+        ],
+        [
+          'artifact-usercontent-development-content',
+          'https://{identity}.usercontent.localhost:5174/{+path}',
+        ],
+      ].map(([name, uriTemplate]) => ({
+        name,
+        uriTemplate,
+        title: 'Artifact Share artifact',
+        description:
+          'Reads the current Markdown or HTML source of an Artifact Share artifact.',
+      })),
       {
         name: 'artifact-link-development-root',
         uriTemplate: 'https://{identity}.localhost:5173/',
@@ -1233,7 +1284,8 @@ describe('headless publish wiring', () => {
     const contentUri = `https://${sandboxVersionLabel(
       published.id,
       published.versionId,
-    )}.artifactshare.link/index.md?t=ignored`
+      'link',
+    )}.usercontent.localhost:5174/index.md?t=ignored`
     const contentRead = await callMcp(db, 'resources/read', {
       uri: contentUri,
     })
@@ -4514,3 +4566,55 @@ describe('headless publish wiring', () => {
     expect(result.kind).toBe('workspace-unavailable')
   })
 })
+
+test.each(['a', 'l'])(
+  'resource execution URI uses the runtime environment for %s hosts',
+  (kind) => {
+    const original = env.APP_ENV
+    try {
+      env.APP_ENV = 'production'
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com/`,
+          ),
+        ),
+      ).toBe('abc123def4')
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/`,
+          ),
+        ),
+      ).toBeNull()
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.artifactshareusercontent.com:5174/`,
+          ),
+        ),
+      ).toBeNull()
+      for (const uri of [
+        `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/a/abc123def4`,
+        `https://${kind}-abc123def4--v-7.artifactshareusercontent.com/a/abc123def4`,
+        `http://${kind}-abc123def4--v-7631.artifactshareusercontent.com/a/abc123def4`,
+      ])
+        expect(artifactIdFromResourceUri(new URL(uri))).toBeNull()
+      env.APP_ENV = 'development'
+      expect(
+        artifactIdFromResourceUri(
+          new URL(
+            `https://${kind}-abc123def4--v-7631.usercontent.localhost:5174/`,
+          ),
+        ),
+      ).toBe('abc123def4')
+      expect(
+        artifactIdFromResourceUri(
+          new URL(`https://${kind}-abc123def4--v-7631.usercontent.localhost/`),
+        ),
+      ).toBeNull()
+    } finally {
+      env.APP_ENV = original
+    }
+  },
+)

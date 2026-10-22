@@ -21,7 +21,15 @@ import {
   mcpUserAsSessionUser,
   type McpRequestContext,
 } from './identity.server'
-import { APP_DEV_PORT, isProduction, shareableUrl } from '~/lib/hosts'
+import {
+  APP_DEV_PORT,
+  BUNDLE_SANDBOX_DEV_PORT,
+  SANDBOX_HOST,
+  SANDBOX_DEV_SUFFIX,
+  sandboxVersionIdentityFromHostname,
+  isProduction,
+  shareableUrl,
+} from '~/lib/hosts'
 
 const ARTIFACT_RESOURCE_UNAVAILABLE = 'Artifact resource is not available.'
 const ARTIFACT_RESOURCE_UNSUPPORTED = 'Artifact resource type is not supported.'
@@ -391,6 +399,23 @@ export function registerArtifactResource(
     metadata,
     artifactResource.readCallback,
   )
+  const [name, origin] = isProduction(env)
+    ? ['usercontent', `https://{identity}.${SANDBOX_HOST}`]
+    : [
+        'usercontent-development',
+        `https://{identity}${SANDBOX_DEV_SUFFIX}:${BUNDLE_SANDBOX_DEV_PORT}`,
+      ]
+  for (const [suffix, path] of [
+    ['root', '/'],
+    ['content', '/{+path}'],
+  ]) {
+    server.registerResource(
+      `artifact-${name}-${suffix}`,
+      new ResourceTemplate(`${origin}${path}`, { list: undefined }),
+      metadata,
+      artifactResource.readCallback,
+    )
+  }
   if (!isProduction(env)) {
     const developmentLinkResourceOrigin = `https://{identity}.localhost:${APP_DEV_PORT}`
     server.registerResource(
@@ -414,8 +439,18 @@ export function registerArtifactResource(
 }
 
 export function artifactIdFromResourceUri(uri: URL): string | null {
+  const hostname = uri.hostname.toLowerCase()
+  if (
+    hostname.endsWith(`.${SANDBOX_HOST}`) ||
+    hostname.endsWith(SANDBOX_DEV_SUFFIX)
+  ) {
+    const identity = sandboxVersionIdentityFromHostname(hostname, env)
+    return uri.protocol === 'https:' &&
+      uri.port === (isProduction(env) ? '' : String(BUNDLE_SANDBOX_DEV_PORT))
+      ? (identity?.shareableId ?? null)
+      : null
+  }
   if (uri.protocol === 'https:') {
-    const hostname = uri.hostname.toLowerCase()
     if (uri.port === '') {
       const viewerMatch = /^([a-z0-9]{10})\.artifactshare\.link$/.exec(hostname)
       if (viewerMatch && uri.pathname === '/') return viewerMatch[1]

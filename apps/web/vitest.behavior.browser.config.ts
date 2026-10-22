@@ -1,3 +1,4 @@
+import { usercontentDelivery } from './app/test/usercontent-browser-command'
 import {
   sandboxHashDocument,
   sandboxHashDocumentLoads,
@@ -41,6 +42,7 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       commands: {
+        usercontentDelivery,
         projectPlacementDestinations,
         projectPlacementCandidates,
         selectAnchorText,
@@ -56,7 +58,16 @@ export default defineConfig({
         { browser: 'chromium' },
         {
           browser: 'firefox',
+          provider: playwright({
+            launchOptions: {
+              firefoxUserPrefs: {
+                'network.cookie.cookieBehavior': 5,
+                'network.cookie.cookieBehavior.pbmode': 5,
+              },
+            },
+          }),
           include: [
+            'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
@@ -68,6 +79,7 @@ export default defineConfig({
         {
           browser: 'webkit',
           include: [
+            'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',

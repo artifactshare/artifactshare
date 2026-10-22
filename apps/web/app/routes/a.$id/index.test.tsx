@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { BOT_EMAIL_DOMAIN } from '~/lib/bot-account'
-import { verifySandboxToken } from '~/lib/sandbox-token'
+import { verifySandboxTokenDetailed } from '~/lib/sandbox-token'
 import {
   ctxContext,
   linkDomainContext,
@@ -23,6 +23,7 @@ const commentLiveMock = vi.hoisted(() => ({
 vi.mock('cloudflare:workers', () => ({
   env: {
     APP_ENV: 'production',
+    ARTIFACT_DELIVERY_STAGE: 'usercontent',
     BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
     BETTER_AUTH_URL: 'https://artifactshare.com',
     VIEW_DEDUP: {},
@@ -561,7 +562,7 @@ describe('/a/:id loader', () => {
       })
       expect(result.canTrackView).toBe(false)
       expect(result.sandboxUrl).toContain(
-        'html123abc--v-7631.sandbox.artifactshare.com',
+        'a-html123abc--v-7631.artifactshareusercontent.com',
       )
       expect(
         result.artifact.versions.find((version) => version.id === 'v1'),
@@ -1190,23 +1191,26 @@ describe('/a/:id loader', () => {
     if (result.kind !== 'static_site') return
     expect(result.artifact.canReplaceFile).toBe(true)
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/abc123def4--v-7631\.sandbox\.artifactshare\.com\/index\.md\?t=/,
+      /^https:\/\/a-abc123def4--v-7631\.artifactshareusercontent\.com\/index\.md\?__as_token=/,
     )
     expect(result.bundlePaths).toEqual(['/index.md', '/other.md'])
     expect(result.fallbackToIndex).toBe(false)
-    const token = new URL(result.sandboxUrl).searchParams.get('t')
+    const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'abc123def4',
-      vid: 'v1',
-      fid: 'ws1/abc123def4/v1/index.md',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'abc123def4',
+        vid: 'v1',
+        fid: 'ws1/abc123def4/v1/index.md',
+        t: 'static_site',
+      },
     })
     expect(waitUntil).toHaveBeenCalledTimes(1)
     expect(recordViewAndNotifyViewCountMock).toHaveBeenCalledTimes(1)
@@ -1360,23 +1364,26 @@ describe('/a/:id loader', () => {
     expect(result.kind).toBe('static_site')
     if (result.kind !== 'static_site') return
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/site123abc--v-7631\.sandbox\.artifactshare\.com\/\?t=/,
+      /^https:\/\/a-site123abc--v-7631\.artifactshareusercontent\.com\/\?__as_token=/,
     )
     expect(result.bundlePaths).toEqual(['/index.md', '/other.md'])
     expect(result.fallbackToIndex).toBe(true)
-    const token = new URL(result.sandboxUrl).searchParams.get('t')
+    const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'site123abc',
-      vid: 'v1',
-      fid: 'ws1/site123abc/v1/index.html',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'site123abc',
+        vid: 'v1',
+        fid: 'ws1/site123abc/v1/index.html',
+        t: 'static_site',
+      },
     })
   })
 
@@ -1393,21 +1400,24 @@ describe('/a/:id loader', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     expect(result.sandboxUrl).toMatch(
-      /^https:\/\/html123abc--v-7631\.sandbox\.artifactshare\.com\/demo\.html\?t=/,
+      /^https:\/\/a-html123abc--v-7631\.artifactshareusercontent\.com\/demo\.html\?__as_token=/,
     )
-    const token = new URL(result.sandboxUrl).searchParams.get('t')
+    const token = new URL(result.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
-    const payload = await verifySandboxToken(
+    const payload = await verifySandboxTokenDetailed(
       token!,
       'test-secret-with-enough-entropy-for-hmac',
     )
     expect(payload).toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'html123abc',
-      vid: 'v1',
-      fid: 'artifacts/html123abc/v1/index.html',
-      t: 'html',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'html123abc',
+        vid: 'v1',
+        fid: 'artifacts/html123abc/v1/index.html',
+        t: 'html',
+      },
     })
     expect(waitUntil).toHaveBeenCalledTimes(1)
   })
@@ -1891,7 +1901,8 @@ describe('/a/:id loader', () => {
       loaderData: {
         kind: 'static_site',
         canonicalUrl: 'https://artifactshare.com/a/site123abc',
-        sandboxUrl: 'https://site123abc.sandbox.artifactshare.com/index.html',
+        sandboxUrl:
+          'https://a-site123abc--v-7631.artifactshareusercontent.com/',
         fallbackToIndex: true,
         user: null,
         artifact: {
@@ -1925,7 +1936,8 @@ describe('/a/:id loader', () => {
       loaderData: {
         kind: 'ok',
         canonicalUrl: 'https://artifactshare.com/a/html123abc',
-        sandboxUrl: 'https://html123abc.sandbox.artifactshare.com/demo.html',
+        sandboxUrl:
+          'https://a-html123abc--v-7631.artifactshareusercontent.com/demo.html',
         renderType: 'html',
         user: null,
         artifact: {
@@ -1976,7 +1988,8 @@ describe('/a/:id loader', () => {
       loaderData: {
         kind: 'ok',
         canonicalUrl: 'https://artifactshare.com/a/link123abc',
-        sandboxUrl: 'https://link123abc.sandbox.artifactshare.com/demo.html',
+        sandboxUrl:
+          'https://l-link123abc--v-7631.artifactshareusercontent.com/demo.html',
         renderType: 'html',
         user: null,
         artifact: {

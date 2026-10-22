@@ -44,6 +44,8 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 
 The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
 
+Targets accept artifact IDs, app share URLs, per-ID `artifactshare.link` viewer URLs, and `a-<id>--v-<hex-version>.artifactshareusercontent.com` or `l-<id>--v-<hex-version>.artifactshareusercontent.com` execution URLs. Legacy sandbox and link-content URLs still resolve to IDs through the API; they no longer serve file content. Public share URLs are unchanged.
+
 ## Quick reference
 
 | Task                     | Command                                                                             |

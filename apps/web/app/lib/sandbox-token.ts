@@ -7,6 +7,7 @@
  * Token = base64url(payload) "." base64url(hmac-sha256(secret, payload))
  */
 
+import { artifactSandboxUrl, sandboxAuthority } from './hosts'
 import { decodeBase64Url, encodeBase64Url } from './base64url'
 import type { ArtifactType } from './artifact-type'
 import { constantTimeEqual, hmacSha256 } from './hmac'
@@ -16,6 +17,8 @@ const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
 
 export interface SandboxPayload {
+  kind: 'authenticated' | 'link'
+  aud: string
   uid: string | null
   wid: string
   aid: string
@@ -37,15 +40,46 @@ export interface SandboxPayload {
   exp: number
 }
 
-export async function signSandboxToken(
-  payload: Omit<SandboxPayload, 'exp'>,
+export function signSandboxToken(
+  payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
   secret: string,
+  env: { APP_ENV: string },
   ttlSeconds: number = TTL_SECONDS,
 ): Promise<string> {
-  const full: SandboxPayload = {
-    ...payload,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
-  }
+  return signPayload(
+    {
+      ...payload,
+      ...sandboxAuthority(env, payload.uid, payload.aid, payload.vid),
+      exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    },
+    secret,
+  )
+}
+
+/** Sign and route from one authorization decision. */
+export async function signSandboxUrl(
+  payload: Omit<SandboxPayload, 'exp' | 'kind' | 'aud'>,
+  secret: string,
+  env: { APP_ENV: string; ARTIFACT_DELIVERY_STAGE?: string },
+  entrypointPath?: string,
+): Promise<string> {
+  const token = await signSandboxToken(payload, secret, env)
+  return artifactSandboxUrl(
+    env,
+    payload.aid,
+    payload.vid,
+    token,
+    entrypointPath,
+    {
+      domain: payload.uid === null ? 'link' : 'sandbox',
+    },
+  )
+}
+
+async function signPayload(
+  full: SandboxPayload,
+  secret: string,
+): Promise<string> {
   const body = encodeBase64Url(ENCODER.encode(JSON.stringify(full)))
   const sig = encodeBase64Url(await hmacSha256(secret, body))
   return `${body}.${sig}`
@@ -59,7 +93,18 @@ export type SandboxTokenFailure =
 
 export type SandboxTokenResult =
   | { ok: true; payload: SandboxPayload }
-  | { ok: false; failure: SandboxTokenFailure; expiredBySeconds?: number }
+  | {
+      ok: false
+      failure: 'expired'
+      /** Verified claims for comparison only; expired tokens never grant access. */
+      payload: SandboxPayload
+      expiredBySeconds: number
+    }
+  | {
+      ok: false
+      failure: Exclude<SandboxTokenFailure, 'expired'>
+      expiredBySeconds?: never
+    }
 
 export async function verifySandboxTokenDetailed(
   token: string,
@@ -84,29 +129,26 @@ export async function verifySandboxTokenDetailed(
 
   if (!isSandboxPayload(payload)) return { ok: false, failure: 'bad_payload' }
   const now = Math.floor(Date.now() / 1000)
-  if (payload.exp < now) {
+  if (payload.exp <= now) {
     return {
       ok: false,
       failure: 'expired',
+      payload,
       expiredBySeconds: now - payload.exp,
     }
   }
   return { ok: true, payload }
 }
 
-export async function verifySandboxToken(
-  token: string,
-  secret: string,
-): Promise<SandboxPayload | null> {
-  const result = await verifySandboxTokenDetailed(token, secret)
-  return result.ok ? result.payload : null
-}
-
 function isSandboxPayload(value: unknown): value is SandboxPayload {
   if (!value || typeof value !== 'object') return false
   const payload = value as Partial<Record<keyof SandboxPayload, unknown>>
   return (
-    (typeof payload.uid === 'string' || payload.uid === null) &&
+    ((payload.kind === 'authenticated' &&
+      typeof payload.uid === 'string' &&
+      payload.uid.length > 0) ||
+      (payload.kind === 'link' && payload.uid === null && !payload.emb)) &&
+    typeof payload.aud === 'string' &&
     typeof payload.wid === 'string' &&
     typeof payload.aid === 'string' &&
     typeof payload.vid === 'string' &&
@@ -117,6 +159,7 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
       payload.t === 'static_site') &&
     typeof payload.jti === 'string' &&
     (payload.emb === undefined || typeof payload.emb === 'boolean') &&
-    typeof payload.exp === 'number'
+    typeof payload.exp === 'number' &&
+    Number.isFinite(payload.exp)
   )
 }

@@ -11,6 +11,10 @@ const realNow = performance.now.bind(performance)
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+const reloadViewerPage = vi.hoisted(() => vi.fn())
+
+vi.mock('./a.$id/+components/reload-viewer-page', () => ({ reloadViewerPage }))
+
 const i18n = vi.hoisted(() => ({ locale: 'en' as 'en' | 'ja' }))
 
 vi.mock('~/hooks/use-t', async () => {
@@ -39,6 +43,7 @@ function deferred<T>(): Deferred<T> {
 let root: Root | undefined
 
 afterEach(async () => {
+  reloadViewerPage.mockClear()
   i18n.locale = 'en'
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -48,6 +53,55 @@ afterEach(async () => {
 })
 
 describe('SandboxFrame recovery', () => {
+  test.each([
+    [
+      'en',
+      'Content is being updated',
+      'Please reload this page shortly.',
+      'Reload',
+    ],
+    [
+      'ja',
+      'コンテンツを更新しています',
+      '少し待ってから、このページを再読み込みしてください。',
+      '再読み込み',
+    ],
+  ] as const)(
+    'shows cutover unavailability without probing or recovery in %s',
+    async (locale, title, message, reloadLabel) => {
+      i18n.locale = locale
+      vi.useFakeTimers()
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      const host = await renderFrame(undefined, false, false, undefined, {
+        url: 'https://a-abc123def4--v-7631.usercontent.localhost:5174/.well-known/artifactshare-delivery-unavailable',
+      })
+      expect(stateOf(host)).toBe('delivery-unavailable')
+      expect(host.querySelector('[role=heading]')?.textContent).toBe(title)
+      expect(host.textContent).toContain(message)
+      const reloadButton = host.querySelector('button')!
+      expect(reloadButton.textContent).toBe(reloadLabel)
+      expect(host.querySelector('iframe')).toBeNull()
+      await act(async () => {
+        window.dispatchEvent(
+          new PageTransitionEvent('pageshow', { persisted: true }),
+        )
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(30000)
+      })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(stateOf(host)).toBe('delivery-unavailable')
+      expect(host.querySelector('[role=status]')?.textContent).toBe(title)
+      expect(
+        host.querySelector('[role=status]')?.getAttribute('aria-live'),
+      ).toBe('polite')
+      expect(reloadViewerPage).not.toHaveBeenCalled()
+      await act(async () => reloadButton.click())
+      expect(reloadViewerPage).toHaveBeenCalledOnce()
+      expect(fetchMock).not.toHaveBeenCalled()
+    },
+  )
+
   test('retries a lost ready-check and stops probing after the frame replies', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
@@ -131,7 +185,9 @@ describe('SandboxFrame recovery', () => {
     )
 
     const checking = vi.fn()
-    const host = await renderFrame(checking)
+    const host = await renderFrame(checking, false, false, undefined, {
+      url: 'https://l-abc123def4--v-7631.usercontent.localhost:5174/sandbox-frame-test?__as_token=old',
+    })
     const initialFrame = host.querySelector('iframe')
 
     await act(async () => {
@@ -150,7 +206,8 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       tokenRequests[0].resolve(
         Response.json({
-          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=fresh`,
+          sandboxUrl:
+            'https://l-abc123def4--v-7632.usercontent.localhost:5174/sandbox-frame-test?__as_token=fresh',
           renderType: 'html',
         }),
       )
@@ -162,6 +219,9 @@ describe('SandboxFrame recovery', () => {
     expect(checking).toHaveBeenLastCalledWith(false)
     const recoveredFrame = host.querySelector('iframe')
     expect(recoveredFrame).not.toBe(initialFrame)
+    expect(new URL(recoveredFrame!.src).hostname).toBe(
+      'l-abc123def4--v-7632.usercontent.localhost',
+    )
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000)
@@ -181,7 +241,8 @@ describe('SandboxFrame recovery', () => {
     await act(async () => {
       tokenRequests[1].resolve(
         Response.json({
-          sandboxUrl: `${window.location.origin}/sandbox-frame-test?t=retry`,
+          sandboxUrl:
+            'https://l-abc123def4--v-7632.usercontent.localhost:5174/sandbox-frame-test?__as_token=retry',
           renderType: 'html',
         }),
       )
@@ -323,6 +384,14 @@ describe('SandboxFrame recovery', () => {
       await Promise.resolve()
     })
     expect(stateOf(host)).toBe('blocked')
+    const reassurance = (message: string) => {
+      const line = Array.from(host.querySelectorAll('p')).find(
+        (element) => element.textContent === message,
+      )!
+      expect(line).toBeDefined()
+      expect(line.classList.contains('justify-center')).toBe(true)
+    }
+    reassurance('The file hasn’t been deleted')
     expect(checking).toHaveBeenLastCalledWith(false)
 
     await act(async () =>
@@ -337,6 +406,7 @@ describe('SandboxFrame recovery', () => {
       )
     })
     await expectFrameState(host, 'paused')
+    reassurance('The file and share link are unaffected')
     expect(host.textContent).toContain(
       'The last attempt did not finish. Try again or reload the page.',
     )
@@ -367,6 +437,7 @@ async function renderFrame(
   onRender: ProfilerOnRenderCallback = () => {},
   options: {
     host?: HTMLElement
+    url?: string
     commentThreads?: CommentThreadView[]
     renderType?: string | null
     beforeHydrate?: (host: HTMLElement) => void
@@ -392,7 +463,9 @@ async function renderFrame(
           onAnchorCheckingChange={onAnchorCheckingChange}
           shareableId="abc123def4"
           versionId="v1"
-          url={`${window.location.origin}/sandbox-frame-test?t=old`}
+          url={
+            options.url ?? `${window.location.origin}/sandbox-frame-test?t=old`
+          }
           name="Recovery test"
           mermaidEnabled={false}
           textAnchorsEnabled={Boolean(options.commentThreads)}

@@ -115,7 +115,30 @@ afterEach(() => {
 })
 
 describe('app worker link-domain routing', () => {
-  test('dispatches versioned content hosts to the sandbox handler', async () => {
+  test.each(['usercontent', 'refuse', 'unknown', undefined])(
+    'reports only the effective delivery stage without caching: %s',
+    async (stage) => {
+      const response = await app.fetch(
+        workerRequest(
+          'https://artifactshare.com/__artifactshare_delivery_stage',
+        ),
+        {
+          ...productionEnv({ maintenance: false }),
+          ...(stage === undefined ? {} : { ARTIFACT_DELIVERY_STAGE: stage }),
+        },
+        executionContext(),
+      )
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe(
+        stage === 'usercontent' ? 'usercontent' : 'refuse',
+      )
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+      expect(requestHandlerMock).not.toHaveBeenCalled()
+      expect(anchorAuthInitMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test('refuses legacy versioned content hosts before app routing', async () => {
     sandboxHandlerMock.mockResolvedValue(new Response('bundle'))
     const request = workerRequest(
       'https://abc123def4--v-7631.artifactshare.link/index.html?t=token',
@@ -128,8 +151,8 @@ describe('app worker link-domain routing', () => {
       ctx,
     )
 
-    await expect(response.text()).resolves.toBe('bundle')
-    expect(sandboxHandlerMock).toHaveBeenCalledWith(request, ctx)
+    expect(response.status).toBe(404)
+    expect(sandboxHandlerMock).not.toHaveBeenCalled()
     expect(requestHandlerMock).not.toHaveBeenCalled()
   })
 

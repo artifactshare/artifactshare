@@ -6,11 +6,12 @@ import {
 import { createRequestHandler, RouterContextProvider } from 'react-router'
 import {
   APEX_HOST,
+  SANDBOX_DEV_SUFFIX,
+  SANDBOX_HOST,
   isProduction,
   LINK_HOST,
   linkShareableIdFromHostname,
   requestHostname,
-  sandboxVersionIdentityFromHostname,
   WWW_HOST,
 } from '../app/lib/hosts'
 import { isAuthCookieName } from '../app/lib/auth-cookies'
@@ -51,7 +52,6 @@ import {
   checkViewerRateLimit,
   isViewerRateLimitedPath,
 } from '../app/services/viewer-rate-limit.server'
-import { handleArtifactSandboxRequest } from './bundle-sandbox'
 import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
 import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
 
@@ -160,9 +160,32 @@ export default {
   },
   async fetch(request, env, ctx) {
     const hostname = requestHostname(request, env)
-    const sandboxIdentity = sandboxVersionIdentityFromHostname(hostname, env)
-    if (isProduction(env) && sandboxIdentity?.domain === 'link') {
-      return handleArtifactSandboxRequest(request, ctx)
+    if (
+      hostname === APEX_HOST &&
+      new URL(request.url).pathname === '/__artifactshare_delivery_stage' &&
+      request.method === 'GET'
+    ) {
+      return new Response(
+        env.ARTIFACT_DELIVERY_STAGE === 'usercontent'
+          ? 'usercontent'
+          : 'refuse',
+        {
+          headers: {
+            'Cache-Control': 'no-store',
+            'Content-Type': 'text/plain',
+          },
+        },
+      )
+    }
+    if (
+      hostname === 'sandbox.artifactshare.com' ||
+      hostname.endsWith('.sandbox.artifactshare.com') ||
+      hostname === SANDBOX_HOST ||
+      hostname.endsWith(`.${SANDBOX_HOST}`) ||
+      hostname.endsWith('.sandbox.localhost') ||
+      hostname.endsWith(SANDBOX_DEV_SUFFIX)
+    ) {
+      return linkDomainNotFound(request.method)
     }
     if (
       isProduction(env) &&

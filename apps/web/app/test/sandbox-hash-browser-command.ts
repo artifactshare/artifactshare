@@ -1,6 +1,6 @@
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 
-const fixtureOrigin = 'https://sandbox.example.com'
+const fixtureOrigin = 'https://a-abc123def4--v-7631.usercontent.localhost:5174'
 const fixturePattern = `${fixtureOrigin}/**`
 const loads = new WeakMap<object, number>()
 
@@ -24,7 +24,7 @@ export const sandboxHashDocument = defineBrowserCommand(
       spent.add(url)
       await route.fulfill({ contentType: 'text/html', body: html })
     })
-    return `${fixtureOrigin}/index.html${signedIn ? '?t=synthetic-token' : ''}`
+    return `${fixtureOrigin}/index.html${signedIn ? '?__as_token=synthetic-token' : ''}`
   },
 )
 

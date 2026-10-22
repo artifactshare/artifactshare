@@ -220,7 +220,7 @@ command 固有の代表 code を補足する。
 
 投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus プランでは、管理者という理由だけで他のメンバーの非公開プロジェクトに投稿できません。閲覧権限や成果物への個別共有だけでは、投稿先を選ぶ権限になりません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。
 
-- `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.artifactshare.link` URL、`<id>--v-<version>.artifactshare.link` URL、`<id>.sandbox.*` URL を直接受ける。タイトルやプロジェクト名からは非対話で解決しない。
+- `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.artifactshare.link` URL、`a-<id>--v-<hex-version>.artifactshareusercontent.com` / `l-<id>--v-<hex-version>.artifactshareusercontent.com` の実行 URL、旧 sandbox / リンク配信 URL を直接受ける。旧配信 URL は ID の解決だけに使い、内容を取得しない。公開共有 URL は変更しない。タイトルやプロジェクト名からは非対話で解決しない。
 - タイトルやプロジェクト名しかないときは `resolve <value>` で候補を得てから ID を渡す。
 - `resolve` は URL、ID、タイトル、プロジェクト名を受け、候補を `data.candidates` で返す。非対話では 1 件に決まらない限り失敗し、次に指定すべき ID を返す。
 

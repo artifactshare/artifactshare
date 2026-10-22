@@ -4,6 +4,7 @@ import {
 } from '~/lib/viewer-hash'
 import { useHydrated } from '~/hooks/use-hydrated'
 import { CspBanner } from './csp-banner'
+import { reloadViewerPage } from './reload-viewer-page'
 import { retainCspViolation } from './csp-violation-retention'
 import { classifyCspViolation } from '~/lib/csp-violation-classification'
 import { createAnchorResolutionSync } from '~/lib/anchor-resolution-sync'
@@ -38,7 +39,15 @@ import {
   type TextSelectionMessage,
 } from '~/lib/csp-reporter'
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
-import { APEX_HOST, WWW_HOST } from '~/lib/hosts'
+import {
+  APEX_HOST,
+  DELIVERY_UNAVAILABLE_PATH,
+  SANDBOX_DEV_SUFFIX,
+  WWW_HOST,
+  BUNDLE_SANDBOX_DEV_PORT,
+  sandboxVersionIdentityFromHostname,
+} from '~/lib/hosts'
+import { withoutSearchParameters } from '~/lib/sandbox-delivery-query'
 import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
@@ -157,6 +166,40 @@ export function sandboxFrameSurfaceClassName(followsAppTheme: boolean) {
 }
 
 export function SandboxFrame(props: SandboxFrameProps) {
+  const { t } = useT()
+  // The app marks cutover unavailability before the execution Worker is ready.
+  // Do not mount the frame controller: probing or renewing cannot recover it.
+  if (new URL(props.url).pathname === DELIVERY_UNAVAILABLE_PATH) {
+    return (
+      <ViewerBodySurface>
+        <div
+          data-sandbox-state="delivery-unavailable"
+          className="bg-background relative block h-full w-full overflow-hidden"
+        >
+          <div className="absolute inset-0 overflow-y-auto">
+            <DeniedPanel
+              icon={<IconFile aria-hidden="true" />}
+              title={t('vw.deliveryUnavailable.title')}
+              body={t('vw.deliveryUnavailable.body')}
+              actions={
+                <Button size="sm" onClick={reloadViewerPage}>
+                  {t('vw.deliveryUnavailable.reload')}
+                </Button>
+              }
+            />
+            <span className="sr-only" role="status" aria-live="polite">
+              {t('vw.deliveryUnavailable.title')}
+            </span>
+          </div>
+        </div>
+        {props.children}
+      </ViewerBodySurface>
+    )
+  }
+  return <ActiveSandboxFrame {...props} />
+}
+
+function ActiveSandboxFrame(props: SandboxFrameProps) {
   const { shareableId, name, sandboxPermissions, children } = props
   const controller = useSandboxFrameController(props)
   const hydrated = useHydrated()
@@ -300,7 +343,7 @@ function SandboxState({
           body={
             <>
               <p>{t('vw.sandboxBlocked.body')}</p>
-              <p className="text-foreground mt-2 flex items-center gap-1.5 font-medium">
+              <p className="text-foreground mt-2 flex items-center justify-center gap-1.5 font-medium">
                 <IconCheck aria-hidden="true" size={16} />
                 {t('vw.sandboxBlocked.reassurance')}
               </p>
@@ -338,7 +381,7 @@ function SandboxState({
           body={
             <>
               <p>{t('vw.sandboxPaused.body')}</p>
-              <p className="text-foreground mt-2 flex items-center gap-1.5 font-medium">
+              <p className="text-foreground mt-2 flex items-center justify-center gap-1.5 font-medium">
                 <IconCheck aria-hidden="true" size={16} />
                 {t('vw.sandboxPaused.reassurance')}
               </p>
@@ -463,7 +506,7 @@ function useSandboxFrameController({
   const [hashSync] = useState(createViewerHashSync)
   useEffect(() => () => hashSync.clear(), [hashSync])
   const mermaidRenderChallengeRef = useRef<string | null>(null)
-  const trustedMessageOrigin = new URL(url).origin
+  const trustedMessageOrigin = new URL(frameUrl).origin
   const commentLabels = useMemo(
     () => ({
       openOne: translatePlural(locale, 'comments.highlightOpen', 1),
@@ -1142,8 +1185,60 @@ export async function refreshSandboxFrameUrl(
   }
   const body = result.body
   if (typeof body?.sandboxUrl !== 'string') return null
-  const nextUrl = new URL(targetUrl)
+  let nextUrl = new URL(targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
+  // A renewal may advance the published version, but never the artifact,
+  // authorization kind, or deployment's execution domain.
+  const executionEnv = {
+    APP_ENV: nextUrl.hostname.endsWith(SANDBOX_DEV_SUFFIX)
+      ? 'development'
+      : 'production',
+  }
+  const currentIdentity = sandboxVersionIdentityFromHostname(
+    nextUrl.hostname,
+    executionEnv,
+  )
+  const renewedIdentity = sandboxVersionIdentityFromHostname(
+    entrypointUrl.hostname,
+    executionEnv,
+  )
+  const expectedPort =
+    executionEnv.APP_ENV === 'production' ? '' : String(BUNDLE_SANDBOX_DEV_PORT)
+  if (
+    !currentIdentity ||
+    !renewedIdentity ||
+    currentIdentity.shareableId !== shareableId ||
+    renewedIdentity.shareableId !== shareableId ||
+    currentIdentity.domain !== renewedIdentity.domain ||
+    nextUrl.protocol !== 'https:' ||
+    entrypointUrl.protocol !== 'https:' ||
+    nextUrl.port !== expectedPort ||
+    entrypointUrl.port !== expectedPort
+  )
+    return null
+  // The frame src may still be the previous renewal entry URL. Recover its
+  // validated in-artifact destination before constructing the next renewal.
+  const previousNext = nextUrl.searchParams.get('as_next')
+  const isRenewalEntry = nextUrl.searchParams.has('__as_token')
+  if (isRenewalEntry) {
+    nextUrl.search = withoutSearchParameters(nextUrl.search, ['as_next'])
+    if (
+      body.renderType === 'static_site' &&
+      previousNext?.startsWith('/') &&
+      !previousNext.startsWith('//')
+    ) {
+      try {
+        const destination = new URL(previousNext, nextUrl.origin)
+        if (destination.origin === nextUrl.origin) nextUrl = destination
+      } catch {
+        return null
+      }
+    }
+  }
+  nextUrl.search = withoutSearchParameters(nextUrl.search, [
+    '__as_token',
+    '__as_cookie_check',
+  ])
   entrypointUrl.hash = options.navigation
     ? nextUrl.hash
     : (options.getHash?.() ?? window.location.hash)

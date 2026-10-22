@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import { artifactSandboxUrl } from '~/lib/hosts'
+import { artifactDeliveryEnabled } from '~/lib/hosts'
 import { renderTypeFromKind } from '~/lib/artifact-type'
-import { signSandboxToken } from '~/lib/sandbox-token'
+import { signSandboxUrl } from '~/lib/sandbox-token'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import {
   viewerAccessAllowed,
@@ -16,6 +16,11 @@ import type { Route } from './+types/api.shareables.$id.sandbox-token'
 const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' } as const
 
 export async function loader({ context, params, request }: Route.LoaderArgs) {
+  if (!artifactDeliveryEnabled(env))
+    return Response.json(
+      { error: 'delivery-unavailable' },
+      { status: 503, headers: NO_STORE_HEADERS },
+    )
   const linkDomain = context.get(linkDomainContext)
   if (linkDomain && params.id !== linkDomain.shareableId) {
     return Response.json(
@@ -146,7 +151,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
     )
   }
 
-  const token = await signSandboxToken(
+  const sandboxUrl = await signSandboxUrl(
     {
       uid: user?.id ?? null,
       wid: shareable.workspace_id,
@@ -158,16 +163,10 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
+    env,
+    version.entrypoint_path ?? undefined,
   )
 
-  const sandboxUrl = artifactSandboxUrl(
-    env,
-    shareable.id,
-    version.id,
-    token,
-    version.entrypoint_path ?? undefined,
-    { domain: linkDomain ? 'link' : 'sandbox' },
-  )
   return Response.json(
     { sandboxUrl, renderType: versionRenderType },
     { headers: NO_STORE_HEADERS },

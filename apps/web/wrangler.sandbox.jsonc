@@ -28,6 +28,10 @@
       "name": "artifactshare-sandbox",
       "observability": { "enabled": true, "redact_query_string": true },
       "routes": [
+        {
+          "pattern": "*.artifactshareusercontent.com/*",
+          "zone_name": "artifactshareusercontent.com",
+        },
         { "pattern": "sandbox.artifactshare.com", "custom_domain": true },
         {
           "pattern": "*.sandbox.artifactshare.com/*",

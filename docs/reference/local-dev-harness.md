@@ -13,7 +13,7 @@ The command prepares local inputs and then starts three HTTPS services:
 | Service | Origin |
 | --- | --- |
 | Application | `https://localhost:5173` |
-| Artifact sandbox | `https://*.sandbox.localhost:5174` |
+| Artifact sandbox | `https://*.usercontent.localhost:5174` |
 | Open Graph image worker | `https://localhost:5175` |
 
 If one or more of these services already responds on its expected origin, the
@@ -57,3 +57,49 @@ This uses a temporary persistence directory. It proves setup on an empty databas
 ## Generated files
 
 `.dev.vars`, `.dev-certs/`, and `.wrangler/` are local inputs or state and must remain untracked. Never place production credentials in them for this harness.
+
+
+Artifact execution uses `a-<id>--v-<hex-version>.usercontent.localhost:5174`
+for authenticated viewing and `l-<id>--v-<hex-version>.usercontent.localhost:5174`
+for anonymous link viewing. The app stays at `localhost:5173` and link viewers
+stay at `<id>.localhost:5173`. Regenerate the local certificate with `dev:setup`
+when moving from the old sandbox wildcard. These hosts are all same-site;
+passing this harness does not prove third-party-cookie blocking compatibility.
+Cross-site browser evidence must use distinct sites mapped to loopback, block
+external traffic, and record exact browser versions and cookie settings.
+
+Run the self-contained cross-site regression with:
+
+```sh
+pnpm --filter @artifactshare/web exec vitest --config vitest.behavior.browser.config.ts run app/lib/usercontent-delivery.behavior.browser.test.tsx
+```
+
+The command builds the app locally and starts isolated Worker, D1, R2, HTTPS,
+and proxy instances. Reserved `app.example`, `<id>.link.example`, and
+`<kind>-<id>--v-<hex-version>.usercontent.example` hosts map one-to-one to the
+Worker origins. The proxy translates URL/Origin and CSP/CORS hostnames together;
+signed tokens and cookies remain untouched. No real DNS or account is used.
+Unexpected browser and Worker traffic is blocked. A temporary self-signed test
+certificate is accepted only by the test browser context. All servers, contexts,
+and temporary keys are cleaned up by the command.
+
+Chromium uses `Network.setCookieControls` with third-party restriction enabled.
+Firefox runs default Total Cookie Protection (`network.cookie.cookieBehavior=5`)
+and a separate block-all-cross-site-cookies case (`1`). WebKit uses its default
+policy. A first-party positive control accepts an ordinary cookie; cross-site
+controls prove blocking in Chromium/WebKit and top-level-site partitioning in
+Firefox TCP. Each engine also sets a `Partitioned` cookie in a cross-site frame
+and checks whether the next navigation returns it, before running product flows.
+When supported, the full delivery matrix runs. Otherwise, private static sites
+must show the explanation page while single-file HTML, Markdown, and anonymous
+link content still render. Output records the detected capability, engine, exact
+version, setting, and completed cases; no engine is skipped.
+
+Supported policies are Chromium with third-party cookie restriction, Firefox
+default Total Cookie Protection, and Safari 26.2 or later (and 18.4). Safari 18.5
+through 26.1 and browsers blocking all cross-site cookies get the explanation
+page for private static sites. Automated WebKit capability detection does not
+stand in for a separate Safari product measurement.
+A failure is a release blocker, not permission to skip a browser or reuse an old
+origin. Authenticated exports and authored HTML/static-site downloads are covered;
+the existing anonymous Markdown viewer intentionally has no export menu.

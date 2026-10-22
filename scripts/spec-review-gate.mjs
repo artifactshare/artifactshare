@@ -328,6 +328,19 @@ function canonicalArtifactIdentity(input) {
   } catch {
     throw new Error('Artifact URL does not contain a canonical artifact id.')
   }
+  const contentMatch = url.hostname.match(
+    /^[al]-([a-z0-9]{10})--v-((?:[a-f0-9]{2})+)\.(?:artifactshareusercontent\.com|usercontent\.localhost)$/u,
+  )
+  if (contentMatch && url.hostname.indexOf('.') <= 63) {
+    try {
+      const bytes = Buffer.from(contentMatch[2], 'hex')
+      const version = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      if (version && Buffer.from(version).toString('hex') === contentMatch[2])
+        return contentMatch[1]
+    } catch {
+      throw new Error('Artifact URL does not contain a canonical artifact id.')
+    }
+  }
   const sandboxMatch = url.hostname.match(/^([A-Za-z0-9]+)\.sandbox\./u)
   if (sandboxMatch?.[1]) return sandboxMatch[1]
   const shareMatch = url.pathname.match(/^\/a\/([A-Za-z0-9]+)(?:\.data)?\/?$/u)

@@ -54,7 +54,8 @@ const AGENT_SURFACE_LAST_UPDATED = '2026-09-18'
 const AGENT_URL_PATTERNS = [
   'https://artifactshare.com/a/...',
   'https://<id>.artifactshare.link/',
-  'https://<id>--v-<version>.artifactshare.link/...',
+  'https://a-<id>--v-<hex-version>.artifactshareusercontent.com/...',
+  'https://l-<id>--v-<hex-version>.artifactshareusercontent.com/...',
 ] as const
 const AGENT_ROUTING_INTENTS = {
   positive: [

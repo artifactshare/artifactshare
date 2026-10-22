@@ -77,7 +77,7 @@ export const CLI_QUICK_REFERENCE = [
 export const CLI_README_COMMANDS = [
   [
     'open <target>',
-    'First command for agents opening a shared URL; ensures skills, then reads or suggests download',
+    'First command for agents opening a share or artifactshareusercontent.com execution URL; ensures skills, then reads or suggests download',
   ],
   [
     'share <path>',

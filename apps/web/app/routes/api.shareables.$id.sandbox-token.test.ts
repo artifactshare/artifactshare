@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { verifySandboxToken } from '~/lib/sandbox-token'
+import { verifySandboxTokenDetailed } from '~/lib/sandbox-token'
 
 vi.mock('cloudflare:workers', () => ({
   env: {
     APP_ENV: 'production',
+    ARTIFACT_DELIVERY_STAGE: 'usercontent',
     BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
   },
 }))
@@ -105,19 +106,25 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(response.headers.get('Cache-Control')).toBe('private, no-store')
     const body = (await response.json()) as { sandboxUrl: string }
     expect(body.sandboxUrl).toMatch(
-      /^https:\/\/abc123def4--v-7631\.sandbox\.artifactshare\.com\/\?t=/,
+      /^https:\/\/a-abc123def4--v-7631\.artifactshareusercontent\.com\/\?__as_token=/,
     )
-    const token = new URL(body.sandboxUrl).searchParams.get('t')
+    const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     expect(token).toBeTruthy()
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
     ).resolves.toMatchObject({
-      uid: 'u1',
-      wid: 'ws1',
-      aid: 'abc123def4',
-      vid: 'v1',
-      fid: 'ws1/abc123def4/v1/index.html',
-      t: 'static_site',
+      ok: true,
+      payload: {
+        uid: 'u1',
+        wid: 'ws1',
+        aid: 'abc123def4',
+        vid: 'v1',
+        fid: 'ws1/abc123def4/v1/index.html',
+        t: 'static_site',
+      },
     })
   })
 
@@ -191,13 +198,19 @@ describe('/api/shareables/:id/sandbox-token', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { sandboxUrl: string }
     expect(body.sandboxUrl).toContain(
-      'html123abc--v-7631.sandbox.artifactshare.com',
+      'a-html123abc--v-7631.artifactshareusercontent.com',
     )
     expect(new URL(body.sandboxUrl).pathname).toBe('/demo.html')
-    const token = new URL(body.sandboxUrl).searchParams.get('t')
+    const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
-    ).resolves.toMatchObject({ vid: 'v1', fid: 'ws1/html123abc/v1/demo.html' })
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      payload: { vid: 'v1', fid: 'ws1/html123abc/v1/demo.html' },
+    })
   })
 
   test('does not return a token when access is denied', async () => {
@@ -248,12 +261,15 @@ describe('/api/shareables/:id/sandbox-token', () => {
     const response = await loader(loaderArgs('abc123def4', 'old', true))
     const body = (await response.json()) as { sandboxUrl: string }
     expect(body.sandboxUrl).toMatch(
-      /^https:\/\/abc123def4--v-7631\.artifactshare\.link\/\?t=/,
+      /^https:\/\/l-abc123def4--v-7631\.artifactshareusercontent\.com\/\?__as_token=/,
     )
-    const token = new URL(body.sandboxUrl).searchParams.get('t')
+    const token = new URL(body.sandboxUrl).searchParams.get('__as_token')
     await expect(
-      verifySandboxToken(token!, 'test-secret-with-enough-entropy-for-hmac'),
-    ).resolves.toMatchObject({ uid: null, vid: 'v1' })
+      verifySandboxTokenDetailed(
+        token!,
+        'test-secret-with-enough-entropy-for-hmac',
+      ),
+    ).resolves.toMatchObject({ ok: true, payload: { uid: null, vid: 'v1' } })
     expect(checkAnonymousLinkAccessMock).toHaveBeenCalledWith(
       expect.anything(),
       'abc123def4',

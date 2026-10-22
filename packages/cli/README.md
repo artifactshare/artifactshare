@@ -6,6 +6,8 @@ The official CLI to open, share, and update files, folders, and static sites on 
 
 Artifact Share hosts AI-built reports, documents, and static sites so you can share them with teammates and clients. This CLI shares a single file or a whole folder (HTML, Markdown, exported SPAs, images included), updates versions, opens shared URLs for agents, reads content and comments back, and works the same for humans, terminal agents (Claude Code, Codex, Cursor Agent), and automation.
 
+Targets accept artifact IDs, app share URLs, per-ID `artifactshare.link` viewer URLs, and `a-<id>--v-<hex-version>.artifactshareusercontent.com` or `l-<id>--v-<hex-version>.artifactshareusercontent.com` execution URLs. Legacy sandbox and link-content URLs still resolve to IDs through the API; they no longer serve file content. Public share URLs are unchanged.
+
 ## WebAssembly dashboards
 
 Static sites can run WebAssembly and workers, such as DuckDB-WASM loaded from jsDelivr, and folder uploads accept `.wasm` and `.parquet`; extensions such as `parquet` load from `extensions.duckdb.org`, and the bundled skill describes the setup.
@@ -71,7 +73,7 @@ project's Slack channel must be reauthorized.
 
 | Command                                                            | What it does                                                                                                                                                              |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `open <target>`                                                    | First command for agents opening a shared URL; ensures skills, then reads or suggests download                                                                            |
+| `open <target>`                                                    | First command for agents opening a share or artifactshareusercontent.com execution URL; ensures skills, then reads or suggests download                                   |
 | `share <path>`                                                     | Share a file or folder as a new shared file (`--project`, `--home`, `--visibility`, `--key`, link expiry options)                                                         |
 | `update <target> <path>`                                           | Add a new version to an existing file (ID or share URL); optional `--label` adds a version note                                                                           |
 | `append <target> <path>`                                           | Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end                                         |

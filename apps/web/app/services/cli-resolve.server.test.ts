@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 
-vi.mock('cloudflare:workers', () => ({ env: {} }))
+const envMock = vi.hoisted(() => ({ APP_ENV: 'production' }))
+vi.mock('cloudflare:workers', () => ({ env: envMock }))
 
 import { resolveCliCandidates } from './cli-resolve.server'
 
@@ -17,6 +18,63 @@ describe('resolveCliCandidates', () => {
 
   afterEach(async () => {
     await db.destroy()
+  })
+
+  test.each([
+    ['production', 'a-abc123def4--v-7631.artifactshareusercontent.com'],
+    ['production', 'l-abc123def4--v-7631.artifactshareusercontent.com'],
+    ['development', 'a-abc123def4--v-7631.usercontent.localhost:5174'],
+    ['development', 'l-abc123def4--v-7631.usercontent.localhost:5174'],
+  ])('resolves execution URLs in %s: %s', async (appEnv, host) => {
+    envMock.APP_ENV = appEnv
+    try {
+      const artifact = await db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', 'art123')
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('shareables')
+        .values({ ...artifact, id: 'abc123def4', current_version_id: null })
+        .execute()
+      const result = await resolveCliCandidates(
+        db,
+        USER,
+        `https://${host}/index.html`,
+      )
+      expect(result.candidates).toContainEqual(
+        expect.objectContaining({
+          id: 'abc123def4',
+          match: { kind: 'url', confidence: 'exact' },
+        }),
+      )
+    } finally {
+      envMock.APP_ENV = 'production'
+    }
+  })
+
+  test.each([
+    'a-abc123def4--v-7',
+    'l-abc123def4--v-ff',
+    'x-abc123def4--v-7631',
+    'a-abc123def4--v-',
+    `a-abc123def4--v-${'61'.repeat(24)}`,
+  ])('does not resolve malformed execution label %s', async (label) => {
+    const artifact = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', 'art123')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('shareables')
+      .values({ ...artifact, id: 'abc123def4', current_version_id: null })
+      .execute()
+    const result = await resolveCliCandidates(
+      db,
+      USER,
+      `https://${label}.artifactshareusercontent.com/`,
+    )
+    expect(result.candidates).toEqual([])
   })
 
   test('returns artifact, project, and version candidates', async () => {

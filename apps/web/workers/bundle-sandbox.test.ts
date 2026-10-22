@@ -39,7 +39,12 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 }))
 
 import { staticSiteAssetResponse } from './lib/artifact-response'
-import { signSandboxToken } from '../app/lib/sandbox-token'
+import { signSandboxToken as signDeliveryToken } from '../app/lib/sandbox-token'
+const signSandboxToken = (
+  payload: Parameters<typeof signDeliveryToken>[0],
+  secret: string,
+  ttl?: number,
+) => signDeliveryToken(payload, secret, envMock, ttl)
 import { sandboxVersionLabel } from '../app/lib/hosts'
 import { decodeBase64Url, encodeBase64Url } from '../app/lib/base64url'
 import { hmacSha256 } from '../app/lib/hmac'
@@ -225,26 +230,30 @@ function sandboxOrigin(
   versionId = 'v-bundle',
   shareableId = 'abc123def4',
 ): string {
-  return `https://${sandboxVersionLabel(shareableId, versionId)}.sandbox.localhost:5174`
+  return `https://${sandboxVersionLabel(shareableId, versionId)}.usercontent.localhost:5174`
+}
+
+function linkOrigin(
+  versionId = 'v-bundle',
+  shareableId = 'abc123def4',
+): string {
+  return `https://${sandboxVersionLabel(shareableId, versionId, 'link')}.usercontent.localhost:5174`
 }
 
 describe('sandbox probe', () => {
+  beforeEach(() => {
+    envMock.APP_ENV = 'development'
+  })
   test('returns the fixed response without touching storage, DB, or JTI', async () => {
     dbRef.current = null
     const requests = [
       new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
         headers: {
-          Origin: 'https://artifactshare.com',
+          Origin: 'https://localhost:5173',
           Cookie: 'as_bnd=secret',
           authorization: 'Bearer secret',
         },
       }),
-      new Request(
-        `https://not-an-id.sandbox.artifactshare.com${SANDBOX_PROBE_PATH}`,
-        {
-          headers: { Origin: 'https://www.artifactshare.com' },
-        },
-      ),
     ]
     const responses = await Promise.all(
       requests.map((request) => handleArtifactSandboxRequest(request)),
@@ -261,7 +270,7 @@ describe('sandbox probe', () => {
         'same-origin',
       )
       expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
-        'same-site',
+        'cross-origin',
       )
       expect(response.headers.get('Permissions-Policy')).toContain('camera=()')
       expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
@@ -284,8 +293,8 @@ describe('sandbox probe', () => {
   })
 
   test.each([
-    ['https://artifactshare.com', 'https://artifactshare.com'],
-    ['https://www.artifactshare.com', 'https://www.artifactshare.com'],
+    ['https://artifactshare.com', null],
+    ['https://www.artifactshare.com', null],
     ['https://localhost:5173', 'https://localhost:5173'],
   ])('allows only the app origin %s', async (origin, expected) => {
     const response = await handleArtifactSandboxRequest(
@@ -307,7 +316,7 @@ describe('sandbox probe', () => {
     envMock.APP_ENV = 'production'
     const normal = await handleArtifactSandboxRequest(
       new Request(
-        'https://unrecognized.sandbox.artifactshare.com/not-a-bundle-path',
+        'https://unrecognized.artifactshareusercontent.com/not-a-bundle-path',
         {
           headers: { Origin: 'https://artifactshare.com' },
         },
@@ -322,13 +331,16 @@ describe('sandbox probe', () => {
     const origin = 'https://abc123def4.artifactshare.link'
     const label = sandboxVersionLabel('abc123def4', 'v-bundle')
     const linkProbe = await handleArtifactSandboxRequest(
-      new Request(`https://${label}.artifactshare.link${SANDBOX_PROBE_PATH}`, {
-        headers: { Origin: origin },
-      }),
+      new Request(
+        `https://${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com${SANDBOX_PROBE_PATH}`,
+        {
+          headers: { Origin: origin },
+        },
+      ),
     )
     const sandboxProbe = await handleArtifactSandboxRequest(
       new Request(
-        `https://${label}.sandbox.artifactshare.com${SANDBOX_PROBE_PATH}`,
+        `https://${label}.artifactshareusercontent.com${SANDBOX_PROBE_PATH}`,
         { headers: { Origin: origin } },
       ),
     )
@@ -413,7 +425,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
 
       expect(response.status).toBe(200)
@@ -458,7 +470,9 @@ describe('violation reporter injection handler', () => {
         jti: 'j-node-md',
       })
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin('v-node-md')}/index.md?t=${token}`),
+        new Request(
+          `${sandboxOrigin('v-node-md')}/index.md?__as_token=${token}`,
+        ),
       )
 
       const body = await response.text()
@@ -479,7 +493,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
       const body = await response.text()
       expect(body.indexOf(VIOLATION_REPORTER_TAG)).toBeLessThan(
@@ -499,7 +513,7 @@ describe('violation reporter injection handler', () => {
       )
       const token = await entrypointToken()
       await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
 
       const rewriter = HtmlRewriterStub.instances.at(-1)!
@@ -564,7 +578,7 @@ describe('violation reporter injection handler', () => {
       })
       const response = await handleArtifactSandboxRequest(
         new Request(
-          `${sandboxOrigin('v-md-single', 'mdsingle01')}/readme.md?t=${token}`,
+          `${sandboxOrigin('v-md-single', 'mdsingle01')}/readme.md?__as_token=${token}`,
         ),
       )
       expect(response.status).toBe(200)
@@ -1019,6 +1033,819 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockReset()
   })
 
+  test.each(['authenticated', 'link'] as const)(
+    'renewal removes expired tokens from %s redirect targets',
+    async (kind) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const makeToken =
+        kind === 'link' ? anonymousEntrypointToken : entrypointToken
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const oldToken = await makeToken()
+        clock.mockReturnValue(now + 61_000)
+        const expired = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html?__as_token=${oldToken}`),
+        )
+        expect(expired.status).toBe(401)
+        const freshToken = await makeToken()
+        const target = `/index.html?q=a%20b&flag&__as_token=${oldToken}`
+        const entry = await handleArtifactSandboxRequest(
+          new Request(
+            `${origin}/index.html?__as_token=${freshToken}&as_next=${encodeURIComponent(target)}`,
+            { headers: { 'Sec-Fetch-Dest': 'iframe' } },
+          ),
+        )
+        expect(entry.status).toBe(302)
+        expect(entry.headers.get('Location')).toBe(
+          `/index.html?q=a%20b&flag${kind === 'link' ? '' : '&__as_cookie_check=1'}`,
+        )
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        let location = entry.headers.get('Location')!
+        if (kind !== 'link') {
+          const checked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(checked.status).toBe(302)
+          location = checked.headers.get('Location')!
+        }
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<h1>Renewed</h1>', 'text/html'),
+        )
+        const delivered = await handleArtifactSandboxRequest(
+          new Request(new URL(location, origin), {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(delivered.status).toBe(200)
+        expect(await delivered.text()).toContain('Renewed')
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each([
+    ['authenticated', false],
+    ['link', false],
+    ['authenticated', true],
+    ['link', true],
+  ] as const)(
+    '%s expired entry tokens recover only with matching live cookie authority (renewal: %s)',
+    async (kind, renewal) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const payload = {
+        uid: kind === 'link' ? null : 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site' as const,
+        jti: 'expired-entry',
+      }
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const token = await signSandboxToken(payload, 'test-secret')
+        const target = '/other.md?q=a%20b&flag#section'
+        const entryUrl = `${origin}/index.html?__as_token=${token}${
+          renewal
+            ? `&as_next=${encodeURIComponent(`${target.split('#')[0]}&__as_token=${token}&__as_cookie_check=1#section`)}`
+            : ''
+        }`
+        const entry = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { 'Sec-Fetch-Dest': 'iframe' },
+          }),
+        )
+        expect(entry.status).toBe(302)
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        const mismatchedTokens = await Promise.all(
+          [
+            { uid: kind === 'link' ? 'viewer-1' : 'owner-1' },
+            { wid: 'other-workspace' },
+            { aid: 'abc123def5' },
+            { vid: 'other-version' },
+          ].map((overrides) =>
+            signSandboxToken({ ...payload, ...overrides }, 'test-secret'),
+          ),
+        )
+        clock.mockReturnValue(now + 61_000)
+        consumeJtiMock.mockClear()
+        storageMock.getArtifact.mockImplementation(async () =>
+          storedArtifact('<h1>Recovered</h1>', 'text/html'),
+        )
+        // Keep the original expired token in the URL, as history/reload does.
+        const recovered = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        if (renewal) {
+          expect(recovered.status).toBe(302)
+          expect(recovered.headers.get('Location')).toBe(target)
+          expect(storageMock.getArtifact).not.toHaveBeenCalled()
+          const delivered = await handleArtifactSandboxRequest(
+            new Request(new URL(target, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(delivered.status).toBe(200)
+          expect(await delivered.text()).toContain('Recovered')
+          expect(storageMock.getArtifact).toHaveBeenLastCalledWith(
+            {},
+            'ws-a/abc123def4/v-bundle/other.md',
+          )
+        } else {
+          expect(recovered.status).toBe(200)
+          expect(await recovered.text()).toContain('Recovered')
+        }
+        expect(recovered.headers.get('Set-Cookie')).toBeNull()
+        expect(consumeJtiMock).not.toHaveBeenCalled()
+
+        storageMock.getArtifact.mockClear()
+        for (const headers of [
+          new Headers(),
+          new Headers({ Cookie: '__Host-as_bnd=invalid' }),
+        ]) {
+          const denied = await handleArtifactSandboxRequest(
+            new Request(entryUrl, { headers }),
+          )
+          expect(denied.status).toBe(401)
+        }
+        for (const invalidToken of [...mismatchedTokens, `${token}invalid`]) {
+          const denied = await handleArtifactSandboxRequest(
+            new Request(`${origin}/index.html?__as_token=${invalidToken}`, {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(denied.status).toBe(401)
+        }
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+
+        clock.mockReturnValue(now + 601_000)
+        const expiredCookie = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(expiredCookie.status).toBe(401)
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+
+        clock.mockReturnValue(now + 62_000)
+        if (kind === 'link')
+          await dbRef
+            .current!.updateTable('shareables')
+            .set({ visibility: 'private' })
+            .where('id', '=', 'abc123def4')
+            .execute()
+        else
+          await dbRef
+            .current!.deleteFrom('shareable_grants')
+            .where('shareable_id', '=', 'abc123def4')
+            .execute()
+        const revoked = await handleArtifactSandboxRequest(
+          new Request(entryUrl, {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(revoked.status).toBe(401)
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each(['authenticated', 'link'] as const)(
+    '%s document entry removes the token so reload survives its expiry',
+    async (kind) => {
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+      try {
+        const token = await (kind === 'link'
+          ? anonymousEntrypointToken()
+          : entrypointToken())
+        const entry = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html?q=a%20b&flag&__as_token=${token}`, {
+            headers: { 'Sec-Fetch-Dest': 'iframe' },
+          }),
+        )
+        expect(entry.status).toBe(302)
+        const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+        let location = entry.headers.get('Location')!
+        expect(location).not.toContain('__as_token')
+        if (kind === 'authenticated') {
+          const checked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(checked.status).toBe(302)
+          location = checked.headers.get('Location')!
+        }
+        expect(location).toBe('/index.html?q=a%20b&flag')
+        clock.mockReturnValue(now + 61_000)
+        storageMock.getArtifact.mockResolvedValue(
+          storedArtifact('<h1>Reloaded</h1>', 'text/html'),
+        )
+        const reloaded = await handleArtifactSandboxRequest(
+          new Request(new URL(location, origin), {
+            headers: { Cookie: cookie },
+          }),
+        )
+        expect(reloaded.status).toBe(200)
+        expect(await reloaded.text()).toContain('Reloaded')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'private' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+        if (kind === 'link') {
+          storageMock.getArtifact.mockClear()
+          const revoked = await handleArtifactSandboxRequest(
+            new Request(new URL(location, origin), {
+              headers: { Cookie: cookie },
+            }),
+          )
+          expect(revoked.status).toBe(401)
+          expect(storageMock.getArtifact).not.toHaveBeenCalled()
+        }
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test.each([
+    '__Host-as_bnd=invalid',
+    '__Host-as_bnd=first; __Host-as_bnd=second',
+    'rotated-secret',
+  ])('fresh entry tokens replace unverifiable cookies: %s', async (cookie) => {
+    const token = await entrypointToken()
+    if (cookie === 'rotated-secret') {
+      const original = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      const body = original.headers
+        .get('Set-Cookie')!
+        .split(';')[0]
+        .split('=')[1]
+        .split('.')[0]
+      const signature = encodeBase64Url(
+        await hmacSha256('previous-test-secret', body),
+      )
+      cookie = `__Host-as_bnd=${body}.${signature}`
+    }
+    const request = () =>
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+        headers: { Cookie: cookie, 'Sec-Fetch-Dest': 'iframe' },
+      })
+    const entry = await handleArtifactSandboxRequest(request())
+    expect(entry.status).toBe(302)
+    expect(entry.headers.get('Set-Cookie')).toMatch(/^__Host-as_bnd=/)
+    expect(entry.headers.get('Set-Cookie')).not.toContain('invalid')
+    // An invalid cookie does not provide the matching-bundle replay exception.
+    consumeJtiMock.mockResolvedValue(false)
+    expect((await handleArtifactSandboxRequest(request())).status).toBe(401)
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+    expect(asset.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('checks private static-site navigation cookies before serving artifact code', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<h1>Private page</h1>', 'text/html'),
+    )
+    const token = await signSandboxToken(
+      {
+        uid: 'viewer-1',
+        wid: 'ws-a',
+        aid: 'abc123def4',
+        vid: 'v-bundle',
+        fid: 'ws-a/abc123def4/v-bundle/index.html',
+        mt: null,
+        t: 'static_site',
+        jti: 'cookie-check-viewer',
+      },
+      'test-secret',
+    )
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      }),
+    )
+    expect(entry.status).toBe(302)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    const target = new URL(entry.headers.get('Location')!, sandboxOrigin())
+    expect(target.pathname).toBe('/index.html')
+    expect(target.searchParams.has('__as_token')).toBe(false)
+    const blocked = await handleArtifactSandboxRequest(new Request(target))
+    expect(blocked.status).toBe(403)
+    const message = await blocked.text()
+    expect(message).toContain('blocks or does not support the cookies')
+    expect(message).toContain('Safari 26.2 or later')
+    expect(message).toContain('allow cross-site cookies')
+    expect(message).toContain('If your session expired, reload the viewer.')
+    expect(message).toContain('Safari は 26.2 以降')
+    expect(message).toContain('サイト間 Cookie を許可')
+    expect(message).toContain('セッションの有効期限が切れた場合は')
+    expect(message).toContain('<section lang="ja">')
+    expect(message).toContain('非公開の静的サイトを表示できません')
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    const checked = await handleArtifactSandboxRequest(
+      new Request(target, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(checked.status).toBe(302)
+    const cleanTarget = new URL(
+      checked.headers.get('Location')!,
+      sandboxOrigin(),
+    )
+    expect(cleanTarget.pathname).toBe(target.pathname)
+    expect(cleanTarget.searchParams.has('__as_cookie_check')).toBe(false)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    const delivered = await handleArtifactSandboxRequest(
+      new Request(cleanTarget, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(delivered.status).toBe(200)
+    expect(await delivered.text()).toContain('Private page')
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'abc123def4')
+      .execute()
+    storageMock.getArtifact.mockClear()
+    const revoked = await handleArtifactSandboxRequest(
+      new Request(cleanTarget, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(revoked.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test.each(
+    [
+      ['//index.html', '/index.html'],
+      ['/\\index.html', '/index.html'],
+      ['/%2findex.html', '/index.html'],
+      ['/%5cindex.html', '/index.html'],
+      ['//example.test/path', '/example.test/path'],
+      ['/\\example.test/path', '/example.test/path'],
+      ['/%2fexample.test%2fpath', '/example.test/path'],
+      ['/example.test%5cpath', '/example.test/path'],
+    ].flatMap(([rawPath, path]) =>
+      ['authenticated', 'link'].map((kind) => [rawPath, path, kind]),
+    ),
+  )(
+    'redirects only normalized same-origin artifact paths: %s (%s, %s)',
+    async (rawPath, path, kind) => {
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      // Make the normalized entrypoint valid so both redirects are exercised.
+      await dbRef
+        .current!.updateTable('versions')
+        .set({ entrypoint_path: path })
+        .where('id', '=', 'v-bundle')
+        .execute()
+      await dbRef
+        .current!.updateTable('version_files')
+        .set({ path })
+        .where('version_id', '=', 'v-bundle')
+        .where('path', '=', '/index.html')
+        .execute()
+      const token = await (kind === 'link'
+        ? anonymousEntrypointToken()
+        : entrypointToken())
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${origin}${rawPath}?__as_token=${token}&q=a%20b`, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      expect(entry.status).toBe(302)
+      expect(entry.headers.get('Location')).toBe(
+        `${path}?q=a%20b${kind === 'link' ? '' : '&__as_cookie_check=1'}`,
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const checked = await handleArtifactSandboxRequest(
+        new Request(`${origin}${rawPath}?q=a%20b&__as_cookie_check=1`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(checked.status).toBe(302)
+      expect(checked.headers.get('Location')).toBe(`${path}?q=a%20b`)
+      expect(new URL(checked.headers.get('Location')!, origin).origin).toBe(
+        origin,
+      )
+    },
+  )
+
+  test.each([
+    ['authenticated', false],
+    ['link', false],
+    ['authenticated', true],
+    ['link', true],
+  ] as const)(
+    'preserves the root route for %s static sites (renewal: %s)',
+    async (kind, renewal) => {
+      const origin = kind === 'link' ? linkOrigin() : sandboxOrigin()
+      if (kind === 'link')
+        await dbRef
+          .current!.updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'abc123def4')
+          .execute()
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<h1>Root route</h1>', 'text/html'),
+      )
+      const token = await (kind === 'link'
+        ? anonymousEntrypointToken()
+        : entrypointToken())
+      const destination = '/?q=a%20b&flag#section'
+      const url = renewal
+        ? `${origin}/index.html?__as_token=${token}&as_next=${encodeURIComponent(destination)}`
+        : `${origin}/?__as_token=${token}&q=a%20b&flag#section`
+      const entry = await handleArtifactSandboxRequest(
+        new Request(url, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+      expect(entry.status).toBe(302)
+      expect(entry.headers.get('Location')).toBe(
+        kind === 'link'
+          ? destination
+          : '/?q=a%20b&flag&__as_cookie_check=1#section',
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      // Both kinds may revisit the cookie-check URL on a same-host navigation.
+      const checked = await handleArtifactSandboxRequest(
+        new Request(`${origin}/?q=a%20b&flag&__as_cookie_check=1#section`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(checked.status).toBe(302)
+      expect(checked.headers.get('Location')).toBe(destination)
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      const delivered = await handleArtifactSandboxRequest(
+        new Request(new URL(checked.headers.get('Location')!, origin), {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(delivered.status).toBe(200)
+      expect(await delivered.text()).toContain('Root route')
+      expect(storageMock.getArtifact).toHaveBeenCalledWith(
+        envMock.BUCKET,
+        'ws-a/abc123def4/v-bundle/index.html',
+      )
+    },
+  )
+
+  test('cookie-check navigation preserves the requested same-host path and rejects invalid authority', async () => {
+    const token = await entrypointToken()
+    const entry = await handleArtifactSandboxRequest(
+      new Request(
+        `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=${encodeURIComponent('/docs/intro.html?tab=one#top')}`,
+        { headers: { 'Sec-Fetch-Dest': 'document' } },
+      ),
+    )
+    const target = new URL(entry.headers.get('Location')!, sandboxOrigin())
+    expect(target.pathname).toBe('/docs/intro.html')
+    expect(target.searchParams.get('tab')).toBe('one')
+    expect(target.hash).toBe('#top')
+    const checked = await handleArtifactSandboxRequest(
+      new Request(target, {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(checked.status).toBe(302)
+    expect(checked.headers.get('Location')).toBe('/docs/intro.html?tab=one#top')
+    const invalid = await handleArtifactSandboxRequest(
+      new Request(target, {
+        headers: { Cookie: '__Host-as_bnd=invalid' },
+      }),
+    )
+    expect(invalid.status).toBe(401)
+    expect(await invalid.text()).not.toContain(
+      'Private static-site preview unavailable',
+    )
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('preserves artifact query bytes while adding and removing the cookie check', async () => {
+    const token = await entrypointToken()
+    const query =
+      '?q=a%20b&flag&encoded=%2f%2B&as_next=authored&repeat=1&repeat=2'
+    const target = `/docs/intro.html${query}#section`
+    const entry = await handleArtifactSandboxRequest(
+      new Request(
+        `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=${encodeURIComponent(target)}`,
+        { headers: { 'Sec-Fetch-Dest': 'iframe' } },
+      ),
+    )
+    expect(entry.status).toBe(302)
+    expect(entry.headers.get('Location')).toBe(
+      `/docs/intro.html${query}&__as_cookie_check=1#section`,
+    )
+    const checked = await handleArtifactSandboxRequest(
+      new Request(new URL(entry.headers.get('Location')!, sandboxOrigin()), {
+        headers: { Cookie: entry.headers.get('Set-Cookie')!.split(';')[0] },
+      }),
+    )
+    expect(checked.status).toBe(302)
+    expect(checked.headers.get('Location')).toBe(target)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('removes delivery parameters only from the outer entry URL', async () => {
+    const token = await entrypointToken()
+    const navigate = (url: string) =>
+      handleArtifactSandboxRequest(
+        new Request(url, {
+          headers: { 'Sec-Fetch-Dest': 'iframe' },
+        }),
+      )
+    const direct = await navigate(
+      `${sandboxOrigin()}/index.html?flag&q=a%20b&__as_token=${token}`,
+    )
+    expect(direct.headers.get('Location')).toBe(
+      '/index.html?flag&q=a%20b&__as_cookie_check=1',
+    )
+    const target = '/index.html?t=authored&as_next=authored&flag'
+    const redirected = await navigate(
+      `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=${encodeURIComponent(target)}`,
+    )
+    expect(redirected.headers.get('Location')).toBe(
+      `${target}&__as_cookie_check=1`,
+    )
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    const cookie = redirected.headers.get('Set-Cookie')!.split(';')[0]
+    const checked = await handleArtifactSandboxRequest(
+      new Request(
+        new URL(redirected.headers.get('Location')!, sandboxOrigin()),
+        {
+          headers: { Cookie: cookie },
+        },
+      ),
+    )
+    expect(checked.status).toBe(302)
+    expect(checked.headers.get('Location')).toBe(target)
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact(
+        '<!doctype html><body>Authored document</body>',
+        'text/html',
+      ),
+    )
+    const delivered = await handleArtifactSandboxRequest(
+      new Request(new URL(checked.headers.get('Location')!, sandboxOrigin()), {
+        headers: { Cookie: cookie },
+      }),
+    )
+    expect(delivered.status).toBe(200)
+    expect(await delivered.text()).toContain('Authored document')
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([
+    ['kind', { kind: 'link' }],
+    ['host', { aud: 'a-other12345--v-7631.usercontent.localhost' }],
+    ['artifact', { aid: 'other12345' }],
+    ['version', { vid: 'v-other' }],
+    ['workspace', { wid: 'ws-other' }],
+    ['principal', { uid: 'missing-viewer' }],
+    ['expiry', { exp: 1 }],
+  ])(
+    'rejects signed inconsistent %s authority for tokens and cookies',
+    async (_name, claims) => {
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<p>valid</p>', 'text/html'),
+      )
+      const token = await entrypointToken()
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/?__as_token=${token}`),
+      )
+      expect(entry.status).toBe(200)
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const cookieToken = cookie.slice('__Host-as_bnd='.length)
+      for (const [kind, original] of [
+        ['token', token],
+        ['cookie', cookieToken],
+      ]) {
+        const body = JSON.parse(
+          new TextDecoder().decode(decodeBase64Url(original.split('.')[0])),
+        )
+        const encoded = encodeBase64Url(
+          new TextEncoder().encode(JSON.stringify({ ...body, ...claims })),
+        )
+        const value = `${encoded}.${encodeBase64Url(await hmacSha256('test-secret', encoded))}`
+        storageMock.getArtifact.mockClear()
+        const response = await handleArtifactSandboxRequest(
+          new Request(
+            kind === 'token'
+              ? `${sandboxOrigin()}/?__as_token=${value}`
+              : `${sandboxOrigin()}/style.css`,
+            kind === 'cookie'
+              ? { headers: { Cookie: `__Host-as_bnd=${value}` } }
+              : undefined,
+          ),
+        )
+        expect([401, 404]).toContain(response.status)
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      }
+    },
+  )
+
+  test.each([false, true])(
+    'rejects viewer/embed authority as a bundle cookie (embed=%s)',
+    async (emb) => {
+      storageMock.getArtifact.mockResolvedValue(
+        storedArtifact('<p>valid</p>', 'text/html'),
+      )
+      const base = JSON.parse(
+        new TextDecoder().decode(
+          decodeBase64Url((await entrypointToken()).split('.')[0]),
+        ),
+      )
+      const token = await signSandboxToken(
+        { ...base, emb },
+        'test-secret',
+        1800,
+      )
+      const replay = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/style.css`, {
+          headers: { Cookie: `__Host-as_bnd=${token}` },
+        }),
+      )
+      expect(replay.status).toBe(401)
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      expect(consumeJtiMock).not.toHaveBeenCalled()
+
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/?__as_token=${token}`),
+      )
+      expect(entry.status).toBe(200)
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const asset = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/style.css`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(asset.status).toBe(200)
+    },
+  )
+
+  test('uses a host-only partitioned bundle cookie and never converts it to link authority', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<p>valid</p>', 'text/html'),
+    )
+    const token = await entrypointToken()
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/?__as_token=${token}`),
+    )
+    const setCookie = entry.headers.get('Set-Cookie')!
+    expect(setCookie).toMatch(/^__Host-as_bnd=/)
+    for (const attribute of [
+      'Secure',
+      'HttpOnly',
+      'Path=/',
+      'SameSite=None',
+      'Partitioned',
+      'Max-Age=595',
+    ])
+      expect(setCookie.split('; ')).toContain(attribute)
+    expect(setCookie.toLowerCase()).not.toContain('domain=')
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const cookie = setCookie.split(';')[0]
+    storageMock.getArtifact.mockClear()
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin()}/style.css`, { headers: { Cookie: cookie } }),
+    )
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    // Missing authority is a separate, explicit public-link path.
+    const publicAsset = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin()}/style.css`),
+    )
+    expect(publicAsset.status).toBe(200)
+  })
+
+  test.each([
+    '__Host-as_bnd=',
+    '__Host-as_bnd=invalid',
+    '__Host-as_bnd=one; __Host-as_bnd=two',
+  ])(
+    'refuses invalid presented authority %s even for a public link',
+    async (Cookie) => {
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'link' })
+        .where('id', '=', 'abc123def4')
+        .execute()
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${linkOrigin()}/style.css`, { headers: { Cookie } }),
+      )
+      expect(response.status).toBe(401)
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    },
+  )
+
+  test('ignores sibling-written legacy cookies without accepting them as authority', async () => {
+    const legacy = await legacyAuthenticatedBundleCookie()
+    const denied = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: legacy },
+      }),
+    )
+    expect(denied.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<h1>Bundle</h1>', 'text/html'),
+    )
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/?__as_token=${await entrypointToken()}`, {
+        headers: { Cookie: `${legacy}; as_bnd=sibling` },
+      }),
+    )
+    expect(entry.status).toBe(200)
+    const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('body{}', 'text/css'),
+    )
+    const asset = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/style.css`, {
+        headers: { Cookie: `${legacy}; ${cookie}; as_bnd=sibling` },
+      }),
+    )
+    expect(asset.status).toBe(200)
+
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', 'abc123def4')
+      .execute()
+    const publicAsset = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin()}/style.css`, { headers: { Cookie: legacy } }),
+    )
+    expect(publicAsset.status).toBe(200)
+  })
+
+  test('rejects both viewer and reusable embed tokens on the link execution host', async () => {
+    const base = JSON.parse(
+      new TextDecoder().decode(
+        decodeBase64Url((await entrypointToken()).split('.')[0]),
+      ),
+    )
+    for (const emb of [false, true]) {
+      const token = await signSandboxToken({ ...base, emb }, 'test-secret')
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${linkOrigin()}/?__as_token=${token}`),
+      )
+      expect(response.status).toBe(401)
+    }
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    expect(consumeJtiMock).not.toHaveBeenCalled()
+  })
+
   test('serves an anonymous link-domain entrypoint with isolated headers', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
@@ -1030,14 +1857,14 @@ describe('handleArtifactSandboxRequest', () => {
       storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
     )
     const token = await anonymousEntrypointToken()
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
     expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
       'cross-origin',
     )
@@ -1061,9 +1888,9 @@ describe('handleArtifactSandboxRequest', () => {
 
     const [tokenResponse, assetResponse] = await Promise.all([
       handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${linkOrigin()}/index.html?__as_token=${token}`),
       ),
-      handleArtifactSandboxRequest(new Request(`${sandboxOrigin()}/style.css`)),
+      handleArtifactSandboxRequest(new Request(`${linkOrigin()}/style.css`)),
     ])
 
     expect(tokenResponse.status).toBe(401)
@@ -1084,7 +1911,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await anonymousEntrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${linkOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1095,10 +1922,10 @@ describe('handleArtifactSandboxRequest', () => {
   test('denies authenticated tokens on link-domain content hosts', async () => {
     envMock.APP_ENV = 'production'
     const token = await entrypointToken()
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1111,7 +1938,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(consumeJtiMock).not.toHaveBeenCalled()
   })
 
-  test('ignores bundle cookies on link-domain asset requests', async () => {
+  test('rejects invalid presented bundle cookies on link hosts', async () => {
     envMock.APP_ENV = 'production'
     await dbRef
       .current!.updateTable('shareables')
@@ -1121,18 +1948,17 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('body{}', 'text/css; charset=utf-8'),
     )
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const response = await handleArtifactSandboxRequest(
       new Request(`https://${host}/style.css`, {
-        headers: { Cookie: 'as_bnd=not-a-valid-cookie' },
+        headers: { Cookie: '__Host-as_bnd=not-a-valid-cookie' },
       }),
     )
 
-    expect(response.status).toBe(200)
-    expect(response.headers.get('Cross-Origin-Resource-Policy')).toBe(
-      'cross-origin',
-    )
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Set-Cookie')).toBeNull()
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
   test('uses link-domain isolation headers for missing bundle assets', async () => {
@@ -1142,7 +1968,7 @@ describe('handleArtifactSandboxRequest', () => {
       .set({ visibility: 'link' })
       .where('id', '=', 'abc123def4')
       .execute()
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const response = await handleArtifactSandboxRequest(
       new Request(`https://${host}/missing.css`),
@@ -1164,12 +1990,12 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(200)
     await expect(response.text()).resolves.toContain('Hello')
-    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
     expect(response.headers.get('Content-Security-Policy')).toContain(
       'frame-ancestors https://localhost:5173',
     )
@@ -1233,7 +2059,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1241,7 +2067,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
-  test('keeps accepting authenticated bundle cookies issued before the schema change', async () => {
+  test('rejects legacy authenticated bundle cookies', async () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('body{}', 'text/css; charset=utf-8'),
     )
@@ -1252,8 +2078,9 @@ describe('handleArtifactSandboxRequest', () => {
       }),
     )
 
-    expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toBe('body{}')
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Set-Cookie')).toBeNull()
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
   test('revokes an authenticated bundle cookie after its grant is removed', async () => {
@@ -1278,7 +2105,7 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
     )
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
@@ -1315,7 +2142,7 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
     )
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
@@ -1352,14 +2179,14 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
     )
     const first = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${viewerToken}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${viewerToken}`),
     )
     const viewerCookie = first.headers.get('Set-Cookie')?.split(';')[0]
     consumeJtiMock.mockResolvedValueOnce(false)
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin()}/index.html?t=${await entrypointToken()}`,
+        `${sandboxOrigin()}/index.html?__as_token=${await entrypointToken()}`,
         {
           headers: { Cookie: viewerCookie ?? '' },
         },
@@ -1387,7 +2214,7 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
     )
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     await dbRef
@@ -1470,7 +2297,7 @@ describe('handleArtifactSandboxRequest', () => {
         'test-secret',
       )
       const entrypoint = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
       const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
       expect(entrypoint.status).toBe(200)
@@ -1582,11 +2409,11 @@ describe('handleArtifactSandboxRequest', () => {
       )
 
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
 
       expect(response.status).toBe(200)
-      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+      expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
     },
   )
 
@@ -1609,7 +2436,7 @@ describe('handleArtifactSandboxRequest', () => {
       })
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -1653,7 +2480,7 @@ describe('handleArtifactSandboxRequest', () => {
         size: 10,
       }))
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/demo.mp4`, {
+        new Request(`${linkOrigin()}/demo.mp4`, {
           headers: range ? { Range: range } : {},
         }),
       )
@@ -1691,7 +2518,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`, {
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
         headers: { Range: 'bytes=2-5' },
       }),
     )
@@ -1710,7 +2537,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -1736,7 +2563,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -1768,7 +2595,7 @@ describe('handleArtifactSandboxRequest', () => {
       const token = await anonymousEntrypointToken()
 
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${linkOrigin()}/index.html?__as_token=${token}`),
       )
 
       expect(response.status).toBe(401)
@@ -1785,7 +2612,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await anonymousEntrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css?t=${token}`),
+      new Request(`${linkOrigin()}/style.css?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -1805,9 +2632,9 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`https://localhost:5173/index.html?t=${token}`, {
+      new Request(`https://localhost:5173/index.html?__as_token=${token}`, {
         headers: {
-          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.localhost:5174`,
+          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.usercontent.localhost:5174`,
         },
       }),
     )
@@ -1815,13 +2642,13 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(entrypoint.status).toBe(200)
     await expect(entrypoint.text()).resolves.toContain('Hello')
-    expect(cookie).toContain('as_bnd=')
+    expect(cookie).toContain('__Host-as_bnd=')
 
     const asset = await handleArtifactSandboxRequest(
       new Request('https://localhost:5173/style.css', {
         headers: {
           Cookie: cookie ?? '',
-          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.localhost:5174`,
+          host: `${sandboxVersionLabel('abc123def4', 'v-bundle')}.usercontent.localhost:5174`,
         },
       }),
     )
@@ -1840,7 +2667,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     expect(
       cspDirective(
@@ -1872,7 +2699,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin()}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html%3Ftab%3Done%23top`,
+        `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=%2Fdocs%2Fintro.html%3Ftab%3Done%23top`,
       ),
     )
 
@@ -1880,7 +2707,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Location')).toBe(
       '/docs/intro.html?tab=one#top',
     )
-    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -1912,13 +2739,13 @@ describe('handleArtifactSandboxRequest', () => {
     test.each([
       [
         'production',
-        'artifactshare.link',
+        'artifactshareusercontent.com',
         'cross-origin',
         'https://abc123def4.artifactshare.link',
       ],
       [
         'development',
-        'sandbox.localhost:5174',
+        'usercontent.localhost:5174',
         'cross-origin',
         'https://abc123def4.localhost:5173',
       ],
@@ -1926,12 +2753,12 @@ describe('handleArtifactSandboxRequest', () => {
       'redirects an anonymous target with the %s %s response policy',
       async (environment, suffix, corp, ancestor) => {
         envMock.APP_ENV = environment
-        const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.${suffix}`
+        const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.${suffix}`
         const target = '/docs/intro.html?tab=one#top'
         const token = await anonymousEntrypointToken()
         const response = await handleArtifactSandboxRequest(
           new Request(
-            `${origin}/index.html?t=${token}&as_next=${encodeURIComponent(target)}`,
+            `${origin}/index.html?__as_token=${token}&as_next=${encodeURIComponent(target)}`,
           ),
         )
         expect(response.status).toBe(302)
@@ -1945,8 +2772,10 @@ describe('handleArtifactSandboxRequest', () => {
         expect(storageMock.getArtifact).not.toHaveBeenCalled()
         expect(consumeJtiMock).not.toHaveBeenCalled()
         const cookie = response.headers.get('Set-Cookie')!.split(';')[0]
-        expect(cookie).toMatch(/^as_bnd=/)
-        const [body, signature] = cookie.slice('as_bnd='.length).split('.')
+        expect(cookie).toMatch(/^__Host-as_bnd=/)
+        const [body, signature] = cookie
+          .slice('__Host-as_bnd='.length)
+          .split('.')
         expect(signature).toBe(
           encodeBase64Url(await hmacSha256('test-secret', body)),
         )
@@ -1956,8 +2785,11 @@ describe('handleArtifactSandboxRequest', () => {
           uid: null,
           aid: 'abc123def4',
           vid: 'v-bundle',
-          fallbackToIndex: false,
         })
+
+        expect(
+          JSON.parse(new TextDecoder().decode(decodeBase64Url(body))),
+        ).not.toHaveProperty('fallbackToIndex')
 
         // The target need not exist when redirecting; follow-up delivery uses the manifest.
         await dbRef
@@ -1995,39 +2827,28 @@ describe('handleArtifactSandboxRequest', () => {
       },
     )
 
-    test('serves the anonymous entrypoint for a valid target on a production sandbox host', async () => {
+    test('rejects anonymous authority on an authenticated execution host', async () => {
       envMock.APP_ENV = 'production'
       storageMock.getArtifact.mockResolvedValue(
         storedArtifact('<body>Entrypoint</body>', 'text/html'),
       )
-      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.sandbox.artifactshare.com`
+      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshareusercontent.com`
       const token = await anonymousEntrypointToken()
       const target = '/docs/intro.html?tab=one#top'
       const response = await handleArtifactSandboxRequest(
         new Request(
-          `${origin}/index.html?t=${token}&as_next=${encodeURIComponent(target)}`,
+          `${origin}/index.html?__as_token=${token}&as_next=${encodeURIComponent(target)}`,
         ),
       )
-      expect(response.status).toBe(200)
-      await expect(response.text()).resolves.toContain('Entrypoint')
-      expect(response.headers.get('Location')).toBeNull()
-      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
-      expectAnonymousPolicy(response, 'same-site')
-      expectStaticSiteCsp(
-        response.headers.get('Content-Security-Policy')!,
-        'https://artifactshare.com https://www.artifactshare.com',
-      )
-      expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
-        {},
-        'ws-a/abc123def4/v-bundle/index.html',
-      )
-      expect(consumeJtiMock).not.toHaveBeenCalled()
+      expect(response.status).toBe(401)
+      expect(response.headers.get('Set-Cookie')).toBeNull()
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
     })
 
     test.each([
       undefined,
       '',
-      `${sandboxOrigin()}/docs/intro.html`,
+      `${linkOrigin()}/docs/intro.html`,
       'https://example.com/',
       '//example.com/',
       '/\\example.com/',
@@ -2039,14 +2860,14 @@ describe('handleArtifactSandboxRequest', () => {
         storageMock.getArtifact.mockResolvedValue(
           storedArtifact('<body>Entrypoint</body>', 'text/html'),
         )
-        const url = new URL(`${sandboxOrigin()}/index.html`)
-        url.searchParams.set('t', await anonymousEntrypointToken())
+        const url = new URL(`${linkOrigin()}/index.html`)
+        url.searchParams.set('__as_token', await anonymousEntrypointToken())
         if (target !== undefined) url.searchParams.set('as_next', target)
         const response = await handleArtifactSandboxRequest(new Request(url))
         expect(response.status).toBe(200)
         await expect(response.text()).resolves.toContain('Entrypoint')
         expect(response.headers.get('Location')).toBeNull()
-        expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+        expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
         expect(storageMock.getArtifact).toHaveBeenCalledExactlyOnceWith(
           {},
           'ws-a/abc123def4/v-bundle/index.html',
@@ -2058,12 +2879,12 @@ describe('handleArtifactSandboxRequest', () => {
       const token = await anonymousEntrypointToken()
       const response = await handleArtifactSandboxRequest(
         new Request(
-          `${sandboxOrigin()}/index.html?t=${token}&as_next=${encodeURIComponent('/概要.html')}`,
+          `${linkOrigin()}/index.html?__as_token=${token}&as_next=${encodeURIComponent('/概要.html')}`,
         ),
       )
       expect(response.status).toBe(302)
       expect(response.headers.get('Location')).toBe('/%E6%A6%82%E8%A6%81.html')
-      expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+      expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
       expect(storageMock.getArtifact).not.toHaveBeenCalled()
     })
 
@@ -2071,7 +2892,7 @@ describe('handleArtifactSandboxRequest', () => {
       storageMock.getArtifact.mockResolvedValue(null)
       const token = await anonymousEntrypointToken()
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${linkOrigin()}/index.html?__as_token=${token}`),
       )
       expect(response.status).toBe(404)
       expect(response.headers.get('Set-Cookie')).toBeNull()
@@ -2116,7 +2937,7 @@ describe('handleArtifactSandboxRequest', () => {
         )
         const response = await handleArtifactSandboxRequest(
           new Request(
-            `${sandboxOrigin()}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html`,
+            `${linkOrigin()}/index.html?__as_token=${token}&as_next=%2Fdocs%2Fintro.html`,
           ),
         )
         expect(response.status).toBe(200)
@@ -2195,10 +3016,10 @@ describe('handleArtifactSandboxRequest', () => {
         const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
         try {
           const token = await anonymousEntrypointToken()
-          const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+          const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
           const response = await handleArtifactSandboxRequest(
             new Request(
-              `https://${host}/index.html?t=${token}&as_next=%2Fdocs%2Fintro.html`,
+              `https://${host}/index.html?__as_token=${token}&as_next=%2Fdocs%2Fintro.html`,
             ),
           )
           expect(response.status).toBe(401)
@@ -2250,13 +3071,13 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin()}/index.html?t=${token}&as_next=%2F%E6%A6%82%E8%A6%81.html`,
+        `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=%2F%E6%A6%82%E8%A6%81.html`,
       ),
     )
 
     expect(response.status).toBe(302)
     expect(response.headers.get('Location')).toBe('/%E6%A6%82%E8%A6%81.html')
-    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -2268,14 +3089,14 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin()}/index.html?t=${token}&as_next=https%3A%2F%2Fevil.example%2F`,
+        `${sandboxOrigin()}/index.html?__as_token=${token}&as_next=https%3A%2F%2Fevil.example%2F`,
       ),
     )
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Location')).toBeNull()
     await expect(response.text()).resolves.toContain('Hello')
-    expect(response.headers.get('Set-Cookie')).toContain('as_bnd=')
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-as_bnd=')
   })
 
   test('serves index.html for extensionless static-site history paths when fallback is enabled', async () => {
@@ -2293,7 +3114,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -2322,7 +3143,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -2344,7 +3165,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -2401,7 +3222,9 @@ describe('handleArtifactSandboxRequest', () => {
         jti: `j-${sample.versionId}`,
       })
       const entrypoint = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin(sample.versionId)}/index.html?t=${token}`),
+        new Request(
+          `${sandboxOrigin(sample.versionId)}/index.html?__as_token=${token}`,
+        ),
       )
       const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -2430,13 +3253,13 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const first = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = first.headers.get('Set-Cookie')?.split(';')[0]
     consumeJtiMock.mockResolvedValueOnce(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`, {
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
         headers: { Cookie: cookie ?? '' },
       }),
     )
@@ -2454,7 +3277,7 @@ describe('handleArtifactSandboxRequest', () => {
     consumeJtiMock.mockResolvedValue(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -2468,7 +3291,7 @@ describe('handleArtifactSandboxRequest', () => {
     consumeJtiMock.mockResolvedValue(false)
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -2502,7 +3325,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -2542,7 +3365,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -2589,7 +3412,9 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-md-entry')}/index.md?t=${token}`),
+      new Request(
+        `${sandboxOrigin('v-md-entry')}/index.md?__as_token=${token}`,
+      ),
     )
 
     expect(response.status).toBe(200)
@@ -2650,7 +3475,9 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-md-links')}/index.md?t=${token}`),
+      new Request(
+        `${sandboxOrigin('v-md-links')}/index.md?__as_token=${token}`,
+      ),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     const entrypointBody = await entrypoint.text()
@@ -2658,7 +3485,7 @@ describe('handleArtifactSandboxRequest', () => {
     expect(entrypoint.status).toBe(200)
     expect(entrypointBody).toContain('href="./other.md"')
     expect(entrypointBody).toContain('src="./logo.png"')
-    expect(cookie).toContain('as_bnd=')
+    expect(cookie).toContain('__Host-as_bnd=')
 
     const linkedPage = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin('v-md-links')}/other.md`, {
@@ -2723,7 +3550,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     await dbRef
@@ -2771,7 +3598,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-bundle')}/?t=${token}`),
+      new Request(`${sandboxOrigin('v-bundle')}/?__as_token=${token}`),
     )
 
     expect(response.status).toBe(200)
@@ -2782,7 +3609,7 @@ describe('handleArtifactSandboxRequest', () => {
     const token = await entrypointToken()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-other')}/?t=${token}`),
+      new Request(`${sandboxOrigin('v-other')}/?__as_token=${token}`),
     )
 
     expect(response.status).toBe(401)
@@ -2809,7 +3636,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin('v-html', 'html123abc')}/demo.html?t=${token}`,
+        `${sandboxOrigin('v-html', 'html123abc')}/demo.html?__as_token=${token}`,
       ),
     )
 
@@ -2883,7 +3710,7 @@ describe('handleArtifactSandboxRequest', () => {
       'test-secret',
       1800,
     )
-    const url = `${sandboxOrigin('v-embed', 'embed12345')}/index.html?t=${token}`
+    const url = `${sandboxOrigin('v-embed', 'embed12345')}/index.html?__as_token=${token}`
 
     const first = await handleArtifactSandboxRequest(new Request(url))
     expect(first.status).toBe(200)
@@ -2920,7 +3747,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin('v-locked', 'locked1234')}/index.html?t=${token}`,
+        `${sandboxOrigin('v-locked', 'locked1234')}/index.html?__as_token=${token}`,
       ),
     )
     expect(response.status).toBe(200)
@@ -2952,7 +3779,9 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-md', 'md123abcde')}/notes.md?t=${token}`),
+      new Request(
+        `${sandboxOrigin('v-md', 'md123abcde')}/notes.md?__as_token=${token}`,
+      ),
     )
 
     expect(response.status).toBe(200)
@@ -3013,7 +3842,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(
-        `${sandboxOrigin('v-md-utf8', 'mdutf8abcd')}/notes.md?t=${token}`,
+        `${sandboxOrigin('v-md-utf8', 'mdutf8abcd')}/notes.md?__as_token=${token}`,
       ),
     )
 
@@ -3081,7 +3910,7 @@ describe('handleArtifactSandboxRequest', () => {
         })
       const token = await entrypointToken()
       const entry = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
       )
       const response = await handleArtifactSandboxRequest(
         new Request(`${sandboxOrigin()}${path}`, {
@@ -3142,7 +3971,9 @@ describe('handleArtifactSandboxRequest', () => {
             ? await entrypointToken()
             : await anonymousEntrypointToken()
         const entry = await handleArtifactSandboxRequest(
-          new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+          new Request(
+            `${access === 'authenticated' ? sandboxOrigin() : linkOrigin()}/index.html?__as_token=${token}`,
+          ),
         )
         cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
       }
@@ -3154,7 +3985,10 @@ describe('handleArtifactSandboxRequest', () => {
         })
         if (range) headers.set('Range', range)
         const response = await handleArtifactSandboxRequest(
-          new Request(`${sandboxOrigin()}/worker.js`, { headers }),
+          new Request(
+            `${access === 'authenticated' ? sandboxOrigin() : linkOrigin()}/worker.js`,
+            { headers },
+          ),
         )
         expect(response.status).toBe(403)
         expect((await response.arrayBuffer()).byteLength).toBe(0)
@@ -3169,9 +4003,12 @@ describe('handleArtifactSandboxRequest', () => {
           )
         }
         const response = await handleArtifactSandboxRequest(
-          new Request(`${sandboxOrigin()}${path}`, {
-            headers: { Cookie: cookie, 'Service-Worker': 'script' },
-          }),
+          new Request(
+            `${access === 'authenticated' ? sandboxOrigin() : linkOrigin()}${path}`,
+            {
+              headers: { Cookie: cookie, 'Service-Worker': 'script' },
+            },
+          ),
         )
         expect(response.status).toBe(403)
         expect((await response.arrayBuffer()).byteLength).toBe(0)
@@ -3181,9 +4018,12 @@ describe('handleArtifactSandboxRequest', () => {
       )
       expect(storageMock.getArtifact).not.toHaveBeenCalled()
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/worker.js`, {
-          headers: { Cookie: cookie },
-        }),
+        new Request(
+          `${access === 'authenticated' ? sandboxOrigin() : linkOrigin()}/worker.js`,
+          {
+            headers: { Cookie: cookie },
+          },
+        ),
       )
       expect(response.status).toBe(200)
       expect(await response.text()).toBe('postMessage(1)')
@@ -3207,7 +4047,7 @@ describe('handleArtifactSandboxRequest', () => {
       )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 
@@ -3247,7 +4087,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`),
+      new Request(`${linkOrigin()}/style.css`),
     )
 
     expect(response.status).toBe(200)
@@ -3276,14 +4116,14 @@ describe('handleArtifactSandboxRequest', () => {
       storedHeadArtifact('body{}', 'text/css'),
     )
     const token = await anonymousEntrypointToken()
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
-    expect(cookie).toContain('as_bnd=')
+    expect(cookie).toContain('__Host-as_bnd=')
 
     const asset = await handleArtifactSandboxRequest(
       new Request(`https://${host}/style.css`, {
@@ -3339,10 +4179,10 @@ describe('handleArtifactSandboxRequest', () => {
       },
       'test-secret',
     )
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
@@ -3384,10 +4224,10 @@ describe('handleArtifactSandboxRequest', () => {
         : null,
     )
     const token = await anonymousEntrypointToken()
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
     expect(entrypoint.status).toBe(200)
@@ -3431,9 +4271,11 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockResolvedValue(
       storedHeadArtifact('old object', 'video/mp4'),
     )
-    const oldHost = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const oldHost = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
     const oldEntry = await handleArtifactSandboxRequest(
-      new Request(`https://${oldHost}/?t=${await anonymousEntrypointToken()}`),
+      new Request(
+        `https://${oldHost}/?__as_token=${await anonymousEntrypointToken()}`,
+      ),
     )
     expect(oldEntry.status).toBe(200)
     const oldCookie = oldEntry.headers.get('Set-Cookie')!.split(';')[0]
@@ -3481,9 +4323,9 @@ describe('handleArtifactSandboxRequest', () => {
       },
       'test-secret',
     )
-    const host = `${sandboxVersionLabel('abc123def4', 'v-inherited')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-inherited', 'link')}.artifactshareusercontent.com`
     const entry = await handleArtifactSandboxRequest(
-      new Request(`https://${host}/?t=${token}`),
+      new Request(`https://${host}/?__as_token=${token}`),
     )
     expect(entry.status).toBe(200)
     expect(await entry.text()).toContain('ws-a/abc123def4/v-bundle/index.html')
@@ -3504,12 +4346,8 @@ describe('handleArtifactSandboxRequest', () => {
       'ws-a/abc123def4/v-inherited/data/a.parquet',
     )
     expect((await requestAsset('/demo.mp4')).status).toBe(404)
-    expect(await (await requestAsset('/data/a.parquet', true)).text()).toBe(
-      'ws-a/abc123def4/v-bundle/data/a.parquet',
-    )
-    expect(await (await requestAsset('/demo.mp4', true)).text()).toBe(
-      'ws-a/abc123def4/v-bundle/demo.mp4',
-    )
+    expect((await requestAsset('/data/a.parquet', true)).status).toBe(401)
+    expect((await requestAsset('/demo.mp4', true)).status).toBe(401)
     await db
       .updateTable('shareables')
       .set({ visibility: 'private' })
@@ -3529,14 +4367,14 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.getArtifact.mockResolvedValue(
       storedArtifact('<!doctype html><body>Link</body>', 'text/html'),
     )
-    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle')}.artifactshare.link`
+    const host = `${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.artifactshareusercontent.com`
 
     vi.useFakeTimers()
     try {
       const token = await anonymousEntrypointToken()
       const issuedAt = Math.floor(Date.now() / 1000)
       const entrypoint = await handleArtifactSandboxRequest(
-        new Request(`https://${host}/?t=${token}`),
+        new Request(`https://${host}/?__as_token=${token}`),
       )
       const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
       expect(entrypoint.status).toBe(200)
@@ -3561,7 +4399,7 @@ describe('handleArtifactSandboxRequest', () => {
     }
   })
 
-  test('serves anonymous link static-site assets when the bundle cookie is invalid', async () => {
+  test('rejects invalid anonymous cookies without falling back to link access', async () => {
     await dbRef
       .current!.updateTable('shareables')
       .set({ visibility: 'link' })
@@ -3572,18 +4410,14 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`, {
-        headers: { Cookie: 'as_bnd=invalid' },
+      new Request(`${linkOrigin()}/style.css`, {
+        headers: { Cookie: '__Host-as_bnd=invalid' },
       }),
     )
 
-    expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toBe('body{}')
-    expect(storageMock.getArtifact).toHaveBeenCalledWith(
-      {},
-      'ws-a/abc123def4/v-bundle/style.css',
-    )
-    expect(consumeJtiMock).not.toHaveBeenCalled()
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Set-Cookie')).toBeNull()
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
   test('rechecks the workspace link policy for anonymous assets without a cookie', async () => {
@@ -3602,7 +4436,7 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`, {
+      new Request(`${linkOrigin()}/style.css`, {
         headers: { 'Service-Worker': 'script' },
       }),
     )
@@ -3627,7 +4461,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/projects/alpha`),
+      new Request(`${linkOrigin()}/projects/alpha`),
     )
 
     expect(response.status).toBe(200)
@@ -3649,7 +4483,7 @@ describe('handleArtifactSandboxRequest', () => {
         .execute()
 
       const response = await handleArtifactSandboxRequest(
-        new Request(`${sandboxOrigin()}/style.css`),
+        new Request(`${linkOrigin()}/style.css`),
       )
 
       expect(response.status).toBe(401)
@@ -3670,7 +4504,7 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`, {
+      new Request(`${linkOrigin()}/style.css`, {
         headers: { 'Service-Worker': 'script' },
       }),
     )
@@ -3690,7 +4524,7 @@ describe('handleArtifactSandboxRequest', () => {
       .execute()
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/style.css`, {
+      new Request(`${linkOrigin()}/style.css`, {
         headers: { 'Service-Worker': 'script' },
       }),
     )
@@ -3720,7 +4554,7 @@ describe('handleArtifactSandboxRequest', () => {
     })
 
     const response = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin('v-old')}/old-only.css`),
+      new Request(`${linkOrigin('v-old')}/old-only.css`),
     )
 
     expect(response.status).toBe(401)
@@ -3735,7 +4569,7 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const token = await entrypointToken()
     const entrypoint = await handleArtifactSandboxRequest(
-      new Request(`${sandboxOrigin()}/index.html?t=${token}`),
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
     )
     const cookie = entrypoint.headers.get('Set-Cookie')?.split(';')[0]
 

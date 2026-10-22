@@ -5,7 +5,8 @@ import {
 } from './sandbox-frame-message'
 
 describe('sandboxMessageFromFrame', () => {
-  const trustedOrigin = 'https://site123abc.sandbox.artifactshare.com'
+  const trustedOrigin =
+    'https://a-site123abc--v-7631.artifactshareusercontent.com'
   const trustedWindow = {} as Window
 
   function messageEvent(overrides: Partial<MessageEvent>): MessageEvent {
@@ -16,6 +17,22 @@ describe('sandboxMessageFromFrame', () => {
       ...overrides,
     } as MessageEvent
   }
+
+  test.each([
+    'https://site123abc.sandbox.artifactshare.com',
+    'https://site123abc--v-7631.artifactshare.link',
+    'https://a-other12345--v-7631.artifactshareusercontent.com',
+    'https://a-site123abc--v-7632.artifactshareusercontent.com',
+    'https://l-site123abc--v-7631.artifactshareusercontent.com',
+  ])('rejects legacy and sibling origin %s', (origin) => {
+    expect(
+      sandboxMessageFromFrame(
+        messageEvent({ origin }),
+        trustedOrigin,
+        trustedWindow,
+      ),
+    ).toBeNull()
+  })
 
   test('accepts ready and CSP violation messages from the trusted iframe', () => {
     expect(
@@ -134,7 +151,7 @@ test('builds the parent-owned external-link policy sent after readiness', () => 
 })
 
 test('CSP metadata still requires the exact origin and frame identity', () => {
-  const origin = 'https://site123abc.sandbox.artifactshare.com'
+  const origin = 'https://a-site123abc--v-7631.artifactshareusercontent.com'
   const frame = {} as Window
   const data = {
     source: 'artifactshare',

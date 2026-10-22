@@ -57,3 +57,9 @@ Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md)
 ## License
 
 The repository license is a lawyer-review draft with Japanese authoritative text and an English reference translation. See [LICENSE](LICENSE). The npm package through version 0.9.0 remains under Apache-2.0; the repository and CLI from version 0.10.0 onward use the source-available license. Version 0.10.0 was intentionally not published; version 0.10.1 is the first npm release under the new license.
+
+Local artifact execution uses versioned `a-…` and `l-…` hosts under
+`*.usercontent.localhost` on port 5174. `pnpm dev:setup` includes this certificate
+wildcard. The app and public link-viewer URLs are unchanged. All `.localhost`
+hosts are same-site, so use the cross-site browser release gate to verify cookie
+partitioning; local viewer checks alone are insufficient.
