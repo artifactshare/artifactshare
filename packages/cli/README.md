@@ -399,8 +399,15 @@ links, and special files. Names starting with `.`, `__MACOSX`, `node_modules`,
 excluded before inspection. `build` and `dist` remain included. Remaining entries
 are classified with `lstat`, not directory-entry link flags; cloud placeholders
 serving their own content remain supported when stable identities are available.
+Each included entry's physical parent must have the identity of the directory
+it was reached from, catching redirects that `lstat` reports as ordinary
+directories. Physical paths are resolved once per entry; repeated parent-chain
+checks use `lstat` identities. This comparison uses device/inode identity, not
+canonical path spelling. Absolute selections still trust their parent paths.
 
-On POSIX, files are opened once with `O_NOFOLLOW` where available. On Windows,
+On POSIX, files are opened once with `O_NOFOLLOW` and `O_NONBLOCK` where available.
+Nonblocking opens prevent a replacement FIFO from stalling before the handle
+is checked to be a regular file. On Windows,
 `lstat` link rejection and the same handle identity checks protect reads without
 requiring POSIX no-follow support. Both compare handle device, inode, mode, and
 size against the recorded file and recheck parent identities before/after entry

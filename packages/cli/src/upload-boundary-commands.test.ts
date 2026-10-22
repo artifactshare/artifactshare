@@ -430,3 +430,40 @@ for (const command of ['share', 'append', 'update'] as const) {
     })
   }
 }
+
+for (const command of ['share', 'append', 'update'] as const) {
+  test(`${command} rejects an unreported directory redirect before auth or reads`, async (t) => {
+    const { cwd, root } = await fixture(t)
+    const entry = path.join(cwd, 'assets')
+    const target = path.join(root, 'external')
+    await fs.mkdir(target)
+    await fs.writeFile(path.join(target, 'index.html'), 'outside sentinel')
+    let inspected = false
+    let reads = 0
+    hooks.dependencies.lstat = async (name) => {
+      if (name === entry) {
+        inspected = true
+        return fs.lstat(target, { bigint: true })
+      }
+      return fs.lstat(name, { bigint: true })
+    }
+    hooks.dependencies.realpath = async (name) =>
+      name === entry ? target : fs.realpath(name)
+    hooks.dependencies.open = async () => {
+      reads++
+      throw new Error('outside content must not be read')
+    }
+    await invoke(command, 'assets')
+    assert.equal(inspected, true)
+    assert.equal(reads, 0)
+    assert.equal(vi.mocked(writeFailure).mock.calls.length, 1)
+    const error = vi.mocked(writeFailure).mock.calls[0]![1]
+    assert.equal(error.code, 'validation_failed')
+    assert.equal(error.details?.reason, 'link')
+    assert.equal(error.details?.path, 'assets')
+    assert.equal(vi.mocked(resolveCredential).mock.calls.length, 0)
+    assert.equal(vi.mocked(resolveProjectConfig).mock.calls.length, 0)
+    assert.equal(hooks.projectLookup.mock.calls.length, 0)
+    assert.equal(vi.mocked(cliFetch).mock.calls.length, 0)
+  })
+}

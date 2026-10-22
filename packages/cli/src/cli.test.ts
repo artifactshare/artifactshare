@@ -300,3 +300,24 @@ test('edit help documents project visibility and its placement requirement', () 
   assert.match(result.stdout, /private, workspace, project, or link/)
   assert.match(result.stdout, /project requires placement in a project/)
 })
+
+for (const command of ['share', 'update']) {
+  test(`${command} help explains upload boundary recovery`, () => {
+    const result = run([command, '--help'])
+    assert.equal(result.status, 0)
+    assert.match(result.stdout, /upload_read_failed.*permissions, then retry/)
+    assert.match(
+      result.stdout,
+      /link\s+Copy into the selection or pass the target by absolute path/,
+    )
+    assert.match(result.stdout, /outside_cwd\s+Pass an absolute path/)
+    assert.match(
+      result.stdout,
+      /parent_traversal\s+Pass a direct absolute path without any \.\. component/,
+    )
+    assert.match(
+      result.stdout,
+      /changed\s+The selection changed while reading; retry/,
+    )
+  })
+}

@@ -199,3 +199,21 @@ test('append reports traversal and missing paths before authentication', async (
     assert.ok(payload.error.message.includes(input!))
   }
 })
+
+test('append directory has single-file recovery before authentication', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-directory-'))
+  t.onTestFinished(() => rm(dir, { recursive: true, force: true }))
+  const result = await runAsync(['append', 'abc123def4', dir, '--json'])
+  const payload = expectFailure(result, {
+    command: 'append',
+    code: 'validation_failed',
+  })
+  assert.match(payload.error.message, /Path must be a non-empty file\./)
+  assert.ok(payload.error.message.includes(dir))
+  assert.equal(
+    payload.error.hint,
+    'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.',
+  )
+  assert.equal(payload.error.details.path, dir)
+  assert.equal(payload.error.details.reason, 'invalid_type')
+})

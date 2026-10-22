@@ -147,7 +147,7 @@ test('physical cwd aliases and explicit absolute linked parents work', async (t)
     },
   })
   assert.equal(await selection.files[0]!.blob.text(), '<p>selected</p>')
-  assert.equal(realpaths, 1)
+  assert.equal(realpaths, 2)
   const absolute = await prepareUploadSelection(path.join(alias, 'report.html'))
   assert.equal(await absolute.files[0]!.blob.text(), '<p>selected</p>')
 })
@@ -186,8 +186,9 @@ for (const input of ['.', './', '.\\', '.\\.\\']) {
       cwd: windowsAlias,
       paths: path.win32,
       realpath: async (name) => {
-        assert.equal(name, windowsAlias)
-        return windowsRoot
+        if (name === windowsAlias) return windowsRoot
+        assert.equal(name, path.win32.join(windowsRoot, 'report.html'))
+        return name
       },
       lstat: (name) => {
         const translated = translate(name)
@@ -218,6 +219,74 @@ test('case aliases use filesystem identity, with capability probe', async (t) =>
   )
 })
 
+for (const variant of ['relative', 'absolute', 'component'] as const) {
+  test(`typed short-name alias accepts the same identity: ${variant}`, async (t) => {
+    const { cwd } = await fixture(t)
+    const directory = path.join(cwd, 'Program Files')
+    await fs.mkdir(directory)
+    const stored = path.join(directory, 'Long Report.html')
+    await fs.writeFile(stored, 'selected alias')
+    const aliasDirectory = path.join(cwd, 'PROGRA~1')
+    const aliasFile = path.join(directory, 'LONGRE~1.HTM')
+    const translate = (name: string) => {
+      if (name === aliasDirectory) return directory
+      if (name === path.join(aliasDirectory, 'LONGRE~1.HTM')) return stored
+      if (name === aliasFile) return stored
+      return name
+    }
+    const input =
+      variant === 'absolute'
+        ? aliasFile
+        : path.join(
+            variant === 'component' ? 'PROGRA~1' : 'Program Files',
+            'LONGRE~1.HTM',
+          )
+    let opens = 0
+    const selection = await prepareUploadSelection(input, false, {
+      cwd,
+      lstat: (name) => fs.lstat(translate(name), { bigint: true }),
+      realpath: (name) => fs.realpath(translate(name)),
+      open: async (name, flags) => {
+        opens++
+        assert.equal(translate(String(name)), stored)
+        return fs.open(stored, flags)
+      },
+    })
+    assert.equal(opens, 1)
+    assert.equal(selection.files.length, 1)
+    assert.equal(await selection.files[0]!.blob.text(), 'selected alias')
+  })
+}
+
+for (const [typedName, storedName] of [
+  ['Σ.html', 'σ.html'],
+  ['σ.html', 'σ.html'],
+  ['ς.html', 'σ.html'],
+  ['ς[1]+.html', 'σ[1]+.html'],
+] as const) {
+  test(`Unicode sigma alias ${typedName} accepts the same file identity`, async (t) => {
+    const { cwd } = await fixture(t)
+    const stored = path.join(cwd, storedName)
+    const typed = path.join(cwd, typedName)
+    await fs.writeFile(stored, 'selected sigma')
+    let reads = 0
+    const selection = await prepareUploadSelection(typedName, false, {
+      cwd,
+      lstat: (name) =>
+        fs.lstat(name === typed ? stored : name, { bigint: true }),
+      realpath: (name) => fs.realpath(name === typed ? stored : name),
+      open: async (name, flags) => {
+        assert.equal(String(name), typed)
+        reads++
+        return fs.open(stored, flags)
+      },
+    })
+    assert.equal(reads, 1)
+    assert.equal(selection.files.length, 1)
+    assert.equal(await selection.files[0]!.blob.text(), 'selected sigma')
+  })
+}
+
 test('macOS NFC input reaches NFD stored filename', async (t) => {
   const { cwd } = await fixture(t)
   if (process.platform !== 'darwin') t.skip('macOS normalization behavior')
@@ -243,6 +312,10 @@ test('name exclusions happen before inspection, including reparse-like entries',
   const selected = await prepareUploadSelection('.', false, {
     cwd,
     readdir: async () => ['report.html', ...excluded],
+    realpath: async (name) => {
+      assert.ok(!excluded.includes(path.basename(name)))
+      return fs.realpath(name)
+    },
     lstat: async (name) => {
       inspected.push(path.basename(name))
       assert.ok(!excluded.includes(path.basename(name)))
@@ -313,7 +386,9 @@ for (const phase of [
         open: async (...args) => {
           assert.equal(
             args[1],
-            constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+            constants.O_RDONLY |
+              (constants.O_NOFOLLOW ?? 0) |
+              (constants.O_NONBLOCK ?? 0),
           )
           const handle = await fs.open(...args)
           const read = handle.readFile.bind(handle)
@@ -456,19 +531,24 @@ for (const input of [
     const root = 'C:\\selected'
     const actual = path.join(cwd, 'report.html')
     let realpaths = 0
-    const translate = (name: string) => (name === root ? cwd : actual)
+    const resolvedInput = path.win32.resolve(root, input)
+    const parent = path.win32.dirname(resolvedInput)
+    const translate = (name: string) =>
+      name === root || name === parent ? cwd : actual
     const result = await prepareUploadSelection(input, false, {
       cwd: root,
       paths: path.win32,
-      realpath: async () => {
+      realpath: async (name) => {
         realpaths++
-        return root
+        return name === root || name === parent
+          ? root
+          : path.win32.join(root, 'report.html')
       },
       lstat: (name) => fs.lstat(translate(name), { bigint: true }),
       open: (name, flags) => fs.open(translate(String(name)), flags),
     })
     assert.equal(await result.files[0]!.blob.text(), '<p>selected</p>')
-    assert.equal(realpaths, /^[CD]:/.test(input) ? 0 : 1)
+    assert.equal(realpaths, 2)
   })
 }
 
@@ -638,7 +718,232 @@ for (const name of ['x:d', 'x:']) {
         },
       },
     )
-    assert.equal(realpaths, 1)
+    assert.equal(realpaths, 3)
     assert.equal(await selection.files[0]!.blob.text(), 'selected content')
+  })
+}
+
+test('nonblocking open checks regular-file type before reading', async (t) => {
+  const { cwd } = await fixture(t)
+  let opened = false
+  let reads = 0
+  let closed = false
+  await rejection(
+    prepareUploadSelection('report.html', false, {
+      cwd,
+      open: async (...args) => {
+        assert.equal(
+          args[1],
+          constants.O_RDONLY |
+            (constants.O_NOFOLLOW ?? 0) |
+            (constants.O_NONBLOCK ?? 0),
+        )
+        const handle = await fs.open(...args)
+        opened = true
+        const stat = handle.stat.bind(handle)
+        const close = handle.close.bind(handle)
+        handle.stat = (async () => {
+          const result = await stat({ bigint: true })
+          result.isFile = () => false
+          return result
+        }) as typeof handle.stat
+        handle.readFile = (async () => {
+          reads++
+          throw new Error('non-regular handle must not be read')
+        }) as typeof handle.readFile
+        handle.close = async () => {
+          closed = true
+          await close()
+        }
+        return handle
+      },
+    }),
+    'changed',
+    'report.html',
+  )
+  assert.equal(opened, true)
+  assert.equal(reads, 0)
+  assert.equal(closed, true)
+})
+
+for (const primary of ['boundary', 'read', 'none'] as const) {
+  test(`close failure preserves the primary ${primary} failure`, async (t) => {
+    const { cwd } = await fixture(t)
+    const readError = Object.assign(new Error('read failed'), { code: 'EIO' })
+    const closeError = Object.assign(new Error('close failed'), { code: 'EIO' })
+    let closed = 0
+    await assert.rejects(
+      prepareUploadSelection('report.html', false, {
+        cwd,
+        open: async (...args) => {
+          const handle = await fs.open(...args)
+          const close = handle.close.bind(handle)
+          const stat = handle.stat.bind(handle)
+          if (primary === 'boundary')
+            handle.stat = (async () => {
+              const result = await stat({ bigint: true })
+              result.size++
+              return result
+            }) as typeof handle.stat
+          if (primary === 'read')
+            handle.readFile = (async () => {
+              throw readError
+            }) as typeof handle.readFile
+          handle.close = async () => {
+            closed++
+            await close()
+            throw closeError
+          }
+          return handle
+        },
+      }),
+      (error) => {
+        const safe = uploadReadError(error, 'report.html')
+        assert.equal(safe.details?.path, 'report.html')
+        if (primary === 'boundary') {
+          assert.equal(safe.code, 'validation_failed')
+          assert.equal(safe.details?.reason, 'changed')
+        } else {
+          assert.equal(safe.code, 'upload_read_failed')
+          assert.equal(
+            (safe as { cause?: unknown }).cause,
+            primary === 'read' ? readError : closeError,
+          )
+        }
+        return true
+      },
+    )
+    assert.equal(closed, 1)
+  })
+}
+
+for (const variant of [
+  'relative',
+  'absolute',
+  'component',
+  'descendant',
+  'file',
+] as const) {
+  for (const location of variant === 'descendant'
+    ? ['outside', 'sibling', 'sibling-case']
+    : ['outside']) {
+    test(`rejects a ${location} redirect reported as an ordinary ${variant} entry`, async (t) => {
+      const { cwd, root, outside } = await fixture(t)
+      const redirected = path.join(cwd, 'assets')
+      const target = path.join(
+        location === 'outside' ? root : cwd,
+        location === 'sibling-case' ? 'ASSETS' : 'node_modules',
+      )
+      const fileTarget =
+        location === 'outside' ? outside : path.join(cwd, 'report.html')
+      await fs.mkdir(target)
+      await fs.writeFile(path.join(target, 'page.html'), 'outside sentinel')
+      // The seam models a reparse redirect without requiring platform privileges.
+      const input =
+        variant === 'absolute'
+          ? redirected
+          : variant === 'component'
+            ? 'assets/page.html'
+            : variant === 'descendant'
+              ? '.'
+              : 'assets'
+      let redirectInspected = false
+      let opens = 0
+      let descents = 0
+      await assert.rejects(
+        prepareUploadSelection(input, false, {
+          cwd,
+          lstat: async (name) => {
+            if (name === redirected) {
+              redirectInspected = true
+              return fs.lstat(variant === 'file' ? fileTarget : target, {
+                bigint: true,
+              })
+            }
+            return fs.lstat(name, { bigint: true })
+          },
+          realpath: async (name) =>
+            name === redirected
+              ? variant === 'file'
+                ? fileTarget
+                : target
+              : fs.realpath(name),
+          readdir: async (name) => {
+            if (name === cwd) return ['assets']
+            descents++
+            return fs.readdir(target)
+          },
+          open: async () => {
+            opens++
+            throw new Error('outside content must not be opened')
+          },
+        }),
+        (error) => {
+          assert.equal(redirectInspected, true)
+          const safe = uploadReadError(error, input)
+          assert.equal(safe.code, 'validation_failed')
+          assert.equal(safe.details?.reason, 'link')
+          assert.equal(
+            safe.details?.path,
+            variant === 'descendant' ? 'assets' : input,
+          )
+          return true
+        },
+      )
+      assert.equal(opens, 0)
+      assert.equal(descents, 0)
+    })
+  }
+}
+
+test('physical parent aliases are accepted by identity and resolved only once', async (t) => {
+  const { cwd, root } = await fixture(t)
+  const dir = path.join(cwd, 'assets')
+  await fs.mkdir(dir)
+  await fs.writeFile(path.join(dir, 'page.html'), 'selected')
+  const alias = path.join(root, 'physical-parent-alias')
+  const calls = new Map<string, number>()
+  const selection = await prepareUploadSelection('.', false, {
+    cwd,
+    realpath: async (name) => {
+      calls.set(name, (calls.get(name) ?? 0) + 1)
+      if (name === path.join(dir, 'page.html'))
+        return path.join(alias, 'page.html')
+      return fs.realpath(name)
+    },
+    lstat: (name) => fs.lstat(name === alias ? dir : name, { bigint: true }),
+  })
+  assert.deepEqual(
+    selection.files.map((file) => file.name),
+    ['assets/page.html', 'report.html'],
+  )
+  assert.equal(await selection.files[0]!.blob.text(), 'selected')
+  assert.equal(calls.size, 4)
+  for (const count of calls.values()) assert.equal(count, 1)
+})
+
+for (const errno of ['EACCES', 'EIO']) {
+  test(`physical-path ${errno} keeps the offending descendant and cause`, async (t) => {
+    const { cwd } = await fixture(t)
+    const cause = Object.assign(new Error('internal path error'), {
+      code: errno,
+    })
+    await assert.rejects(
+      prepareUploadSelection('.', false, {
+        cwd,
+        realpath: async (name) => {
+          if (name.endsWith('report.html')) throw cause
+          return fs.realpath(name)
+        },
+      }),
+      (error) => {
+        const safe = uploadReadError(error, '.')
+        assert.equal(safe.code, 'upload_read_failed')
+        assert.equal(safe.details?.path, 'report.html')
+        assert.equal(safe.details?.errno, errno)
+        assert.equal((safe as { cause?: unknown }).cause, cause)
+        return true
+      },
+    )
   })
 }

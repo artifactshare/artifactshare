@@ -94,7 +94,7 @@ export type UploadBoundaryDependencies = {
   cwd?: string
   paths?: Pick<
     typeof path,
-    'resolve' | 'join' | 'isAbsolute' | 'basename' | 'sep'
+    'resolve' | 'join' | 'isAbsolute' | 'basename' | 'dirname' | 'sep'
   >
   lstat?: (name: string) => Promise<BigIntStats>
   realpath?: (name: string) => Promise<string>
@@ -140,6 +140,11 @@ export async function prepareUploadSelection(
   }
   const same = (a: BigIntStats, b: BigIntStats) =>
     a.dev === b.dev && a.ino === b.ino
+  const sameFile = (actual: BigIntStats, recorded: BigIntStats) =>
+    actual.isFile() &&
+    same(actual, recorded) &&
+    actual.mode === recorded.mode &&
+    actual.size === recorded.size
   const checkType = (s: BigIntStats, display: string) => {
     if (s.isSymbolicLink()) fail(display, 'link')
     identity(s, display)
@@ -156,17 +161,48 @@ export async function prepareUploadSelection(
       throw new UploadReadFailure(uploadReadError(error, display), error)
     }
   }
+  const physicalPaths = new Map<string, string>()
+  const physicalPath = async (name: string, display: string) => {
+    const cached = physicalPaths.get(name)
+    if (cached !== undefined) return cached
+    try {
+      const resolved = await (dependencies.realpath ?? fs.realpath)(name)
+      physicalPaths.set(name, resolved)
+      return resolved
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR')
+        fail(display, 'changed', error)
+      if (code === 'ELOOP') fail(display, 'link', error)
+      throw new UploadReadFailure(uploadReadError(error, display), error)
+    }
+  }
+  const checkPhysicalEntry = async (
+    name: string,
+    display: string,
+    parent: BigIntStats,
+    storedName?: string,
+  ) => {
+    // Some Windows redirects look like ordinary directories to lstat.
+    // Typed aliases are accepted by identity, including platform spellings such
+    // as short names. Enumerated names must retain their exact stored spelling
+    // so sibling redirects cannot bypass the name-based exclusions.
+    const resolved = await physicalPath(name, display)
+    if (storedName !== undefined && storedName !== paths.basename(resolved))
+      fail(display, 'link')
+    const actualParent = await get(paths.dirname(resolved), display, true)
+    checkType(actualParent, display)
+    if (!actualParent.isDirectory() || !same(actualParent, parent))
+      fail(display, 'link')
+  }
   const recheck = async (entry: RecordEntry, directory: boolean) => {
     const s = await get(entry.path, entry.display, true)
     if (s.isSymbolicLink()) fail(entry.display, 'link')
     identity(s, entry.display)
     if (
-      !same(s, entry.stat) ||
-      (directory
-        ? !s.isDirectory()
-        : !s.isFile() ||
-          s.mode !== entry.stat.mode ||
-          s.size !== entry.stat.size)
+      directory
+        ? !s.isDirectory() || !same(s, entry.stat)
+        : !sameFile(s, entry.stat)
     )
       fail(entry.display, 'changed')
   }
@@ -182,7 +218,8 @@ export async function prepareUploadSelection(
     const chain: RecordEntry[] = []
     let selected: BigIntStats
     if (!explicit) {
-      const root = await (dependencies.realpath ?? fs.realpath)(cwd)
+      const root = await physicalPath(cwd, input)
+      physicalPaths.set(root, root)
       const rootStat = await get(root, input)
       checkType(rootStat, input)
       chain.push({ path: root, display: input, stat: rootStat })
@@ -196,6 +233,7 @@ export async function prepareUploadSelection(
         cursor = paths.join(cursor, components[index]!)
         selected = await get(cursor, input)
         checkType(selected, input)
+        await checkPhysicalEntry(cursor, input, chain[chain.length - 1]!.stat)
         await checkChain(chain)
         if (index < components.length - 1) {
           if (!selected.isDirectory()) fail(input, 'invalid_type')
@@ -214,6 +252,11 @@ export async function prepareUploadSelection(
     } else {
       selected = await get(selectedPath, input)
       checkType(selected, input)
+      // Resolve only the trusted immediate parent, not its ancestor chain.
+      const parentPath = await physicalPath(paths.dirname(selectedPath), input)
+      const parent = await get(parentPath, input)
+      checkType(parent, input)
+      await checkPhysicalEntry(selectedPath, input, parent)
     }
     if (singleFile && !selected.isFile()) fail(input, 'invalid_type')
     const leaves: Array<RecordEntry & { name: string; chain: RecordEntry[] }> =
@@ -255,6 +298,7 @@ export async function prepareUploadSelection(
           stat: await get(paths.join(dir.path, name), display),
         }
         checkType(entry.stat, display)
+        await checkPhysicalEntry(entry.path, display, dir.stat, name)
         await checkChain(current)
         if (entry.stat.isDirectory()) await visit(entry, current, display)
         else leaves.push({ ...entry, name: display, chain: current })
@@ -275,7 +319,9 @@ export async function prepareUploadSelection(
       try {
         handle = await (dependencies.open ?? fs.open)(
           leaf.path,
-          constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+          constants.O_RDONLY |
+            (constants.O_NOFOLLOW ?? 0) |
+            (constants.O_NONBLOCK ?? 0),
         )
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
@@ -289,17 +335,12 @@ export async function prepareUploadSelection(
           fail(leaf.display, 'unsupported_guarantee', error, 'O_NOFOLLOW open')
         throw error
       }
+      let failed = false
       try {
         const checkHandle = async () => {
           const s = await handle.stat({ bigint: true })
           identity(s, leaf.display)
-          if (
-            !s.isFile() ||
-            !same(s, leaf.stat) ||
-            s.mode !== leaf.stat.mode ||
-            s.size !== leaf.stat.size
-          )
-            fail(leaf.display, 'changed')
+          if (!sameFile(s, leaf.stat)) fail(leaf.display, 'changed')
         }
         await checkpoint('after_open', leaf.path)
         await checkHandle()
@@ -313,8 +354,13 @@ export async function prepareUploadSelection(
         if (BigInt(bytes.byteLength) !== leaf.stat.size)
           fail(leaf.display, 'changed')
         files.push({ name: leaf.name, blob: new Blob([bytes]) })
+      } catch (error) {
+        failed = true
+        throw error
       } finally {
-        await handle.close()
+        // Preserve the read/boundary failure; a close failure alone still fails.
+        if (failed) await handle.close().catch(() => {})
+        else await handle.close()
       }
     }
     return { directory: selected.isDirectory(), files }

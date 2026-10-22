@@ -60,7 +60,14 @@ export async function runAppend(
     try {
       selection = await prepareUploadSelection(path, true)
     } catch (error) {
-      return writeFailure(command, uploadReadError(error, path), mode, 1)
+      const failure = uploadReadError(error, path)
+      if (failure.details?.reason === 'invalid_type') {
+        failure.message = `Upload path ${path}: Path must be a non-empty file.`
+        failure.why = failure.message
+        failure.hint =
+          'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.'
+      }
+      return writeFailure(command, failure, mode, 1)
     }
     const file = selection.files[0]!
     if (file.blob.size === 0)
