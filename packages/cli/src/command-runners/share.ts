@@ -1,9 +1,14 @@
-import { stat } from 'node:fs/promises'
 import {
   ARTIFACT_KEY_MAX_LENGTH,
   type ArtifactUploadQuery,
 } from '@artifactshare/contract'
-import type { CliError, CliOptions, OutputMode, ParsedArgs } from '../types.js'
+import type {
+  CliError,
+  CliOptions,
+  OutputMode,
+  ParsedArgs,
+  UploadPayload,
+} from '../types.js'
 import { apiUrl, baseUrlOf, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import {
@@ -32,10 +37,19 @@ import { nonEmpty } from '../validators.js'
 
 const MAX_SHARE_KEY_LENGTH = ARTIFACT_KEY_MAX_LENGTH
 
-export async function runShare(
+export function runShare(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+): Promise<void> {
+  return runShareWithSnapshot(parsed, mode, isRetry)
+}
+
+async function runShareWithSnapshot(
+  parsed: ParsedArgs,
+  mode: OutputMode,
+  isRetry: boolean,
+  snapshot?: UploadPayload,
 ): Promise<void> {
   const command = 'share'
   const targetPath = parsed.positionals[0]
@@ -82,18 +96,6 @@ export async function runShare(
   }
 
   const project = await resolveProjectConfig()
-  const credential = await resolveCredential(parsed.options, project)
-  if (!credential.ok) {
-    return handleCredentialFailure(
-      command,
-      credential,
-      parsed.options,
-      mode,
-      () => runShare(parsed, mode, true),
-      isRetry,
-    )
-  }
-
   const baseUrl = baseUrlOf(parsed.options)
 
   const hasProjectFlag = 'project' in parsed.options
@@ -123,16 +125,20 @@ export async function runShare(
       return writeFailure(command, earlyDestination.error, mode, 1)
   }
 
-  const fileStat = await stat(targetPath).catch(() => null)
-  if (!fileStat) {
-    return writeFailure(
+  const upload = snapshot
+    ? { payload: snapshot }
+    : await prepareUploadPayload(targetPath)
+  if (upload.error) return writeFailure(command, upload.error, mode, 1)
+
+  const credential = await resolveCredential(parsed.options, project)
+  if (!credential.ok) {
+    return handleCredentialFailure(
       command,
-      validationError(
-        'Path was not found.',
-        `Check the path and retry: ${targetPath}`,
-      ),
+      credential,
+      parsed.options,
       mode,
-      1,
+      () => runShareWithSnapshot(parsed, mode, true, upload.payload),
+      isRetry,
     )
   }
 
@@ -161,7 +167,7 @@ export async function runShare(
         credential,
         parsed.options,
         mode,
-        () => runShare(parsed, mode, true),
+        () => runShareWithSnapshot(parsed, mode, true, upload.payload),
         isRetry,
       )
     }
@@ -173,7 +179,13 @@ export async function runShare(
   if (destination.error)
     return writeFailure(command, destination.error, mode, 1)
 
+  // Preserve the files-only snapshot for retries. Metadata belongs to this
+  // attempt; reusing a mutated form would duplicate grants or retain a stale
+  // destination after authentication recovery.
   const initialForm = await createUploadForm()
+  for (const file of upload.payload.form.getAll('file')) {
+    if (typeof file !== 'string') initialForm.append('file', file, file.name)
+  }
   const grantEmails = arrayOption(parsed.options.grantEmail)
   const defaultVisibility =
     parsed.options.visibility || destination.containerId
@@ -211,8 +223,7 @@ export async function runShare(
   if (parsed.options.expectedVersion) {
     uploadQuery.expected_version = parsed.options.expectedVersion
   }
-  const upload = await prepareUploadPayload(targetPath, fileStat, initialForm)
-  if (upload.error) return writeFailure(command, upload.error, mode, 1)
+
   if (upload.payload.kind === 'static_site') {
     uploadQuery.artifact_kind = 'static_site'
     if (destination.containerId) {
@@ -228,7 +239,7 @@ export async function runShare(
     {
       uploadUrl,
       token: credential.token,
-      form: upload.payload.form,
+      form: initialForm,
       requestInit: request.init,
       errorOptions: {
         authenticated: true,
@@ -255,7 +266,7 @@ export async function runShare(
       credential,
       parsed.options,
       mode,
-      () => runShare(parsed, mode, true),
+      () => runShareWithSnapshot(parsed, mode, true, upload.payload),
       isRetry,
     )
   }

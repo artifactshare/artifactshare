@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 43
+version: 44
 managed: true
 -->
 
@@ -712,3 +712,28 @@ refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
 Mutation readback contains only the affected thread window and changed message.
 `refresh_required: true` means the write committed but advisory readback failed:
 read that thread by ID; do not replay the write automatically.
+
+### Local upload boundary
+
+`share`, `append`, and `update` verify and buffer local files before authentication
+or API requests. Authentication retries reuse those verified bytes, even if the
+original path changes. Inputs and encountered descendants must not be symbolic links
+or junctions. Within Git, the boundary is the worktree root containing the current
+working directory; relative paths leaving that root are rejected. Select an
+absolute path explicitly to share outside it. Outside Git, and for absolute
+inputs outside that worktree, the boundary is the input's parent directory.
+Copy linked files into the selected directory, or share the link target directly.
+Existing hidden-file and dependency-directory exclusions still apply.
+
+POSIX reads use no-follow file handles and check component and file identities
+before and after reading. OS aliases strictly above the trust root remain supported;
+the selected input and user-created trust-root links are rejected. As fallback
+parents, macOS `/tmp` and `/var` are allowed only with their expected `/private`
+targets; both alias and target identities are checked repeatedly. Missing stable identities or
+missing POSIX no-follow support cause a local failure before authentication or API
+requests. Windows uploads fail locally before reading bytes: Node's standard APIs
+cannot rule out every reparse point, even when `lstat` and resolved paths appear
+regular. Use a supported POSIX system to upload until that guarantee is available.
+These checks are not an atomic filesystem snapshot: Node has no directory-relative
+`openat` traversal, so transient swap-and-restore changes between checks cannot
+always be detected.

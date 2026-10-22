@@ -1,16 +1,9 @@
-import { createReadStream } from 'node:fs'
 import { Blob, type Buffer } from 'node:buffer'
-import { lstat, mkdir, mkdtemp, readdir } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import type { Stats } from 'node:fs'
-import { EXCLUDED_DIR_NAMES, IGNORED_FILENAMES } from './constants.js'
-import type {
-  CliError,
-  DirectoryFile,
-  DownloadPlan,
-  UploadPayloadResult,
-} from './types.js'
+import { basename, dirname, join, resolve } from 'node:path'
+import { readUploadBoundary, UploadBoundaryError } from './upload-boundary.js'
+import type { CliError, DownloadPlan, UploadPayloadResult } from './types.js'
 import type {
   DownloadManifestFile,
   DownloadManifestResponse,
@@ -27,44 +20,37 @@ export async function createUploadForm(): Promise<FormData> {
 
 export async function prepareUploadPayload(
   targetPath: string,
-  fileStat: Stats,
-  initialForm?: FormData,
 ): Promise<UploadPayloadResult> {
-  const form = initialForm ?? (await createUploadForm())
-  if (fileStat.isDirectory()) {
-    let files
-    try {
-      files = await collectDirectoryFiles(resolve(targetPath))
-    } catch (error) {
-      if (error instanceof CollectDirectoryFilesError) {
-        return { error: validationError(error.message, error.hint) }
-      }
-      throw error
-    }
-    if (files.length === 0) {
+  try {
+    const snapshot = await readUploadBoundary(targetPath)
+    if (snapshot.files.length === 0) {
       return {
         error: validationError(
-          'Directory has no shareable files.',
+          `Directory has no shareable files: ${targetPath}`,
           'Add index.html or index.md and retry.',
         ),
       }
     }
-    for (const file of files) {
-      form.append('file', await blobFor(file.path), file.relativePath)
+    const form = await createUploadForm()
+    for (const file of snapshot.files) {
+      form.append(
+        'file',
+        new Blob([file.bytes], { type: contentTypeFor(file.path) }),
+        file.relativePath,
+      )
     }
-    return { payload: { form, kind: 'static_site' } }
-  }
-  if (fileStat.isFile()) {
-    form.append('file', await blobFor(targetPath), basename(targetPath))
     return {
-      payload: { form, kind: artifactKindForFile(targetPath) },
+      payload: {
+        form,
+        kind: snapshot.directory
+          ? 'static_site'
+          : artifactKindForFile(targetPath),
+      },
     }
-  }
-  return {
-    error: validationError(
-      'Path must be a file or directory.',
-      'Pass a regular file or directory.',
-    ),
+  } catch (error) {
+    if (error instanceof UploadBoundaryError)
+      return { error: validationError(error.message, error.hint) }
+    throw error
   }
 }
 
@@ -235,59 +221,6 @@ export function downloadFileSystemError(error: unknown): CliError {
     requiresHuman: false,
     recovery: { kind: 'change_input' },
   })
-}
-
-async function collectDirectoryFiles(root: string): Promise<DirectoryFile[]> {
-  const results: DirectoryFile[] = []
-  async function visit(dir: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (entry.name === '__MACOSX') continue
-      const fullPath = join(dir, entry.name)
-      if (entry.isSymbolicLink()) {
-        throw new CollectDirectoryFilesError(
-          'Directory contains a symbolic link.',
-          'Remove or replace symlinked files and directories before sharing.',
-        )
-      }
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) {
-          continue
-        }
-        await visit(fullPath)
-        continue
-      }
-      if (
-        !entry.isFile() ||
-        IGNORED_FILENAMES.has(entry.name) ||
-        entry.name.startsWith('.')
-      ) {
-        continue
-      }
-      const relativePath = relative(root, fullPath).split(sep).join('/')
-      results.push({ path: fullPath, relativePath })
-    }
-  }
-  await visit(root)
-  results.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
-  return results
-}
-
-class CollectDirectoryFilesError extends Error {
-  hint: string
-
-  constructor(message: string, hint: string) {
-    super(message)
-    this.name = 'CollectDirectoryFilesError'
-    this.hint = hint
-  }
-}
-
-async function blobFor(path: string): Promise<Blob> {
-  const chunks: Buffer[] = []
-  for await (const chunk of createReadStream(path)) {
-    chunks.push(chunk)
-  }
-  return new Blob(chunks, { type: contentTypeFor(path) })
 }
 
 export function contentTypeFor(path: string): string {

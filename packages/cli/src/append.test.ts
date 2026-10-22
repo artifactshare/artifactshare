@@ -1,3 +1,4 @@
+import { uploadBoundaryRunnerTests } from './test/upload-boundary-runners.js'
 import assert from 'node:assert/strict'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -176,3 +177,5 @@ test('append preserves the static-site rejection as a change-input error', async
     },
   )
 })
+
+uploadBoundaryRunnerTests('append')

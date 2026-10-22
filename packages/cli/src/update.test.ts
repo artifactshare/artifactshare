@@ -1,3 +1,4 @@
+import { uploadBoundaryRunnerTests } from './test/upload-boundary-runners.js'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ServerResponse } from 'node:http'
@@ -55,8 +56,10 @@ test('update --help prints update-specific options', () => {
   )
 })
 
-test('update --json fails with auth_required before path checks', async () => {
+test('update --json fails with auth_required after local validation', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   await withServer(
     (request, response) => {
       if (request.url === '/api/auth/device/code') {
@@ -71,7 +74,7 @@ test('update --json fails with auth_required before path checks', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          authInput,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -92,6 +95,8 @@ test('update --json fails with auth_required before path checks', async () => {
 
 test('update --json reuses pending device auth before approval', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   let deviceCodeRequests = 0
   await withServer(
     (request, response) => {
@@ -112,7 +117,7 @@ test('update --json reuses pending device auth before approval', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        authInput,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -133,6 +138,8 @@ test('update --json reuses pending device auth before approval', async () => {
 
 test('update --json clears denied pending device auth', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   await withServer(
     (request, response) => {
       if (request.url === '/api/auth/device/code') {
@@ -151,7 +158,7 @@ test('update --json clears denied pending device auth', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        authInput,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -173,6 +180,8 @@ test('update --json clears denied pending device auth', async () => {
 
 test('update --json completes after pending device auth approval', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-file-'))
   const file = join(root, 'index.html')
   await writeFile(file, '<html></html>')
@@ -253,6 +262,8 @@ test('update --json completes after pending device auth approval', async () => {
 
 test('update --json replaces expired pending device auth', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   let deviceCodeRequests = 0
 
   await withServer(
@@ -287,7 +298,7 @@ test('update --json replaces expired pending device auth', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          authInput,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -307,6 +318,8 @@ test('update --json replaces expired pending device auth', async () => {
 
 test('update --json with invalid token returns token_invalid without pending auth', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-file-'))
   const file = join(root, 'index.html')
   await writeFile(file, '<html></html>')
@@ -681,6 +694,8 @@ test('update reuses directory validation for symlinked files', async () => {
 test('update --json explains the expected-version-required rejection', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-update-file-'))
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
+  const authInput = join(configHome, 'auth.html')
+  await writeFile(authInput, '<p>auth fixture</p>')
   const file = join(root, 'index.html')
   await writeFile(file, '<html></html>')
   await withServer(
@@ -838,3 +853,5 @@ for (const kind of ['html', 'md', 'directory']) {
     })
   }
 }
+
+uploadBoundaryRunnerTests('update')

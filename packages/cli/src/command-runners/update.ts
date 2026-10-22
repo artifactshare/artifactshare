@@ -1,10 +1,9 @@
-import { stat } from 'node:fs/promises'
 import {
   type ArtifactVersionUpdateQuery,
   VersionLabelInputSchema,
   ARTIFACT_VERSION_UPDATE_RESPONSE_SCHEMA,
 } from '@artifactshare/contract'
-import type { OutputMode, ParsedArgs } from '../types.js'
+import type { OutputMode, ParsedArgs, UploadPayload } from '../types.js'
 import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
 import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
@@ -27,10 +26,19 @@ import {
 } from '../shared.js'
 import { isContract } from '../validators.js'
 
-export async function runUpdate(
+export function runUpdate(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+): Promise<void> {
+  return runUpdateWithSnapshot(parsed, mode, isRetry)
+}
+
+async function runUpdateWithSnapshot(
+  parsed: ParsedArgs,
+  mode: OutputMode,
+  isRetry: boolean,
+  snapshot?: UploadPayload,
 ): Promise<void> {
   const command = 'update'
   const artifactInput = parsed.positionals[0]
@@ -94,6 +102,11 @@ export async function runUpdate(
     )
   }
 
+  const upload = snapshot
+    ? { payload: snapshot }
+    : await prepareUploadPayload(targetPath)
+  if (upload.error) return writeFailure(command, upload.error, mode, 1)
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -104,30 +117,14 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdateWithSnapshot(parsed, mode, true, upload.payload),
       isRetry,
-    )
-  }
-
-  const fileStat = await stat(targetPath).catch(() => null)
-  if (!fileStat) {
-    return writeFailure(
-      command,
-      validationError(
-        'Path was not found.',
-        `Check the path and retry: ${targetPath}`,
-      ),
-      mode,
-      1,
     )
   }
 
   const baseUrl = baseUrlOf(parsed.options)
   const request = await requestConfig(parsed.options)
   if (request.error) return writeFailure(command, request.error, mode, 1)
-
-  const upload = await prepareUploadPayload(targetPath, fileStat)
-  if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
   const updateQuery: Pick<
     ArtifactVersionUpdateQuery,
@@ -175,7 +172,7 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdateWithSnapshot(parsed, mode, true, upload.payload),
       isRetry,
     )
   }

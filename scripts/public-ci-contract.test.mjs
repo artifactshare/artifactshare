@@ -379,6 +379,7 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
     'build-validation',
     'cli-validation',
     'windows-cli-validation',
+    'upload-boundary-validation',
     'browser-validation',
     'visual-validation',
   ])
@@ -388,7 +389,7 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
   const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
   assert.equal(
     aggregateRun,
-    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
+    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$UPLOAD_BOUNDARY_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
   )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
@@ -993,4 +994,35 @@ test('production command exception rejects extra publishing or credential comman
       ]),
     )
   }
+})
+
+test('upload boundary matrix exercises helper and command regressions on every OS', () => {
+  const job = parsedWorkflow.jobs['upload-boundary-validation']
+  assert.deepEqual(job.strategy.matrix.os, [
+    'ubuntu-latest',
+    'macos-latest',
+    'windows-latest',
+  ])
+  assert.equal(job['runs-on'], '${{ matrix.os }}')
+  assert.match(job.if, /merge_group/)
+  assert.match(job.if, /workflow_dispatch/)
+  const checkout = job.steps.find((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(checkout.with.ref, '${{ github.sha }}')
+  assert.match(checkout.uses, /@[a-f0-9]{40}$/)
+  const runs = job.steps.filter((step) => step.run).map((step) => step.run)
+  assert.deepEqual(runs, [
+    'pnpm install --frozen-lockfile --ignore-scripts',
+    'pnpm --filter @artifactshare/cli build',
+    'pnpm --filter @artifactshare/cli exec vitest run src/upload-boundary.test.ts src/share.test.ts src/append.test.ts src/update.test.ts -t "upload boundary"',
+  ])
+  assert.doesNotMatch(
+    JSON.stringify(job),
+    /continue-on-error|passWithNoTests|\|\| true/,
+  )
+  assert.equal(
+    parsedWorkflow.jobs.validate.steps[0].env.UPLOAD_BOUNDARY_RESULT,
+    '${{ needs.upload-boundary-validation.result }}',
+  )
 })

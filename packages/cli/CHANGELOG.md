@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Validate and buffer upload files before authentication; reject links and detected filesystem substitutions. Fail locally when the filesystem guarantee is unavailable, including missing file identities or unavailable Windows reparse-point detection. Reject user-created links at the trust root while preserving macOS `/tmp` and `/var` fallback parents with verified targets and identities.
+
 - Accept version-scoped execution URLs on artifactshareusercontent.com while preserving public share URLs and legacy URL-to-ID resolution. Artifact execution is isolated from app and link-viewer cookies.
 
 - Show only authorized project destinations and enforce live placement permissions when uploads, moves, edits, and agent updates commit. Preserve existing contents and clean up uploads if destination access is revoked.
