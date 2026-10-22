@@ -379,6 +379,11 @@ test.each(['en', 'ja'] as const)(
     const recovery = cliReferenceContent(locale).sections.recovery.body
     expect(recovery).toContain(
       locale === 'en'
+        ? 'Check missing paths, pass an absolute path for outside_cwd, retry changed selections, and follow the named guarantee or file-type hint.'
+        : '見つからないパスは確認し、outside_cwd では絶対パスを指定し、読み取り中の変更は再試行し、保証やファイル種別の問題は個別のヒントに従います。',
+    )
+    expect(recovery).toContain(
+      locale === 'en'
         ? 'For validation_failed without a details.reason, check usage and options.'
         : 'details.reason がない validation_failed は構文と option を確認します。',
     )
