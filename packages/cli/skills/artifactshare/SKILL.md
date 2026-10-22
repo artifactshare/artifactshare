@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 43
+version: 44
 managed: true
 -->
 
@@ -576,6 +576,12 @@ Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
 
 ## Static-site scripts and data
+
+Folder shares load external HTTPS images, stylesheets from jsDelivr, cdnjs,
+unpkg, and Google Fonts (`fonts.googleapis.com`), and font files from jsDelivr
+and Google Fonts (`fonts.gstatic.com`). Load icon/font packages from jsDelivr
+or bundle the font files because cdnjs and unpkg font files are blocked.
+JavaScript `eval` and `new Function` remain blocked.
 
 Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.
 DuckDB-WASM can load from jsDelivr: its `getJsDelivrBundles()` setup uses a blob

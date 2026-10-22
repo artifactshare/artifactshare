@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Update bundled skill guidance for folder shares: external HTTPS images, CDN stylesheets, and jsDelivr fonts are supported; JavaScript eval remains blocked.
+
 ## 0.17.0 - 2026-10-23
 
 - Record invalid, duplicate or conflicting manifest file paths and malformed or mismatched project manifest identities as per-artifact failures and continue project downloads. Malformed single-download responses report service errors; failure hints name only verified, nonempty retained workspaces.

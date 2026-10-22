@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 43
+version: 44
 managed: true
 -->
 
@@ -134,6 +134,12 @@ The browser share page opens HTML, Markdown, and static sites with its URL fragm
 Targets accept artifact IDs, app share URLs, per-ID `artifactshare.link` viewer URLs, and `a-<id>--v-<hex-version>.artifactshareusercontent.com` or `l-<id>--v-<hex-version>.artifactshareusercontent.com` execution URLs. Legacy sandbox and link-content URLs still resolve to IDs through the API; they no longer serve file content. Public share URLs are unchanged.
 
 ## Static-site scripts and data
+
+Folder shares load external HTTPS images, stylesheets from jsDelivr, cdnjs,
+unpkg, and Google Fonts (`fonts.googleapis.com`), and font files from jsDelivr
+and Google Fonts (`fonts.gstatic.com`). Load icon/font packages from jsDelivr
+or bundle the font files because cdnjs and unpkg font files are blocked.
+JavaScript `eval` and `new Function` remain blocked.
 
 Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.
 DuckDB-WASM can load from jsDelivr: its `getJsDelivrBundles()` setup uses a blob
