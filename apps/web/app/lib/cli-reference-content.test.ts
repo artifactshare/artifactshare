@@ -372,3 +372,57 @@ test.each(['en', 'ja'] as const)(
     for (const explanation of policy) expect(guidance).toContain(explanation)
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'documents upload boundary recovery in %s',
+  (locale) => {
+    const recovery = cliReferenceContent(locale).sections.recovery.body
+    expect(recovery).toContain(
+      locale === 'en'
+        ? 'Check missing paths, pass an absolute path for outside_cwd, retry changed selections, and follow the named guarantee or file-type hint.'
+        : '見つからないパスは確認し、outside_cwd では絶対パスを指定し、読み取り中の変更は再試行し、保証やファイル種別の問題は個別のヒントに従います。',
+    )
+    expect(recovery).toContain(
+      locale === 'en'
+        ? 'For validation_failed without a details.reason, check usage and options.'
+        : 'details.reason がない validation_failed は構文と option を確認します。',
+    )
+    expect(recovery).not.toContain(
+      locale === 'en'
+        ? 'For validation_failed, check usage and options.'
+        : '。validation_failed は構文と option を確認します。',
+    )
+    const content = JSON.stringify(cliReferenceContent(locale))
+    for (const term of [
+      'details.path',
+      'details.reason',
+      'parent_traversal',
+      'link',
+      'outside_cwd',
+      'not_found',
+      'changed',
+      'unsupported_guarantee',
+      'invalid_type',
+      'upload_read_failed',
+      'details.errno',
+      'POSIX',
+      'Windows',
+      'lstat',
+    ])
+      expect(content).toContain(term)
+    expect(content).toContain(
+      locale === 'en' ? 'direct absolute path' : '直接の絶対パス',
+    )
+    expect(content).toContain(
+      locale === 'en'
+        ? 'authentication retries reuse verified content'
+        : '認証の再試行では検証済みの内容を再利用',
+    )
+  },
+)
+
+test('names parent-directory references clearly in Japanese recovery guidance', () => {
+  const recovery = cliReferenceContent('ja').sections.recovery.body
+  expect(recovery).toContain('親ディレクトリ参照（..）を含むパスは使えません。')
+  expect(recovery).not.toContain('。.. を')
+})

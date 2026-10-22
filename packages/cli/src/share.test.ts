@@ -1,7 +1,14 @@
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ServerResponse } from 'node:http'
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import {
+  rm,
+  mkdtemp,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
@@ -249,7 +256,11 @@ test('share --artifact-id fails before it can create a new artifact', () => {
   }
 })
 
-test('share --json fails with auth_required before destination checks', async () => {
+test('share --json fails with auth_required before destination checks', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   await withServer(
     (request, response) => {
@@ -264,7 +275,7 @@ test('share --json fails with auth_required before destination checks', async ()
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          uploadPath,
           '--home',
           '--base-url',
           baseUrl,
@@ -290,7 +301,11 @@ test('share --json fails with auth_required before destination checks', async ()
   )
 })
 
-test('share --json reuses pending device auth before approval', async () => {
+test('share --json reuses pending device auth before approval', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   let deviceCodeRequests = 0
   await withServer(
@@ -311,7 +326,7 @@ test('share --json reuses pending device auth before approval', async () => {
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        uploadPath,
         '--home',
         '--base-url',
         baseUrl,
@@ -337,7 +352,11 @@ test('share --json reuses pending device auth before approval', async () => {
   )
 })
 
-test('share --json keeps auth_required when device auth cannot start', async () => {
+test('share --json keeps auth_required when device auth cannot start', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   await withServer(
     (_request, response) => {
@@ -347,7 +366,7 @@ test('share --json keeps auth_required when device auth cannot start', async () 
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          uploadPath,
           '--home',
           '--base-url',
           baseUrl,
@@ -375,7 +394,11 @@ test('share --json keeps auth_required when device auth cannot start', async () 
   )
 })
 
-test('share --json does not consume approved pending auth without a token store', async () => {
+test('share --json does not consume approved pending auth without a token store', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   let tokenRequests = 0
   await withServer(
@@ -399,7 +422,7 @@ test('share --json does not consume approved pending auth without a token store'
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        uploadPath,
         '--home',
         '--base-url',
         baseUrl,
@@ -500,7 +523,11 @@ test('share --json completes after pending device auth approval', async () => {
   )
 })
 
-test('share --json clears denied pending device auth', async () => {
+test('share --json clears denied pending device auth', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   await withServer(
     (request, response) => {
@@ -519,7 +546,7 @@ test('share --json clears denied pending device auth', async () => {
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        uploadPath,
         '--home',
         '--base-url',
         baseUrl,
@@ -538,7 +565,11 @@ test('share --json clears denied pending device auth', async () => {
   )
 })
 
-test('share --json replaces expired pending device auth', async () => {
+test('share --json replaces expired pending device auth', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
 
   let deviceCodeRequests = 0
@@ -573,7 +604,7 @@ test('share --json replaces expired pending device auth', async () => {
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          uploadPath,
           '--home',
           '--base-url',
           serverBaseUrl,

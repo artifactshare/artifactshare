@@ -1,4 +1,4 @@
-import { stat, readFile } from 'node:fs/promises'
+import { prepareUploadSelection, uploadReadError } from '../upload-boundary.js'
 import {
   type ArtifactAppendRequest,
   ARTIFACT_APPEND_RESPONSE_SCHEMA,
@@ -24,6 +24,7 @@ export async function runAppend(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  preparedContent?: string,
 ): Promise<void> {
   const command = 'append'
   const input = parsed.positionals[0]
@@ -53,31 +54,47 @@ export async function runAppend(
       mode,
       1,
     )
-  const s = await stat(path).catch(() => null)
-  if (!s || !s.isFile() || s.size === 0)
-    return writeFailure(
-      command,
-      validationError(
-        'Path must be a non-empty file.',
-        'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.',
-      ),
-      mode,
-      1,
-    )
-  const bytes = await readFile(path)
-  let content: string
-  try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    return writeFailure(
-      command,
-      validationError(
-        'File is not valid UTF-8.',
-        'Use a non-empty UTF-8 file and retry.',
-      ),
-      mode,
-      1,
-    )
+  let content = preparedContent
+  if (content === undefined) {
+    let selection
+    try {
+      selection = await prepareUploadSelection(path, true)
+    } catch (error) {
+      const failure = uploadReadError(error, path)
+      if (failure.details?.reason === 'invalid_type') {
+        failure.message = `Upload path ${path}: Path must be a non-empty file.`
+        failure.why = failure.message
+        failure.hint =
+          'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.'
+      }
+      return writeFailure(command, failure, mode, 1)
+    }
+    const file = selection.files[0]!
+    if (file.blob.size === 0)
+      return writeFailure(
+        command,
+        validationError(
+          'Path must be a non-empty file.',
+          'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.',
+        ),
+        mode,
+        1,
+      )
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(
+        await file.blob.arrayBuffer(),
+      )
+    } catch {
+      return writeFailure(
+        command,
+        validationError(
+          'File is not valid UTF-8.',
+          'Use a non-empty UTF-8 file and retry.',
+        ),
+        mode,
+        1,
+      )
+    }
   }
   const credential = await resolveCredential(
     parsed.options,
@@ -89,7 +106,7 @@ export async function runAppend(
       credential,
       parsed.options,
       mode,
-      () => runAppend(parsed, mode, true),
+      () => runAppend(parsed, mode, true, content),
       isRetry,
     )
   const request = await requestConfig(parsed.options)
@@ -133,7 +150,7 @@ export async function runAppend(
       credential,
       parsed.options,
       mode,
-      () => runAppend(parsed, mode, true),
+      () => runAppend(parsed, mode, true, content),
       isRetry,
     )
   const responseBody = isContract(ARTIFACT_APPEND_RESPONSE_SCHEMA, body)

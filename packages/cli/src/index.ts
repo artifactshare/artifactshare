@@ -398,7 +398,12 @@ Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before share
   self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
+  upload_read_failed     Check filesystem availability and permissions, then retry
   validation_failed      Check file type (.html / .md for single files) and directory layout
+    link                 Copy into the selection or pass the target by absolute path
+    outside_cwd          Pass an absolute path
+    parent_traversal     Pass a direct absolute path without any .. component
+    changed              The selection changed while reading; retry
   key_target_moved       The artifact for --key moved; update it by ID or use a new key
   key_kind_mismatch      The artifact for --key is a different kind; use a new key`,
 })
@@ -458,7 +463,12 @@ Common failures:
   artifact_kind_mismatch Use a file for single-file artifacts or a directory for static sites
   self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
-  validation_failed      Check file type (.html / .md for single files) and directory layout`,
+  upload_read_failed     Check filesystem availability and permissions, then retry
+  validation_failed      Check file type (.html / .md for single files) and directory layout
+    link                 Copy into the selection or pass the target by absolute path
+    outside_cwd          Pass an absolute path
+    parent_traversal     Pass a direct absolute path without any .. component
+    changed              The selection changed while reading; retry`,
 })
 
 const appendDefinition = define({

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ServerResponse } from 'node:http'
-import { mkdtemp, symlink, writeFile, readFile } from 'node:fs/promises'
+import { rm, mkdtemp, symlink, writeFile, readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
@@ -55,7 +55,11 @@ test('update --help prints update-specific options', () => {
   )
 })
 
-test('update --json fails with auth_required before path checks', async () => {
+test('update --json fails with auth_required after local preparation', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
   await withServer(
     (request, response) => {
@@ -71,7 +75,7 @@ test('update --json fails with auth_required before path checks', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          uploadPath,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -90,7 +94,11 @@ test('update --json fails with auth_required before path checks', async () => {
   )
 })
 
-test('update --json reuses pending device auth before approval', async () => {
+test('update --json reuses pending device auth before approval', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
   let deviceCodeRequests = 0
   await withServer(
@@ -112,7 +120,7 @@ test('update --json reuses pending device auth before approval', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        uploadPath,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -131,7 +139,11 @@ test('update --json reuses pending device auth before approval', async () => {
   )
 })
 
-test('update --json clears denied pending device auth', async () => {
+test('update --json clears denied pending device auth', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
   await withServer(
     (request, response) => {
@@ -151,7 +163,7 @@ test('update --json clears denied pending device auth', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        uploadPath,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -251,7 +263,11 @@ test('update --json completes after pending device auth approval', async () => {
   )
 })
 
-test('update --json replaces expired pending device auth', async () => {
+test('update --json replaces expired pending device auth', async (t) => {
+  const uploadRoot = await mkdtemp(join(tmpdir(), 'upload-auth-'))
+  t.onTestFinished(() => rm(uploadRoot, { recursive: true, force: true }))
+  const uploadPath = join(uploadRoot, 'report.html')
+  await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
   let deviceCodeRequests = 0
 
@@ -287,7 +303,7 @@ test('update --json replaces expired pending device auth', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          uploadPath,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
