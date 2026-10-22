@@ -5,25 +5,55 @@ const version = '70726f6265'
 const marker = 'artifactshare-sandbox-probe-v1'
 const probePath = '/__artifactshare_probe'
 
+const deliveryStageUrl =
+  'https://artifactshare.com/__artifactshare_delivery_stage'
+const deliveryStageRequest = { redirect: 'manual', cache: 'no-store' }
+const classifyDeliveryStage = (body) =>
+  body === 'refuse' || body === 'usercontent' ? body : 'malformed'
+
+// Keep only a small prefix, plus an overflow indication: a matching prefix is
+// never sufficient to pass an exact-body check. Cancellation must not extend
+// the request deadline, even if the underlying stream ignores it.
+async function readVerificationBody(response, signal) {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const bytes = new Uint8Array(64)
+  let length = 0
+  const cancel = () => {
+    void reader.cancel().catch(() => {})
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    signal.throwIfAborted()
+    while (true) {
+      const { done, value } = await reader.read()
+      signal.throwIfAborted()
+      if (done) return new TextDecoder().decode(bytes.subarray(0, length))
+      if (value.byteLength > bytes.length - length) return undefined
+      bytes.set(value, length)
+      length += value.byteLength
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    cancel()
+  }
+}
+
 /** Only definitive stage responses may select a production deployment path. */
 export async function readContentDeliveryStage(
   fetcher = fetch,
   log = console.info,
 ) {
-  const response = await fetcher(
-    'https://artifactshare.com/__artifactshare_delivery_stage',
-    {
-      redirect: 'manual',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(10_000),
-    },
-  )
+  const response = await fetcher(deliveryStageUrl, {
+    ...deliveryStageRequest,
+    signal: AbortSignal.timeout(10_000),
+  })
   let stage = 'refuse'
   if (response.status !== 404) {
     if (response.status !== 200)
       throw new Error(`Content delivery stage check failed: ${response.status}`)
     const body = await response.text()
-    if (body !== 'usercontent' && body !== 'refuse')
+    if (classifyDeliveryStage(body) === 'malformed')
       throw new Error('Content delivery stage check returned a malformed body')
     stage = body
   }
@@ -44,17 +74,10 @@ export async function verifyContentCutover(
     requestTimeoutMs = 10_000,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
-    expectedDeliveryStage,
   } = {},
 ) {
-  if (!['app-refusal', 'sandbox-ready'].includes(stage)) {
-    throw new Error('Expected app-refusal or sandbox-ready')
-  }
-  if (
-    expectedDeliveryStage !== undefined &&
-    !['refuse', 'usercontent'].includes(expectedDeliveryStage)
-  ) {
-    throw new Error('Expected refuse or usercontent delivery confirmation')
+  if (!['app-refusal', 'sandbox-ready', 'final'].includes(stage)) {
+    throw new Error('Expected app-refusal, sandbox-ready, or final')
   }
   const checks = []
   const legacyLink = `https://${artifact}--v-${version}.artifactshare.link`
@@ -65,7 +88,7 @@ export async function verifyContentCutover(
     : [legacyLink, legacySandbox]) {
     for (const path of paths) checks.push({ url: origin + path, status: 404 })
   }
-  if (stage === 'sandbox-ready') {
+  if (stage !== 'app-refusal') {
     for (const kind of ['a', 'l']) {
       checks.push({
         url: `https://${kind}-${artifact}--v-${version}.artifactshareusercontent.com${probePath}`,
@@ -78,11 +101,11 @@ export async function verifyContentCutover(
       })
     }
   }
-  if (expectedDeliveryStage) {
+  if (stage !== 'sandbox-ready') {
     checks.push({
-      url: 'https://artifactshare.com/__artifactshare_delivery_stage',
+      url: deliveryStageUrl,
       status: 200,
-      deliveryStage: expectedDeliveryStage,
+      deliveryStage: stage === 'app-refusal' ? 'refuse' : 'usercontent',
     })
   }
   const deadline = clock() + timeoutMs
@@ -93,8 +116,10 @@ export async function verifyContentCutover(
   async function checkOnce(check) {
     const controller = new AbortController()
     const requestDeadline = Math.min(deadline, clock() + requestTimeoutMs)
-    let status = 'transport-error'
-    let bodyClass
+    const assertActive = () => {
+      if (controller.signal.aborted || clock() >= requestDeadline)
+        throw new Error('Request deadline')
+    }
     let timer
     try {
       const expired = new Promise((_, reject) => {
@@ -106,45 +131,44 @@ export async function verifyContentCutover(
           Math.min(requestTimeoutMs, remaining()),
         )
       })
-      const valid = await Promise.race([
+      const result = await Promise.race([
         expired,
         (async () => {
           const response = await fetcher(check.url, {
             redirect: 'manual',
             signal: controller.signal,
             headers: check.origin ? { Origin: check.origin } : {},
-            ...(check.deliveryStage ? { cache: 'no-store' } : {}),
+            ...(check.deliveryStage ? deliveryStageRequest : {}),
           })
-          status = response.status
-          if (controller.signal.aborted || clock() >= requestDeadline) {
-            status = 'transport-error'
-            return false
-          }
-          const body = await response.text()
+          assertActive()
+          const body = await readVerificationBody(response, controller.signal)
           if (check.deliveryStage) {
-            bodyClass =
-              body === 'refuse' || body === 'usercontent' ? body : 'malformed'
-            return (
-              response.status === check.status && body === check.deliveryStage
-            )
+            return {
+              status: response.status,
+              bodyClass: classifyDeliveryStage(body),
+              valid:
+                response.status === check.status &&
+                body === check.deliveryStage,
+            }
           }
-          return (
-            response.status === check.status &&
-            (check.probe
-              ? body === marker &&
-                response.headers.get('X-ArtifactShare-Sandbox-Probe') ===
-                  marker &&
-                response.headers.get('Cross-Origin-Resource-Policy') ===
-                  'cross-origin' &&
-                response.headers.get('Access-Control-Allow-Origin') ===
-                  check.origin
-              : !response.headers.has('X-ArtifactShare-Sandbox-Probe'))
-          )
+          return {
+            status: response.status,
+            valid:
+              response.status === check.status &&
+              (check.probe
+                ? body === marker &&
+                  response.headers.get('X-ArtifactShare-Sandbox-Probe') ===
+                    marker &&
+                  response.headers.get('Cross-Origin-Resource-Policy') ===
+                    'cross-origin' &&
+                  response.headers.get('Access-Control-Allow-Origin') ===
+                    check.origin
+                : !response.headers.has('X-ArtifactShare-Sandbox-Probe')),
+          }
         })(),
       ])
-      if (controller.signal.aborted || clock() >= requestDeadline)
-        return { valid: false, status: 'transport-error' }
-      return { valid, status, ...(bodyClass ? { bodyClass } : {}) }
+      assertActive()
+      return result
     } catch {
       return { valid: false, status: 'transport-error' }
     } finally {
@@ -154,8 +178,15 @@ export async function verifyContentCutover(
     }
   }
 
+  // Reserve at least one second of useful I/O time (or the configured request
+  // cap when smaller). Do not replace observed failures with a token attempt.
+  const minimumRequestMs = Math.min(1_000, requestTimeoutMs)
   let lastFailure
-  for (let attempt = 1; remaining() > 0; attempt++) {
+  for (
+    let attempt = 1;
+    remaining() >= minimumRequestMs && remaining() > 0;
+    attempt++
+  ) {
     const results = await Promise.all(
       checks.map(async (check) => {
         if (remaining() <= 0) return undefined
@@ -183,7 +214,8 @@ export async function verifyContentCutover(
     // Each check already validated its deadline. Do not reject a completed
     // passing attempt because time elapsed while collecting its results.
     if (results.every((result) => result?.valid)) return
-    if (remaining() > 0) await wait(Math.min(intervalMs, remaining()))
+    if (remaining() < intervalMs + minimumRequestMs) break
+    await wait(intervalMs)
   }
   const detail = lastFailure
     ? `${lastFailure.hostname}${lastFailure.path} (${lastFailure.status}${lastFailure.bodyClass ? `, ${lastFailure.bodyClass}` : ''})`

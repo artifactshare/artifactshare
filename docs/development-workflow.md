@@ -213,18 +213,27 @@ finally with `--var ARTIFACT_DELIVERY_STAGE:usercontent`. A refusal-stage viewer
 shell remains available and emits a token-free unavailable frame URL.
 `scripts/verify-content-cutover.mjs` checks old link refusals after the first app
 deploy, then both new probe policies and old sandbox/link refusals after the
-sandbox deploy. Both paths repeat the `sandbox-ready` check set immediately after
-final app deployment as a read-only verification. After each app deployment,
-the same polling invocation also confirms the uncached delivery-stage endpoint:
+sandbox deploy. Both paths run `final` immediately after final app deployment.
+This read-only verification repeats the `sandbox-ready` content checks and
+confirms the uncached delivery-stage endpoint. Each named verification stage
+defines its entire check set: `app-refusal` includes stage confirmation,
+`sandbox-ready` checks content only, and `final` includes stage confirmation.
+The app-stage confirmations require:
 exact status 200 and body `refuse` before sandbox deployment, or exact status 200
 and body `usercontent` after final app deployment. This confirmation shares the
 check-set deadline and request cap; it does not call or retry initial discovery.
 Stage-body mismatches report only `refuse`, `usercontent`, or `malformed`, never
 the response body. Each post-deploy verification
 starts immediately, runs the checks concurrently, and retries the complete, exact
-check set every 2 seconds for
-up to 75 seconds. Each request, including response-body consumption, is capped
-at 10 seconds or the remaining total budget, whichever is shorter. Earlier
+check set with a 2-second wait after each failed attempt, for
+up to 75 seconds. Concurrent attempts take at most the per-request cap. Each
+request, including response-body consumption, is capped at 10 seconds or the
+remaining total budget, whichever is shorter. Every attempt requires at least
+1 second remaining (or the request cap if configured smaller). After failure,
+verification stops immediately if the remaining budget cannot cover both the
+2-second wait and that minimum, preserving the last observed failure. It does
+not sleep solely to exhaust the deadline. Body reads retain at most a 64-byte
+prefix, reject oversized probe or stage bodies, and cancel the stream. Earlier
 passing checks are rechecked; success requires a complete passing attempt within
 the deadline. Each failure is logged as it is observed, with stage, attempt,
 hostname, path, and observed status (or a fixed transport-error indication for

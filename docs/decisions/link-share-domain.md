@@ -98,23 +98,32 @@ Suffix List submission is planned for `artifactshareusercontent.com`.
 ## Fail-closed cutover
 
 Post-deploy verification polls for up to 75 seconds per invocation, starting
-immediately and retrying every 2 seconds. Every attempt repeats the entire exact
-stage check set concurrently, including previously passing checks. No status, marker, header,
-origin, path, or host expectation is relaxed. Requests include body consumption
-in their 10-second cap; both requests and retry waits are capped by the remaining
-total deadline. No new attempt starts after exhaustion. Each failure is logged as
+immediately and waiting 2 seconds after each failed attempt before retrying.
+Concurrent attempts take at most the per-request cap. Every attempt repeats the
+entire exact stage check set concurrently, including previously passing checks.
+No status, marker, header, origin, path, or host expectation is relaxed. Body
+reads retain at most a 64-byte prefix, reject oversized probe or stage bodies,
+and cancel the stream. Requests include body consumption in their 10-second cap;
+both requests and retry waits are capped by the remaining
+total deadline. An attempt requires at least 1 second remaining (or the request
+cap if configured smaller). If the remaining budget cannot cover the 2-second
+wait plus that minimum, verification fails immediately with the last observed
+failure; it does not sleep solely to exhaust the deadline. Each failure is logged as
 it is observed, with
 stage, attempt, hostname, path, and observed status (or a fixed transport-error
 indication for fetch or body-read failures), without bodies or raw transport errors. Timeout reports the last
 failing check in check-set order, or exhaustion without an observed failure if no
-check failed. Both deployment paths run `sandbox-ready` again immediately after
-the final app deployment. This final read-only verification adds no delivery stage
-or production write. Failure aborts before the next write; final verification
+check failed. Both deployment paths run the `final` verification immediately
+after the final app deployment. It repeats all `sandbox-ready` content checks
+and confirms the delivery stage. This adds no delivery stage or production write. Failure aborts before the next write; final verification
 failure fails the job without rollback.
 
-Post-deploy app verification also polls the uncached delivery-stage endpoint in
-the same check set and time budget: exact 200 `refuse` before sandbox deployment,
-and exact 200 `usercontent` after final app deployment on both paths. Stale or
+The named check sets fix the delivery-stage expectations: `app-refusal` includes
+legacy link refusals and exact 200 `refuse`; `sandbox-ready` includes legacy
+refusals and usercontent probes without stage confirmation; `final` includes
+those same content checks and exact 200 `usercontent`. Stage confirmation polls
+the uncached delivery-stage endpoint within the same time budget. The CLI accepts
+all three verification names and runs the same checks as the deploy job. Stale or
 malformed stage responses prevent success even when all content checks pass.
 Diagnostics include status and only a fixed body class (`refuse`, `usercontent`,
 or `malformed`); response bodies and transport payloads are never logged.

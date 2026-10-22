@@ -27,14 +27,12 @@ export async function deployContentCutover({
   })
   if (stage !== 'usercontent') {
     await run(['--var', 'ARTIFACT_DELIVERY_STAGE:refuse'])
-    await verify('app-refusal', undefined, { expectedDeliveryStage: 'refuse' })
+    await verify('app-refusal')
   }
   await run(['-c', 'wrangler.sandbox.jsonc', '--env', 'production'])
   await verify('sandbox-ready')
   await run(['--var', 'ARTIFACT_DELIVERY_STAGE:usercontent'])
-  await verify('sandbox-ready', undefined, {
-    expectedDeliveryStage: 'usercontent',
-  })
+  await verify('final')
 }
 
 if (
