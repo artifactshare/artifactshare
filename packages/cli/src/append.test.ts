@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -175,4 +175,27 @@ test('append preserves the static-site rejection as a change-input error', async
       assert.match(payload.error.hint, /Use update to replace the full source/)
     },
   )
+})
+
+test('append reports traversal and missing paths before authentication', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-boundary-'))
+  t.onTestFinished(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(join(dir, 'regular.txt'), 'selected')
+  for (const [input, reason] of [
+    ['regular.txt/../missing.md', 'parent_traversal'],
+    ['missing.md', 'not_found'],
+  ]) {
+    const result = run(
+      ['append', 'abc123def4', input!, '--json'],
+      { ARTIFACTSHARE_TOKEN: '' },
+      { cwd: dir },
+    )
+    const payload = expectFailure(result, {
+      command: 'append',
+      code: 'validation_failed',
+    })
+    assert.equal(payload.error.details.reason, reason)
+    assert.equal(payload.error.details.path, input)
+    assert.ok(payload.error.message.includes(input!))
+  }
 })

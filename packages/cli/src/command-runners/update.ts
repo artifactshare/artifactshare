@@ -1,4 +1,3 @@
-import { stat } from 'node:fs/promises'
 import {
   type ArtifactVersionUpdateQuery,
   VersionLabelInputSchema,
@@ -31,6 +30,7 @@ export async function runUpdate(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  prepared?: Awaited<ReturnType<typeof prepareUploadPayload>>,
 ): Promise<void> {
   const command = 'update'
   const artifactInput = parsed.positionals[0]
@@ -94,6 +94,9 @@ export async function runUpdate(
     )
   }
 
+  const upload = prepared ?? (await prepareUploadPayload(targetPath))
+  if (upload.error) return writeFailure(command, upload.error, mode, 1)
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -104,30 +107,14 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdate(parsed, mode, true, upload),
       isRetry,
-    )
-  }
-
-  const fileStat = await stat(targetPath).catch(() => null)
-  if (!fileStat) {
-    return writeFailure(
-      command,
-      validationError(
-        'Path was not found.',
-        `Check the path and retry: ${targetPath}`,
-      ),
-      mode,
-      1,
     )
   }
 
   const baseUrl = baseUrlOf(parsed.options)
   const request = await requestConfig(parsed.options)
   if (request.error) return writeFailure(command, request.error, mode, 1)
-
-  const upload = await prepareUploadPayload(targetPath, fileStat)
-  if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
   const updateQuery: Pick<
     ArtifactVersionUpdateQuery,
@@ -175,7 +162,7 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdate(parsed, mode, true, upload),
       isRetry,
     )
   }

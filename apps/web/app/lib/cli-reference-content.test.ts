@@ -372,3 +372,35 @@ test.each(['en', 'ja'] as const)(
     for (const explanation of policy) expect(guidance).toContain(explanation)
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'documents upload boundary recovery in %s',
+  (locale) => {
+    const content = JSON.stringify(cliReferenceContent(locale))
+    for (const term of [
+      'details.path',
+      'details.reason',
+      'parent_traversal',
+      'link',
+      'outside_cwd',
+      'not_found',
+      'changed',
+      'unsupported_guarantee',
+      'invalid_type',
+      'upload_read_failed',
+      'details.errno',
+      'POSIX',
+      'Windows',
+      'lstat',
+    ])
+      expect(content).toContain(term)
+    expect(content).toContain(
+      locale === 'en' ? 'direct absolute path' : '直接の絶対パス',
+    )
+    expect(content).toContain(
+      locale === 'en'
+        ? 'authentication retries reuse verified content'
+        : '認証の再試行では検証済みの内容を再利用',
+    )
+  },
+)

@@ -375,3 +375,57 @@ refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
 Mutation readback contains only the affected thread window and changed message.
 `refresh_required: true` means the write committed but advisory readback failed:
 read that thread by ID; do not replay the write automatically.
+
+## Local upload boundaries
+
+`share`, `append`, and `update` validate and read local content before credential
+resolution or refresh, project lookup, or upload. Authentication retries reuse the
+verified bytes; they do not reopen source paths. Append still accepts only a
+nonempty UTF-8 file, and checks emptiness after the verified read.
+
+Every literal `..` component is rejected, including absolute paths and Windows
+separator or drive-relative forms. Pass a direct absolute path instead. Relative
+paths stay within the physical current directory: each component is inspected
+with `lstat`, links are rejected, and device/inode identity determines containment.
+Case, Unicode normalization, trailing dot/space aliases, and a current directory
+reached through an alias work when the filesystem resolves them to the same file.
+Absolute paths (including Windows `C:report.html` and `D:report.html`, resolved by
+the platform) trust their parents, but the selection itself must not be a link.
+To select a link target, copy it into the selection or pass its absolute path.
+
+Selected trees reject included symlinks, junctions, app execution aliases, dangling
+links, and special files. Names starting with `.`, `__MACOSX`, `node_modules`,
+`.git`, `.artifactshare`, `.turbo`, `.DS_Store`, `Thumbs.db`, and `desktop.ini` are
+excluded before inspection. `build` and `dist` remain included. Remaining entries
+are classified with `lstat`, not directory-entry link flags; cloud placeholders
+serving their own content remain supported when stable identities are available.
+
+On POSIX, files are opened once with `O_NOFOLLOW` where available. On Windows,
+`lstat` link rejection and the same handle identity checks protect reads without
+requiring POSIX no-follow support. Both compare handle device, inode, mode, and
+size against the recorded file and recheck parent identities before/after entry
+inspection, around opening, and after reading. Missing stable identities or an
+available no-follow guarantee that cannot be provided fail closed. Device zero
+alone is allowed. ctime and mtime are not compared: cloud hydration may change
+ctime. Same-identity, same-size in-place edits are not detected. Node has no
+directory-relative `openat`, so a transient swap-and-restore entirely between
+checks cannot always be detected.
+
+Boundary errors use `validation_failed`, name the offending `details.path`
+(descendants are relative to the selection), and provide `details.reason`:
+
+| Reason                  | Recovery                                                                  |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `parent_traversal`      | Pass a direct absolute path without `..`.                                 |
+| `link`                  | Copy into the selection or pass the target by absolute path.              |
+| `outside_cwd`           | Pass an absolute path.                                                    |
+| `not_found`             | Check the path.                                                           |
+| `changed`               | Retry after the selection stops changing (`retry_later`).                 |
+| `unsupported_guarantee` | Use a filesystem providing the named stable identity/no-follow guarantee. |
+| `invalid_type`          | Select a regular file or directory.                                       |
+
+Other filesystem failures, including EACCES, EMFILE, EIO, and EPERM, use
+`upload_read_failed` with `details.errno` and `retry_later`. Check availability and
+permissions, then retry. Raw exceptions remain internal; errors never include
+credentials or file contents. Empty included directories report
+“Directory has no shareable files.”

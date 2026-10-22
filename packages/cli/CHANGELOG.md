@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Verify local upload boundaries for share, append, and update before authentication. Reject links and parent traversal, detect observed path replacements, and reuse verified content on authentication retries.
+
 - Accept version-scoped execution URLs on artifactshareusercontent.com while preserving public share URLs and legacy URL-to-ID resolution. Artifact execution is isolated from app and link-viewer cookies.
 
 - Show only authorized project destinations and enforce live placement permissions when uploads, moves, edits, and agent updates commit. Preserve existing contents and clean up uploads if destination access is revoked.
