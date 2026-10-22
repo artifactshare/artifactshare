@@ -202,9 +202,10 @@ If a required local tool (`codex`, `claude`, `python3`, `gh`, the platform's `lo
 ## Production content-origin cutover
 
 The protected `production` Environment runs `deploy:production`. Its content
-orchestrator first reads the uncached app delivery-stage endpoint. Confirmed
+orchestrator first reads the uncached app delivery-stage endpoint in a single
+fail-closed request with a 10-second timeout; discovery is never polled. Confirmed
 `usercontent` deployments deploy the sandbox, verify readiness, then deploy the
-final app without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
+final app and verify readiness again without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
 first-transition sequence: app refusal, sandbox readiness, then app delivery.
 Any other status, malformed stage body, or network failure aborts before content deployment. During the first transition,
 the same app build is first deployed with `--var ARTIFACT_DELIVERY_STAGE:refuse`, the safe default, and
@@ -212,8 +213,37 @@ finally with `--var ARTIFACT_DELIVERY_STAGE:usercontent`. A refusal-stage viewer
 shell remains available and emits a token-free unavailable frame URL.
 `scripts/verify-content-cutover.mjs` checks old link refusals after the first app
 deploy, then both new probe policies and old sandbox/link refusals after the
-sandbox deploy. A failed command stops the chain before the final app deploy.
-Retries recheck the deployed stage. Retries and recovery retain refusal code;
+sandbox deploy. Both paths run `final` immediately after final app deployment.
+This read-only verification repeats the `sandbox-ready` content checks and
+confirms the uncached delivery-stage endpoint. Each named verification stage
+defines its entire check set: `app-refusal` includes stage confirmation,
+`sandbox-ready` checks content only, and `final` includes stage confirmation.
+The app-stage confirmations require:
+exact status 200 and body `refuse` before sandbox deployment, or exact status 200
+and body `usercontent` after final app deployment. This confirmation shares the
+check-set deadline and request cap; it does not call or retry initial discovery.
+Stage-body mismatches report only `refuse`, `usercontent`, or `malformed`, never
+the response body. Each post-deploy verification
+starts immediately, runs the checks concurrently, and retries the complete, exact
+check set with a 2-second wait after each failed attempt, for
+up to 75 seconds. Concurrent attempts take at most the per-request cap. Each
+request, including response-body consumption, is capped at 10 seconds or the
+remaining total budget, whichever is shorter. Every attempt requires at least
+1 second remaining (or the request cap if configured smaller). After failure,
+verification stops immediately if the remaining budget cannot cover both the
+2-second wait and that minimum, preserving the last observed failure. It does
+not sleep solely to exhaust the deadline. Body reads retain at most a 64-byte
+prefix, reject oversized probe or stage bodies, and cancel the stream. Earlier
+passing checks are rechecked; success requires a complete passing attempt within
+the deadline. Each failure is logged as it is observed, with stage, attempt,
+hostname, path, and observed status (or a fixed transport-error indication for
+fetch or body-read failures), never response bodies or raw
+transport errors. Timeout names the last failing check in check-set order, or
+reports exhaustion without an observed failure if no check failed. A failed command or
+verification stops the chain before the next production write; final verification
+failure fails the job without further writes. When an operator reruns the protected
+deploy job, its initial single request discovers the deployed stage again.
+Job reruns and recovery retain refusal code;
 do not restore old content handlers or URL generators. Users recover an open viewer by reloading the same public URL.
 The production build/shadow lane performs no deploy or readiness fetch.
 

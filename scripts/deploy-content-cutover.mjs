@@ -32,6 +32,7 @@ export async function deployContentCutover({
   await run(['-c', 'wrangler.sandbox.jsonc', '--env', 'production'])
   await verify('sandbox-ready')
   await run(['--var', 'ARTIFACT_DELIVERY_STAGE:usercontent'])
+  await verify('final')
 }
 
 if (
