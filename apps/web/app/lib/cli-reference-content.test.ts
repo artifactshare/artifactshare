@@ -376,6 +376,17 @@ test.each(['en', 'ja'] as const)(
 test.each(['en', 'ja'] as const)(
   'documents upload boundary recovery in %s',
   (locale) => {
+    const recovery = cliReferenceContent(locale).sections.recovery.body
+    expect(recovery).toContain(
+      locale === 'en'
+        ? 'For validation_failed without a details.reason, check usage and options.'
+        : 'details.reason がない validation_failed は構文と option を確認します。',
+    )
+    expect(recovery).not.toContain(
+      locale === 'en'
+        ? 'For validation_failed, check usage and options.'
+        : '。validation_failed は構文と option を確認します。',
+    )
     const content = JSON.stringify(cliReferenceContent(locale))
     for (const term of [
       'details.path',
@@ -404,3 +415,9 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+test('names parent-directory references clearly in Japanese recovery guidance', () => {
+  const recovery = cliReferenceContent('ja').sections.recovery.body
+  expect(recovery).toContain('親ディレクトリ参照（..）を含むパスは使えません。')
+  expect(recovery).not.toContain('。.. を')
+})
