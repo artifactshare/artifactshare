@@ -20,8 +20,23 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
   for (const navigation of evidence.navigationEvidence) {
     expect(navigation.sandboxStates).toEqual(['ready'])
     const prefix = navigation.stage.includes('link:') ? 'l' : 'a'
+    const cookieMessage =
+      evidence.partitionedThirdPartyCookie === 'blocked' &&
+      navigation.stage.includes('authenticated:static_site first load')
+    if (!cookieMessage) {
+      expect(
+        navigation.reports.some(
+          ({ origin, state }) =>
+            navigation.executionUrls.some(
+              (url) => new URL(url).origin === origin,
+            ) &&
+            state.heading === 'Local delivery' &&
+            state.nonce.length > 0,
+        ),
+      ).toBe(true)
+    }
     expect(
-      navigation.frameUrls.some((url) => {
+      navigation.executionUrls.some((url) => {
         if (!URL.canParse(url)) return false
         const { protocol, hostname } = new URL(url)
         const [label, ...domain] = hostname.split('.')
