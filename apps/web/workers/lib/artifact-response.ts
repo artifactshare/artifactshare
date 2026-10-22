@@ -22,6 +22,11 @@ const EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES =
     .map((source) => `"${source}"`)
     .join(' ')
 export const PERMISSIONS_POLICY = `fullscreen=(self ${EMBED_FULLSCREEN_PERMISSIONS_POLICY_SOURCES}), clipboard-write=(self), camera=(), microphone=(), geolocation=(), display-capture=(), payment=(), usb=(), serial=(), hid=(), midi=(), language-model=(self), summarizer=(self), translator=(self), language-detector=(self)`
+const IMAGE_CSP_SOURCES = "'self' data: https: blob:"
+const FONT_CSP_SOURCES =
+  "'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net"
+const STYLESHEET_CDN_CSP_SOURCES =
+  'https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com'
 const MEDIA_CSP_SOURCES = "'self' https: data: blob:"
 
 export function artifactContentSecurityPolicy(
@@ -53,9 +58,9 @@ export function artifactContentSecurityPolicy(
         ? [
             "default-src 'none'",
             `script-src 'unsafe-inline' 'unsafe-eval' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_SCRIPT_CSP_SOURCES}`,
-            `style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
-            "img-src 'self' data: https: blob:",
-            "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+            `style-src 'unsafe-inline' ${STYLESHEET_CDN_CSP_SOURCES} https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
+            `img-src ${IMAGE_CSP_SOURCES}`,
+            `font-src ${FONT_CSP_SOURCES}`,
             `media-src ${MEDIA_CSP_SOURCES}`,
             `connect-src ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES}`,
             `frame-src ${EMBED_FRAME_CSP_SOURCES}`,
@@ -64,10 +69,10 @@ export function artifactContentSecurityPolicy(
             "default-src 'none'",
             ...STATIC_SITE_SCRIPT_DIRECTIVES,
             `script-src-elem 'self' 'unsafe-inline' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_SCRIPT_CSP_SOURCES}`,
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-            `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
-            "img-src 'self' data: blob:",
-            "font-src 'self' data: https://fonts.gstatic.com",
+            `style-src 'self' 'unsafe-inline' ${STYLESHEET_CDN_CSP_SOURCES} https://fonts.googleapis.com`,
+            `style-src-elem 'self' 'unsafe-inline' ${STYLESHEET_CDN_CSP_SOURCES} https://fonts.googleapis.com ${SOCIAL_EMBED_STYLE_CSP_SOURCES}`,
+            `img-src ${IMAGE_CSP_SOURCES}`,
+            `font-src ${FONT_CSP_SOURCES}`,
             `media-src ${MEDIA_CSP_SOURCES}`,
             `connect-src 'self' ${EXTERNAL_SCRIPT_CSP_SOURCES} ${SOCIAL_EMBED_CONNECT_CSP_SOURCES} https://extensions.duckdb.org`,
             `frame-src ${EMBED_FRAME_CSP_SOURCES}`,

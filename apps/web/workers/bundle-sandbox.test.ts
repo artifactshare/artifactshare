@@ -128,7 +128,8 @@ const youtubeFrameCspSources =
 const socialEmbedFrameCspSources =
   'https://platform.twitter.com https://embed.bsky.app https://www.tiktok.com https://www.instagram.com https://www.threads.com https://www.threads.net'
 const embedFrameCspSources = `${youtubeFrameCspSources} ${socialEmbedFrameCspSources}`
-// Independent baseline headers: only the static-site connect source may change.
+// Independent historical baselines: retain the DuckDB connect addition and
+// permit only the four explicit static-site resource-source substitutions.
 const baselineTail = [
   'frame-ancestors https://localhost:5173',
   "base-uri 'none'",
@@ -171,11 +172,42 @@ const baselineMarkdownCsp = [
   ...baselineTail,
 ].join('; ')
 
+const staticSiteResourceDirectives = [
+  ["img-src 'self' data: blob:", "img-src 'self' data: https: blob:"],
+  [
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com",
+  ],
+  [
+    `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
+    "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com https://sf16-website-login.neutral.ttwstatic.com",
+  ],
+  [
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+  ],
+] as const
+
 function expectStaticSiteCsp(csp: string, ancestor = 'https://localhost:5173') {
   const extensionOrigin = 'https://extensions.duckdb.org'
   expect(csp.split(extensionOrigin)).toHaveLength(2)
+  let expected = baselineStaticSiteCsp
+  for (const [previous, current] of staticSiteResourceDirectives) {
+    expected = expected.replace(previous, current)
+    expect(cspDirective(csp, current.split(' ')[0])).toBe(current)
+  }
+  expect(csp).not.toContain("'unsafe-eval'")
+  expect(cspDirective(csp, 'script-src')).toContain("'wasm-unsafe-eval'")
+  for (const name of ['style-src', 'style-src-elem']) {
+    expect(cspDirective(csp, name)).not.toContain('https://esm.sh')
+    expect(cspDirective(csp, name)).not.toContain('https://cdn.tailwindcss.com')
+  }
+  expect(cspDirective(csp, 'font-src')).not.toContain(
+    'https://cdnjs.cloudflare.com',
+  )
+  expect(cspDirective(csp, 'font-src')).not.toContain('https://unpkg.com')
   expect(csp.replace(` ${extensionOrigin}`, '')).toBe(
-    baselineStaticSiteCsp.replace(
+    expected.replace(
       'frame-ancestors https://localhost:5173',
       `frame-ancestors ${ancestor}`,
     ),
@@ -2008,7 +2040,9 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(csp, 'connect-src')).toBe(
       `connect-src 'self' ${externalCspSources} https://www.tiktok.com https://extensions.duckdb.org`,
     )
-    expect(cspDirective(csp, 'img-src')).toBe("img-src 'self' data: blob:")
+    expect(cspDirective(csp, 'img-src')).toBe(
+      "img-src 'self' data: https: blob:",
+    )
     expect(cspDirective(csp, 'sandbox')).toBe(
       'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
     )
@@ -2021,10 +2055,10 @@ describe('handleArtifactSandboxRequest', () => {
       `script-src-elem 'self' 'unsafe-inline' 'sha256-${VIOLATION_REPORTER_SHA256}'`,
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
-      `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
+      `style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     expect(response.headers.get('Content-Security-Policy')).toContain(
-      "font-src 'self' data: https://fonts.gstatic.com",
+      "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
     )
     expect(
       cspDirective(
@@ -2032,6 +2066,10 @@ describe('handleArtifactSandboxRequest', () => {
         'media-src',
       ),
     ).toBe("media-src 'self' https: data: blob:")
+    expect(response.headers.get('Permissions-Policy')).toBe(
+      expectedPermissionsPolicy,
+    )
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
     expect(storageMock.getArtifact).toHaveBeenCalledWith(
       {},
       'ws-a/abc123def4/v-bundle/index.html',
@@ -3510,7 +3548,7 @@ describe('handleArtifactSandboxRequest', () => {
       `script-src-elem 'self' 'unsafe-inline' ${externalCspSources} ${socialEmbedScriptCspSources}`,
     )
     expect(cspDirective(linkedPageCsp, 'style-src-elem')).toBe(
-      `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
+      `style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
     await expect(linkedPage.text()).resolves.toContain(
       '<h1 id="other-page">Other page</h1>',
@@ -3646,6 +3684,7 @@ describe('handleArtifactSandboxRequest', () => {
       'sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads',
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
     expect(csp).toBe(baselineHtmlCsp)
     expect(csp).not.toContain('https://extensions.duckdb.org')
     expect(cspDirective(csp, 'connect-src')).toBe(
@@ -3789,6 +3828,7 @@ describe('handleArtifactSandboxRequest', () => {
       'text/html; charset=utf-8',
     )
     const csp = response.headers.get('Content-Security-Policy') ?? ''
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
     expect(csp).toBe(baselineMarkdownCsp)
     expect(csp).not.toContain('https://extensions.duckdb.org')
     expect(cspDirective(csp, 'connect-src')).toBe("connect-src 'none'")
@@ -3923,6 +3963,10 @@ describe('handleArtifactSandboxRequest', () => {
           response.headers.get('Content-Security-Policy') ?? '',
           isXml ? "'self' https://localhost:5173" : 'https://localhost:5173',
         )
+      expect(response.headers.get('Permissions-Policy')).toBe(
+        expectedPermissionsPolicy,
+      )
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin')
       expect(response.headers.get('Content-Type')).toBe(mime)
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
       expect(response.headers.get('Content-Security-Policy')).toBe(
