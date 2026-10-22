@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.17.0 - 2026-10-23
+
 - Record invalid, duplicate or conflicting manifest file paths and malformed or mismatched project manifest identities as per-artifact failures and continue project downloads. Malformed single-download responses report service errors; failure hints name only verified, nonempty retained workspaces.
 
 - Recheck each write operation’s recorded ancestry to detect nested directory redirects while avoiding unrelated trees.
