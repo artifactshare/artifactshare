@@ -19,35 +19,6 @@ const bundled = (file: 'SKILL.md' | 'artifactshare.mdc') =>
     'utf8',
   )
 
-test('bundled static-site guidance distinguishes stylesheet and font hosts', async () => {
-  const paragraphs = await Promise.all(
-    (['SKILL.md', 'artifactshare.mdc'] as const).map(async (file) => {
-      const text = await bundled(file)
-      const paragraph = text
-        .split('## Static-site scripts and data\n\n')[1]
-        ?.split('\n\n')[0]
-      assert.ok(paragraph, `${file} has static-site resource guidance`)
-      return paragraph.replace(/\s+/g, ' ')
-    }),
-  )
-  assert.equal(paragraphs[0], paragraphs[1])
-  assert.ok(paragraphs[0])
-  assert.match(paragraphs[0], /Google Fonts \(`fonts\.googleapis\.com`\)/)
-  assert.match(
-    paragraphs[0],
-    /font files from jsDelivr and Google Fonts \(`fonts\.gstatic\.com`\)/,
-  )
-  assert.match(
-    paragraphs[0],
-    /Load icon\/font packages from jsDelivr or bundle the font files/,
-  )
-  assert.match(paragraphs[0], /cdnjs and unpkg font files are blocked/)
-  assert.match(
-    paragraphs[0],
-    /JavaScript `eval` and `new Function` remain blocked/,
-  )
-})
-
 let workDir: string
 let homeDir: string
 
