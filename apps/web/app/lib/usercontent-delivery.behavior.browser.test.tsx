@@ -14,6 +14,29 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
     expect(evidence.partitionedThirdPartyCookie).toBe('present')
   }
   expect(evidence.assetPreflights).toBe(6)
+  expect(evidence.navigationEvidence.length).toBe(
+    evidence.partitionedThirdPartyCookie === 'present' ? 13 : 11,
+  )
+  for (const navigation of evidence.navigationEvidence) {
+    expect(navigation.sandboxStates).toEqual(['ready'])
+    const prefix = navigation.stage.includes('link:') ? 'l' : 'a'
+    expect(
+      navigation.frameUrls.some((url) => {
+        if (!URL.canParse(url)) return false
+        const { protocol, hostname } = new URL(url)
+        const [label, ...domain] = hostname.split('.')
+        const [artifact, version, extra] = label.split('--v-')
+        return (
+          protocol === 'https:' &&
+          domain.join('.') === 'usercontent.example' &&
+          artifact.startsWith(`${prefix}-`) &&
+          /^[a-z0-9]+$/.test(artifact.slice(2)) &&
+          /^[a-f0-9]+$/.test(version ?? '') &&
+          extra === undefined
+        )
+      }),
+    ).toBe(true)
+  }
   expect(evidence.results).toEqual([
     'authenticated:html',
     'authenticated:md',

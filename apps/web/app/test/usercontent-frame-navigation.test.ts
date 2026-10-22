@@ -1,121 +1,206 @@
 import { setImmediate } from 'node:timers/promises'
 import type { Frame, Page } from 'playwright'
-import { expect, test, vi } from 'vitest'
-import { navigateUsercontentViewer } from './usercontent-frame-navigation'
+import { afterEach, expect, test, vi } from 'vitest'
+import {
+  createUsercontentResponseGate,
+  navigateUsercontentViewer,
+  usercontentFrameEvidence,
+} from './usercontent-frame-navigation'
 
-const origin = 'https://a-abc123def4--v-7631.usercontent.example'
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+const origin = 'https://l-abc123def4--v-7631.usercontent.example'
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
     resolve = done
   })
   return { promise, resolve }
 }
-
-function fixture(initialUrl: string) {
-  const main = {} as Frame
-  const committed = deferred<Frame>()
-  let predicate: (frame: Frame) => boolean
+function fixture(initialUrl = 'about:blank') {
+  const main = {
+    url: () => 'https://abc123def4.link.example/',
+    parentFrame: () => null,
+  } as Frame
   const child = (url: string, parent: Frame | null = main) =>
     ({ url: () => url, parentFrame: () => parent }) as Frame
-  const initial = child(initialUrl)
-  const attached = {
-    ...child(`${origin}/index.html#section`),
-    waitForURL: vi.fn(async (matches: (url: URL) => boolean) => {
-      expect(matches(new URL('about:blank'))).toBe(false)
-      expect(
-        matches(new URL('https://a-abc123def4--v-7632.usercontent.example/')),
-      ).toBe(false)
-      expect(matches(new URL(`${origin}/index.html#section`))).toBe(true)
-    }),
-  }
-  let current = initial
-  const element = {
-    contentFrame: vi.fn(async () => current),
-    dispose: vi.fn(async () => {}),
-  }
-  const elementHandle = vi.fn(async () => element)
-  const liveLocator = {}
+  const ready = deferred()
+  let frames = [main, child(initialUrl)]
+  const listeners = new Set<(frame: Frame) => void>()
+  const locator = {}
+  const scan = vi.fn(() => frames)
+  const readStates = vi.fn(async () => ['ready'])
   const page = {
     mainFrame: () => main,
-    waitForEvent: vi.fn((event: string, accepts: typeof predicate) => {
-      expect(event).toBe('framenavigated')
-      predicate = accepts
-      return committed.promise
+    frames: scan,
+    on: vi.fn((event, listener) => {
+      expect(event).toBe('frameattached')
+      listeners.add(listener)
     }),
-    locator: vi.fn(() => ({ first: () => ({ elementHandle }) })),
-    frameLocator: vi.fn(() => ({ first: () => liveLocator })),
-  }
+    off: vi.fn((event, listener) => {
+      expect(event).toBe('frameattached')
+      listeners.delete(listener)
+    }),
+    locator: vi.fn((selector) => ({
+      waitFor: () => {
+        expect(selector).toBe('[data-sandbox-state="ready"]')
+        return ready.promise
+      },
+      evaluateAll: readStates,
+    })),
+    frameLocator: () => ({ first: () => locator }),
+  } as unknown as Page
   return {
-    page: page as unknown as Page,
-    element,
-    elementHandle,
-    attached,
-    liveLocator,
-    emit(url: string, isMain = false) {
-      const frame = child(url, isMain ? null : main)
-      if (predicate(frame)) {
-        current = attached as unknown as Frame
-        committed.resolve(frame)
-      }
+    page,
+    ready,
+    locator,
+    scan,
+    readStates,
+    child,
+    listeners,
+    frames: (next: Frame[]) => {
+      frames = next
     },
-    subscribed: () => expect(page.waitForEvent).toHaveBeenCalledOnce(),
+    attach: () => {
+      const attached = child('about:blank')
+      frames = [main, attached]
+      for (const listener of listeners) listener(attached)
+    },
   }
 }
+afterEach(() => vi.useRealTimers())
 
 test.each([
   ['first load', 'about:blank'],
   ['public reload', `${origin}/next.html`],
-  ['reload after clearing authority', `${origin}/index.html`],
+  ['authority reload', `${origin}/index.html`],
 ])(
-  '%s waits for the new execution commit before resolving the iframe',
+  '%s gates the response on attachment, then scans only after product readiness without navigation events',
   async (_stage, previousUrl) => {
     const f = fixture(previousUrl)
-    const navigate = vi.fn(async () => {
-      f.subscribed()
-      // Parent load and successful asset responses can precede the child commit.
+    const gate = createUsercontentResponseGate()
+    let delivered = false
+    const pending = navigateUsercontentViewer(
+      f.page,
+      origin,
+      async () => {
+        await gate.wait(new URL(origin), 'iframe')
+        delivered = true
+      },
+      gate,
+    )
+    await setImmediate()
+    expect(delivered).toBe(false)
+    f.attach()
+    await setImmediate()
+    expect(delivered).toBe(true)
+    expect(f.scan).not.toHaveBeenCalled()
+    f.frames([f.child(`${origin}/index.html?t=secret`)])
+    f.ready.resolve()
+    expect(await pending).toBe(f.locator)
+    expect(f.listeners.size).toBe(0)
+    expect(await usercontentFrameEvidence(f.page)).toEqual({
+      sandboxStates: ['ready'],
+      frameUrls: [`${origin}/index.html`],
     })
-    const pending = navigateUsercontentViewer(f.page, origin, navigate)
-    await setImmediate()
-    expect(navigate).toHaveBeenCalledOnce()
-    expect(f.elementHandle).not.toHaveBeenCalled()
-
-    f.emit('about:blank')
-    f.emit(`${origin}/`, true)
-    f.emit('https://a-abc123def4--v-7632.usercontent.example/')
-    f.emit('https://l-abc123def4--v-7631.usercontent.example/')
-    f.emit('https://abc123def4.sandbox.app.example/')
-    await setImmediate()
-    expect(f.elementHandle).not.toHaveBeenCalled()
-
-    f.emit(`${origin}/index.html#section`)
-    expect(await pending).toBe(f.liveLocator)
-    expect(f.elementHandle).toHaveBeenCalledOnce()
-    expect(f.attached.waitForURL).toHaveBeenCalledOnce()
-    expect(f.element.dispose).toHaveBeenCalledOnce()
   },
 )
 
-test('observes an execution commit that happens before the shell navigation resolves', async () => {
-  const f = fixture('about:blank')
-  const navigation = deferred<void>()
-  const pending = navigateUsercontentViewer(f.page, origin, () => {
-    f.emit(`${origin}/`)
-    return navigation.promise
+test('polls frame visibility after ready and rejects main, sibling, old and blank frames', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  const pending = navigateUsercontentViewer(
+    f.page,
+    origin,
+    async () => {},
+    createUsercontentResponseGate(),
+  )
+  f.frames([
+    f.child(origin, null),
+    f.child('about:blank'),
+    f.child(''),
+    f.child('not a URL'),
+    f.child('https://a-abc123def4--v-7631.usercontent.example/'),
+    f.child('https://abc123def4.sandbox.app.example/'),
+  ])
+  f.ready.resolve()
+  let completed = false
+  void pending.then(() => {
+    completed = true
   })
-  await setImmediate()
-  expect(f.elementHandle).not.toHaveBeenCalled()
-  navigation.resolve()
-  expect(await pending).toBe(f.liveLocator)
+  await vi.advanceTimersByTimeAsync(100)
+  expect(completed).toBe(false)
+  f.frames([f.child(origin)])
+  await vi.advanceTimersByTimeAsync(50)
+  expect(await pending).toBe(f.locator)
 })
 
-test('propagates navigation failures without reading the old iframe', async () => {
-  const f = fixture(`${origin}/`)
+test.each(['about:blank', ''])(
+  'labels automation visibility failure with unavailable diagnostics and frame URL %j',
+  async (frameUrl) => {
+    vi.useFakeTimers()
+    const f = fixture()
+    const pending = navigateUsercontentViewer(
+      f.page,
+      origin,
+      async () => {},
+      createUsercontentResponseGate(),
+    )
+    f.frames([f.child(frameUrl)])
+    f.readStates.mockRejectedValue(new Error('Execution context was destroyed'))
+    const failure = expect(pending).rejects.toThrow(
+      /Automation frame visibility: product reached ready.*unavailable.*frameUrls/,
+    )
+    f.ready.resolve()
+    await vi.advanceTimersByTimeAsync(30_050)
+    await failure
+    expect(f.listeners.size).toBe(0)
+  },
+)
+
+test('navigation failure cleans up and releases any held response', async () => {
+  const f = fixture()
+  const gate = createUsercontentResponseGate()
+  let held!: Promise<void>
   await expect(
-    navigateUsercontentViewer(f.page, origin, async () => {
-      throw new Error('Shell navigation failed')
-    }),
+    navigateUsercontentViewer(
+      f.page,
+      origin,
+      async () => {
+        held = gate.wait(new URL(origin), 'iframe')
+        throw new Error('Shell navigation failed')
+      },
+      gate,
+    ),
   ).rejects.toThrow('Shell navigation failed')
-  expect(f.elementHandle).not.toHaveBeenCalled()
+  await held
+  expect(f.scan).not.toHaveBeenCalled()
+  expect(f.listeners.size).toBe(0)
+})
+
+test('gate ignores other origins and assets, and rearms for reload', async () => {
+  const f = fixture()
+  const gate = createUsercontentResponseGate()
+  for (let navigation = 0; navigation < 2; navigation++) {
+    const dispose = gate.arm(f.page, origin)
+    await gate.wait(new URL('https://other.usercontent.example/'), 'iframe')
+    await gate.wait(new URL(origin), 'script')
+    let delivered = false
+    const held = gate.wait(new URL(origin), 'iframe').then(() => {
+      delivered = true
+    })
+    await setImmediate()
+    expect(delivered).toBe(false)
+    f.attach()
+    await held
+    expect(delivered).toBe(true)
+    dispose()
+  }
+})
+
+test('evidence preserves frame URLs when the viewer execution context is unavailable', async () => {
+  const f = fixture(`${origin}/index.html?t=secret`)
+  f.readStates.mockRejectedValue(new Error('Execution context was destroyed'))
+  expect(await usercontentFrameEvidence(f.page)).toEqual({
+    sandboxStates: ['(unavailable)'],
+    frameUrls: ['https://abc123def4.link.example/', `${origin}/index.html`],
+  })
 })

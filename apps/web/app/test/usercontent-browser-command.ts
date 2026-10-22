@@ -12,7 +12,11 @@ import { join } from 'node:path'
 import { createHmac } from 'node:crypto'
 import { promisify } from 'node:util'
 import { acquireUsercontentBuild } from './usercontent-build'
-import { navigateUsercontentViewer } from './usercontent-frame-navigation'
+import {
+  createUsercontentResponseGate,
+  navigateUsercontentViewer,
+  usercontentFrameEvidence,
+} from './usercontent-frame-navigation'
 import { assertShellAssets } from './usercontent-shell-assets.js'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import { setupServer } from 'msw/node'
@@ -150,6 +154,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
     let proxy: ReturnType<typeof createHttpServer> | undefined
     let stage = 'starting local Workers'
     const responses: string[] = []
+    const responseGate = createUsercontentResponseGate()
+    const navigationEvidence: Array<
+      { stage: string } & Awaited<ReturnType<typeof usercontentFrameEvidence>>
+    > = []
     const legacyCookieHosts = new Set<string>()
     try {
       await harness.listen()
@@ -300,6 +308,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               `${incoming.hostname}${incoming.pathname}: ${result.status}`,
             )
             if (responses.length > 20) responses.shift()
+            await responseGate.wait(
+              incoming,
+              request.headers['sec-fetch-dest'] as string | undefined,
+            )
             response.statusCode = result.status
             for (const [name, value] of result.headers) {
               if (
@@ -570,7 +582,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             viewer,
             executionOrigin,
             () => viewer.goto(`${publicUrl}#section`),
+            responseGate,
           )
+          navigationEvidence.push({
+            stage,
+            ...(await usercontentFrameEvidence(viewer)),
+          })
           if (
             !supportsPartitionedCookies &&
             kind === 'authenticated' &&
@@ -713,7 +730,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             viewer,
             executionOrigin,
             () => viewer.reload(),
+            responseGate,
           )
+          navigationEvidence.push({
+            stage,
+            ...(await usercontentFrameEvidence(viewer)),
+          })
           await reloadedFrame
             .getByRole('heading', { name: 'Local delivery', exact: true })
             .waitFor()
@@ -735,7 +757,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 viewer,
                 executionOrigin,
                 () => viewer.reload(),
+                responseGate,
               )
+              navigationEvidence.push({
+                stage,
+                ...(await usercontentFrameEvidence(viewer)),
+              })
               await restoredFrame
                 .getByRole('heading', { name: 'Local delivery', exact: true })
                 .waitFor()
@@ -864,11 +891,15 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           engine === 'firefox' && !blockAll ? 'partitioned' : 'blocked',
         partitionedThirdPartyCookie,
         assetPreflights,
+        navigationEvidence,
         results,
         identity: identity.user.id,
         uploadOwner: stored?.owner_user_id,
       }
     } catch (error) {
+      const viewerStates = await Promise.all(
+        (context?.pages() ?? []).map(usercontentFrameEvidence),
+      )
       const frames = await Promise.all(
         (context?.pages() ?? []).flatMap((current) =>
           current.frames().map(async (frame) => ({
@@ -889,7 +920,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 '$1[redacted]',
               )
             : 'Unknown harness error'
-        }\n${JSON.stringify({ responses, frames })}`,
+        }\n${JSON.stringify({ responses, frames, viewerStates, navigationEvidence })}`,
         { cause: error },
       )
     } finally {
@@ -938,6 +969,11 @@ declare module 'vitest/browser' {
       ordinaryThirdPartyCookie: string
       partitionedThirdPartyCookie: string
       assetPreflights: number
+      navigationEvidence: Array<{
+        stage: string
+        sandboxStates: (string | null)[]
+        frameUrls: string[]
+      }>
       results: string[]
       identity: string
       uploadOwner: unknown
