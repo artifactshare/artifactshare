@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -175,4 +175,25 @@ test('append preserves the static-site rejection as a change-input error', async
       assert.match(payload.error.hint, /Use update to replace the full source/)
     },
   )
+})
+
+test('append rejects a selected link before authentication', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-link-'))
+  try {
+    const target = join(dir, 'source.md')
+    const link = join(dir, 'link.md')
+    await writeFile(target, '# Local fixture')
+    await symlink(target, link, 'file')
+    const result = run(['append', 'abc123def4', link, '--json'], {
+      ARTIFACTSHARE_TOKEN: '',
+    })
+    const payload = expectFailure(result, {
+      command: 'append',
+      code: 'validation_failed',
+    })
+    assert.equal(payload.error.details.reason, 'link')
+    assert.match(payload.error.hint, /absolute path/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

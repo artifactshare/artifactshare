@@ -12,6 +12,10 @@ import {
   withServer,
 } from './test/helpers.js'
 
+const authDirectory = await mkdtemp(join(tmpdir(), 'artifactshare-auth-input-'))
+const authFile = join(authDirectory, 'input.html')
+await writeFile(authFile, '<h1>auth fixture</h1>')
+
 const deviceAuthEnv = {
   ARTIFACTSHARE_TOKEN: '',
   ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
@@ -55,7 +59,7 @@ test('update --help prints update-specific options', () => {
   )
 })
 
-test('update --json fails with auth_required before path checks', async () => {
+test('update --json starts authentication after validating a regular file', async () => {
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-update-auth-'))
   await withServer(
     (request, response) => {
@@ -71,7 +75,7 @@ test('update --json fails with auth_required before path checks', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          authFile,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',
@@ -112,7 +116,7 @@ test('update --json reuses pending device auth before approval', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        authFile,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -151,7 +155,7 @@ test('update --json clears denied pending device auth', async () => {
       const args = [
         'update',
         'abc123def4',
-        'missing.html',
+        authFile,
         '--base-url',
         baseUrl,
         '--allow-plaintext-token-store',
@@ -287,7 +291,7 @@ test('update --json replaces expired pending device auth', async () => {
         [
           'update',
           'abc123def4',
-          'missing.html',
+          authFile,
           '--base-url',
           baseUrl,
           '--allow-plaintext-token-store',

@@ -372,3 +372,21 @@ test.each(['en', 'ja'] as const)(
     for (const explanation of policy) expect(guidance).toContain(explanation)
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'documents upload boundary and recovery in %s',
+  (locale) => {
+    const { basics, recovery } = cliReferenceContent(locale).sections
+    expect(basics.body).toContain(locale === 'en' ? 'physical cwd' : '相対パス')
+    expect(basics.body).toContain(
+      locale === 'en' ? 'before authentication' : '認証前',
+    )
+    expect(basics.body).toContain(
+      locale === 'en' ? 'reuse them on auth retries' : '同じ内容',
+    )
+    expect(recovery.body).toContain(
+      locale === 'en' ? 'absolute path' : '絶対パス',
+    )
+    expect(recovery.body).toContain('dev/ino')
+  },
+)

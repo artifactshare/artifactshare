@@ -567,12 +567,27 @@ for (const item of refreshCases) {
         }
 
         if (snapshot.auth === `Bearer ${EXPIRED_TOKEN}`) {
+          if (['share', 'update', 'append'].includes(item.name)) {
+            await rm(
+              join(
+                workDir,
+                item.name === 'append' ? 'section.md' : 'report.md',
+              ),
+            )
+          }
           response.statusCode = 401
           response.end(JSON.stringify({ error: 'unauthorized' }))
           return
         }
 
         assert.equal(snapshot.auth, `Bearer ${FRESH_TOKEN}`)
+        if (['share', 'update', 'append'].includes(item.name)) {
+          assert.ok(
+            snapshot.body.includes(
+              item.name === 'append' ? '## Results' : '# Report',
+            ),
+          )
+        }
         const result = item.respond(snapshot)
         if (typeof result === 'string') {
           response.setHeader('content-type', 'text/plain')

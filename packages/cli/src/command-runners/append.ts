@@ -1,4 +1,4 @@
-import { stat, readFile } from 'node:fs/promises'
+import { prepareAppend, uploadBoundaryError } from '../upload-boundary.js'
 import {
   type ArtifactAppendRequest,
   ARTIFACT_APPEND_RESPONSE_SCHEMA,
@@ -24,6 +24,7 @@ export async function runAppend(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  preparedContent?: string,
 ): Promise<void> {
   const command = 'append'
   const input = parsed.positionals[0]
@@ -53,8 +54,28 @@ export async function runAppend(
       mode,
       1,
     )
-  const s = await stat(path).catch(() => null)
-  if (!s || !s.isFile() || s.size === 0)
+  let content: string
+  try {
+    content = preparedContent ?? (await prepareAppend(path))
+  } catch (error) {
+    if (
+      error instanceof TypeError &&
+      (error as NodeJS.ErrnoException).code ===
+        'ERR_ENCODING_INVALID_ENCODED_DATA'
+    ) {
+      return writeFailure(
+        command,
+        validationError(
+          'File is not valid UTF-8.',
+          'Use a non-empty UTF-8 file and retry.',
+        ),
+        mode,
+        1,
+      )
+    }
+    return writeFailure(command, uploadBoundaryError(error), mode, 1)
+  }
+  if (content.length === 0)
     return writeFailure(
       command,
       validationError(
@@ -64,21 +85,6 @@ export async function runAppend(
       mode,
       1,
     )
-  const bytes = await readFile(path)
-  let content: string
-  try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    return writeFailure(
-      command,
-      validationError(
-        'File is not valid UTF-8.',
-        'Use a non-empty UTF-8 file and retry.',
-      ),
-      mode,
-      1,
-    )
-  }
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -89,7 +95,7 @@ export async function runAppend(
       credential,
       parsed.options,
       mode,
-      () => runAppend(parsed, mode, true),
+      () => runAppend(parsed, mode, true, content),
       isRetry,
     )
   const request = await requestConfig(parsed.options)
@@ -133,7 +139,7 @@ export async function runAppend(
       credential,
       parsed.options,
       mode,
-      () => runAppend(parsed, mode, true),
+      () => runAppend(parsed, mode, true, content),
       isRetry,
     )
   const responseBody = isContract(ARTIFACT_APPEND_RESPONSE_SCHEMA, body)

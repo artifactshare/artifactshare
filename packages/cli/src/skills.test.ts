@@ -637,3 +637,20 @@ test('skills without a subcommand fails with guidance', async () => {
     code: 'validation_failed',
   })
 })
+
+test('both managed skills ship the same upload boundary version and guarantees', async () => {
+  const skills = await Promise.all([
+    bundled('SKILL.md'),
+    bundled('artifactshare.mdc'),
+  ])
+  const versions = skills.map((text) => text.match(/version: (\d+)/)?.[1])
+  assert.deepEqual(versions, ['44', '44'])
+  for (const text of skills) {
+    assert.match(text, /Local upload boundary/)
+    assert.match(text, /physical current directory/)
+    assert.match(text, /Windows drive-relative/)
+    assert.match(text, /openat/)
+    assert.match(text, /ctime/)
+    assert.match(text, /mtime/)
+  }
+})

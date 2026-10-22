@@ -375,3 +375,40 @@ refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
 Mutation readback contains only the affected thread window and changed message.
 `refresh_required: true` means the write committed but advisory readback failed:
 read that thread by ID; do not replay the write automatically.
+
+## Local upload boundary
+
+`share`, `update`, and `append` validate and read local input before authentication,
+credential refresh, project lookup, or upload. Authentication retries reuse the
+verified bytes without reading paths again.
+
+Relative input stays inside the physical current directory: its real path must
+match physical cwd plus the normalized relative input. A cwd reached through an
+alias or junction works; links below cwd do not. Paths leaving cwd require an
+absolute path. Absolute paths (and Windows drive-relative paths resolved with
+platform path resolution) trust typed parent directories, including macOS `/tmp`
+and `/var` aliases, but reject a link at the selected entry. Malformed intermediate
+file traversal is invalid; Windows also rejects ambiguous `..` traversal.
+
+Directory uploads walk the physical tree and reject included symlinks, directory
+links, junctions, and dangling links. Hidden names and `__MACOSX` are skipped before
+inspection; excluded directory names apply to directories and ignored filenames
+to files. Excluded entries may disappear or change without failing preparation.
+
+Each file is read once through a handle. Linux and macOS use `O_NOFOLLOW` where
+available; all platforms check handle/path dev, ino, mode, size, and mtime before
+and after reading, plus recorded parent-directory identities. Windows rejects
+links reported by lstat, including junctions and app execution aliases; other
+reparse points serving their own file content are accepted when identity checks
+pass. Missing stable dev/ino identities fail closed. ctime changes are ignored to
+allow cloud-placeholder hydration; mtime changes fail.
+
+Node has no directory-relative `openat`: a transient swap-and-restore between
+checks cannot always be detected. These checks do not promise atomic containment
+or a snapshot across multiple files.
+
+Boundary errors include a local `details.reason`: `link` means copy into the
+selection or pass the target by absolute path; `escape` means pass an absolute
+path; `missing` and `invalid` mean check the path; `changed` means retry;
+`unsupported` names the missing stable-identity guarantee; `type` means select a
+regular file or directory (append requires a non-empty UTF-8 file).

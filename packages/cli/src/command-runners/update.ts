@@ -1,4 +1,9 @@
-import { stat } from 'node:fs/promises'
+import {
+  prepareUpload,
+  uploadBoundaryError,
+  type PreparedUpload,
+} from '../upload-boundary.js'
+import { contentTypeFor } from '../files.js'
 import {
   type ArtifactVersionUpdateQuery,
   VersionLabelInputSchema,
@@ -31,6 +36,7 @@ export async function runUpdate(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  prepared?: PreparedUpload,
 ): Promise<void> {
   const command = 'update'
   const artifactInput = parsed.positionals[0]
@@ -94,6 +100,22 @@ export async function runUpdate(
     )
   }
 
+  try {
+    prepared ??= await prepareUpload(targetPath, contentTypeFor)
+  } catch (error) {
+    return writeFailure(command, uploadBoundaryError(error), mode, 1)
+  }
+  if (prepared.files.length === 0)
+    return writeFailure(
+      command,
+      validationError(
+        'Directory has no shareable files.',
+        'Add index.html or index.md and retry.',
+      ),
+      mode,
+      1,
+    )
+
   const credential = await resolveCredential(
     parsed.options,
     await resolveProjectConfig(),
@@ -104,21 +126,8 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdate(parsed, mode, true, prepared),
       isRetry,
-    )
-  }
-
-  const fileStat = await stat(targetPath).catch(() => null)
-  if (!fileStat) {
-    return writeFailure(
-      command,
-      validationError(
-        'Path was not found.',
-        `Check the path and retry: ${targetPath}`,
-      ),
-      mode,
-      1,
     )
   }
 
@@ -126,7 +135,7 @@ export async function runUpdate(
   const request = await requestConfig(parsed.options)
   if (request.error) return writeFailure(command, request.error, mode, 1)
 
-  const upload = await prepareUploadPayload(targetPath, fileStat)
+  const upload = await prepareUploadPayload(prepared)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
 
   const updateQuery: Pick<
@@ -175,7 +184,7 @@ export async function runUpdate(
       credential,
       parsed.options,
       mode,
-      () => runUpdate(parsed, mode, true),
+      () => runUpdate(parsed, mode, true, prepared),
       isRetry,
     )
   }

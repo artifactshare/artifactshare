@@ -1,4 +1,9 @@
-import { stat } from 'node:fs/promises'
+import {
+  prepareUpload,
+  uploadBoundaryError,
+  type PreparedUpload,
+} from '../upload-boundary.js'
+import { contentTypeFor } from '../files.js'
 import {
   ARTIFACT_KEY_MAX_LENGTH,
   type ArtifactUploadQuery,
@@ -36,6 +41,7 @@ export async function runShare(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  prepared?: PreparedUpload,
 ): Promise<void> {
   const command = 'share'
   const targetPath = parsed.positionals[0]
@@ -81,6 +87,25 @@ export async function runShare(
     }
   }
 
+  const inputConflict = destinationConflictError(parsed.options)
+  if (inputConflict) return writeFailure(command, inputConflict, mode, 1)
+
+  try {
+    prepared ??= await prepareUpload(targetPath, contentTypeFor)
+  } catch (error) {
+    return writeFailure(command, uploadBoundaryError(error), mode, 1)
+  }
+  if (prepared.files.length === 0)
+    return writeFailure(
+      command,
+      validationError(
+        'Directory has no shareable files.',
+        'Add index.html or index.md and retry.',
+      ),
+      mode,
+      1,
+    )
+
   const project = await resolveProjectConfig()
   const credential = await resolveCredential(parsed.options, project)
   if (!credential.ok) {
@@ -89,7 +114,7 @@ export async function runShare(
       credential,
       parsed.options,
       mode,
-      () => runShare(parsed, mode, true),
+      () => runShare(parsed, mode, true, prepared),
       isRetry,
     )
   }
@@ -123,19 +148,6 @@ export async function runShare(
       return writeFailure(command, earlyDestination.error, mode, 1)
   }
 
-  const fileStat = await stat(targetPath).catch(() => null)
-  if (!fileStat) {
-    return writeFailure(
-      command,
-      validationError(
-        'Path was not found.',
-        `Check the path and retry: ${targetPath}`,
-      ),
-      mode,
-      1,
-    )
-  }
-
   const request = await requestConfig(parsed.options)
   if (request.error) return writeFailure(command, request.error, mode, 1)
 
@@ -161,7 +173,7 @@ export async function runShare(
         credential,
         parsed.options,
         mode,
-        () => runShare(parsed, mode, true),
+        () => runShare(parsed, mode, true, prepared),
         isRetry,
       )
     }
@@ -211,7 +223,7 @@ export async function runShare(
   if (parsed.options.expectedVersion) {
     uploadQuery.expected_version = parsed.options.expectedVersion
   }
-  const upload = await prepareUploadPayload(targetPath, fileStat, initialForm)
+  const upload = await prepareUploadPayload(prepared, initialForm)
   if (upload.error) return writeFailure(command, upload.error, mode, 1)
   if (upload.payload.kind === 'static_site') {
     uploadQuery.artifact_kind = 'static_site'
@@ -255,7 +267,7 @@ export async function runShare(
       credential,
       parsed.options,
       mode,
-      () => runShare(parsed, mode, true),
+      () => runShare(parsed, mode, true, prepared),
       isRetry,
     )
   }

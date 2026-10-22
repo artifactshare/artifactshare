@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Keep share, update, and append reads within physical upload selections, reject links and identity changes before authentication, and reuse verified bytes on auth retries. Document platform guarantees and Node filesystem race limitations.
+
 - Accept version-scoped execution URLs on artifactshareusercontent.com while preserving public share URLs and legacy URL-to-ID resolution. Artifact execution is isolated from app and link-viewer cookies.
 
 - Show only authorized project destinations and enforce live placement permissions when uploads, moves, edits, and agent updates commit. Preserve existing contents and clean up uploads if destination access is revoked.

@@ -277,11 +277,6 @@ export type ApiErrorOptions = {
   projectTarget?: boolean
 }
 
-export type DirectoryFile = {
-  path: string
-  relativePath: string
-}
-
 export type UploadPayload = {
   form: FormData
   kind: UploadArtifactKind

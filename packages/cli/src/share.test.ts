@@ -14,6 +14,10 @@ import {
 } from './test/helpers.js'
 import { mapApiError } from './errors.js'
 
+const authDirectory = await mkdtemp(join(tmpdir(), 'artifactshare-auth-input-'))
+const authFile = join(authDirectory, 'input.html')
+await writeFile(authFile, '<h1>auth fixture</h1>')
+
 const deviceAuthEnv = {
   ARTIFACTSHARE_TOKEN: '',
   ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
@@ -264,7 +268,7 @@ test('share --json fails with auth_required before destination checks', async ()
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          authFile,
           '--home',
           '--base-url',
           baseUrl,
@@ -311,7 +315,7 @@ test('share --json reuses pending device auth before approval', async () => {
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        authFile,
         '--home',
         '--base-url',
         baseUrl,
@@ -347,7 +351,7 @@ test('share --json keeps auth_required when device auth cannot start', async () 
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          authFile,
           '--home',
           '--base-url',
           baseUrl,
@@ -399,7 +403,7 @@ test('share --json does not consume approved pending auth without a token store'
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        authFile,
         '--home',
         '--base-url',
         baseUrl,
@@ -519,7 +523,7 @@ test('share --json clears denied pending device auth', async () => {
       const env = { ...deviceAuthEnv, ARTIFACTSHARE_CONFIG_HOME: configHome }
       const args = [
         'share',
-        'missing.html',
+        authFile,
         '--home',
         '--base-url',
         baseUrl,
@@ -573,7 +577,7 @@ test('share --json replaces expired pending device auth', async () => {
       const result = await runAsync(
         [
           'share',
-          'missing.html',
+          authFile,
           '--home',
           '--base-url',
           serverBaseUrl,
