@@ -47,6 +47,8 @@ const same = (a: BigIntStats, b: BigIntStats) =>
 /** Observed identity checks, not an atomic directory-relative filesystem API. */
 export class WriteBoundary {
   private entries = new Map<string, Entry>()
+  private children = new Map<string, Set<string>>()
+  private trustedParents = new Set<string>()
   private absent = new Set<string>()
   private guards = new Set<string>()
 
@@ -56,6 +58,40 @@ export class WriteBoundary {
   readonly backupPaths: string[] = []
   workspace?: string
   constructor(private dependencies: WriteBoundaryDependencies = {}) {}
+
+  private setEntry(path: string, entry: Entry) {
+    this.entries.set(path, entry)
+    const parent = dirname(path)
+    if (parent === path) return
+    let children = this.children.get(parent)
+    if (!children) this.children.set(parent, (children = new Set()))
+    children.add(path)
+  }
+
+  private deleteEntry(path: string) {
+    this.entries.delete(path)
+    this.children.get(dirname(path))?.delete(path)
+  }
+
+  private *subtree(path: string): Generator<[string, Entry]> {
+    const entry = this.entries.get(path)
+    if (entry) yield [path, entry]
+    for (const child of this.children.get(path) ?? [])
+      yield* this.subtree(child)
+  }
+
+  // Record the chosen output parent without following links, then pin its
+  // identity for subsequent operations. Missing parents are checked likewise.
+  async outputParent(path: string): Promise<void> {
+    path = resolve(path)
+    if (this.entries.has(path)) {
+      await this.record(path, true)
+      return
+    }
+    this.trustedParents.add(path)
+    this.watch(path)
+    if (!(await this.record(path, true))) await this.outputParent(dirname(path))
+  }
 
   private async io<T>(path: string, action: () => Promise<T>): Promise<T> {
     try {
@@ -109,45 +145,56 @@ export class WriteBoundary {
       return false
     }
     if (directory && !s.isDirectory()) throw new WriteBoundaryError(path)
-    this.entries.set(path, { stat: s, owned: false })
+    this.setEntry(path, { stat: s, owned: false })
     await this.check(path)
     return true
   }
 
   async check(...paths: string[]) {
-    // Check only the selected entries and their recorded ancestors. Tree leaves
-    // are inspected during preflight and again when an operation uses them.
+    // Follow only the operation endpoints and guards through their recorded
+    // ancestry. Checking just the immediate parent misses an ancestor redirect
+    // that preserves the identities of the descendants beneath it.
     const selected = new Set<string>()
-    for (const target of [...this.guards, ...paths]) {
+    for (const target of [
+      ...this.guards,
+      ...paths,
+      ...(this.workspace ? [this.workspace] : []),
+    ]) {
       let path = resolve(target)
-      while (true) {
-        selected.add(path)
+      selected.add(path)
+      while (!this.trustedParents.has(path)) {
         const parent = dirname(path)
-        if (parent === path) break
+        if (parent === path || !this.entries.has(parent)) break
+        selected.add(parent)
         path = parent
       }
+    }
+    const observed = new Map<string, BigIntStats | null>()
+    const inspect = async (path: string) => {
+      if (!observed.has(path)) observed.set(path, await this.stat(path))
+      return observed.get(path)!
     }
     for (const path of selected) {
       const entry = this.entries.get(path)
       if (!entry) {
-        if (this.absent.has(path) && (await this.stat(path)))
+        if (this.absent.has(path) && (await inspect(path)))
           throw new WriteBoundaryError(path)
         continue
       }
-      const s = await this.stat(path)
+      const s = await inspect(path)
       if (!s || !same(s, entry.stat)) throw new WriteBoundaryError(path)
       const parent = this.entries.get(dirname(path))
-      if (parent) {
+      if (parent && !this.trustedParents.has(path)) {
         // Compare physical parent identity, never normalized path spellings.
         const physical = await (this.dependencies.realpath ?? fs.realpath)(
           path,
         ).catch(() => {
           throw new WriteBoundaryError(path)
         })
-        const actualEntry = await this.stat(physical)
+        const actualEntry = await inspect(physical)
         if (!actualEntry || !same(actualEntry, s))
           throw new WriteBoundaryError(path)
-        const actual = await this.stat(dirname(physical))
+        const actual = await inspect(dirname(physical))
         if (!actual || !same(actual, parent.stat))
           throw new WriteBoundaryError(path)
       }
@@ -169,7 +216,7 @@ export class WriteBoundary {
     this.absent.delete(path)
     const s = await this.stat(path)
     if (!s?.isDirectory()) throw new WriteBoundaryError(path)
-    this.entries.set(path, { stat: s, owned: true })
+    this.setEntry(path, { stat: s, owned: true })
     await this.check(path)
   }
 
@@ -200,7 +247,7 @@ export class WriteBoundary {
     )
     const stat = await this.stat(path)
     if (!stat?.isDirectory()) throw new WriteBoundaryError(path)
-    this.entries.set(path, { stat, owned: true })
+    this.setEntry(path, { stat, owned: true })
     await this.check(path)
     return path
   }
@@ -237,20 +284,21 @@ export class WriteBoundary {
     }
   }
 
-  async write(path: string, content: string | Uint8Array) {
+  async write(path: string, content: string | Uint8Array, mode?: number) {
     path = resolve(path)
     await this.directory(dirname(path))
     if (await this.record(path)) throw new WriteBoundaryError(path)
     await this.before('create', path)
     const handle = await this.io(path, () =>
-      (this.dependencies.open ?? fs.open)(path, 'wx', 0o600),
+      (this.dependencies.open ?? fs.open)(path, 'wx', mode ?? 0o666),
     )
     try {
       const stat = await handle.stat({ bigint: true })
       this.absent.delete(path)
-      this.entries.set(path, { stat, owned: true })
+      this.setEntry(path, { stat, owned: true })
       await this.check(path)
       await this.io(path, () => handle.writeFile(content))
+      if (mode !== undefined) await this.io(path, () => handle.chmod(mode))
       await this.check(path)
     } finally {
       await this.io(path, () => handle.close())
@@ -272,14 +320,12 @@ export class WriteBoundary {
     await this.io(destination, () =>
       (this.dependencies.rename ?? fs.rename)(source, destination),
     )
-    this.entries.delete(destination)
+    this.deleteEntry(destination)
     this.absent.delete(destination)
-    for (const [path, entry] of Array.from(this.entries)) {
-      if (path === source || path.startsWith(`${source}${sep}`)) {
-        this.entries.delete(path)
-        this.entries.set(destination + path.slice(source.length), entry)
-      }
-    }
+    const moved = [...this.subtree(source)]
+    for (const [path] of moved) this.deleteEntry(path)
+    for (const [path, entry] of moved)
+      this.setEntry(destination + path.slice(source.length), entry)
     this.absent.add(source)
     await this.check(source, destination)
   }
@@ -287,48 +333,53 @@ export class WriteBoundary {
   async replace(source: string, destination: string, retain = true) {
     const guarded = this.guards.has(resolve(destination))
     this.watch(destination)
-    let backup: string | undefined
-    if (await this.record(destination)) {
-      if (!retain) {
-        await this.move(source, destination, true)
-        if (!guarded) this.guards.delete(resolve(destination))
-        return
-      }
-      if (!this.workspace) throw new WriteBoundaryError(destination)
-      backup = join(this.workspace, `backup-${randomUUID()}`)
-      await this.move(destination, backup)
-      this.backupPaths.push(backup)
-    }
     try {
-      await this.move(source, destination)
-      if (!guarded) this.guards.delete(resolve(destination))
-    } catch (error) {
-      if (backup) {
-        try {
-          await this.before('rollback', destination)
-          await this.move(backup, destination)
-          this.backupPaths.splice(this.backupPaths.indexOf(backup), 1)
-        } catch (restoreError) {
-          const failure = new WriteBoundaryError(
-            destination,
-            `Publication failed and backup restoration could not finish. Recover original data at ${backup}; inspect it before manual cleanup.`,
-          )
-          Object.defineProperty(failure, 'cause', {
-            value: new AggregateError([error, restoreError]),
-          })
-          throw failure
+      let backup: string | undefined
+      if (await this.record(destination)) {
+        if (!retain) {
+          await this.move(source, destination, true)
+          return
         }
+        if (!this.workspace) throw new WriteBoundaryError(destination)
+        backup = join(this.workspace, `backup-${randomUUID()}`)
+        await this.move(destination, backup)
+        this.backupPaths.push(backup)
       }
-      if (!guarded && !(error instanceof WriteBoundaryError))
-        this.guards.delete(resolve(destination))
-      throw error
+      try {
+        await this.move(source, destination)
+      } catch (error) {
+        if (backup) {
+          try {
+            await this.before('rollback', destination)
+            await this.move(backup, destination)
+            this.backupPaths.splice(this.backupPaths.indexOf(backup), 1)
+          } catch (restoreError) {
+            const failure = new WriteBoundaryError(
+              destination,
+              `Publication failed and backup restoration could not finish. Recover original data at ${backup}; inspect it before manual cleanup.`,
+            )
+            Object.defineProperty(failure, 'cause', {
+              value: new AggregateError([error, restoreError]),
+            })
+            throw failure
+          }
+        }
+        throw error
+      }
+    } finally {
+      if (!guarded) this.guards.delete(resolve(destination))
     }
   }
 
   async atomicWrite(path: string, content: string, retain = false) {
     await this.record(path)
     const temp = join(dirname(path), `.artifactshare-${randomUUID()}.tmp`)
-    await this.write(temp, content)
+    const existing = this.entries.get(resolve(path))
+    await this.write(
+      temp,
+      content,
+      existing ? Number(existing.stat.mode & 0o777n) : undefined,
+    )
     await this.replace(temp, path, retain)
   }
 
@@ -347,20 +398,24 @@ export class WriteBoundary {
         await this.io(path, () => (this.dependencies.rmdir ?? fs.rmdir)(path))
       else
         await this.io(path, () => (this.dependencies.unlink ?? fs.unlink)(path))
-      this.entries.delete(path)
+      this.deleteEntry(path)
       this.absent.add(path)
     }
   }
 
+  // Displaced originals remain recoverable after successful publication.
+  // cleanup removes only owned entries outside their retained containers.
+  async finish() {
+    await this.cleanup()
+  }
+
   keep(path: string) {
     path = resolve(path)
-    for (const [name, entry] of this.entries) {
-      if (
-        name === path ||
-        name.startsWith(`${path}${sep}`) ||
-        path.startsWith(`${name}${sep}`)
-      )
-        entry.owned = false
+    for (const [, entry] of this.subtree(path)) entry.owned = false
+    for (let parent = dirname(path); ; parent = dirname(parent)) {
+      const entry = this.entries.get(parent)
+      if (entry) entry.owned = false
+      if (dirname(parent) === parent) break
     }
   }
 }

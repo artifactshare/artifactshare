@@ -1,4 +1,3 @@
-import { lstat } from 'node:fs/promises'
 import {
   WriteBoundary,
   WriteBoundaryError,
@@ -181,11 +180,6 @@ async function runDownloadInternal(
   const artifactId = target.artifactId
   const input = parsed.positionals[0]!
   if (!/^https?:\/\//i.test(input)) validateIds([{ id: input }])
-  const host = input.match(/^https?:\/\/(?:[^/?#@]*@)?([^/?#:]+)/i)?.[1]
-  const hostId = host?.match(
-    /^(?:[al]-)?([A-Za-z0-9]+)(?:--v-[a-f0-9]+)?\.(?:artifactshare\.link|sandbox\.|artifactshareusercontent\.com|usercontent\.localhost)/i,
-  )?.[1]
-  if (hostId) validateIds([{ id: hostId }])
   validateIds([{ id: artifactId }])
 
   const credential = await resolveCredential(
@@ -319,7 +313,7 @@ async function runDownloadInternal(
   await boundary.replace(plan.value.tempRoot, plan.value.root)
   boundary.keep(plan.value.root)
 
-  await boundary.cleanup()
+  await boundary.finish()
   return writeSuccess(
     command,
     {
@@ -492,12 +486,14 @@ async function runProjectDownload(
   if (listError && first) throw new DownloadFailure(listError)
   validateIds(entries)
   boundary.watch(output)
-  await boundary.record(dirname(output), true)
+  await boundary.outputParent(dirname(output))
   await boundary.record(output, true)
-  await boundary.tree(output)
-  for (const entry of entries)
-    await boundary.record(join(output, entry.id as string), true)
   const previousVersions = await readPreviousVersions(output, boundary)
+  for (const item of entries) {
+    const root = join(output, item.id as string)
+    await boundary.record(root, true)
+    await boundary.tree(root)
+  }
   await boundary.directory(output)
   boundary.workspace = await boundary.privateDirectory(dirname(output))
   boundary.keep(output)
@@ -525,77 +521,70 @@ async function runProjectDownload(
         continue
       }
       const root = join(output, result.id)
-      await boundary.check(root)
-      const rootStat = await lstat(root).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === 'ENOENT') return null
-          throw error
-        },
-      )
-      const rootExists = rootStat !== null
-      const response = await authFetch(
-        apiUrl(
-          `/api/cli/artifacts/${encodeURIComponent(result.id)}/download`,
-          baseUrl,
-        ),
-      )
-      if ('networkError' in response) {
-        result.reason = 'network failed'
-        continue
-      }
-      if (!response.ok) {
-        const body = await readJson(response)
-        const apiError = mapApiError(response.status, body, {
-          authenticated: true,
-          baseUrl,
-          artifactTarget: true,
-        })
-        if (apiError.code === 'unsupported_kind') {
-          result.status = 'skipped'
-          result.reason = 'unsupported-kind'
-        } else {
-          result.reason = `download failed (${response.status})`
-        }
-        continue
-      }
-      const body = await readJson(response)
-      validateIds([body])
-      if (isRecord(body) && body.id !== result.id)
-        throw new WriteBoundaryError(
-          `manifest artifact ID ${JSON.stringify(body.id)}`,
-        )
-      if (!downloadManifestFields(body)) {
-        result.reason = 'invalid download manifest'
-        continue
-      }
-      // Re-runs are an incremental sync: an unchanged version with its output
-      // still on disk needs no file requests. --force wins and re-downloads.
-      if (
-        !parsed.options.force &&
-        rootStat?.isDirectory() &&
-        previousVersions.get(result.id) === body.version_id
-      ) {
-        result.status = 'unchanged'
-        result.version_id = body.version_id
-        result.path = root
-        delete result.reason
-        continue
-      }
-      if (rootExists && !parsed.options.force) {
-        result.reason = 'artifact output already exists'
-        continue
-      }
-      const plan = await prepareDownloadPlan(
-        body,
-        root,
-        Boolean(parsed.options.force),
-        boundary,
-      )
-      if (plan.error) {
-        result.reason = plan.error.message
-        continue
-      }
       try {
+        const rootExists = await boundary.record(root, true)
+        const response = await authFetch(
+          apiUrl(
+            `/api/cli/artifacts/${encodeURIComponent(result.id)}/download`,
+            baseUrl,
+          ),
+        )
+        if ('networkError' in response) {
+          result.reason = 'network failed'
+          continue
+        }
+        if (!response.ok) {
+          const body = await readJson(response)
+          const apiError = mapApiError(response.status, body, {
+            authenticated: true,
+            baseUrl,
+            artifactTarget: true,
+          })
+          if (apiError.code === 'unsupported_kind') {
+            result.status = 'skipped'
+            result.reason = 'unsupported-kind'
+          } else {
+            result.reason = `download failed (${response.status})`
+          }
+          continue
+        }
+        const body = await readJson(response)
+        if (isRecord(body) && 'id' in body) validateIds([body])
+        if (isRecord(body) && isArtifactId(body.id) && body.id !== result.id) {
+          result.reason = `Manifest artifact ID ${JSON.stringify(body.id)} does not match ${result.id}; check the endpoint and retry.`
+          continue
+        }
+        if (!downloadManifestFields(body)) {
+          result.reason = 'invalid download manifest'
+          continue
+        }
+        // Re-runs are an incremental sync: an unchanged version with its output
+        // still on disk needs no file requests. --force wins and re-downloads.
+        if (
+          !parsed.options.force &&
+          rootExists &&
+          previousVersions.get(result.id) === body.version_id
+        ) {
+          result.status = 'unchanged'
+          result.version_id = body.version_id
+          result.path = root
+          delete result.reason
+          continue
+        }
+        if (rootExists && !parsed.options.force) {
+          result.reason = 'artifact output already exists'
+          continue
+        }
+        const plan = await prepareDownloadPlan(
+          body,
+          root,
+          Boolean(parsed.options.force),
+          boundary,
+        )
+        if (plan.error) {
+          result.reason = plan.error.message
+          continue
+        }
         for (const file of plan.value.files) {
           const fileResponse = await authFetch(
             downloadFileUrl(baseUrl, result.id, file.path),
@@ -629,12 +618,12 @@ async function runProjectDownload(
         result.path = root
         delete result.reason
       } catch (error) {
+        await boundary.check(output, dirname(output), boundary.workspace!)
         if (error instanceof WriteBoundaryError) throw error
         result.reason =
           error instanceof DownloadFileError
             ? error.message
             : 'download failed; check filesystem availability and retry'
-        await boundary.check(root)
       }
     }
   }
@@ -651,7 +640,8 @@ async function runProjectDownload(
     skipped: results.filter((r) => r.status === 'skipped').length,
     failed: results.filter((r) => r.status === 'failed').length,
   }
-  await boundary.cleanup()
+  if (counts.failed === 0 && !listError) await boundary.finish()
+  else await boundary.cleanup()
   process.exitCode = counts.failed > 0 ? 1 : 0
   return writeSuccess(
     command,

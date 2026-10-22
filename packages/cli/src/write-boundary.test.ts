@@ -53,7 +53,7 @@ for (const phase of ['create', 'read', 'rename', 'remove'] as const) {
   })
 }
 
-test('retains displaced original and removes only owned staging', async (t) => {
+test('successful finish retains displaced original and removes only owned staging', async (t) => {
   const { base, root } = await fixture(t)
   await fs.writeFile(join(root, 'old'), 'original')
   const boundary = new WriteBoundary()
@@ -64,7 +64,11 @@ test('retains displaced original and removes only owned staging', async (t) => {
   await boundary.write(join(stage, 'new'), 'replacement')
   await boundary.replace(stage, root)
   boundary.keep(root)
-  await boundary.cleanup()
+  const unused = await boundary.privateDirectory(boundary.workspace)
+  await boundary.write(join(unused, 'partial'), 'temporary')
+  await boundary.finish()
+  await assert.rejects(fs.lstat(unused), { code: 'ENOENT' })
+  assert.equal(boundary.backupPaths.length, 1)
   assert.deepEqual(await fs.readdir(root), ['new'])
   assert.equal(
     await fs.readFile(join(boundary.backupPaths[0]!, 'old'), 'utf8'),
@@ -232,7 +236,7 @@ test('rollback refuses a newly arrived destination', async (t) => {
   boundary.workspace = await boundary.privateDirectory(base)
   const stage = await boundary.privateDirectory(boundary.workspace)
   await assert.rejects(boundary.replace(stage, root), WriteBoundaryError)
-  await assert.rejects(boundary.cleanup(), WriteBoundaryError)
+  await boundary.cleanup()
   assert.equal(
     await fs.readFile(join(root, 'newcomer'), 'utf8'),
     'do not overwrite',
@@ -403,3 +407,170 @@ test('watched output identity is checked while writing sibling staging', async (
   assert.deepEqual(await fs.readdir(staging), [])
   assert.deepEqual(await fs.readdir(outside), ['sentinel'])
 })
+
+test('new published files use the umask default mode', async (t) => {
+  if (process.platform === 'win32') return
+  const { root } = await fixture(t)
+  const boundary = new WriteBoundary()
+  await boundary.record(root, true)
+  const reference = join(root, 'reference')
+  await fs.writeFile(reference, 'default mode')
+  const expected = (await fs.stat(reference)).mode & 0o777
+  const file = join(root, 'downloaded')
+  await boundary.write(file, 'content')
+  assert.equal((await fs.stat(file)).mode & 0o777, expected)
+  const config = join(root, 'config.local.json')
+  await boundary.atomicWrite(config, '{}')
+  assert.equal((await fs.stat(config)).mode & 0o777, expected)
+})
+
+for (const mode of [0o640, 0o664]) {
+  test(`atomic replacement preserves existing mode ${mode.toString(8)}`, async (t) => {
+    if (process.platform === 'win32') return
+    const { root } = await fixture(t)
+    const file = join(root, 'config.local.json')
+    await fs.writeFile(file, 'old')
+    await fs.chmod(file, mode)
+    const boundary = new WriteBoundary()
+    await boundary.record(root, true)
+    await boundary.atomicWrite(file, 'new')
+    assert.equal(await fs.readFile(file, 'utf8'), 'new')
+    assert.equal((await fs.stat(file)).mode & 0o777, mode)
+  })
+}
+
+test('Git exclude preserves the existing file mode', async (t) => {
+  if (process.platform === 'win32') return
+  const { root } = await fixture(t)
+  const path = join(root, '.git/info/exclude')
+  await fs.mkdir(join(root, '.git/info'), { recursive: true })
+  await fs.writeFile(path, '# keep\n')
+  await fs.chmod(path, 0o640)
+  assert.equal((await ensureGitExclude(root)).applied, true)
+  assert.equal((await fs.stat(path)).mode & 0o777, 0o640)
+})
+
+for (const phase of ['rename', 'remove'] as const) {
+  test(`output parent replaced by a link is rejected before ${phase}`, async (t) => {
+    const { base, root, outside } = await fixture(t)
+    const alias = join(base, 'alias')
+    await fs.mkdir(alias)
+    let armed = false
+    const boundary = new WriteBoundary({
+      checkpoint: async (at) => {
+        if (!armed || at !== phase) return
+        armed = false
+        await fs.rename(alias, join(root, 'original-parent'))
+        await fs.symlink(outside, alias)
+      },
+    })
+    await boundary.outputParent(alias)
+    const stage = await boundary.privateDirectory(alias)
+    await boundary.write(join(stage, 'file'), 'new')
+    armed = true
+    await assert.rejects(
+      phase === 'rename'
+        ? boundary.move(stage, join(alias, 'published'))
+        : boundary.cleanup(),
+      WriteBoundaryError,
+    )
+    assert.deepEqual(await fs.readdir(outside), ['sentinel'])
+    assert.equal(
+      await fs.readFile(join(outside, 'sentinel'), 'utf8'),
+      'unchanged',
+    )
+  })
+}
+
+test('checks visit the operation ancestry without unrelated recorded trees', async (t) => {
+  const { root } = await fixture(t)
+  let calls = 0
+  const boundary = new WriteBoundary({
+    lstat: async (path) => {
+      calls++
+      return fs.lstat(path, { bigint: true })
+    },
+  })
+  let directory = root
+  await boundary.record(root, true)
+  const unrelated = join(root, 'unrelated')
+  await boundary.directory(unrelated)
+  for (let i = 0; i < 100; i++)
+    await boundary.write(join(unrelated, String(i)), 'unrelated')
+  for (let i = 0; i < 25; i++) {
+    directory = join(directory, 'nested')
+    await boundary.directory(directory)
+  }
+  calls = 0
+  await boundary.write(join(directory, 'file'), 'content')
+  assert.ok(calls < 150, `one write used ${calls} identity reads`)
+})
+
+test('successful finish leaves originals and unknown backup entries untouched', async (t) => {
+  const { base, root } = await fixture(t)
+  await fs.writeFile(join(root, 'old'), 'original')
+  const boundary = new WriteBoundary()
+  await boundary.record(base, true)
+  await boundary.tree(root)
+  boundary.workspace = await boundary.privateDirectory(base)
+  const stage = await boundary.privateDirectory(boundary.workspace)
+  await boundary.write(join(stage, 'new'), 'replacement')
+  await boundary.replace(stage, root)
+  boundary.keep(root)
+  const backup = boundary.backupPaths[0]!
+  await fs.writeFile(join(backup, 'newcomer'), 'keep')
+  await boundary.finish()
+  assert.deepEqual(boundary.backupPaths, [backup])
+  assert.equal(await fs.readFile(join(backup, 'old'), 'utf8'), 'original')
+  assert.equal(await fs.readFile(join(backup, 'newcomer'), 'utf8'), 'keep')
+})
+
+for (const phase of ['create', 'read', 'rename', 'remove'] as const) {
+  test(`nested ancestor replacement is refused before ${phase}`, async (t) => {
+    const { root, outside } = await fixture(t)
+    const ancestor = join(root, 'nested')
+    const directory = join(ancestor, 'child', 'leaf')
+    const file = join(directory, 'file')
+    const relocated = join(outside, 'relocated')
+    let armed = false
+    const boundary = new WriteBoundary({
+      checkpoint: async (at) => {
+        if (!armed || at !== phase) return
+        armed = false
+        await fs.rename(ancestor, relocated)
+        await fs.symlink(relocated, ancestor)
+      },
+    })
+    await boundary.record(root, true)
+    await boundary.directory(directory)
+    await boundary.write(file, 'original')
+    const originalParent = await fs.lstat(directory, { bigint: true })
+    armed = true
+    const operation =
+      phase === 'create'
+        ? boundary.write(join(directory, 'new'), 'new')
+        : phase === 'read'
+          ? boundary.read(file)
+          : phase === 'rename'
+            ? boundary.move(file, join(directory, 'renamed'))
+            : boundary.cleanup()
+    await assert.rejects(operation, WriteBoundaryError)
+    // The endpoint's parent still has the same identity after the redirect.
+    // Only checking the complete recorded ancestry detects this swap.
+    const parentAfter = await fs.lstat(directory, { bigint: true })
+    assert.equal(parentAfter.ino, originalParent.ino)
+    assert.equal(parentAfter.dev, originalParent.dev)
+    assert.deepEqual(await fs.readdir(join(relocated, 'child', 'leaf')), [
+      'file',
+    ])
+    assert.equal(
+      await fs.readFile(join(relocated, 'child', 'leaf', 'file'), 'utf8'),
+      'original',
+    )
+    assert.equal(
+      await fs.readFile(join(outside, 'sentinel'), 'utf8'),
+      'unchanged',
+    )
+    await assert.rejects(boundary.cleanup(), WriteBoundaryError)
+  })
+}

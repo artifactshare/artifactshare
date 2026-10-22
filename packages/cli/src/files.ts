@@ -90,9 +90,9 @@ export async function prepareDownloadPlan(
     }
   }
   const root = resolve(outputPath)
-  await boundary.record(dirname(root), true)
+  if (boundary.workspace) await boundary.record(dirname(root), true)
+  else await boundary.outputParent(dirname(root))
   const existing = await boundary.record(root, true)
-  await boundary.tree(root)
   if (existing && !force) {
     return {
       error: cliError({
@@ -106,35 +106,36 @@ export async function prepareDownloadPlan(
       }),
     }
   }
+  await boundary.tree(root)
   const seen = new Set<string>()
+  const directories = new Set<string>()
+  const foldCase = process.platform === 'win32' || process.platform === 'darwin'
   const relativeFiles: Array<DownloadManifestFile & { relativePath: string }> =
     []
   for (const file of manifest.files) {
     const relativePath = downloadRelativePath(file.path)
-    if (relativePath.error)
-      throw new WriteBoundaryError(
-        JSON.stringify(file.path),
-        relativePath.error.hint,
-        relativePath.error.message,
-      )
+    const key = foldCase ? relativePath.toLowerCase() : relativePath
+    const prefixes: string[] = []
+    for (
+      let slash = key.indexOf('/');
+      slash !== -1;
+      slash = key.indexOf('/', slash + 1)
+    )
+      prefixes.push(key.slice(0, slash))
     if (
-      [...seen].some(
-        (path) =>
-          path.toLowerCase() === relativePath.value.toLowerCase() ||
-          path
-            .toLowerCase()
-            .startsWith(relativePath.value.toLowerCase() + '/') ||
-          relativePath.value.toLowerCase().startsWith(path.toLowerCase() + '/'),
-      )
+      seen.has(key) ||
+      directories.has(key) ||
+      prefixes.some((prefix) => seen.has(prefix))
     ) {
       throw new WriteBoundaryError(
-        JSON.stringify(file.path),
+        file.path,
         'Retry later. If this repeats, report the artifact ID.',
         `Download manifest contains conflicting file path ${JSON.stringify(file.path)}.`,
       )
     }
-    seen.add(relativePath.value)
-    relativeFiles.push({ ...file, relativePath: relativePath.value })
+    seen.add(key)
+    for (const prefix of prefixes) directories.add(prefix)
+    relativeFiles.push({ ...file, relativePath })
   }
 
   const parent = dirname(root)
@@ -157,16 +158,13 @@ export async function prepareDownloadPlan(
   }
 }
 
-function downloadRelativePath(
-  path: string,
-): { value: string; error?: never } | { error: CliError; value?: never } {
+function downloadRelativePath(path: string): string {
   if (!path.startsWith('/') || path.includes('\0') || path.includes('\\')) {
-    return {
-      error: validationError(
-        `Download manifest contains invalid file path ${JSON.stringify(path)}.`,
-        'Retry later. If this repeats, report the artifact ID.',
-      ),
-    }
+    throw new WriteBoundaryError(
+      path,
+      'Retry later. If this repeats, report the artifact ID.',
+      `Download manifest contains invalid file path ${JSON.stringify(path)}.`,
+    )
   }
   const segments = path.split('/').slice(1)
   if (
@@ -182,14 +180,13 @@ function downloadRelativePath(
             /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(segment))),
     )
   ) {
-    return {
-      error: validationError(
-        `Download manifest contains unsafe file path ${JSON.stringify(path)}.`,
-        'Retry later. If this repeats, report the artifact ID.',
-      ),
-    }
+    throw new WriteBoundaryError(
+      path,
+      'Retry later. If this repeats, report the artifact ID.',
+      `Download manifest contains unsafe file path ${JSON.stringify(path)}.`,
+    )
   }
-  return { value: segments.join('/') }
+  return segments.join('/')
 }
 
 export function verifyDownloadedBytes(

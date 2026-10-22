@@ -443,13 +443,27 @@ Download artifact IDs must match `^[a-z0-9]{10}$`. Invalid, duplicate, or
 case-colliding IDs in any list page or previous `index.json` are fatal before
 writes. Single-download targets and manifest identities must agree.
 
-Downloads refuse linked output roots, parents, existing descendants, and indexes,
-and observed directory replacements, including with `--force`. Replacements do
-not merge stale files. Originals, including replaced project indexes, remain at
-`data.backup_paths`; inspect those paths to recover data and remove backups
-manually when no longer needed. Failed recovery or cleanup names the retained
-workspace. Staging and backups share one private directory in the output root's
-parent. Files use exclusive creation and indexes use temporary-file publication.
+Linked output parents, roots, indexes, and listed artifact trees are refused,
+even with `--force`. Recorded directory identities are checked again before
+writes and cleanup. Project preflight inspects every listed artifact tree,
+including unchanged versions, and `index.json`; unrelated content is not walked.
+Ordinary network or content failures are recorded per artifact. Every boundary
+violation stops further publication, including later artifacts and the final index.
+Artifact IDs with surrounding whitespace are rejected, not trimmed, including
+single-download targets. Remove the whitespace before retrying. Share URLs use
+the usual URL-to-ID resolution; list and index IDs are never normalized.
+
+Replacements do not merge stale files. Staging and backups share one private
+directory in the output root's parent. Displaced originals and previous indexes
+remain there after success and are reported in `data.backup_paths` and human
+output. Inspect those paths before manual cleanup. Failed recovery also names
+retained paths in the error. Cleanup removes only CLI-created temporary entries
+and never removes a container holding originals. Files use exclusive creation
+and indexes use temporary-file publication.
+Manifest path conflict checks fold case on macOS and Windows; Linux keeps
+case-distinct names. New downloaded files, config files, and Git excludes use
+the default file mode masked by the umask. Replaced config and exclude files
+preserve their existing permission bits.
 Identity checks detect observed swaps at operation checkpoints; Node path-based
 operations cannot guarantee atomic confinement against arbitrary concurrent changes.
 

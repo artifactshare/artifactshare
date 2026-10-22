@@ -1240,6 +1240,88 @@ test('download --project-id rerun leaves unchanged versions with zero file reque
   assert.equal(entry.path, join(output, 'artaaaa100'))
 })
 
+for (const force of [false, true]) {
+  test(`project preflight rejects links in unchanged artifact trees (force=${force})`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-project-'))
+    const output = join(root, 'out')
+    const outside = join(root, 'outside')
+    await mkdir(outside)
+    await writeFile(join(outside, 'sentinel'), 'original')
+    const requests: Array<string | undefined> = []
+    const serve = projectServerHandler({
+      entries: [projectEntry('artaaaa100')],
+    })
+    await withServer(
+      (request, response) => {
+        requests.push(request.url)
+        serve(request, response)
+      },
+      async (baseUrl) => {
+        expectSuccess(await runProjectDownloadCli(baseUrl, output), 'download')
+        const index = await readFile(join(output, 'index.json'), 'utf8')
+        const names = await readdir(root)
+        const link = join(output, 'artaaaa100', 'linked')
+        await symlink(outside, link)
+        requests.length = 0
+        const result = await runAsync(
+          [
+            'download',
+            '--project-id',
+            'proj1',
+            '--output',
+            output,
+            ...(force ? ['--force'] : []),
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const payload = expectFailure(result, {
+          command: 'download',
+          code: 'validation_failed',
+        })
+        assert.ok(payload.error.message.includes(link))
+        assert.equal(
+          requests.some((url) => url?.includes('/download')),
+          false,
+        )
+        assert.deepEqual(await readdir(root), names)
+        assert.equal(await readFile(join(output, 'index.json'), 'utf8'), index)
+        assert.deepEqual(await readdir(outside), ['sentinel'])
+        assert.equal(
+          await readFile(join(outside, 'sentinel'), 'utf8'),
+          'original',
+        )
+      },
+    )
+  })
+}
+
+test('project preflight does not walk content outside listed artifact trees', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-project-'))
+  const output = join(root, 'out')
+  await mkdir(join(output, 'node_modules'), { recursive: true })
+  await symlink(root, join(output, 'node_modules', 'linked'))
+  await withServer(
+    projectServerHandler({ entries: [projectEntry('artaaaa100')] }),
+    async (baseUrl) => {
+      expectSuccess(await runProjectDownloadCli(baseUrl, output), 'download')
+      const previousIndex = await readFile(join(output, 'index.json'), 'utf8')
+      const payload = expectSuccess(
+        await runProjectDownloadCli(baseUrl, output),
+        'download',
+      )
+      assert.equal(payload.data.unchanged, 1)
+      assert.equal(payload.data.backup_paths.length, 1)
+      assert.equal(
+        await readFile(payload.data.backup_paths[0], 'utf8'),
+        previousIndex,
+      )
+    },
+  )
+})
+
 test('download --project-id rerun fails on a changed version without --force and refetches with it', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-project-'))
   const output = join(root, 'out')
@@ -1296,6 +1378,15 @@ test('download --project-id rerun fails on a changed version without --force and
       const forced = expectSuccess(withForce, 'download')
       assert.equal(forced.data.ok, 1)
       assert.equal(forced.data.unchanged, 0)
+      assert.equal(forced.data.backup_paths.length, 2)
+      assert.equal(
+        await readFile(join(forced.data.backup_paths[0], 'index.md'), 'utf8'),
+        '# First version',
+      )
+      const savedIndex = JSON.parse(
+        await readFile(forced.data.backup_paths[1], 'utf8'),
+      )
+      assert.equal(savedIndex.artifacts[0].id, 'artaaaa100')
     },
   )
 
@@ -1396,7 +1487,7 @@ test('download --project-id ignores a structurally corrupt index instead of its 
   )
 })
 
-test('download --project-id does not treat a plain file at the artifact path as unchanged', async () => {
+test('download --project-id rejects a plain file at the artifact path before writing', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-project-'))
   const output = join(root, 'out')
   await mkdir(output, { recursive: true })
@@ -1416,12 +1507,32 @@ test('download --project-id does not treat a plain file at the artifact path as 
     }),
   )
 
+  const originalIndex = await readFile(join(output, 'index.json'), 'utf8')
+
   await withServer(
-    projectServerHandler({ entries: [projectEntry('artaaaa100')] }),
+    projectServerHandler({
+      entries: [projectEntry('artaaaa100'), projectEntry('html123abc')],
+    }),
     async (baseUrl) => {
       const result = await runProjectDownloadCli(baseUrl, output)
-      assert.equal(result.status, 1)
-      expectFailure(result, { command: 'download', code: 'validation_failed' })
+      const payload = expectFailure(result, {
+        command: 'download',
+        code: 'validation_failed',
+      })
+      assert.ok(payload.error.message.includes(join(output, 'artaaaa100')))
+      assert.equal(
+        await readFile(join(output, 'index.json'), 'utf8'),
+        originalIndex,
+      )
+      assert.deepEqual((await readdir(output)).sort(), [
+        'artaaaa100',
+        'index.json',
+      ])
+      assert.deepEqual(await readdir(root), ['out'])
+      assert.equal(
+        await readFile(join(output, 'artaaaa100'), 'utf8'),
+        'not a directory',
+      )
     },
   )
 })

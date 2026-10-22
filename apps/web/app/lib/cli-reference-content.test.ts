@@ -438,7 +438,22 @@ test.each(['en', 'ja'] as const)(
       (command) => command.path === 'download',
     )!
     expect(download.option_help).toEqual([
-      '--force Replace existing output; retain originals at reported backup paths',
+      '--force Replace existing output; retain backups for recovery',
     ])
   },
 )
+
+test('download recovery describes boundary refusals and retained originals in both locales', () => {
+  const en = cliReferenceContent('en').sections.recovery.body
+  expect(en).toContain('refuses linked output parents')
+  expect(en).toContain('including unchanged versions')
+  expect(en).toContain(
+    'Successful replacements retain originals and previous indexes',
+  )
+  expect(en).toContain('every boundary violation stops further publication')
+  const ja = cliReferenceContent('ja').sections.recovery.body
+  expect(ja).toContain('リンクは --force でも拒否')
+  expect(ja).toContain('変更のない成果物を含む全対象')
+  expect(ja).toContain('置換前のデータと index は成功後も保持')
+  expect(ja).toContain('後続の成果物と最終 index の公開を中断')
+})

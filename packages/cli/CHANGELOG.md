@@ -5,7 +5,11 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
-- Download validates ten-character lowercase alphanumeric artifact IDs before writes, rejects links and observed directory changes even with `--force`, and retains displaced output and indexes at reported `backup_paths` for recovery.
+- Recheck each write operation’s recorded ancestry to detect nested directory redirects while avoiding unrelated trees.
+
+- Check download manifest path conflicts without pairwise scans, preserve case-distinct paths on Linux, and return `output_exists` before inspecting an existing single-download tree without `--force`. New local files respect the umask; replaced init config and Git excludes preserve their permissions.
+
+- Download validates ten-character lowercase alphanumeric artifact IDs before writes. Linked output parents, roots, indexes, and listed artifact trees are rejected even with `--force`. Preflight includes unchanged artifacts but does not walk unrelated content. Ordinary network/content failures remain per-artifact; every boundary violation stops further publication. Successful replacements retain originals and previous indexes at reported recovery paths for manual cleanup. Artifact IDs with surrounding whitespace are rejected, not trimmed, including single-download targets; remove the whitespace before retrying. Share URLs use normal URL-to-ID resolution.
 - Init atomically saves local defaults while preserving unknown keys. Linked config paths are refused; Git worktrees and unsafe exclude paths save config with actionable manual-exclude warnings.
 - Upload aliases use the stored filename for kind and content type. Disappearing listed entries report `changed`; relative paths through files report `not_found`. Share and append help include all upload recovery reasons.
 
