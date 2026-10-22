@@ -11,7 +11,7 @@ export function uploadBoundarySwap({
   external,
   path,
 }: {
-  phase: 'enumerated' | 'before-open' | 'opened'
+  phase: 'enumerated' | 'before-open' | 'opened' | 'read'
   parent: boolean
   selected: string
   external: string
@@ -44,7 +44,7 @@ export function uploadBoundarySwap({
         // fixture failures must fail the test, even if the boundary wraps them.
         if (
           process.platform !== 'win32' ||
-          phase !== 'opened' ||
+          (phase !== 'opened' && phase !== 'read') ||
           !parent ||
           !['EPERM', 'EACCES'].includes(
             (error as NodeJS.ErrnoException).code ?? '',

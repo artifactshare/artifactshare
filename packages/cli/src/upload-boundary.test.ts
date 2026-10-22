@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  symlink,
+  rm,
+  rename,
+  lstat,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
-import { readUploadBoundary } from './upload-boundary.js'
+import { readUploadBoundary, UploadBoundaryError } from './upload-boundary.js'
 import { uploadBoundarySwap } from './test/upload-boundary-swap.js'
 
 const observed = vi.hoisted(() => ({
@@ -13,6 +21,10 @@ const observed = vi.hoisted(() => ({
   fault: '' as string,
   noFollowUnavailable: false,
   swapFailure: '',
+  inspected: [] as string[],
+  readIdentities: [] as bigint[],
+  ctimeChange: false,
+  openError: undefined as Error | undefined,
 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -33,6 +45,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      observed.inspected.push(String(args[0]))
+      return actual.lstat(...args)
+    },
     rename: (...args: Parameters<typeof actual.rename>) => {
       if (observed.swapFailure === 'rename')
         throw new Error('synthetic swap rename failure')
@@ -51,12 +67,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return actual.readdir(...args)
     },
     open: async (...args: Parameters<typeof actual.open>) => {
+      if (observed.openError) throw observed.openError
       const handle = await actual.open(...args)
       const stat = handle.stat.bind(handle)
       const read = handle.readFile.bind(handle)
       const close = handle.close.bind(handle)
       handle.stat = (async (...statArgs: Parameters<typeof handle.stat>) => {
         const result = await stat(...statArgs)
+        if (observed.ctimeChange && 'ctimeNs' in result)
+          result.ctimeNs += 1_000_000n
         if (observed.fault === 'identity') result.ino = 0n as never
         if (observed.fault === 'missing-identity')
           result.ino = undefined as never
@@ -68,6 +87,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         ...readArgs: Parameters<typeof handle.readFile>
       ) => {
         observed.reads++
+        observed.readIdentities.push((await stat({ bigint: true })).ino)
         if (observed.fault === 'read') throw new Error('synthetic read failure')
         return read(...readArgs)
       }) as typeof handle.readFile
@@ -88,6 +108,10 @@ afterEach(async () => {
   observed.fault = ''
   observed.noFollowUnavailable = false
   observed.swapFailure = ''
+  observed.inspected = []
+  observed.readIdentities = []
+  observed.ctimeChange = false
+  observed.openError = undefined
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   )
@@ -400,3 +424,168 @@ for (const operation of ['rename', 'symlink']) {
     assert.equal(observed.reads, 0)
   })
 }
+
+for (const phase of ['before-open', 'read'] as const) {
+  test(`upload boundary accepts ctime-only changes at ${phase}`, async () => {
+    const { selected } = await fixture()
+    const snapshot = await readUploadBoundary(join(selected, 'index.html'), {
+      cwd: selected,
+      hooks: {
+        checkpoint: async (point) => {
+          if (point === phase) observed.ctimeChange = true
+        },
+      },
+    })
+    assert.equal(observed.ctimeChange, true)
+    assert.equal(snapshot.files[0]!.bytes.toString(), '<p>selected</p>')
+    assert.equal(observed.reads, 1)
+  })
+}
+
+for (const operation of ['delete', 'replace'] as const) {
+  test(`upload boundary ignores excluded entries that ${operation} during preparation`, async () => {
+    const { selected, external } = await fixture()
+    const ignored = [
+      '.DS_Store',
+      '.index.swp',
+      'Thumbs.db',
+      'desktop.ini',
+      'node_modules',
+      '__MACOSX',
+    ]
+    for (const name of ignored) await writeFile(join(selected, name), 'ignored')
+    let changed = false
+    const result = await readUploadBoundary(selected, {
+      cwd: selected,
+      hooks: {
+        checkpoint: async (phase) => {
+          if (phase !== 'enumerated') return
+          for (const name of ignored) {
+            const path = join(selected, name)
+            await rm(path)
+            if (operation === 'replace')
+              await symlink(join(external, 'index.html'), path, 'file')
+          }
+          changed = true
+        },
+      },
+    })
+    assert.equal(changed, true)
+    assert.deepEqual(
+      result.files.map((file) => file.relativePath),
+      ['index.html'],
+    )
+    for (const name of ignored)
+      assert.equal(observed.inspected.includes(join(selected, name)), false)
+    assert.equal(observed.reads, 1)
+  })
+}
+
+for (const phase of ['before-open', 'opened', 'read'] as const) {
+  test(`upload boundary detects a parent below the trust root replaced at ${phase}`, async (context) => {
+    const { selected, external } = await fixture()
+    const parent = join(selected, 'site')
+    await mkdir(parent)
+    const path = join(parent, 'index.html')
+    await writeFile(path, '<p>inside</p>')
+    const outsideIdentity = (
+      await lstat(join(external, 'index.html'), { bigint: true })
+    ).ino
+    const swap = uploadBoundarySwap({
+      phase,
+      parent: true,
+      selected: parent,
+      external,
+      path,
+    })
+    let rejection: unknown
+    await assert.rejects(
+      readUploadBoundary(parent, {
+        cwd: selected,
+        hooks: { checkpoint: swap.checkpoint },
+      }),
+      (error: unknown) => {
+        rejection = error
+        return true
+      },
+    )
+    const blockedByOpenHandle = await swap.assertCompleted()
+    assert.equal(observed.readIdentities.includes(outsideIdentity), false)
+    assert.equal(observed.reads, phase === 'read' ? 1 : 0)
+    assert.equal(observed.closes, 1)
+    if (blockedByOpenHandle)
+      context.skip(
+        'Windows refused the parent rename while a child handle was open',
+      )
+    assert.ok(rejection instanceof UploadBoundaryError)
+    assert.match(rejection.message, /link|identity|verified/)
+  })
+}
+
+for (const code of ['EACCES', 'EMFILE', 'EISDIR', undefined]) {
+  test(`upload boundary preserves a safe diagnostic and cause for ${code ?? 'TypeError'}`, async () => {
+    const { selected } = await fixture()
+    const cause = Object.assign(new TypeError('external-sentinel test-token'), {
+      code,
+    })
+    observed.openError = cause
+    await assert.rejects(
+      readUploadBoundary(join(selected, 'index.html')),
+      (error: unknown) => {
+        assert.ok(error instanceof UploadBoundaryError)
+        assert.equal(error.cause, cause)
+        assert.ok(error.message.includes(join(selected, 'index.html')))
+        if (code) assert.ok(error.message.includes(`(${code})`))
+        if (code === 'EACCES') assert.match(error.message, /permission denied/)
+        assert.doesNotMatch(
+          error.message + error.hint,
+          /external-sentinel|test-token/,
+        )
+        assert.doesNotMatch(error.hint, /link target/)
+        return true
+      },
+    )
+    assert.equal(observed.reads, 0)
+  })
+}
+
+test('upload boundary gives failure-specific recovery hints', async () => {
+  const { selected } = await fixture()
+  const missing = join(selected, 'missing.html')
+  await assert.rejects(readUploadBoundary(missing), (error: unknown) => {
+    assert.ok(error instanceof UploadBoundaryError)
+    assert.match(error.message, /path was not found/)
+    assert.equal(error.hint, `Check the path and retry: ${missing}`)
+    assert.equal((error.cause as NodeJS.ErrnoException).code, 'ENOENT')
+    return true
+  })
+  await assert.rejects(
+    readUploadBoundary(selected, { fileOnly: true }),
+    (error: unknown) => {
+      assert.ok(error instanceof UploadBoundaryError)
+      assert.match(error.hint, /Select a regular file/)
+      return true
+    },
+  )
+  observed.fault = 'mismatch'
+  await assert.rejects(
+    readUploadBoundary(join(selected, 'index.html')),
+    (error: unknown) => {
+      assert.ok(error instanceof UploadBoundaryError)
+      assert.equal(error.hint, 'Retry once the files stop changing.')
+      return true
+    },
+  )
+  observed.fault = 'missing-identity'
+  await assert.rejects(
+    readUploadBoundary(join(selected, 'index.html')),
+    (error: unknown) => {
+      assert.ok(error instanceof UploadBoundaryError)
+      assert.match(
+        error.hint,
+        /platform or filesystem lacks the required upload safety guarantee/,
+      )
+      return true
+    },
+  )
+})

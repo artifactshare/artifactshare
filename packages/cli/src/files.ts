@@ -1,4 +1,4 @@
-import { Blob, type Buffer } from 'node:buffer'
+import { Blob, Buffer } from 'node:buffer'
 import { lstat, mkdir, mkdtemp } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -38,6 +38,8 @@ export async function prepareUploadPayload(
         new Blob([file.bytes], { type: contentTypeFor(file.path) }),
         file.relativePath,
       )
+      // Blob owns its immutable copy; do not retain a second directory snapshot.
+      file.bytes = Buffer.alloc(0)
     }
     return {
       payload: {

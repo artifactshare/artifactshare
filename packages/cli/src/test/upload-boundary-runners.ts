@@ -404,6 +404,10 @@ export function uploadBoundaryRunnerTests(
           assert.equal(credential.mock.calls.length, 0)
           assert.equal(request.mock.calls.length, 0)
           assert.equal(failure.mock.calls.length, 1)
+          if (await swap.assertCompleted())
+            context.skip(
+              'Windows refused the parent rename while a child handle was open',
+            )
           const error = failure.mock.calls[0]![1]
           assert.match(error.message, /selected/)
           assert.match(error.hint, /Copy|link target/)
@@ -411,10 +415,6 @@ export function uploadBoundaryRunnerTests(
             JSON.stringify(error),
             /external-sentinel|test-token/,
           )
-          if (await swap.assertCompleted())
-            context.skip(
-              'Windows refused the parent rename while a child handle was open',
-            )
         } finally {
           vi.restoreAllMocks()
           await rm(root, { recursive: true, force: true })
@@ -474,7 +474,19 @@ export function uploadBoundaryRunnerTests(
               code: 'validation_failed',
             })
             assert.match(payload.error.message, /selected|dir|file|dangling/)
-            assert.match(payload.error.hint, /Copy|link target/)
+            if (command === 'append' && input === '.') {
+              // Append rejects the selected directory before inspecting its links.
+              assert.match(
+                payload.error.message,
+                /path must be a non-empty file/,
+              )
+              assert.equal(
+                payload.error.hint,
+                'Select a regular file or directory (append requires a regular file).',
+              )
+            } else {
+              assert.match(payload.error.hint, /Copy|link target/)
+            }
             assert.doesNotMatch(
               result.stdout + result.stderr,
               /external-sentinel|test-token/,

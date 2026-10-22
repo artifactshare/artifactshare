@@ -13,8 +13,13 @@ import {
 import { EXCLUDED_DIR_NAMES, IGNORED_FILENAMES } from './constants.js'
 
 export class UploadBoundaryError extends Error {
-  readonly hint =
-    'Copy the file into the directory, or share the link target directly using an absolute path.'
+  constructor(
+    message: string,
+    readonly hint: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+  }
 }
 
 /** Test-only synchronization/observation seam; never controlled by CLI input. */
@@ -26,8 +31,63 @@ export interface UploadBoundaryHooks {
   reading?: (path: string, identity: BigIntStats) => void
 }
 
-function fail(path: string, reason: string): never {
-  throw new UploadBoundaryError(`Cannot upload ${path}: ${reason}.`)
+type FailureKind =
+  | 'link'
+  | 'missing'
+  | 'changed'
+  | 'unsupported'
+  | 'type'
+  | 'read'
+
+function fail(
+  path: string,
+  reason: string,
+  kind: FailureKind = 'changed',
+  cause?: unknown,
+): never {
+  const hints: Record<FailureKind, string> = {
+    link: 'Copy the file into the directory, or share the link target directly using an absolute path.',
+    missing: `Check the path and retry: ${path}`,
+    changed: 'Retry once the files stop changing.',
+    unsupported:
+      'This platform or filesystem lacks the required upload safety guarantee. Use a filesystem and platform that support it.',
+    type: 'Select a regular file or directory (append requires a regular file).',
+    read: 'Check file permissions and available system resources, then retry.',
+  }
+  throw new UploadBoundaryError(
+    `Cannot upload ${path}: ${reason}.`,
+    hints[kind],
+    { cause },
+  )
+}
+
+function readFailure(path: string, error: unknown): never {
+  const code =
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    /^E[A-Z0-9_]+$/.test(error.code)
+      ? error.code
+      : undefined
+  if (code === 'ENOENT')
+    fail(path, 'path was not found (ENOENT)', 'missing', error)
+  if (code === 'ELOOP')
+    fail(path, 'symbolic link is not allowed (ELOOP)', 'link', error)
+  const reasons: Record<string, string> = {
+    EACCES: 'permission denied',
+    EPERM: 'operation not permitted',
+    EMFILE: 'too many open files',
+    EISDIR: 'expected a regular file',
+  }
+  const reason =
+    (code && reasons[code]) || 'path could not be verified or read safely'
+  fail(
+    path,
+    `${reason}${code ? ` (${code})` : ''}`,
+    code === 'EISDIR' ? 'type' : 'read',
+    error,
+  )
 }
 function identity(path: string, stat: BigIntStats): void {
   if (
@@ -36,18 +96,14 @@ function identity(path: string, stat: BigIntStats): void {
     stat.ino <= 0n ||
     stat.dev <= 0n
   )
-    fail(path, 'filesystem identity guarantee unavailable')
+    fail(path, 'filesystem identity guarantee unavailable', 'unsupported')
 }
 function same(a: BigIntStats, b: BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode
 }
+// Hydration may change ctime without changing the file content or identity.
 function unchanged(a: BigIntStats, b: BigIntStats): boolean {
-  return (
-    same(a, b) &&
-    a.size === b.size &&
-    a.mtimeNs === b.mtimeNs &&
-    a.ctimeNs === b.ctimeNs
-  )
+  return same(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs
 }
 function contains(root: string, path: string): boolean {
   const rel = relative(root, path)
@@ -64,7 +120,7 @@ async function gitRoot(cwd: string): Promise<string | undefined> {
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
           return undefined
-        fail(markerPath, 'repository boundary could not be verified')
+        readFailure(markerPath, error)
       },
     )
     if (marker?.isFile() || marker?.isDirectory()) return dir
@@ -105,6 +161,7 @@ export async function readUploadBoundary(
     fail(
       input,
       'relative path leaves the Git repository; select an absolute path explicitly',
+      'link',
     )
   }
   const repositoryBoundary = repo && contains(repo, target)
@@ -126,7 +183,7 @@ export async function readUploadBoundary(
     let info = await lstat(path, { bigint: true })
     if (info.isSymbolicLink()) {
       if (path !== root || !systemAliasTarget)
-        fail(path, 'symbolic link or junction is not allowed')
+        fail(path, 'symbolic link or junction is not allowed', 'link')
       identity(path, info)
       if (aliasIdentity && !unchanged(aliasIdentity, info))
         fail(path, 'system alias identity changed')
@@ -138,7 +195,7 @@ export async function readUploadBoundary(
       aliasIdentity = info
       info = await lstat(systemAliasTarget, { bigint: true })
       if (!info.isDirectory())
-        fail(path, 'system alias target is not a regular directory')
+        fail(path, 'system alias target is not a regular directory', 'type')
     } else if (path === root && aliasIdentity) {
       fail(path, 'system alias identity changed')
     }
@@ -153,7 +210,8 @@ export async function readUploadBoundary(
     let stat = await inspect(current)
     const parts = relative(root, path).split(sep).filter(Boolean)
     for (const part of parts) {
-      if (!stat.isDirectory()) fail(current, 'parent is not a directory')
+      if (!stat.isDirectory())
+        fail(current, 'parent is not a directory', 'type')
       current = join(current, part)
       stat = await inspect(current)
     }
@@ -181,26 +239,32 @@ export async function readUploadBoundary(
     }
     const selected = await walk(target)
     if (process.platform !== 'win32' && !constants.O_NOFOLLOW)
-      fail(input, 'no-follow open guarantee unavailable on this platform')
+      fail(
+        input,
+        'no-follow open guarantee unavailable on this platform',
+        'unsupported',
+      )
     if (!selected.isFile() && !selected.isDirectory())
-      fail(input, 'path must be a regular file or directory')
+      fail(input, 'path must be a regular file or directory', 'type')
     if (options.fileOnly && !selected.isFile())
-      fail(input, 'path must be a non-empty file')
+      fail(input, 'path must be a non-empty file', 'type')
     const paths: string[] = []
     async function visit(dir: string): Promise<void> {
       await walk(dir)
       for (const name of await readdir(dir)) {
-        if (name === '__MACOSX') continue
+        // Excluded names are not upload inputs, even when they are links.
+        if (
+          name === '__MACOSX' ||
+          name.startsWith('.') ||
+          IGNORED_FILENAMES.has(name) ||
+          EXCLUDED_DIR_NAMES.has(name)
+        )
+          continue
         const path = join(dir, name)
         const stat = await walk(path)
         if (stat.isDirectory()) {
-          if (EXCLUDED_DIR_NAMES.has(name) || name.startsWith('.')) continue
           await visit(path)
-        } else if (
-          stat.isFile() &&
-          !IGNORED_FILENAMES.has(name) &&
-          !name.startsWith('.')
-        ) {
+        } else if (stat.isFile()) {
           paths.push(path)
         }
       }
@@ -256,13 +320,6 @@ export async function readUploadBoundary(
     return { directory: selected.isDirectory(), files }
   } catch (error) {
     if (error instanceof UploadBoundaryError) throw error
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      error.code === 'ENOENT'
-    )
-      fail(activePath, 'Path was not found')
-    fail(activePath, 'path could not be verified or read safely')
+    readFailure(activePath, error)
   }
 }

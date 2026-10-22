@@ -438,7 +438,7 @@ test('update accepts share URLs as artifact targets', () => {
     command: 'update',
     code: 'validation_failed',
   })
-  assert.match(payload.error.message, /Path was not found/)
+  assert.match(payload.error.message, /path was not found/)
 })
 
 test('update accepts sandbox URLs as artifact targets', () => {
@@ -456,7 +456,7 @@ test('update accepts sandbox URLs as artifact targets', () => {
     command: 'update',
     code: 'validation_failed',
   })
-  assert.match(payload.error.message, /Path was not found/)
+  assert.match(payload.error.message, /path was not found/)
 })
 
 test.each([
@@ -471,7 +471,7 @@ test.each([
     command: 'update',
     code: 'validation_failed',
   })
-  assert.match(payload.error.message, /Path was not found/)
+  assert.match(payload.error.message, /path was not found/)
 })
 
 test('update --json maps a successful version response', async () => {
