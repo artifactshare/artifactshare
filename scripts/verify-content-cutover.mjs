@@ -44,15 +44,16 @@ export async function readContentDeliveryStage(
   fetcher = fetch,
   log = console.info,
 ) {
+  const signal = AbortSignal.timeout(10_000)
   const response = await fetcher(deliveryStageUrl, {
     ...deliveryStageRequest,
-    signal: AbortSignal.timeout(10_000),
+    signal,
   })
   let stage = 'refuse'
   if (response.status !== 404) {
     if (response.status !== 200)
       throw new Error(`Content delivery stage check failed: ${response.status}`)
-    const body = await response.text()
+    const body = await readVerificationBody(response, signal)
     if (classifyDeliveryStage(body) === 'malformed')
       throw new Error('Content delivery stage check returned a malformed body')
     stage = body

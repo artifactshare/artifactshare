@@ -371,10 +371,10 @@ test('stage discovery accepts only an exact uncached successful response', async
           readContentDeliveryStage(() => {
             fetches++
             if (failure === 'fetch') throw new Error('offline')
-            return {
+            return withBody({
               status: 200,
               text: () => Promise.reject(new Error('offline')),
-            }
+            })
           }),
         run: (args) => calls.push(args),
         verify: () => calls.push('verify'),
@@ -384,6 +384,98 @@ test('stage discovery accepts only an exact uncached successful response', async
     assert.equal(fetches, 1)
     assert.deepEqual(calls, [])
   }
+})
+
+for (const chunkSize of [1, 65]) {
+  test(`stage discovery rejects oversized bodies in ${chunkSize}-byte chunks without writes`, async () => {
+    let fetches = 0
+    let reads = 0
+    let cancellations = 0
+    const writes = []
+    const logs = []
+    await assert.rejects(
+      deployContentCutover({
+        readStage: () =>
+          readContentDeliveryStage(
+            () => {
+              fetches++
+              return new Response(
+                new ReadableStream(
+                  {
+                    pull(controller) {
+                      reads++
+                      controller.enqueue(new Uint8Array(chunkSize))
+                      if (reads * chunkSize > 128) controller.close()
+                    },
+                    cancel() {
+                      cancellations++
+                    },
+                  },
+                  { highWaterMark: 0 },
+                ),
+              )
+            },
+            (...args) => logs.push(args),
+          ),
+        run: (args) => writes.push(args),
+        verify: () => writes.push('verify'),
+      }),
+      /Content delivery stage check returned a malformed body/u,
+    )
+    assert.equal(fetches, 1)
+    assert.equal(reads, Math.floor(64 / chunkSize) + 1)
+    assert.equal(cancellations, 1)
+    assert.deepEqual(writes, [])
+    assert.deepEqual(logs, [])
+  })
+}
+
+test('stage discovery cancels a trickling body at its original request deadline', async (t) => {
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    assert.equal(ms, 10_000)
+    return controller.signal
+  })
+  let fetches = 0
+  let reads = 0
+  let cancellations = 0
+  const writes = []
+  await assert.rejects(
+    deployContentCutover({
+      readStage: () =>
+        readContentDeliveryStage((_url, init) => {
+          fetches++
+          assert.equal(init.signal, controller.signal)
+          return new Response(
+            new ReadableStream(
+              {
+                pull(stream) {
+                  reads++
+                  if (reads === 1) {
+                    stream.enqueue(new TextEncoder().encode('user'))
+                  } else {
+                    stream.enqueue(new TextEncoder().encode('content'))
+                    controller.abort()
+                    if (cancellations === 0) stream.close()
+                  }
+                },
+                cancel() {
+                  cancellations++
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          )
+        }),
+      run: (args) => writes.push(args),
+      verify: () => writes.push('verify'),
+    }),
+    { name: 'AbortError' },
+  )
+  assert.equal(fetches, 1)
+  assert.equal(reads, 2)
+  assert.equal(cancellations, 1)
+  assert.deepEqual(writes, [])
 })
 
 // Independent fixtures: never derive expectations from the verifier's requests.
@@ -901,9 +993,14 @@ test('late fetch completion aborts unread bodies even before the timer fires', a
         now = 5_000
         return {
           ...passingResponse(check),
-          text: () => {
-            reads++
-            return Promise.resolve('private body')
+          body: {
+            getReader: () => ({
+              read: () => {
+                reads++
+                return Promise.resolve({ done: true })
+              },
+              cancel: () => Promise.resolve(),
+            }),
           },
         }
       },
