@@ -32,7 +32,20 @@ export async function readContentDeliveryStage(
 }
 
 /** Read-only checks used between protected deployment stages. */
-export async function verifyContentCutover(stage, fetcher = fetch) {
+export async function verifyContentCutover(
+  stage,
+  fetcher = fetch,
+  {
+    clock = () => performance.now(),
+    wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    log = console.info,
+    timeoutMs = 75_000,
+    intervalMs = 2_000,
+    requestTimeoutMs = 10_000,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+  } = {},
+) {
   if (!['app-refusal', 'sandbox-ready'].includes(stage)) {
     throw new Error('Expected app-refusal or sandbox-ready')
   }
@@ -58,29 +71,95 @@ export async function verifyContentCutover(stage, fetcher = fetch) {
       })
     }
   }
-  for (const check of checks) {
-    const response = await fetcher(check.url, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(10_000),
-      headers: check.origin ? { Origin: check.origin } : {},
-    })
-    const body = await response.text()
-    if (
-      response.status !== check.status ||
-      (check.probe &&
-        (body !== marker ||
-          response.headers.get('X-ArtifactShare-Sandbox-Probe') !== marker ||
-          response.headers.get('Cross-Origin-Resource-Policy') !==
-            'cross-origin' ||
-          response.headers.get('Access-Control-Allow-Origin') !==
-            check.origin)) ||
-      (!check.probe && response.headers.has('X-ArtifactShare-Sandbox-Probe'))
-    ) {
-      throw new Error(
-        `Content cutover verification failed: ${stage} ${new URL(check.url).hostname}${new URL(check.url).pathname}`,
-      )
+  const deadline = clock() + timeoutMs
+  const remaining = () => Math.max(0, deadline - clock())
+
+  // Race both fetch and body consumption: abort alone cannot bound a fetcher
+  // that ignores its signal. Inject timers as well as the clock for stalled I/O.
+  async function checkOnce(check) {
+    const controller = new AbortController()
+    const requestDeadline = Math.min(deadline, clock() + requestTimeoutMs)
+    let status = 'transport-error'
+    let timer
+    try {
+      const expired = new Promise((_, reject) => {
+        timer = setTimer(
+          () => {
+            controller.abort()
+            reject(new Error('Request deadline'))
+          },
+          Math.min(requestTimeoutMs, remaining()),
+        )
+      })
+      const valid = await Promise.race([
+        expired,
+        (async () => {
+          const response = await fetcher(check.url, {
+            redirect: 'manual',
+            signal: controller.signal,
+            headers: check.origin ? { Origin: check.origin } : {},
+          })
+          status = response.status
+          if (controller.signal.aborted || clock() >= requestDeadline)
+            return false
+          const body = await response.text()
+          return (
+            response.status === check.status &&
+            (check.probe
+              ? body === marker &&
+                response.headers.get('X-ArtifactShare-Sandbox-Probe') ===
+                  marker &&
+                response.headers.get('Cross-Origin-Resource-Policy') ===
+                  'cross-origin' &&
+                response.headers.get('Access-Control-Allow-Origin') ===
+                  check.origin
+              : !response.headers.has('X-ArtifactShare-Sandbox-Probe'))
+          )
+        })(),
+      ])
+      return { valid: valid && clock() < requestDeadline, status }
+    } catch {
+      return { valid: false, status }
+    } finally {
+      clearTimer(timer)
     }
   }
+
+  let lastFailure
+  for (let attempt = 1; remaining() > 0; attempt++) {
+    const failures = []
+    let completed = 0
+    for (const check of checks) {
+      if (remaining() <= 0) break
+      const result = await checkOnce(check)
+      completed++
+      if (!result.valid) {
+        const url = new URL(check.url)
+        failures.push({
+          stage,
+          attempt,
+          hostname: url.hostname,
+          path: url.pathname,
+          status: result.status,
+        })
+      }
+    }
+    for (const failure of failures) {
+      log('Content cutover verification attempt failed', failure)
+      lastFailure = failure
+    }
+    if (completed === checks.length && failures.length === 0 && remaining() > 0)
+      return
+    if (remaining() > 0) await wait(Math.min(intervalMs, remaining()))
+  }
+  const last = lastFailure ?? {
+    hostname: new URL(checks[0].url).hostname,
+    path: new URL(checks[0].url).pathname,
+    status: 'transport-error',
+  }
+  throw new Error(
+    `Content cutover verification failed: ${stage} ${last.hostname}${last.path} (${last.status})`,
+  )
 }
 
 if (

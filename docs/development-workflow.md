@@ -202,9 +202,10 @@ If a required local tool (`codex`, `claude`, `python3`, `gh`, the platform's `lo
 ## Production content-origin cutover
 
 The protected `production` Environment runs `deploy:production`. Its content
-orchestrator first reads the uncached app delivery-stage endpoint. Confirmed
+orchestrator first reads the uncached app delivery-stage endpoint in a single
+fail-closed request with a 10-second timeout; discovery is never polled. Confirmed
 `usercontent` deployments deploy the sandbox, verify readiness, then deploy the
-final app without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
+final app and verify readiness again without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
 first-transition sequence: app refusal, sandbox readiness, then app delivery.
 Any other status, malformed stage body, or network failure aborts before content deployment. During the first transition,
 the same app build is first deployed with `--var ARTIFACT_DELIVERY_STAGE:refuse`, the safe default, and
@@ -212,8 +213,17 @@ finally with `--var ARTIFACT_DELIVERY_STAGE:usercontent`. A refusal-stage viewer
 shell remains available and emits a token-free unavailable frame URL.
 `scripts/verify-content-cutover.mjs` checks old link refusals after the first app
 deploy, then both new probe policies and old sandbox/link refusals after the
-sandbox deploy. A failed command stops the chain before the final app deploy.
-Retries recheck the deployed stage. Retries and recovery retain refusal code;
+sandbox deploy. Both paths repeat the `sandbox-ready` check set immediately after
+final app deployment as a read-only verification. Each post-deploy verification
+starts immediately and retries the complete, exact check set every 2 seconds for
+up to 75 seconds. Each request, including response-body consumption, is capped
+at 10 seconds or the remaining total budget, whichever is shorter. Earlier
+passing checks are rechecked; success requires a complete passing attempt within
+the deadline. Failed attempts log stage, attempt, hostname, path, and observed
+status (or a fixed transport-error indication), never response bodies or raw
+transport errors. Timeout names the last failing check. A failed command or
+verification stops the chain before the next production write; final verification
+failure fails the job without further writes. Retries recheck the deployed stage. Retries and recovery retain refusal code;
 do not restore old content handlers or URL generators. Users recover an open viewer by reloading the same public URL.
 The production build/shadow lane performs no deploy or readiness fetch.
 

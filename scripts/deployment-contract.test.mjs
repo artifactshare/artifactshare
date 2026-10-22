@@ -275,6 +275,7 @@ for (const initialStage of ['refuse', 'usercontent', 'unknown']) {
       ['deploy', '-c', 'wrangler.sandbox.jsonc', '--env', 'production'],
       ['verify', 'sandbox-ready'],
       ['deploy', '--var', 'ARTIFACT_DELIVERY_STAGE:usercontent'],
+      ['verify', 'sandbox-ready'],
     ]
     for (let failure = -1; failure < expected.length; failure++) {
       const calls = []
@@ -345,62 +346,483 @@ test('stage discovery accepts only an exact uncached successful response', async
     ),
   ]) {
     const writes = []
+    let fetches = 0
     await assert.rejects(
       deployContentCutover({
         readStage: () =>
-          readContentDeliveryStage(() => new Response(body, { status })),
+          readContentDeliveryStage(() => {
+            fetches++
+            return new Response(body, { status })
+          }),
         run: (args) => writes.push(args),
         verify: () => writes.push('verify'),
       }),
       /Content delivery stage check/u,
     )
     assert.deepEqual(writes, [])
+    assert.equal(fetches, 1)
   }
-  const calls = []
-  await assert.rejects(
-    deployContentCutover({
-      readStage: () =>
-        readContentDeliveryStage(() => {
-          throw new Error('offline')
-        }),
-      run: (args) => calls.push(args),
-    }),
-    /offline/u,
-  )
-  assert.deepEqual(calls, [])
+  for (const failure of ['fetch', 'body']) {
+    const calls = []
+    let fetches = 0
+    await assert.rejects(
+      deployContentCutover({
+        readStage: () =>
+          readContentDeliveryStage(() => {
+            fetches++
+            if (failure === 'fetch') throw new Error('offline')
+            return {
+              status: 200,
+              text: () => Promise.reject(new Error('offline')),
+            }
+          }),
+        run: (args) => calls.push(args),
+        verify: () => calls.push('verify'),
+      }),
+      /offline/u,
+    )
+    assert.equal(fetches, 1)
+    assert.deepEqual(calls, [])
+  }
 })
 
-test('readiness requires both new kinds, cross-site probe policy, and legacy refusal', async () => {
-  const seen = []
-  const success = (url, init) => {
-    seen.push(url)
-    const probe = url.includes('.artifactshareusercontent.com/')
-    return new Response(
-      probe ? 'artifactshare-sandbox-probe-v1' : 'Not found',
-      {
-        status: probe ? 200 : 404,
-        headers: probe
-          ? {
-              'X-ArtifactShare-Sandbox-Probe': 'artifactshare-sandbox-probe-v1',
-              'Cross-Origin-Resource-Policy': 'cross-origin',
-              'Access-Control-Allow-Origin': init.headers.Origin,
-            }
-          : {},
+// Independent fixtures: never derive expectations from the verifier's requests.
+const artifact = 'probe00000'
+const version = '70726f6265'
+const probeMarker = 'artifactshare-sandbox-probe-v1'
+function expectedChecks(stage) {
+  const paths = ['/', '/style.css', '/download', '/__artifactshare_probe']
+  const hosts = [`${artifact}--v-${version}.artifactshare.link`]
+  if (stage === 'sandbox-ready')
+    hosts.push(`${artifact}--v-${version}.sandbox.artifactshare.com`)
+  return [
+    ...hosts.flatMap((host) =>
+      paths.map((path) => ({ url: `https://${host}${path}`, status: 404 })),
+    ),
+    ...(stage === 'sandbox-ready'
+      ? ['a', 'l'].map((kind) => ({
+          url: `https://${kind}-${artifact}--v-${version}.artifactshareusercontent.com/__artifactshare_probe`,
+          status: 200,
+          origin:
+            kind === 'a'
+              ? 'https://artifactshare.com'
+              : `https://${artifact}.artifactshare.link`,
+        }))
+      : []),
+  ]
+}
+function passingResponse(check) {
+  return {
+    status: check.status,
+    headers: new Headers(
+      check.origin
+        ? {
+            'X-ArtifactShare-Sandbox-Probe': probeMarker,
+            'Cross-Origin-Resource-Policy': 'cross-origin',
+            'Access-Control-Allow-Origin': check.origin,
+          }
+        : {},
+    ),
+    text: () => Promise.resolve(check.origin ? probeMarker : 'Not found'),
+  }
+}
+function timing(timeoutMs = 5_000) {
+  let now = 0
+  const timers = new Map()
+  const logs = []
+  const waits = []
+  const caps = []
+  const advance = (ms) => {
+    now += ms
+    for (const [callback, due] of timers) {
+      if (due <= now) {
+        timers.delete(callback)
+        callback()
+      }
+    }
+  }
+  return {
+    logs,
+    waits,
+    caps,
+    timers,
+    advance,
+    options: {
+      clock: () => now,
+      wait: (ms) => {
+        waits.push(ms)
+        advance(ms)
+        return Promise.resolve()
+      },
+      log: (message, metadata) => logs.push({ message, ...metadata }),
+      timeoutMs,
+      setTimer: (callback, ms) => {
+        caps.push(ms)
+        timers.set(callback, now + ms)
+        return callback
+      },
+      clearTimer: (callback) => timers.delete(callback),
+    },
+  }
+}
+
+for (const stage of ['app-refusal', 'sandbox-ready']) {
+  test(`${stage} repeats complete sets immediately and never accumulates passes`, async () => {
+    const checks = expectedChecks(stage)
+    const time = timing()
+    const seen = []
+    await verifyContentCutover(
+      stage,
+      (url, init) => {
+        const index = seen.length % checks.length
+        const attempt = Math.floor(seen.length / checks.length)
+        const check = checks[index]
+        assert.equal(url, check.url)
+        assert.equal(init.redirect, 'manual')
+        assert.ok(init.signal instanceof AbortSignal)
+        assert.deepEqual(
+          init.headers,
+          check.origin ? { Origin: check.origin } : {},
+        )
+        assert.equal(time.options.clock(), attempt * 2_000)
+        seen.push(url)
+        const response = passingResponse(check)
+        if (
+          (attempt === 0 && index === checks.length - 1) ||
+          (attempt === 1 && index === 0)
+        )
+          response.status = 503
+        return response
+      },
+      time.options,
+    )
+    assert.deepEqual(
+      seen,
+      Array(3)
+        .fill(checks.map(({ url }) => url))
+        .flat(),
+    )
+    assert.deepEqual(time.waits, [2_000, 2_000])
+    assert.deepEqual(
+      time.logs.map(({ attempt, status }) => [attempt, status]),
+      [
+        [1, 503],
+        [2, 503],
+      ],
+    )
+    assert.equal(time.timers.size, 0)
+  })
+
+  test(`${stage} first-attempt success never waits; unknown stage does no I/O`, async () => {
+    const time = timing()
+    const checks = expectedChecks(stage)
+    let calls = 0
+    const fetcher = () => passingResponse(checks[calls++])
+    await verifyContentCutover(stage, fetcher, time.options)
+    assert.equal(calls, checks.length)
+    assert.deepEqual(time.waits, [])
+    await assert.rejects(
+      verifyContentCutover('unsupported', fetcher, time.options),
+      /Expected app-refusal or sandbox-ready/u,
+    )
+    assert.equal(calls, checks.length)
+    assert.deepEqual(time.waits, [])
+  })
+
+  test(`${stage} preserves every exact expectation through deadline exhaustion`, async () => {
+    const checks = expectedChecks(stage)
+    for (const check of checks) {
+      const mutations = [
+        (response) => {
+          response.status = 503
+        },
+        ...(check.origin
+          ? [
+              (response) => {
+                response.status = 201
+              },
+              (response) => {
+                response.text = () => Promise.resolve(`${probeMarker}\n`)
+              },
+              (response) => {
+                response.text = () => Promise.resolve('private response body')
+              },
+              (response) => {
+                response.headers.delete('X-ArtifactShare-Sandbox-Probe')
+              },
+              (response) => {
+                response.headers.set('X-ArtifactShare-Sandbox-Probe', 'wrong')
+              },
+              (response) => {
+                response.headers.delete('Cross-Origin-Resource-Policy')
+              },
+              (response) => {
+                response.headers.set(
+                  'Cross-Origin-Resource-Policy',
+                  'same-origin',
+                )
+              },
+              (response) => {
+                response.headers.delete('Access-Control-Allow-Origin')
+              },
+              (response) => {
+                response.headers.set('Access-Control-Allow-Origin', '*')
+              },
+              (response) => {
+                response.headers.set(
+                  'Access-Control-Allow-Origin',
+                  'https://wrong.example',
+                )
+              },
+            ]
+          : [
+              (response) => {
+                response.headers.set(
+                  'X-ArtifactShare-Sandbox-Probe',
+                  probeMarker,
+                )
+              },
+            ]),
+      ]
+      for (const mutate of mutations) {
+        const time = timing()
+        let calls = 0
+        await assert.rejects(
+          verifyContentCutover(
+            stage,
+            (url) => {
+              assert.ok(time.options.clock() < 5_000)
+              const expected = checks[calls++ % checks.length]
+              assert.equal(url, expected.url)
+              const response = passingResponse(expected)
+              if (url === check.url) mutate(response)
+              return response
+            },
+            time.options,
+          ),
+          (error) => {
+            assert.ok(
+              error.message.startsWith('Content cutover verification failed'),
+            )
+            assert.ok(
+              error.message.includes(
+                new URL(check.url).hostname + new URL(check.url).pathname,
+              ),
+            )
+            assert.ok(!error.message.includes('private response body'))
+            return true
+          },
+        )
+        assert.equal(calls, checks.length * 3)
+        assert.equal(time.options.clock(), 5_000)
+        assert.deepEqual(time.waits, [2_000, 2_000, 1_000])
+        assert.equal(time.logs.length, 3)
+        for (const [index, log] of time.logs.entries()) {
+          assert.equal(log.stage, stage)
+          assert.equal(log.attempt, index + 1)
+          assert.equal(log.hostname, new URL(check.url).hostname)
+          assert.equal(log.path, new URL(check.url).pathname)
+          assert.ok(Number.isInteger(log.status))
+        }
+        assert.ok(!JSON.stringify(time.logs).includes('private response body'))
+        assert.equal(time.timers.size, 0)
+      }
+    }
+  })
+}
+
+for (const failure of [
+  'fetch-reject',
+  'body-reject',
+  'fetch-stall',
+  'body-stall',
+  'abort',
+  'late-body',
+]) {
+  test(`bounds and sanitizes ${failure} including body consumption`, async () => {
+    const time = timing(25_000)
+    const checks = expectedChecks('sandbox-ready')
+    let calls = 0
+    const signals = []
+    await assert.rejects(
+      verifyContentCutover(
+        'sandbox-ready',
+        (url, init) => {
+          assert.ok(time.options.clock() < 25_000)
+          calls++
+          signals.push(init.signal)
+          const reject = () => {
+            throw new Error('private transport payload')
+          }
+          const stall = () => {
+            queueMicrotask(() => time.advance(time.caps.at(-1)))
+            return new Promise(() => {})
+          }
+          if (failure === 'fetch-reject') return reject()
+          if (failure === 'fetch-stall') return stall()
+          if (failure === 'abort') {
+            const promise = new Promise((_, rejectAbort) =>
+              init.signal.addEventListener(
+                'abort',
+                () => rejectAbort(new Error('private transport payload')),
+                { once: true },
+              ),
+            )
+            queueMicrotask(() => time.advance(time.caps.at(-1)))
+            return promise
+          }
+          const response = passingResponse(
+            checks.find((check) => check.url === url),
+          )
+          response.text =
+            failure === 'body-reject'
+              ? reject
+              : failure === 'body-stall'
+                ? stall
+                : () => {
+                    time.advance(25_000)
+                    return Promise.resolve(probeMarker)
+                  }
+          return response
+        },
+        time.options,
+      ),
+      (error) => {
+        assert.match(error.message, /^Content cutover verification failed/u)
+        assert.ok(!error.message.includes('private transport payload'))
+        return true
       },
     )
+    assert.equal(time.options.clock(), 25_000)
+    assert.ok(calls > 0)
+    assert.ok(time.caps.every((cap) => cap <= 10_000))
+    assert.equal(time.timers.size, 0)
+    assert.ok(!JSON.stringify(time.logs).includes('private transport payload'))
+    if (['fetch-stall', 'body-stall', 'abort'].includes(failure)) {
+      assert.deepEqual(time.caps, [10_000, 10_000, 5_000])
+      assert.ok(signals.every((signal) => signal.aborted))
+      assert.deepEqual(time.waits, [])
+      assert.equal(time.logs.at(-1).path, '/download')
+    }
+    if (failure.startsWith('fetch') || failure === 'abort')
+      assert.ok(time.logs.every(({ status }) => status === 'transport-error'))
+    else
+      assert.ok(
+        time.logs.every(({ status }) => status === 404 || status === 200),
+      )
+  })
+}
+
+for (const initialStage of ['refuse', 'usercontent']) {
+  const stages =
+    initialStage === 'refuse'
+      ? ['app-refusal', 'sandbox-ready', 'sandbox-ready']
+      : ['sandbox-ready', 'sandbox-ready']
+  for (const [target, targetStage] of stages.entries()) {
+    for (const persistent of [false, true]) {
+      test(`${initialStage} gates write ${target + 1} with real polling (${persistent ? 'persistent' : 'transient'})`, async () => {
+        const events = []
+        let invocation = 0
+        const result = deployContentCutover({
+          readStage: () => initialStage,
+          log: () => {},
+          run: (args) => events.push(['write', args]),
+          verify: async (stage) => {
+            const current = invocation++
+            assert.equal(stage, stages[current])
+            const time = timing()
+            const checks = expectedChecks(stage)
+            let requests = 0
+            await verifyContentCutover(
+              stage,
+              () => {
+                const response = passingResponse(
+                  checks[requests % checks.length],
+                )
+                if (
+                  current === target &&
+                  (persistent || requests < checks.length)
+                )
+                  response.status = 503
+                requests++
+                return response
+              },
+              time.options,
+            )
+            if (current === target) assert.deepEqual(time.waits, [2_000])
+            events.push(['verified', stage])
+          },
+        })
+        if (persistent)
+          await assert.rejects(
+            result,
+            new RegExp(
+              `Content cutover verification failed: ${targetStage}`,
+              'u',
+            ),
+          )
+        else await result
+        assert.deepEqual(
+          events.map(([event]) => event),
+          persistent
+            ? Array.from({ length: target * 2 + 1 }, (_, i) =>
+                i % 2 ? 'verified' : 'write',
+              )
+            : stages.flatMap(() => ['write', 'verified']),
+        )
+      })
+    }
   }
-  await verifyContentCutover('sandbox-ready', success)
-  assert.equal(seen.length, 10)
-  for (const failedUrl of seen.slice()) {
-    await assert.rejects(
-      verifyContentCutover('sandbox-ready', (url, init) =>
-        url === failedUrl
-          ? new Response('unavailable', { status: 503 })
-          : success(url, init),
-      ),
-    )
-  }
+}
+
+test('production defaults enforce a 75-second budget and two-second retry interval', async () => {
+  const time = timing()
+  delete time.options.timeoutMs
+  let calls = 0
   await assert.rejects(
-    verifyContentCutover('sandbox-ready', () => new Response('legacy content')),
+    verifyContentCutover(
+      'app-refusal',
+      () => {
+        assert.ok(time.options.clock() < 75_000)
+        calls++
+        return { status: 503, text: () => Promise.resolve('private body') }
+      },
+      time.options,
+    ),
+    /Content cutover verification failed/u,
   )
+  assert.equal(time.options.clock(), 75_000)
+  assert.equal(calls, 38 * 4)
+  assert.deepEqual(time.waits, [...Array(37).fill(2_000), 1_000])
+  assert.equal(time.caps[0], 10_000)
+  assert.equal(time.caps.at(-1), 1_000)
+})
+
+test('a successful final body received at the deadline cannot pass', async () => {
+  const checks = expectedChecks('sandbox-ready')
+  const time = timing()
+  let calls = 0
+  await assert.rejects(
+    verifyContentCutover(
+      'sandbox-ready',
+      () => {
+        const response = passingResponse(checks[calls++])
+        if (calls === checks.length)
+          response.text = () => {
+            time.advance(5_000)
+            return Promise.resolve(probeMarker)
+          }
+        return response
+      },
+      time.options,
+    ),
+    (error) => {
+      assert.ok(error.message.includes(new URL(checks.at(-1).url).hostname))
+      return true
+    },
+  )
+  assert.equal(calls, checks.length)
+  assert.deepEqual(time.waits, [])
+  assert.equal(time.logs.length, 1)
+  assert.equal(time.logs[0].status, 200)
 })

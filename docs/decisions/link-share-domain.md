@@ -97,6 +97,23 @@ Suffix List submission is planned for `artifactshareusercontent.com`.
 
 ## Fail-closed cutover
 
+Post-deploy verification polls for up to 75 seconds per invocation, starting
+immediately and retrying every 2 seconds. Every attempt repeats the entire exact
+stage check set, including previously passing checks. No status, marker, header,
+origin, path, or host expectation is relaxed. Requests include body consumption
+in their 10-second cap; both requests and retry waits are capped by the remaining
+total deadline. No new attempt starts after exhaustion. Each failed attempt logs
+stage, attempt, hostname, path, and observed status (or a fixed transport-error
+indication), without bodies or raw transport errors. Timeout reports the last
+failing check. Both deployment paths run `sandbox-ready` again immediately after
+the final app deployment. This final read-only verification adds no delivery stage
+or production write. Failure aborts before the next write; final verification
+failure fails the job without rollback.
+
+Delivery-stage discovery remains a single uncached, manual-redirect request with
+a 10-second timeout and exact-body parsing. It is never retried by polling; fetch
+or body-read failures abort before content writes. Recovery retains refusal code.
+
 The protected production workflow first reads the app's uncached
 `/__artifactshare_delivery_stage` endpoint. Only an exact successful `usercontent`
 response selects steady-state deployment: deploy the sandbox, verify readiness
