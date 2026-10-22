@@ -42,73 +42,122 @@ vi.mock('node:fs', async (importOriginal) => ({
 export function uploadBoundaryRunnerTests(
   command: 'share' | 'append' | 'update',
 ) {
-  test(`${command} upload boundary rejects a linked fallback root before reads or authentication`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'upload-boundary-root-'))
-    try {
-      const selected = join(root, 'selected')
-      const alias = join(root, 'alias')
-      await mkdir(selected)
-      await writeFile(join(selected, 'index.html'), '<p>selected</p>')
-      await symlink(
-        selected,
-        alias,
-        process.platform === 'win32' ? 'junction' : 'dir',
-      )
-      const original = boundary.readUploadBoundary
-      vi.spyOn(boundary, 'readUploadBoundary').mockImplementation(
-        (input, options) => original(input, { ...options, cwd: root }),
-      )
-      let reads = 0
-      const originalOpen = fs.open
-      vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
-        const handle = await originalOpen(...args)
-        const read = handle.readFile.bind(handle)
-        handle.readFile = ((
-          ...readArgs: Parameters<typeof handle.readFile>
-        ) => {
-          reads++
-          return read(...readArgs)
-        }) as typeof handle.readFile
-        return handle
-      })
-      const pathReads = vi.spyOn(fs, 'readFile')
-      const pathStreams = vi.spyOn(streams, 'createReadStream')
-      const credential = vi.spyOn(credentials, 'resolveCredential')
-      const request = vi.spyOn(api, 'cliFetch')
-      const failure = vi
-        .spyOn(output, 'writeFailure')
-        .mockImplementation(() => undefined)
-      const input = join(alias, 'index.html')
-      await { share: runShare, append: runAppend, update: runUpdate }[command](
-        {
-          command,
-          positionals: command === 'share' ? [input] : ['abc123def4', input],
-          options: {
-            token: 'test-token',
-            ...(command === 'share' ? { project: 'example' } : {}),
-          },
-        },
-        { json: true },
-      )
-      assert.equal(reads, 0)
-      for (const [readPath] of pathReads.mock.calls)
-        assert.ok(
-          ![input, join(selected, 'index.html')].includes(String(readPath)),
+  for (const kind of [
+    'fallback root',
+    'repository alias',
+    'relative parent',
+    'nested repository',
+    'aliased nested repository',
+    'relative nested marker',
+  ]) {
+    test(`${command} upload boundary rejects a linked ${kind} before reads or authentication`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'upload-boundary-root-'))
+      try {
+        const selected = join(root, 'selected')
+        const alias = join(root, 'alias')
+        await mkdir(selected)
+        await writeFile(join(selected, 'index.html'), '<p>selected</p>')
+        await symlink(
+          selected,
+          alias,
+          process.platform === 'win32' ? 'junction' : 'dir',
         )
-      assert.equal(pathStreams.mock.calls.length, 0)
-      assert.equal(credential.mock.calls.length, 0)
-      assert.equal(request.mock.calls.length, 0)
-      assert.equal(failure.mock.calls.length, 1)
-      const error = failure.mock.calls[0]![1]
-      assert.match(error.message, /symbolic link|junction/)
-      assert.ok(error.message.includes(alias))
-      assert.match(error.hint, /Copy|link target/)
-      assert.doesNotMatch(JSON.stringify(error), /test-token|<p>/)
-    } finally {
-      vi.restoreAllMocks()
-      await rm(root, { recursive: true, force: true })
-    }
-  })
+        let input = join(alias, 'index.html')
+        let offending = alias
+        let cwd = root
+        if (kind !== 'fallback root') {
+          await mkdir(join(selected, 'site'))
+          await writeFile(
+            join(selected, 'site', 'index.html'),
+            'external-sentinel',
+          )
+          if (kind.includes('nested'))
+            await writeFile(join(selected, 'site', '.git'), 'gitdir: unused')
+          if (kind.includes('repository')) {
+            const repo = join(root, 'repo')
+            await mkdir(repo)
+            await mkdir(join(repo, '.git'))
+            await symlink(selected, join(repo, 'docs'), 'junction')
+            const ancestorAlias = join(root, 'ancestor-alias')
+            await symlink(root, ancestorAlias, 'junction')
+            if (kind === 'nested repository') {
+              input = join('docs', 'site', 'index.html')
+              offending = join(repo, 'docs')
+            } else {
+              input = join(ancestorAlias, 'repo', 'docs', 'site', 'index.html')
+              offending = join(ancestorAlias, 'repo', 'docs')
+            }
+            cwd = repo
+          } else {
+            input = join('alias', 'site', 'index.html')
+          }
+        }
+        const original = boundary.readUploadBoundary
+        vi.spyOn(boundary, 'readUploadBoundary').mockImplementation(
+          (path, options) => original(path, { ...options, cwd }),
+        )
+        let reads = 0
+        const originalOpen = fs.open
+        vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+          const handle = await originalOpen(...args)
+          const read = handle.readFile.bind(handle)
+          handle.readFile = ((
+            ...readArgs: Parameters<typeof handle.readFile>
+          ) => {
+            reads++
+            return read(...readArgs)
+          }) as typeof handle.readFile
+          return handle
+        })
+        const pathReads = vi.spyOn(fs, 'readFile')
+        const pathStreams = vi.spyOn(streams, 'createReadStream')
+        const credential = vi.spyOn(credentials, 'resolveCredential')
+        const request = vi
+          .spyOn(api, 'cliFetch')
+          .mockRejectedValue(new Error('Unexpected upload request'))
+        const failure = vi
+          .spyOn(output, 'writeFailure')
+          .mockImplementation(() => undefined)
+        await { share: runShare, append: runAppend, update: runUpdate }[
+          command
+        ](
+          {
+            command,
+            positionals: command === 'share' ? [input] : ['abc123def4', input],
+            options: {
+              token: 'test-token',
+              ...(command === 'share' ? { project: 'example' } : {}),
+            },
+          },
+          { json: true },
+        )
+        assert.equal(reads, 0)
+        for (const [readPath] of pathReads.mock.calls)
+          assert.ok(
+            ![
+              input,
+              join(selected, 'index.html'),
+              join(selected, 'site', 'index.html'),
+            ].includes(String(readPath)),
+          )
+        assert.equal(pathStreams.mock.calls.length, 0)
+        assert.equal(credential.mock.calls.length, 0)
+        assert.equal(request.mock.calls.length, 0)
+        assert.equal(failure.mock.calls.length, 1)
+        const error = failure.mock.calls[0]![1]
+        assert.match(error.message, /symbolic link|junction/)
+        assert.ok(error.message.includes(offending))
+        assert.match(error.hint, /Copy|link target/)
+        assert.doesNotMatch(
+          JSON.stringify(error),
+          /test-token|external-sentinel|<p>/,
+        )
+      } finally {
+        vi.restoreAllMocks()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  }
   for (const directory of command === 'append' ? [false] : [false, true]) {
     test(`${command} upload boundary uploads verified ${directory ? 'static-site directory' : 'regular file'} bytes`, async () => {
       const root = await mkdtemp(join(tmpdir(), 'upload-boundary-success-'))

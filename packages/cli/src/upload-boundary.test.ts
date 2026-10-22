@@ -9,9 +9,13 @@ import {
   lstat,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, win32 } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
-import { readUploadBoundary, UploadBoundaryError } from './upload-boundary.js'
+import {
+  readUploadBoundary,
+  UploadBoundaryError,
+  uploadInputPath,
+} from './upload-boundary.js'
 import { uploadBoundarySwap } from './test/upload-boundary-swap.js'
 
 const observed = vi.hoisted(() => ({
@@ -589,3 +593,273 @@ test('upload boundary gives failure-specific recovery hints', async () => {
     },
   )
 })
+
+for (const linked of [false, true]) {
+  test(`upload boundary discovers a repository through an ancestor alias with inner link=${linked}`, async () => {
+    const { root, selected, external } = await fixture()
+    const alias = join(root, 'alias')
+    await symlink(root, alias, 'junction')
+    await mkdir(join(external, 'site'))
+    await writeFile(join(external, 'site', 'index.html'), 'external-sentinel')
+    const docs = join(selected, 'docs')
+    if (linked) {
+      await symlink(external, docs, 'junction')
+    } else {
+      await mkdir(join(docs, 'site'), { recursive: true })
+      await writeFile(join(docs, 'site', 'index.html'), '<p>inside</p>')
+    }
+    const input = join(alias, 'selected', 'docs', 'site', 'index.html')
+    if (linked) {
+      await assert.rejects(
+        readUploadBoundary(input, { cwd: selected }),
+        (error: unknown) => {
+          assert.ok(error instanceof UploadBoundaryError)
+          assert.ok(error.message.includes(join(alias, 'selected', 'docs')))
+          assert.match(error.hint, /Copy the file/)
+          return true
+        },
+      )
+      assert.equal(observed.reads, 0)
+    } else {
+      const result = await readUploadBoundary(input, { cwd: selected })
+      assert.equal(result.files[0]!.bytes.toString(), '<p>inside</p>')
+      assert.equal(observed.reads, 1)
+    }
+  })
+}
+
+test('upload boundary checks relative parents outside Git from cwd', async () => {
+  const { root, external } = await fixture()
+  await mkdir(join(external, 'site'))
+  await writeFile(join(external, 'site', 'index.html'), 'external-sentinel')
+  await symlink(external, join(root, 'build'), 'junction')
+  await assert.rejects(
+    readUploadBoundary('build/site/index.html', { cwd: root }),
+    /symbolic link|junction/,
+  )
+  assert.equal(observed.reads, 0)
+})
+
+test('upload boundary explains relative repository escapes separately from links', async () => {
+  const { selected } = await fixture()
+  await assert.rejects(
+    readUploadBoundary('../external/index.html', { cwd: selected }),
+    (error: unknown) => {
+      assert.ok(error instanceof UploadBoundaryError)
+      assert.equal(
+        error.hint,
+        'Pass the absolute path to share a file outside this repository.',
+      )
+      assert.ok(error.message.includes('../external/index.html'))
+      return true
+    },
+  )
+  assert.equal(observed.reads, 0)
+})
+
+test('upload boundary preserves Windows drive-relative components from the drive current directory', () => {
+  const cwd = String.raw`C:\repo`
+  for (const input of [
+    'C:report.html',
+    'C:site',
+    String.raw`C:link\..\report.html`,
+  ]) {
+    assert.equal(
+      uploadInputPath(input, cwd, win32),
+      `${cwd}\\${input.slice(2)}`,
+    )
+  }
+  assert.equal(
+    uploadInputPath('D:report.html', cwd, win32),
+    `${win32.resolve(cwd, 'D:.')}\\report.html`,
+  )
+})
+
+if (process.platform === 'win32') {
+  test('upload boundary accepts drive-relative files and directories and rejects links', async () => {
+    const { selected, external } = await fixture()
+    const drive = win32.parse(selected).root.slice(0, 2)
+    const file = await readUploadBoundary(`${drive}index.html`, {
+      cwd: selected,
+    })
+    assert.equal(file.files[0]!.bytes.toString(), '<p>selected</p>')
+    await mkdir(join(selected, 'site'))
+    await writeFile(join(selected, 'site', 'index.html'), '<p>site</p>')
+    const directory = await readUploadBoundary(`${drive}site`, {
+      cwd: selected,
+    })
+    assert.equal(directory.directory, true)
+    assert.equal(directory.files[0]!.bytes.toString(), '<p>site</p>')
+    await symlink(external, join(selected, 'link'), 'junction')
+    observed.reads = 0
+    await assert.rejects(
+      readUploadBoundary(`${drive}link`, { cwd: selected }),
+      /symbolic link|junction/,
+    )
+    assert.equal(observed.reads, 0)
+  })
+}
+
+for (const marker of ['file', 'directory'] as const) {
+  for (const inputKind of ['relative', 'absolute', 'ancestor alias'] as const) {
+    for (const directory of [false, true]) {
+      test(`upload boundary rejects a nested Git ${marker} reached through a link for ${inputKind} ${directory ? 'directory' : 'file'} input`, async () => {
+        const { root, selected, external } = await fixture()
+        const nested = join(external, 'nested')
+        await mkdir(nested)
+        if (marker === 'file')
+          await writeFile(join(nested, '.git'), 'gitdir: unused')
+        else await mkdir(join(nested, '.git'))
+        await writeFile(join(nested, 'index.html'), 'external-sentinel')
+        const link = join(selected, 'vendor')
+        await symlink(external, link, 'junction')
+        const suffix = directory
+          ? join('vendor', 'nested')
+          : join('vendor', 'nested', 'index.html')
+        let input = inputKind === 'relative' ? suffix : join(selected, suffix)
+        let offending = link
+        if (inputKind === 'ancestor alias') {
+          const alias = join(root, 'alias')
+          await symlink(root, alias, 'junction')
+          input = join(alias, 'selected', suffix)
+          offending = join(alias, 'selected', 'vendor')
+        }
+        await assert.rejects(
+          readUploadBoundary(input, { cwd: selected }),
+          (error: unknown) => {
+            assert.ok(error instanceof UploadBoundaryError)
+            assert.ok(error.message.includes(offending))
+            assert.match(error.hint, /Copy the file/)
+            return true
+          },
+        )
+        assert.equal(observed.reads, 0)
+        assert.equal(observed.paths.length, 0)
+      })
+    }
+  }
+}
+
+test('upload boundary keeps cwd protection when a relative link reaches a Git marker outside Git', async () => {
+  const { root, external } = await fixture()
+  await mkdir(join(external, 'nested'))
+  await mkdir(join(external, 'nested', '.git'))
+  await writeFile(join(external, 'nested', 'index.html'), 'external-sentinel')
+  await symlink(external, join(root, 'vendor'), 'junction')
+  await assert.rejects(
+    readUploadBoundary(join('vendor', 'nested', 'index.html'), { cwd: root }),
+    /symbolic link|junction/,
+  )
+  assert.equal(observed.reads, 0)
+})
+
+test('upload boundary accepts a regular nested repository through an ancestor alias', async () => {
+  const { root, selected } = await fixture()
+  const nested = join(selected, 'nested')
+  await mkdir(nested)
+  await writeFile(join(nested, '.git'), 'gitdir: unused')
+  await writeFile(join(nested, 'index.html'), '<p>nested</p>')
+  const alias = join(root, 'alias')
+  await symlink(root, alias, 'junction')
+  const result = await readUploadBoundary(join(alias, 'selected', 'nested'), {
+    cwd: selected,
+  })
+  assert.deepEqual(
+    result.files.map((file) => [file.relativePath, file.bytes.toString()]),
+    [['index.html', '<p>nested</p>']],
+  )
+})
+
+for (const marker of ['file', 'directory'] as const) {
+  test(`upload boundary trusts aliases above the nearest Git ${marker} inside an outer repository`, async () => {
+    const { root, selected, external } = await fixture()
+    const home = join(root, 'home')
+    await mkdir(join(home, '.git'), { recursive: true })
+    const project = join(external, 'project')
+    await mkdir(project)
+    if (marker === 'file')
+      await writeFile(join(project, '.git'), 'gitdir: unused')
+    else await mkdir(join(project, '.git'))
+    await writeFile(join(project, 'index.html'), '<p>project</p>')
+    await symlink(external, join(home, 'code'), 'junction')
+    const input = join(home, 'code', 'project', 'index.html')
+    const result = await readUploadBoundary(input, { cwd: selected })
+    assert.equal(result.files[0]!.bytes.toString(), '<p>project</p>')
+    assert.equal(observed.reads, 1)
+    assert.deepEqual(observed.readIdentities, [
+      (await lstat(join(project, 'index.html'), { bigint: true })).ino,
+    ])
+  })
+}
+
+for (const linked of [false, true]) {
+  test(`upload boundary retains cwd's worktree through a direct root alias with inner link=${linked}`, async () => {
+    const { root, selected, external } = await fixture()
+    const alias = join(root, 'alias')
+    await symlink(selected, alias, 'junction')
+    const docs = join(selected, 'docs')
+    if (linked) await symlink(external, docs, 'junction')
+    else await mkdir(docs)
+    const nested = join(linked ? external : docs, 'private')
+    await mkdir(join(nested, '.git'), { recursive: true })
+    await writeFile(
+      join(nested, 'index.html'),
+      linked ? 'external-sentinel' : '<p>inside</p>',
+    )
+    const input = join(alias, 'docs', 'private', 'index.html')
+    if (linked) {
+      await assert.rejects(
+        readUploadBoundary(input, { cwd: selected }),
+        (error: unknown) => {
+          assert.ok(error instanceof UploadBoundaryError)
+          assert.ok(error.message.includes(join(alias, 'docs')))
+          assert.match(error.hint, /Copy the file/)
+          return true
+        },
+      )
+      assert.equal(observed.reads, 0)
+      assert.deepEqual(observed.readIdentities, [])
+    } else {
+      const result = await readUploadBoundary(input, { cwd: selected })
+      assert.equal(result.files[0]!.bytes.toString(), '<p>inside</p>')
+      assert.equal(observed.reads, 1)
+      assert.deepEqual(observed.readIdentities, [
+        (await lstat(join(nested, 'index.html'), { bigint: true })).ino,
+      ])
+    }
+  })
+}
+
+for (const marker of ['file', 'directory'] as const) {
+  for (const directory of [false, true]) {
+    test(`upload boundary rejects an alias entering a worktree descendant before a nested Git ${marker} for ${directory ? 'directory' : 'file'} input`, async () => {
+      const { root, selected, external } = await fixture()
+      const subdirectory = join(selected, 'docs')
+      await mkdir(subdirectory)
+      const alias = join(root, 'alias')
+      await symlink(subdirectory, alias, 'junction')
+      await symlink(external, join(subdirectory, 'linked'), 'junction')
+      const nested = join(external, 'private')
+      await mkdir(nested)
+      if (marker === 'file')
+        await writeFile(join(nested, '.git'), 'gitdir: unused')
+      else await mkdir(join(nested, '.git'))
+      await writeFile(join(nested, 'index.html'), 'external-sentinel')
+      const input = directory
+        ? join(alias, 'linked', 'private')
+        : join(alias, 'linked', 'private', 'index.html')
+      await assert.rejects(
+        readUploadBoundary(input, { cwd: selected }),
+        (error: unknown) => {
+          assert.ok(error instanceof UploadBoundaryError)
+          assert.ok(error.message.includes(alias))
+          assert.match(error.hint, /Copy the file/)
+          return true
+        },
+      )
+      assert.equal(observed.reads, 0)
+      assert.deepEqual(observed.readIdentities, [])
+      assert.deepEqual(observed.paths, [])
+    })
+  }
+}

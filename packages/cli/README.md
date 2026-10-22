@@ -380,17 +380,26 @@ read that thread by ID; do not replay the write automatically.
 
 `share`, `append`, and `update` verify and buffer local files before authentication
 or API requests. Authentication retries reuse those verified bytes, even if the
-original path changes. Inputs and encountered descendants must not be symbolic links
-or junctions. Within Git, the boundary is the worktree root containing the current
-working directory; relative paths leaving that root are rejected. Select an
-absolute path explicitly to share outside it. Outside Git, and for absolute
-inputs outside that worktree, the boundary is the input's parent directory.
+original path changes. Inputs, components below the trust root, and encountered
+descendants must not be symbolic links or junctions. The boundary is the nearest ancestor of the input containing a
+`.git` file or directory. If none exists, it is the current directory for relative
+inputs and the input's parent directory for absolute inputs. Relative paths
+leaving the current directory's Git worktree are rejected; pass an absolute path
+to share outside that repository. For absolute inputs outside the current
+worktree, the nearest enclosing repository is the trust root; components above
+it, including user-created directory aliases, are trusted. Inputs within cwd's
+worktree retain that boundary, even when addressed through an ancestor alias:
+a nearer Git marker cannot exempt links inside it. Relative inputs also retain
+checks from cwd. Windows drive-relative
+file and directory inputs are supported.
 Copy linked files into the selected directory, or share the link target directly.
 Existing hidden-file and dependency-directory exclusions still apply.
 
 POSIX reads use no-follow file handles and check component and file identities
 before and after reading. OS aliases strictly above the trust root remain supported;
-the selected input and user-created trust-root links are rejected. As fallback
+the selected input and user-created trust-root links are rejected, except that
+an alias naming cwd's established worktree may address descendants while retaining
+checks on every component below that worktree. As fallback
 parents, macOS `/tmp` and `/var` are allowed only with their expected `/private`
 targets; both alias and target identities are checked repeatedly. Missing stable identities or
 missing POSIX no-follow support cause a local failure before authentication or API

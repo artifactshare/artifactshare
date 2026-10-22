@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Keep enclosing repository and relative-input boundaries in force when a linked path reaches a nearer Git marker; reject the link before reading upload bytes.
+
+- Discover the upload trust root from the nearest input ancestor containing `.git`; otherwise use the current directory for relative inputs and the input's parent for absolute inputs. Check repository paths reached through ancestor aliases, support Windows drive-relative inputs, and give relative repository escapes an absolute-path recovery hint.
+
 - Validate and buffer upload files before authentication; reject links and detected filesystem substitutions. Fail locally when the filesystem guarantee is unavailable, including missing file identities. Windows uploads retain handle identity checks and reject symlinks, junctions and app execution aliases; non-redirecting reparse points such as cloud-file placeholders, deduplication and compression remain accepted. Reject user-created links at the trust root while preserving macOS `/tmp` and `/var` fallback parents with verified targets and identities.
 
 - Accept version-scoped execution URLs on artifactshareusercontent.com while preserving public share URLs and legacy URL-to-ID resolution. Artifact execution is isolated from app and link-viewer cookies.

@@ -1,5 +1,12 @@
 import { constants, type BigIntStats } from 'node:fs'
-import { lstat, open, readdir, readlink } from 'node:fs/promises'
+import {
+  lstat,
+  open,
+  readdir,
+  readlink,
+  realpath,
+  stat as followedStat,
+} from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -33,6 +40,7 @@ export interface UploadBoundaryHooks {
 
 type FailureKind =
   | 'link'
+  | 'escape'
   | 'missing'
   | 'changed'
   | 'unsupported'
@@ -47,6 +55,7 @@ function fail(
 ): never {
   const hints: Record<FailureKind, string> = {
     link: 'Copy the file into the directory, or share the link target directly using an absolute path.',
+    escape: 'Pass the absolute path to share a file outside this repository.',
     missing: `Check the path and retry: ${path}`,
     changed: 'Retry once the files stop changing.',
     unsupported:
@@ -112,10 +121,36 @@ function contains(root: string, path: string): boolean {
     (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))
   )
 }
-async function gitRoot(cwd: string): Promise<string | undefined> {
+async function gitRoot(
+  cwd: string,
+  establishedRoot?: string,
+): Promise<string | undefined> {
   let dir = cwd
+  let found: string | undefined
+  let protectedAncestor: string | undefined
+  const establishedPath = establishedRoot
+    ? await realpath(establishedRoot)
+    : undefined
+  const established = establishedRoot
+    ? await followedStat(establishedRoot, { bigint: true })
+    : undefined
   for (;;) {
-    const markerPath = join(dir, '.git')
+    if (establishedPath) {
+      const resolved = await realpath(dir).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+            return undefined
+          readFailure(dir, error)
+        },
+      )
+      // Discovery may follow aliases to recognize entry into cwd's worktree.
+      // Keep the lexical ancestor for inspection: replacing it with realpath
+      // would erase the very link that must not narrow the established boundary.
+      // Check even ancestors without a Git marker (aliases into subdirectories).
+      if (resolved && contains(establishedPath, resolved))
+        protectedAncestor = dir
+    }
+    const markerPath = `${dir}${sep}.git`
     const marker = await lstat(markerPath).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
@@ -123,11 +158,34 @@ async function gitRoot(cwd: string): Promise<string | undefined> {
         readFailure(markerPath, error)
       },
     )
-    if (marker?.isFile() || marker?.isDirectory()) return dir
+    if (marker?.isFile() || marker?.isDirectory()) {
+      found ??= dir
+      if (!established) return dir
+      // An ancestor alias can name cwd's worktree differently. Preserve that
+      // established boundary too, without adopting unrelated outer repositories.
+      if (same(established, await followedStat(dir, { bigint: true })))
+        return dir
+    }
     const parent = dirname(dir)
-    if (parent === dir) return undefined
+    if (parent === dir) return protectedAncestor ?? found
     dir = parent
   }
+}
+
+// Preserve components until the lstat walk, including link/.. pairs. Resolving
+// only a drive prefix also respects Windows' per-drive current directories.
+export function uploadInputPath(
+  input: string,
+  cwd: string,
+  paths = { isAbsolute, parse, resolve, sep },
+): string {
+  if (paths.isAbsolute(input)) return input
+  const drive = paths.parse(input).root
+  if (drive) {
+    const base = paths.resolve(cwd, `${drive}.`)
+    return `${base}${paths.sep}${input.slice(drive.length)}`
+  }
+  return `${cwd}${paths.sep}${input}`
 }
 
 /**
@@ -155,17 +213,27 @@ export async function readUploadBoundary(
   files: Array<{ path: string; relativePath: string; bytes: Buffer }>
 }> {
   const cwd = resolve(options.cwd ?? process.cwd())
+  const raw = uploadInputPath(input, cwd)
   const target = resolve(cwd, input)
   const repo = await gitRoot(cwd)
   if (repo && !isAbsolute(input) && !contains(repo, target)) {
     fail(
       input,
       'relative path leaves the Git repository; select an absolute path explicitly',
-      'link',
+      'escape',
     )
   }
-  const repositoryBoundary = repo && contains(repo, target)
-  const root = repositoryBoundary ? repo : dirname(target)
+  // Prefer the nearest repository, retaining cwd's established worktree even
+  // through ancestor aliases. Do not normalize link/.. pairs during discovery.
+  const repositoryBoundary = await gitRoot(raw, repo)
+  let root = repositoryBoundary
+    ? resolve(repositoryBoundary)
+    : isAbsolute(input)
+      ? dirname(target)
+      : cwd
+  // A discovered marker cannot narrow an already established boundary.
+  if (repo && contains(repo, target) && contains(repo, root)) root = repo
+  if (!isAbsolute(input) && contains(cwd, root)) root = cwd
   // Only these OS-owned macOS aliases may be the fallback parent. The selected
   // input and arbitrary user-created parent links still follow the no-link rule.
   const systemAliasTarget =
@@ -175,6 +243,9 @@ export async function readUploadBoundary(
           ['/var', '/private/var'],
         ]).get(root)
       : undefined
+  const establishedIdentity = repo
+    ? await followedStat(repo, { bigint: true })
+    : undefined
   let aliasIdentity: BigIntStats | undefined
   const evidence = new Map<string, BigIntStats>()
   let activePath = input
@@ -182,22 +253,37 @@ export async function readUploadBoundary(
     activePath = path
     let info = await lstat(path, { bigint: true })
     if (info.isSymbolicLink()) {
-      if (path !== root || !systemAliasTarget)
+      // An alias naming cwd's established worktree may address descendants,
+      // but cannot narrow that boundary or make a linked selected input valid.
+      const establishedAlias =
+        path === root && path !== target && establishedIdentity
+          ? same(
+              establishedIdentity,
+              await followedStat(path, { bigint: true }),
+            )
+          : false
+      if (path !== root || (!systemAliasTarget && !establishedAlias))
         fail(path, 'symbolic link or junction is not allowed', 'link')
       identity(path, info)
       if (aliasIdentity && !unchanged(aliasIdentity, info))
-        fail(path, 'system alias identity changed')
-      if (resolve(dirname(path), await readlink(path)) !== systemAliasTarget)
+        fail(path, 'alias identity changed')
+      if (
+        systemAliasTarget &&
+        resolve(dirname(path), await readlink(path)) !== systemAliasTarget
+      )
         fail(path, 'system alias target changed')
       const aliasAfter = await lstat(path, { bigint: true })
-      if (!unchanged(info, aliasAfter))
-        fail(path, 'system alias identity changed')
+      if (!unchanged(info, aliasAfter)) fail(path, 'alias identity changed')
       aliasIdentity = info
-      info = await lstat(systemAliasTarget, { bigint: true })
+      info = systemAliasTarget
+        ? await lstat(systemAliasTarget, { bigint: true })
+        : await followedStat(path, { bigint: true })
+      if (establishedAlias && !same(establishedIdentity!, info))
+        fail(path, 'worktree alias target changed')
       if (!info.isDirectory())
-        fail(path, 'system alias target is not a regular directory', 'type')
+        fail(path, 'alias target is not a regular directory', 'type')
     } else if (path === root && aliasIdentity) {
-      fail(path, 'system alias identity changed')
+      fail(path, 'alias identity changed')
     }
     identity(path, info)
     const prior = evidence.get(path)
@@ -219,7 +305,6 @@ export async function readUploadBoundary(
   }
   try {
     // Inspect lexical components before normalization can erase a link/.. pair.
-    const raw = isAbsolute(input) ? input : `${cwd}${sep}${input}`
     let cursor = parse(raw).root
     // Windows accepts both separators, even in one input. Splitting only on
     // path.sep would let join() erase a forward-slash link/.. component.
