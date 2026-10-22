@@ -329,7 +329,7 @@ test('init excludes config.local.json relative to the git worktree root', async 
   assert.ok(exclude.includes('sub/.artifactshare/config.local.json'))
 })
 
-test('init uses git commondir for linked worktree exclude files', async () => {
+test('init saves config but warns instead of following worktree commondir', async () => {
   await writeGlobalConfig({ profiles: { 'client-a': {} } })
   const commonDir = join(workDir, 'common.git')
   const linkedDir = join(workDir, 'linked')
@@ -346,10 +346,12 @@ test('init uses git commondir for linked worktree exclude files', async () => {
     }),
     'init',
   )
-  assert.equal(payload.data.git_exclude_applied, true)
+  assert.equal(payload.data.git_exclude_applied, undefined)
+  assert.match(String(payload.data.git_exclude_warning), /config.local.json/)
 
-  const exclude = await readFile(join(commonDir, 'info', 'exclude'), 'utf8')
-  assert.ok(exclude.includes('.artifactshare/config.local.json'))
+  await assert.rejects(readFile(join(commonDir, 'info', 'exclude')), {
+    code: 'ENOENT',
+  })
 })
 
 test('init rejects a profile that is not saved', async () => {
@@ -579,3 +581,29 @@ test('doctor flags token-like keys in the working-directory config', async () =>
     'npm exec --yes --package=@artifactshare/cli -- artifactshare login',
   )
 })
+
+for (const component of [
+  '.artifactshare',
+  '.artifactshare/config.local.json',
+]) {
+  test(`init refuses linked ${component} without changing outside data`, async () => {
+    const { symlink } = await import('node:fs/promises')
+    const outside = join(workDir, 'outside')
+    await mkdir(outside)
+    const sentinel = join(outside, 'config.local.json')
+    await writeFile(sentinel, '{"custom":"unchanged"}')
+    if (component.includes('/')) await mkdir(join(workDir, '.artifactshare'))
+    await symlink(
+      component.includes('/') ? sentinel : outside,
+      join(workDir, component),
+    )
+    const payload = expectFailure(
+      run(['init', '--project-id', 'project', '--json'], isolation(), {
+        cwd: workDir,
+      }),
+      { command: 'init', code: 'validation_failed' },
+    )
+    assert.ok(payload.error.message.includes(component))
+    assert.equal(await readFile(sentinel, 'utf8'), '{"custom":"unchanged"}')
+  })
+}

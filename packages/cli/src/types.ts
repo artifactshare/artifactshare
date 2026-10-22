@@ -630,8 +630,8 @@ export type CommentsDeleteData = {
 }
 
 export type DownloadPlan = {
+  boundary: import('./write-boundary.js').WriteBoundary
   root: string
   tempRoot: string
-  replaceExisting: boolean
   files: Array<DownloadManifestFile & { targetPath: string }>
 }

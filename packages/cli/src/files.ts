@@ -1,13 +1,21 @@
 import type { Buffer } from 'node:buffer'
-import { lstat, mkdir, mkdtemp } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { basename, dirname, join, resolve } from 'node:path'
-import { prepareUploadSelection, uploadReadError } from './upload-boundary.js'
+import { dirname, join, resolve } from 'node:path'
+import {
+  prepareUploadSelection,
+  uploadReadError,
+  type UploadBoundaryDependencies,
+} from './upload-boundary.js'
 import type { CliError, DownloadPlan, UploadPayloadResult } from './types.js'
 import type {
   DownloadManifestFile,
   DownloadManifestResponse,
 } from '@artifactshare/contract'
+import {
+  WriteBoundary,
+  WriteBoundaryError,
+  WriteFileSystemError,
+} from './write-boundary.js'
 import { cliError, validationError } from './errors.js'
 import type { FormData } from 'undici'
 
@@ -20,9 +28,14 @@ export async function createUploadForm(): Promise<FormData> {
 
 export async function prepareUploadPayload(
   targetPath: string,
+  dependencies?: UploadBoundaryDependencies,
 ): Promise<UploadPayloadResult> {
   try {
-    const selection = await prepareUploadSelection(targetPath)
+    const selection = await prepareUploadSelection(
+      targetPath,
+      false,
+      dependencies,
+    )
     if (selection.directory && selection.files.length === 0) {
       return {
         error: validationError(
@@ -44,7 +57,7 @@ export async function prepareUploadPayload(
         form,
         kind: selection.directory
           ? 'static_site'
-          : artifactKindForFile(targetPath),
+          : artifactKindForFile(selection.files[0]!.name),
       },
     }
   } catch (error) {
@@ -56,6 +69,7 @@ export async function prepareDownloadPlan(
   manifest: DownloadManifestResponse,
   outputPath: string,
   force: boolean,
+  boundary = new WriteBoundary(),
 ): Promise<
   { value: DownloadPlan; error?: never } | { error: CliError; value?: never }
 > {
@@ -76,15 +90,9 @@ export async function prepareDownloadPlan(
     }
   }
   const root = resolve(outputPath)
-  const existing = await lstat(root).catch(() => null)
-  if (existing?.isSymbolicLink()) {
-    return {
-      error: validationError(
-        'Output path must not be a symbolic link.',
-        'Choose a regular directory path and retry.',
-      ),
-    }
-  }
+  await boundary.record(dirname(root), true)
+  const existing = await boundary.record(root, true)
+  await boundary.tree(root)
   if (existing && !force) {
     return {
       error: cliError({
@@ -98,36 +106,41 @@ export async function prepareDownloadPlan(
       }),
     }
   }
-  if (existing && !existing.isDirectory()) {
-    return {
-      error: validationError(
-        'Output path is not a directory.',
-        'Choose a directory path or remove the existing file.',
-      ),
-    }
-  }
-
   const seen = new Set<string>()
   const relativeFiles: Array<DownloadManifestFile & { relativePath: string }> =
     []
   for (const file of manifest.files) {
     const relativePath = downloadRelativePath(file.path)
-    if (relativePath.error) return { error: relativePath.error }
-    if (seen.has(relativePath.value)) {
-      return {
-        error: validationError(
-          'Download manifest contains duplicate file paths.',
-          'Retry later. If this repeats, report the artifact ID.',
-        ),
-      }
+    if (relativePath.error)
+      throw new WriteBoundaryError(
+        JSON.stringify(file.path),
+        relativePath.error.hint,
+        relativePath.error.message,
+      )
+    if (
+      [...seen].some(
+        (path) =>
+          path.toLowerCase() === relativePath.value.toLowerCase() ||
+          path
+            .toLowerCase()
+            .startsWith(relativePath.value.toLowerCase() + '/') ||
+          relativePath.value.toLowerCase().startsWith(path.toLowerCase() + '/'),
+      )
+    ) {
+      throw new WriteBoundaryError(
+        JSON.stringify(file.path),
+        'Retry later. If this repeats, report the artifact ID.',
+        `Download manifest contains conflicting file path ${JSON.stringify(file.path)}.`,
+      )
     }
     seen.add(relativePath.value)
     relativeFiles.push({ ...file, relativePath: relativePath.value })
   }
 
   const parent = dirname(root)
-  await mkdir(parent, { recursive: true })
-  const tempRoot = await mkdtemp(join(parent, `.${basename(root)}.tmp-`))
+  await boundary.directory(parent)
+  boundary.workspace ??= await boundary.privateDirectory(parent)
+  const tempRoot = await boundary.privateDirectory(boundary.workspace)
   const files: DownloadPlan['files'] = []
   for (const file of relativeFiles) {
     const targetPath = resolve(tempRoot, file.relativePath)
@@ -135,7 +148,12 @@ export async function prepareDownloadPlan(
   }
 
   return {
-    value: { root, tempRoot, replaceExisting: Boolean(existing), files },
+    value: {
+      root,
+      tempRoot,
+      files,
+      boundary,
+    },
   }
 }
 
@@ -145,7 +163,7 @@ function downloadRelativePath(
   if (!path.startsWith('/') || path.includes('\0') || path.includes('\\')) {
     return {
       error: validationError(
-        'Download manifest contains an invalid file path.',
+        `Download manifest contains invalid file path ${JSON.stringify(path)}.`,
         'Retry later. If this repeats, report the artifact ID.',
       ),
     }
@@ -154,12 +172,19 @@ function downloadRelativePath(
   if (
     segments.length === 0 ||
     segments.some(
-      (segment) => segment === '' || segment === '.' || segment === '..',
+      (segment) =>
+        segment === '' ||
+        segment === '.' ||
+        segment === '..' ||
+        (process.platform === 'win32' &&
+          (/[:*?"<>|]/u.test(segment) ||
+            /[. ]$/u.test(segment) ||
+            /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(segment))),
     )
   ) {
     return {
       error: validationError(
-        'Download manifest contains an unsafe file path.',
+        `Download manifest contains unsafe file path ${JSON.stringify(path)}.`,
         'Retry later. If this repeats, report the artifact ID.',
       ),
     }
@@ -195,25 +220,15 @@ function downloadIntegrityError(path: string, reason: string): CliError {
   })
 }
 
-export function backupPathFor(root: string): string {
-  return join(
-    dirname(root),
-    `.${basename(root)}.old-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  )
-}
-
-export async function pathExists(path: string): Promise<boolean> {
-  return Boolean(await lstat(path).catch(() => null))
-}
-
 export function downloadFileSystemError(error: unknown): CliError {
+  if (error instanceof WriteBoundaryError) return error.error
   return cliError({
     code: 'download_failed',
-    message: 'Could not write downloaded files.',
-    why:
-      error instanceof Error
+    message:
+      error instanceof WriteFileSystemError
         ? error.message
-        : 'The local filesystem rejected a download operation.',
+        : 'Could not write downloaded files.',
+    why: 'The local filesystem rejected a download operation. Check retained recovery paths before retrying.',
     hint: 'Check --output permissions and available disk space, then retry.',
     agentRecoverable: true,
     requiresHuman: false,

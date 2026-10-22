@@ -426,3 +426,19 @@ test('names parent-directory references clearly in Japanese recovery guidance', 
   expect(recovery).toContain('親ディレクトリ参照（..）を含むパスは使えません。')
   expect(recovery).not.toContain('。.. を')
 })
+
+test.each(['en', 'ja'] as const)(
+  'documents local write recovery in %s',
+  (locale) => {
+    const content = cliReferenceContent(locale)
+    expect(content.sections.recovery.body).toContain('^[a-z0-9]{10}$')
+    expect(content.sections.recovery.body).toContain('data.backup_paths')
+    expect(content.sections.recovery.body).toContain('git_exclude_warning')
+    const download = surface.commands.find(
+      (command) => command.path === 'download',
+    )!
+    expect(download.option_help).toEqual([
+      '--force Replace existing output; retain originals at reported backup paths',
+    ])
+  },
+)

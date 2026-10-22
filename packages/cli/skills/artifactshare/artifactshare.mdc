@@ -290,3 +290,30 @@ retries reuse it. `validation_failed` includes `details.path` and `details.reaso
 available `O_NOFOLLOW`; Windows uses the same handle identity checks and rejects
 links reported by `lstat`. Neither detects every transient swap-and-restore or
 same-identity, same-size in-place edit. See the CLI README for the full guarantee.
+
+## Local write recovery
+
+Download accepts only unique artifact IDs matching `^[a-z0-9]{10}$`, including
+IDs from list pages and the previous index. Links and observed directory swaps
+are fatal, even with `--force`. Replacement removes stale files from the new
+output but retains originals and replaced indexes at `data.backup_paths`.
+Inspect those paths for recovery; delete backups manually only after checking
+that they are no longer needed. On failed recovery or cleanup, inspect the
+reported private workspace. Staging and backups live in one private directory
+in the chosen output root's parent. Identity checks detect observed swaps;
+Node path-based operations do not provide atomic confinement against arbitrary
+concurrent changes.
+
+Config-mode `init` preserves unknown keys and refuses links at `.artifactshare`
+or `config.local.json`. Git worktrees/submodules save config normally but warn
+instead of following `.git` files, links, or redirect metadata. Only a real
+repository `.git` directory with regular or absent `info/exclude` is updated.
+Follow `git_exclude_warning` to add the exact exclude line manually. Onboarding
+without config arguments still installs user-scope skills.
+
+Upload aliases use the stored filename for kind, filename, and content type.
+Retry `changed` when an enumerated file disappears; correct `not_found` when a
+relative path passes through a regular file. Both `share --help` and
+`append --help` list `upload_read_failed` and all `validation_failed` reasons:
+`link`, `outside_cwd`, `parent_traversal`, `changed`, `not_found`, `invalid_type`,
+and `unsupported_guarantee`.

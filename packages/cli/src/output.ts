@@ -150,6 +150,19 @@ function humanSuccess(command: string, data: unknown): string {
       : output
     return suffix ? `${withWarnings}${suffix}` : withWarnings
   }
+  if (
+    command === 'download' &&
+    isRecord(data) &&
+    Array.isArray(data.backup_paths)
+  ) {
+    const recovery = data.backup_paths
+      .map(
+        (path) =>
+          `Original data retained at ${String(path)}; inspect it before manual cleanup.`,
+      )
+      .join('\n')
+    return `${JSON.stringify(data, null, 2)}\n${recovery ? `${recovery}\n` : ''}`
+  }
   if (command === 'doctor') {
     return doctorHumanOutput(data)
   }

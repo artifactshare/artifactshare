@@ -5,6 +5,10 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Download validates ten-character lowercase alphanumeric artifact IDs before writes, rejects links and observed directory changes even with `--force`, and retains displaced output and indexes at reported `backup_paths` for recovery.
+- Init atomically saves local defaults while preserving unknown keys. Linked config paths are refused; Git worktrees and unsafe exclude paths save config with actionable manual-exclude warnings.
+- Upload aliases use the stored filename for kind and content type. Disappearing listed entries report `changed`; relative paths through files report `not_found`. Share and append help include all upload recovery reasons.
+
 - Verify local upload boundaries for share, append, and update before authentication. Reject links and parent traversal, detect observed path replacements, and reuse verified content on authentication retries.
 
 - Accept version-scoped execution URLs on artifactshareusercontent.com while preserving public share URLs and legacy URL-to-ID resolution. Artifact execution is isolated from app and link-viewer cookies.

@@ -236,7 +236,7 @@ export async function prepareUploadSelection(
         await checkPhysicalEntry(cursor, input, chain[chain.length - 1]!.stat)
         await checkChain(chain)
         if (index < components.length - 1) {
-          if (!selected.isDirectory()) fail(input, 'invalid_type')
+          if (!selected.isDirectory()) fail(input, 'not_found')
           chain.push({ path: cursor, display: input, stat: selected })
         }
       }
@@ -295,7 +295,7 @@ export async function prepareUploadSelection(
         const entry = {
           path: paths.join(dir.path, name),
           display,
-          stat: await get(paths.join(dir.path, name), display),
+          stat: await get(paths.join(dir.path, name), display, true),
         }
         checkType(entry.stat, display)
         await checkPhysicalEntry(entry.path, display, dir.stat, name)
@@ -307,7 +307,12 @@ export async function prepareUploadSelection(
     }
     const root = { path: selectedPath, display: input, stat: selected }
     if (selected.isDirectory()) await visit(root, chain, '')
-    else leaves.push({ ...root, name: paths.basename(selectedPath), chain })
+    else
+      leaves.push({
+        ...root,
+        name: paths.basename(await physicalPath(selectedPath, input)),
+        chain,
+      })
     leaves.sort((a, b) => a.name.localeCompare(b.name))
     const files: Array<{ name: string; blob: Blob }> = []
     for (const leaf of leaves) {

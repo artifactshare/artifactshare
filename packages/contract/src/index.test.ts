@@ -1291,3 +1291,39 @@ it('publisher readback extends the legacy object without widening its shape', as
 it('adoption documents JSON content type rejection', () => {
   expect(CLI_API_ENDPOINTS.artifactAdopt.errorStatuses).toContain(415)
 })
+
+it('artifact IDs use exactly ten lowercase ASCII letters or digits', async () => {
+  const {
+    ArtifactIdSchema,
+    ArtifactsListEntrySchema,
+    DownloadManifestResponseSchema,
+  } = await import('./index.js')
+  for (const id of ['abc123def4', '0123456789', 'abcdefghij']) {
+    expect(ArtifactIdSchema.safeParse(id).success).toBe(true)
+  }
+  for (const id of [
+    null,
+    123,
+    '',
+    'short',
+    'abcdefghijk',
+    '.',
+    '..',
+    'a/b',
+    'a\\b',
+    '/abs',
+    'C:x',
+    '\\\\server\\x',
+    '\0',
+    'CON',
+    'abc123def.',
+    'abc123def ',
+    'ABC123DEF4',
+  ]) {
+    expect(ArtifactIdSchema.safeParse(id).success).toBe(false)
+    expect(ArtifactsListEntrySchema.shape.id.safeParse(id).success).toBe(false)
+    expect(DownloadManifestResponseSchema.shape.id.safeParse(id).success).toBe(
+      false,
+    )
+  }
+})

@@ -436,3 +436,31 @@ Other filesystem failures, including EACCES, EMFILE, EIO, and EPERM, use
 permissions, then retry. Raw exceptions remain internal; errors never include
 credentials or file contents. Empty included directories report
 “Directory has no shareable files.”
+
+### Local download and init writes
+
+Download artifact IDs must match `^[a-z0-9]{10}$`. Invalid, duplicate, or
+case-colliding IDs in any list page or previous `index.json` are fatal before
+writes. Single-download targets and manifest identities must agree.
+
+Downloads refuse linked output roots, parents, existing descendants, and indexes,
+and observed directory replacements, including with `--force`. Replacements do
+not merge stale files. Originals, including replaced project indexes, remain at
+`data.backup_paths`; inspect those paths to recover data and remove backups
+manually when no longer needed. Failed recovery or cleanup names the retained
+workspace. Staging and backups share one private directory in the output root's
+parent. Files use exclusive creation and indexes use temporary-file publication.
+Identity checks detect observed swaps at operation checkpoints; Node path-based
+operations cannot guarantee atomic confinement against arbitrary concurrent changes.
+
+`init --profile` / `init --project-id` preserve unknown local config keys and
+refuse linked or changed `.artifactshare` / `config.local.json` paths. Only a
+real repository `.git` directory without redirect metadata or linked `info` /
+`exclude` is eligible for an exclude update. Worktrees and submodules still save
+config and return `git_exclude_warning` with the path and exact line to add
+manually. Running `init` without config arguments still installs user-scope skills.
+
+Upload aliases use the stored filename for artifact kind, multipart name, and
+content type. An enumerated entry disappearing is `changed` (retry); a relative
+path through a regular file is `not_found` (correct the path). `share --help`
+and `append --help` list all upload boundary reasons and fixes.

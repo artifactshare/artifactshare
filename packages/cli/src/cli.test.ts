@@ -321,3 +321,23 @@ for (const command of ['share', 'update']) {
     )
   })
 }
+
+for (const command of ['share', 'append']) {
+  test(`${command} help describes upload boundary recovery`, () => {
+    const result = run([command, '--help'])
+    assert.equal(result.status, 0)
+    for (const reason of [
+      'upload_read_failed',
+      'validation_failed',
+      'link',
+      'outside_cwd',
+      'parent_traversal',
+      'changed',
+      'not_found',
+      'invalid_type',
+      'unsupported_guarantee',
+    ]) {
+      assert.ok(result.stdout.includes(reason), reason)
+    }
+  })
+}
