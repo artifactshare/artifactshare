@@ -381,9 +381,14 @@ export class WriteBoundary {
     }
   }
 
-  async atomicWrite(path: string, content: string, retain = false) {
+  async atomicWrite(
+    path: string,
+    content: string,
+    retain = false,
+    temporaryParent = dirname(path),
+  ) {
     await this.record(path)
-    const temp = join(dirname(path), `.artifactshare-${randomUUID()}.tmp`)
+    const temp = join(temporaryParent, `.artifactshare-${randomUUID()}.tmp`)
     const existing = this.entries.get(resolve(path))
     await this.write(
       temp,

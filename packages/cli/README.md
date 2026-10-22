@@ -455,7 +455,9 @@ single-download targets. Remove the whitespace before retrying. Share URLs use
 the usual URL-to-ID resolution; list and index IDs are never normalized.
 
 Replacements do not merge stale files. Staging and backups share one private
-directory in the output root's parent. Displaced originals and previous indexes
+directory inside the output root for project downloads, or in its parent for
+single downloads. This keeps project publication on the output filesystem.
+Displaced originals and previous indexes
 remain there after success and are reported in `data.backup_paths` and human
 output. Inspect those paths before manual cleanup. Failed recovery also names
 retained paths in the error. Cleanup removes only CLI-created temporary entries

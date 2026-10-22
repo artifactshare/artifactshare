@@ -747,7 +747,9 @@ Successful replacements retain originals and previous indexes in `data.backup_pa
 and report them in human output. Inspect those paths before manual cleanup.
 Failed recovery also names retained paths in the error. Cleanup removes only
 CLI-created temporary entries, never containers holding originals. Staging and
-backups live in one private directory in the chosen output root's parent.
+backups live in one private directory inside the output root for project
+downloads, or in its parent for single downloads. Project index temporary files
+use that same private directory so publication stays on the output filesystem.
 Identity checks detect observed swaps;
 Node path-based operations do not provide atomic confinement against arbitrary
 concurrent changes.

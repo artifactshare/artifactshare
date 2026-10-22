@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, test } from 'vitest'
+import { afterEach, beforeEach, test, vi } from 'vitest'
+import { runInit } from './command-runners/init.js'
 import { expectFailure, expectSuccess, run } from './test/helpers.js'
 
 let configHome: string
@@ -446,6 +454,47 @@ test('init --profile saves config defaults and installs no skill files', async (
   assert.equal(claudeSkill, null)
 })
 
+test('init saves config when cwd names a linked repository directory', async () => {
+  const repository = join(workDir, 'repository')
+  const alias = join(workDir, 'alias')
+  await mkdir(repository)
+  await mkdir(join(repository, '.git'))
+  await symlink(repository, alias, 'junction')
+  // A spawned process may canonicalize cwd; preserve the alias explicitly so
+  // this exercises the runner's directory identity check on every platform.
+  const cwd = vi.spyOn(process, 'cwd').mockReturnValue(alias)
+  const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+  const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  const previousExitCode = process.exitCode
+  try {
+    await runInit(
+      { command: 'init', options: { projectId: 'prj1' }, positionals: [] },
+      { json: true },
+    )
+    const payload = JSON.parse(
+      [...stdout.mock.calls, ...stderr.mock.calls]
+        .map(([text]) => text)
+        .join(''),
+    )
+    assert.equal(payload.ok, true)
+    assert.equal(payload.data.written, true)
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(
+          join(repository, '.artifactshare/config.local.json'),
+          'utf8',
+        ),
+      ),
+      { default_project_id: 'prj1' },
+    )
+  } finally {
+    cwd.mockRestore()
+    stdout.mockRestore()
+    stderr.mockRestore()
+    process.exitCode = previousExitCode
+  }
+})
+
 test('init updates one key and preserves the rest of config.local.json', async () => {
   await writeGlobalConfig({ profiles: { 'client-a': {} } })
   await mkdir(join(workDir, '.artifactshare'))
@@ -587,7 +636,6 @@ for (const component of [
   '.artifactshare/config.local.json',
 ]) {
   test(`init refuses linked ${component} without changing outside data`, async () => {
-    const { symlink } = await import('node:fs/promises')
     const outside = join(workDir, 'outside')
     await mkdir(outside)
     const sentinel = join(outside, 'config.local.json')

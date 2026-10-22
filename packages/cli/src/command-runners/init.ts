@@ -122,7 +122,7 @@ async function runInitConfig(
   const boundary = new WriteBoundary()
   const path = projectConfigLocalPath()
   try {
-    await boundary.record(process.cwd(), true)
+    await boundary.outputParent(process.cwd())
     await boundary.record(dirname(path), true)
     const localText = await boundary.read(path)
     if (profile) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { Response } from 'undici'
 import * as fs from 'node:fs/promises'
-import { dirname, basename, join } from 'node:path'
+import { dirname, basename, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   beforeEach,
@@ -238,8 +238,9 @@ for (const single of [false, true]) {
     assert.equal(await fs.readFile(join(backup, 'old'), 'utf8'), 'original')
     assert.deepEqual(
       (await fs.readdir(base)).sort(),
-      [basename(dirname(backup)), 'output'].sort(),
+      single ? [basename(dirname(backup)), 'output'].sort() : ['output'],
     )
+    assert.equal(dirname(dirname(backup)), single ? base : output)
     const { writeSuccess: renderSuccess } =
       await vi.importActual<typeof import('./output.js')>('./output.js')
     const stdout = vi
@@ -255,6 +256,83 @@ for (const single of [false, true]) {
       )
     } finally {
       stdout.mockRestore()
+    }
+  })
+}
+
+for (const force of [false, true]) {
+  test(`project publishes on the output filesystem (force=${force})`, async (t) => {
+    const { base, output, args } = await fixture(t)
+    await fs.mkdir(output)
+    const oldIndex = JSON.stringify({ artifacts: [{ id, version_id: 'old' }] })
+    if (force) {
+      await fs.mkdir(join(output, id))
+      await fs.writeFile(join(output, id, 'old'), 'original')
+      await fs.writeFile(join(output, 'index.json'), oldIndex)
+    }
+    args.options.force = force
+    serve()
+    const insideOutput = (path: string) => {
+      const child = relative(output, path)
+      return child !== '..' && !child.startsWith(`..${sep}`)
+    }
+    const renames: Array<[string, string]> = []
+    const indexTemps: string[] = []
+    await runDownload(args, { json: true }, false, {
+      checkpoint: async (phase, path) => {
+        if (phase === 'create' && path.endsWith('.tmp')) indexTemps.push(path)
+      },
+      rename: async (source, destination) => {
+        // Model output as a mount point: its descendants share a device,
+        // while a workspace in output's parent is on another device.
+        if (insideOutput(String(source)) !== insideOutput(String(destination)))
+          throw Object.assign(new Error('Cross-device rename'), {
+            code: 'EXDEV',
+          })
+        renames.push([String(source), String(destination)])
+        await fs.rename(source, destination)
+      },
+    })
+    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+    const data = vi.mocked(writeSuccess).mock.calls.at(-1)![1] as {
+      ok: number
+      failed: number
+      backup_paths: string[]
+    }
+    assert.equal(data.ok, 1)
+    assert.equal(data.failed, 0)
+    assert.equal(renames.length, force ? 4 : 2)
+    assert.ok(renames.flat().every(insideOutput))
+    assert.equal(indexTemps.length, 1)
+    const workspace = dirname(indexTemps[0]!)
+    assert.equal(dirname(workspace), output)
+    assert.match(basename(workspace), /^\.artifactshare-/)
+    assert.equal(
+      await fs.readFile(join(output, id, 'index.md'), 'utf8'),
+      '# abc',
+    )
+    const index = JSON.parse(
+      await fs.readFile(join(output, 'index.json'), 'utf8'),
+    )
+    assert.deepEqual(
+      index.artifacts.map((item: { id: string }) => item.id),
+      [id],
+    )
+    assert.deepEqual(await fs.readdir(base), ['output'])
+    assert.equal(data.backup_paths.length, force ? 2 : 0)
+    if (force) {
+      assert.ok(data.backup_paths.every((path) => dirname(path) === workspace))
+      assert.equal(
+        await fs.readFile(join(data.backup_paths[0]!, 'old'), 'utf8'),
+        'original',
+      )
+      assert.equal(await fs.readFile(data.backup_paths[1]!, 'utf8'), oldIndex)
+      assert.deepEqual(
+        (await fs.readdir(workspace)).sort(),
+        data.backup_paths.map((path) => basename(path)).sort(),
+      )
+    } else {
+      await assert.rejects(fs.lstat(workspace), { code: 'ENOENT' })
     }
   })
 }

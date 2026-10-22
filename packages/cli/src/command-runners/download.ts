@@ -504,8 +504,10 @@ async function runProjectDownload(
     await boundary.tree(root)
   }
   await boundary.directory(output)
-  boundary.workspace = await boundary.privateDirectory(dirname(output))
   boundary.keep(output)
+  // Project publication replaces children, so keep staging and backups on
+  // the output filesystem even when output itself is a mount point.
+  boundary.workspace = await boundary.privateDirectory(output)
   const results: ProjectResult[] = entries.map((item) => ({
     id: item.id as string,
     title: String(item.title ?? ''),
@@ -645,6 +647,7 @@ async function runProjectDownload(
     JSON.stringify({ project_id: projectId, artifacts: results }, null, 2) +
       '\n',
     true,
+    boundary.workspace,
   )
   boundary.keep(join(output, 'index.json'))
   const counts = {
