@@ -19,6 +19,17 @@ import {
 import { cliError, validationError } from './errors.js'
 import type { FormData } from 'undici'
 
+export class DownloadManifestError extends Error {
+  readonly error
+  constructor(message: string) {
+    super(message)
+    this.error = validationError(
+      message,
+      'Retry later. If this repeats, report the artifact ID.',
+    )
+  }
+}
+
 let undiciModule: typeof import('undici') | undefined
 
 export async function createUploadForm(): Promise<FormData> {
@@ -70,6 +81,7 @@ export async function prepareDownloadPlan(
   outputPath: string,
   force: boolean,
   boundary = new WriteBoundary(),
+  treePreflighted = false,
 ): Promise<
   { value: DownloadPlan; error?: never } | { error: CliError; value?: never }
 > {
@@ -106,7 +118,10 @@ export async function prepareDownloadPlan(
       }),
     }
   }
-  await boundary.tree(root)
+  // Project preflight already enumerated the tree. Reuse those records, but
+  // still verify every identity instead of treating preflight as a bypass.
+  if (treePreflighted) await boundary.checkTree(root)
+  else await boundary.tree(root)
   const seen = new Set<string>()
   const directories = new Set<string>()
   const foldCase = process.platform === 'win32' || process.platform === 'darwin'
@@ -127,9 +142,7 @@ export async function prepareDownloadPlan(
       directories.has(key) ||
       prefixes.some((prefix) => seen.has(prefix))
     ) {
-      throw new WriteBoundaryError(
-        file.path,
-        'Retry later. If this repeats, report the artifact ID.',
+      throw new DownloadManifestError(
         `Download manifest contains conflicting file path ${JSON.stringify(file.path)}.`,
       )
     }
@@ -160,9 +173,7 @@ export async function prepareDownloadPlan(
 
 function downloadRelativePath(path: string): string {
   if (!path.startsWith('/') || path.includes('\0') || path.includes('\\')) {
-    throw new WriteBoundaryError(
-      path,
-      'Retry later. If this repeats, report the artifact ID.',
+    throw new DownloadManifestError(
       `Download manifest contains invalid file path ${JSON.stringify(path)}.`,
     )
   }
@@ -180,9 +191,7 @@ function downloadRelativePath(path: string): string {
             /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(segment))),
     )
   ) {
-    throw new WriteBoundaryError(
-      path,
-      'Retry later. If this repeats, report the artifact ID.',
+    throw new DownloadManifestError(
       `Download manifest contains unsafe file path ${JSON.stringify(path)}.`,
     )
   }
@@ -218,7 +227,11 @@ function downloadIntegrityError(path: string, reason: string): CliError {
 }
 
 export function downloadFileSystemError(error: unknown): CliError {
-  if (error instanceof WriteBoundaryError) return error.error
+  if (
+    error instanceof WriteBoundaryError ||
+    error instanceof DownloadManifestError
+  )
+    return error.error
   return cliError({
     code: 'download_failed',
     message:

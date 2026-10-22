@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi, type TestContext } from 'vitest'
 import type { DownloadManifestResponse } from '@artifactshare/contract'
-import { prepareDownloadPlan } from './files.js'
+import { DownloadManifestError, prepareDownloadPlan } from './files.js'
 import { WriteBoundary, WriteBoundaryError } from './write-boundary.js'
 
 async function fixture(t: TestContext) {
@@ -49,7 +49,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
         boundary,
       )
       if (platform === 'linux') assert.ok((await plan).value)
-      else await assert.rejects(plan, WriteBoundaryError)
+      else await assert.rejects(plan, DownloadManifestError)
     } finally {
       vi.unstubAllGlobals()
       await boundary.cleanup()
@@ -67,7 +67,7 @@ for (const paths of [
     const { base, output } = await fixture(t)
     await assert.rejects(
       prepareDownloadPlan(manifest(paths), output, false),
-      WriteBoundaryError,
+      DownloadManifestError,
     )
     assert.deepEqual(await fs.readdir(base), [])
   })
@@ -121,3 +121,35 @@ test('existing output without force returns output_exists without walking its co
   assert.ok(!visited.includes(join(output, 'existing')))
   assert.equal(await fs.readFile(join(output, 'existing'), 'utf8'), 'keep')
 })
+
+for (const changed of [false, true]) {
+  test(`preflighted force plan reuses records and verifies children (changed=${changed})`, async (t) => {
+    const { base, output } = await fixture(t)
+    await fs.mkdir(output)
+    const child = join(output, 'old.md')
+    await fs.writeFile(child, 'original')
+    const boundary = new WriteBoundary()
+    await boundary.outputParent(base)
+    await boundary.tree(output)
+    if (changed) {
+      await fs.rename(child, join(base, 'original.md'))
+      await fs.writeFile(child, 'replacement')
+    }
+    const walk = vi.spyOn(boundary, 'tree')
+    try {
+      const plan = prepareDownloadPlan(
+        manifest(['/index.md']),
+        output,
+        true,
+        boundary,
+        true,
+      )
+      if (changed) await assert.rejects(plan, WriteBoundaryError)
+      else assert.ok((await plan).value)
+      assert.equal(walk.mock.calls.length, 0)
+    } finally {
+      walk.mockRestore()
+      if (!changed) await boundary.cleanup()
+    }
+  })
+}

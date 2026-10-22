@@ -12,6 +12,19 @@ import {
 } from './cli-reference-content'
 
 describe('CLI reference content', () => {
+  test('explains trusted download parents and per-artifact manifest failures in both locales', () => {
+    const en = cliReferenceContent('en').sections.recovery.body
+    const ja = cliReferenceContent('ja').sections.recovery.body
+    expect(en).toContain('accepts linked output parents')
+    expect(en).toContain('rechecks their resolved directory identities')
+    expect(en).toContain(
+      'invalid manifest paths, bodies, or identities remain per-artifact',
+    )
+    expect(ja).toContain('出力ルートの親がリンクでも使用でき')
+    expect(ja).toContain('リンク先のディレクトリの同一性を再確認')
+    expect(ja).toContain('マニフェストのパス・内容・IDの不備は成果物ごとの失敗')
+  })
+
   test('explains fragment delivery and sharing filtered views or headings', () => {
     expect(cliReferenceContent('en').sections.basics.body).toContain(
       'Browser share pages pass their URL fragment (#) to HTML, Markdown, and static-site frames, follow changes inside them, and include it in Copy link for sharing filtered views or headings.',
@@ -445,7 +458,9 @@ test.each(['en', 'ja'] as const)(
 
 test('download recovery describes boundary refusals and retained originals in both locales', () => {
   const en = cliReferenceContent('en').sections.recovery.body
-  expect(en).toContain('refuses linked output parents')
+  expect(en).toContain(
+    'Linked output roots, indexes, and listed artifact trees are refused',
+  )
   expect(en).toContain('including unchanged versions')
   expect(en).toContain(
     'Successful replacements retain originals and previous indexes',

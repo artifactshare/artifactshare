@@ -673,9 +673,10 @@ const downloadDefinition = define({
 Use resolve first when a user gives a title or project name, then pass the id here.
 Download writes files to a directory so the result can be inspected or passed to update.
 Artifact IDs must match ^[a-z0-9]{10}$; invalid or duplicate list/index IDs fail before writes.
-Download rejects links in its output parent, root, index, and every listed artifact, regardless of --force.
+Download accepts linked output parents and rechecks their resolved directory identities.
+Links in the output root, index, and every listed artifact are rejected, regardless of --force.
 Project preflight checks every listed artifact tree, including unchanged versions, but not unrelated content.
-Network and content failures have individual artifact results; a boundary error aborts the remaining publications.
+Network failures and invalid manifest paths, bodies, or identities have individual artifact results; a boundary error aborts the remaining publications.
 Replacement retains originals and previous indexes in data.backup_paths after success; inspect them before manual cleanup.
 Identity checks detect observed swaps;
 Node path-based operations cannot guarantee atomic confinement against concurrent changes.

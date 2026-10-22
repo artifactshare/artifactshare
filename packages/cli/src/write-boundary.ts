@@ -31,6 +31,7 @@ export type WriteBoundaryDependencies = {
     phase: 'create' | 'read' | 'rename' | 'remove' | 'rollback',
     path: string,
   ) => Promise<void>
+  stat?: (path: string) => Promise<BigIntStats>
   lstat?: (path: string) => Promise<BigIntStats>
   realpath?: (path: string) => Promise<string>
   open?: typeof fs.open
@@ -80,8 +81,8 @@ export class WriteBoundary {
       yield* this.subtree(child)
   }
 
-  // Record the chosen output parent without following links, then pin its
-  // identity for subsequent operations. Missing parents are checked likewise.
+  // Trust the chosen parent's resolved directory, including platform aliases
+  // such as /tmp. Pin and recheck that target identity on every operation.
   async outputParent(path: string): Promise<void> {
     path = resolve(path)
     if (this.entries.has(path)) {
@@ -108,10 +109,12 @@ export class WriteBoundary {
 
   private async stat(path: string) {
     try {
-      const s = await (
-        this.dependencies.lstat ??
-        ((name: string) => fs.lstat(name, { bigint: true }))
-      )(path)
+      const inspect = this.trustedParents.has(path)
+        ? (this.dependencies.stat ??
+          ((name: string) => fs.stat(name, { bigint: true })))
+        : (this.dependencies.lstat ??
+          ((name: string) => fs.lstat(name, { bigint: true })))
+      const s = await inspect(path)
       if (
         s.isSymbolicLink() ||
         (!s.isDirectory() && !s.isFile()) ||
@@ -226,8 +229,15 @@ export class WriteBoundary {
     if (entry.stat.isDirectory()) {
       for (const name of await this.io(path, () => fs.readdir(path)))
         await this.tree(join(path, name))
+      await this.check(path)
     }
-    await this.check(path)
+  }
+
+  async checkTree(path: string) {
+    await this.check(
+      path,
+      ...[...this.subtree(resolve(path))].map(([name]) => name),
+    )
   }
 
   async before(
@@ -400,6 +410,16 @@ export class WriteBoundary {
         await this.io(path, () => (this.dependencies.unlink ?? fs.unlink)(path))
       this.deleteEntry(path)
       this.absent.add(path)
+    }
+  }
+
+  async retainedWorkspace(): Promise<string | undefined> {
+    if (!this.workspace || !this.entries.has(this.workspace)) return
+    try {
+      await this.check(this.workspace)
+      if ((await fs.readdir(this.workspace)).length > 0) return this.workspace
+    } catch {
+      // A substituted or inaccessible path is not a verified recovery location.
     }
   }
 

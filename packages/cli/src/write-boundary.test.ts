@@ -574,3 +574,70 @@ for (const phase of ['create', 'read', 'rename', 'remove'] as const) {
     await assert.rejects(boundary.cleanup(), WriteBoundaryError)
   })
 }
+
+test('tree records and verifies a new leaf without a redundant third inspection', async (t) => {
+  const { root } = await fixture(t)
+  const leaf = join(root, 'file.md')
+  await fs.writeFile(leaf, 'content')
+  let inspections = 0
+  const boundary = new WriteBoundary({
+    lstat: async (path) => {
+      if (path === leaf) inspections++
+      return fs.lstat(path, { bigint: true })
+    },
+  })
+  await boundary.tree(root)
+  assert.equal(inspections, 2)
+})
+
+for (const phase of ['rename', 'remove'] as const) {
+  test(`linked output parent target is rechecked before ${phase}`, async (t) => {
+    const { base, root, outside } = await fixture(t)
+    const alias = join(base, 'alias')
+    await fs.symlink(root, alias)
+    let armed = false
+    const boundary = new WriteBoundary({
+      checkpoint: async (at) => {
+        if (!armed || at !== phase) return
+        armed = false
+        await fs.unlink(alias)
+        await fs.symlink(outside, alias)
+      },
+    })
+    await boundary.outputParent(alias)
+    const stage = await boundary.privateDirectory(alias)
+    await boundary.write(join(stage, 'file'), 'new')
+    armed = true
+    await assert.rejects(
+      phase === 'rename'
+        ? boundary.move(stage, join(alias, 'published'))
+        : boundary.cleanup(),
+      WriteBoundaryError,
+    )
+    assert.deepEqual(await fs.readdir(outside), ['sentinel'])
+    assert.equal(
+      await fs.readFile(join(outside, 'sentinel'), 'utf8'),
+      'unchanged',
+    )
+  })
+}
+
+test('missing output parents are created beneath a trusted linked ancestor', async (t) => {
+  const { base, root } = await fixture(t)
+  const alias = join(base, 'alias')
+  await fs.symlink(root, alias)
+  const parent = join(alias, 'new', 'nested')
+  const boundary = new WriteBoundary()
+  await boundary.outputParent(parent)
+  const workspace = await boundary.privateDirectory(parent)
+  await boundary.write(join(workspace, 'file'), 'new')
+  assert.equal(
+    await fs.readFile(
+      join(root, 'new', 'nested', workspace.split('/').at(-1)!, 'file'),
+      'utf8',
+    ),
+    'new',
+  )
+  await boundary.cleanup()
+  assert.deepEqual(await fs.readdir(root), [])
+})

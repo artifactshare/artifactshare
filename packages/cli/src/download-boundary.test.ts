@@ -370,7 +370,7 @@ test('unsupported kinds still reject invalid IDs before mutation', async (t) => 
   assert.deepEqual(await fs.readdir(base), [])
 })
 
-test('failed index publication restores old index and reports recovery', async (t) => {
+test('failed index publication restores old index without a stale recovery hint', async (t) => {
   const { output, args } = await fixture(t)
   await fs.mkdir(output)
   const index = '{"artifacts":[]}'
@@ -388,11 +388,12 @@ test('failed index publication restores old index and reports recovery', async (
   })
   const error = failure()
   assert.equal(error.code, 'download_failed')
+  assert.doesNotMatch(error.hint, /Recover retained data at/)
   assert.ok(!JSON.stringify(error).includes('private failure'))
   assert.equal(await fs.readFile(join(output, 'index.json'), 'utf8'), index)
 })
 
-test('cleanup failure reports retained workspace without a success envelope', async (t) => {
+test('empty workspace cleanup failure does not advertise retained data', async (t) => {
   const { output, args } = await fixture(t)
   serve()
   await runDownload(args, { json: true }, false, {
@@ -400,7 +401,7 @@ test('cleanup failure reports retained workspace without a success envelope', as
       throw new Error('private cleanup failure')
     },
   })
-  assert.match(failure().hint, /Recover retained data at/)
+  assert.doesNotMatch(failure().hint, /Recover retained data at/)
   assert.ok(!JSON.stringify(failure()).includes('private cleanup failure'))
   assert.equal(await fs.readFile(join(output, id, 'index.md'), 'utf8'), '# abc')
 })
@@ -449,12 +450,10 @@ for (const paths of [
   ['relative.md'],
   ['/assets\\file.md'],
   ['/assets\0file.md'],
-  ['/index.md', '/index.md'],
-  ['/index.md', '/index.md/child'],
 ]) {
   for (const force of [false, true]) {
     for (const priorIndex of [false, true]) {
-      test(`project aborts unsafe manifest ${JSON.stringify(paths)} (force=${force}, index=${priorIndex})`, async (t) => {
+      test(`project continues after unsafe manifest ${JSON.stringify(paths)} (force=${force}, index=${priorIndex})`, async (t) => {
         const { base, output, args } = await fixture(t)
         const outside = join(base, 'outside')
         await fs.mkdir(outside)
@@ -473,30 +472,23 @@ for (const paths of [
           }
           return fetch(url, options)
         })
-        const publications: string[] = []
-        await runDownload(args, { json: true }, false, {
-          checkpoint: async (phase, path) => {
-            if (phase === 'rename') publications.push(path)
-          },
-        })
-        const error = failure()
-        assert.equal(error.code, 'validation_failed')
-        assert.ok(error.message.includes(JSON.stringify(paths.at(-1))))
-        assert.match(error.hint, /retry|Retry/)
-        // Only the list and first manifest may be requested: no file fetches
-        // or subsequent artifacts after a fatal path error.
-        assert.equal(vi.mocked(cliFetch).mock.calls.length, 2)
-        assert.deepEqual(publications, [])
-        assert.deepEqual(
-          await fs.readdir(output),
-          priorIndex ? ['index.json'] : [],
+        await runDownload(args, { json: true })
+        assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+        assert.equal(process.exitCode, 1)
+        const results = JSON.parse(
+          await fs.readFile(join(output, 'index.json'), 'utf8'),
         )
-        if (priorIndex)
-          assert.equal(
-            await fs.readFile(join(output, 'index.json'), 'utf8'),
-            index,
-          )
-        assert.deepEqual((await fs.readdir(base)).sort(), ['output', 'outside'])
+        assert.equal(results.artifacts[0].status, 'failed')
+        assert.ok(
+          results.artifacts[0].reason.includes(JSON.stringify(paths.at(-1))),
+        )
+        assert.match(results.artifacts[0].reason, /retry|Retry/)
+        assert.equal(results.artifacts[1].status, 'ok')
+        assert.equal(
+          await fs.readFile(join(output, otherId, 'index.md'), 'utf8'),
+          '# abc',
+        )
+        await assert.rejects(fs.lstat(join(output, id)), { code: 'ENOENT' })
         assert.deepEqual(await fs.readdir(outside), ['sentinel'])
         assert.equal(
           await fs.readFile(join(outside, 'sentinel'), 'utf8'),
@@ -507,7 +499,7 @@ for (const paths of [
   }
 }
 
-for (const bad of ['identity', 'malformed']) {
+for (const bad of ['identity', 'malformed', 'ABC123DEF4', '../x', 123, null]) {
   test(`project handles artifact ${bad} failure according to its boundary status`, async (t) => {
     const { base, output, args } = await fixture(t)
     const outside = join(base, 'outside')
@@ -520,7 +512,7 @@ for (const bad of ['identity', 'malformed']) {
     vi.mocked(cliFetch).mockImplementation(async (url, options) => {
       if (String(url).endsWith(`/${id}/download`)) {
         if (bad === 'malformed') return json({ files: [] })
-        if (bad === 'identity') return json(manifest(otherId))
+        return json(manifest(bad === 'identity' ? otherId : bad))
       }
       return fetch(url, options)
     })
@@ -554,7 +546,7 @@ for (const [single, force] of [
   [true, false],
   [true, true],
 ] as const) {
-  test(`${single ? 'single' : 'project'} download rejects a linked output parent (force=${force})`, async (t) => {
+  test(`${single ? 'single' : 'project'} download accepts a linked output parent (force=${force})`, async (t) => {
     expectTypeOf(single).toEqualTypeOf<boolean>()
     expectTypeOf(force).toEqualTypeOf<boolean>()
     const { base, args } = await fixture(t)
@@ -569,16 +561,19 @@ for (const [single, force] of [
     }
     args.options.force = force
     serve()
-    let mutations = 0
-    await runDownload(args, { json: true }, false, {
-      checkpoint: async (phase) => {
-        if (phase !== 'read') mutations++
-      },
-    })
-    assert.equal(mutations, 0)
-    assert.equal(failure().code, 'validation_failed')
-    assert.ok(failure().message.includes(alias))
-    assert.deepEqual(await fs.readdir(parent), [])
+    await runDownload(args, { json: true })
+    assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+    assert.equal(vi.mocked(writeSuccess).mock.calls.length, 1)
+    const artifact = single
+      ? join(parent, 'output')
+      : join(parent, 'output', id)
+    assert.equal(await fs.readFile(join(artifact, 'index.md'), 'utf8'), '# abc')
+    if (!single) {
+      const index = JSON.parse(
+        await fs.readFile(join(parent, 'output', 'index.json'), 'utf8'),
+      )
+      assert.equal(index.artifacts[0].status, 'ok')
+    }
   })
 }
 
@@ -706,3 +701,79 @@ for (const force of [false, true]) {
     assert.equal(await fs.readFile(join(output, id), 'utf8'), 'keep')
   })
 }
+
+for (const body of [null, [], 'invalid', {}, { files: [] }]) {
+  test(`single malformed manifest is a service error: ${JSON.stringify(body)}`, async (t) => {
+    const { base, args } = await fixture(t)
+    delete args.options.projectId
+    args.positionals = [id]
+    vi.mocked(cliFetch).mockResolvedValue(json(body))
+    let mutations = 0
+    await runDownload(args, { json: true }, false, {
+      checkpoint: async () => {
+        mutations++
+      },
+    })
+    assert.equal(failure().code, 'service_error')
+    assert.equal(mutations, 0)
+    assert.deepEqual(await fs.readdir(base), [])
+  })
+}
+
+for (const paths of [
+  ['/index.md', '/index.md'],
+  ['/index.md', '/index.md/child'],
+  ['/index.md/child', '/index.md'],
+  ...(process.platform === 'darwin' || process.platform === 'win32'
+    ? [['/About.html', '/about.html']]
+    : []),
+]) {
+  for (const force of [false, true]) {
+    test(`project continues after manifest conflict ${JSON.stringify(paths)} (force=${force})`, async (t) => {
+      const { output, args } = await fixture(t)
+      args.options.force = force
+      await fs.mkdir(output)
+      await fs.writeFile(join(output, 'index.json'), '{"artifacts":[]}')
+      serve([entry(id), entry(otherId)])
+      const fetch = vi.mocked(cliFetch).getMockImplementation()!
+      vi.mocked(cliFetch).mockImplementation(async (url, options) => {
+        if (String(url).endsWith(`/${id}/download`)) {
+          const body = manifest()
+          body.files = paths.map((path) => ({ ...body.files[0]!, path }))
+          return json(body)
+        }
+        return fetch(url, options)
+      })
+      await runDownload(args, { json: true })
+      assert.equal(vi.mocked(writeFailure).mock.calls.length, 0)
+      assert.equal(process.exitCode, 1)
+      const index = JSON.parse(
+        await fs.readFile(join(output, 'index.json'), 'utf8'),
+      )
+      assert.equal(index.artifacts[0].status, 'failed')
+      assert.match(index.artifacts[0].reason, /conflicting file path/)
+      assert.equal(index.artifacts[1].status, 'ok')
+      assert.equal(
+        await fs.readFile(join(output, otherId, 'index.md'), 'utf8'),
+        '# abc',
+      )
+      await assert.rejects(fs.lstat(join(output, id)), { code: 'ENOENT' })
+    })
+  }
+}
+
+test('failed cleanup reports a workspace containing staged data', async (t) => {
+  const { args } = await fixture(t)
+  delete args.options.projectId
+  args.positionals = [id]
+  serve()
+  await runDownload(args, { json: true }, false, {
+    rename: async () => {
+      throw new Error('publication failed')
+    },
+    unlink: async () => {
+      throw new Error('cleanup failed')
+    },
+  })
+  assert.match(failure().hint, /Recover retained data at/)
+})

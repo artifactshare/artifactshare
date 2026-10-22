@@ -443,11 +443,12 @@ Download artifact IDs must match `^[a-z0-9]{10}$`. Invalid, duplicate, or
 case-colliding IDs in any list page or previous `index.json` are fatal before
 writes. Single-download targets and manifest identities must agree.
 
-Linked output parents, roots, indexes, and listed artifact trees are refused,
+Output parents may be links; their resolved directory identities are rechecked.
+Linked output roots, indexes, and listed artifact trees are refused,
 even with `--force`. Recorded directory identities are checked again before
 writes and cleanup. Project preflight inspects every listed artifact tree,
 including unchanged versions, and `index.json`; unrelated content is not walked.
-Ordinary network or content failures are recorded per artifact. Every boundary
+Network failures and invalid manifest paths, bodies, or identities are recorded per artifact. Every boundary
 violation stops further publication, including later artifacts and the final index.
 Artifact IDs with surrounding whitespace are rejected, not trimmed, including
 single-download targets. Remove the whitespace before retrying. Share URLs use

@@ -21,6 +21,7 @@ import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
 import { mapApiError, networkError, serviceError } from '../errors.js'
 import {
+  DownloadManifestError,
   downloadFileSystemError,
   prepareDownloadPlan,
   verifyDownloadedBytes,
@@ -142,8 +143,9 @@ export async function runDownload(
         ? error.error
         : downloadFileSystemError(error)
     if (primary && cleanup) failure.hint += ' Cleanup could not finish safely.'
-    if (boundary.workspace)
-      failure.hint += ` Recover retained data at ${boundary.workspace}; inspect it before manual cleanup.`
+    const retained = await boundary.retainedWorkspace()
+    if (retained)
+      failure.hint += ` Recover retained data at ${retained}; inspect it before manual cleanup.`
     writeFailure('download', failure, mode, 1)
   }
 }
@@ -232,10 +234,17 @@ async function runDownloadInternal(
       isRetry,
     )
   }
+  if (!isRecord(body) || !('id' in body)) {
+    throw new DownloadFailure(
+      serviceError(
+        'Download manifest succeeded but the response did not include file metadata.',
+      ),
+    )
+  }
   validateIds([body])
   if (isRecord(body) && body.id !== artifactId)
-    throw new WriteBoundaryError(
-      `manifest artifact ID ${JSON.stringify(body.id)}`,
+    throw new DownloadManifestError(
+      `Manifest artifact ID ${JSON.stringify(body.id)} does not match ${artifactId}.`,
     )
   if (!downloadManifestFields(body)) {
     throw new DownloadFailure(
@@ -549,14 +558,15 @@ async function runProjectDownload(
           continue
         }
         const body = await readJson(response)
-        if (isRecord(body) && 'id' in body) validateIds([body])
-        if (isRecord(body) && isArtifactId(body.id) && body.id !== result.id) {
-          result.reason = `Manifest artifact ID ${JSON.stringify(body.id)} does not match ${result.id}; check the endpoint and retry.`
-          continue
+        if (!isRecord(body) || body.id !== result.id) {
+          throw new DownloadManifestError(
+            `Download manifest artifact ID does not match ${result.id}.`,
+          )
         }
         if (!downloadManifestFields(body)) {
-          result.reason = 'invalid download manifest'
-          continue
+          throw new DownloadManifestError(
+            `Invalid download manifest for artifact ${result.id}.`,
+          )
         }
         // Re-runs are an incremental sync: an unchanged version with its output
         // still on disk needs no file requests. --force wins and re-downloads.
@@ -580,6 +590,7 @@ async function runProjectDownload(
           root,
           Boolean(parsed.options.force),
           boundary,
+          true,
         )
         if (plan.error) {
           result.reason = plan.error.message
@@ -621,9 +632,11 @@ async function runProjectDownload(
         await boundary.check(output, dirname(output), boundary.workspace!)
         if (error instanceof WriteBoundaryError) throw error
         result.reason =
-          error instanceof DownloadFileError
-            ? error.message
-            : 'download failed; check filesystem availability and retry'
+          error instanceof DownloadManifestError
+            ? `${error.message} ${error.error.hint}`
+            : error instanceof DownloadFileError
+              ? error.message
+              : 'download failed; check filesystem availability and retry'
       }
     }
   }
@@ -640,8 +653,7 @@ async function runProjectDownload(
     skipped: results.filter((r) => r.status === 'skipped').length,
     failed: results.filter((r) => r.status === 'failed').length,
   }
-  if (counts.failed === 0 && !listError) await boundary.finish()
-  else await boundary.cleanup()
+  await boundary.finish()
   process.exitCode = counts.failed > 0 ? 1 : 0
   return writeSuccess(
     command,
