@@ -79,9 +79,11 @@ async function gitRoot(cwd: string): Promise<string | undefined> {
  * The trust root itself is inspected with lstat. The fallback parent may be
  * macOS /tmp or /var only when its link points to the expected /private target;
  * both link and target identities are pinned. Ancestor aliases remain allowed.
- * Windows lstat detects symlinks/junctions but Node does not
- * expose all reparse tags. Therefore Windows fails closed before reading bytes:
- * resolved-path equality alone cannot establish the required reparse guarantee.
+ * Windows lstat rejects symlinks, junctions and app execution aliases. Without
+ * O_NOFOLLOW, the post-open component/handle identity check guards the first read.
+ * Non-redirecting reparse points (cloud-file placeholders, deduplication and
+ * compression) may serve their own content. Stable dev/ino/mode identities are
+ * required on every platform; unavailable identities fail closed.
  * These checks are not an atomic snapshot: Node has no openat traversal and a
  * transient swap-and-restore between checks cannot always be detected.
  */
@@ -229,11 +231,6 @@ export async function readUploadBoundary(
           !unchanged(current, before)
         )
           fail(path, 'file identity or type changed')
-        if (process.platform === 'win32')
-          fail(
-            path,
-            'reparse-point detection guarantee unavailable on Windows with Node standard APIs; use a supported POSIX system',
-          )
         options.hooks?.reading?.(path, before)
         const bytes = await handle.readFile()
         await options.hooks?.checkpoint?.('read', path)
@@ -255,11 +252,6 @@ export async function readUploadBoundary(
         await handle.close()
       }
     }
-    if (process.platform === 'win32')
-      fail(
-        input,
-        'reparse-point detection guarantee unavailable on Windows with Node standard APIs; use a supported POSIX system',
-      )
     for (const path of evidence.keys()) await walk(path)
     return { directory: selected.isDirectory(), files }
   } catch (error) {

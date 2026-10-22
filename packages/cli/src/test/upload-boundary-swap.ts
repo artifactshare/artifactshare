@@ -56,9 +56,12 @@ export function uploadBoundarySwap({
         assert.equal(after.dev, before.dev)
         assert.equal(after.ino, before.ino)
         blockedByOpenHandle = true
+        throw new Error(
+          'Windows refused the parent rename with an open child handle',
+        )
       }
     } catch (error) {
-      fixtureError = error
+      if (!blockedByOpenHandle) fixtureError = error
       throw error
     }
   }
@@ -74,6 +77,7 @@ export function uploadBoundarySwap({
       }
       assert.equal(changed, true, 'substitution must actually complete')
       assert.equal((await lstat(victim)).isSymbolicLink(), true)
+      return blockedByOpenHandle
     },
   }
 }

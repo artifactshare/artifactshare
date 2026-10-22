@@ -158,7 +158,7 @@ for (const kind of [
 
 for (const phase of ['enumerated', 'before-open', 'opened'] as const) {
   for (const parent of [false, true]) {
-    test(`upload boundary detects ${parent ? 'parent' : 'leaf'} substitution at ${phase}`, async () => {
+    test(`upload boundary detects ${parent ? 'parent' : 'leaf'} substitution at ${phase}`, async (context) => {
       const { selected, external } = await fixture()
       let reads = 0
       const path = join(selected, 'index.html')
@@ -183,7 +183,10 @@ for (const phase of ['enumerated', 'before-open', 'opened'] as const) {
       )
       assert.equal(reads, 0)
       assert.equal(observed.reads, 0)
-      await swap.assertCompleted()
+      if (await swap.assertCompleted())
+        context.skip(
+          'Windows refused the parent rename while a child handle was open',
+        )
       if (phase === 'opened') assert.equal(observed.closes, 1)
     })
   }
@@ -199,18 +202,6 @@ test('upload boundary preserves bytes, excludes metadata and accepts parent fall
   )
   await writeFile(join(selected, '.hidden'), 'hidden')
   const preparation = readUploadBoundary(selected, { cwd: selected })
-  if (process.platform === 'win32') {
-    await assert.rejects(
-      preparation,
-      /reparse-point detection guarantee unavailable/,
-    )
-    assert.equal(observed.reads, 0)
-    assert.equal(
-      observed.paths.some((path) => path.includes('node_modules')),
-      false,
-    )
-    return
-  }
   const snapshot = await preparation
   assert.deepEqual(
     snapshot.files.map((file) => [file.relativePath, file.bytes.toString()]),
@@ -240,14 +231,6 @@ test('upload boundary supports nested cwd, git files and OS aliases above the ro
     process.platform === 'darwin'
       ? selected.replace(/^\/private\/var\//, '/var/')
       : selected
-  if (process.platform === 'win32') {
-    await assert.rejects(
-      readUploadBoundary('../index.html', { cwd: nested }),
-      /reparse-point detection guarantee unavailable/,
-    )
-    assert.equal(observed.reads, 0)
-    return
-  }
   const result = await readUploadBoundary('../index.html', { cwd: nested })
   assert.equal(result.files[0]!.bytes.toString(), '<p>selected</p>')
   assert.equal((await readUploadBoundary(path, { cwd: path })).directory, true)
@@ -265,9 +248,7 @@ test('upload boundary checks size after reading and rejects erased link componen
         },
       },
     }),
-    process.platform === 'win32'
-      ? /reparse-point detection guarantee unavailable/
-      : /changed/,
+    /changed/,
   )
   await symlink(external, join(selected, 'link'), 'junction')
   await assert.rejects(
@@ -285,10 +266,7 @@ for (const fault of ['identity', 'missing-identity', 'mismatch', 'read']) {
       /identity|verified|guarantee unavailable/,
     )
     assert.equal(observed.closes, 1)
-    assert.equal(
-      observed.reads,
-      fault === 'read' && process.platform !== 'win32' ? 1 : 0,
-    )
+    assert.equal(observed.reads, fault === 'read' ? 1 : 0)
   })
 }
 
@@ -325,32 +303,26 @@ test('upload boundary permits aliases strictly above the fallback trust root', a
   const result = readUploadBoundary(join(alias, 'site', 'index.html'), {
     cwd: root,
   })
-  if (process.platform === 'win32') {
-    await assert.rejects(
-      result,
-      /reparse-point detection guarantee unavailable/,
-    )
-    assert.equal(observed.reads, 0)
-  } else {
-    assert.equal((await result).files[0]!.bytes.toString(), '<p>site</p>')
-  }
+  assert.equal((await result).files[0]!.bytes.toString(), '<p>site</p>')
 })
 
-// Exercise the fail-closed policy on every CI OS, not just Windows.
-test('upload boundary refuses Windows regular files and empty directories before reading', async () => {
+// Exercise Windows without O_NOFOLLOW on every CI OS as well as native Windows.
+test('upload boundary accepts Windows regular files and empty directories with verified identities', async () => {
   const { selected } = await fixture()
   const empty = join(selected, 'empty')
   await mkdir(empty)
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
   Object.defineProperty(process, 'platform', { value: 'win32' })
+  observed.noFollowUnavailable = true
   try {
-    for (const path of [join(selected, 'index.html'), empty]) {
-      await assert.rejects(
-        readUploadBoundary(path, { cwd: selected }),
-        /reparse-point detection guarantee unavailable on Windows/,
-      )
-    }
-    assert.equal(observed.reads, 0)
+    const file = await readUploadBoundary(join(selected, 'index.html'), {
+      cwd: selected,
+    })
+    assert.equal(file.files[0]!.bytes.toString(), '<p>selected</p>')
+    const directory = await readUploadBoundary(empty, { cwd: selected })
+    assert.equal(directory.directory, true)
+    assert.deepEqual(directory.files, [])
+    assert.equal(observed.reads, 1)
     assert.equal(observed.closes, 1)
   } finally {
     Object.defineProperty(process, 'platform', descriptor)
@@ -360,6 +332,7 @@ test('upload boundary refuses Windows regular files and empty directories before
 test('upload boundary fails closed when a required platform capability is unavailable', async () => {
   const { selected } = await fixture()
   observed.noFollowUnavailable = true
+  if (process.platform === 'win32') observed.fault = 'missing-identity'
   await assert.rejects(
     readUploadBoundary(join(selected, 'index.html')),
     /guarantee unavailable/,

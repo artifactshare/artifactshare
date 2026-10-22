@@ -21,7 +21,13 @@ import * as api from '../api.js'
 import { runShare } from '../command-runners/share.js'
 import { runAppend } from '../command-runners/append.js'
 import { runUpdate } from '../command-runners/update.js'
-import { expectFailure, runAsync, withServer } from './helpers.js'
+import {
+  collectBody,
+  expectFailure,
+  expectSuccess,
+  runAsync,
+  withServer,
+} from './helpers.js'
 import { uploadBoundarySwap } from './upload-boundary-swap.js'
 
 // Keep native operations real, but expose configurable exports for read
@@ -36,82 +42,124 @@ vi.mock('node:fs', async (importOriginal) => ({
 export function uploadBoundaryRunnerTests(
   command: 'share' | 'append' | 'update',
 ) {
-  for (const unsupportedWindows of [false, true]) {
-    test(`${command} upload boundary rejects ${unsupportedWindows ? 'unavailable Windows reparse detection' : 'a linked fallback root'} before reads or authentication`, async () => {
-      const root = await mkdtemp(join(tmpdir(), 'upload-boundary-root-'))
-      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
-      try {
-        const selected = join(root, 'selected')
-        const alias = join(root, 'alias')
-        await mkdir(selected)
-        await writeFile(join(selected, 'index.html'), '<p>selected</p>')
-        await symlink(
-          selected,
-          alias,
-          process.platform === 'win32' ? 'junction' : 'dir',
-        )
-        const original = boundary.readUploadBoundary
-        vi.spyOn(boundary, 'readUploadBoundary').mockImplementation(
-          (input, options) => original(input, { ...options, cwd: root }),
-        )
-        let reads = 0
-        const originalOpen = fs.open
-        vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
-          const handle = await originalOpen(...args)
-          const read = handle.readFile.bind(handle)
-          handle.readFile = ((
-            ...readArgs: Parameters<typeof handle.readFile>
-          ) => {
-            reads++
-            return read(...readArgs)
-          }) as typeof handle.readFile
-          return handle
-        })
-        const pathReads = vi.spyOn(fs, 'readFile')
-        const pathStreams = vi.spyOn(streams, 'createReadStream')
-        const credential = vi.spyOn(credentials, 'resolveCredential')
-        const request = vi.spyOn(api, 'cliFetch')
-        const failure = vi
-          .spyOn(output, 'writeFailure')
-          .mockImplementation(() => undefined)
-        if (unsupportedWindows)
-          Object.defineProperty(process, 'platform', { value: 'win32' })
-        const input = join(unsupportedWindows ? selected : alias, 'index.html')
-        await { share: runShare, append: runAppend, update: runUpdate }[
-          command
-        ](
-          {
-            command,
-            positionals: command === 'share' ? [input] : ['abc123def4', input],
-            options: {
-              token: 'test-token',
-              ...(command === 'share' ? { project: 'example' } : {}),
-            },
+  test(`${command} upload boundary rejects a linked fallback root before reads or authentication`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upload-boundary-root-'))
+    try {
+      const selected = join(root, 'selected')
+      const alias = join(root, 'alias')
+      await mkdir(selected)
+      await writeFile(join(selected, 'index.html'), '<p>selected</p>')
+      await symlink(
+        selected,
+        alias,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      )
+      const original = boundary.readUploadBoundary
+      vi.spyOn(boundary, 'readUploadBoundary').mockImplementation(
+        (input, options) => original(input, { ...options, cwd: root }),
+      )
+      let reads = 0
+      const originalOpen = fs.open
+      vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+        const handle = await originalOpen(...args)
+        const read = handle.readFile.bind(handle)
+        handle.readFile = ((
+          ...readArgs: Parameters<typeof handle.readFile>
+        ) => {
+          reads++
+          return read(...readArgs)
+        }) as typeof handle.readFile
+        return handle
+      })
+      const pathReads = vi.spyOn(fs, 'readFile')
+      const pathStreams = vi.spyOn(streams, 'createReadStream')
+      const credential = vi.spyOn(credentials, 'resolveCredential')
+      const request = vi.spyOn(api, 'cliFetch')
+      const failure = vi
+        .spyOn(output, 'writeFailure')
+        .mockImplementation(() => undefined)
+      const input = join(alias, 'index.html')
+      await { share: runShare, append: runAppend, update: runUpdate }[command](
+        {
+          command,
+          positionals: command === 'share' ? [input] : ['abc123def4', input],
+          options: {
+            token: 'test-token',
+            ...(command === 'share' ? { project: 'example' } : {}),
           },
-          { json: true },
+        },
+        { json: true },
+      )
+      assert.equal(reads, 0)
+      for (const [readPath] of pathReads.mock.calls)
+        assert.ok(
+          ![input, join(selected, 'index.html')].includes(String(readPath)),
         )
-        assert.equal(reads, 0)
-        for (const [readPath] of pathReads.mock.calls)
-          assert.ok(
-            ![input, join(selected, 'index.html')].includes(String(readPath)),
-          )
-        assert.equal(pathStreams.mock.calls.length, 0)
-        assert.equal(credential.mock.calls.length, 0)
-        assert.equal(request.mock.calls.length, 0)
-        assert.equal(failure.mock.calls.length, 1)
-        const error = failure.mock.calls[0]![1]
-        assert.match(
-          error.message,
-          unsupportedWindows
-            ? /reparse-point detection guarantee unavailable/
-            : /symbolic link|junction/,
+      assert.equal(pathStreams.mock.calls.length, 0)
+      assert.equal(credential.mock.calls.length, 0)
+      assert.equal(request.mock.calls.length, 0)
+      assert.equal(failure.mock.calls.length, 1)
+      const error = failure.mock.calls[0]![1]
+      assert.match(error.message, /symbolic link|junction/)
+      assert.ok(error.message.includes(alias))
+      assert.match(error.hint, /Copy|link target/)
+      assert.doesNotMatch(JSON.stringify(error), /test-token|<p>/)
+    } finally {
+      vi.restoreAllMocks()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+  for (const directory of command === 'append' ? [false] : [false, true]) {
+    test(`${command} upload boundary uploads verified ${directory ? 'static-site directory' : 'regular file'} bytes`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'upload-boundary-success-'))
+      try {
+        const site = join(root, 'site')
+        await mkdir(site)
+        await writeFile(join(site, 'index.html'), '<p>selected upload</p>')
+        await writeFile(join(site, '.hidden'), 'excluded-content')
+        await mkdir(join(site, 'node_modules'))
+        await writeFile(
+          join(site, 'node_modules', 'dependency.js'),
+          'excluded-content',
         )
-        assert.ok(error.message.includes(unsupportedWindows ? selected : alias))
-        assert.match(error.hint, /Copy|link target/)
-        assert.doesNotMatch(JSON.stringify(error), /test-token|<p>/)
+        let requests = 0
+        await withServer(
+          async (request, response) => {
+            requests++
+            const body = await collectBody(request)
+            if (command === 'append') {
+              assert.equal(JSON.parse(body).content, '<p>selected upload</p>')
+            } else {
+              assert.ok(body.includes('<p>selected upload</p>'))
+              assert.ok(body.includes('filename="index.html"'))
+              assert.ok(body.includes('Content-Type: text/html'))
+              assert.ok(!body.includes('excluded-content'))
+            }
+            response.setHeader('content-type', 'application/json')
+            response.end(
+              JSON.stringify({
+                id: 'abc123def4',
+                versionId: 'version2',
+                artifactKind: directory ? 'static_site' : 'html_page',
+                shareUrl: 'https://example.test/a/abc123def4',
+              }),
+            )
+          },
+          async (baseUrl) => {
+            const input = directory ? site : join(site, 'index.html')
+            const args =
+              command === 'share'
+                ? [command, input, '--home']
+                : [command, 'abc123def4', input]
+            const result = await runAsync(
+              [...args, '--base-url', baseUrl, '--json'],
+              { ARTIFACTSHARE_TOKEN: 'test-token' },
+            )
+            expectSuccess(result, command)
+          },
+        )
+        assert.equal(requests, 1)
       } finally {
-        Object.defineProperty(process, 'platform', platform)
-        vi.restoreAllMocks()
         await rm(root, { recursive: true, force: true })
       }
     })
@@ -270,20 +318,6 @@ export function uploadBoundaryRunnerTests(
           },
           { json: true },
         )
-        if (process.platform === 'win32') {
-          assert.equal(replaced, false)
-          assert.equal(refresh.mock.calls.length, 0)
-          assert.equal(credential.mock.calls.length, 0)
-          assert.equal(uploads.mock.calls.length, 0)
-          assert.deepEqual(readIdentities, [])
-          assert.equal(success.mock.calls.length, 0)
-          assert.equal(failure.mock.calls.length, 1)
-          assert.match(
-            failure.mock.calls[0]![1].message,
-            /reparse-point detection guarantee unavailable/,
-          )
-          return
-        }
         assert.equal(replaced, true)
         assert.equal(refresh.mock.calls.length, 1)
         assert.equal(preparations.mock.calls.length, 1)
@@ -309,7 +343,7 @@ export function uploadBoundaryRunnerTests(
   }
   for (const phase of ['enumerated', 'before-open', 'opened'] as const) {
     for (const parent of [false, true]) {
-      test(`${command} upload boundary rejects ${parent ? 'parent' : 'leaf'} substitution at ${phase} before reads or authentication`, async () => {
+      test(`${command} upload boundary rejects ${parent ? 'parent' : 'leaf'} substitution at ${phase} before reads or authentication`, async (context) => {
         const root = await mkdtemp(join(tmpdir(), 'upload-boundary-command-'))
         const original = boundary.readUploadBoundary
         try {
@@ -377,7 +411,10 @@ export function uploadBoundaryRunnerTests(
             JSON.stringify(error),
             /external-sentinel|test-token/,
           )
-          await swap.assertCompleted()
+          if (await swap.assertCompleted())
+            context.skip(
+              'Windows refused the parent rename while a child handle was open',
+            )
         } finally {
           vi.restoreAllMocks()
           await rm(root, { recursive: true, force: true })

@@ -394,9 +394,12 @@ the selected input and user-created trust-root links are rejected. As fallback
 parents, macOS `/tmp` and `/var` are allowed only with their expected `/private`
 targets; both alias and target identities are checked repeatedly. Missing stable identities or
 missing POSIX no-follow support cause a local failure before authentication or API
-requests. Windows uploads fail locally before reading bytes: Node's standard APIs
-cannot rule out every reparse point, even when `lstat` and resolved paths appear
-regular. Use a supported POSIX system to upload until that guarantee is available.
+requests. Windows rejects symlinks, junctions and app execution aliases reported
+by `lstat`. Without POSIX no-follow support, Windows checks the opened handle's
+`dev`/`ino`/`mode` against the link-free path before and after reading. Other reparse
+points, including cloud-file placeholders, deduplication and compression, are
+accepted because they serve the file's own content rather than redirecting to
+another path. Missing stable file identities still cause a local failure.
 These checks are not an atomic filesystem snapshot: Node has no directory-relative
 `openat` traversal, so transient swap-and-restore changes between checks cannot
 always be detected.
