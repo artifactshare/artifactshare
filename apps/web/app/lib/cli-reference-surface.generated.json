@@ -313,6 +313,9 @@
         "--project-id",
         "--output",
         "--force"
+      ],
+      "option_help": [
+        "--force Replace existing output; retain backups for recovery"
       ]
     },
     {
@@ -814,5 +817,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-19"
+  "generated_date": "2026-10-22"
 }

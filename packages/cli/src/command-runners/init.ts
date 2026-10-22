@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { WriteBoundary, WriteBoundaryError } from '../write-boundary.js'
 import { dirname } from 'node:path'
 import type {
   InitConfigData,
@@ -11,7 +11,6 @@ import {
   configString,
   PROJECT_CONFIG_LOCAL_PATH,
   projectConfigLocalPath,
-  readRawLocalProjectConfig,
   resolveProjectConfig,
 } from '../destination.js'
 import { CLI_INVOCATION } from '../constants.js'
@@ -120,45 +119,79 @@ async function runInitConfig(
     )
   }
 
-  const resolved = await resolveProjectConfig()
-
-  if (profile) {
-    if (!configHome()) {
-      return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
-    }
-    const globalConfig = await readGlobalConfig()
-    // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing
-    // as saved profile names.
-    if (!Object.hasOwn(globalConfig?.profiles ?? {}, profile)) {
-      return writeFailure(command, profileNotFoundError(profile), mode, 1)
-    }
-  }
-
-  const existing = (await readRawLocalProjectConfig()) ?? {}
-  const next = {
-    ...existing,
-    ...(profile ? { default_profile: profile } : {}),
-    ...(projectId ? { default_project_id: projectId } : {}),
-  }
+  const boundary = new WriteBoundary()
   const path = projectConfigLocalPath()
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`)
-  const gitExclude = await ensureGitExclude(process.cwd())
-  const data = configData(next, resolved)
-  delete data.read_path
-  if (gitExclude.warning) {
-    data.git_exclude_warning = gitExclude.warning
+  try {
+    await boundary.outputParent(process.cwd())
+    await boundary.record(dirname(path), true)
+    const localText = await boundary.read(path)
+    if (profile) {
+      if (!configHome()) {
+        return writeFailure(
+          command,
+          configHomeUnavailableError(profile),
+          mode,
+          1,
+        )
+      }
+      const globalConfig = await readGlobalConfig()
+      // Object.hasOwn keeps inherited keys ("constructor" etc.) from passing
+      // as saved profile names.
+      if (!Object.hasOwn(globalConfig?.profiles ?? {}, profile)) {
+        return writeFailure(command, profileNotFoundError(profile), mode, 1)
+      }
+    }
+
+    let existing: Record<string, unknown> = {}
+    if (localText !== null) {
+      try {
+        const raw: unknown = JSON.parse(localText)
+        if (raw && typeof raw === 'object' && !Array.isArray(raw))
+          existing = raw as Record<string, unknown>
+      } catch {
+        /* Preserve the existing malformed-config fallback. */
+      }
+    }
+    const next = {
+      ...existing,
+      ...(profile ? { default_profile: profile } : {}),
+      ...(projectId ? { default_project_id: projectId } : {}),
+    }
+    await boundary.directory(dirname(path))
+    await boundary.atomicWrite(path, `${JSON.stringify(next, null, 2)}\n`)
+    boundary.keep(path)
+    const gitExclude = await ensureGitExclude(process.cwd())
+    const data = configData(next)
+    delete data.read_path
+    if (gitExclude.warning) {
+      data.git_exclude_warning = gitExclude.warning
+    }
+    if (gitExclude.applied) {
+      data.git_exclude_applied = true
+    }
+    await boundary.cleanup()
+    return writeSuccess(command, data, mode)
+  } catch (error) {
+    let cleanupFailed = false
+    try {
+      await boundary.cleanup()
+    } catch {
+      cleanupFailed = true
+    }
+    const failure =
+      error instanceof WriteBoundaryError
+        ? error.error
+        : validationError(
+            `Could not save config at ${path}.`,
+            'Check directory permissions and retry.',
+          )
+    if (cleanupFailed)
+      failure.hint += ` Inspect temporary files in ${dirname(path)} before manual cleanup.`
+    return writeFailure(command, failure, mode, 1)
   }
-  if (gitExclude.applied) {
-    data.git_exclude_applied = true
-  }
-  return writeSuccess(command, data, mode)
 }
 
-function configData(
-  config: Record<string, unknown>,
-  resolved: Awaited<ReturnType<typeof resolveProjectConfig>>,
-): InitConfigData {
+function configData(config: Record<string, unknown>): InitConfigData {
   return {
     mode: 'config',
     path: PROJECT_CONFIG_LOCAL_PATH,
@@ -167,6 +200,5 @@ function configData(
       default_profile: configString(config.default_profile),
       default_project_id: configString(config.default_project_id),
     },
-    ...(resolved.path ? { read_path: resolved.path } : {}),
   }
 }

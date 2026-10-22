@@ -1,15 +1,34 @@
 import type { Buffer } from 'node:buffer'
-import { lstat, mkdir, mkdtemp } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { basename, dirname, join, resolve } from 'node:path'
-import { prepareUploadSelection, uploadReadError } from './upload-boundary.js'
+import { dirname, join, resolve } from 'node:path'
+import {
+  prepareUploadSelection,
+  uploadReadError,
+  type UploadBoundaryDependencies,
+} from './upload-boundary.js'
 import type { CliError, DownloadPlan, UploadPayloadResult } from './types.js'
 import type {
   DownloadManifestFile,
   DownloadManifestResponse,
 } from '@artifactshare/contract'
+import {
+  WriteBoundary,
+  WriteBoundaryError,
+  WriteFileSystemError,
+} from './write-boundary.js'
 import { cliError, validationError } from './errors.js'
 import type { FormData } from 'undici'
+
+export class DownloadManifestError extends Error {
+  readonly error
+  constructor(message: string) {
+    super(message)
+    this.error = validationError(
+      message,
+      'Retry later. If this repeats, report the artifact ID.',
+    )
+  }
+}
 
 let undiciModule: typeof import('undici') | undefined
 
@@ -20,9 +39,14 @@ export async function createUploadForm(): Promise<FormData> {
 
 export async function prepareUploadPayload(
   targetPath: string,
+  dependencies?: UploadBoundaryDependencies,
 ): Promise<UploadPayloadResult> {
   try {
-    const selection = await prepareUploadSelection(targetPath)
+    const selection = await prepareUploadSelection(
+      targetPath,
+      false,
+      dependencies,
+    )
     if (selection.directory && selection.files.length === 0) {
       return {
         error: validationError(
@@ -44,7 +68,7 @@ export async function prepareUploadPayload(
         form,
         kind: selection.directory
           ? 'static_site'
-          : artifactKindForFile(targetPath),
+          : artifactKindForFile(selection.files[0]!.name),
       },
     }
   } catch (error) {
@@ -56,6 +80,8 @@ export async function prepareDownloadPlan(
   manifest: DownloadManifestResponse,
   outputPath: string,
   force: boolean,
+  boundary = new WriteBoundary(),
+  treePreflighted = false,
 ): Promise<
   { value: DownloadPlan; error?: never } | { error: CliError; value?: never }
 > {
@@ -76,15 +102,9 @@ export async function prepareDownloadPlan(
     }
   }
   const root = resolve(outputPath)
-  const existing = await lstat(root).catch(() => null)
-  if (existing?.isSymbolicLink()) {
-    return {
-      error: validationError(
-        'Output path must not be a symbolic link.',
-        'Choose a regular directory path and retry.',
-      ),
-    }
-  }
+  if (boundary.workspace) await boundary.record(dirname(root), true)
+  else await boundary.outputParent(dirname(root))
+  const existing = await boundary.record(root, true)
   if (existing && !force) {
     return {
       error: cliError({
@@ -98,36 +118,43 @@ export async function prepareDownloadPlan(
       }),
     }
   }
-  if (existing && !existing.isDirectory()) {
-    return {
-      error: validationError(
-        'Output path is not a directory.',
-        'Choose a directory path or remove the existing file.',
-      ),
-    }
-  }
-
+  // Project preflight already enumerated the tree. Reuse those records, but
+  // still verify every identity instead of treating preflight as a bypass.
+  if (treePreflighted) await boundary.checkTree(root)
+  else await boundary.tree(root)
   const seen = new Set<string>()
+  const directories = new Set<string>()
+  const foldCase = process.platform === 'win32' || process.platform === 'darwin'
   const relativeFiles: Array<DownloadManifestFile & { relativePath: string }> =
     []
   for (const file of manifest.files) {
     const relativePath = downloadRelativePath(file.path)
-    if (relativePath.error) return { error: relativePath.error }
-    if (seen.has(relativePath.value)) {
-      return {
-        error: validationError(
-          'Download manifest contains duplicate file paths.',
-          'Retry later. If this repeats, report the artifact ID.',
-        ),
-      }
+    const key = foldCase ? relativePath.toLowerCase() : relativePath
+    const prefixes: string[] = []
+    for (
+      let slash = key.indexOf('/');
+      slash !== -1;
+      slash = key.indexOf('/', slash + 1)
+    )
+      prefixes.push(key.slice(0, slash))
+    if (
+      seen.has(key) ||
+      directories.has(key) ||
+      prefixes.some((prefix) => seen.has(prefix))
+    ) {
+      throw new DownloadManifestError(
+        `Download manifest contains conflicting file path ${JSON.stringify(file.path)}.`,
+      )
     }
-    seen.add(relativePath.value)
-    relativeFiles.push({ ...file, relativePath: relativePath.value })
+    seen.add(key)
+    for (const prefix of prefixes) directories.add(prefix)
+    relativeFiles.push({ ...file, relativePath })
   }
 
   const parent = dirname(root)
-  await mkdir(parent, { recursive: true })
-  const tempRoot = await mkdtemp(join(parent, `.${basename(root)}.tmp-`))
+  await boundary.directory(parent)
+  boundary.workspace ??= await boundary.privateDirectory(parent)
+  const tempRoot = await boundary.privateDirectory(boundary.workspace)
   const files: DownloadPlan['files'] = []
   for (const file of relativeFiles) {
     const targetPath = resolve(tempRoot, file.relativePath)
@@ -135,36 +162,40 @@ export async function prepareDownloadPlan(
   }
 
   return {
-    value: { root, tempRoot, replaceExisting: Boolean(existing), files },
+    value: {
+      root,
+      tempRoot,
+      files,
+      boundary,
+    },
   }
 }
 
-function downloadRelativePath(
-  path: string,
-): { value: string; error?: never } | { error: CliError; value?: never } {
+function downloadRelativePath(path: string): string {
   if (!path.startsWith('/') || path.includes('\0') || path.includes('\\')) {
-    return {
-      error: validationError(
-        'Download manifest contains an invalid file path.',
-        'Retry later. If this repeats, report the artifact ID.',
-      ),
-    }
+    throw new DownloadManifestError(
+      `Download manifest contains invalid file path ${JSON.stringify(path)}.`,
+    )
   }
   const segments = path.split('/').slice(1)
   if (
     segments.length === 0 ||
     segments.some(
-      (segment) => segment === '' || segment === '.' || segment === '..',
+      (segment) =>
+        segment === '' ||
+        segment === '.' ||
+        segment === '..' ||
+        (process.platform === 'win32' &&
+          (/[:*?"<>|]/u.test(segment) ||
+            /[. ]$/u.test(segment) ||
+            /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(segment))),
     )
   ) {
-    return {
-      error: validationError(
-        'Download manifest contains an unsafe file path.',
-        'Retry later. If this repeats, report the artifact ID.',
-      ),
-    }
+    throw new DownloadManifestError(
+      `Download manifest contains unsafe file path ${JSON.stringify(path)}.`,
+    )
   }
-  return { value: segments.join('/') }
+  return segments.join('/')
 }
 
 export function verifyDownloadedBytes(
@@ -195,25 +226,19 @@ function downloadIntegrityError(path: string, reason: string): CliError {
   })
 }
 
-export function backupPathFor(root: string): string {
-  return join(
-    dirname(root),
-    `.${basename(root)}.old-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  )
-}
-
-export async function pathExists(path: string): Promise<boolean> {
-  return Boolean(await lstat(path).catch(() => null))
-}
-
 export function downloadFileSystemError(error: unknown): CliError {
+  if (
+    error instanceof WriteBoundaryError ||
+    error instanceof DownloadManifestError
+  )
+    return error.error
   return cliError({
     code: 'download_failed',
-    message: 'Could not write downloaded files.',
-    why:
-      error instanceof Error
+    message:
+      error instanceof WriteFileSystemError
         ? error.message
-        : 'The local filesystem rejected a download operation.',
+        : 'Could not write downloaded files.',
+    why: 'The local filesystem rejected a download operation. Check retained recovery paths before retrying.',
     hint: 'Check --output permissions and available disk space, then retry.',
     agentRecoverable: true,
     requiresHuman: false,

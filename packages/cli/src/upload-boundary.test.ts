@@ -947,3 +947,61 @@ for (const errno of ['EACCES', 'EIO']) {
     )
   })
 }
+
+test('listed entry disappearance is changed with retry recovery', async (t) => {
+  const { cwd } = await fixture(t)
+  await rejection(
+    prepareUploadSelection('.', false, {
+      cwd,
+      checkpoint: async (phase, name) => {
+        if (phase === 'entry') await fs.unlink(name)
+      },
+    }),
+    'changed',
+    'report.html',
+  )
+})
+
+test('relative path through a regular file is not_found', async (t) => {
+  const { cwd } = await fixture(t)
+  await rejection(
+    prepareUploadSelection('report.html/index.html', false, { cwd }),
+    'not_found',
+    'report.html/index.html',
+  )
+})
+
+test('typed Markdown alias returns stored filename', async (t) => {
+  const { cwd } = await fixture(t)
+  const stored = path.join(cwd, 'report.md')
+  await fs.writeFile(stored, '# report')
+  const translate = (name: string) =>
+    name === path.join(cwd, 'REPORT.MD') ? stored : name
+  const selection = await prepareUploadSelection('REPORT.MD', false, {
+    cwd,
+    lstat: (name) => fs.lstat(translate(name), { bigint: true }),
+    realpath: (name) => fs.realpath(translate(name)),
+    open: (name, flags) => fs.open(translate(String(name)), flags),
+  })
+  assert.equal(selection.files[0]!.name, 'report.md')
+})
+
+test('single-file payload uses stored Markdown kind, name, and content type', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  const stored = path.join(cwd, 'report.md')
+  await fs.writeFile(stored, '# report')
+  const translate = (name: string) =>
+    name === path.join(cwd, 'REPORT.MD') ? stored : name
+  const result = await prepareUploadPayload('REPORT.MD', {
+    cwd,
+    lstat: (name) => fs.lstat(translate(name), { bigint: true }),
+    realpath: (name) => fs.realpath(translate(name)),
+    open: (name, flags) => fs.open(translate(String(name)), flags),
+  })
+  assert.equal(result.error, undefined)
+  assert.equal(result.payload!.kind, 'markdown_page')
+  const file = result.payload!.form.get('file') as File
+  assert.equal(file.name, 'report.md')
+  assert.equal(file.type, 'text/markdown')
+})

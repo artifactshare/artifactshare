@@ -15,6 +15,10 @@ export const ARTIFACT_KEY_MAX_LENGTH = 128 as const
 export const REFRESH_CREDENTIAL_TTL_DAYS = 180 as const
 
 const stringId = z.string().min(1)
+const artifactIdPattern = /^[a-z0-9]{10}$/
+export const ArtifactIdSchema = z.string().regex(artifactIdPattern)
+export const isArtifactId = (value: unknown): value is string =>
+  typeof value === 'string' && artifactIdPattern.test(value)
 const timestamp = z.string().min(1)
 const url = z.string().url()
 const nullableTimestamp = timestamp.nullable()
@@ -733,7 +737,7 @@ export const DownloadManifestFileSchema = z.object({
 export type DownloadManifestFile = z.infer<typeof DownloadManifestFileSchema>
 
 export const DownloadManifestResponseSchema = z.object({
-  id: stringId,
+  id: ArtifactIdSchema,
   share_url: url,
   version_id: stringId,
   artifact_kind: UploadArtifactKindSchema,
@@ -746,7 +750,7 @@ export type DownloadManifestResponse = z.infer<
 >
 
 export const ArtifactsListEntrySchema = z.object({
-  id: stringId,
+  id: ArtifactIdSchema,
   title: z.string(),
   share_url: url,
   visibility: VisibilitySchema,

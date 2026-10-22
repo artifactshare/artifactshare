@@ -1,6 +1,13 @@
-import { mkdir, readFile, rename, rm, writeFile, lstat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { ARTIFACTS_LIST_RESPONSE_SCHEMA } from '@artifactshare/contract'
+import {
+  WriteBoundary,
+  WriteBoundaryError,
+  type WriteBoundaryDependencies,
+} from '../write-boundary.js'
+import { dirname, join, resolve } from 'node:path'
+import {
+  ARTIFACTS_LIST_RESPONSE_SCHEMA,
+  isArtifactId,
+} from '@artifactshare/contract'
 import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import {
   apiUrl,
@@ -14,9 +21,8 @@ import { resolveCredential } from '../credentials.js'
 import { resolveProjectConfig } from '../destination.js'
 import { mapApiError, networkError, serviceError } from '../errors.js'
 import {
-  backupPathFor,
+  DownloadManifestError,
   downloadFileSystemError,
-  pathExists,
   prepareDownloadPlan,
   verifyDownloadedBytes,
 } from '../files.js'
@@ -33,6 +39,13 @@ import {
 import { parseArtifactTarget } from '../shared.js'
 import { validationError } from '../errors.js'
 import { isRecord } from '../validators.js'
+
+class DownloadFileError extends Error {}
+class DownloadFailure extends Error {
+  constructor(readonly error: CliError) {
+    super(error.message)
+  }
+}
 
 function fileDownloadError(
   error: CliError,
@@ -66,33 +79,82 @@ type ProjectResult = {
 
 // Previous run's id → version_id pairs from <output>/index.json, used for the
 // incremental re-run. A missing or corrupt index means no previous knowledge.
+function validateIds(entries: unknown[]): void {
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const id = isRecord(entry) ? entry.id : undefined
+    if (!isArtifactId(id) || seen.has(id.toLowerCase())) {
+      throw new WriteBoundaryError(
+        `artifact ID ${typeof id === 'string' ? JSON.stringify(id) : '(missing or non-string)'}`,
+        'Use unique artifact IDs matching ^[a-z0-9]{10}$. Correct the endpoint or saved index and retry.',
+      )
+    }
+    seen.add(id.toLowerCase())
+  }
+}
+
 async function readPreviousVersions(
   output: string,
+  boundary: WriteBoundary,
 ): Promise<Map<string, string>> {
+  const text = await boundary.read(join(output, 'index.json'))
+  if (text === null) return new Map()
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(
-      await readFile(join(output, 'index.json'), 'utf8'),
-    ) as { artifacts?: unknown }
-    if (!Array.isArray(parsed.artifacts)) return new Map()
-    // Validate the whole structure first: a corrupt index must yield no
-    // previous information, not the valid prefix of a broken artifacts array.
-    const previous = new Map<string, string>()
-    for (const entry of parsed.artifacts) {
-      if (entry === null || typeof entry !== 'object') return new Map()
-      const { id, version_id } = entry as { id?: unknown; version_id?: unknown }
-      if (typeof id !== 'string') return new Map()
-      if (typeof version_id === 'string') previous.set(id, version_id)
-    }
-    return previous
+    parsed = JSON.parse(text)
   } catch {
     return new Map()
   }
+  if (!isRecord(parsed) || !Array.isArray(parsed.artifacts)) return new Map()
+  validateIds(parsed.artifacts)
+  const previous = new Map<string, string>()
+  for (const entry of parsed.artifacts) {
+    if (entry.version_id !== undefined && typeof entry.version_id !== 'string')
+      return new Map()
+    if (typeof entry.version_id === 'string')
+      previous.set(entry.id, entry.version_id)
+  }
+  return previous
 }
 
 export async function runDownload(
   parsed: ParsedArgs,
   mode: OutputMode,
   isRetry = false,
+  dependencies: WriteBoundaryDependencies = {},
+): Promise<void> {
+  const boundary = new WriteBoundary(dependencies)
+  let primary: unknown
+  let cleanup: unknown
+  try {
+    await runDownloadInternal(parsed, mode, isRetry, boundary)
+  } catch (error) {
+    primary = error
+  }
+  try {
+    await boundary.cleanup()
+  } catch (error) {
+    cleanup = error
+  }
+  const error = primary ?? cleanup
+  if (error) {
+    const failure =
+      error instanceof DownloadFailure
+        ? error.error
+        : downloadFileSystemError(error)
+    if (primary && cleanup) failure.hint += ' Cleanup could not finish safely.'
+    const retained = await boundary.retainedWorkspace()
+    if (retained)
+      failure.hint += ` Recover retained data at ${retained}; inspect it before manual cleanup.`
+    writeFailure('download', failure, mode, 1)
+  }
+}
+
+async function runDownloadInternal(
+  parsed: ParsedArgs,
+  mode: OutputMode,
+  isRetry = false,
+  boundary: WriteBoundary,
 ): Promise<void> {
   const command = 'download'
   const projectId = parsed.options.projectId?.trim()
@@ -102,25 +164,25 @@ export async function runDownload(
       parsed.positionals.length > 0 ||
       !parsed.options.output?.trim()
     ) {
-      return writeFailure(
-        command,
+      throw new DownloadFailure(
         validationError(
           'Invalid project download arguments.',
           'Use download <target> or download --project-id <id> --output <dir>.',
         ),
-        mode,
-        1,
       )
     }
-    return runProjectDownload(parsed, mode, projectId, isRetry)
+    return runProjectDownload(parsed, mode, projectId, isRetry, boundary)
   }
   const target = parseArtifactTarget(
     parsed.positionals[0],
     'download',
     'Pass an artifact ID or share URL to download.',
   )
-  if (target.error) return writeFailure(command, target.error, mode, 1)
+  if (target.error) throw new DownloadFailure(target.error)
   const artifactId = target.artifactId
+  const input = parsed.positionals[0]!
+  if (!/^https?:\/\//i.test(input)) validateIds([{ id: input }])
+  validateIds([{ id: artifactId }])
 
   const credential = await resolveCredential(
     parsed.options,
@@ -137,7 +199,7 @@ export async function runDownload(
     )
   }
   const request = await requestConfig(parsed.options)
-  if (request.error) return writeFailure(command, request.error, mode, 1)
+  if (request.error) throw new DownloadFailure(request.error)
 
   const baseUrl = baseUrlOf(parsed.options)
   const manifestUrl = apiUrl(
@@ -149,12 +211,7 @@ export async function runDownload(
     ...request.init,
   })
   if ('networkError' in manifestResponse) {
-    return writeFailure(
-      command,
-      networkError(manifestResponse.networkError),
-      mode,
-      1,
-    )
+    throw new DownloadFailure(networkError(manifestResponse.networkError))
   }
 
   const body = await readJson(manifestResponse)
@@ -177,118 +234,99 @@ export async function runDownload(
       isRetry,
     )
   }
-  if (!downloadManifestFields(body)) {
-    return writeFailure(
-      command,
+  if (!isRecord(body) || !('id' in body)) {
+    throw new DownloadFailure(
       serviceError(
         'Download manifest succeeded but the response did not include file metadata.',
       ),
-      mode,
-      1,
+    )
+  }
+  validateIds([body])
+  if (isRecord(body) && body.id !== artifactId)
+    throw new DownloadManifestError(
+      `Manifest artifact ID ${JSON.stringify(body.id)} does not match ${artifactId}.`,
+    )
+  if (!downloadManifestFields(body)) {
+    throw new DownloadFailure(
+      serviceError(
+        'Download manifest succeeded but the response did not include file metadata.',
+      ),
     )
   }
 
+  boundary.watch(resolve(parsed.options.output ?? artifactId))
   const plan = await prepareDownloadPlan(
     body,
     parsed.options.output ?? artifactId,
     Boolean(parsed.options.force),
+    boundary,
   )
-  if (plan.error) return writeFailure(command, plan.error, mode, 1)
+  if (plan.error) throw new DownloadFailure(plan.error)
 
-  let completed = false
-  let backupRoot: string | null = null
-  try {
-    for (const file of plan.value.files) {
-      const fileUrl = downloadFileUrl(baseUrl, artifactId, file.path)
-      const fileResponse = await cliFetch(fileUrl, {
-        headers: { Authorization: `Bearer ${credential.token}` },
-        ...request.init,
-      })
-      if ('networkError' in fileResponse) {
-        return writeFailure(
-          command,
-          fileDownloadError(networkError(fileResponse.networkError), file.path),
-          mode,
-          1,
-        )
-      }
-      if (!fileResponse.ok) {
-        const fileBody = await readJson(fileResponse)
-        const apiError = isRecord(fileBody) ? fileBody.error : undefined
-        const notFound =
-          fileResponse.status === 404 ||
-          apiError === 'not-found' ||
-          (isRecord(apiError) && apiError.code === 'not-found')
-        return handleAuthenticatedCredentialFailure(
-          command,
-          fileDownloadError(
-            mapApiError(fileResponse.status, fileBody, {
-              authenticated: true,
-              ...(!notFound ? { artifactTarget: true } : {}),
-              baseUrl,
-              credentialSource: credential.source,
-              profile: credential.profile,
-              profileCredentialKind: credential.profileCredentialKind,
-              botProfile: credential.botProfile,
-            }),
-            file.path,
-            notFound,
-          ),
-          credential,
-          parsed.options,
-          mode,
-          () => runDownload(parsed, mode, true),
-          isRetry,
-        )
-      }
-      let fileBody: ArrayBuffer
-      try {
-        fileBody = await fileResponse.arrayBuffer()
-      } catch (error) {
-        return writeFailure(
-          command,
-          fileDownloadError(networkError(error), file.path),
-          mode,
-          1,
-        )
-      }
-      const bytes = Buffer.from(fileBody)
-      const verified = verifyDownloadedBytes(file, bytes)
-      if (verified.error) {
-        return writeFailure(command, verified.error, mode, 1)
-      }
-      await mkdir(dirname(file.targetPath), { recursive: true })
-      await writeFile(file.targetPath, bytes)
-    }
-    if (plan.value.replaceExisting) {
-      backupRoot = backupPathFor(plan.value.root)
-      await rename(plan.value.root, backupRoot)
-    }
-    await rename(plan.value.tempRoot, plan.value.root)
-    completed = true
-    if (backupRoot) {
-      await rm(backupRoot, { recursive: true, force: true }).catch(() => {})
-    }
-  } catch (error) {
-    if (
-      backupRoot &&
-      !(await pathExists(plan.value.root)) &&
-      (await pathExists(backupRoot))
-    ) {
-      await rename(backupRoot, plan.value.root).catch(() => {})
-    }
-    return writeFailure(command, downloadFileSystemError(error), mode, 1)
-  } finally {
-    if (!completed) {
-      await rm(plan.value.tempRoot, { recursive: true, force: true }).catch(
-        () => {},
+  for (const file of plan.value.files) {
+    const fileUrl = downloadFileUrl(baseUrl, artifactId, file.path)
+    const fileResponse = await cliFetch(fileUrl, {
+      headers: { Authorization: `Bearer ${credential.token}` },
+      ...request.init,
+    })
+    if ('networkError' in fileResponse) {
+      throw new DownloadFailure(
+        fileDownloadError(networkError(fileResponse.networkError), file.path),
       )
     }
+    if (!fileResponse.ok) {
+      const fileBody = await readJson(fileResponse)
+      const apiError = isRecord(fileBody) ? fileBody.error : undefined
+      const notFound =
+        fileResponse.status === 404 ||
+        apiError === 'not-found' ||
+        (isRecord(apiError) && apiError.code === 'not-found')
+      await boundary.cleanup()
+      return handleAuthenticatedCredentialFailure(
+        command,
+        fileDownloadError(
+          mapApiError(fileResponse.status, fileBody, {
+            authenticated: true,
+            ...(!notFound ? { artifactTarget: true } : {}),
+            baseUrl,
+            credentialSource: credential.source,
+            profile: credential.profile,
+            profileCredentialKind: credential.profileCredentialKind,
+            botProfile: credential.botProfile,
+          }),
+          file.path,
+          notFound,
+        ),
+        credential,
+        parsed.options,
+        mode,
+        () => runDownload(parsed, mode, true),
+        isRetry,
+      )
+    }
+    let fileBody: ArrayBuffer
+    try {
+      fileBody = await fileResponse.arrayBuffer()
+    } catch (error) {
+      throw new DownloadFailure(
+        fileDownloadError(networkError(error), file.path),
+      )
+    }
+    const bytes = Buffer.from(fileBody)
+    const verified = verifyDownloadedBytes(file, bytes)
+    if (verified.error) {
+      throw new DownloadFailure(verified.error)
+    }
+    await boundary.write(file.targetPath, bytes)
   }
+  await boundary.replace(plan.value.tempRoot, plan.value.root)
+  boundary.keep(plan.value.root)
 
+  await boundary.finish()
   return writeSuccess(
     command,
     {
+      backup_paths: boundary.backupPaths,
       artifact: {
         id: body.id,
         url: body.share_url,
@@ -314,6 +352,7 @@ async function runProjectDownload(
   mode: OutputMode,
   projectId: string,
   isRetry = false,
+  boundary: WriteBoundary,
 ): Promise<void> {
   const command = 'download'
   const resolved = await resolveCredential(
@@ -331,7 +370,7 @@ async function runProjectDownload(
     )
   }
   const request = await requestConfig(parsed.options)
-  if (request.error) return writeFailure(command, request.error, mode, 1)
+  if (request.error) throw new DownloadFailure(request.error)
   const baseUrl = baseUrlOf(parsed.options)
   // A project download can outlive an expired session, so refresh once mid-run
   // and funnel every authenticated request through this fetch.
@@ -367,7 +406,7 @@ async function runProjectDownload(
       ...request.init,
     })
   }
-  const output = parsed.options.output!.trim()
+  const output = resolve(parsed.options.output!.trim())
   const list = async (cursor?: string) => {
     const url = apiUrl('/api/cli/artifacts', baseUrl)
     url.searchParams.set('project_id', projectId)
@@ -453,24 +492,24 @@ async function runProjectDownload(
         ? page.data.next_cursor
         : undefined
   } while (cursor)
-  if (listError && first) return writeFailure(command, listError, mode, 1)
-  // Same output-path symlink guard as prepareDownloadPlan applies per artifact
-  // in single mode: never write through a symlinked project root.
-  if ((await lstat(output).catch(() => null))?.isSymbolicLink()) {
-    return writeFailure(
-      command,
-      validationError(
-        'Output path must not be a symbolic link.',
-        'Choose a regular directory path and retry.',
-      ),
-      mode,
-      1,
-    )
+  if (listError && first) throw new DownloadFailure(listError)
+  validateIds(entries)
+  boundary.watch(output)
+  await boundary.outputParent(dirname(output))
+  await boundary.record(output, true)
+  const previousVersions = await readPreviousVersions(output, boundary)
+  for (const item of entries) {
+    const root = join(output, item.id as string)
+    await boundary.record(root, true)
+    await boundary.tree(root)
   }
-  const previousVersions = await readPreviousVersions(output)
-  await mkdir(output, { recursive: true })
+  await boundary.directory(output)
+  boundary.keep(output)
+  // Project publication replaces children, so keep staging and backups on
+  // the output filesystem even when output itself is a mount point.
+  boundary.workspace = await boundary.privateDirectory(output)
   const results: ProjectResult[] = entries.map((item) => ({
-    id: String(item.id),
+    id: item.id as string,
     title: String(item.title ?? ''),
     ...(typeof item.owner_email === 'string'
       ? { owner_email: item.owner_email }
@@ -493,146 +532,137 @@ async function runProjectDownload(
         continue
       }
       const root = join(output, result.id)
-      const rootStat = await lstat(root).catch(() => null)
-      const rootExists = rootStat !== null
-      const response = await authFetch(
-        apiUrl(
-          `/api/cli/artifacts/${encodeURIComponent(result.id)}/download`,
-          baseUrl,
-        ),
-      )
-      if ('networkError' in response) {
-        result.reason = 'network failed'
-        continue
-      }
-      if (!response.ok) {
-        const body = await readJson(response)
-        const apiError = mapApiError(response.status, body, {
-          authenticated: true,
-          baseUrl,
-          artifactTarget: true,
-        })
-        if (apiError.code === 'unsupported_kind') {
-          result.status = 'skipped'
-          result.reason = 'unsupported-kind'
-        } else {
-          result.reason = `download failed (${response.status})`
-        }
-        continue
-      }
-      const body = await readJson(response)
-      if (!downloadManifestFields(body)) {
-        result.reason = 'invalid download manifest'
-        continue
-      }
-      // Re-runs are an incremental sync: an unchanged version with its output
-      // still on disk needs no file requests. --force wins and re-downloads.
-      if (
-        !parsed.options.force &&
-        rootStat?.isDirectory() &&
-        previousVersions.get(result.id) === body.version_id
-      ) {
-        result.status = 'unchanged'
-        result.version_id = body.version_id
-        result.path = root
-        delete result.reason
-        continue
-      }
-      if (rootExists && !parsed.options.force) {
-        result.reason = 'artifact output already exists'
-        continue
-      }
-      const plan = await prepareDownloadPlan(
-        body,
-        root,
-        Boolean(parsed.options.force),
-      )
-      if (plan.error) {
-        result.reason = plan.error.message
-        continue
-      }
       try {
+        const rootExists = await boundary.record(root, true)
+        const response = await authFetch(
+          apiUrl(
+            `/api/cli/artifacts/${encodeURIComponent(result.id)}/download`,
+            baseUrl,
+          ),
+        )
+        if ('networkError' in response) {
+          result.reason = 'network failed'
+          continue
+        }
+        if (!response.ok) {
+          const body = await readJson(response)
+          const apiError = mapApiError(response.status, body, {
+            authenticated: true,
+            baseUrl,
+            artifactTarget: true,
+          })
+          if (apiError.code === 'unsupported_kind') {
+            result.status = 'skipped'
+            result.reason = 'unsupported-kind'
+          } else {
+            result.reason = `download failed (${response.status})`
+          }
+          continue
+        }
+        const body = await readJson(response)
+        if (!isRecord(body) || body.id !== result.id) {
+          throw new DownloadManifestError(
+            `Download manifest artifact ID does not match ${result.id}.`,
+          )
+        }
+        if (!downloadManifestFields(body)) {
+          throw new DownloadManifestError(
+            `Invalid download manifest for artifact ${result.id}.`,
+          )
+        }
+        // Re-runs are an incremental sync: an unchanged version with its output
+        // still on disk needs no file requests. --force wins and re-downloads.
+        if (
+          !parsed.options.force &&
+          rootExists &&
+          previousVersions.get(result.id) === body.version_id
+        ) {
+          result.status = 'unchanged'
+          result.version_id = body.version_id
+          result.path = root
+          delete result.reason
+          continue
+        }
+        if (rootExists && !parsed.options.force) {
+          result.reason = 'artifact output already exists'
+          continue
+        }
+        const plan = await prepareDownloadPlan(
+          body,
+          root,
+          Boolean(parsed.options.force),
+          boundary,
+          true,
+        )
+        if (plan.error) {
+          result.reason = plan.error.message
+          continue
+        }
         for (const file of plan.value.files) {
           const fileResponse = await authFetch(
             downloadFileUrl(baseUrl, result.id, file.path),
           )
           if ('networkError' in fileResponse)
-            throw new Error(
+            throw new DownloadFileError(
               `Could not download file "${file.path}": network failed`,
             )
           if (!fileResponse.ok)
-            throw new Error(
+            throw new DownloadFileError(
               `Could not download file "${file.path}" (${fileResponse.status})`,
             )
           let fileBody: ArrayBuffer
           try {
             fileBody = await fileResponse.arrayBuffer()
           } catch {
-            throw new Error(
+            throw new DownloadFileError(
               `Could not download file "${file.path}": network failed while reading response body`,
             )
           }
           const bytes = Buffer.from(fileBody)
           const verified = verifyDownloadedBytes(file, bytes)
-          if (verified.error) throw new Error(verified.error.message)
-          await mkdir(dirname(file.targetPath), { recursive: true })
-          await writeFile(file.targetPath, bytes)
+          if (verified.error)
+            throw new DownloadFileError(verified.error.message)
+          await boundary.write(file.targetPath, bytes)
         }
-        // Same backup-and-restore replacement as the single-artifact path: a
-        // failed rename must never lose the previously downloaded directory.
-        let backupRoot: string | null = null
-        try {
-          if (plan.value.replaceExisting) {
-            backupRoot = backupPathFor(plan.value.root)
-            await rename(plan.value.root, backupRoot)
-          }
-          await rename(plan.value.tempRoot, plan.value.root)
-        } catch (error) {
-          if (
-            backupRoot &&
-            !(await pathExists(plan.value.root)) &&
-            (await pathExists(backupRoot))
-          ) {
-            await rename(backupRoot, plan.value.root).catch(() => {})
-          }
-          throw error
-        }
-        if (backupRoot) {
-          await rm(backupRoot, { recursive: true, force: true }).catch(() => {})
-        }
+        await boundary.replace(plan.value.tempRoot, plan.value.root)
+        boundary.keep(plan.value.root)
         result.status = 'ok'
         result.version_id = body.version_id
         result.path = root
         delete result.reason
       } catch (error) {
+        await boundary.check(output, dirname(output), boundary.workspace!)
+        if (error instanceof WriteBoundaryError) throw error
         result.reason =
-          error instanceof Error ? error.message : 'download failed'
-        await rm(plan.value.tempRoot, { recursive: true, force: true }).catch(
-          () => {},
-        )
+          error instanceof DownloadManifestError
+            ? `${error.message} ${error.error.hint}`
+            : error instanceof DownloadFileError
+              ? error.message
+              : 'download failed; check filesystem availability and retry'
       }
     }
   }
-  try {
-    await writeFile(
-      join(output, 'index.json'),
-      JSON.stringify({ project_id: projectId, artifacts: results }, null, 2) +
-        '\n',
-    )
-  } catch (error) {
-    return writeFailure(command, downloadFileSystemError(error), mode, 1)
-  }
+  await boundary.atomicWrite(
+    join(output, 'index.json'),
+    JSON.stringify({ project_id: projectId, artifacts: results }, null, 2) +
+      '\n',
+    true,
+    boundary.workspace,
+  )
+  boundary.keep(join(output, 'index.json'))
   const counts = {
     ok: results.filter((r) => r.status === 'ok').length,
     unchanged: results.filter((r) => r.status === 'unchanged').length,
     skipped: results.filter((r) => r.status === 'skipped').length,
     failed: results.filter((r) => r.status === 'failed').length,
   }
+  await boundary.finish()
   process.exitCode = counts.failed > 0 ? 1 : 0
   return writeSuccess(
     command,
     {
       project_id: projectId,
+      backup_paths: boundary.backupPaths,
       ...counts,
       failures: results
         .filter((r) => r.status === 'failed')

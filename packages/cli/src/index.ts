@@ -404,6 +404,9 @@ Common failures:
     outside_cwd          Pass an absolute path
     parent_traversal     Pass a direct absolute path without any .. component
     changed              The selection changed while reading; retry
+    not_found            Check the path and retry
+    invalid_type         Select a regular file or directory
+    unsupported_guarantee Select a filesystem with stable dev/ino and no-follow support
   key_target_moved       The artifact for --key moved; update it by ID or use a new key
   key_kind_mismatch      The artifact for --key is a different kind; use a new key`,
 })
@@ -468,7 +471,10 @@ Common failures:
     link                 Copy into the selection or pass the target by absolute path
     outside_cwd          Pass an absolute path
     parent_traversal     Pass a direct absolute path without any .. component
-    changed              The selection changed while reading; retry`,
+    changed              The selection changed while reading; retry
+    not_found            Check the path and retry
+    invalid_type         Select a regular file or directory
+    unsupported_guarantee Select a filesystem with stable dev/ino and no-follow support`,
 })
 
 const appendDefinition = define({
@@ -485,7 +491,18 @@ const appendDefinition = define({
     },
     path: { type: 'positional', description: 'Non-empty UTF-8 file to append' },
   },
-  examples: `Append <path> without a separator and create a new version at the existing share URL.\n\nFor Markdown, the file is added at the end of the current source. For HTML, it is inserted immediately before an ASCII case-insensitive </body> closing tag; when the tag is absent, it is added at the end.\n\nStatic sites are not supported. Use update to replace the full source instead.`,
+  examples: `Append <path> without a separator and create a new version at the existing share URL.\n\nFor Markdown, the file is added at the end of the current source. For HTML, it is inserted immediately before an ASCII case-insensitive </body> closing tag; when the tag is absent, it is added at the end.\n\nStatic sites are not supported. Use update to replace the full source instead.
+
+Common failures:
+  upload_read_failed     Check filesystem availability and permissions, then retry
+  validation_failed      Check the selected file
+    link                 Copy into the selection or pass the target by absolute path
+    outside_cwd          Pass an absolute path
+    parent_traversal     Pass a direct absolute path without any .. component
+    changed              The selection changed while reading; retry
+    not_found            Check the path and retry
+    invalid_type         Select a regular file
+    unsupported_guarantee Select a filesystem with stable dev/ino and no-follow support`,
 })
 
 const editDefinition = define({
@@ -646,7 +663,7 @@ const downloadDefinition = define({
     force: {
       type: 'boolean',
       toKebab: true,
-      description: 'Allow writing into an existing output directory',
+      description: 'Replace existing output; retain backups for recovery',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare download abc123def4 --json
@@ -655,12 +672,20 @@ const downloadDefinition = define({
 
 Use resolve first when a user gives a title or project name, then pass the id here.
 Download writes files to a directory so the result can be inspected or passed to update.
+Artifact IDs must match ^[a-z0-9]{10}$; invalid or duplicate list/index IDs fail before writes.
+Download accepts linked output parents and rechecks their resolved directory identities.
+Links in the output root, index, and every listed artifact are rejected, regardless of --force.
+Project preflight checks every listed artifact tree, including unchanged versions, but not unrelated content.
+Network failures and invalid manifest paths, bodies, or identities have individual artifact results; a boundary error aborts the remaining publications.
+Replacement retains originals and previous indexes in data.backup_paths after success; inspect them before manual cleanup.
+Identity checks detect observed swaps;
+Node path-based operations cannot guarantee atomic confinement against concurrent changes.
 
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before download
   target_not_found   Retry with an artifact ID, share URL, or sandbox URL
   output_exists      Choose another --output path or pass --force
-  validation_failed  Check --output and downloaded file paths`,
+  validation_failed  Check the named ID/path; use a regular directory without links`,
 })
 
 const openDefinition = define({
@@ -1725,6 +1750,9 @@ and Cursor skills. Cursor project scope is not auto-installed; use skills instal
 data.mode is "onboarding".
 With --profile or --project-id, init saves working-directory defaults to
 .artifactshare/config.local.json instead (data.mode is "config"); secrets are never written there.
+Config saves preserve unknown keys and refuse linked or changed paths.
+Only a regular repository .git directory can receive an info/exclude update.
+Git worktrees/submodules still save config; git_exclude_warning gives the exact line to add manually.
 
 Common failures:
   skill_update_conflict   An unmanaged or broken skill file exists; inspect it before overwriting

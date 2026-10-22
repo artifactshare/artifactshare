@@ -436,3 +436,48 @@ Other filesystem failures, including EACCES, EMFILE, EIO, and EPERM, use
 permissions, then retry. Raw exceptions remain internal; errors never include
 credentials or file contents. Empty included directories report
 “Directory has no shareable files.”
+
+### Local download and init writes
+
+Download artifact IDs must match `^[a-z0-9]{10}$`. Invalid, duplicate, or
+case-colliding IDs in any list page or previous `index.json` are fatal before
+writes. Single-download targets and manifest identities must agree.
+
+Output parents may be links; their resolved directory identities are rechecked.
+Linked output roots, indexes, and listed artifact trees are refused,
+even with `--force`. Recorded directory identities are checked again before
+writes and cleanup. Project preflight inspects every listed artifact tree,
+including unchanged versions, and `index.json`; unrelated content is not walked.
+Network failures and invalid manifest paths, bodies, or identities are recorded per artifact. Every boundary
+violation stops further publication, including later artifacts and the final index.
+Artifact IDs with surrounding whitespace are rejected, not trimmed, including
+single-download targets. Remove the whitespace before retrying. Share URLs use
+the usual URL-to-ID resolution; list and index IDs are never normalized.
+
+Replacements do not merge stale files. Staging and backups share one private
+directory inside the output root for project downloads, or in its parent for
+single downloads. This keeps project publication on the output filesystem.
+Displaced originals and previous indexes
+remain there after success and are reported in `data.backup_paths` and human
+output. Inspect those paths before manual cleanup. Failed recovery also names
+retained paths in the error. Cleanup removes only CLI-created temporary entries
+and never removes a container holding originals. Files use exclusive creation
+and indexes use temporary-file publication.
+Manifest path conflict checks fold case on macOS and Windows; Linux keeps
+case-distinct names. New downloaded files, config files, and Git excludes use
+the default file mode masked by the umask. Replaced config and exclude files
+preserve their existing permission bits.
+Identity checks detect observed swaps at operation checkpoints; Node path-based
+operations cannot guarantee atomic confinement against arbitrary concurrent changes.
+
+`init --profile` / `init --project-id` preserve unknown local config keys and
+refuse linked or changed `.artifactshare` / `config.local.json` paths. Only a
+real repository `.git` directory without redirect metadata or linked `info` /
+`exclude` is eligible for an exclude update. Worktrees and submodules still save
+config and return `git_exclude_warning` with the path and exact line to add
+manually. Running `init` without config arguments still installs user-scope skills.
+
+Upload aliases use the stored filename for artifact kind, multipart name, and
+content type. An enumerated entry disappearing is `changed` (retry); a relative
+path through a regular file is `not_found` (correct the path). `share --help`
+and `append --help` list all upload boundary reasons and fixes.
