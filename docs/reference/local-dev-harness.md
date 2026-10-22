@@ -83,12 +83,23 @@ Unexpected browser and Worker traffic is blocked. A temporary self-signed test
 certificate is accepted only by the test browser context. All servers, contexts,
 and temporary keys are cleaned up by the command.
 
-Chromium uses `Network.setCookieControls` with third-party restriction enabled;
-Firefox uses `network.cookie.cookieBehavior=1`; WebKit's default policy is checked
-with the same ordinary-cookie control. A top-level positive control must accept
-an ordinary cookie, then a third-party frame must fail to send that cookie even
-after attempting to set it in that frame. Only then does the partitioned-delivery
-matrix run. Output names the engine, exact version, setting, and completed cases.
+Chromium uses `Network.setCookieControls` with third-party restriction enabled.
+Firefox runs default Total Cookie Protection (`network.cookie.cookieBehavior=5`)
+and a separate block-all-cross-site-cookies case (`1`). WebKit uses its default
+policy. A first-party positive control accepts an ordinary cookie; cross-site
+controls prove blocking in Chromium/WebKit and top-level-site partitioning in
+Firefox TCP. Each engine also sets a `Partitioned` cookie in a cross-site frame
+and checks whether the next navigation returns it, before running product flows.
+When supported, the full delivery matrix runs. Otherwise, private static sites
+must show the explanation page while single-file HTML, Markdown, and anonymous
+link content still render. Output records the detected capability, engine, exact
+version, setting, and completed cases; no engine is skipped.
+
+Supported policies are Chromium with third-party cookie restriction, Firefox
+default Total Cookie Protection, and Safari 26.2 or later (and 18.4). Safari 18.5
+through 26.1 and browsers blocking all cross-site cookies get the explanation
+page for private static sites. Automated WebKit capability detection does not
+stand in for a separate Safari product measurement.
 A failure is a release blocker, not permission to skip a browser or reuse an old
 origin. Authenticated exports and authored HTML/static-site downloads are covered;
 the existing anonymous Markdown viewer intentionally has no export menu.

@@ -17,7 +17,10 @@ test('content-origin decision records cookie support and the rejected path capab
     .replace(/\s+/gu, ' ')
   for (const policy of [
     'Chromium with third-party cookie restriction',
-    'WebKit/Safari ITP',
+    'Safari 26.2 or later (and 18.4)',
+    'Safari 18.5 through 26.1',
+    'cross-site cookies show the explanation page for private static sites',
+    'The automated suite detects partitioned-cookie support per engine',
     'Firefox default Total Cookie Protection',
     'network.cookie.cookieBehavior=5',
     'network.cookie.cookieBehavior=1',
@@ -25,6 +28,7 @@ test('content-origin decision records cookie support and the rejected path capab
   ]) {
     assert.ok(decision.includes(policy), `Missing cookie policy: ${policy}`)
   }
+  assert.doesNotMatch(decision, /WebKit\/Safari ITP/u)
   assert.match(
     decision,
     /ordinary parent-domain cookies and inflate sibling request headers/u,

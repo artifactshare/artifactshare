@@ -49,8 +49,15 @@ must match the current frame origin and frame window.
 
 Partitioned cookies are the only authority mechanism for authenticated static-site
 assets and navigation. Supported cookie policies are Chromium with third-party
-cookie restriction, WebKit/Safari ITP, and Firefox default Total Cookie Protection
-(`network.cookie.cookieBehavior=5`). The browser suite records each measured engine,
+cookie restriction, Firefox default Total Cookie Protection
+(`network.cookie.cookieBehavior=5`), and Safari 26.2 or later (and 18.4), which
+support partitioned cookies. Safari 18.5 through 26.1 and browsers that block all
+cross-site cookies show the explanation page for private static sites.
+The automated suite detects partitioned-cookie support per engine by setting a
+cookie in a cross-site frame and checking whether the next navigation returns it.
+Every engine verifies either private static-site delivery or the explanation page,
+as well as single-file HTML, Markdown, and anonymous link delivery.
+The browser suite records the detected capability and each measured engine,
 exact version, settings, and outcome. Firefox's ordinary-cookie control proves
 partitioning across top-level sites; Chromium and WebKit controls prove blocking.
 A same-site `.localhost` run cannot establish cross-site behavior.
@@ -64,10 +71,10 @@ The cookie-check request preserves the artifact pathname and version and
 validates the cookie binding, then removes its diagnostic query marker with a
 redirect. The clean request runs current-access and manifest checks before
 delivery, so artifact code never sees the marker. Without the cookie, the frame
-explains in English and Japanese that the cookie is blocked or expired and asks
-the viewer to reload the public page. It also explains the unsupported setting
-when partitioned cookies remain blocked. This happens before any
-artifact script or relative asset executes. It neither rewrites artifact code,
+explains in English and Japanese that the browser blocks or does not support the
+required cookies and suggests updating the browser (Safari 26.2 or later) or
+allowing cross-site cookies. Reloading is suggested only for an expired session.
+This happens before any artifact script or relative asset executes. It neither rewrites artifact code,
 import maps, or SRI nor introduces another delivery capability. Single-file HTML,
 Markdown, and anonymous link content remain available with that setting. Old
 execution origins are never a fallback. Clients that omit Fetch Metadata do not

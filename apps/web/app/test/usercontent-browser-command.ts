@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { createHmac } from 'node:crypto'
 import { promisify } from 'node:util'
 import { acquireUsercontentBuild } from './usercontent-build'
+import { navigateUsercontentViewer } from './usercontent-frame-navigation'
 import { assertShellAssets } from './usercontent-shell-assets.js'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import { setupServer } from 'msw/node'
@@ -209,9 +210,16 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             )
             assert.ok(allowedHost(incoming.hostname))
             if (incoming.hostname === 'control.usercontent.example') {
-              if (incoming.pathname === '/echo') {
+              const partitioned = incoming.pathname.startsWith('/partitioned')
+              const cookieName = partitioned
+                ? '__Host-partitioned_control'
+                : 'ordinary_control'
+              if (incoming.pathname.endsWith('/echo')) {
+                response.setHeader('Content-Type', 'text/plain; charset=utf-8')
                 response.end(
-                  request.headers.cookie?.includes('ordinary_control=present')
+                  request.headers.cookie
+                    ?.split(';')
+                    .some((cookie) => cookie.trim() === `${cookieName}=present`)
                     ? 'present'
                     : 'blocked',
                 )
@@ -219,21 +227,29 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 response.setHeader('Content-Type', 'text/html')
                 response.setHeader(
                   'Set-Cookie',
-                  'ordinary_control=present; Secure; Path=/; SameSite=None',
+                  `${cookieName}=present; Secure; HttpOnly; Path=/; SameSite=None${partitioned ? '; Partitioned' : ''}`,
                 )
-                response.end(
-                  '<body>waiting<script>fetch("/echo").then(r=>r.text()).then(t=>document.body.textContent=t)</script>',
-                )
+                if (partitioned) {
+                  // Match the product's cookie exchange: Set-Cookie on a 302,
+                  // followed by a same-host navigation inside the iframe.
+                  response.writeHead(302, { Location: '/partitioned/echo' })
+                  response.end()
+                } else {
+                  response.end(
+                    '<body>waiting<script>fetch("/echo").then(r=>r.text()).then(t=>{document.body.textContent=t;document.body.dataset.complete="true"})</script>',
+                  )
+                }
               }
               return
             }
             if (
               incoming.pathname === '/__cookie_control' ||
-              incoming.pathname === '/__cookie_control_echo'
+              incoming.pathname === '/__cookie_control_echo' ||
+              incoming.pathname === '/__partitioned_control'
             ) {
               response.setHeader('Content-Type', 'text/html')
               response.end(
-                `<iframe src="https://control.usercontent.example/${incoming.pathname.endsWith('_echo') ? 'echo' : ''}"></iframe>`,
+                `<iframe src="https://control.usercontent.example/${incoming.pathname === '/__partitioned_control' ? 'partitioned' : incoming.pathname.endsWith('_echo') ? 'echo' : ''}"></iframe>`,
               )
               return
             }
@@ -401,18 +417,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
       // Controls distinguish blocked cookies from Firefox TCP partitioning.
       stage = `${engine}: ordinary third-party cookie negative control`
       await viewer.goto('https://app.example/__cookie_control')
-      const control = viewer.frameLocator('iframe').locator('body')
+      const control = viewer
+        .frameLocator('iframe')
+        .locator('body[data-complete="true"]')
       await control.waitFor()
-      const controlFrame = viewer
-        .frames()
-        .find((frame) =>
-          frame.url().startsWith('https://control.usercontent.example/'),
-        )!
-      await controlFrame.waitForFunction(() =>
-        ['present', 'blocked'].includes(document.body.textContent ?? ''),
-      )
       assert.equal(
-        await controlFrame.locator('body').innerText(),
+        await control.innerText(),
         engine === 'firefox' && !blockAll ? 'present' : 'blocked',
       )
       if (engine === 'firefox' && !blockAll) {
@@ -435,6 +445,18 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
         )
         await partitionControl.close()
       }
+      // Measure returned authority after a cross-site navigation, independently
+      // of the product. A missing cookie is a capability result, not a timeout.
+      stage = `${engine}: partitioned third-party cookie positive control`
+      await viewer.goto('https://app.example/__partitioned_control')
+      const partitionedControl = viewer.frameLocator('iframe').locator('body')
+      await partitionedControl
+        .filter({ hasText: /^(present|blocked)$/ })
+        .waitFor()
+      const partitionedThirdPartyCookie = await partitionedControl.innerText()
+      assert.ok(['present', 'blocked'].includes(partitionedThirdPartyCookie))
+      const supportsPartitionedCookies =
+        partitionedThirdPartyCookie === 'present'
       await context.addCookies([
         {
           name: '__Secure-better-auth.session_token',
@@ -543,14 +565,14 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           )
           assetPreflights++
           stage = `${engine}: ${kind}:${format} first load`
-          await viewer.goto(`${publicUrl}#section`)
-          const frameElement = viewer.locator('iframe[data-src]').first()
-          await frameElement.waitFor()
-          const frame =
-            await (await frameElement.elementHandle())!.contentFrame()
-          assert.ok(frame)
+          const executionOrigin = `https://${kind === 'link' ? 'l' : 'a'}-${artifact.id}--v-${Buffer.from(artifact.versionId).toString('hex')}.usercontent.example`
+          const frame = await navigateUsercontentViewer(
+            viewer,
+            executionOrigin,
+            () => viewer.goto(`${publicUrl}#section`),
+          )
           if (
-            blockAll &&
+            !supportsPartitionedCookies &&
             kind === 'authenticated' &&
             format === 'static_site'
           ) {
@@ -562,8 +584,16 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               .waitFor()
             assert.equal(await frame.locator('h1#section').count(), 0)
             assert.equal(
-              await frame.evaluate(() => document.body.dataset.asset),
-              undefined,
+              await frame.locator('body').getAttribute('data-asset'),
+              null,
+            )
+            assert.match(
+              await frame.locator('body').innerText(),
+              /Safari 26\.2 or later/,
+            )
+            assert.match(
+              await frame.locator('section[lang="ja"]').innerText(),
+              /Safari は 26\.2 以降/,
             )
             results.push('authenticated:static_site:cookie-setting-message')
             continue
@@ -572,9 +602,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             .getByRole('heading', { name: 'Local delivery', exact: true })
             .waitFor()
           if (format !== 'md') {
-            await frame.waitForFunction(
-              () => document.body.dataset.cookieAttack === 'attempted',
-            )
+            await frame
+              .locator('body[data-cookie-attack="attempted"]')
+              .waitFor()
             assert.deepEqual(
               (await context.cookies('https://app.example'))
                 .filter(
@@ -590,20 +620,26 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           // viewer has confirmed that it can receive frame messages.
           stage = `${engine}: ${kind}:${format} viewer handshake`
           await viewer.locator('[data-sandbox-state="ready"]').waitFor()
-          assert.match(
-            new URL(frame.url()).hostname,
-            new RegExp(
-              `^${kind === 'link' ? 'l' : 'a'}-${artifact.id}--v-${/[a-f0-9]+/.source}\\.usercontent\\.example$`,
-            ),
+          assert.equal(
+            await frame.locator('body').evaluate(() => location.origin),
+            executionOrigin,
           )
           stage = `${engine}: ${kind}:${format} initial hash`
-          await frame.waitForURL((url) => url.hash === '#section')
-          await frame.evaluate(() => {
+          // Acquire a Frame only after the execution document is attached, and
+          // use it solely for this URL wait, never across subsequent navigation.
+          const loadedFrame = await (await viewer
+            .locator('iframe[data-src]')
+            .first()
+            .elementHandle())!.contentFrame()
+          assert.ok(loadedFrame)
+          await loadedFrame.waitForURL(
+            (url) => url.origin === executionOrigin && url.hash === '#section',
+          )
+          await frame.locator('body').evaluate(() => {
             location.hash = '#changed'
           })
           stage = `${engine}: ${kind}:${format} hash report`
           await viewer.waitForURL((url) => url.hash === '#changed')
-          const executionOrigin = new URL(frame.url()).origin
           const probe = await viewer.evaluate(
             async ({ origin, path }) => {
               const response = await fetch(origin + path, {
@@ -624,22 +660,30 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           })
           if (format === 'static_site') {
             stage = `${engine}: ${kind}:${format} relative assets`
-            await frame.waitForFunction(
-              () =>
-                document.body.dataset.asset === 'loaded' &&
-                getComputedStyle(document.body)
-                  .getPropertyValue('--delivery-asset')
-                  .trim() === 'loaded',
+            await frame.locator('body[data-asset="loaded"]').waitFor()
+            assert.equal(
+              await frame
+                .locator('body')
+                .evaluate((body) =>
+                  getComputedStyle(body)
+                    .getPropertyValue('--delivery-asset')
+                    .trim(),
+                ),
+              'loaded',
             )
             const cookies: Cookie[] = (await context.cookies()).filter(
               (cookie) => cookie.name === '__Host-as_bnd',
             )
-            assert.equal(
-              cookies.some(
-                (cookie) => cookie.domain === new URL(executionOrigin).hostname,
-              ),
-              !blockAll,
-            )
+            // Some engines store a cookie without returning it cross-site.
+            // The control above measures delivery; storage alone is not support.
+            if (supportsPartitionedCookies) {
+              assert.ok(
+                cookies.some(
+                  (cookie) =>
+                    cookie.domain === new URL(executionOrigin).hostname,
+                ),
+              )
+            }
             assert.ok(cookies.every((cookie) => !cookie.domain.startsWith('.')))
             assert.ok(cookies.every((cookie) => cookie.value !== 'invalid'))
             // The earlier HTML sibling attempted a parent-domain legacy cookie
@@ -665,10 +709,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               .waitFor()
           }
           stage = `${engine}: ${kind}:${format} public reload`
-          await viewer.reload()
-          await viewer
-            .frameLocator('iframe[data-src]')
-            .first()
+          const reloadedFrame = await navigateUsercontentViewer(
+            viewer,
+            executionOrigin,
+            () => viewer.reload(),
+          )
+          await reloadedFrame
             .getByRole('heading', { name: 'Local delivery', exact: true })
             .waitFor()
           stage = `${engine}: ${kind}:${format} download and authority control`
@@ -679,21 +725,18 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               const appCookies = await context.cookies('https://app.example')
               await context.clearCookies()
               await context.addCookies(appCookies)
-              const current = await (await viewer
-                .locator('iframe[data-src]')
-                .first()
-                .elementHandle())!.contentFrame()
-              assert.ok(current)
               assert.equal(
-                await current.evaluate(
-                  async () => (await fetch('/style.css')).status,
-                ),
+                await frame
+                  .locator('body')
+                  .evaluate(async () => (await fetch('/style.css')).status),
                 401,
               )
-              await viewer.reload()
-              await viewer
-                .frameLocator('iframe[data-src]')
-                .first()
+              const restoredFrame = await navigateUsercontentViewer(
+                viewer,
+                executionOrigin,
+                () => viewer.reload(),
+              )
+              await restoredFrame
                 .getByRole('heading', { name: 'Local delivery', exact: true })
                 .waitFor()
             }
@@ -743,13 +786,17 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               'DELETE FROM shareable_grants WHERE shareable_id=?',
             ).bind(artifact.id),
           ])
-          const renewedFrame = await (await viewer
+          const revokedResponse = viewer.waitForResponse(
+            (response) => response.url() === renewed.sandboxUrl,
+          )
+          await viewer
             .locator('iframe[data-src]')
             .first()
-            .elementHandle())!.contentFrame()
-          assert.ok(renewedFrame)
-          const revoked = await renewedFrame.goto(renewed.sandboxUrl)
-          assert.equal(revoked?.status(), 401)
+            .evaluate((element, url) => {
+              ;(element as HTMLIFrameElement).src = url
+            }, renewed.sandboxUrl)
+          const revoked = await revokedResponse
+          assert.equal(revoked.status(), 401)
           assert.equal(
             (await context.cookies('https://app.example')).find(
               (cookie) => cookie.name === 'isolation_probe',
@@ -815,6 +862,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               : 'WebKit third-party cookie blocking; enforced by ordinary-cookie control',
         ordinaryThirdPartyCookie:
           engine === 'firefox' && !blockAll ? 'partitioned' : 'blocked',
+        partitionedThirdPartyCookie,
         assetPreflights,
         results,
         identity: identity.user.id,
@@ -888,6 +936,7 @@ declare module 'vitest/browser' {
       version: string
       settings: string
       ordinaryThirdPartyCookie: string
+      partitionedThirdPartyCookie: string
       assetPreflights: number
       results: string[]
       identity: string

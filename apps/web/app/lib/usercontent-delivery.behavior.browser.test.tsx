@@ -7,11 +7,19 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
   expect(evidence.ordinaryThirdPartyCookie).toBe(
     evidence.engine === 'firefox' ? 'partitioned' : 'blocked',
   )
+  expect(['present', 'blocked']).toContain(evidence.partitionedThirdPartyCookie)
+  // These policies promise private static-site support; losing it must fail
+  // instead of silently replacing their full delivery coverage with a message.
+  if (evidence.engine === 'chromium' || evidence.engine === 'firefox') {
+    expect(evidence.partitionedThirdPartyCookie).toBe('present')
+  }
   expect(evidence.assetPreflights).toBe(6)
   expect(evidence.results).toEqual([
     'authenticated:html',
     'authenticated:md',
-    'authenticated:static_site',
+    evidence.partitionedThirdPartyCookie === 'present'
+      ? 'authenticated:static_site'
+      : 'authenticated:static_site:cookie-setting-message',
     'link:html',
     'link:md',
     'link:static_site',
@@ -22,6 +30,7 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
     const restricted = await server.commands.usercontentDelivery(true)
     console.info('usercontent block-all-cookies measurement', restricted)
     expect(restricted.ordinaryThirdPartyCookie).toBe('blocked')
+    expect(restricted.partitionedThirdPartyCookie).toBe('blocked')
     expect(restricted.results).toEqual([
       'authenticated:html',
       'authenticated:md',
