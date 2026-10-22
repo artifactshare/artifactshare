@@ -214,16 +214,27 @@ shell remains available and emits a token-free unavailable frame URL.
 `scripts/verify-content-cutover.mjs` checks old link refusals after the first app
 deploy, then both new probe policies and old sandbox/link refusals after the
 sandbox deploy. Both paths repeat the `sandbox-ready` check set immediately after
-final app deployment as a read-only verification. Each post-deploy verification
-starts immediately and retries the complete, exact check set every 2 seconds for
+final app deployment as a read-only verification. After each app deployment,
+the same polling invocation also confirms the uncached delivery-stage endpoint:
+exact status 200 and body `refuse` before sandbox deployment, or exact status 200
+and body `usercontent` after final app deployment. This confirmation shares the
+check-set deadline and request cap; it does not call or retry initial discovery.
+Stage-body mismatches report only `refuse`, `usercontent`, or `malformed`, never
+the response body. Each post-deploy verification
+starts immediately, runs the checks concurrently, and retries the complete, exact
+check set every 2 seconds for
 up to 75 seconds. Each request, including response-body consumption, is capped
 at 10 seconds or the remaining total budget, whichever is shorter. Earlier
 passing checks are rechecked; success requires a complete passing attempt within
-the deadline. Failed attempts log stage, attempt, hostname, path, and observed
-status (or a fixed transport-error indication), never response bodies or raw
-transport errors. Timeout names the last failing check. A failed command or
+the deadline. Each failure is logged as it is observed, with stage, attempt,
+hostname, path, and observed status (or a fixed transport-error indication for
+fetch or body-read failures), never response bodies or raw
+transport errors. Timeout names the last failing check in check-set order, or
+reports exhaustion without an observed failure if no check failed. A failed command or
 verification stops the chain before the next production write; final verification
-failure fails the job without further writes. Retries recheck the deployed stage. Retries and recovery retain refusal code;
+failure fails the job without further writes. When an operator reruns the protected
+deploy job, its initial single request discovers the deployed stage again.
+Job reruns and recovery retain refusal code;
 do not restore old content handlers or URL generators. Users recover an open viewer by reloading the same public URL.
 The production build/shadow lane performs no deploy or readiness fetch.
 

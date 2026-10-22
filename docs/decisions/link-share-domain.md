@@ -99,16 +99,25 @@ Suffix List submission is planned for `artifactshareusercontent.com`.
 
 Post-deploy verification polls for up to 75 seconds per invocation, starting
 immediately and retrying every 2 seconds. Every attempt repeats the entire exact
-stage check set, including previously passing checks. No status, marker, header,
+stage check set concurrently, including previously passing checks. No status, marker, header,
 origin, path, or host expectation is relaxed. Requests include body consumption
 in their 10-second cap; both requests and retry waits are capped by the remaining
-total deadline. No new attempt starts after exhaustion. Each failed attempt logs
+total deadline. No new attempt starts after exhaustion. Each failure is logged as
+it is observed, with
 stage, attempt, hostname, path, and observed status (or a fixed transport-error
-indication), without bodies or raw transport errors. Timeout reports the last
-failing check. Both deployment paths run `sandbox-ready` again immediately after
+indication for fetch or body-read failures), without bodies or raw transport errors. Timeout reports the last
+failing check in check-set order, or exhaustion without an observed failure if no
+check failed. Both deployment paths run `sandbox-ready` again immediately after
 the final app deployment. This final read-only verification adds no delivery stage
 or production write. Failure aborts before the next write; final verification
 failure fails the job without rollback.
+
+Post-deploy app verification also polls the uncached delivery-stage endpoint in
+the same check set and time budget: exact 200 `refuse` before sandbox deployment,
+and exact 200 `usercontent` after final app deployment on both paths. Stale or
+malformed stage responses prevent success even when all content checks pass.
+Diagnostics include status and only a fixed body class (`refuse`, `usercontent`,
+or `malformed`); response bodies and transport payloads are never logged.
 
 Delivery-stage discovery remains a single uncached, manual-redirect request with
 a 10-second timeout and exact-body parsing. It is never retried by polling; fetch
@@ -139,7 +148,8 @@ path, which uses the same app build twice:
 3. Only after both checks pass, deploy the app with
    `ARTIFACT_DELIVERY_STAGE=usercontent` to emit fresh execution URLs and tokens.
 
-Each stage aborts on failure. Retries check the deployed stage again; a partial
+Each stage aborts on failure. When an operator reruns the protected deploy job,
+its initial single request discovers the deployed stage again; a partial
 first transition remains on the refusal path until final app delivery succeeds.
 Recovery must retain refusal code and must not roll back to an old content handler
 or URL generator. Temporary unavailable frames occur only during that transition. A viewer left open across cutover

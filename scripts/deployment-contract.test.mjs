@@ -644,6 +644,15 @@ for (const failure of [
     const checks = expectedChecks('sandbox-ready')
     let calls = 0
     const signals = []
+    let advanceScheduled = false
+    const scheduleAdvance = (ms) => {
+      if (advanceScheduled) return
+      advanceScheduled = true
+      queueMicrotask(() => {
+        advanceScheduled = false
+        time.advance(ms)
+      })
+    }
     await assert.rejects(
       verifyContentCutover(
         'sandbox-ready',
@@ -655,7 +664,7 @@ for (const failure of [
             throw new Error('private transport payload')
           }
           const stall = () => {
-            queueMicrotask(() => time.advance(time.caps.at(-1)))
+            scheduleAdvance(time.caps.at(-1))
             return new Promise(() => {})
           }
           if (failure === 'fetch-reject') return reject()
@@ -668,7 +677,7 @@ for (const failure of [
                 { once: true },
               ),
             )
-            queueMicrotask(() => time.advance(time.caps.at(-1)))
+            scheduleAdvance(time.caps.at(-1))
             return promise
           }
           const response = passingResponse(
@@ -680,7 +689,7 @@ for (const failure of [
               : failure === 'body-stall'
                 ? stall
                 : () => {
-                    time.advance(25_000)
+                    scheduleAdvance(25_000)
                     return Promise.resolve(probeMarker)
                   }
           return response
@@ -699,17 +708,18 @@ for (const failure of [
     assert.equal(time.timers.size, 0)
     assert.ok(!JSON.stringify(time.logs).includes('private transport payload'))
     if (['fetch-stall', 'body-stall', 'abort'].includes(failure)) {
-      assert.deepEqual(time.caps, [10_000, 10_000, 5_000])
-      assert.ok(signals.every((signal) => signal.aborted))
-      assert.deepEqual(time.waits, [])
-      assert.equal(time.logs.at(-1).path, '/download')
-    }
-    if (failure.startsWith('fetch') || failure === 'abort')
-      assert.ok(time.logs.every(({ status }) => status === 'transport-error'))
-    else
-      assert.ok(
-        time.logs.every(({ status }) => status === 404 || status === 200),
+      assert.deepEqual(
+        time.caps,
+        [10_000, 10_000, 1_000].flatMap((cap) =>
+          Array(checks.length).fill(cap),
+        ),
       )
+      assert.ok(signals.every((signal) => signal.aborted))
+      assert.deepEqual(time.waits, [2_000, 2_000])
+      assert.equal(time.logs.at(-1).path, '/__artifactshare_probe')
+    }
+    assert.ok(time.logs.every(({ status }) => status === 'transport-error'))
+    assert.ok(signals.every((signal) => signal.aborted))
   })
 }
 
@@ -823,6 +833,282 @@ test('a successful final body received at the deadline cannot pass', async () =>
   )
   assert.equal(calls, checks.length)
   assert.deepEqual(time.waits, [])
-  assert.equal(time.logs.length, 1)
-  assert.equal(time.logs[0].status, 200)
+  assert.equal(time.logs.length, checks.length)
+  assert.ok(time.logs.every(({ status }) => status === 'transport-error'))
 })
+
+test('late fetch completion aborts unread bodies even before the timer fires', async () => {
+  const time = timing()
+  let now = 0
+  let signal
+  let calls = 0
+  let reads = 0
+  const check = expectedChecks('app-refusal')[0]
+  await assert.rejects(
+    verifyContentCutover(
+      'app-refusal',
+      (_url, init) => {
+        calls++
+        signal = init.signal
+        now = 5_000
+        return {
+          ...passingResponse(check),
+          text: () => {
+            reads++
+            return Promise.resolve('private body')
+          },
+        }
+      },
+      { ...time.options, clock: () => now },
+    ),
+    (error) => {
+      assert.equal(
+        error.message,
+        `Content cutover verification failed: app-refusal ${new URL(check.url).hostname}/ (transport-error)`,
+      )
+      return true
+    },
+  )
+  assert.equal(calls, 1)
+  assert.equal(reads, 0)
+  assert.ok(signal.aborted)
+  assert.equal(time.timers.size, 0)
+  assert.deepEqual(time.waits, [])
+})
+
+for (const stage of ['app-refusal', 'sandbox-ready']) {
+  test(`${stage} starts all checks concurrently and logs failures as observed`, async () => {
+    const time = timing(1_000)
+    const checks = expectedChecks(stage)
+    const pending = []
+    const logged = checks.map(() => Promise.withResolvers())
+    const verification = verifyContentCutover(
+      stage,
+      (url) => {
+        const check = checks[pending.length]
+        assert.equal(url, check.url)
+        return new Promise((resolve) =>
+          pending.push(() =>
+            resolve({ ...passingResponse(check), status: 503 }),
+          ),
+        )
+      },
+      {
+        ...time.options,
+        log: (message, metadata) => {
+          time.options.log(message, metadata)
+          logged[time.logs.length - 1].resolve()
+        },
+      },
+    )
+    const rejected = assert.rejects(verification, (error) => {
+      const last = new URL(checks.at(-1).url)
+      assert.equal(
+        error.message,
+        `Content cutover verification failed: ${stage} ${last.hostname}${last.pathname} (503)`,
+      )
+      return true
+    })
+    assert.equal(pending.length, checks.length)
+    // Resolve in reverse order; each log must appear before the others finish.
+    for (let index = pending.length - 1; index >= 0; index--) {
+      pending[index]()
+      await logged[pending.length - index - 1].promise
+      assert.equal(time.logs.at(-1).path, new URL(checks[index].url).pathname)
+      assert.equal(
+        time.logs.at(-1).hostname,
+        new URL(checks[index].url).hostname,
+      )
+    }
+    await rejected
+    assert.equal(time.timers.size, 0)
+  })
+
+  for (const retry of [false, true]) {
+    test(`${stage} accepts a fully passing attempt when the clock expires during collection (retry=${retry})`, async () => {
+      const checks = expectedChecks(stage)
+      const time = timing()
+      let calls = 0
+      await verifyContentCutover(
+        stage,
+        () => {
+          const response = passingResponse(checks[calls++ % checks.length])
+          if (retry && calls <= checks.length) response.status = 503
+          return response
+        },
+        {
+          ...time.options,
+          clearTimer: (timer) => {
+            time.options.clearTimer(timer)
+            if (
+              time.timers.size === 0 &&
+              calls === checks.length * (retry ? 2 : 1)
+            )
+              time.advance(5_000)
+          },
+        },
+      )
+      assert.equal(calls, checks.length * (retry ? 2 : 1))
+      assert.deepEqual(time.waits, retry ? [2_000] : [])
+      assert.equal(time.logs.length, retry ? checks.length : 0)
+    })
+  }
+}
+
+test('exhaustion without an observed failure does not invent a failing check', async () => {
+  const time = timing(0)
+  let calls = 0
+  await assert.rejects(
+    verifyContentCutover(
+      'app-refusal',
+      () => {
+        calls++
+      },
+      time.options,
+    ),
+    {
+      message:
+        'Content cutover verification failed: app-refusal deadline exhausted before a complete check set; no failing check observed',
+    },
+  )
+  assert.equal(calls, 0)
+  assert.deepEqual(time.logs, [])
+  assert.deepEqual(time.waits, [])
+})
+
+for (const initialStage of ['refuse', 'usercontent']) {
+  for (const expectedStage of initialStage === 'refuse'
+    ? ['refuse', 'usercontent']
+    : ['usercontent']) {
+    for (const failure of [
+      'stale',
+      'malformed',
+      'status',
+      'fetch',
+      'body',
+      'stall',
+    ]) {
+      for (const persistent of [false, true]) {
+        test(`${initialStage} confirms deployed ${expectedStage}: ${failure}, persistent=${persistent}`, async () => {
+          const writes = []
+          const confirmations = []
+          const times = []
+          const result = deployContentCutover({
+            readStage: () => initialStage,
+            log: () => {},
+            run: (args) => writes.push(args),
+            verify: async (stage, fetcher, options = {}) => {
+              assert.equal(fetcher, undefined)
+              const time = timing()
+              times.push(time)
+              const checks = expectedChecks(stage)
+              let requests = 0
+              let stageRequests = 0
+              await verifyContentCutover(
+                stage,
+                (url, init) => {
+                  assert.ok(time.options.clock() < 5_000)
+                  if (url.endsWith('/__artifactshare_delivery_stage')) {
+                    assert.equal(
+                      url,
+                      'https://artifactshare.com/__artifactshare_delivery_stage',
+                    )
+                    assert.equal(init.cache, 'no-store')
+                    assert.equal(init.redirect, 'manual')
+                    assert.ok(init.signal)
+                    stageRequests++
+                    confirmations.push(options.expectedDeliveryStage)
+                    const fails =
+                      options.expectedDeliveryStage === expectedStage &&
+                      (persistent || stageRequests === 1)
+                    if (fails && failure === 'fetch')
+                      throw new Error('private transport payload')
+                    return {
+                      status: fails && failure === 'status' ? 404 : 200,
+                      text: () => {
+                        if (fails && failure === 'body')
+                          throw new Error('private body payload')
+                        if (fails && failure === 'stall') {
+                          time.advance(
+                            Math.min(2_000, 5_000 - time.options.clock()),
+                          )
+                          return new Promise(() => {})
+                        }
+                        return Promise.resolve(
+                          fails && failure === 'stale'
+                            ? expectedStage === 'refuse'
+                              ? 'usercontent'
+                              : 'refuse'
+                            : fails && failure === 'malformed'
+                              ? 'private malformed payload'
+                              : options.expectedDeliveryStage,
+                        )
+                      },
+                    }
+                  }
+                  const check = checks[requests++ % checks.length]
+                  assert.equal(url, check.url)
+                  return passingResponse(check)
+                },
+                { ...time.options, requestTimeoutMs: 2_000, ...options },
+              )
+              assert.equal(requests, checks.length * Math.max(1, stageRequests))
+            },
+          })
+          const diagnostic = ['fetch', 'body', 'stall'].includes(failure)
+            ? 'transport-error'
+            : failure === 'status'
+              ? `404, ${expectedStage}`
+              : failure === 'malformed'
+                ? '200, malformed'
+                : `200, ${expectedStage === 'refuse' ? 'usercontent' : 'refuse'}`
+          if (persistent) {
+            await assert.rejects(result, (error) => {
+              assert.match(
+                error.message,
+                /^Content cutover verification failed:/u,
+              )
+              assert.ok(
+                error.message.includes(
+                  'artifactshare.com/__artifactshare_delivery_stage',
+                ),
+              )
+              assert.ok(!error.message.includes('private'))
+              assert.ok(error.message.endsWith(`(${diagnostic})`))
+              return true
+            })
+          } else {
+            await result
+          }
+          assert.ok(confirmations.includes(expectedStage))
+          assert.equal(
+            writes.length,
+            persistent && expectedStage === 'refuse'
+              ? 1
+              : initialStage === 'refuse'
+                ? 3
+                : 2,
+          )
+          assert.ok(
+            !JSON.stringify(times.flatMap((time) => time.logs)).includes(
+              'private',
+            ),
+          )
+          assert.ok(times.every((time) => time.timers.size === 0))
+          const failures = times
+            .flatMap((time) => time.logs)
+            .filter((entry) => entry.path === '/__artifactshare_delivery_stage')
+          assert.ok(failures.length > 0)
+          assert.ok(
+            failures.every((entry) => entry.hostname === 'artifactshare.com'),
+          )
+          assert.equal(
+            confirmations.filter((value) => value === expectedStage).length,
+            persistent && failure !== 'stall' ? 3 : 2,
+          )
+          if (persistent) assert.equal(times.at(-1).options.clock(), 5_000)
+        })
+      }
+    }
+  }
+}

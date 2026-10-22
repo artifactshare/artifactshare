@@ -44,10 +44,17 @@ export async function verifyContentCutover(
     requestTimeoutMs = 10_000,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
+    expectedDeliveryStage,
   } = {},
 ) {
   if (!['app-refusal', 'sandbox-ready'].includes(stage)) {
     throw new Error('Expected app-refusal or sandbox-ready')
+  }
+  if (
+    expectedDeliveryStage !== undefined &&
+    !['refuse', 'usercontent'].includes(expectedDeliveryStage)
+  ) {
+    throw new Error('Expected refuse or usercontent delivery confirmation')
   }
   const checks = []
   const legacyLink = `https://${artifact}--v-${version}.artifactshare.link`
@@ -71,6 +78,13 @@ export async function verifyContentCutover(
       })
     }
   }
+  if (expectedDeliveryStage) {
+    checks.push({
+      url: 'https://artifactshare.com/__artifactshare_delivery_stage',
+      status: 200,
+      deliveryStage: expectedDeliveryStage,
+    })
+  }
   const deadline = clock() + timeoutMs
   const remaining = () => Math.max(0, deadline - clock())
 
@@ -80,6 +94,7 @@ export async function verifyContentCutover(
     const controller = new AbortController()
     const requestDeadline = Math.min(deadline, clock() + requestTimeoutMs)
     let status = 'transport-error'
+    let bodyClass
     let timer
     try {
       const expired = new Promise((_, reject) => {
@@ -98,11 +113,21 @@ export async function verifyContentCutover(
             redirect: 'manual',
             signal: controller.signal,
             headers: check.origin ? { Origin: check.origin } : {},
+            ...(check.deliveryStage ? { cache: 'no-store' } : {}),
           })
           status = response.status
-          if (controller.signal.aborted || clock() >= requestDeadline)
+          if (controller.signal.aborted || clock() >= requestDeadline) {
+            status = 'transport-error'
             return false
+          }
           const body = await response.text()
+          if (check.deliveryStage) {
+            bodyClass =
+              body === 'refuse' || body === 'usercontent' ? body : 'malformed'
+            return (
+              response.status === check.status && body === check.deliveryStage
+            )
+          }
           return (
             response.status === check.status &&
             (check.probe
@@ -117,49 +142,53 @@ export async function verifyContentCutover(
           )
         })(),
       ])
-      return { valid: valid && clock() < requestDeadline, status }
+      if (controller.signal.aborted || clock() >= requestDeadline)
+        return { valid: false, status: 'transport-error' }
+      return { valid, status, ...(bodyClass ? { bodyClass } : {}) }
     } catch {
-      return { valid: false, status }
+      return { valid: false, status: 'transport-error' }
     } finally {
+      // Also release I/O when the clock expires before the timer callback runs.
+      controller.abort()
       clearTimer(timer)
     }
   }
 
   let lastFailure
   for (let attempt = 1; remaining() > 0; attempt++) {
-    const failures = []
-    let completed = 0
-    for (const check of checks) {
-      if (remaining() <= 0) break
-      const result = await checkOnce(check)
-      completed++
-      if (!result.valid) {
-        const url = new URL(check.url)
-        failures.push({
-          stage,
-          attempt,
-          hostname: url.hostname,
-          path: url.pathname,
-          status: result.status,
-        })
-      }
+    const results = await Promise.all(
+      checks.map(async (check) => {
+        if (remaining() <= 0) return undefined
+        const result = await checkOnce(check)
+        if (!result.valid) {
+          const url = new URL(check.url)
+          const failure = {
+            stage,
+            attempt,
+            hostname: url.hostname,
+            path: url.pathname,
+            status: result.status,
+            ...(result.bodyClass ? { bodyClass: result.bodyClass } : {}),
+          }
+          log('Content cutover verification attempt failed', failure)
+          return { ...result, failure }
+        }
+        return result
+      }),
+    )
+    // Results retain check order even when responses complete out of order.
+    for (const result of results) {
+      if (result?.failure) lastFailure = result.failure
     }
-    for (const failure of failures) {
-      log('Content cutover verification attempt failed', failure)
-      lastFailure = failure
-    }
-    if (completed === checks.length && failures.length === 0 && remaining() > 0)
-      return
+    // Each check already validated its deadline. Do not reject a completed
+    // passing attempt because time elapsed while collecting its results.
+    if (results.every((result) => result?.valid)) return
     if (remaining() > 0) await wait(Math.min(intervalMs, remaining()))
   }
-  const last = lastFailure ?? {
-    hostname: new URL(checks[0].url).hostname,
-    path: new URL(checks[0].url).pathname,
-    status: 'transport-error',
-  }
-  throw new Error(
-    `Content cutover verification failed: ${stage} ${last.hostname}${last.path} (${last.status})`,
-  )
+  const detail = lastFailure
+    ? `${lastFailure.hostname}${lastFailure.path} (${lastFailure.status}${lastFailure.bodyClass ? `, ${lastFailure.bodyClass}` : ''})`
+    : 'deadline exhausted before a complete check set; no failing check observed'
+  throw new Error(`Content cutover verification failed: ${stage} ${detail}`)
 }
 
 if (
