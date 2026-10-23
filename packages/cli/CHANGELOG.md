@@ -6,6 +6,7 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 ## Unreleased
 
 - Isolate local preview artifacts with a scripts-only sandbox and a permanent notice about unavailable localStorage, IndexedDB and same-origin features. Validate reporter observations with bounded schemas, document capabilities and replay checks; anchor verdicts affect display only. Local preview and share-dialog HTTP session authentication remains deferred, so local clients knowing the ports still have access.
+- Update bundled skill guidance for folder shares: external HTTPS images, CDN stylesheets, and jsDelivr fonts are supported; JavaScript eval remains blocked.
 
 ## 0.17.0 - 2026-10-23
 
