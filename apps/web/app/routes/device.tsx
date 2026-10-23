@@ -63,6 +63,38 @@ export const screen = {
   primaryAction: '認証を完了する',
   states: [
     {
+      id: 'unrestricted',
+      description: 'Unrestricted approval, confirmation unchecked',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/unrestricted',
+        query: '?user_code=FAE50B19',
+        ready: {
+          selector: '#device-code-confirmation',
+          description: 'Code verified and approval context loaded',
+        },
+      },
+    },
+    {
+      id: 'unrestricted-confirmed',
+      description: 'Unrestricted approval, confirmation checked',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/unrestricted-confirmed',
+        query: '?user_code=EA818F55',
+        ready: {
+          selector: '#device-code-confirmation',
+          description: 'Code verified and approval context loaded',
+        },
+        interactions: [
+          { action: 'click', selector: '#device-code-confirmation' },
+        ],
+      },
+    },
+
+    {
       id: 'publisher-new',
       description: 'publisher-new approval',
       setup: {
@@ -388,18 +420,155 @@ function PublisherApprovalFields({
   )
 }
 
-export default function Device({ loaderData }: Route.ComponentProps) {
-  const { t, locale } = useT()
-  const [params] = useSearchParams()
-  const initialCode = params.get('user_code') ?? ''
+function DeviceApprovalActions({
+  unrestricted,
+  requiresConfirmation,
+  confirmed,
+  onConfirm,
+  blocked,
+  hasProjectConsequence,
+  onDecision,
+}: {
+  unrestricted: boolean
+  requiresConfirmation: boolean
+  confirmed: boolean
+  onConfirm: (confirmed: boolean) => void
+  blocked: boolean
+  hasProjectConsequence: boolean
+  onDecision: (decision: 'approved' | 'denied') => Promise<void>
+}) {
+  const { t } = useT()
+  return (
+    <>
+      <DeviceApprovalSafety
+        unrestricted={unrestricted}
+        requiresConfirmation={requiresConfirmation}
+        confirmed={confirmed}
+        onConfirm={onConfirm}
+      />
+      <ConsentActions>
+        <Button
+          type="button"
+          disabled={blocked}
+          aria-describedby={[
+            'device-approval-warning',
+            unrestricted ? 'device-unrestricted-disclosure' : null,
+            hasProjectConsequence ? 'agent-project-consequence' : null,
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => onDecision('approved')}
+        >
+          {t('device.approve')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onDecision('denied')}
+        >
+          {t('device.deny')}
+        </Button>
+      </ConsentActions>
+    </>
+  )
+}
+
+function DeviceApprovalSafety({
+  unrestricted,
+  requiresConfirmation,
+  confirmed,
+  onConfirm,
+}: {
+  unrestricted: boolean
+  requiresConfirmation: boolean
+  confirmed: boolean
+  onConfirm: (confirmed: boolean) => void
+}) {
+  const { t } = useT()
+  return (
+    <div className="mt-4 w-full max-w-80 text-left text-sm">
+      <Stack gap="3">
+        <p id="device-approval-warning" role="note" className="font-medium">
+          {t('device.approval_warning')}
+        </p>
+        {unrestricted ? (
+          <p id="device-unrestricted-disclosure">
+            {t('device.unrestricted_disclosure')}
+          </p>
+        ) : null}
+        {requiresConfirmation ? (
+          <label
+            htmlFor="device-code-confirmation"
+            className="flex min-h-11 cursor-pointer items-start gap-2 py-2"
+          >
+            <input
+              id="device-code-confirmation"
+              type="checkbox"
+              checked={confirmed}
+              onChange={(event) => onConfirm(event.target.checked)}
+              className="accent-primary focus-visible:ring-ring mt-1 size-4 shrink-0 focus-visible:ring-2 focus-visible:ring-offset-2"
+            />
+            <span>{t('device.code_confirmation')}</span>
+          </label>
+        ) : null}
+      </Stack>
+    </div>
+  )
+}
+
+function useDeviceCodeInput(initialCode: string) {
   const [codeInput, setCodeInput] = useState(() => ({
     sourceQuery: initialCode,
     editedValue: formatUserCode(initialCode),
+    confirmed: false,
   }))
+  if (codeInput.sourceQuery !== initialCode) {
+    setCodeInput({
+      sourceQuery: initialCode,
+      editedValue: formatUserCode(initialCode),
+      confirmed: false,
+    })
+  }
   const userCode =
     codeInput.sourceQuery === initialCode
       ? codeInput.editedValue
       : formatUserCode(initialCode)
+  const initialCleanCode = cleanUserCode(initialCode).slice(0, USER_CODE_LENGTH)
+  // Completing a partial prefill or changing its formatting is not manual entry.
+  const requiresConfirmation =
+    initialCleanCode.length > 0 &&
+    cleanUserCode(userCode).startsWith(initialCleanCode)
+  const codeConfirmed =
+    codeInput.sourceQuery === initialCode && codeInput.confirmed
+  const confirmationMissing = requiresConfirmation && !codeConfirmed
+  return {
+    userCode,
+    requiresConfirmation,
+    codeConfirmed,
+    confirmationMissing,
+    confirmCode: (confirmed: boolean) =>
+      setCodeInput({ ...codeInput, confirmed }),
+    editCode: (value: string) =>
+      setCodeInput({
+        sourceQuery: initialCode,
+        editedValue: formatUserCode(value),
+        confirmed: false,
+      }),
+  }
+}
+
+export default function Device({ loaderData }: Route.ComponentProps) {
+  const { t, locale } = useT()
+  const [params] = useSearchParams()
+  const initialCode = params.get('user_code') ?? ''
+  const {
+    userCode,
+    requiresConfirmation,
+    codeConfirmed,
+    confirmationMissing,
+    confirmCode,
+    editCode,
+  } = useDeviceCodeInput(initialCode)
   const [state, dispatch] = useReducer(verifyReducer, { kind: 'idle' })
   const [verifiedAgentApproval, setVerifiedAgentApproval] = useState<{
     code: string
@@ -494,10 +663,14 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     }
   }, [loaderData.signedIn, cleanCode, complete, hasInitialCode])
 
+  const approvalBlocked =
+    confirmationMissing ||
+    (Boolean(agentApproval) && !effectiveProjectId) ||
+    (Boolean(publisherApproval) && !publisherChoiceValid)
+
   const decide = async (decision: 'approved' | 'denied') => {
     if (!complete || state.kind !== 'ready') return
-    if (decision === 'approved' && publisherApproval && !publisherChoiceValid)
-      return
+    if (decision === 'approved' && approvalBlocked) return
     const decisionCode = cleanCode
     if (state.code !== decisionCode) return
     if (currentCleanCode.current !== decisionCode) return
@@ -573,13 +746,8 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             value={userCode}
             inputMode="text"
             autoComplete="one-time-code"
-            onChange={(event) =>
-              setCodeInput({
-                sourceQuery: initialCode,
-                editedValue: formatUserCode(event.target.value),
-              })
-            }
-            className="h-14 text-center font-mono text-2xl"
+            onChange={(event) => editCode(event.target.value)}
+            className="h-14 text-center font-mono text-2xl md:text-2xl"
             aria-invalid={state.kind === 'invalid' ? true : undefined}
             aria-describedby={
               state.kind === 'invalid' ? 'device-code-error' : undefined
@@ -652,30 +820,18 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             {state.notice ? (
               <ConsentErrorAlert>{t('device.retry')}</ConsentErrorAlert>
             ) : null}
-            <ConsentActions>
-              <Button
-                type="button"
-                disabled={
-                  (Boolean(agentApproval) && !effectiveProjectId) ||
-                  (Boolean(publisherApproval) && !publisherChoiceValid)
-                }
-                aria-describedby={
-                  agentApproval && effectiveProject
-                    ? 'agent-project-consequence'
-                    : undefined
-                }
-                onClick={() => decide('approved')}
-              >
-                {t('device.approve')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => decide('denied')}
-              >
-                {t('device.deny')}
-              </Button>
-            </ConsentActions>
+            <DeviceApprovalActions
+              unrestricted={!agentApproval && !publisherApproval}
+              requiresConfirmation={
+                requiresConfirmation &&
+                !(agentApproval?.projectSelector && !fixedProject)
+              }
+              confirmed={codeConfirmed}
+              onConfirm={confirmCode}
+              blocked={approvalBlocked}
+              hasProjectConsequence={Boolean(agentApproval && effectiveProject)}
+              onDecision={decide}
+            />
           </>
         ) : null}
       </LandingHero>

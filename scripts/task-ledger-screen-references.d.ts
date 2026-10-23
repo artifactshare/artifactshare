@@ -13,6 +13,8 @@ export type TaskLedgerScreenReference =
   | 'device/publisher-invalid'
   | 'device/publisher-long-name'
   | 'device/publisher-new'
+  | 'device/unrestricted'
+  | 'device/unrestricted-confirmed'
   | 'device/with-code'
   | 'files/content-rich'
   | 'files/default'

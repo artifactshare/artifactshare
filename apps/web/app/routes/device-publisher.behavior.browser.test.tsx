@@ -68,6 +68,14 @@ async function render(clients: Array<{ id: string; name: string }>) {
 
 test('first client defaults to create-new and labels the requested name', async () => {
   await render([])
+  await expect
+    .element(
+      page.getByRole('button', { name: en['device.approve'], exact: true }),
+    )
+    .toBeDisabled()
+  await page
+    .getByRole('checkbox', { name: en['device.code_confirmation'] })
+    .click()
   expect(en['device.publisher.capability']).toContain('static sites')
   expect(en['device.publisher.capability']).toContain(
     'permanently delete them or their older versions',
@@ -177,6 +185,14 @@ test('duplicate names require explicit continuation and an owned client selectio
     .element(page.getByText(en['device.publisher.client'], { exact: true }))
     .toHaveAttribute('id', 'publisher-client-label')
   await clientSelect.selectOptions('client1')
+  await expect
+    .element(
+      page.getByRole('button', { name: en['device.approve'], exact: true }),
+    )
+    .toBeDisabled()
+  await page
+    .getByRole('checkbox', { name: en['device.code_confirmation'] })
+    .click()
   await page
     .getByRole('button', { name: en['device.approve'], exact: true })
     .click()
@@ -188,6 +204,9 @@ test('duplicate names require explicit continuation and an owned client selectio
 
 test('existing clients keep new-client approval deliberate even without a duplicate', async () => {
   await render([{ id: 'client1', name: 'Other dashboard' }])
+  await page
+    .getByRole('checkbox', { name: en['device.code_confirmation'] })
+    .click()
   await expect
     .element(
       page.getByRole('button', { name: en['device.approve'], exact: true }),
@@ -201,4 +220,12 @@ test('existing clients keep new-client approval deliberate even without a duplic
       page.getByRole('button', { name: en['device.approve'], exact: true }),
     )
     .toBeEnabled()
+})
+
+test('denial does not require a client choice or code confirmation', async () => {
+  await render([{ id: 'client1', name: 'Employee dashboard' }])
+  await page
+    .getByRole('button', { name: en['device.deny'], exact: true })
+    .click()
+  expect(transport.deviceDeny).toHaveBeenCalledWith('ABCD1234')
 })
