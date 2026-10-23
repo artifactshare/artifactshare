@@ -463,27 +463,27 @@ function useDeviceCodeInput(initialCode: string) {
   const [codeInput, setCodeInput] = useState(() => ({
     sourceQuery: initialCode,
     editedValue: formatUserCode(initialCode),
-    edited: false,
     confirmed: false,
   }))
   if (codeInput.sourceQuery !== initialCode) {
     setCodeInput({
       sourceQuery: initialCode,
       editedValue: formatUserCode(initialCode),
-      edited: false,
       confirmed: false,
     })
   }
-  const requiresConfirmation =
-    Boolean(initialCode) &&
-    (codeInput.sourceQuery !== initialCode || !codeInput.edited)
-  const codeConfirmed =
-    codeInput.sourceQuery === initialCode && codeInput.confirmed
-  const confirmationMissing = requiresConfirmation && !codeConfirmed
   const userCode =
     codeInput.sourceQuery === initialCode
       ? codeInput.editedValue
       : formatUserCode(initialCode)
+  const initialCleanCode = cleanUserCode(initialCode).slice(0, USER_CODE_LENGTH)
+  // Completing a partial prefill or changing its formatting is not manual entry.
+  const requiresConfirmation =
+    initialCleanCode.length > 0 &&
+    cleanUserCode(userCode).startsWith(initialCleanCode)
+  const codeConfirmed =
+    codeInput.sourceQuery === initialCode && codeInput.confirmed
+  const confirmationMissing = requiresConfirmation && !codeConfirmed
   return {
     userCode,
     requiresConfirmation,
@@ -495,7 +495,6 @@ function useDeviceCodeInput(initialCode: string) {
       setCodeInput({
         sourceQuery: initialCode,
         editedValue: formatUserCode(value),
-        edited: true,
         confirmed: false,
       }),
   }

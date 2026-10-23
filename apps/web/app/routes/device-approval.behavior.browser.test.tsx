@@ -152,3 +152,24 @@ test('editing a checked prefill uses the new code without retaining confirmation
   await approve().click()
   expect(transport.deviceApprove).toHaveBeenCalledWith('EF56GH78', undefined)
 })
+
+test.each(['ab12-cd3', 'AB12CD34'])(
+  'completing or reformatting query prefill %s still requires confirmation',
+  async (prefill) => {
+    await render(`user_code=${prefill}`)
+    if (prefill === 'AB12CD34') {
+      await confirmation().click()
+      await expect.element(approve()).toBeEnabled()
+    }
+    await page
+      .getByRole('textbox', { name: en['device.code_label'] })
+      .fill('ab12cd34')
+    await expect.element(confirmation()).not.toBeChecked()
+    await expect.element(approve()).toBeDisabled()
+    expect(transport.deviceApprove).not.toHaveBeenCalled()
+    await confirmation().click()
+    await expect.element(approve()).toBeEnabled()
+    await approve().click()
+    expect(transport.deviceApprove).toHaveBeenCalledWith('AB12CD34', undefined)
+  },
+)
