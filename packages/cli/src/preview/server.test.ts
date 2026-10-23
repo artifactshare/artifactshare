@@ -275,34 +275,46 @@ describe('startPreviewServer', () => {
     expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
   })
 
-  it('focuses the existing share popup and replaces it only after closure', async () => {
+  it('closes the existing share popup and opens a fresh one on every click', async () => {
     const shell = await (await fetch(`${origin(context)}/`)).text()
     const handler = shell.match(
       /document\.getElementById\('shareBtn'\)\.addEventListener\('click', \(\) => \{([\s\S]*?)\n  \}\);/,
     )
     expect(handler).not.toBeNull()
-    let opens = 0
-    let focuses = 0
-    const popup = { closed: false, focus: () => focuses++ }
+    const popups: { closed: boolean; close: () => void }[] = []
     const scope = {
       sharePopup: null,
       CONFIG: { shareOrigin: 'http://127.0.0.1:12345' },
       window: {
-        open: () => {
-          opens++
+        open: (url: string, target: string, features: string) => {
+          expect(url).toBe('http://127.0.0.1:12345/')
+          expect(target).toBe('_blank')
+          expect(features).toBe('width=440,height=560')
+          expect(popups.every((popup) => popup.closed)).toBe(true)
+          const popup = {
+            closed: false,
+            close: () => {
+              expect(popup.closed).toBe(false)
+              popup.closed = true
+            },
+          }
+          popups.push(popup)
           return popup
         },
       },
     }
     const click = () => runInNewContext(`(() => {${handler![1]}})()`, scope)
     click()
-    expect(opens).toBe(1)
+    expect(popups).toHaveLength(1)
+    expect(scope.sharePopup).toBe(popups[0])
     click()
-    expect(opens).toBe(1)
-    expect(focuses).toBe(1)
-    popup.closed = true
+    expect(popups[0]!.closed).toBe(true)
+    expect(popups).toHaveLength(2)
+    expect(scope.sharePopup).toBe(popups[1])
+    popups[1]!.closed = true
     click()
-    expect(opens).toBe(2)
+    expect(popups).toHaveLength(3)
+    expect(scope.sharePopup).toBe(popups[2])
   })
 
   it('serves the shell page and the artifact with the reporter injected', async () => {

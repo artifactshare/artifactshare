@@ -796,8 +796,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // --- share --------------------------------------------------------------
   document.getElementById('shareBtn').addEventListener('click', () => {
     if (sharePopup && !sharePopup.closed) {
-      sharePopup.focus();
-      return;
+      sharePopup.close();
     }
     sharePopup = window.open(CONFIG.shareOrigin + '/', '_blank', 'width=440,height=560');
   });
