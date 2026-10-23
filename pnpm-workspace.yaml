@@ -7,10 +7,13 @@ packages:
   - 'tools/*'
 
 overrides:
+  # The previous Rolldown 1.2.15 graph failed Vite sourcemapPathTransform.
+  # Keep matching JS/native bindings; remove after an upgrade passes the D1 suite.
+  'vite@8.3.3>rolldown': 1.2.14
   'lodash-es@>=4.0.0 <5.0.0': 4.18.1
   'undici@>=7.0.0 <8.0.0': 7.29.1
   'postcss@>=8.0.0 <9.0.0': 8.5.28
-  'sharp@>=0.34.0 <0.35.0': 0.35.4
+  'sharp@>=0.34.0 <0.35.5': 0.35.5
 
 allowBuilds:
   esbuild: true
@@ -42,17 +45,7 @@ minimumReleaseAgeExclude:
   - wrangler@4.129.1 || 4.131.1
   - '@cloudflare/workers-types@5.20260827.1'
   - '@cloudflare/vite-plugin@1.54.1 || 1.54.8'
-  - '@next/env@16.3.5'
-  - '@next/swc-darwin-arm64@16.3.5'
-  - '@next/swc-darwin-x64@16.3.5'
-  - '@next/swc-linux-arm64-gnu@16.3.5'
-  - '@next/swc-linux-arm64-musl@16.3.5'
-  - '@next/swc-linux-x64-gnu@16.3.5'
-  - '@next/swc-linux-x64-musl@16.3.5'
-  - '@next/swc-win32-arm64-msvc@16.3.5'
-  - '@next/swc-win32-x64-msvc@16.3.5'
   - '@tanstack/highlight@0.1.0'
   - '@tanstack/markdown@0.0.14'
   - happy-dom@20.14.5
-  - next@16.3.5
   - yaml@2.9.1
