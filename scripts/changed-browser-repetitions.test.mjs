@@ -4,6 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import {
   main,
   MAX_PAIRS,
@@ -63,6 +65,75 @@ const passing = (pair) => ({
       tests: [{ namePath: ['example'], state: 'passed', errors: [] }],
     },
   ],
+})
+
+test('preview browser setup builds missing CLI output once and reuses it', () => {
+  const helper = new URL(
+    '../apps/web/app/test/preview-security-browser-command.ts',
+    import.meta.url,
+  )
+  const source = fs.readFileSync(helper, 'utf8')
+  // Run the actual setup before browser/process creation, with build and disk
+  // effects controlled so this regression needs no browser or package install.
+  const setup = source
+    .slice(
+      source.indexOf('  const cli = resolve('),
+      source.indexOf('  const dir = mkdtempSync('),
+    )
+    .replaceAll('import.meta.dirname', 'helperDirectory')
+  const helperDirectory = path.dirname(fileURLToPath(helper))
+  const cli = path.resolve(
+    helperDirectory,
+    '../../../../packages/cli/dist/index.js',
+  )
+  const builds = []
+  let built = false
+  const context = {
+    assert,
+    resolve: path.resolve,
+    helperDirectory,
+    existsSync: (candidate) => {
+      assert.equal(candidate, cli)
+      return built
+    },
+    execFileSync: (command, args, options) => {
+      builds.push({ command, args: [...args], options: { ...options } })
+      built = true
+    },
+  }
+  runInNewContext(setup, { ...context })
+  runInNewContext(setup, { ...context })
+  assert.deepEqual(builds, [
+    {
+      command: 'pnpm',
+      args: ['--filter', '@artifactshare/cli', 'build'],
+      options: {
+        cwd: path.resolve(helperDirectory, '../../../..'),
+        stdio: 'inherit',
+      },
+    },
+  ])
+
+  built = false
+  assert.throws(
+    () =>
+      runInNewContext(setup, {
+        ...context,
+        execFileSync: () => {},
+      }),
+    /Build @artifactshare\/cli before running preview browser tests/,
+  )
+  const failure = new Error('Build failed')
+  assert.throws(
+    () =>
+      runInNewContext(setup, {
+        ...context,
+        execFileSync: () => {
+          throw failure
+        },
+      }),
+    (error) => error === failure,
+  )
 })
 
 test('selects only added/modified literal paths from NUL records, sorted and capped', () => {

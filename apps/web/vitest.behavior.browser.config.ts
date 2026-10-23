@@ -1,3 +1,4 @@
+import { previewSecurity } from './app/test/preview-security-browser-command'
 import { usercontentDelivery } from './app/test/usercontent-browser-command'
 import {
   sandboxHashDocument,
@@ -42,6 +43,7 @@ export default defineConfig({
       enabled: true,
       provider: playwright(),
       commands: {
+        previewSecurity,
         usercontentDelivery,
         projectPlacementDestinations,
         projectPlacementCandidates,
@@ -70,6 +72,7 @@ export default defineConfig({
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/lib/preview-security.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
             'app/routes/a.$id/viewer-revisit.behavior.browser.test.tsx',
@@ -82,6 +85,7 @@ export default defineConfig({
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/lib/preview-security.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
             'app/routes/a.$id/viewer-revisit.behavior.browser.test.tsx',

@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname } from 'node:path'
+import { mutationOriginAllowed } from './request-origin.js'
 import {
   apiUrl,
   baseUrlOf,
@@ -117,6 +118,15 @@ export function createShareDialogHandler(
     }
 
     if (request.method === 'POST') {
+      if (
+        !mutationOriginAllowed(
+          request.headers.origin,
+          request.headers.host,
+          request.headers['sec-fetch-site'],
+        )
+      ) {
+        return sendJson(response, 403, { error: 'forbidden_origin' })
+      }
       if (!mutationHeadersValid(request)) {
         return sendJson(response, 403, { error: 'forbidden' })
       }

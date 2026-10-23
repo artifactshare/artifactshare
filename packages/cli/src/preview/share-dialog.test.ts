@@ -138,6 +138,76 @@ test('a mutating POST without the preview header is rejected', async () => {
   })
 })
 
+test.each(['null', 'https://example.test'])(
+  'rejects snapshot requests from Origin %s before reading the source',
+  async (origin) => {
+    let reads = 0
+    await withDialogServer(
+      {
+        readFileBytes: () => {
+          reads++
+          return Buffer.from('<p>Sample</p>')
+        },
+      },
+      async (port) => {
+        const response = await rawRequest(port, {
+          method: 'POST',
+          path: '/api/snapshot',
+          headers: { ...mutationHeaders(), origin },
+          body: '{}',
+        })
+        assert.equal(response.status, 403)
+        assert.equal(reads, 0)
+        const accepted = await rawRequest(port, {
+          method: 'POST',
+          path: '/api/snapshot',
+          headers: {
+            ...mutationHeaders(),
+            origin: `http://127.0.0.1:${port}`,
+          },
+          body: '{}',
+        })
+        assert.equal(accepted.status, 200)
+        assert.equal(reads, 1)
+      },
+    )
+  },
+)
+
+test.each([
+  ['same-origin', 200, 1],
+  ['same-site', 403, 0],
+  ['cross-site', 403, 0],
+  ['none', 403, 0],
+] as const)(
+  'checks opaque snapshot requests with Fetch Metadata %s before reading',
+  async (fetchSite, status, expectedReads) => {
+    let reads = 0
+    await withDialogServer(
+      {
+        readFileBytes: () => {
+          reads++
+          return Buffer.from('<p>Sample</p>')
+        },
+      },
+      async (port) => {
+        const response = await rawRequest(port, {
+          method: 'POST',
+          path: '/api/snapshot',
+          headers: {
+            ...mutationHeaders(),
+            origin: 'null',
+            'sec-fetch-site': fetchSite,
+          },
+          body: '{}',
+        })
+        assert.equal(response.status, status)
+        assert.equal(reads, expectedReads)
+      },
+    )
+  },
+)
+
 test('a mutating POST without a JSON content type is rejected', async () => {
   await withDialogServer({}, async (port) => {
     const response = await rawRequest(port, {

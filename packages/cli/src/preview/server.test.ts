@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   PREVIEW_MUTATION_HEADER,
@@ -162,6 +163,67 @@ describe('startPreviewServer', () => {
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
+  it.each(['null', 'https://example.test'])(
+    'rejects mutations from Origin %s without ending the session',
+    async (requestOrigin) => {
+      const response = await post(
+        context,
+        '/api/agent/stop',
+        {},
+        {
+          ...MUTATION_HEADERS,
+          origin: requestOrigin,
+        },
+      )
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'forbidden_origin' })
+      expect(
+        (await fetch(`${origin(context)}${PREVIEW_SESSION_ENDPOINT}`)).status,
+      ).toBe(200)
+      const annotation = await post(
+        context,
+        '/api/annotations',
+        { anchor: { kind: 'artifact' }, comment: 'Still reviewing' },
+        { ...MUTATION_HEADERS, origin: origin(context) },
+      )
+      expect(annotation.ok).toBe(true)
+      expect(context.store.all()).toHaveLength(1)
+    },
+  )
+
+  it('accepts no-referrer shell mutations with same-origin Fetch Metadata', async () => {
+    const headers = {
+      ...MUTATION_HEADERS,
+      origin: 'null',
+      'sec-fetch-site': 'same-origin',
+    }
+    const annotation = await post(
+      context,
+      '/api/annotations',
+      { anchor: { kind: 'artifact' }, comment: 'Review from the shell' },
+      headers,
+    )
+    expect(annotation.ok).toBe(true)
+    expect(context.store.all()).toHaveLength(1)
+    const stopped = await post(context, '/api/agent/stop', {}, headers)
+    expect(stopped.status).toBe(200)
+    await context.server.closed
+  })
+
+  it.each(['same-site', 'cross-site', 'none'])(
+    'rejects opaque mutations with Fetch Metadata %s',
+    async (fetchSite) => {
+      const response = await post(
+        context,
+        '/api/annotations',
+        { anchor: { kind: 'artifact' }, comment: 'Must not be saved' },
+        { ...MUTATION_HEADERS, origin: 'null', 'sec-fetch-site': fetchSite },
+      )
+      expect(response.status).toBe(403)
+      expect(context.store.all()).toHaveLength(0)
+    },
+  )
+
   it('never exposes a provider target to browser responses', async () => {
     await context.server.close()
     rmSync(context.dir, { recursive: true, force: true })
@@ -213,11 +275,61 @@ describe('startPreviewServer', () => {
     expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
   })
 
+  it('closes the existing share popup and opens a fresh one on every click', async () => {
+    const shell = await (await fetch(`${origin(context)}/`)).text()
+    const handler = shell.match(
+      /document\.getElementById\('shareBtn'\)\.addEventListener\('click', \(\) => \{([\s\S]*?)\n  \}\);/,
+    )
+    expect(handler).not.toBeNull()
+    const popups: { closed: boolean; close: () => void }[] = []
+    const scope = {
+      sharePopup: null,
+      CONFIG: { shareOrigin: 'http://127.0.0.1:12345' },
+      window: {
+        open: (url: string, target: string, features: string) => {
+          expect(url).toBe('http://127.0.0.1:12345/')
+          expect(target).toBe('_blank')
+          expect(features).toBe('width=440,height=560')
+          expect(popups.every((popup) => popup.closed)).toBe(true)
+          const popup = {
+            closed: false,
+            close: () => {
+              expect(popup.closed).toBe(false)
+              popup.closed = true
+            },
+          }
+          popups.push(popup)
+          return popup
+        },
+      },
+    }
+    const click = () => runInNewContext(`(() => {${handler![1]}})()`, scope)
+    click()
+    expect(popups).toHaveLength(1)
+    expect(scope.sharePopup).toBe(popups[0])
+    click()
+    expect(popups[0]!.closed).toBe(true)
+    expect(popups).toHaveLength(2)
+    expect(scope.sharePopup).toBe(popups[1])
+    popups[1]!.closed = true
+    click()
+    expect(popups).toHaveLength(3)
+    expect(scope.sharePopup).toBe(popups[2])
+  })
+
   it('serves the shell page and the artifact with the reporter injected', async () => {
     const shell = await (await fetch(`${origin(context)}/`)).text()
     expect(shell).toContain('artifactFrame')
     expect(shell).toContain('/artifact')
-    const artifact = await (await fetch(`${origin(context)}/artifact`)).text()
+    expect(shell).toContain('sandbox="allow-scripts"')
+    expect(shell).not.toContain('allow-same-origin')
+    expect(shell).toContain('preview.isolationNotice')
+    const artifactResponse = await fetch(`${origin(context)}/artifact`)
+    expect(artifactResponse.headers.get('content-security-policy')).toBe(
+      'sandbox allow-scripts',
+    )
+    expect(artifactResponse.headers.get('referrer-policy')).toBe('no-referrer')
+    const artifact = await artifactResponse.text()
     expect(artifact).toContain('<h1>Hello</h1>')
     expect(artifact).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
   })
