@@ -420,6 +420,59 @@ function PublisherApprovalFields({
   )
 }
 
+function DeviceApprovalActions({
+  unrestricted,
+  requiresConfirmation,
+  confirmed,
+  onConfirm,
+  blocked,
+  hasProjectConsequence,
+  onDecision,
+}: {
+  unrestricted: boolean
+  requiresConfirmation: boolean
+  confirmed: boolean
+  onConfirm: (confirmed: boolean) => void
+  blocked: boolean
+  hasProjectConsequence: boolean
+  onDecision: (decision: 'approved' | 'denied') => Promise<void>
+}) {
+  const { t } = useT()
+  return (
+    <>
+      <DeviceApprovalSafety
+        unrestricted={unrestricted}
+        requiresConfirmation={requiresConfirmation}
+        confirmed={confirmed}
+        onConfirm={onConfirm}
+      />
+      <ConsentActions>
+        <Button
+          type="button"
+          disabled={blocked}
+          aria-describedby={[
+            'device-approval-warning',
+            unrestricted ? 'device-unrestricted-disclosure' : null,
+            hasProjectConsequence ? 'agent-project-consequence' : null,
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          onClick={() => onDecision('approved')}
+        >
+          {t('device.approve')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onDecision('denied')}
+        >
+          {t('device.deny')}
+        </Button>
+      </ConsentActions>
+    </>
+  )
+}
+
 function DeviceApprovalSafety({
   unrestricted,
   requiresConfirmation,
@@ -435,10 +488,14 @@ function DeviceApprovalSafety({
   return (
     <div className="mt-4 w-full max-w-80 text-left text-sm">
       <Stack gap="3">
-        <p role="note" className="font-medium">
+        <p id="device-approval-warning" role="note" className="font-medium">
           {t('device.approval_warning')}
         </p>
-        {unrestricted ? <p>{t('device.unrestricted_disclosure')}</p> : null}
+        {unrestricted ? (
+          <p id="device-unrestricted-disclosure">
+            {t('device.unrestricted_disclosure')}
+          </p>
+        ) : null}
         {requiresConfirmation ? (
           <label
             htmlFor="device-code-confirmation"
@@ -690,7 +747,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             inputMode="text"
             autoComplete="one-time-code"
             onChange={(event) => editCode(event.target.value)}
-            className="h-14 text-center font-mono text-2xl"
+            className="h-14 text-center font-mono text-2xl md:text-2xl"
             aria-invalid={state.kind === 'invalid' ? true : undefined}
             aria-describedby={
               state.kind === 'invalid' ? 'device-code-error' : undefined
@@ -763,33 +820,18 @@ export default function Device({ loaderData }: Route.ComponentProps) {
             {state.notice ? (
               <ConsentErrorAlert>{t('device.retry')}</ConsentErrorAlert>
             ) : null}
-            <DeviceApprovalSafety
+            <DeviceApprovalActions
               unrestricted={!agentApproval && !publisherApproval}
-              requiresConfirmation={requiresConfirmation}
+              requiresConfirmation={
+                requiresConfirmation &&
+                !(agentApproval?.projectSelector && !fixedProject)
+              }
               confirmed={codeConfirmed}
               onConfirm={confirmCode}
+              blocked={approvalBlocked}
+              hasProjectConsequence={Boolean(agentApproval && effectiveProject)}
+              onDecision={decide}
             />
-            <ConsentActions>
-              <Button
-                type="button"
-                disabled={approvalBlocked}
-                aria-describedby={
-                  agentApproval && effectiveProject
-                    ? 'agent-project-consequence'
-                    : undefined
-                }
-                onClick={() => decide('approved')}
-              >
-                {t('device.approve')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => decide('denied')}
-              >
-                {t('device.deny')}
-              </Button>
-            </ConsentActions>
           </>
         ) : null}
       </LandingHero>

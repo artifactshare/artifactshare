@@ -62,21 +62,6 @@ vi.mock('~/components/layout/inline', () => ({
 vi.mock('~/components/layout/stack', () => ({
   Stack: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
-vi.mock('~/components/ui/button', () => ({
-  Button: ({
-    children,
-    onClick,
-    disabled,
-  }: {
-    children: ReactNode
-    onClick?: () => void
-    disabled?: boolean
-  }) => (
-    <button onClick={onClick} disabled={disabled}>
-      {children}
-    </button>
-  ),
-}))
 vi.mock('~/components/app/project-candidate-picker', () => ({
   ProjectCandidatePicker: () => <div data-testid="project-picker" />,
 }))
@@ -137,6 +122,9 @@ describe('/device', () => {
       expect(container.textContent).not.toContain('UntrustedSentinel')
       expect(confirmation().checked).toBe(false)
       expect(approve().disabled).toBe(true)
+      expect(approve().getAttribute('aria-describedby')).toBe(
+        'device-approval-warning device-unrestricted-disclosure',
+      )
       await React.act(async () => confirmation().click())
       expect(approve().disabled).toBe(false)
       await React.act(async () => confirmation().click())
@@ -285,7 +273,7 @@ describe('/device', () => {
           : preset === 'publisher'
             ? {
                 preset: 'publisher',
-                requestedName: 'Dashboard',
+                requestedName: 'UntrustedSentinel',
                 clients: [{ id: 'client1', name: 'Dashboard' }],
               }
             : null,
@@ -306,8 +294,19 @@ describe('/device', () => {
         expect(
           container.textContent?.includes('device.unrestricted_disclosure'),
         ).toBe(preset === 'unrestricted')
-        expect(container.textContent).not.toContain('UntrustedSentinel')
+        if (preset === 'publisher') {
+          expect(container.querySelector('blockquote')?.textContent).toBe(
+            'UntrustedSentinel',
+          )
+          expect(container.textContent).toContain('device.publisher.nameSource')
+        } else {
+          expect(container.textContent).not.toContain('UntrustedSentinel')
+        }
         const buttons = Array.from(container.querySelectorAll('button'))
+        const approve = buttons.find((b) => b.textContent === 'device.approve')!
+        for (const id of approve.getAttribute('aria-describedby')!.split(' ')) {
+          expect(container.querySelector(`#${id}`)?.textContent).toBeTruthy()
+        }
         const deny = buttons.find((b) => b.textContent === 'device.deny')!
         expect(deny.disabled).toBe(false)
         await React.act(async () => deny.click())
@@ -484,6 +483,9 @@ describe('/device', () => {
           (button) => button.textContent === 'device.approve',
         )!
         expect(approve.disabled).toBe(true)
+        expect(approve.getAttribute('aria-describedby')).toBe(
+          'device-approval-warning',
+        )
         expect(container.textContent).toContain('device.approval_warning')
         expect(container.textContent).not.toContain(
           'device.unrestricted_disclosure',
@@ -530,7 +532,7 @@ describe('/device', () => {
     const authClient = await import('~/lib/auth-client')
     vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
       preset: 'agent',
-      deviceName: 'Codex',
+      deviceName: 'UntrustedSentinel',
       projectSelector: 'Reports',
       fixedProject: {
         id: 'project-1',
@@ -559,7 +561,10 @@ describe('/device', () => {
       (button) => button.textContent === 'device.approve',
     )!
     expect(approve.disabled).toBe(true)
-    expect(container.textContent).not.toContain('Codex')
+    expect(approve.getAttribute('aria-describedby')).toBe(
+      'device-approval-warning agent-project-consequence',
+    )
+    expect(container.textContent).not.toContain('UntrustedSentinel')
     expect(container.textContent).not.toContain(
       'device.unrestricted_disclosure',
     )
@@ -582,7 +587,7 @@ describe('/device', () => {
     const authClient = await import('~/lib/auth-client')
     vi.mocked(authClient.loadDeviceAgentApproval).mockResolvedValue({
       preset: 'agent',
-      deviceName: 'Codex',
+      deviceName: 'UntrustedSentinel',
       projectSelector: 'Unavailable',
       fixedProject: null,
       fixedProjectError: true,
@@ -606,12 +611,17 @@ describe('/device', () => {
       (button) => button.textContent === 'device.approve',
     )!
     expect(approve.disabled).toBe(true)
-    await React.act(async () =>
-      container
-        .querySelector<HTMLInputElement>('#device-code-confirmation')!
-        .click(),
+    expect(container.querySelector('#device-code-confirmation')).toBeNull()
+    expect(container.textContent).toContain('device.approval_warning')
+    expect(approve.getAttribute('aria-describedby')).toBe(
+      'device-approval-warning',
     )
-    expect(approve.disabled).toBe(true)
+    const deny = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'device.deny',
+    )!
+    expect(deny.disabled).toBe(false)
+    await React.act(async () => deny.click())
+    expect(authClient.deviceDeny).toHaveBeenCalledWith('AB12CD34')
     await React.act(async () => root.unmount())
   })
 

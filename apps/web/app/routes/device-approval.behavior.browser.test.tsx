@@ -91,7 +91,7 @@ test.each([
   {
     publisherApproval: {
       preset: 'publisher',
-      requestedName: 'Dashboard',
+      requestedName: 'UntrustedSentinel',
       clients: [],
     },
   },
@@ -112,15 +112,27 @@ test.each([
       .element(page.getByText(en['device.unrestricted_disclosure']))
       .toBeVisible()
   }
-  expect(container!.textContent).not.toContain('UntrustedSentinel')
+  if (body.publisherApproval) {
+    await expect
+      .element(page.getByText('UntrustedSentinel', { exact: true }))
+      .toBeVisible()
+    expect(container!.querySelector('blockquote')?.textContent).toBe(
+      'UntrustedSentinel',
+    )
+    await expect
+      .element(page.getByText(en['device.publisher.nameSource']))
+      .toBeVisible()
+  } else {
+    expect(container!.textContent).not.toContain('UntrustedSentinel')
+  }
   await expect.element(approve()).toBeDisabled()
+  if (body.agentApproval) {
+    await expect.element(confirmation()).not.toBeInTheDocument()
+    return
+  }
   await expect.element(confirmation()).not.toBeChecked()
   await confirmation().click()
-  if (body.agentApproval) {
-    await expect.element(approve()).toBeDisabled()
-  } else {
-    await expect.element(approve()).toBeEnabled()
-  }
+  await expect.element(approve()).toBeEnabled()
   await confirmation().click()
   await expect.element(approve()).toBeDisabled()
 })
@@ -173,3 +185,14 @@ test.each(['ab12-cd3', 'AB12CD34'])(
     expect(transport.deviceApprove).toHaveBeenCalledWith('AB12CD34', undefined)
   },
 )
+
+test('comparison code stays large on desktop', async () => {
+  await page.viewport(1024, 768)
+  try {
+    await render('user_code=AB12CD34')
+    const input = container!.querySelector<HTMLInputElement>('#device-code')!
+    expect(getComputedStyle(input).fontSize).toBe('24px')
+  } finally {
+    await page.viewport(1280, 720)
+  }
+})
