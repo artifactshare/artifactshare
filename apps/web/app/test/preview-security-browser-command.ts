@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,6 +27,12 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     import.meta.dirname,
     '../../../../packages/cli/dist/index.js',
   )
+  if (!existsSync(cli)) {
+    execFileSync('pnpm', ['--filter', '@artifactshare/cli', 'build'], {
+      cwd: resolve(import.meta.dirname, '../../../..'),
+      stdio: 'inherit',
+    })
+  }
   assert.ok(
     existsSync(cli),
     'Build @artifactshare/cli before running preview browser tests',
