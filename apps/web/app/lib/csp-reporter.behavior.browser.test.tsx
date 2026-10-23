@@ -757,13 +757,22 @@ describe('CSP reporter runtime behavior', () => {
 
   test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
     const sanitized = sanitizeMermaidSvg(
-      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><script>alert(1)</script></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>Safe</text><a href="javascript:alert(1)"><text>Unsafe href</text></a><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="javascript:alert(1)"><text>Unsafe xlink</text></a><script>alert(1)</script></svg>',
     )
 
     expect(sanitized).toContain('<svg')
     expect(sanitized).toContain('<text>Safe</text>')
     expect(sanitized).not.toContain('onload')
     expect(sanitized).not.toContain('<script')
+    expect(sanitized).not.toContain('javascript:')
+    const svg = new DOMParser().parseFromString(sanitized, 'image/svg+xml')
+    expect(svg.querySelectorAll('a')).toHaveLength(2)
+    for (const anchor of svg.querySelectorAll('a')) {
+      expect(anchor.hasAttribute('href')).toBe(false)
+      expect(
+        anchor.hasAttributeNS('http://www.w3.org/1999/xlink', 'href'),
+      ).toBe(false)
+    }
   })
 
   test('renders Mermaid only after the parent ready check and preserves source text', async () => {

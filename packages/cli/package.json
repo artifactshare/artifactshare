@@ -57,6 +57,6 @@
     "@types/node": "22.20.2",
     "tsdown": "0.23.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }
