@@ -34,6 +34,8 @@
   "settings-tokens/created-secret",
   "settings-tokens/active-cli",
   "settings-usage/near-limit",
+  "device/unrestricted",
+  "device/unrestricted-confirmed",
   "device/fixed-project",
   "device/fixed-project-unavailable",
   "device/publisher-new",

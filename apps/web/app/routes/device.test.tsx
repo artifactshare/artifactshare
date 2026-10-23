@@ -106,6 +106,185 @@ describe('/device', () => {
     document.body.innerHTML = ''
   })
 
+  test('prefilled confirmation toggles approval and resets on edits and query navigation', async () => {
+    deviceParams = new URLSearchParams(
+      'user_code=ab12-cd34&preset=agent&device_name=UntrustedSentinel',
+    )
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    const auth = await import('~/lib/auth-client')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const render = () =>
+      React.act(async () =>
+        root.render(
+          <Device
+            {...({ loaderData: { signedIn: true } } as Parameters<
+              typeof Device
+            >[0])}
+          />,
+        ),
+      )
+    const approve = () =>
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'device.approve',
+      )!
+    const confirmation = () =>
+      container.querySelector<HTMLInputElement>('#device-code-confirmation')!
+    try {
+      await render()
+      expect(container.textContent).toContain('device.approval_warning')
+      expect(container.textContent).toContain('device.unrestricted_disclosure')
+      expect(container.textContent).not.toContain('UntrustedSentinel')
+      expect(confirmation().checked).toBe(false)
+      expect(approve().disabled).toBe(true)
+      await React.act(async () => confirmation().click())
+      expect(approve().disabled).toBe(false)
+      await React.act(async () => confirmation().click())
+      expect(approve().disabled).toBe(true)
+      await React.act(async () => confirmation().click())
+      deviceParams = new URLSearchParams('user_code=ef56-gh78')
+      await render()
+      expect(confirmation().checked).toBe(false)
+      expect(approve().disabled).toBe(true)
+      await React.act(async () => confirmation().click())
+      deviceParams = new URLSearchParams('user_code=ab12-cd34')
+      await render()
+      expect(confirmation().checked).toBe(false)
+      await React.act(async () => confirmation().click())
+      const input = container.querySelector<HTMLInputElement>('#device-code')!
+      await React.act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(input, 'EF56GH78')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(confirmation()).toBeNull()
+      expect(approve().disabled).toBe(false)
+      await React.act(async () => approve().click())
+      expect(auth.deviceApprove).toHaveBeenCalledWith('EF56GH78', undefined)
+    } finally {
+      await React.act(async () => root.unmount())
+    }
+  })
+
+  test('an edit normalizing to the same code removes the confirmation requirement', async () => {
+    deviceParams = new URLSearchParams('user_code=AB12CD34')
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await React.act(async () =>
+        root.render(
+          <Device
+            {...({ loaderData: { signedIn: true } } as Parameters<
+              typeof Device
+            >[0])}
+          />,
+        ),
+      )
+      const input = container.querySelector<HTMLInputElement>('#device-code')!
+      await React.act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(input, 'ab12cd34')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(container.querySelector('#device-code-confirmation')).toBeNull()
+      expect(
+        container.querySelector<HTMLButtonElement>('button')!.disabled,
+      ).toBe(false)
+      expect(deviceVerifyMock).toHaveBeenCalledTimes(1)
+    } finally {
+      await React.act(async () => root.unmount())
+    }
+  })
+
+  test('prefilled unrestricted approval submits the normalized code only after confirmation', async () => {
+    deviceParams = new URLSearchParams('user_code=ab12-cd34')
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    const auth = await import('~/lib/auth-client')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await React.act(async () =>
+        root.render(
+          <Device
+            {...({ loaderData: { signedIn: true } } as Parameters<
+              typeof Device
+            >[0])}
+          />,
+        ),
+      )
+      const approve = container.querySelector<HTMLButtonElement>('button')!
+      await React.act(async () => approve.click())
+      expect(auth.deviceApprove).not.toHaveBeenCalled()
+      await React.act(async () =>
+        container
+          .querySelector<HTMLInputElement>('#device-code-confirmation')!
+          .click(),
+      )
+      await React.act(async () => approve.click())
+      expect(auth.deviceApprove).toHaveBeenCalledWith('AB12CD34', undefined)
+      expect(container.textContent).toContain('device.approved')
+      expect(container.textContent).not.toContain('device.approval_warning')
+    } finally {
+      await React.act(async () => root.unmount())
+    }
+  })
+
+  test.each(['agent', 'publisher', 'unrestricted'])(
+    'denial needs neither confirmation nor a %s choice',
+    async (preset) => {
+      deviceParams = new URLSearchParams('user_code=AB12CD34')
+      deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+      const auth = await import('~/lib/auth-client')
+      vi.mocked(auth.loadDeviceAgentApproval).mockResolvedValue(
+        preset === 'agent'
+          ? {
+              preset: 'agent',
+              deviceName: 'UntrustedSentinel',
+              projectSelector: 'Unavailable',
+              fixedProject: null,
+              fixedProjectError: true,
+            }
+          : preset === 'publisher'
+            ? {
+                preset: 'publisher',
+                requestedName: 'Dashboard',
+                clients: [{ id: 'client1', name: 'Dashboard' }],
+              }
+            : null,
+      )
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      try {
+        await React.act(async () =>
+          root.render(
+            <Device
+              {...({ loaderData: { signedIn: true } } as Parameters<
+                typeof Device
+              >[0])}
+            />,
+          ),
+        )
+        expect(container.textContent).toContain('device.approval_warning')
+        expect(
+          container.textContent?.includes('device.unrestricted_disclosure'),
+        ).toBe(preset === 'unrestricted')
+        expect(container.textContent).not.toContain('UntrustedSentinel')
+        const buttons = Array.from(container.querySelectorAll('button'))
+        const deny = buttons.find((b) => b.textContent === 'device.deny')!
+        expect(deny.disabled).toBe(false)
+        await React.act(async () => deny.click())
+        expect(auth.deviceDeny).toHaveBeenCalledWith('AB12CD34')
+      } finally {
+        await React.act(async () => root.unmount())
+      }
+    },
+  )
+
   test.each([
     [
       { data: { status: 'pending' } },
@@ -178,6 +357,15 @@ describe('/device', () => {
     await React.act(async () => {})
 
     expect(deviceVerifyMock).toHaveBeenCalledWith('AB12CD34')
+    expect(container.textContent).toContain('device.approval_warning')
+    expect(container.textContent).toContain('device.unrestricted_disclosure')
+    expect(container.querySelector('#device-code-confirmation')).toBeNull()
+    const approve = container.querySelector<HTMLButtonElement>('button')!
+    expect(approve.disabled).toBe(false)
+    await React.act(async () => approve.click())
+    expect(
+      (await import('~/lib/auth-client')).deviceApprove,
+    ).toHaveBeenCalledWith('AB12CD34', undefined)
     await React.act(async () => root.unmount())
   })
 
@@ -206,6 +394,10 @@ describe('/device', () => {
       })
       await React.act(async () => {})
       expect(deviceVerifyMock).not.toHaveBeenCalled()
+      expect(container.textContent).not.toContain('device.approval_warning')
+      expect(container.textContent).not.toContain(
+        'device.unrestricted_disclosure',
+      )
       await React.act(async () => root.unmount())
     },
   )
@@ -258,6 +450,16 @@ describe('/device', () => {
         const approve = Array.from(container.querySelectorAll('button')).find(
           (button) => button.textContent === 'device.approve',
         )!
+        expect(approve.disabled).toBe(true)
+        expect(container.textContent).toContain('device.approval_warning')
+        expect(container.textContent).not.toContain(
+          'device.unrestricted_disclosure',
+        )
+        await React.act(async () =>
+          container
+            .querySelector<HTMLInputElement>('#device-code-confirmation')!
+            .click(),
+        )
         expect(approve.disabled).toBe(clients.length > 0)
         expect(
           container.textContent?.includes('device.publisher.nameHelp'),
@@ -323,6 +525,16 @@ describe('/device', () => {
     const approve = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'device.approve',
     )!
+    expect(approve.disabled).toBe(true)
+    expect(container.textContent).not.toContain('Codex')
+    expect(container.textContent).not.toContain(
+      'device.unrestricted_disclosure',
+    )
+    await React.act(async () =>
+      container
+        .querySelector<HTMLInputElement>('#device-code-confirmation')!
+        .click(),
+    )
     await React.act(async () => approve.click())
     expect(authClient.deviceApprove).toHaveBeenCalledWith(
       'AB12CD34',
@@ -360,6 +572,12 @@ describe('/device', () => {
     const approve = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'device.approve',
     )!
+    expect(approve.disabled).toBe(true)
+    await React.act(async () =>
+      container
+        .querySelector<HTMLInputElement>('#device-code-confirmation')!
+        .click(),
+    )
     expect(approve.disabled).toBe(true)
     await React.act(async () => root.unmount())
   })
@@ -576,8 +794,13 @@ describe('/device', () => {
     await React.act(async () => {})
     expect(container.textContent).toContain('device.approve')
 
+    await React.act(async () =>
+      container
+        .querySelector<HTMLInputElement>('#device-code-confirmation')!
+        .click(),
+    )
     await React.act(async () => {
-      container.querySelector('button')?.click()
+      container.querySelector('button')!.click()
     })
     deviceParams = new URLSearchParams('user_code=ef56-gh78')
     await React.act(async () =>
@@ -704,8 +927,10 @@ describe('/device', () => {
 })
 
 test('publisher capture queries match the seeded team workspace codes', () => {
-  for (const state of screen.states.filter((candidate) =>
-    candidate.id.startsWith('publisher-'),
+  for (const state of screen.states.filter(
+    (candidate) =>
+      candidate.id.startsWith('publisher-') ||
+      candidate.id.startsWith('unrestricted'),
   )) {
     const setup = state.setup as { scenario: string; query: string }
     expect(new URLSearchParams(setup.query).get('user_code')).toBe(
@@ -736,5 +961,17 @@ test.each([
     expect(messages['device.publisher.capability']).toContain(ongoing)
     expect(messages['device.publisher.duplicate']).not.toContain('device_name')
     expect(messages['device.publisher.nameHelp']).not.toContain('device_name')
+  },
+)
+
+test.each([en, ja])(
+  'approval safety copy is present in both locales',
+  (messages) => {
+    for (const key of [
+      'device.approval_warning',
+      'device.unrestricted_disclosure',
+      'device.code_confirmation',
+    ] as const)
+      expect(messages[key].length).toBeGreaterThan(20)
   },
 )

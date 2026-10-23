@@ -544,6 +544,32 @@ export async function seedDevScreenState(
       .onConflict((oc) => oc.column('id').doNothing())
       .execute()
   }
+  if (
+    scenario === 'device/unrestricted' ||
+    scenario === 'device/unrestricted-confirmed'
+  ) {
+    await db
+      .insertInto('deviceCode')
+      .values({
+        id: `${workspaceId}-device-code`,
+        deviceCode: `${workspaceId}-device-token`,
+        userCode: devPublisherUserCode(workspaceId),
+        userId,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        status: 'pending',
+        lastPolledAt: null,
+        pollingInterval: 5,
+        clientId: 'artifactshare-cli',
+        scope: null,
+        preset: null,
+        deviceName: null,
+        approvalNonce: null,
+        selectedProjectId: null,
+        requestedProjectSelector: null,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+  }
   if (scenario.startsWith('device/publisher-')) {
     const name =
       scenario === 'device/publisher-long-name'

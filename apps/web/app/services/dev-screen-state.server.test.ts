@@ -66,6 +66,54 @@ async function expectWorkspaceExpiryStarts(db: Kysely<DB>) {
 }
 
 describe('dev screen state requests', () => {
+  test('unrestricted captures seed isolated pending requests without approval intent', async () => {
+    const { db } = createMigratedInMemoryDb()
+    const now = '2026-09-09T00:00:00.000Z'
+    try {
+      const codes = new Set<string>()
+      for (const scenario of [
+        'device/unrestricted',
+        'device/unrestricted-confirmed',
+      ]) {
+        const { workspaceId } = await ensureDevScreenState(
+          db,
+          scenario,
+          now,
+          'team',
+        )
+        const userId = `${workspaceId}-user`
+        await db
+          .insertInto('users')
+          .values({
+            id: userId,
+            email: `${scenario.split('/')[1]}@example.test`,
+            name: 'Owner',
+            email_verified: 1,
+            created_at: now,
+            updated_at: now,
+            workspace_id: workspaceId,
+          })
+          .execute()
+        await seedDevScreenState(db, scenario, workspaceId, userId, now)
+        const code = await db
+          .selectFrom('deviceCode')
+          .selectAll()
+          .where('userId', '=', userId)
+          .executeTakeFirstOrThrow()
+        expect(code).toMatchObject({
+          status: 'pending',
+          preset: null,
+          deviceName: null,
+          userCode: devPublisherUserCode(workspaceId),
+        })
+        codes.add(code.userCode!)
+      }
+      expect(codes.size).toBe(2)
+    } finally {
+      await db.destroy()
+    }
+  })
+
   test('publisher scenarios seed distinct stable approval codes across workspaces', async () => {
     const { db } = createMigratedInMemoryDb()
     const now = '2026-09-09T00:00:00.000Z'

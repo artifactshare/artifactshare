@@ -1,3 +1,5 @@
+import en from '~/i18n/en.json'
+import { Stack } from '~/components/layout/stack'
 import { FocusedFlowBrand } from '~/components/app/focused-flow-brand'
 import { LandingHero, LandingShell } from '~/components/app/landing-shell'
 import { ConsentActions } from '~/components/app/consent-panel'
@@ -47,8 +49,26 @@ export function FocusedDeviceFixture() {
             read workspace-visible files and private projects shared with you.
           </p>
         </Field>
+        <div className="mt-4 w-full max-w-80 text-left text-sm">
+          <Stack gap="3">
+            <p role="note" className="font-medium">
+              {en['device.approval_warning']}
+            </p>
+            <label
+              htmlFor="fixture-code-confirmation"
+              className="flex min-h-11 cursor-pointer items-start gap-2 py-2"
+            >
+              <input
+                id="fixture-code-confirmation"
+                type="checkbox"
+                className="accent-primary focus-visible:ring-ring mt-1 size-4 shrink-0 focus-visible:ring-2 focus-visible:ring-offset-2"
+              />
+              <span>{en['device.code_confirmation']}</span>
+            </label>
+          </Stack>
+        </div>
         <ConsentActions>
-          <Button type="button" data-regression-primary="approve">
+          <Button type="button" disabled data-regression-primary="approve">
             Approve
           </Button>
           <Button type="button" variant="outline">
