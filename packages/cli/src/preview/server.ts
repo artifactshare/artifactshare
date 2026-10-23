@@ -33,6 +33,7 @@ import {
   type PreviewAgentAdapter,
 } from './notification.js'
 import { renderPreviewShell } from './shell.js'
+import { mutationOriginAllowed } from './request-origin.js'
 import type { PreviewStore } from './store.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -274,6 +275,16 @@ export async function startPreviewServer(
     }
     const method = request.method ?? 'GET'
     if (method === 'POST' || method === 'DELETE') {
+      if (
+        !mutationOriginAllowed(
+          request.headers.origin,
+          request.headers.host,
+          request.headers['sec-fetch-site'],
+        )
+      ) {
+        sendJson(response, 403, { error: 'forbidden_origin' })
+        return false
+      }
       if (!mutationHeadersValid(request)) {
         sendJson(response, 403, { error: 'missing_preview_header' })
         return false
@@ -283,6 +294,8 @@ export async function startPreviewServer(
   }
 
   function serveArtifact(response: ServerResponse): void {
+    response.setHeader('Content-Security-Policy', 'sandbox allow-scripts')
+    response.setHeader('Referrer-Policy', 'no-referrer')
     let bytes: Buffer
     try {
       bytes = readFileSync(filePath)

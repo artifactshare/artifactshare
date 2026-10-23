@@ -416,3 +416,9 @@ same-identity, same-size in-place edit. See the CLI README for the full guarante
 設定を保存する `init` は未知のキーを保持し、`.artifactshare` と `config.local.json` のリンクや差し替えを拒否する。Git worktree と submodule でも設定は保存するが、`.git` ファイルやリンク、転送メタデータをたどって exclude を更新しない。実ディレクトリの `.git` と通常ファイルまたは未作成の `info/exclude` だけを更新する。更新できない場合は `git_exclude_warning` のパスと行に従って手動で追加する。引数なしの `init` による user scope の skill インストールは従来どおり。
 
 アップロードの別表記は保存済みの名前から種類・ファイル名・content type を決める。列挙後に消えたファイルは `changed` として再試行を案内し、通常ファイルを中間要素に含む相対パスは `not_found` として修正を案内する。`share --help` と `append --help` は `upload_read_failed` と七つの `validation_failed` 理由を示す。
+
+### Local preview isolation
+
+Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.
+
+Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.

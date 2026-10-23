@@ -63,6 +63,7 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     const executable = document.createElement('script')
     executable.textContent = script
     document.body.appendChild(executable)
+    frame.dispatchEvent(new Event('load'))
     await vi.waitFor(() =>
       expect(
         post.mock.calls.some(([message]) => message.kind === 'verify-anchors'),
@@ -81,13 +82,14 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     window.dispatchEvent(
       new MessageEvent('message', {
         source: frame.contentWindow,
-        origin: window.location.origin,
+        origin: 'null',
         data: snapshot,
       }),
     )
     expect(window.location.href).toBe(previewUrl)
     expect(frame.src).toBe(frameUrl)
-    const request = post.mock.calls.find(
+    await vi.advanceTimersByTimeAsync(400)
+    const request = post.mock.calls.findLast(
       ([message]) => message.kind === 'verify-anchors',
     )![0]
     expect(document.querySelector('.thread')!.textContent).toContain(
@@ -106,9 +108,12 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     window.dispatchEvent(
       new MessageEvent('message', {
         source: frame.contentWindow,
-        origin: window.location.origin,
+        origin: 'null',
         data: {
           source: 'artifactshare',
+          previewCapability: request.previewCapability,
+          documentGeneration: request.documentGeneration,
+          sequence: 1,
           kind: 'anchor-verdicts',
           verificationId: request.verificationId,
           generation: 1,
@@ -138,9 +143,12 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     window.dispatchEvent(
       new MessageEvent('message', {
         source: frame.contentWindow,
-        origin: window.location.origin,
+        origin: 'null',
         data: {
           source: 'artifactshare',
+          previewCapability: request.previewCapability,
+          documentGeneration: request.documentGeneration,
+          sequence: 2,
           kind: 'anchor-verdicts',
           verificationId: request.verificationId,
           generation: 2,
@@ -154,6 +162,9 @@ test('an unchanged page keeps saved legacy annotations attached without offering
         },
       }),
     )
+    expect(
+      writes.some(([url]) => url === '/api/annotations/anchor-state'),
+    ).toBe(false)
     expect(document.querySelectorAll('.thread.orphaned')).toHaveLength(1)
     expect(
       document.querySelector('#orphanNotice')!.classList.contains('show'),

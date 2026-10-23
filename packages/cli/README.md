@@ -481,3 +481,9 @@ Upload aliases use the stored filename for artifact kind, multipart name, and
 content type. An enumerated entry disappearing is `changed` (retry); a relative
 path through a regular file is `not_found` (correct the path). `share --help`
 and `append --help` list all upload boundary reasons and fixes.
+
+### Local preview isolation
+
+Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.
+
+Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.

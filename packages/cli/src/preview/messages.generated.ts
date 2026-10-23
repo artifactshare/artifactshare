@@ -2,6 +2,8 @@
 // Source: apps/web/app/i18n/{en,ja}.json (preview.* subset).
 export const PREVIEW_MESSAGES = {
   en: {
+    'preview.isolationNotice':
+      'Preview runs scripts in an isolated frame. localStorage, IndexedDB and other same-origin features are unavailable. Preview isolation cannot be disabled.',
     'preview.localBadge': 'Local preview',
     'preview.watching': 'Watching for changes',
     'preview.share': 'Share',
@@ -129,6 +131,8 @@ export const PREVIEW_MESSAGES = {
       'The file could not be read, so sharing is disabled. Reopen this dialog once it is available.',
   },
   ja: {
+    'preview.isolationNotice':
+      'プレビューのスクリプトは隔離されたフレームで実行されます。localStorage、IndexedDB など、同一オリジンを必要とする機能は使えません。この隔離は解除できません。',
     'preview.localBadge': 'ローカルプレビュー',
     'preview.watching': '変更を監視中',
     'preview.share': '共有する',

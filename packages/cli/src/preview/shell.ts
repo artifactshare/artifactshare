@@ -4,6 +4,7 @@ import {
   READY_MESSAGE_REPEAT_COUNT,
   READY_MESSAGE_REPEAT_INTERVAL_MS,
 } from '@artifactshare/viewer-kit/csp-reporter'
+import { validPreviewObservation } from './reporter-protocol.js'
 import type { PREVIEW_MESSAGES } from './messages.generated.js'
 
 export interface PreviewShellOptions {
@@ -45,6 +46,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(fileName)} - as preview</title>
 <style>
@@ -213,9 +215,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 </header>
 <div class="layout">
   <div class="doc-wrap">
-    <iframe id="artifactFrame" src="/artifact" title="${escapeHtml(fileName)}"></iframe>
+    <iframe id="artifactFrame" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/artifact" title="${escapeHtml(fileName)}"></iframe>
   </div>
   <aside class="panel">
+    <p data-msg="preview.isolationNotice" style="font-size:12px;color:var(--muted-foreground);margin:0"></p>
     <h2 data-msg="preview.panelTitle"></h2>
     <div class="submit-bar" id="submitBar">
       <button class="btn btn-primary" id="submitBtn" aria-describedby="batchStatus"></button>
@@ -357,16 +360,22 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let ended = false;
 
   // --- iframe protocol ----------------------------------------------------
+  const validObservation = ${validPreviewObservation.toString()};
+  let documentGeneration = 0;
+  let previewCapability = '';
+  let sendSequence = 0;
+  let receiveSequence = 0;
+  let sharePopup = null;
   function postToFrame(message) {
     try {
       frame.contentWindow.postMessage(
-        Object.assign({ source: CONFIG.readySource }, message), '*');
+        Object.assign({ source: CONFIG.readySource, previewCapability, documentGeneration, sequence: ++sendSequence }, message), '*');
     } catch (error) {}
   }
   function readyPayload() {
     return {
       kind: CONFIG.readyKind,
-      challenge: String(Math.random()).slice(2) + String(Date.now()),
+      challenge: previewCapability,
       textAnchorsEnabled: true,
       commentLabels: {},
     };
@@ -374,6 +383,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let readyBurstTimer = null;
   function startReadyBurst() {
     if (readyBurstTimer) clearInterval(readyBurstTimer);
+    documentGeneration++;
+    previewCapability = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+    sendSequence = 0;
+    receiveSequence = 0;
     let sent = 0;
     const payload = readyPayload();
     postToFrame(payload);
@@ -398,7 +411,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     // share finished; everything else must come from the artifact frame.
     const data = event.data || {};
     if (data.source === 'artifactshare-preview-share') {
-      if (event.origin !== CONFIG.shareOrigin) return;
+      if (!sharePopup || event.source !== sharePopup || event.origin !== CONFIG.shareOrigin) return;
       // "Preview ended" has to be true for the agent too: without the stop,
       // the process keeps serving and pending next polls never receive
       // session_ended.
@@ -412,9 +425,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     // check any page that opens this port can post a crafted element-annotate
     // and steer what the user is about to write into the store.
     if (event.source !== frame.contentWindow) return;
-    if (event.origin !== window.location.origin) return;
-    if (data.source !== 'artifactshare') return;
+    if (ended || !previewCapability || event.origin !== 'null') return;
+    if (!validObservation(data) || data.previewCapability !== previewCapability ||
+      data.documentGeneration !== documentGeneration || data.sequence <= receiveSequence) return;
+    receiveSequence = data.sequence;
     if (data.kind === 'element-annotate') {
+      if (!annotateMode) return;
       openPopover({
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
@@ -623,13 +639,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
+    previewCapability = '';
+    hidePopover();
     verificationId++;
     verificationGeneration = -1;
     let scrollY = 0;
     try { scrollY = frame.contentWindow.scrollY || 0; } catch (error) {}
     const restore = () => {
       try { frame.contentWindow.scrollTo(0, scrollY); } catch (error) {}
-      startReadyBurst();
       setTimeout(() => { lastVerifiedAnchors = null; checkOrphans(); }, 400);
       frame.removeEventListener('load', restore);
     };
@@ -677,24 +694,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
     checkingThreads = new Set((verdicts || []).filter(v => v.position_state === 'checking').map(v => v.thread));
     const newlyOrphaned = [];
-    const states = [];
     annotations.forEach((annotation) => {
       if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread)) return;
-      const anchor = annotation.anchor;
       const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
         newlyOrphaned.push(annotation.thread);
       }
       if (!found) orphanedThreads.add(annotation.thread);
       else orphanedThreads.delete(annotation.thread);
-      const nextState = found ? 'attached' : 'orphaned';
-      if (anchor.state !== nextState || (anchor.kind === 'text' && anchor.position_state !== (found ? 'attached' : 'needs-check'))) {
-        states.push({ thread: annotation.thread, state: nextState });
-      }
     });
-    if (states.length > 0) {
-      api('POST', '/api/annotations/anchor-state', { states });
-    }
+    // Reporter observations are display-only. Persist only explicit user actions.
     renderPanel();
     if (newlyOrphaned.length > 0) {
       document.getElementById('orphanText').textContent =
@@ -778,13 +787,15 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   function showEnded() {
     if (ended) return;
     ended = true;
+    previewCapability = '';
+    if (readyBurstTimer) clearInterval(readyBurstTimer);
     events.close();
     document.getElementById('endedScreen').classList.add('show');
   }
 
   // --- share --------------------------------------------------------------
   document.getElementById('shareBtn').addEventListener('click', () => {
-    window.open(CONFIG.shareOrigin + '/', 'as-preview-share', 'width=440,height=560');
+    sharePopup = window.open(CONFIG.shareOrigin + '/', '_blank', 'width=440,height=560');
   });
 
   // --- boot ---------------------------------------------------------------

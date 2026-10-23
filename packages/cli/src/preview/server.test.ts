@@ -162,6 +162,67 @@ describe('startPreviewServer', () => {
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
+  it.each(['null', 'https://example.test'])(
+    'rejects mutations from Origin %s without ending the session',
+    async (requestOrigin) => {
+      const response = await post(
+        context,
+        '/api/agent/stop',
+        {},
+        {
+          ...MUTATION_HEADERS,
+          origin: requestOrigin,
+        },
+      )
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'forbidden_origin' })
+      expect(
+        (await fetch(`${origin(context)}${PREVIEW_SESSION_ENDPOINT}`)).status,
+      ).toBe(200)
+      const annotation = await post(
+        context,
+        '/api/annotations',
+        { anchor: { kind: 'artifact' }, comment: 'Still reviewing' },
+        { ...MUTATION_HEADERS, origin: origin(context) },
+      )
+      expect(annotation.ok).toBe(true)
+      expect(context.store.all()).toHaveLength(1)
+    },
+  )
+
+  it('accepts no-referrer shell mutations with same-origin Fetch Metadata', async () => {
+    const headers = {
+      ...MUTATION_HEADERS,
+      origin: 'null',
+      'sec-fetch-site': 'same-origin',
+    }
+    const annotation = await post(
+      context,
+      '/api/annotations',
+      { anchor: { kind: 'artifact' }, comment: 'Review from the shell' },
+      headers,
+    )
+    expect(annotation.ok).toBe(true)
+    expect(context.store.all()).toHaveLength(1)
+    const stopped = await post(context, '/api/agent/stop', {}, headers)
+    expect(stopped.status).toBe(200)
+    await context.server.closed
+  })
+
+  it.each(['same-site', 'cross-site', 'none'])(
+    'rejects opaque mutations with Fetch Metadata %s',
+    async (fetchSite) => {
+      const response = await post(
+        context,
+        '/api/annotations',
+        { anchor: { kind: 'artifact' }, comment: 'Must not be saved' },
+        { ...MUTATION_HEADERS, origin: 'null', 'sec-fetch-site': fetchSite },
+      )
+      expect(response.status).toBe(403)
+      expect(context.store.all()).toHaveLength(0)
+    },
+  )
+
   it('never exposes a provider target to browser responses', async () => {
     await context.server.close()
     rmSync(context.dir, { recursive: true, force: true })
@@ -217,7 +278,15 @@ describe('startPreviewServer', () => {
     const shell = await (await fetch(`${origin(context)}/`)).text()
     expect(shell).toContain('artifactFrame')
     expect(shell).toContain('/artifact')
-    const artifact = await (await fetch(`${origin(context)}/artifact`)).text()
+    expect(shell).toContain('sandbox="allow-scripts"')
+    expect(shell).not.toContain('allow-same-origin')
+    expect(shell).toContain('preview.isolationNotice')
+    const artifactResponse = await fetch(`${origin(context)}/artifact`)
+    expect(artifactResponse.headers.get('content-security-policy')).toBe(
+      'sandbox allow-scripts',
+    )
+    expect(artifactResponse.headers.get('referrer-policy')).toBe('no-referrer')
+    const artifact = await artifactResponse.text()
     expect(artifact).toContain('<h1>Hello</h1>')
     expect(artifact).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
   })

@@ -1484,6 +1484,7 @@
   "upgradeRequest.copyFailed": "Select the text and copy it manually.",
   "upgradeRequest.billing": "View billing",
   "upgradeRequest.support": "Contact support",
+  "preview.isolationNotice": "Preview runs scripts in an isolated frame. localStorage, IndexedDB and other same-origin features are unavailable. Preview isolation cannot be disabled.",
   "preview.localBadge": "Local preview",
   "preview.watching": "Watching for changes",
   "preview.share": "Share",

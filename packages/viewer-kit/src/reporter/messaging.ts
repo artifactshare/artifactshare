@@ -21,6 +21,11 @@ import type { ReporterState } from './state.js'
 export function send(ctx: ReporterState, message: Record<string, unknown>) {
   try {
     let payload = createMessagePayload(ctx.primordials, message)
+    if (ctx.previewCapability) {
+      payload.previewCapability = ctx.previewCapability
+      payload.documentGeneration = ctx.previewGeneration
+      payload.sequence = ++ctx.previewSendSequence
+    }
     ctx.primordials.savedPostMessage(ctx.primordials.savedParent, payload, '*')
   } catch (e) {}
 }
@@ -93,6 +98,28 @@ export function installMessageListener(ctx: ReporterState) {
       data.source !== READY_CHECK_MESSAGE_SOURCE
     ) {
       return
+    }
+    // Preview is opt-in. Hosted viewers retain their existing protocol.
+    if (
+      !ctx.previewCapability &&
+      data.kind === READY_CHECK_MESSAGE_KIND &&
+      typeof data.previewCapability === 'string' &&
+      /^[a-f0-9]{64}$/.test(data.previewCapability) &&
+      Number.isSafeInteger(data.documentGeneration) &&
+      data.documentGeneration > 0
+    ) {
+      ctx.previewCapability = data.previewCapability
+      ctx.previewGeneration = data.documentGeneration
+    }
+    if (ctx.previewCapability) {
+      if (
+        data.previewCapability !== ctx.previewCapability ||
+        data.documentGeneration !== ctx.previewGeneration ||
+        !Number.isSafeInteger(data.sequence) ||
+        data.sequence <= ctx.previewReceiveSequence
+      )
+        return
+      ctx.previewReceiveSequence = data.sequence
     }
     if (data.kind === READY_CHECK_MESSAGE_KIND) {
       onReadyCheck(ctx, event)
