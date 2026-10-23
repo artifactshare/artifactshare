@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   PREVIEW_MUTATION_HEADER,
@@ -272,6 +273,36 @@ describe('startPreviewServer', () => {
     expect(body.agent.state).toBe('queued')
     expect(JSON.stringify(payloads)).not.toContain('private comment body')
     expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
+  })
+
+  it('focuses the existing share popup and replaces it only after closure', async () => {
+    const shell = await (await fetch(`${origin(context)}/`)).text()
+    const handler = shell.match(
+      /document\.getElementById\('shareBtn'\)\.addEventListener\('click', \(\) => \{([\s\S]*?)\n  \}\);/,
+    )
+    expect(handler).not.toBeNull()
+    let opens = 0
+    let focuses = 0
+    const popup = { closed: false, focus: () => focuses++ }
+    const scope = {
+      sharePopup: null,
+      CONFIG: { shareOrigin: 'http://127.0.0.1:12345' },
+      window: {
+        open: () => {
+          opens++
+          return popup
+        },
+      },
+    }
+    const click = () => runInNewContext(`(() => {${handler![1]}})()`, scope)
+    click()
+    expect(opens).toBe(1)
+    click()
+    expect(opens).toBe(1)
+    expect(focuses).toBe(1)
+    popup.closed = true
+    click()
+    expect(opens).toBe(2)
   })
 
   it('serves the shell page and the artifact with the reporter injected', async () => {

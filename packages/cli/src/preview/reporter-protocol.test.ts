@@ -82,3 +82,14 @@ test.each([
 ])('rejects malformed bounded observations %#', (message) => {
   expect(validPreviewObservation(message)).toBe(false)
 })
+
+test('accepts long element text while bounding the complete anchor text', () => {
+  for (const length of [5000, 1_000_000]) {
+    expect(
+      validPreviewObservation({ ...element, ownText: 'x'.repeat(length) }),
+    ).toBe(true)
+  }
+  expect(
+    validPreviewObservation({ ...element, ownText: 'x'.repeat(1_000_001) }),
+  ).toBe(false)
+})

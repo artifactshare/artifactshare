@@ -59,7 +59,7 @@ export function validPreviewObservation(value: unknown): boolean {
         str(value.selector, 4096) &&
         str(value.label, 1024) &&
         str(value.contextText, 4096) &&
-        str(value.ownText, 4096) &&
+        str(value.ownText, 1_000_000) &&
         str(value.tagName, 128) &&
         rect(value.rect)
       )

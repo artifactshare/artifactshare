@@ -56,3 +56,11 @@ test('Fetch Metadata does not override an explicit foreign Origin', () => {
     ),
   ).toBe(false)
 })
+
+test('rejects duplicated Fetch Metadata with missing or matching Origin', () => {
+  for (const origin of [undefined, 'http://127.0.0.1:12345', 'null']) {
+    expect(
+      mutationOriginAllowed(origin, '127.0.0.1:12345', ['same-origin']),
+    ).toBe(false)
+  }
+})
