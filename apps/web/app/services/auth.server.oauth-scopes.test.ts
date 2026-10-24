@@ -101,36 +101,45 @@ describe('OAuth scope configuration and compatibility', () => {
     expect(redirect.searchParams.has('code')).toBe(false)
   })
 
-  test('registration without scope defaults a new authorization_code connection to the configured product scopes', async () => {
-    const response = await createAuth().handler(
-      new Request('https://example.com/api/auth/oauth2/register', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          redirect_uris: [REDIRECT_URI],
-          token_endpoint_auth_method: 'none',
-          grant_types: ['authorization_code', 'refresh_token'],
+  test.each([
+    REDIRECT_URI,
+    'http://localhost:54321/callback',
+    'http://127.0.0.1:54321/callback',
+    'com.example.mcp:/callback',
+  ])(
+    'registration without application_type or scope supports %s',
+    async (redirectUri) => {
+      const response = await createAuth().handler(
+        new Request('https://example.com/api/auth/oauth2/register', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: [redirectUri],
+            token_endpoint_auth_method: 'none',
+            grant_types: ['authorization_code', 'refresh_token'],
+          }),
         }),
-      }),
-    )
+      )
 
-    expect(response.status).toBe(201)
-    const registration = await jsonObject(response)
-    const expectedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
-    expect(registration.scope).toBe(expectedScopes.join(' '))
-    expect(registration.client_id).toEqual(expect.any(String))
-    const clientId = String(registration.client_id)
-    const client = sqlite
-      .prepare('SELECT scopes FROM oauthClient WHERE clientId = ?')
-      .get(clientId)
-    expect(client?.scopes).toBe(JSON.stringify(expectedScopes))
+      expect(response.status).toBe(201)
+      const registration = await jsonObject(response)
+      const expectedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
+      expect(registration.scope).toBe(expectedScopes.join(' '))
+      expect(registration.client_id).toEqual(expect.any(String))
+      const clientId = String(registration.client_id)
+      const client = sqlite
+        .prepare('SELECT scopes FROM oauthClient WHERE clientId = ?')
+        .get(clientId)
+      expect(client?.scopes).toBe(JSON.stringify(expectedScopes))
 
-    await consentAndExchangeCode(
-      await authorizationRequest(clientId),
-      clientId,
-      expectedScopes,
-    )
-  })
+      await consentAndExchangeCode(
+        await authorizationRequest(clientId, {}, redirectUri),
+        clientId,
+        expectedScopes,
+        redirectUri,
+      )
+    },
+  )
 
   test.each([
     { name: 'omitted', fields: {} },
@@ -288,12 +297,13 @@ describe('OAuth scope configuration and compatibility', () => {
   function authorizationRequest(
     clientId: string,
     fields: { scope?: string } = {},
+    redirectUri = REDIRECT_URI,
   ) {
     const query = new URLSearchParams({
       response_type: 'code',
       resource: 'https://example.com/mcp',
       client_id: clientId,
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri,
       state: 'scope-test-state',
       code_challenge: createHash('sha256')
         .update(CODE_VERIFIER)
@@ -312,6 +322,7 @@ describe('OAuth scope configuration and compatibility', () => {
     response: Response,
     clientId: string,
     expectedScopes: readonly string[],
+    redirectUri = REDIRECT_URI,
   ) {
     expect(response.status).toBe(302)
     const consentUrl = new URL(
@@ -339,7 +350,9 @@ describe('OAuth scope configuration and compatibility', () => {
     const consent = await jsonObject(consentResponse)
     expect(consent).toMatchObject({ redirect: true, url: expect.any(String) })
     const callback = new URL(String(consent.url))
-    expect(`${callback.origin}${callback.pathname}`).toBe(REDIRECT_URI)
+    const callbackTarget = new URL(callback)
+    callbackTarget.search = ''
+    expect(callbackTarget.href).toBe(redirectUri)
     expect(callback.searchParams.get('state')).toBe('scope-test-state')
     expect(callback.searchParams.get('code')).toBeTruthy()
 
@@ -351,7 +364,7 @@ describe('OAuth scope configuration and compatibility', () => {
           grant_type: 'authorization_code',
           client_id: clientId,
           resource: 'https://example.com/mcp',
-          redirect_uri: REDIRECT_URI,
+          redirect_uri: redirectUri,
           code: callback.searchParams.get('code')!,
           code_verifier: CODE_VERIFIER,
         }),
@@ -364,6 +377,10 @@ describe('OAuth scope configuration and compatibility', () => {
       scope: expectedScopes.join(' '),
     })
     const accessTokenPayload = decodeJwtPayload(tokenBody.access_token)
+    expect(accessTokenPayload.aud).toEqual([
+      'https://example.com/mcp',
+      'https://example.com/api/auth/oauth2/userinfo',
+    ])
     expect(typeof accessTokenPayload.scope).toBe('string')
     expect(accessTokenPayload.scope).toBe(expectedScopes.join(' '))
   }

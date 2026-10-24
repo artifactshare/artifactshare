@@ -1588,7 +1588,6 @@ CREATE TABLE oauthClientResource (
   createdAt TEXT,
   UNIQUE (clientId, resourceId)
 );
-CREATE INDEX oauthClientResource_clientId ON oauthClientResource(clientId);
 CREATE INDEX oauthClientResource_resourceId ON oauthClientResource(resourceId);
 
 CREATE TABLE oauthClientAssertion (

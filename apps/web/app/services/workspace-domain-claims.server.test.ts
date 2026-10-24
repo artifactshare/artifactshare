@@ -998,22 +998,28 @@ describe('workspace domain claims', () => {
     ).resolves.toEqual({ id: 'token-race' })
   })
 
-  test('keeps users with delegated OAuth tokens in their current workspace', async () => {
-    const db = setup()
-    await seedWorkspace(db, { id: 'ws-org', hd: null, emailDomain: 'corp.com' })
-    await seedWorkspace(db, { id: 'ws-personal', hd: null })
-    await ensureWorkspaceDomainClaim(db, {
-      domain: 'corp.com',
-      workspaceId: 'ws-org',
-      source: 'google_hd',
-      now: '2026-06-26T00:00:00.000Z',
-    })
-    await seedUser(db, {
-      id: 'u1',
-      email: 'alice@corp.com',
-      workspaceId: 'ws-personal',
-    })
-    sqliteRef.current?.exec(`
+  test.each(['expired', 'revoked'])(
+    'keeps users with delegated OAuth tokens until %s',
+    async (state) => {
+      const db = setup()
+      await seedWorkspace(db, {
+        id: 'ws-org',
+        hd: null,
+        emailDomain: 'corp.com',
+      })
+      await seedWorkspace(db, { id: 'ws-personal', hd: null })
+      await ensureWorkspaceDomainClaim(db, {
+        domain: 'corp.com',
+        workspaceId: 'ws-org',
+        source: 'google_hd',
+        now: '2026-06-26T00:00:00.000Z',
+      })
+      await seedUser(db, {
+        id: 'u1',
+        email: 'alice@corp.com',
+        workspaceId: 'ws-personal',
+      })
+      sqliteRef.current?.exec(`
       INSERT INTO oauthClient (id, clientId, redirectUris)
       VALUES ('client-row', 'client-1', '[]');
       INSERT INTO oauthAccessToken (
@@ -1023,35 +1029,37 @@ describe('workspace domain claims', () => {
       );
     `)
 
-    await expect(
-      maybeMoveUserToClaimedWorkspace(db, {
-        userId: 'u1',
-        email: 'alice@corp.com',
-        currentWorkspaceId: 'ws-personal',
-      }),
-    ).resolves.toBeNull()
-    await expect(
-      db
-        .selectFrom('users')
-        .select('workspace_id')
-        .where('id', '=', 'u1')
-        .executeTakeFirstOrThrow(),
-    ).resolves.toEqual({ workspace_id: 'ws-personal' })
+      await expect(
+        maybeMoveUserToClaimedWorkspace(db, {
+          userId: 'u1',
+          email: 'alice@corp.com',
+          currentWorkspaceId: 'ws-personal',
+        }),
+      ).resolves.toBeNull()
+      await expect(
+        db
+          .selectFrom('users')
+          .select('workspace_id')
+          .where('id', '=', 'u1')
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({ workspace_id: 'ws-personal' })
 
-    sqliteRef.current
-      ?.prepare(
-        `UPDATE oauthAccessToken SET expiresAt = '2020-01-01T00:00:00.000Z'
-         WHERE id = 'access-1'`,
-      )
-      .run()
-    await expect(
-      maybeMoveUserToClaimedWorkspace(db, {
-        userId: 'u1',
-        email: 'alice@corp.com',
-        currentWorkspaceId: 'ws-personal',
-      }),
-    ).resolves.toBe('ws-org')
-  })
+      sqliteRef.current
+        ?.prepare(
+          state === 'expired'
+            ? `UPDATE oauthAccessToken SET expiresAt = '2020-01-01T00:00:00.000Z' WHERE id = 'access-1'`
+            : `UPDATE oauthAccessToken SET revoked = '2026-06-26T00:00:00.000Z', expiresAt = '2099-01-01T00:00:00.000Z' WHERE id = 'access-1'`,
+        )
+        .run()
+      await expect(
+        maybeMoveUserToClaimedWorkspace(db, {
+          userId: 'u1',
+          email: 'alice@corp.com',
+          currentWorkspaceId: 'ws-personal',
+        }),
+      ).resolves.toBe('ws-org')
+    },
+  )
 
   test('rolls back when a delegated OAuth token appears before the move batch', async () => {
     const db = setup()
@@ -1471,6 +1479,10 @@ describe('workspace domain claims', () => {
         oauthRefreshTokensCount: 0,
       },
     ])
+    sqliteRef.current?.exec(`UPDATE oauthAccessToken
+      SET revoked = '2026-06-26T00:00:00.000Z', expiresAt = '2099-01-01T00:00:00.000Z'
+      WHERE id = 'candidate-access'`)
+    await expect(listWorkspaceMigrationCandidates(db)).resolves.toEqual([])
   })
 
   test('keeps users with stateless OAuth consent in their current workspace', async () => {

@@ -1600,66 +1600,74 @@ describe('OAuth workspace integration', () => {
     await expectUserWorkspace(db, 'u1', 'ws-org')
   })
 
-  test('blocks migration while delegated OAuth tokens remain active', async () => {
-    const db = setup()
-    await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
-    await seedWorkspace(db, { id: 'ws-org', name: 'corp.com' })
-    await seedUser(db, 'u1', 'alice@corp.com', 'ws-personal')
-    await seedClaim(db, 'corp.com', 'ws-org')
-    sqliteRef.current?.exec(`
+  test.each(['oauthRefreshToken', 'oauthAccessToken'] as const)(
+    'blocks migration while %s remains active',
+    async (tokenTable) => {
+      const db = setup()
+      await seedWorkspace(db, { id: 'ws-personal', name: 'Alice' })
+      await seedWorkspace(db, { id: 'ws-org', name: 'corp.com' })
+      await seedUser(db, 'u1', 'alice@corp.com', 'ws-personal')
+      await seedClaim(db, 'corp.com', 'ws-org')
+      sqliteRef.current?.exec(`
       INSERT INTO oauthClient (id, clientId, redirectUris)
       VALUES ('client-row', 'client-1', '[]');
-      INSERT INTO oauthRefreshToken (
-        id, token, clientId, userId, scopes
+      INSERT INTO ${tokenTable} (
+        id, token, clientId, userId, scopes, expiresAt
       ) VALUES (
-        'refresh-1', 'refresh-token', 'client-1', 'u1', 'openid'
+        'refresh-1', 'refresh-token', 'client-1', 'u1', 'openid', '2099-01-01T00:00:00.000Z'
       );
     `)
 
-    const plan = await planOAuthWorkspaceIntegration(db, {
-      domain: 'corp.com',
-      email: 'alice@corp.com',
-      source: 'google_hd',
-    })
-    expect(plan.executable).toBe(false)
-    expect(plan.blockingResources.delegatedOAuthTokenCount).toBe(1)
-    expect(plan.stopReasons).toContain('delegated_oauth_token_present')
-    const result = await applyOAuthWorkspaceIntegration(db, plan)
-    expect(result.kind).toBe('blocked')
-    await expectUserWorkspace(db, 'u1', 'ws-personal')
+      const plan = await planOAuthWorkspaceIntegration(db, {
+        domain: 'corp.com',
+        email: 'alice@corp.com',
+        source: 'google_hd',
+      })
+      expect(plan.executable).toBe(false)
+      expect(plan.blockingResources.delegatedOAuthTokenCount).toBe(1)
+      expect(plan.stopReasons).toContain('delegated_oauth_token_present')
+      const result = await applyOAuthWorkspaceIntegration(db, plan)
+      expect(result.kind).toBe('blocked')
+      await expectUserWorkspace(db, 'u1', 'ws-personal')
 
-    sqliteRef.current
-      ?.prepare(
-        `UPDATE oauthRefreshToken SET revoked = '2026-06-26T00:00:00.000Z'
+      sqliteRef.current
+        ?.prepare(
+          `UPDATE ${tokenTable} SET revoked = '2026-06-26T00:00:00.000Z'
          WHERE id = 'refresh-1'`,
+        )
+        .run()
+      const unblockedPlan = await planOAuthWorkspaceIntegration(db, {
+        domain: 'corp.com',
+        email: 'alice@corp.com',
+        source: 'google_hd',
+      })
+      expect(unblockedPlan.blockingResources.delegatedOAuthTokenCount).toBe(0)
+      expect(unblockedPlan.stopReasons).not.toContain(
+        'delegated_oauth_token_present',
       )
-      .run()
-    const unblockedPlan = await planOAuthWorkspaceIntegration(db, {
-      domain: 'corp.com',
-      email: 'alice@corp.com',
-      source: 'google_hd',
-    })
-    expect(unblockedPlan.blockingResources.delegatedOAuthTokenCount).toBe(0)
-    expect(unblockedPlan.stopReasons).not.toContain(
-      'delegated_oauth_token_present',
-    )
 
-    sqliteRef.current?.exec(`
+      sqliteRef.current?.exec(`
       INSERT INTO oauthConsent (id, clientId, userId, scopes)
       VALUES ('consent-1', 'client-1', 'u1', 'openid');
     `)
-    const consentBlockedPlan = await planOAuthWorkspaceIntegration(db, {
-      domain: 'corp.com',
-      email: 'alice@corp.com',
-      source: 'google_hd',
-    })
-    expect(consentBlockedPlan.blockingResources.delegatedOAuthTokenCount).toBe(
-      1,
-    )
-    expect(consentBlockedPlan.stopReasons).toContain(
-      'delegated_oauth_token_present',
-    )
-  })
+      const consentBlockedPlan = await planOAuthWorkspaceIntegration(db, {
+        domain: 'corp.com',
+        email: 'alice@corp.com',
+        source: 'google_hd',
+      })
+      expect(
+        consentBlockedPlan.blockingResources.delegatedOAuthTokenCount,
+      ).toBe(1)
+      expect(consentBlockedPlan.stopReasons).toContain(
+        'delegated_oauth_token_present',
+      )
+      sqliteRef.current?.exec("DELETE FROM oauthConsent WHERE id = 'consent-1'")
+      expect(
+        (await applyOAuthWorkspaceIntegration(db, unblockedPlan)).kind,
+      ).toBe('applied')
+      await expectUserWorkspace(db, 'u1', 'ws-org')
+    },
+  )
 
   test('rejects public domains and email/domain mismatches without writing', async () => {
     const db = setup()

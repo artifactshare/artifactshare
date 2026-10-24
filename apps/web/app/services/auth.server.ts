@@ -191,6 +191,7 @@ function buildAuth() {
         scopes: [...MCP_OAUTH_SCOPES],
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
+        clientRegistrationDefaultApplicationType: 'infer',
         // Restrict token audiences to the MCP endpoint URL: clients send it as
         // the RFC 8707 `resource`, and the JWT `aud` is verified against it at
         // /mcp. Only this protected resource is registered.
