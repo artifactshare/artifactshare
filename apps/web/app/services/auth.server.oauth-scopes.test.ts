@@ -41,6 +41,8 @@ describe('OAuth scope configuration and compatibility', () => {
     sqliteRef.current = sqlite
     seedWorkspace(sqlite)
     seedUser(sqlite, 'u1')
+    sqlite.exec(`INSERT INTO oauthResource (id, identifier, name)
+      VALUES ('mcp', 'https://example.com/mcp', 'MCP')`)
     const sessionToken = 'scope-test-session'
     seedSession(sqlite, 'u1', sessionToken)
     const signature = createHmac('sha256', authSecret)
@@ -112,7 +114,7 @@ describe('OAuth scope configuration and compatibility', () => {
       }),
     )
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(201)
     const registration = await jsonObject(response)
     const expectedScopes = [...LEGACY_SCOPES, 'artifactshare:access']
     expect(registration.scope).toBe(expectedScopes.join(' '))
@@ -208,6 +210,68 @@ describe('OAuth scope configuration and compatibility', () => {
     expect((await jsonObject(response)).error).toBe('invalid_scope')
   })
 
+  test('dynamic registration cannot request another protected resource', async () => {
+    const response = await createAuth().handler(
+      new Request('https://example.com/api/auth/oauth2/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: [REDIRECT_URI],
+          token_endpoint_auth_method: 'none',
+          resources: ['https://other.example/mcp'],
+        }),
+      }),
+    )
+    expect(response.status).toBe(400)
+    expect(await jsonObject(response)).toMatchObject({
+      error: 'invalid_target',
+    })
+  })
+
+  test('sign-out revokes session-bound access tokens while preserving offline refresh and disabling the session JWT endpoint', async () => {
+    insertRefreshToken(
+      'session-refresh',
+      'session-refresh-secret',
+      LEGACY_SCOPES,
+    )
+    sqlite.exec(`UPDATE oauthRefreshToken SET sessionId = 'sess1';
+      INSERT INTO oauthAccessToken (id, token, clientId, userId, sessionId, expiresAt, createdAt, scopes)
+      VALUES ('session-access', 'opaque-access-secret', 'client-1', 'u1', 'sess1',
+        '2099-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '["openid"]')`)
+    const disabled = await createAuth().handler(
+      new Request('https://example.com/api/auth/token', {
+        headers: { cookie: sessionCookie },
+      }),
+    )
+    expect(disabled.status).toBe(404)
+    const signedOut = await createAuth().handler(
+      new Request('https://example.com/api/auth/sign-out', {
+        method: 'POST',
+        headers: {
+          cookie: sessionCookie,
+          origin: 'https://example.com',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }),
+    )
+    expect(signedOut.status).toBe(200)
+    expect(
+      sqlite.prepare("SELECT id FROM sessions WHERE id = 'sess1'").get(),
+    ).toBeUndefined()
+    expect(
+      sqlite
+        .prepare(
+          "SELECT revoked FROM oauthAccessToken WHERE id = 'session-access'",
+        )
+        .get(),
+    ).toEqual({ revoked: expect.any(String) })
+    // offline_access deliberately survives the browser session ending.
+    expect((await refreshTokenRequest('session-refresh-secret')).status).toBe(
+      200,
+    )
+  })
+
   function insertLegacyClient() {
     sqlite
       .prepare(
@@ -218,6 +282,7 @@ describe('OAuth scope configuration and compatibility', () => {
            '["authorization_code","refresh_token"]', '["code"]')`,
       )
       .run(JSON.stringify(LEGACY_SCOPES), JSON.stringify([REDIRECT_URI]))
+    bindClientResource('legacy-client')
   }
 
   function authorizationRequest(
@@ -226,6 +291,7 @@ describe('OAuth scope configuration and compatibility', () => {
   ) {
     const query = new URLSearchParams({
       response_type: 'code',
+      resource: 'https://example.com/mcp',
       client_id: clientId,
       redirect_uri: REDIRECT_URI,
       state: 'scope-test-state',
@@ -309,22 +375,30 @@ describe('OAuth scope configuration and compatibility', () => {
   ) {
     sqlite
       .prepare(
-        `INSERT INTO oauthClient (id, clientId, public, redirectUris)
-         VALUES ('client-row', 'client-1', 1, '[]')`,
+        `INSERT INTO oauthClient (id, clientId, public, redirectUris, tokenEndpointAuthMethod)
+         VALUES ('client-row', 'client-1', 1, '[]', 'none')`,
       )
       .run()
+    bindClientResource('client-1')
     sqlite
       .prepare(
         `INSERT INTO oauthRefreshToken (
-           id, token, clientId, userId, expiresAt, createdAt, scopes
+           id, token, clientId, userId, expiresAt, createdAt, scopes, resources
          ) VALUES (?, ?, 'client-1', 'u1', '2099-01-01T00:00:00.000Z',
-           '2026-09-18T00:00:00.000Z', ?)`,
+           '2026-09-18T00:00:00.000Z', ?, '["https://example.com/mcp"]')`,
       )
       .run(
         id,
         createHash('sha256').update(token).digest('base64url'),
         JSON.stringify(scopes),
       )
+  }
+
+  function bindClientResource(clientId: string) {
+    sqlite
+      .prepare(`INSERT INTO oauthClientResource (id, clientId, resourceId)
+      VALUES (?, ?, 'https://example.com/mcp')`)
+      .run(clientId, clientId)
   }
 
   function refreshTokenRequest(

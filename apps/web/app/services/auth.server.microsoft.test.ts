@@ -129,7 +129,6 @@ describe('mapMicrosoftProfileToUser', () => {
         name: 'Display Name',
       }),
     ).toEqual({
-      id: 'tenant-1:object-1',
       name: 'Display Name',
       email: 'user@example.com',
       emailVerified: false,
@@ -182,6 +181,22 @@ describe('mapMicrosoftProfileToUser', () => {
 })
 
 describe('getMicrosoftUserInfo', () => {
+  test.each([undefined, '', ' ', 123])(
+    'rejects a missing or invalid oid claim (%s)',
+    async (oid) => {
+      await expect(
+        getMicrosoftUserInfo({
+          idToken: createMicrosoftIdToken({
+            tid: 'tenant-1',
+            oid,
+            sub: 'old-subject',
+            email: 'user@example.com',
+          }),
+        }),
+      ).resolves.toBeNull()
+    },
+  )
+
   test('returns null when idToken is missing', async () => {
     await expect(
       getMicrosoftUserInfo({ accessToken: 'access-token' }),
@@ -327,7 +342,6 @@ describe('getMicrosoftUserInfo', () => {
       getMicrosoftUserInfo({ idToken, accessToken: 'access-token' }),
     ).resolves.toEqual({
       user: {
-        id: 'tenant-1:object-1',
         name: '山田 太郎',
         email: 'taro@example.com',
         emailVerified: false,

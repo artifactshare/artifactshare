@@ -1074,7 +1074,9 @@ CREATE TABLE jwks (
   publicKey   TEXT NOT NULL,
   privateKey  TEXT NOT NULL,
   createdAt   TEXT NOT NULL,
-  expiresAt   TEXT
+  expiresAt   TEXT,
+  alg TEXT,
+  crv TEXT
 );
 
 CREATE TABLE oauthClient (
@@ -1107,7 +1109,15 @@ CREATE TABLE oauthClient (
   type                     TEXT,
   requirePKCE              INTEGER,
   referenceId              TEXT,
-  metadata                 TEXT
+  metadata                 TEXT,
+  clientDiscoveryId TEXT,
+  clientCredentialsScopes TEXT,
+  backchannelLogoutUri TEXT,
+  backchannelLogoutSessionRequired INTEGER,
+  applicationType TEXT,
+  jwks TEXT,
+  jwksUri TEXT,
+  dpopBoundAccessTokens INTEGER
 );
 CREATE INDEX oauthClient_userId ON oauthClient(userId);
 
@@ -1122,7 +1132,14 @@ CREATE TABLE oauthRefreshToken (
   createdAt    TEXT,
   revoked      TEXT,
   authTime     TEXT,
-  scopes       TEXT NOT NULL
+  scopes       TEXT NOT NULL,
+  authorizationCodeId TEXT,
+  resources TEXT,
+  requestedUserInfoClaims TEXT,
+  rotatedAt TEXT,
+  rotationReplayResponse TEXT,
+  rotationReplayExpiresAt TEXT,
+  confirmation TEXT
 );
 CREATE INDEX oauthRefreshToken_clientId ON oauthRefreshToken(clientId);
 CREATE INDEX oauthRefreshToken_sessionId ON oauthRefreshToken(sessionId);
@@ -1138,7 +1155,12 @@ CREATE TABLE oauthAccessToken (
   refreshId    TEXT REFERENCES oauthRefreshToken(id) ON DELETE SET NULL,
   expiresAt    TEXT,
   createdAt    TEXT,
-  scopes       TEXT NOT NULL
+  scopes       TEXT NOT NULL,
+  authorizationCodeId TEXT,
+  resources TEXT,
+  requestedUserInfoClaims TEXT,
+  revoked TEXT,
+  confirmation TEXT
 );
 CREATE INDEX oauthAccessToken_clientId ON oauthAccessToken(clientId);
 CREATE INDEX oauthAccessToken_sessionId ON oauthAccessToken(sessionId);
@@ -1152,7 +1174,9 @@ CREATE TABLE oauthConsent (
   referenceId  TEXT,
   scopes       TEXT NOT NULL,
   createdAt    TEXT,
-  updatedAt    TEXT
+  updatedAt    TEXT,
+  resources TEXT,
+  requestedUserInfoClaims TEXT
 );
 CREATE INDEX oauthConsent_clientId ON oauthConsent(clientId);
 CREATE INDEX oauthConsent_userId ON oauthConsent(userId);
@@ -1534,3 +1558,40 @@ CREATE TABLE comment_post_windows (
   PRIMARY KEY (user_id, shareable_id)
 );
 CREATE INDEX comment_post_windows_shareable ON comment_post_windows(shareable_id);
+
+CREATE INDEX oauthRefreshToken_authorizationCodeId ON oauthRefreshToken(authorizationCodeId);
+CREATE INDEX oauthAccessToken_authorizationCodeId ON oauthAccessToken(authorizationCodeId);
+
+CREATE TABLE oauthResource (
+  id TEXT PRIMARY KEY,
+  identifier TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  accessTokenTtl INTEGER,
+  refreshTokenTtl INTEGER,
+  signingAlgorithm TEXT,
+  signingKeyId TEXT,
+  allowedScopes TEXT,
+  customClaims TEXT,
+  dpopBoundAccessTokensRequired INTEGER,
+  disabled INTEGER,
+  createdAt TEXT,
+  updatedAt TEXT,
+  policyVersion INTEGER,
+  metadata TEXT
+);
+
+CREATE TABLE oauthClientResource (
+  id TEXT PRIMARY KEY,
+  clientId TEXT NOT NULL REFERENCES oauthClient(clientId) ON DELETE CASCADE,
+  resourceId TEXT NOT NULL REFERENCES oauthResource(identifier) ON DELETE CASCADE,
+  metadata TEXT,
+  createdAt TEXT,
+  UNIQUE (clientId, resourceId)
+);
+CREATE INDEX oauthClientResource_clientId ON oauthClientResource(clientId);
+CREATE INDEX oauthClientResource_resourceId ON oauthClientResource(resourceId);
+
+CREATE TABLE oauthClientAssertion (
+  id TEXT PRIMARY KEY,
+  expiresAt TEXT NOT NULL
+);

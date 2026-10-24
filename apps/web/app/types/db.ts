@@ -26,6 +26,14 @@ export interface DB {
   project_share_defaults: ProjectShareDefaultsTable
   project_members: ProjectMembersTable
   users: UsersTable
+  jwks: JwksTable
+  oauthClient: OauthClientTable
+  oauthResource: OauthResourceTable
+  oauthClientResource: OauthClientResourceTable
+  oauthClientAssertion: OauthClientAssertionTable
+  oauthRefreshToken: OauthRefreshTokenTable
+  oauthAccessToken: OauthAccessTokenTable
+  oauthConsent: OauthConsentTable
   accounts: AccountsTable
   sessions: SessionsTable
   cli_refresh_credentials: CliRefreshCredentialsTable
@@ -769,4 +777,137 @@ interface ApiTokensTable {
   created_at: string
   last_used_at: string | null
   revoked_at: string | null
+}
+
+interface JwksTable {
+  id: string
+  publicKey: string
+  privateKey: string
+  createdAt: string
+  expiresAt: Generated<string | null>
+  alg: Generated<string | null>
+  crv: Generated<string | null>
+}
+
+interface OauthClientTable {
+  id: string
+  clientId: string
+  clientSecret: Generated<string | null>
+  disabled: Generated<number | null>
+  skipConsent: Generated<number | null>
+  enableEndSession: Generated<number | null>
+  subjectType: Generated<string | null>
+  scopes: Generated<string | null>
+  userId: Generated<string | null>
+  createdAt: Generated<string | null>
+  updatedAt: Generated<string | null>
+  name: Generated<string | null>
+  uri: Generated<string | null>
+  icon: Generated<string | null>
+  contacts: Generated<string | null>
+  tos: Generated<string | null>
+  policy: Generated<string | null>
+  softwareId: Generated<string | null>
+  softwareVersion: Generated<string | null>
+  softwareStatement: Generated<string | null>
+  redirectUris: string
+  postLogoutRedirectUris: Generated<string | null>
+  tokenEndpointAuthMethod: Generated<string | null>
+  grantTypes: Generated<string | null>
+  responseTypes: Generated<string | null>
+  public: Generated<number | null>
+  type: Generated<string | null>
+  requirePKCE: Generated<number | null>
+  referenceId: Generated<string | null>
+  metadata: Generated<string | null>
+  clientDiscoveryId: Generated<string | null>
+  clientCredentialsScopes: Generated<string | null>
+  backchannelLogoutUri: Generated<string | null>
+  backchannelLogoutSessionRequired: Generated<number | null>
+  applicationType: Generated<string | null>
+  jwks: Generated<string | null>
+  jwksUri: Generated<string | null>
+  dpopBoundAccessTokens: Generated<number | null>
+}
+
+interface OauthResourceTable {
+  id: string
+  identifier: string
+  name: string
+  accessTokenTtl: Generated<number | null>
+  refreshTokenTtl: Generated<number | null>
+  signingAlgorithm: Generated<string | null>
+  signingKeyId: Generated<string | null>
+  allowedScopes: Generated<string | null>
+  customClaims: Generated<string | null>
+  dpopBoundAccessTokensRequired: Generated<number | null>
+  disabled: Generated<number | null>
+  createdAt: Generated<string | null>
+  updatedAt: Generated<string | null>
+  policyVersion: Generated<number | null>
+  metadata: Generated<string | null>
+}
+
+interface OauthClientResourceTable {
+  id: string
+  clientId: string
+  resourceId: string
+  metadata: Generated<string | null>
+  createdAt: Generated<string | null>
+}
+
+interface OauthClientAssertionTable {
+  id: string
+  expiresAt: string
+}
+
+interface OauthRefreshTokenTable {
+  id: string
+  token: string
+  clientId: string
+  sessionId: Generated<string | null>
+  userId: string
+  referenceId: Generated<string | null>
+  expiresAt: Generated<string | null>
+  createdAt: Generated<string | null>
+  revoked: Generated<string | null>
+  authTime: Generated<string | null>
+  scopes: string
+  authorizationCodeId: Generated<string | null>
+  resources: Generated<string | null>
+  requestedUserInfoClaims: Generated<string | null>
+  rotatedAt: Generated<string | null>
+  rotationReplayResponse: Generated<string | null>
+  rotationReplayExpiresAt: Generated<string | null>
+  confirmation: Generated<string | null>
+}
+
+interface OauthAccessTokenTable {
+  id: string
+  token: Generated<string | null>
+  clientId: string
+  sessionId: Generated<string | null>
+  userId: Generated<string | null>
+  referenceId: Generated<string | null>
+  refreshId: Generated<string | null>
+  expiresAt: Generated<string | null>
+  createdAt: Generated<string | null>
+  scopes: string
+  authorizationCodeId: Generated<string | null>
+  resources: Generated<string | null>
+  requestedUserInfoClaims: Generated<string | null>
+  revoked: Generated<string | null>
+  confirmation: Generated<string | null>
+}
+
+interface OauthConsentTable {
+  id: string
+  clientId: string
+  userId: Generated<string | null>
+  referenceId: Generated<string | null>
+  scopes: string
+  createdAt: Generated<string | null>
+  updatedAt: Generated<string | null>
+  resources: Generated<string | null>
+  requestedUserInfoClaims: Generated<string | null>
 }

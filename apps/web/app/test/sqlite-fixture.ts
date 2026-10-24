@@ -51,22 +51,22 @@ export function createD1MockFromSqliteRef(sqliteRef: {
   current: DatabaseSync | null
 }) {
   const database = {
-    prepare: (sql: string) => ({
-      bind: (...params: unknown[]) => {
-        const all = () => {
+    prepare: (sql: string) => {
+      const bind = (...params: unknown[]) => {
+        const all = async () => {
           const sqlite = sqliteRef.current
           if (!sqlite) throw new Error('sqlite not bound in test')
           const stmt = sqlite.prepare(sql)
           if (isSqliteReaderStatement(sql)) {
             const results = stmt.all(...(params as never[]))
-            return Promise.resolve({
+            return await Promise.resolve({
               success: true,
               results,
               meta: { changes: 0, last_row_id: null },
             })
           }
           const result = stmt.run(...(params as never[]))
-          return Promise.resolve({
+          return await Promise.resolve({
             success: true,
             results: [],
             meta: {
@@ -83,8 +83,9 @@ export function createD1MockFromSqliteRef(sqliteRef: {
             return result.results[0] ?? null
           },
         }
-      },
-    }),
+      }
+      return { bind, ...bind() }
+    },
     batch: (statements: Array<{ all: () => Promise<unknown> }>) =>
       Promise.all(statements.map((statement) => statement.all())),
   }

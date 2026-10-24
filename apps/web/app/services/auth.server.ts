@@ -15,6 +15,7 @@ import {
 import { APIError, createAuthEndpoint } from 'better-auth/api'
 import { setSessionCookie } from 'better-auth/cookies'
 import { betterAuth, type BetterAuthPlugin } from 'better-auth'
+import type { MicrosoftEntraIDProfile } from 'better-auth/social-providers'
 import {
   deviceAuthorization,
   emailOTP,
@@ -192,21 +193,20 @@ function buildAuth() {
         allowUnauthenticatedClientRegistration: true,
         // Restrict token audiences to the MCP endpoint URL: clients send it as
         // the RFC 8707 `resource`, and the JWT `aud` is verified against it at
-        // /mcp. Setting this replaces the default (baseURL) accepted audience.
-        validAudiences: [mcpResourceUrl(env.BETTER_AUTH_URL)],
-        // The plugin can't see our framework routes, so it warns at init to
-        // confirm the RFC 8414 metadata is reachable. It is — served at
-        // /.well-known/oauth-authorization-server/api/auth by the splat route
-        // (see routes/[.]well-known.oauth-authorization-server.$.ts) — so the
-        // warning is a false positive. openid-configuration isn't warned
-        // because basePath equals the issuer path (/api/auth).
-        silenceWarnings: { oauthAuthServerConfig: true },
+        // /mcp. Only this protected resource is registered.
+        resources: [mcpResourceUrl(env.BETTER_AUTH_URL)],
+        enforcePerClientResources: true,
+        // Every MCP connector is allowed to use our single protected resource.
+        // Keep per-client checks enabled and bind newly registered clients.
+        clientRegistrationDefaultResources: [
+          mcpResourceUrl(env.BETTER_AUTH_URL),
+        ],
       }),
       deviceAuthorization({
         verificationUri: '/device',
         validateClient: (clientId) => clientId === CLI_DEVICE_CLIENT_ID,
         // better-auth declares `schema` as required in the plugin's option
-        // validation (still true in 1.6.16); omitting it throws a ZodError at
+        // validation; omitting it throws a ZodError at
         // construction. An empty object is a no-op for mergeSchema.
         schema: {},
       }),
@@ -1602,12 +1602,12 @@ function decodeBase64UrlUtf8Json<T>(segment: string): T {
 
 export function decodeMicrosoftIdTokenPayload(
   idToken: string,
-): MicrosoftProfile {
+): MicrosoftEntraIDProfile {
   const payloadSegment = idToken.split('.')[1]
   if (!payloadSegment) {
     throw new Error('Invalid Microsoft ID token')
   }
-  return decodeBase64UrlUtf8Json<MicrosoftProfile>(payloadSegment)
+  return decodeBase64UrlUtf8Json<MicrosoftEntraIDProfile>(payloadSegment)
 }
 
 export function decodeGoogleIdTokenPayload(
@@ -1638,7 +1638,7 @@ export async function persistGoogleHostedDomainClaimForAccount(
 }
 
 export function mapMicrosoftProfileToUser(profile: MicrosoftProfile) {
-  if (!profile.tid || !profile.oid) {
+  if (!profile.tid?.trim() || !profile.oid?.trim()) {
     throw new Error('Microsoft profile missing tid or oid')
   }
   const email = resolveMicrosoftEmail(profile)
@@ -1647,7 +1647,6 @@ export function mapMicrosoftProfileToUser(profile: MicrosoftProfile) {
   }
   const emailVerified = resolveMicrosoftEmailVerified(profile, email)
   return {
-    id: `${profile.tid}:${profile.oid}`,
     name:
       profile.name ??
       (`${profile.given_name ?? ''} ${profile.family_name ?? ''}`.trim() ||
@@ -1663,10 +1662,19 @@ export async function getMicrosoftUserInfo(token: {
   accessToken?: string | null
 }): Promise<{
   user: ReturnType<typeof mapMicrosoftProfileToUser>
-  data: MicrosoftProfile
+  data: MicrosoftEntraIDProfile
 } | null> {
   if (!token.idToken) return null
   const profile = decodeMicrosoftIdTokenPayload(token.idToken)
+  // The custom user-info hook bypasses the provider's built-in oid guard.
+  // Return no profile so Better Auth responds with an authentication failure.
+  if (
+    typeof profile.oid !== 'string' ||
+    !profile.oid.trim() ||
+    typeof profile.tid !== 'string' ||
+    !profile.tid.trim()
+  )
+    return null
   const user = mapMicrosoftProfileToUser(profile)
   const microsoftVerifiedDomain = user.emailVerified
     ? await resolveMicrosoftVerifiedEmailDomain({

@@ -669,7 +669,6 @@ describe('OAuth profile mapping', () => {
         preferred_username: 'user@example.com',
       }),
     ).toEqual({
-      id: 'tenant-1:object-1',
       name: 'user@example.com',
       email: 'user@example.com',
       emailVerified: false,

@@ -88,6 +88,6 @@
     ]
   },
   "supplyChain": {
-    "minScore": 25
+    "minScore": 50
   }
 }

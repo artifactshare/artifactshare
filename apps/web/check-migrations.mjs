@@ -7,6 +7,12 @@ const scriptPath = fileURLToPath(import.meta.url)
 
 const protectedTables = new Set([
   'accounts',
+  'oauthclient',
+  'oauthresource',
+  'oauthclientresource',
+  'oauthrefreshtoken',
+  'oauthaccesstoken',
+  'oauthconsent',
   'artifact_containers',
   'comment_threads',
   'project_share_defaults',
