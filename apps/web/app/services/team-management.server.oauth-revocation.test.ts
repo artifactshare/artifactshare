@@ -69,6 +69,8 @@ beforeEach(() => {
   seedWorkspace(sqlite)
   seedUser(sqlite, 'u1')
   seedUser(sqlite, 'u2')
+  sqlite.exec(`INSERT INTO oauthResource (id, identifier, name)
+    VALUES ('mcp', 'https://example.com/mcp', 'MCP')`)
   sqlite.exec(
     "UPDATE workspaces SET plan = 'team'; INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES ('ws1', 'u1', 'member', 'active', '2026-01-01', '2026-01-01'), ('ws1', 'u2', 'owner', 'active', '2026-01-01', '2026-01-01')",
   )
@@ -93,7 +95,7 @@ async function issue(): Promise<
       }),
     }),
   )
-  expect(response.status).toBe(200)
+  expect(response.status).toBe(201)
   const client = await jsonObject(response)
   const clientId = String(client.client_id)
   return {
@@ -242,6 +244,7 @@ function authorizationRequest(
 ) {
   const query = new URLSearchParams({
     response_type: 'code',
+    resource: 'https://example.com/mcp',
     client_id: clientId,
     redirect_uri: REDIRECT_URI,
     state: 'scope-test-state',

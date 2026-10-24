@@ -117,6 +117,45 @@ for (const t of tables) {
   }
 }
 
+// Resource bindings and device codes rely on UNIQUE constraints, including
+// SQLite's unnamed autoindexes (which namedObjects deliberately excludes).
+for (const table of [
+  'accounts',
+  'deviceCode',
+  'oauthClient',
+  'oauthResource',
+  'oauthClientResource',
+  'oauthRefreshToken',
+  'oauthAccessToken',
+  'oauthConsent',
+]) {
+  const constraints = (db) => {
+    const unique = []
+    for (const index of db.prepare(`PRAGMA index_list("${table}")`).all()) {
+      if (!index.unique) continue
+      unique.push(
+        db
+          .prepare(`PRAGMA index_info("${index.name}")`)
+          .all()
+          .map((column) => column.name)
+          .join(','),
+      )
+    }
+    unique.sort()
+    const foreignKeys = db
+      .prepare(`PRAGMA foreign_key_list("${table}")`)
+      .all()
+      .map((fk) => `${fk.from}:${fk.table}.${fk.to}:${fk.on_delete}`)
+      .sort()
+    return JSON.stringify({ unique, foreignKeys })
+  }
+  if (constraints(migrated) !== constraints(declared)) {
+    problems.push(
+      `db/schema.sql ${table}: UNIQUE or foreign-key constraints differ from migrations`,
+    )
+  }
+}
+
 const migratedShareablesSql = createTableSql(migrated, 'shareables')
 const declaredShareablesSql = createTableSql(declared, 'shareables')
 if (migratedShareablesSql !== declaredShareablesSql) {

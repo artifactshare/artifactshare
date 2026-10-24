@@ -564,6 +564,7 @@ export async function applyOAuthWorkspaceIntegration(
       OR EXISTS (
         SELECT 1 FROM oauthAccessToken
         WHERE userId = ${userId}
+          AND revoked IS NULL
           AND (expiresAt IS NULL OR expiresAt > ${now})
       )
       OR EXISTS (
@@ -1595,6 +1596,7 @@ async function countBlockingResources(
       SELECT (
         (SELECT count(*) FROM oauthAccessToken
          WHERE userId = ${userId}
+           AND revoked IS NULL
            AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})) +
         (SELECT count(*) FROM oauthRefreshToken
          WHERE userId = ${userId}

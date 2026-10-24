@@ -445,6 +445,7 @@ async function moveUserToWorkspaceIfSafe(
           WHERE user_id = ${input.userId})
         AND NOT EXISTS (SELECT 1 FROM oauthAccessToken
           WHERE userId = ${input.userId}
+            AND revoked IS NULL
             AND (expiresAt IS NULL OR expiresAt > ${now}))
         AND NOT EXISTS (SELECT 1 FROM oauthRefreshToken
           WHERE userId = ${input.userId}
@@ -1004,6 +1005,7 @@ async function userWorkspaceChangeBlockReasons(
       sql<boolean>`EXISTS (
         SELECT 1 FROM oauthAccessToken
         WHERE userId = ${userId}
+          AND revoked IS NULL
           AND (expiresAt IS NULL OR expiresAt > ${activeTokenCutoff})
       )`.as('has_oauth_access_tokens'),
       sql<boolean>`EXISTS (
@@ -1197,6 +1199,7 @@ export async function listWorkspaceMigrationCandidates(
         SELECT count(*)
         FROM oauthAccessToken
         WHERE oauthAccessToken.userId = users.id
+          AND oauthAccessToken.revoked IS NULL
           AND (oauthAccessToken.expiresAt IS NULL OR oauthAccessToken.expiresAt > ${activeTokenCutoff})
       ) AS oauthAccessTokensCount,
       (

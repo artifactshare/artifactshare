@@ -14,7 +14,7 @@ async function runMcp(
   request: Request,
   identity: McpIdentity,
   executionContext: ExecutionContext,
-  version?: { claim: unknown; resource: string },
+  version?: { claim: unknown; resource: string; sessionId: unknown },
 ): Promise<Response> {
   // One D1 connection per request, shared across the tool calls in it. The
   // tools resolve the workspace-scoped user from it; closing it after the body
@@ -39,6 +39,22 @@ async function runMcp(
           .executeTakeFirst()
         if (!user || user.oauth_token_version !== claim)
           return unauthorized(version.resource)
+        if (version.sessionId !== undefined && version.sessionId !== null) {
+          if (
+            typeof version.sessionId !== 'string' ||
+            !version.sessionId.trim()
+          )
+            return unauthorized(version.resource)
+          const session = await db
+            .selectFrom('sessions')
+            .select('user_id')
+            .where('id', '=', version.sessionId)
+            .executeTakeFirst()
+          // Refresh tokens can outlive the browser session's expiry. Only
+          // removal or a different owner invalidates this session binding.
+          if (!session || session.user_id !== identity.userId)
+            return unauthorized(version.resource)
+        }
       } catch {
         return new Response('Service unavailable', { status: 503 })
       }
@@ -213,6 +229,6 @@ export async function handleMcpRequest(
       mode: 'oauth',
     },
     executionContext,
-    { claim: jwt.oauth_token_version, resource },
+    { claim: jwt.oauth_token_version, resource, sessionId: jwt.sid },
   )
 }

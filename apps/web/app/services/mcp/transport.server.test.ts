@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   evaluateFlagshipFlag: vi.fn(),
   createDb: vi.fn(),
   readUser: vi.fn(),
+  readSession: vi.fn(),
+  sessionWhere: vi.fn(),
   destroy: vi.fn(),
   createMcpServer: vi.fn(),
   serverConnect: vi.fn(),
@@ -95,11 +97,20 @@ beforeEach(() => {
   mocks.serverConnect.mockResolvedValue(undefined)
   mocks.createMcpServer.mockReturnValue({ connect: mocks.serverConnect })
   mocks.readUser.mockReset().mockResolvedValue({ oauth_token_version: 0 })
+  mocks.readSession.mockReset()
+  mocks.sessionWhere.mockReset().mockReturnValue({
+    executeTakeFirst: mocks.readSession,
+  })
   mocks.destroy.mockReset().mockResolvedValue(undefined)
   mocks.createDb.mockImplementation(() => ({
     destroy: mocks.destroy,
-    selectFrom: () => ({
-      select: () => ({ where: () => ({ executeTakeFirst: mocks.readUser }) }),
+    selectFrom: (table: string) => ({
+      select: () => ({
+        where:
+          table === 'sessions'
+            ? mocks.sessionWhere
+            : () => ({ executeTakeFirst: mocks.readUser }),
+      }),
     }),
   }))
   mocks.transportHandleRequest.mockResolvedValue(
@@ -308,6 +319,77 @@ describe('handleMcpRequest product scope enforcement', () => {
       (await handleMcpRequest(mcpRequest(), executionContext)).status,
     ).toBe(200)
     expect(mocks.createDb).toHaveBeenCalledOnce()
+    expect(mocks.destroy).toHaveBeenCalledOnce()
+  })
+
+  test.each([
+    { name: 'missing', session: undefined, status: 401 },
+    { name: 'another user', session: { user_id: 'other-user' }, status: 401 },
+    {
+      name: 'expired but existing',
+      session: { user_id: 'u1', expires_at: '2000-01-01T00:00:00.000Z' },
+      status: 200,
+    },
+  ])('checks a $name session binding', async ({ session, status }) => {
+    mocks.verifyJwsAccessToken.mockResolvedValue({
+      sub: 'u1',
+      azp: 'client-1',
+      scope: 'artifactshare:access',
+      sid: 'session-1',
+    })
+    mocks.readSession.mockResolvedValue(session)
+
+    expect(
+      (await handleMcpRequest(mcpRequest(), executionContext)).status,
+    ).toBe(status)
+    expect(mocks.sessionWhere).toHaveBeenCalledExactlyOnceWith(
+      'id',
+      '=',
+      'session-1',
+    )
+    expect(mocks.readSession).toHaveBeenCalledOnce()
+    expect(mocks.createMcpServer).toHaveBeenCalledTimes(status === 200 ? 1 : 0)
+    expect(mocks.destroy).toHaveBeenCalledOnce()
+  })
+
+  test.each([undefined, null])('accepts an unbound sid %s', async (sid) => {
+    mocks.verifyJwsAccessToken.mockResolvedValue({
+      sub: 'u1',
+      azp: 'client-1',
+      scope: 'artifactshare:access',
+      sid,
+    })
+    expect(
+      (await handleMcpRequest(mcpRequest(), executionContext)).status,
+    ).toBe(200)
+    expect(mocks.readSession).not.toHaveBeenCalled()
+  })
+
+  test.each(['', ' ', 42, {}])('rejects malformed sid %s', async (sid) => {
+    mocks.verifyJwsAccessToken.mockResolvedValue({
+      sub: 'u1',
+      azp: 'client-1',
+      scope: 'artifactshare:access',
+      sid,
+    })
+    expect(
+      (await handleMcpRequest(mcpRequest(), executionContext)).status,
+    ).toBe(401)
+    expect(mocks.createMcpServer).not.toHaveBeenCalled()
+  })
+
+  test('fails closed when the session lookup fails', async () => {
+    mocks.verifyJwsAccessToken.mockResolvedValue({
+      sub: 'u1',
+      azp: 'client-1',
+      scope: 'artifactshare:access',
+      sid: 'session-1',
+    })
+    mocks.readSession.mockRejectedValue(new Error('database unavailable'))
+    expect(
+      (await handleMcpRequest(mcpRequest(), executionContext)).status,
+    ).toBe(503)
+    expect(mocks.createMcpServer).not.toHaveBeenCalled()
     expect(mocks.destroy).toHaveBeenCalledOnce()
   })
 
