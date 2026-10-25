@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { createArgumentParser } from './args.js'
-import { commandOptionCatalog } from './cli.js'
+import { commandOptionCatalog, generateCliHelp } from './cli.js'
 const { insertDefaultSubcommand, commandNameFromArgv, normalizeArgvForGunshi } =
   createArgumentParser(commandOptionCatalog())
 
@@ -148,4 +148,22 @@ test('unknown option suggestions are command-specific and never contain values',
     parser.validateRawArgs(['whoami', '--visiblity'], 'whoami')!.hint,
     /--visibility/,
   )
+})
+
+test('unrelated short options do not suggest short help or version flags', () => {
+  const error = parser.validateRawArgs(['whoami', '-x'], 'whoami')
+  assert.equal(error?.code, 'unknown_option')
+  assert.doesNotMatch(error!.hint, /Did you mean/)
+})
+
+test('every option advertised in command help is accepted by its catalog', async () => {
+  for (const [command, options] of catalog) {
+    const help = await generateCliHelp(command.split(' ').filter(Boolean))
+    const optionLines = help.split('OPTIONS:')[1]?.split(/\n[A-Z ]+:/)[0] ?? ''
+    const spellings = [...optionLines.matchAll(/^\s+(?:-\w,\s+)?(--[\w-]+)/gm)]
+    assert.ok(spellings.length > 0, command || 'root')
+    for (const [, spelling] of spellings) {
+      assert.ok(options.has(spelling!), `${command} ${spelling}`)
+    }
+  }
 })

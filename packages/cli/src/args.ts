@@ -6,7 +6,7 @@ import {
   invalidExpectedVersion,
   unknownOptionError,
 } from './errors.js'
-import { camelCase } from './shared.js'
+import { camelCase, unsupportedUpdateOption } from './shared.js'
 
 export function parsedArgsFromContext(
   command: CliCommand,
@@ -150,7 +150,20 @@ export function createArgumentParser(catalog: Map<string, Options>) {
       )
       if (artifactIdError) return artifactIdError
       const option = options.get(spelling)
-      if (!option) return unknownOptionError(spelling, [...options.keys()])
+      if (!option) {
+        const error = unknownOptionError(spelling, [...options.keys()])
+        if (
+          command === 'update' &&
+          catalog.get('share')?.has(spelling) &&
+          unsupportedUpdateOption({
+            [camelCase(spelling.replace(/^--?/, ''))]: true,
+          })
+        ) {
+          error.hint =
+            'Update only adds a new version. Use edit to change sharing settings, or remove unsupported options and retry.'
+        }
+        return error
+      }
       if (option.boolean) {
         if (eqIndex !== -1)
           return validationError(

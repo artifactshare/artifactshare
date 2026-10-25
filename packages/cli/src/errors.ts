@@ -1056,6 +1056,7 @@ export function unknownOptionError(
   const closest =
     option.length <= 80
       ? accepted
+          .filter((name) => name.startsWith('--'))
           .sort()
           .map((name) => ({ name, distance: distance(option, name) }))
           .sort((a, b) => a.distance - b.distance)[0]

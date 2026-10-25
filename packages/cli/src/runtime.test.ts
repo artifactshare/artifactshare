@@ -8,9 +8,16 @@ import { isSupportedNode } from './runtime.js'
 import { expectFailure, run } from './test/helpers.js'
 
 test('Node version comparison uses numeric major, minor and patch', () => {
-  for (const version of ['20.19.0', '22.18.9', '21.99.0'])
+  for (const version of ['20.19.0', '22.18.9', '21.99.0', '22.18.9-rc.1'])
     assert.equal(isSupportedNode(version), false)
-  for (const version of ['22.19.0', '22.20.0', '24.0.0'])
+  for (const version of [
+    '22.19.0',
+    '22.20.0',
+    '24.0.0',
+    '24.0.0-rc.1',
+    '23.0.0-nightly20260101',
+    '22.19.0-rc.1',
+  ])
     assert.equal(isSupportedNode(version), true)
 })
 
@@ -52,7 +59,14 @@ test('built entry rejects old Node before loading any command dependency', async
         assert.ok(result.stderr.includes(version))
       }
     }
-    for (const version of ['22.19.0', '22.20.0', '24.0.0']) {
+    for (const version of [
+      '22.19.0',
+      '22.20.0',
+      '24.0.0',
+      '24.0.0-rc.1',
+      '23.0.0-nightly20260101',
+      '22.19.0-rc.1',
+    ]) {
       await writeFile(
         preload,
         `Object.defineProperty(process.versions, 'node', { value: '${version}' });`,

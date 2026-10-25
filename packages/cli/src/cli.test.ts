@@ -353,6 +353,9 @@ test('unknown options fail at root, parent, nested and implicit commands', () =>
   for (const [args, command] of [
     [['--bogus-flag', 'x'], 'unknown'],
     [['whoami', '--bogus-flag', 'x'], 'whoami'],
+    [['changelog', '--token', 'x'], 'changelog'],
+    [['changelog', '--base-url', 'x'], 'changelog'],
+    [['profiles', 'import-token', '--token', 'x'], 'profiles import-token'],
     [['share', 'test.md', '--visiblity', 'private'], 'share'],
     [['artifacts', '--bogus'], 'artifacts'],
     [
@@ -495,5 +498,17 @@ test('opaque version ids are sent unchanged with every accepted spelling', async
     }
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('update unknown sharing options retain actionable edit guidance', () => {
+  for (const option of ['--visibility', '--projectId', '--grant-email']) {
+    const { error } = expectFailure(
+      run(['update', 'abc123def4', 'missing.md', option, 'private', '--json']),
+      { command: 'update', code: 'unknown_option' },
+    )
+    assert.match(error.hint, /Update only adds a new version/)
+    assert.match(error.hint, /edit/)
+    assert.deepEqual(error.details, { option })
   }
 })

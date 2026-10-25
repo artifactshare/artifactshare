@@ -12,7 +12,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 import { afterEach, test } from 'vitest'
 
 const entry = join(import.meta.dirname, '..', 'dist', 'cursor-acp-entry.js')
@@ -300,3 +301,47 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
   )
   assert.equal(crashCode, 1)
 }, 15_000)
+
+test('Cursor entry rejects old Node before loading its body or creating state', () => {
+  const root = mkdtempSync(join(tmpdir(), 'artifactshare-cursor-runtime-'))
+  roots.push(root)
+  const preload = join(root, 'preload.mjs')
+  const config = join(root, 'config')
+  for (const version of ['20.19.0', '22.18.0']) {
+    writeFileSync(
+      preload,
+      `
+      import { registerHooks } from 'node:module';
+      Object.defineProperty(process.versions, 'node', { value: '${version}' });
+      registerHooks({ resolve(specifier, context, next) {
+        if (/cursor-acp[.-]/.test(specifier) && context.parentURL) {
+          throw new Error('Cursor body loaded before runtime gate');
+        }
+        return next(specifier, context);
+      }});
+    `,
+    )
+    const result = spawnSync(
+      process.execPath,
+      ['--import', pathToFileURL(preload).href, entry, 'report.md', '--json'],
+      {
+        encoding: 'utf8',
+        cwd: root,
+        env: { ...process.env, ARTIFACTSHARE_CONFIG_HOME: config },
+        timeout: 10_000,
+      },
+    )
+    assert.equal(result.status, 1, result.stderr)
+    assert.equal(result.stdout, '')
+    const payload = JSON.parse(result.stderr)
+    assert.equal(payload.schema_version, 2)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'unsupported_node_version')
+    assert.equal(payload.error.details.current_version, version)
+    assert.equal(payload.error.details.required_version, '22.19.0')
+    assert.equal(payload.error.agent_recoverable, false)
+    assert.equal(payload.error.requires_human, true)
+    assert.equal(payload.error.recovery.kind, 'ask_human')
+    assert.equal(existsSync(config), false)
+  }
+})

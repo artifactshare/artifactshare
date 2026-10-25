@@ -1809,7 +1809,10 @@ export async function runCli(argv: string[]): Promise<void> {
 export function commandOptionCatalog() {
   const catalog = new Map<string, ReturnType<typeof optionMetadata>>()
   const visit = (path: string, definition: OptionDefinition) => {
-    catalog.set(path, optionMetadata(definition, entryCommand))
+    catalog.set(
+      path,
+      optionMetadata(definition, { args: { json: commonArgs.json } }),
+    )
     for (const [name, child] of definition.subCommands instanceof Map
       ? definition.subCommands
       : Object.entries(definition.subCommands ?? {})) {

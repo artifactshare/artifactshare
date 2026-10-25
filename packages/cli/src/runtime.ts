@@ -3,7 +3,7 @@
 export const MINIMUM_NODE_VERSION = '22.19.0'
 
 export function isSupportedNode(version: string): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) return false
   const [, major, minor] = match.map(Number)
   return major! > 22 || (major === 22 && minor! >= 19)
