@@ -38,7 +38,7 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 
 ## 共通 flag
 
-各 command は原則として次を受け取る。例外として、`profiles import-token` は token を標準入力だけで受けるため `--token` を通常の認証 flag として扱わない。`skills *` はローカルファイル操作だけなので認証 flag を受け取っても API 呼び出しには使わない。
+各 command は次の共通 flag を受け取る。例外として、`profiles import-token` は token を標準入力だけで受けるため `--token` を `unknown_option` で拒否する。`skills *` はローカルファイル操作だけなので認証 flag を受け取っても API 呼び出しには使わない。
 
 | flag                            | 既定                                                        | 役割                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -212,6 +212,18 @@ command 固有の代表 code を補足する。
 - 一覧は `<noun> list`、詳細・読み戻しは `<noun> get`。複数語の名詞空間は入れ子の subcommand にする（`artifacts get`、`comments post`、`projects list`）。
 - 新規作成は仕事単位の動詞にする（共有は `share`、コメントは `comments post`）。明示的なリソースを作る名詞空間では `<noun> create` を使ってよい（例: `projects create`）。低レベルな汎用 `create <type>` は使わない。
 - login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定します。 この場合の復旧は `recovery.kind: change_input` です。`artifacts get` が返す現在版は `data.version_id` です。
+
+Options not defined by the selected command, other than the shared flags above,
+fail locally with `unknown_option` before authentication, requests, or writes.
+Correct `details.option`; the hint suggests a nearby option when one exists. Use the selected command’s `--help` to see accepted options.
+A digits-only `--expected-version` fails with `invalid_expected_version`: pass a
+version id from `data.version.id` in the previous share or update output, or
+`data.version_id` from `artifacts get <target> --json` for a single-file artifact.
+Both errors have `recovery.kind: change_input` and are agent-recoverable.
+Node.js below 22.19.0 fails with `unsupported_node_version` and requires upgrading
+to 22.19.0 or newer;
+it reports the current version and uses `recovery.kind: ask_human` with
+`agent_recoverable: false` and `requires_human: true`.
 - 既存対象の変更は内容に合わせる。版追加は `update`、移動は `move`、共有範囲や関係者の変更は対象に合わせた専用 command にする。
 - ローカル保存は `download`、読み戻しは `get`。保存と読み戻しを 1 つの command に混ぜない。
 - 取り消せない操作や影響の大きい操作は、操作名、対象指定、出力で取り消せないことを明示する。`delete` は `share` や `update` と同じ非対話のエージェント経路で使うため、追加の `--yes` は要求しない。

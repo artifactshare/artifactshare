@@ -6,7 +6,7 @@ export default defineConfig({
   },
   clean: true,
   dts: true,
-  entry: ['src/index.ts', 'src/cursor-acp-entry.ts'],
+  entry: ['src/index.ts', 'src/cli.ts', 'src/cursor-acp-entry.ts'],
   format: ['esm'],
   outExtensions: () => ({ js: '.js' }),
   platform: 'node',

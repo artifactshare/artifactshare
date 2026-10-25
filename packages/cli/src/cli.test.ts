@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { symlinkSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'vitest'
 import { apiUrl } from './api.js'
 import {
@@ -341,3 +348,202 @@ for (const command of ['share', 'append']) {
     }
   })
 }
+
+test('unknown options fail at root, parent, nested and implicit commands', () => {
+  for (const [args, command] of [
+    [['--bogus-flag', 'x'], 'unknown'],
+    [['whoami', '--bogus-flag', 'x'], 'whoami'],
+    [['changelog', '--visibility', 'private'], 'changelog'],
+    [['profiles', 'import-token', '--token', 'x'], 'profiles import-token'],
+    [['share', 'test.md', '--visiblity', 'private'], 'share'],
+    [['artifacts', '--bogus'], 'artifacts'],
+    [
+      ['artifacts', 'get', 'abc123def4', '--visibility', 'private'],
+      'artifacts get',
+    ],
+    [['preview', 'test.md', '--bogus'], 'preview start'],
+    [['config', 'set', 'home_audience', 'private', '--bogus'], 'config set'],
+    [['skills', 'install', '--tool', 'codex', '--bogus'], 'skills install'],
+    [['whoami', '--help', '--bogus'], 'whoami'],
+    [['--version', '--bogus'], 'unknown'],
+    [['whoami', '-x'], 'whoami'],
+  ] as Array<[string[], string]>) {
+    const result = run([...args, '--json'])
+    const { error } = expectFailure(result, { command, code: 'unknown_option' })
+    assert.equal(result.stdout, '')
+    assert.equal(error.agent_recoverable, true)
+    assert.equal(error.requires_human, false)
+    assert.equal(error.recovery.kind, 'change_input')
+    assert.ok(error.details.option.startsWith('-'))
+  }
+})
+
+test('globals, camelCase, equals and short help remain accepted', () => {
+  for (const args of [
+    ['--profile', 'work', 'whoami', '-h'],
+    ['--baseUrl=https://example.test', 'artifacts', '--json', 'get', '-h'],
+    [
+      'share',
+      '--noSlackNotify',
+      '--expectedVersion=v1',
+      '--visibility=private',
+      '--help',
+    ],
+    ['preview', 'report.md', '--profile=work', '--help'],
+    ['-v'],
+  ]) {
+    const result = run(args)
+    assert.equal(result.status, 0, result.stderr)
+    assert.notEqual(result.stdout, '')
+  }
+})
+
+test('invalid inputs leave configuration and managed skills unchanged without fetching', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-invalid-input-'))
+  const home = join(root, 'home')
+  const config = join(root, 'config')
+  const skillDir = join(home, '.codex', 'skills', 'artifactshare')
+  const skill = join(skillDir, 'SKILL.md')
+  const original =
+    '<!-- artifactshare-skill\nversion: 1\nmanaged: true\n-->\nOld managed instructions\n'
+  try {
+    await mkdir(skillDir, { recursive: true })
+    await mkdir(config)
+    await writeFile(skill, original)
+    const preload = join(root, 'no-fetch.mjs')
+    const fetched = join(root, 'fetched')
+    await writeFile(
+      preload,
+      `import { writeFileSync } from 'node:fs'; import { registerHooks } from 'node:module'; registerHooks({ resolve(specifier, context, next) { if (specifier === 'undici') { writeFileSync(${JSON.stringify(fetched)}, 'called'); throw new Error('Unexpected HTTP dependency load'); } return next(specifier, context); } });`,
+    )
+    for (const args of [
+      ['whoami', '--bogus-flag', 'x'],
+      ['share', 'missing.md', '--visiblity', 'private'],
+      ['config', 'set', 'home_audience', 'private', '--bogus'],
+      ['skills', 'install', '--tool', 'codex', '--bogus'],
+      ['share', 'missing.md', '--key', 'k', '--expected-version', '2'],
+      ['update', 'abc123def4', 'missing.md', '--expectedVersion=002'],
+    ]) {
+      const result = run(
+        [...args, '--json'],
+        {
+          HOME: home,
+          ARTIFACTSHARE_CONFIG_HOME: config,
+          ARTIFACTSHARE_TOKEN: '',
+          NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+        },
+        { cwd: root },
+      )
+      expectFailure(result, {
+        code: args.some((arg) => arg.startsWith('--expected'))
+          ? 'invalid_expected_version'
+          : 'unknown_option',
+      })
+      assert.deepEqual(await readdir(config), [])
+      assert.equal(await readFile(skill, 'utf8'), original)
+      assert.deepEqual((await readdir(root)).sort(), [
+        'config',
+        'home',
+        'no-fetch.mjs',
+      ])
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('opaque version ids are sent unchanged with every accepted spelling', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-version-id-'))
+  try {
+    const file = join(root, 'report.md')
+    const request = join(root, 'request.json')
+    const preload = join(root, 'request.mjs')
+    await writeFile(file, '# Report')
+    const mock = `import { writeFileSync } from 'node:fs';
+      export const FormData = globalThis.FormData;
+      export class Agent {}
+      export async function fetch(input) {
+        writeFileSync(${JSON.stringify(request)}, JSON.stringify(String(input)));
+        return new Response(JSON.stringify({error:{code:'version_conflict',message:'Changed'}}), {status:409});
+      }`
+    await writeFile(
+      preload,
+      `import { registerHooks } from 'node:module'; registerHooks({ resolve(specifier, context, next) { if (specifier === 'undici') return {url: ${JSON.stringify('data:text/javascript,' + encodeURIComponent(mock))}, shortCircuit: true}; return next(specifier, context); } });`,
+    )
+    for (const command of ['share', 'update']) {
+      for (const option of [
+        ['--expected-version', 'Ab0x9'],
+        ['--expected-version=Ab0x9'],
+        ['--expectedVersion', 'Ab0x9'],
+        ['--expectedVersion=Ab0x9'],
+      ]) {
+        const args =
+          command === 'share'
+            ? ['share', file, '--key', 'k']
+            : ['update', 'abc123def4', file]
+        const result = run(
+          [...args, ...option, '--json'],
+          {
+            ARTIFACTSHARE_TOKEN: 'test-token',
+            NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+          },
+          { cwd: root },
+        )
+        expectFailure(result, { command, code: 'version_conflict' })
+        const url = new URL(JSON.parse(await readFile(request, 'utf8')))
+        assert.equal(url.searchParams.get('expected_version'), 'Ab0x9')
+        await rm(request)
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('update unknown sharing options retain actionable edit guidance', () => {
+  for (const option of ['--visibility', '--projectId', '--grant-email']) {
+    const { error } = expectFailure(
+      run(['update', 'abc123def4', 'missing.md', option, 'private', '--json']),
+      { command: 'update', code: 'unknown_option' },
+    )
+    assert.match(error.hint, /Update only adds a new version/)
+    assert.match(error.hint, /edit/)
+    assert.deepEqual(error.details, { option })
+  }
+})
+
+test('changelog accepts shared flags while rejecting undefined options', () => {
+  const result = run([
+    'changelog',
+    '--profile',
+    'p',
+    '--base-url',
+    'https://example.com',
+    '--allow-plaintext-token-store',
+    '--insecure-localhost',
+    '--token',
+    'test-token',
+    '--json',
+  ])
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  expectFailure(run(['changelog', '--bogus', '--json']), {
+    command: 'changelog',
+    code: 'unknown_option',
+  })
+})
+
+test('import-token rejects token options with standard-input guidance', () => {
+  for (const option of [['--token', 'x'], ['--token=x']]) {
+    const { error } = expectFailure(
+      run(['profiles', 'import-token', ...option, '--json']),
+      { command: 'profiles import-token', code: 'unknown_option' },
+    )
+    assert.equal(error.details.option, '--token')
+    assert.equal(
+      error.hint,
+      'Pipe the token on standard input so it does not appear in process arguments.',
+    )
+    assert.equal(error.recovery.kind, 'change_input')
+  }
+})

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Reject unknown command options locally with spelling hints, explain numeric `--expected-version` mistakes, and report unsupported Node.js versions before loading command dependencies.
+
 ## 0.18.0 - 2026-10-23
 
 - Isolate local preview artifacts with a scripts-only sandbox and a permanent notice about unavailable localStorage, IndexedDB and same-origin features. Validate reporter observations with bounded schemas, document capabilities and replay checks; anchor verdicts affect display only. Local preview and share-dialog HTTP session authentication remains deferred, so local clients knowing the ports still have access.

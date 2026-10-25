@@ -686,6 +686,9 @@
         "--grant-email",
         "--key",
         "--expected-version"
+      ],
+      "option_help": [
+        "--expected-version <expected-version> Require this current version id when --key updates an existing artifact; use data.version.id, not a number (artifacts get returns data.version_id)"
       ]
     },
     {
@@ -800,6 +803,9 @@
         "--insecure-localhost",
         "--label",
         "--expected-version"
+      ],
+      "option_help": [
+        "--expected-version <expected-version> Only update this current version id; use data.version.id, not a number (artifacts get returns data.version_id); required for agent-preset logins"
       ]
     },
     {
@@ -817,5 +823,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-22"
+  "generated_date": "2026-10-25"
 }

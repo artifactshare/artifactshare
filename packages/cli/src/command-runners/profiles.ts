@@ -142,17 +142,6 @@ export async function runProfilesImportToken(
   if (!configHome()) {
     return writeFailure(command, configHomeUnavailableError(profile), mode, 1)
   }
-  if (nonEmpty(parsed.options.token)) {
-    return writeFailure(
-      command,
-      validationError(
-        'Do not pass API tokens with --token to import-token.',
-        'Pipe the token on standard input so it does not appear in process arguments.',
-      ),
-      mode,
-      1,
-    )
-  }
   if (parsed.positionals.length > 0) {
     return writeFailure(
       command,

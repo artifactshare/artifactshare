@@ -354,9 +354,12 @@ test('profiles import-token rejects --token input', async () => {
       isolation(),
       { input: 'stdin-token' },
     ),
-    { command: 'profiles import-token', code: 'validation_failed' },
+    { command: 'profiles import-token', code: 'unknown_option' },
   )
   assert.match(payload.error.message, /--token/)
+  assert.deepEqual(payload.error.details, { option: '--token' })
+  assert.equal(payload.error.recovery.kind, 'change_input')
+  assert.doesNotMatch(JSON.stringify(payload), /secret-in-argv/)
 })
 
 test('profiles import-token rejects positional token input', async () => {

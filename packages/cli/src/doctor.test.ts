@@ -19,13 +19,12 @@ test('whoami --base-url with empty inline value fails with validation_failed', (
   expectFailure(result, { command: 'whoami', code: 'validation_failed' })
 })
 
-test('doctor ignores share-only flags instead of adding invalid destination data', () => {
+test('doctor rejects share-only flags before inspecting the environment', () => {
   const result = run(['doctor', '--project-id', 'proj_123', '--json'], {
     ARTIFACTSHARE_TOKEN: 'test-token',
   })
 
-  const payload = expectSuccess(result, 'doctor')
-  assert.equal(payload.data.destination.ok, true)
+  expectFailure(result, { command: 'doctor', code: 'unknown_option' })
 })
 
 test('doctor --json reports missing destination without failing', () => {
@@ -133,7 +132,7 @@ test('doctor next_command is null when all checks pass', async () => {
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['doctor', '--home', '--base-url', baseUrl, '--json'],
+        ['doctor', '--base-url', baseUrl, '--json'],
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
@@ -237,7 +236,7 @@ test('doctor reports blocked upload without a next_command', async () => {
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['doctor', '--home', '--base-url', baseUrl, '--json'],
+        ['doctor', '--base-url', baseUrl, '--json'],
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
@@ -327,10 +326,9 @@ test('doctor reports outdated managed skills with update commands', async () => 
 })
 
 test('doctor next_command is null when network fails', () => {
-  const result = run(
-    ['doctor', '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
-  )
+  const result = run(['doctor', '--base-url', 'http://127.0.0.1:1', '--json'], {
+    ARTIFACTSHARE_TOKEN: 'test-token',
+  })
 
   const payload = expectSuccess(result, 'doctor')
   assert.equal(payload.data.network.ok, false)
@@ -350,7 +348,7 @@ test('doctor next_command is null when the API returns 500', async () => {
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['doctor', '--home', '--base-url', baseUrl, '--json'],
+        ['doctor', '--base-url', baseUrl, '--json'],
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
@@ -375,7 +373,7 @@ test('doctor next_command is null when ARTIFACTSHARE_TOKEN is rejected', async (
     },
     async (baseUrl) => {
       const result = await runAsync(
-        ['doctor', '--home', '--base-url', baseUrl, '--json'],
+        ['doctor', '--base-url', baseUrl, '--json'],
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
@@ -409,15 +407,7 @@ test('doctor points at profile login when saved profile token is rejected', asyn
       )
 
       const result = await runAsync(
-        [
-          'doctor',
-          '--home',
-          '--profile',
-          'expired',
-          '--base-url',
-          baseUrl,
-          '--json',
-        ],
+        ['doctor', '--profile', 'expired', '--base-url', baseUrl, '--json'],
         {
           ARTIFACTSHARE_TOKEN: '',
           ARTIFACTSHARE_CONFIG_HOME: configHome,

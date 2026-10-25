@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 44
+version: 45
 managed: true
 -->
 
@@ -192,6 +192,18 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id
   Repeat `share --key` updates accept the same option; initial creation does
   not require it.
 - After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
+
+Unknown options fail locally with `unknown_option` before authentication, requests,
+or writes. Correct `details.option`; the hint suggests a nearby option when one
+exists. Use the selected command’s `--help` to see accepted options.
+A digits-only `--expected-version` fails with `invalid_expected_version`: pass a
+version id from `data.version.id` in the previous share or update output, or
+`data.version_id` from `artifacts get <target> --json` for a single-file artifact.
+Both errors have `recovery.kind: change_input` and are agent-recoverable.
+`unsupported_node_version` requires upgrading Node.js to 22.19.0 or newer;
+it reports the current version and uses `recovery.kind: ask_human` with
+`agent_recoverable: false` and `requires_human: true`.
+
 - A signed-in external human whose verified email is explicitly granted on an
   artifact can update it when the artifact workspace allows external posting.
   Link access alone does not grant update access.

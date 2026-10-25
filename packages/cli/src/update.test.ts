@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import type { ServerResponse } from 'node:http'
 import { rm, mkdtemp, symlink, writeFile, readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { runUpdate } from './command-runners/update.js'
 import {
   expectFailure,
   expectSuccess,
@@ -670,7 +671,7 @@ test('update rejects unsupported options', () => {
 
     const payload = expectFailure(result, {
       command: 'update',
-      code: 'validation_failed',
+      code: 'unknown_option',
     })
     assert.match(payload.error.message, new RegExp(flag))
   }
@@ -854,3 +855,54 @@ for (const kind of ['html', 'md', 'directory']) {
     })
   }
 }
+
+test('update rejects version numbers before authentication or file handling', () => {
+  for (const value of ['0', '2', '002']) {
+    for (const option of [
+      ['--expected-version', value],
+      [`--expected-version=${value}`],
+      ['--expectedVersion', value],
+    ]) {
+      const result = run(
+        ['update', 'abc123def4', 'missing.md', ...option, '--json'],
+        { ARTIFACTSHARE_TOKEN: '' },
+      )
+      const { error } = expectFailure(result, {
+        command: 'update',
+        code: 'invalid_expected_version',
+      })
+      assert.match(error.hint, /data.version.id/)
+      assert.match(error.hint, /artifacts get <target> --json/)
+      assert.match(error.hint, /data.version_id/)
+      assert.equal(error.agent_recoverable, true)
+      assert.equal(error.requires_human, false)
+      assert.equal(error.recovery.kind, 'change_input')
+    }
+  }
+})
+
+test('direct update runner rejects numeric version ids before file work', async () => {
+  const previousExitCode = process.exitCode
+  let output = ''
+  const stderr = vi
+    .spyOn(process.stderr, 'write')
+    .mockImplementation((chunk) => {
+      output += String(chunk)
+      return true
+    })
+  try {
+    await runUpdate(
+      {
+        command: 'update',
+        options: { expectedVersion: '002' },
+        positionals: ['abc123def4', 'missing.md'],
+      },
+      { json: true },
+    )
+    assert.equal(process.exitCode, 1)
+    assert.equal(JSON.parse(output).error.code, 'invalid_expected_version')
+  } finally {
+    stderr.mockRestore()
+    process.exitCode = previousExitCode
+  }
+})

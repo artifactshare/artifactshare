@@ -1021,3 +1021,57 @@ export function cliError(args: CliErrorArgs): CliError {
     ...(args.details ? { details: args.details } : {}),
   }
 }
+
+export function invalidExpectedVersion(value: unknown): CliError | null {
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) return null
+  return validationError(
+    '--expected-version requires a version id, not a version number.',
+    'Use data.version.id from the previous share or update output. For a single-file artifact, artifacts get <target> --json returns data.version_id.',
+    'invalid_expected_version',
+  )
+}
+
+export function unknownOptionError(
+  option: string,
+  accepted: string[],
+): CliError {
+  // Bound both work and suggestions for arbitrary untrusted option names.
+  const distance = (left: string, right: string): number => {
+    let row = Array.from({ length: right.length + 1 }, (_, index) => index)
+    for (let i = 0; i < left.length; i += 1) {
+      const next = [i + 1]
+      for (let j = 0; j < right.length; j += 1) {
+        next.push(
+          Math.min(
+            next[j]! + 1,
+            row[j + 1]! + 1,
+            row[j]! + (left[i] === right[j] ? 0 : 1),
+          ),
+        )
+      }
+      row = next
+    }
+    return row[right.length]!
+  }
+  const closest =
+    option.length <= 80
+      ? accepted
+          .filter((name) => name.startsWith('--'))
+          .sort()
+          .map((name) => ({ name, distance: distance(option, name) }))
+          .sort((a, b) => a.distance - b.distance)[0]
+      : undefined
+  const suggestion = closest && closest.distance <= 2 ? closest.name : undefined
+  return cliError({
+    code: 'unknown_option',
+    message: `Unknown option: ${option}`,
+    why: 'This command does not define that option.',
+    hint: suggestion
+      ? `Did you mean ${suggestion}? Check this command with --help.`
+      : 'Check this command with --help and remove or correct the option.',
+    agentRecoverable: true,
+    requiresHuman: false,
+    recovery: { kind: 'change_input' },
+    details: { option },
+  })
+}

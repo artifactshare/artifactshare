@@ -10,7 +10,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { runShare } from './command-runners/share.js'
 import {
   expectFailure,
   expectSuccess,
@@ -956,6 +957,12 @@ test('share --key preserves version conflicts as recoverable input changes', asy
 
   await withServer(
     async (request, response) => {
+      assert.equal(
+        new URL(request.url!, 'http://localhost').searchParams.get(
+          'expected_version',
+        ),
+        'v2',
+      )
       await collectBody(request)
       response.statusCode = 409
       response.setHeader('content-type', 'application/json')
@@ -1812,4 +1819,55 @@ test('share reports missing path before insecure-localhost validation', () => {
   )
 
   expectFailure(result, { command: 'share', code: 'validation_failed' })
+})
+
+test('share rejects version numbers before authentication or file handling', () => {
+  for (const value of ['0', '2', '002']) {
+    for (const option of [
+      ['--expected-version', value],
+      [`--expected-version=${value}`],
+      ['--expectedVersion', value],
+    ]) {
+      const result = run(
+        ['share', 'missing.md', '--key', 'k', ...option, '--json'],
+        { ARTIFACTSHARE_TOKEN: '' },
+      )
+      const { error } = expectFailure(result, {
+        command: 'share',
+        code: 'invalid_expected_version',
+      })
+      assert.match(error.hint, /data.version.id/)
+      assert.match(error.hint, /artifacts get <target> --json/)
+      assert.match(error.hint, /data.version_id/)
+      assert.equal(error.agent_recoverable, true)
+      assert.equal(error.requires_human, false)
+      assert.equal(error.recovery.kind, 'change_input')
+    }
+  }
+})
+
+test('direct share runner rejects numeric version ids before file work', async () => {
+  const previousExitCode = process.exitCode
+  let output = ''
+  const stderr = vi
+    .spyOn(process.stderr, 'write')
+    .mockImplementation((chunk) => {
+      output += String(chunk)
+      return true
+    })
+  try {
+    await runShare(
+      {
+        command: 'share',
+        options: { expectedVersion: '002' },
+        positionals: ['missing.md'],
+      },
+      { json: true },
+    )
+    assert.equal(process.exitCode, 1)
+    assert.equal(JSON.parse(output).error.code, 'invalid_expected_version')
+  } finally {
+    stderr.mockRestore()
+    process.exitCode = previousExitCode
+  }
 })
