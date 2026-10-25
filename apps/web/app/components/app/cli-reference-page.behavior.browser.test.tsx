@@ -297,9 +297,10 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
               const bounds = paragraph.getBoundingClientRect()
               expect(bounds.height).toBeGreaterThan(0)
               if (index > 0) {
-                expect(bounds.top).toBeGreaterThan(
-                  paragraphs[index - 1].getBoundingClientRect().bottom,
-                )
+                expect(
+                  bounds.top -
+                    paragraphs[index - 1].getBoundingClientRect().bottom,
+                ).toBeCloseTo(16, 1)
               }
             }
             for (const flag of text.match(/--[\w-]+/g) ?? []) {

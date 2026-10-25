@@ -487,7 +487,7 @@ test.each(['en', 'ja'] as const)(
         ? [
             'Download IDs',
             'When saving configuration, init refuses linked or changed config paths.',
-            'Upload aliases',
+            'Files named by another spelling',
             'For auth_required or token_invalid',
           ]
         : [
@@ -512,6 +512,18 @@ test.each(['en', 'ja'] as const)(
         'Windows の短い名前など、別の綴りで指定したファイルは、保存されている本来の名前から種類と content type を決めます。',
         '途中に通常のファイルを含む相対パス（例: file.txt/x）は not_found になります。',
         '. で始まる名前と除外対象は、検査の前に省きます。',
+      ]) {
+        expect(paragraphs[2]).toContain(fact)
+      }
+    }
+    if (locale === 'en') {
+      expect(paragraphs[1]).toContain(
+        '.git files, links, gitdir or commondir files that point elsewhere, and unsafe exclude paths',
+      )
+      for (const fact of [
+        'Files named by another spelling (such as Windows short names) use their stored names for kind and content type',
+        'relative paths with a regular file in the middle (for example file.txt/x) are not_found.',
+        'Names starting with . and excluded names are skipped before inspection.',
       ]) {
         expect(paragraphs[2]).toContain(fact)
       }

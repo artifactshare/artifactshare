@@ -230,7 +230,14 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                   ? section.body
                   : [section.body]
                 ).map((paragraph) => (
-                  <p key={paragraph} className={guideSubClassName}>
+                  <p
+                    key={paragraph}
+                    className={
+                      id === 'recovery'
+                        ? guideSubClassName.replace('[&+&]:mt-1', '[&+&]:mt-4')
+                        : guideSubClassName
+                    }
+                  >
                     <SectionBody text={paragraph} />
                   </p>
                 ))}
