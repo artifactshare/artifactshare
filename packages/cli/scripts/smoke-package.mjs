@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,8 +51,45 @@ try {
   const version = execFileSync(process.execPath, [entry, '--version'], {
     encoding: 'utf8',
   })
-  assert.ok(version.includes(`artifactshare v${manifest.version}`))
+  assert.ok(version.includes(manifest.version))
   execFileSync(process.execPath, [entry, '--help'], { stdio: 'pipe' })
+  const oldNode = join(temporary, 'old-node.cjs')
+  writeFileSync(
+    oldNode,
+    "Object.defineProperty(process.versions, 'node', { value: '20.19.0' })",
+  )
+  for (const bin of ['cli', 'artifactshare']) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(temporary, 'node_modules/.bin', bin),
+        'whoami',
+        '--bogus-flag',
+        'x',
+        '--json',
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(JSON.parse(result.stderr).error.code, 'unknown_option')
+    const unsupported = spawnSync(
+      process.execPath,
+      [
+        '--require',
+        oldNode,
+        join(temporary, 'node_modules/.bin', bin),
+        '--json',
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.equal(unsupported.status, 1)
+    assert.equal(unsupported.stdout, '')
+    assert.equal(
+      JSON.parse(unsupported.stderr).error.code,
+      'unsupported_node_version',
+    )
+  }
   const updateHelp = execFileSync(
     process.execPath,
     [entry, 'update', '--help'],

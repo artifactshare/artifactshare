@@ -107,13 +107,15 @@ test('generateSurface discovers nested commands from help', async () => {
 
 test('generateSurface caches raw help for downstream capability checks', async () => {
   const helpCache = new Map()
+  const expectedVersionHelp =
+    '--expected-version <expected-version> Require the current version id, not a version number'
   let runs = 0
-  await generateSurface({
+  const surface = await generateSurface({
     helpCache,
     run: (args) => {
       runs += 1
       return args.length
-        ? 'USAGE:\n  artifactshare share <OPTIONS>\n\nOPTIONS:\n  --json x\n'
+        ? `USAGE:\n  artifactshare share <OPTIONS>\n\nOPTIONS:\n  --json x\n  ${expectedVersionHelp}\n`
         : 'USAGE:\n  artifactshare <OPTIONS>\n\nCOMMANDS:\n  share <OPTIONS>\n'
     },
   })
@@ -121,14 +123,20 @@ test('generateSurface caches raw help for downstream capability checks', async (
   assert.equal(runs, 2)
   assert.match(helpCache.get(''), /artifactshare <OPTIONS>/)
   assert.match(helpCache.get('share'), /--json/)
+  assert.ok(helpCache.get('share').includes(expectedVersionHelp))
+  assert.deepEqual(
+    surface.commands.find(({ path }) => path === 'share').option_help,
+    [expectedVersionHelp],
+  )
 
-  await generateSurface({
+  const cachedSurface = await generateSurface({
     helpCache,
     run: () => {
       throw new Error('cached help must be reused')
     },
   })
   assert.equal(runs, 2)
+  assert.deepEqual(cachedSurface, surface)
 })
 
 test('generated metadata uses the UTC date supplied at write time', async () => {
@@ -905,7 +913,7 @@ test('supported generation and checks use fresh CLI help in a clean checkout', (
     checkout,
     'apps/web/app/lib/cli-reference-surface.generated.json',
   )
-  const sourcePath = resolve(checkout, 'packages/cli/src/index.ts')
+  const sourcePath = resolve(checkout, 'packages/cli/src/cli.ts')
   const distPath = resolve(checkout, 'packages/cli/dist')
   const originalSnapshot = readFileSync(snapshotPath, 'utf8')
   const originalSource = readFileSync(sourcePath, 'utf8')

@@ -271,7 +271,7 @@ test('deletion invalid options have identical canonical envelopes', () => {
       command: 'delete',
       code:
         options[0] === '--unknown-option'
-          ? 'auth_required'
+          ? 'unknown_option'
           : 'validation_failed',
     })
     assert.equal(alias.status, primary.status)

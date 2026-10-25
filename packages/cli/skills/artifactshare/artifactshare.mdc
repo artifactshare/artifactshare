@@ -4,7 +4,7 @@ alwaysApply: false
 ---
 
 <!-- artifactshare-skill
-version: 44
+version: 45
 managed: true
 -->
 
@@ -65,6 +65,17 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 - For repeat jobs with a stable caller-owned name, use `share <path> --key <key> --json`: the first run creates the artifact, later runs add versions to the same artifact.
 - To keep an existing share URL, do not use `share --artifact-id`; add a version with `update <artifact-id-or-url> <path> --json`. `update` does not change title, visibility, viewers, or placement.
 - After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
+
+Unknown options fail locally with `unknown_option` before authentication, requests,
+or writes. Correct `details.option`; the hint suggests a nearby option when one
+exists. Use the selected command’s `--help` to see accepted options.
+A digits-only `--expected-version` fails with `invalid_expected_version`: pass a
+version id from `data.version.id` in the previous share or update output, or
+`data.version_id` from `artifacts get <target> --json` for a single-file artifact.
+Both errors have `recovery.kind: change_input` and are agent-recoverable.
+`unsupported_node_version` requires upgrading Node.js to 22.19.0 or newer;
+it reports the current version and uses `recovery.kind: ask_human` with
+`agent_recoverable: false` and `requires_human: true`.
 - Read back with `artifacts get <target> --json`. Pass `--include versions` or `--include comments` to fetch history or comments in one call. If truncated, call again with `--offset` set to `next_offset`.
 - In the successful JSON response, read the source from `data.content` and the current version from `data.version_id`. See `artifacts get --help` for the complete contract and continuation example.
 - Download static-site bundles with `download <target> --output ./out --json`. Pass `--force` to overwrite an existing output directory.

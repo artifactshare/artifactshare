@@ -12,6 +12,7 @@ import {
   networkError,
   serviceError,
   validationError,
+  invalidExpectedVersion,
 } from '../errors.js'
 import { prepareUploadPayload } from '../files.js'
 import {
@@ -33,6 +34,8 @@ export async function runUpdate(
   prepared?: Awaited<ReturnType<typeof prepareUploadPayload>>,
 ): Promise<void> {
   const command = 'update'
+  const versionError = invalidExpectedVersion(parsed.options.expectedVersion)
+  if (versionError) return writeFailure(command, versionError, mode, 1)
   const artifactInput = parsed.positionals[0]
   const targetPath = parsed.positionals[1]
   if (!artifactInput) {

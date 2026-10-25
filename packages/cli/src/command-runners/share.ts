@@ -17,6 +17,7 @@ import {
   projectNotFoundByNameError,
   type ProjectNameCandidate,
   validationError,
+  invalidExpectedVersion,
 } from '../errors.js'
 import { createUploadForm, prepareUploadPayload } from '../files.js'
 import { postShareUpload } from '../share-upload.js'
@@ -38,6 +39,8 @@ export async function runShare(
   prepared?: Awaited<ReturnType<typeof prepareUploadPayload>>,
 ): Promise<void> {
   const command = 'share'
+  const versionError = invalidExpectedVersion(parsed.options.expectedVersion)
+  if (versionError) return writeFailure(command, versionError, mode, 1)
   const targetPath = parsed.positionals[0]
   if (!targetPath) {
     return writeFailure(

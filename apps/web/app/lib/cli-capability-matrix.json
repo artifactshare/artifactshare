@@ -69,7 +69,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "changelog"
         },
         "cli_readme": {
@@ -113,7 +113,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "artifacts get"
         },
         "cli_readme": {
@@ -220,7 +220,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "artifacts list"
         },
         "cli_readme": {
@@ -298,7 +298,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments delete"
         },
         "cli_readme": {
@@ -381,7 +381,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments edit"
         },
         "cli_readme": {
@@ -462,7 +462,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments list"
         },
         "cli_readme": {
@@ -553,7 +553,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments post"
         },
         "cli_readme": {
@@ -649,7 +649,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments reopen"
         },
         "cli_readme": {
@@ -731,7 +731,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "comments resolve"
         },
         "cli_readme": {
@@ -812,7 +812,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "config get"
         },
         "cli_readme": {
@@ -866,7 +866,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "config set"
         },
         "cli_readme": {
@@ -920,7 +920,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "config unset"
         },
         "cli_readme": {
@@ -974,7 +974,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "delete"
         },
         "cli_readme": {
@@ -1057,7 +1057,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "doctor"
         },
         "cli_readme": {
@@ -1110,7 +1110,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "download"
         },
         "cli_readme": {
@@ -1167,7 +1167,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "edit"
         },
         "cli_readme": {
@@ -1272,7 +1272,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "init"
         },
         "cli_readme": {
@@ -1327,7 +1327,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "login"
         },
         "cli_readme": {
@@ -1382,7 +1382,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "logout"
         },
         "cli_readme": {
@@ -1435,7 +1435,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "move"
         },
         "cli_readme": {
@@ -1490,7 +1490,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "open"
         },
         "cli_readme": {
@@ -1549,7 +1549,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "preview"
         },
         "cli_readme": {
@@ -1652,7 +1652,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "profiles delete"
         },
         "cli_readme": {
@@ -1711,7 +1711,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "profiles import-token"
         },
         "cli_readme": {
@@ -1764,7 +1764,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "profiles list"
         },
         "cli_readme": {
@@ -1817,7 +1817,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "profiles use"
         },
         "cli_readme": {
@@ -1871,7 +1871,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "projects create"
         },
         "cli_readme": {
@@ -1954,7 +1954,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "projects edit"
         },
         "cli_readme": {
@@ -2053,7 +2053,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "projects list"
         },
         "cli_readme": {
@@ -2126,7 +2126,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "resolve"
         },
         "cli_readme": {
@@ -2186,7 +2186,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "share"
         },
         "cli_readme": {
@@ -2286,7 +2286,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "skills ensure"
         },
         "cli_readme": {
@@ -2342,7 +2342,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "skills install"
         },
         "cli_readme": {
@@ -2399,7 +2399,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "skills list"
         },
         "cli_readme": {
@@ -2452,7 +2452,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "skills remove"
         },
         "cli_readme": {
@@ -2507,7 +2507,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "skills update"
         },
         "cli_readme": {
@@ -2565,7 +2565,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "update"
         },
         "cli_readme": {
@@ -2651,7 +2651,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "append"
         },
         "cli_readme": {
@@ -2733,7 +2733,7 @@
       "surfaces": {
         "cli_help": {
           "kind": "generated",
-          "path": "packages/cli/dist/index.js",
+          "path": "packages/cli/dist/cli.js",
           "identifier": "whoami"
         },
         "cli_readme": {

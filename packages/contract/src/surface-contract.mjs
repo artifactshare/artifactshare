@@ -183,6 +183,8 @@ export const MCP_OPENAPI_METADATA = {
 
 // Option explanations displayed alongside the generated command reference.
 export const CLI_REFERENCE_OPTION_HELP = {
+  share: ['--expected-version'],
+  update: ['--expected-version'],
   download: ['--force'],
   edit: ['--visibility', '--retain-versions'],
 }
