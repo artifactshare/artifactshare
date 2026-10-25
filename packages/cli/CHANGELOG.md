@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+## 0.19.0 - 2026-10-25
+
 - Reject unknown command options locally with spelling hints, explain numeric `--expected-version` mistakes, and report unsupported Node.js versions before loading command dependencies.
 
 ## 0.18.0 - 2026-10-23
