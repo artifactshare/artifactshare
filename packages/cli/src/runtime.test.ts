@@ -30,11 +30,24 @@ test('built entry rejects old Node before loading any command dependency', async
         await writeFile(
           preload,
           `
+          import assert from 'node:assert/strict';
           import { registerHooks } from 'node:module';
+          import { basename } from 'node:path';
+          function isCommandDependency(specifier) {
+            const filename = basename(specifier);
+            return specifier === './cli.js' || filename === 'cli.js' || /^cli-.*\\.js$/.test(filename) || ['gunshi', 'undici'].includes(specifier);
+          }
+          const dist = '/tmp/release-cli-0.19.0/packages/cli/dist';
+          for (const specifier of [dist + '/index.js', dist + '/runtime.js']) {
+            assert.equal(isCommandDependency(specifier), false, specifier);
+          }
+          for (const specifier of ['./cli.js', 'cli.js', 'cli-testchunk.js', dist + '/cli.js', dist + '/cli-testchunk.js', 'gunshi', 'undici']) {
+            assert.equal(isCommandDependency(specifier), true, specifier);
+          }
           Object.defineProperty(process.versions, 'node', { value: '${version}' });
           Object.defineProperty(process.stdout, 'isTTY', { value: ${human} });
           registerHooks({ resolve(specifier, context, next) {
-            if (specifier === './cli.js' || /cli-.*\\.js$/.test(specifier) || ['gunshi', 'undici'].includes(specifier)) throw new Error('Command graph loaded before runtime gate');
+            if (isCommandDependency(specifier)) throw new Error('Command graph loaded before runtime gate');
             return next(specifier, context);
           }});
         `,

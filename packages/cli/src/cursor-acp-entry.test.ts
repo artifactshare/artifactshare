@@ -311,10 +311,25 @@ test('Cursor entry rejects old Node before loading its body or creating state', 
     writeFileSync(
       preload,
       `
+      import assert from 'node:assert/strict';
       import { registerHooks } from 'node:module';
+      import { basename } from 'node:path';
+      function isCursorBody(specifier, context) {
+        const filename = basename(specifier);
+        return Boolean(context.parentURL) && filename !== 'cursor-acp-entry.js' && /^cursor-acp[.-]/.test(filename);
+      }
+      const dist = '/tmp/release-cursor-acp-0.19.0/packages/cli/dist';
+      const parent = { parentURL: 'file://' + dist + '/cursor-acp-entry.js' };
+      assert.equal(isCursorBody(dist + '/cursor-acp-entry.js', {}), false);
+      for (const specifier of [dist + '/cursor-acp-entry.js', dist + '/runtime.js', dist + '/index.js']) {
+        assert.equal(isCursorBody(specifier, parent), false, specifier);
+      }
+      for (const specifier of ['./cursor-acp.js', 'cursor-acp.js', 'cursor-acp-testchunk.js', dist + '/cursor-acp.js', dist + '/cursor-acp-testchunk.js']) {
+        assert.equal(isCursorBody(specifier, parent), true, specifier);
+      }
       Object.defineProperty(process.versions, 'node', { value: '${version}' });
       registerHooks({ resolve(specifier, context, next) {
-        if (/cursor-acp[.-]/.test(specifier) && context.parentURL) {
+        if (isCursorBody(specifier, context)) {
           throw new Error('Cursor body loaded before runtime gate');
         }
         return next(specifier, context);
