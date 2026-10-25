@@ -218,7 +218,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
           { label: '社外メンバーからの投稿', values: ['—', 'あり', 'あり'] },
           { label: '投稿者と保存容量の運用管理', values: ['—', '—', 'あり'] },
           {
-            label: '含有容量を超えた継続利用',
+            label: 'プランの保存容量を超えた継続利用',
             values: ['—', '上限なし', '上限なし'],
           },
           {
@@ -232,7 +232,7 @@ const makeCopy = (locale: 'en' | 'ja'): PricingCopy => {
         faqs: [
           {
             question: '表示価格に税は含まれていますか？',
-            answer: `有料プランの表示価格は税抜です。国内でJPYを選ぶと、申込時に消費税が加算されます。Teamの年払いは税抜${teamYearlyBeforeTax}、消費税込み${teamYearlyWithTax}です。適用される税額と最終的な請求額はCheckoutで確認できます。`,
+            answer: `有料プランの表示価格は税抜です。国内でJPYを選ぶと、申込時に消費税が加算されます。Teamの年払いは税抜${teamYearlyBeforeTax}、消費税込み${teamYearlyWithTax}です。適用される税額と最終的な請求額は、決済画面(Checkout)で確認できます。`,
           },
           {
             question: '年払いはどのように請求されますか？',

@@ -21,7 +21,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./design.md -
 
 ## PC では URL を開くだけで続きができる
 
-返ってきた URL を PC のブラウザで開くか、PC のエージェントに `open <artifact-url>` を渡します。モバイルで作った文書と PC での編集・実装は、同じファイルとしてつながります。
+返ってきた URL を PC のブラウザで開くか、PC のエージェントに `open <artifact-url>` を渡します。PC での編集や実装も、モバイルで作った文書と同じファイルに対して進められます。
 
 ## 毎回 private にしたいなら既定値を変える
 
@@ -41,6 +41,6 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_aud
 npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective
 ```
 
-リポジトリ設定はそのリポジトリを使う全員に効くため、変えるときは参加者と合意してからにします。
+リポジトリ設定はそのリポジトリを使う全員に適用されるため、変えるときは参加者と合意してからにします。
 
 コマンドの詳細は [CLI リファレンス](https://artifactshare.com/ja/guides/cli) を、製品の変更情報は [Updates](https://artifactshare.com/ja/updates) を参照してください。

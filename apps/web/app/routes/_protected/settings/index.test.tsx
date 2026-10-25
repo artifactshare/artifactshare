@@ -117,7 +117,7 @@ vi.mock('~/hooks/use-t', () => ({
           'team.members.menu': 'メンバー操作メニュー',
           'team.members.remove': '削除',
           'team.members.revokeCliSessions': 'CLIセッションを失効',
-          'team.members.revokeCliSessionsConfirm.title': `${vars?.name ?? ''} のCLIセッションを失効しますか？`,
+          'team.members.revokeCliSessionsConfirm.title': `${vars?.name ?? ''} のCLIセッションを失効させますか？`,
           'team.members.revokeCliSessionsConfirm.body':
             '再ログインが必要です。',
           'team.members.empty': 'メンバーはまだいません。',

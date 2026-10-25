@@ -289,7 +289,7 @@ const JA: ConnectContent = {
     targetUi: 'ChatGPT Web',
     note: 'ChatGPT の MCP アプリは ChatGPT Web でのみ動作し、モバイルには対応していません。',
   },
-  choiceHeading: '入口を選ぶ',
+  choiceHeading: '接続方法を選ぶ',
   choices: [
     {
       label: 'AI エージェント',
@@ -327,7 +327,7 @@ const JA: ConnectContent = {
   notes: [
     {
       label: '複数の Google アカウントを使うとき',
-      body: '仕事や Google アカウントを切り替えて使うことが多い場合は、CLI がおすすめです。仕事ごとに使うアカウントを分けやすくなります。MCP の接続は 1 つの Google アカウントに紐づくため、接続するときに Google のアカウント選択画面で使いたいアカウントを選んでください。切り替えるときは、もう一度接続して別のアカウントを選びます。',
+      body: 'ワークスペースや Google アカウントを切り替えて使うことが多い場合は、CLI がおすすめです。仕事ごとに使うアカウントを分けやすくなります。MCP の接続は 1 つの Google アカウントに紐づくため、接続するときに Google のアカウント選択画面で使いたいアカウントを選んでください。切り替えるときは、もう一度接続して別のアカウントを選びます。',
     },
     {
       label: 'CI・非対話環境で使うとき',
@@ -350,7 +350,7 @@ const JA: ConnectContent = {
             href: '/ja/share-with-ai',
             label: 'AI から Artifact Share を使う',
           },
-          after: '」を見る。',
+          after: '」をご覧ください。',
         },
       ],
       snippets: jaAiAgentSnippets,
@@ -378,12 +378,12 @@ const JA: ConnectContent = {
     {
       id: 'chatgpt',
       heading: 'ChatGPT',
-      lead: 'ChatGPT Web で設定します。入口はプランと権限によって異なります。Pro では「Plugins」と「セキュリティとログイン」が表示される場合があります。Business、Enterprise、Edu では「Apps」を使います。',
+      lead: 'ChatGPT Web で設定します。設定する画面はプランと権限によって異なります。Pro では「Plugins」と「セキュリティとログイン」が表示される場合があります。Business、Enterprise、Edu では「Apps」を使います。',
       note: 'ChatGPT の機能、画面名、権限は変わることがあります。表示が異なる場合は、「設定」の「Plugins」または「Apps」から「Developer mode」を探すか、「設定」>「セキュリティとログイン」を確認してください。',
       steps: [
         'ChatGPT Web を開きます。',
         {
-          text: 'プランと権限に合う入口へ進みます。',
+          text: 'プランと権限に合う設定画面を開きます。',
           substeps: [
             'Pro: 「設定」>「Plugins」を開きます。必要なら「設定」>「セキュリティとログイン」で「開発者モード」を有効にし、「Plugins」または「Apps」に戻って「Create」を探します。',
             'Business: 管理者またはオーナーは、「Workspace settings」>「Apps」>「Create」を開きます。',

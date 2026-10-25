@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { describe, expect, test } from 'vitest'
 import { mcpResourceUrl } from '~/lib/mcp-metadata'
 import {
@@ -14,6 +15,44 @@ describe('computeClaudeWidgetDomain', () => {
 })
 
 describe('artifactPreviewResourceContents', () => {
+  test.each([
+    ['ja', 'ファイル'],
+    ['en', 'Artifact'],
+  ])('renders the unknown-kind fallback in %s', async (locale, label) => {
+    const result = await artifactPreviewResourceContents(
+      'https://artifactshare.com',
+      mcpResourceUrl('https://artifactshare.com'),
+    )
+    const script = result.contents[0].text.match(
+      /<script>([\s\S]*?)<\/script>/,
+    )?.[1]
+    expect(script).toBeDefined()
+    const title = { textContent: '' }
+    const eyebrow = { textContent: '' }
+    const link = {
+      textContent: '',
+      hidden: false,
+      addEventListener() {},
+      removeAttribute() {},
+    }
+    runInNewContext(script!, {
+      document: {
+        getElementById(id: string) {
+          if (id === 'as-title') return title
+          if (id === 'as-eyebrow') return eyebrow
+          if (id === 'as-open') return link
+          throw new Error(`Unexpected widget element: ${id}`)
+        },
+      },
+      window: {
+        openai: { toolOutput: { locale, artifact_kind: 'unknown' } },
+        addEventListener() {},
+      },
+    })
+    expect(title.textContent).toBe(label)
+    expect(eyebrow.textContent).toBe(`Artifact Share · ${label}`)
+  })
+
   test('carries host widget domains without permitting nested frames', async () => {
     const result = await artifactPreviewResourceContents(
       'https://artifactshare.com',

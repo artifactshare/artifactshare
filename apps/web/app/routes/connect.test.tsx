@@ -126,7 +126,7 @@ describe('/connect', () => {
     expect(html).toContain(
       'ChatGPT の MCP アプリは ChatGPT Web でのみ動作し、モバイルには対応していません。',
     )
-    expect(html).toContain('プランと権限に合う入口へ進みます。')
+    expect(html).toContain('プランと権限に合う設定画面を開きます。')
     expect(html).toContain(
       'MCP server endpoint にこの MCP サーバ URL を設定します。',
     )

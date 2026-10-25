@@ -1009,7 +1009,7 @@ test.each([
 
 test('Japanese unrestricted disclosure uses the settings session and revocation terms', () => {
   expect(ja['device.unrestricted_disclosure']).toContain(
-    `設定の「${ja['team.tokens.cli.title']}」でセッションを失効するまで`,
+    `設定の「${ja['team.tokens.cli.title']}」でセッションを失効させるまで`,
   )
 })
 

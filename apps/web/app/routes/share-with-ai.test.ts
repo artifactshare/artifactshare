@@ -122,7 +122,9 @@ describe('share-with-ai content', () => {
 
   test('shows Japanese as upload shorthand as an Artifact Share prompt', () => {
     const content = shareWithAiContent('ja')
-    expect(content.tasksIntro).toContain('as で共有して')
+    expect(content.tasksIntro).toBe(
+      'やりたいことを AI に伝えるだけで使えます。共有や更新、共有リンクを開く・読む依頼では、「Artifact Share」の代わりに「as」と書いても通じます。',
+    )
     expect(content.tasks.find((task) => task.id === 'share')?.ask).toBe(
       'このレポートを as で共有して。',
     )

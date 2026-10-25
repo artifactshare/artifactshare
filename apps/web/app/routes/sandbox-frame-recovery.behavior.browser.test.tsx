@@ -951,7 +951,7 @@ test.each([false, true])(
 
 test.each([
   ['en', 'Open 7 unresolved comments on this text: Selected words'],
-  ['ja', 'この本文範囲の未解決コメント7件を開く: Selected words'],
+  ['ja', 'この箇所の未解決コメント7件を開く: Selected words'],
 ] as const)(
   'inline totals stay stable as older replies load (%s)',
   async (locale, label) => {

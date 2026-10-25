@@ -331,11 +331,13 @@ test('publisher-specific download and read responses are explicitly scoped', () 
   )
   const ja = cliReferenceContent('ja').sections.introduction.body
   expect(ja).toContain(
-    'publisher の資格では、download は単一ファイルなら元データ',
+    'publisher の資格情報では、download は単一ファイルなら元データ',
   )
-  expect(ja).toContain('publisher の資格では、個別アセットの取得はできません。')
   expect(ja).toContain(
-    'publisher の資格では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します',
+    'publisher の資格情報では、個別アセットの取得はできません。',
+  )
+  expect(ja).toContain(
+    'publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します',
   )
   expect(ja).not.toContain('readback')
 })
@@ -347,7 +349,7 @@ test('retention option localization is scoped to the edit command', () => {
     surface.commands.find((command) => command.path === 'edit')?.option_help,
   ).toContain(help)
   expect(cliReferenceOptionHelp('edit', help, 'ja')).toBe(
-    '--retain-versions <retain-versions> N または all(持ち主のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+    '--retain-versions <retain-versions> N または all(所有者のみ)。最新の N 版を残します。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格情報で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
   )
   expect(cliReferenceOptionHelp('edit', help, 'en')).toBe(help)
   expect(cliReferenceOptionHelp('share', help, 'ja')).toBe(help)
@@ -375,7 +377,7 @@ test.each(['en', 'ja'] as const)(
             'Unmanaged artifacts continue to count all published versions.',
           ]
         : [
-            'publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイル',
+            'publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイル',
             '以前のクライアントによる版も含め',
             '人が追加した版はすべて残します。',
             'このルールは所有者が unrestricted 資格情報で設定するときも同じです。',
@@ -398,12 +400,12 @@ test.each(['en', 'ja'] as const)(
     expect(recovery).toContain(
       locale === 'en'
         ? 'For validation_failed without a details.reason, check usage and options.'
-        : 'details.reason がない validation_failed は構文と option を確認します。',
+        : 'details.reason がない validation_failed は構文とオプションを確認します。',
     )
     expect(recovery).not.toContain(
       locale === 'en'
         ? 'For validation_failed, check usage and options.'
-        : '。validation_failed は構文と option を確認します。',
+        : '。validation_failed は構文とオプションを確認します。',
     )
     const content = JSON.stringify(cliReferenceContent(locale))
     for (const term of [
@@ -569,3 +571,22 @@ test.each(['en', 'ja'] as const)(
       expect(paragraphs.join(' ')).not.toContain('Config-mode')
   },
 )
+
+test('uses consistent Japanese terms in CLI reference guidance', () => {
+  const content = cliReferenceContent('ja')
+  expect(content.sections.introduction.body).toContain(
+    'publisher の資格情報は、一覧、解決、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。',
+  )
+  expect(content.sections.basics.body).toContain('ブラウザの共有ページ')
+  expect(content.commandOptionsLabel).toBe('オプション')
+  expect(content.sections.commands.body).toBe(
+    '以下のコマンド一覧は、公開 CLI の help から生成しています。構文と使えるオプションも、生成した snapshot から表示しています。',
+  )
+  const recovery = content.sections.recovery.body.join('')
+  expect(recovery).toContain(
+    'auth_required または token_invalid なら login か有効な profile token の import を行い、同じコマンドを再実行します。',
+  )
+  expect(recovery).toContain(
+    'self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。',
+  )
+})
