@@ -400,12 +400,12 @@ test.each(['en', 'ja'] as const)(
     expect(recovery).toContain(
       locale === 'en'
         ? 'For validation_failed without a details.reason, check usage and options.'
-        : 'details.reason がない validation_failed は構文と option を確認します。',
+        : 'details.reason がない validation_failed は構文とオプションを確認します。',
     )
     expect(recovery).not.toContain(
       locale === 'en'
         ? 'For validation_failed, check usage and options.'
-        : '。validation_failed は構文と option を確認します。',
+        : '。validation_failed は構文とオプションを確認します。',
     )
     const content = JSON.stringify(cliReferenceContent(locale))
     for (const term of [
@@ -571,3 +571,22 @@ test.each(['en', 'ja'] as const)(
       expect(paragraphs.join(' ')).not.toContain('Config-mode')
   },
 )
+
+test('uses consistent Japanese terms in CLI reference guidance', () => {
+  const content = cliReferenceContent('ja')
+  expect(content.sections.introduction.body).toContain(
+    'publisher の資格情報は、一覧、解決、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。',
+  )
+  expect(content.sections.basics.body).toContain('ブラウザの共有ページ')
+  expect(content.commandOptionsLabel).toBe('オプション')
+  expect(content.sections.commands.body).toBe(
+    '以下のコマンド一覧は、公開 CLI の help から生成しています。構文と使えるオプションも、生成した snapshot から表示しています。',
+  )
+  const recovery = content.sections.recovery.body.join('')
+  expect(recovery).toContain(
+    'auth_required または token_invalid なら login か有効な profile token の import を行い、同じコマンドを再実行します。',
+  )
+  expect(recovery).toContain(
+    'self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。',
+  )
+})
