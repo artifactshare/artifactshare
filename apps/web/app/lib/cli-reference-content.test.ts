@@ -592,13 +592,12 @@ test('uses consistent Japanese terms in CLI reference guidance', () => {
   expect(content.og.description).toBe(
     '公開 CLI の全コマンド、JSON 出力、設定、投稿先、復旧方法をまとめたリファレンスです。',
   )
-  expect(content.og.description).not.toContain('公開 CLI の全 command')
   const recovery = content.sections.recovery.body.join('')
   expect(recovery).not.toContain(
     'login か有効な profile token の import を行い、同じコマンドを再実行します',
   )
   expect(recovery).toContain(
-    'auth_required または token_invalid なら login を実行するか、有効なプロファイルのトークンを取り込み、同じコマンドを再実行します。',
+    'auth_required または token_invalid なら login を実行し直すか、有効なトークンをプロファイルに取り込みます。そのあと、同じコマンドを再実行します。',
   )
   expect(recovery).toContain(
     'self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。',
