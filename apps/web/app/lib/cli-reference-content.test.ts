@@ -13,8 +13,8 @@ import {
 
 describe('CLI reference content', () => {
   test('explains trusted download parents and per-artifact manifest failures in both locales', () => {
-    const en = cliReferenceContent('en').sections.recovery.body
-    const ja = cliReferenceContent('ja').sections.recovery.body
+    const en = cliReferenceContent('en').sections.recovery.body.join('')
+    const ja = cliReferenceContent('ja').sections.recovery.body.join('')
     expect(en).toContain('accepts linked output parents')
     expect(en).toContain('rechecks their resolved directory identities')
     expect(en).toContain(
@@ -271,10 +271,10 @@ describe('CLI reference content', () => {
 })
 
 test('documents agent update recovery in both locales', () => {
-  expect(cliReferenceContent('en').sections.recovery.body).toContain(
+  expect(cliReferenceContent('en').sections.recovery.body.join('')).toContain(
     'For expected_version_required after login --preset agent, pass data.version.id from the previous successful share or update output as --expected-version when retrying update or share --key. If that output is unavailable, for single-file HTML and Markdown artifacts, artifacts get <target> --json returns the current version as data.version_id. For static sites, download <target> --json returns it as data.version.id. Check the returned current content (data.content, or the downloaded files for static sites) and reapply your changes to it if it differs from what you edited. Pass the returned value as --expected-version.',
   )
-  expect(cliReferenceContent('ja').sections.recovery.body).toContain(
+  expect(cliReferenceContent('ja').sections.recovery.body.join('')).toContain(
     'login --preset agent でログインして expected_version_required が返された場合は、前回成功した share または update の出力にある data.version.id を --expected-version に指定して、update または share --key を再実行します。前回の出力がない場合、単一ファイルの HTML・Markdown では artifacts get <target> --json が現在のバージョンを data.version_id として返します。静的サイトでは download <target> --json が data.version.id として返します。返された現在の内容（data.content、静的サイトではダウンロードしたファイル）を確認し、編集元の内容と異なる場合は、その現在の内容に変更を適用し直します。返された値を --expected-version に指定します。',
   )
   for (const locale of ['en', 'ja'] as const) {
@@ -389,7 +389,7 @@ test.each(['en', 'ja'] as const)(
 test.each(['en', 'ja'] as const)(
   'documents upload boundary recovery in %s',
   (locale) => {
-    const recovery = cliReferenceContent(locale).sections.recovery.body
+    const recovery = cliReferenceContent(locale).sections.recovery.body.join('')
     expect(recovery).toContain(
       locale === 'en'
         ? 'Check missing paths, pass an absolute path for outside_cwd, retry changed selections, and follow the named guarantee or file-type hint.'
@@ -435,7 +435,7 @@ test.each(['en', 'ja'] as const)(
 )
 
 test('names parent-directory references clearly in Japanese recovery guidance', () => {
-  const recovery = cliReferenceContent('ja').sections.recovery.body
+  const recovery = cliReferenceContent('ja').sections.recovery.body.join('')
   expect(recovery).toContain('親ディレクトリ参照（..）を含むパスは使えません。')
   expect(recovery).not.toContain('。.. を')
 })
@@ -444,9 +444,13 @@ test.each(['en', 'ja'] as const)(
   'documents local write recovery in %s',
   (locale) => {
     const content = cliReferenceContent(locale)
-    expect(content.sections.recovery.body).toContain('^[a-z0-9]{10}$')
-    expect(content.sections.recovery.body).toContain('data.backup_paths')
-    expect(content.sections.recovery.body).toContain('git_exclude_warning')
+    expect(content.sections.recovery.body.join('')).toContain('^[a-z0-9]{10}$')
+    expect(content.sections.recovery.body.join('')).toContain(
+      'data.backup_paths',
+    )
+    expect(content.sections.recovery.body.join('')).toContain(
+      'git_exclude_warning',
+    )
     const download = surface.commands.find(
       (command) => command.path === 'download',
     )!
@@ -457,7 +461,7 @@ test.each(['en', 'ja'] as const)(
 )
 
 test('download recovery describes boundary refusals and retained originals in both locales', () => {
-  const en = cliReferenceContent('en').sections.recovery.body
+  const en = cliReferenceContent('en').sections.recovery.body.join('')
   expect(en).toContain(
     'Linked output roots, indexes, and listed artifact trees are refused',
   )
@@ -466,9 +470,102 @@ test('download recovery describes boundary refusals and retained originals in bo
     'Successful replacements retain originals and previous indexes',
   )
   expect(en).toContain('every boundary violation stops further publication')
-  const ja = cliReferenceContent('ja').sections.recovery.body
+  const ja = cliReferenceContent('ja').sections.recovery.body.join('')
   expect(ja).toContain('リンクは --force でも拒否')
   expect(ja).toContain('変更のない成果物を含む全対象')
   expect(ja).toContain('置換前のデータと index は成功後も保持')
   expect(ja).toContain('後続の成果物と最終 index の公開を中断')
 })
+
+test.each(['en', 'ja'] as const)(
+  'splits recovery into four ordered topics with error remedies in %s',
+  (locale) => {
+    const paragraphs = cliReferenceContent(locale).sections.recovery.body
+    expect(paragraphs).toHaveLength(4)
+    const starts =
+      locale === 'en'
+        ? [
+            'Download IDs',
+            'When saving configuration, init refuses linked or changed config paths.',
+            'Files named by another spelling',
+            'For auth_required or token_invalid',
+          ]
+        : [
+            'download の ID',
+            '設定保存時の init',
+            'Windows の短い名前など、別の綴りで指定したファイル',
+            'auth_required または token_invalid',
+          ]
+    paragraphs.forEach((paragraph, index) => {
+      expect(paragraph.trim().length).toBeGreaterThan(0)
+      expect(paragraph.startsWith(starts[index])).toBe(true)
+    })
+    expect(paragraphs[0]).toContain('data.backup_paths')
+    expect(paragraphs[1]).toContain('git_exclude_warning')
+    expect(paragraphs[2]).toContain('upload_read_failed')
+    expect(paragraphs[2]).toContain('details.reason')
+    if (locale === 'ja') {
+      expect(paragraphs[1]).toContain(
+        '.git ファイル、リンク、.git の中の gitdir や commondir のファイル、安全に更新できない exclude は',
+      )
+      for (const fact of [
+        'Windows の短い名前など、別の綴りで指定したファイルは、保存されている本来の名前から種類と content type を決めます。',
+        '途中に通常のファイルを含む相対パス（例: file.txt/x）は not_found になります。',
+        'ドット（.）で始まる名前と除外対象は、検査の前に省きます。',
+      ]) {
+        expect(paragraphs[2]).toContain(fact)
+      }
+    }
+    if (locale === 'en') {
+      expect(paragraphs[1]).toContain(
+        '.git files, links, gitdir or commondir files inside .git, and unsafe exclude paths',
+      )
+      for (const fact of [
+        'Files named by another spelling (such as Windows short names) use their stored names for kind and content type',
+        'relative paths with a regular file in the middle (for example file.txt/x) are not_found.',
+        'Names that start with a dot (.) and excluded names are skipped before inspection.',
+      ]) {
+        expect(paragraphs[2]).toContain(fact)
+      }
+    }
+    const errors = paragraphs[3]
+    for (const code of [
+      'unknown_option',
+      'invalid_expected_version',
+      'unsupported_node_version',
+    ]) {
+      expect(errors.split(code)).toHaveLength(2)
+    }
+    for (const fact of [
+      'details.option',
+      'data.version.id',
+      'data.version_id',
+      'artifacts get <target> --json',
+      'recovery.kind: change_input',
+      '22.19.0',
+      'recovery.kind: ask_human',
+      'agent_recoverable: false',
+      'requires_human: true',
+      'expected_version_required',
+    ]) {
+      expect(errors).toContain(fact)
+    }
+    expect(errors).toContain(
+      locale === 'en'
+        ? 'correct details.option using the hint or command help; options are checked before authentication, requests or writes.'
+        : 'unknown_option は認証・通信・書き込みの前に返されます。details.option をヒントやコマンドのヘルプに従って修正してください。',
+    )
+    expect(errors).toContain(
+      locale === 'en'
+        ? 'use a version id from data.version.id in share/update output or data.version_id from artifacts get <target> --json, rather than a number.'
+        : '番号ではなく、share/update の出力の data.version.id、または artifacts get <target> --json の data.version_id を指定します。',
+    )
+    expect(errors).toContain(
+      locale === 'en'
+        ? 'upgrade Node.js to 22.19.0 or newer; this requires human or environment action'
+        : 'Node.js を 22.19.0 以上に更新してください。人または実行環境側の対応が必要です',
+    )
+    if (locale === 'en')
+      expect(paragraphs.join(' ')).not.toContain('Config-mode')
+  },
+)
