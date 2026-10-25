@@ -493,7 +493,7 @@ test.each(['en', 'ja'] as const)(
         : [
             'download の ID',
             '設定保存時の init',
-            'アップロードの別表記',
+            'Windows の短い名前など、別の綴りで指定したファイル',
             'auth_required または token_invalid',
           ]
     paragraphs.forEach((paragraph, index) => {
@@ -504,6 +504,18 @@ test.each(['en', 'ja'] as const)(
     expect(paragraphs[1]).toContain('git_exclude_warning')
     expect(paragraphs[2]).toContain('upload_read_failed')
     expect(paragraphs[2]).toContain('details.reason')
+    if (locale === 'ja') {
+      expect(paragraphs[1]).toContain(
+        '.git ファイル、リンク、別の場所を指す gitdir や commondir のファイル、安全に更新できない exclude は',
+      )
+      for (const fact of [
+        'Windows の短い名前など、別の綴りで指定したファイルは、保存されている本来の名前から種類と content type を決めます。',
+        '途中に通常のファイルを含む相対パス（例: file.txt/x）は not_found になります。',
+        '. で始まる名前と除外対象は、検査の前に省きます。',
+      ]) {
+        expect(paragraphs[2]).toContain(fact)
+      }
+    }
     const errors = paragraphs[3]
     for (const code of [
       'unknown_option',
