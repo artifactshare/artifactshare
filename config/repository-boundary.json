@@ -54,6 +54,8 @@
     "scripts/check-cli-changelog.test.mjs",
     "scripts/check-d1-compatibility.mjs",
     "scripts/check-d1-compatibility.test.mjs",
+    "scripts/check-dependency-overrides.mjs",
+    "scripts/check-dependency-overrides.test.mjs",
     "scripts/check-npm-reserved-package.mjs",
     "scripts/audit-ai-search-eligibility.mjs",
     "scripts/audit-ai-search-eligibility.test.mjs",

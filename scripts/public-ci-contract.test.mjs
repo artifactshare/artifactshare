@@ -519,7 +519,10 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
   assert.match(buildRuns, /pnpm check:dev-setup/u)
   assert.match(buildRuns, /pnpm validate:build/u)
   assert.match(rootPackage.scripts['validate:static'], /pnpm test:unit:noncli/u)
-  assert.match(rootPackage.scripts['validate:static'], /pnpm test:d1/u)
+  assert.match(
+    rootPackage.scripts['validate:static'],
+    /pnpm check:dependency-overrides && pnpm test:d1/u,
+  )
   assert.equal(
     rootPackage.scripts['test:d1'],
     'pnpm --filter @artifactshare/web test:d1',
