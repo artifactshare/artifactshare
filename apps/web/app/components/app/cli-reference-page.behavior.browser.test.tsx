@@ -282,17 +282,37 @@ describe.each(['en', 'ja'] as const)('CLI option layout (%s)', (locale) => {
         for (const [id, section] of Object.entries(
           cliReferenceContent(locale).sections,
         )) {
-          const paragraph = document.querySelector<HTMLElement>(`#${id} p`)!
-          expect(paragraph.textContent).toBe(section.body)
-          for (const flag of section.body.match(/--[\w-]+/g) ?? []) {
-            expect(optionRects(paragraph, flag), `${id}: ${flag}`).toHaveLength(
-              1,
-            )
-            const span = [...paragraph.children].find(
-              (child) => child.textContent === flag,
-            )!
-            expect(span, `${id}: ${flag}`).toBeDefined()
-            expect(getComputedStyle(span).whiteSpace).toBe('nowrap')
+          const paragraphs = [
+            ...document.querySelectorAll<HTMLElement>(`#${id} p`),
+          ]
+          const texts = Array.isArray(section.body)
+            ? section.body
+            : [section.body]
+          if (id === 'recovery') expect(paragraphs).toHaveLength(4)
+          for (const [index, text] of texts.entries()) {
+            const paragraph = paragraphs[index]
+            expect(paragraph.textContent).toBe(text)
+            if (id === 'recovery') {
+              expect(getComputedStyle(paragraph).visibility).toBe('visible')
+              const bounds = paragraph.getBoundingClientRect()
+              expect(bounds.height).toBeGreaterThan(0)
+              if (index > 0) {
+                expect(bounds.top).toBeGreaterThan(
+                  paragraphs[index - 1].getBoundingClientRect().bottom,
+                )
+              }
+            }
+            for (const flag of text.match(/--[\w-]+/g) ?? []) {
+              expect(
+                optionRects(paragraph, flag),
+                `${id}: ${flag}`,
+              ).toHaveLength(1)
+              const span = [...paragraph.children].find(
+                (child) => child.textContent === flag,
+              )!
+              expect(span, `${id}: ${flag}`).toBeDefined()
+              expect(getComputedStyle(span).whiteSpace).toBe('nowrap')
+            }
           }
         }
         const seen = new Set<string>()

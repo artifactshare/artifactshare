@@ -134,13 +134,21 @@ describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
       const sectionHtml = html.match(
         new RegExp(`<section[^>]*id="${id}"[^>]*>([\\s\\S]*?)</section>`),
       )![1]
-      const body = sectionHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/)![1]
-      expect(body.replace(/<[^>]+>/g, '')).toBe(
-        renderToStaticMarkup(<>{section.body}</>),
-      )
-      for (const flag of section.body.match(/--[\w-]+/g) ?? []) {
-        expect(body).toContain(`<span class="whitespace-nowrap">${flag}</span>`)
+      const paragraphs = [...sectionHtml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
+      const texts = Array.isArray(section.body) ? section.body : [section.body]
+      if (id === 'recovery') expect(paragraphs).toHaveLength(4)
+      for (const [index, text] of texts.entries()) {
+        const body = paragraphs[index][1]
+        expect(body.replace(/<[^>]+>/g, '')).toBe(
+          renderToStaticMarkup(<>{text}</>),
+        )
+        for (const flag of text.match(/--[\w-]+/g) ?? []) {
+          expect(body).toContain(
+            `<span class="whitespace-nowrap">${flag}</span>`,
+          )
+        }
       }
+      if (locale === 'en') expect(html).not.toContain('Config-mode')
     }
   })
   test('keeps every option intact with literal separators outside the spans', () => {

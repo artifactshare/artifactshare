@@ -107,7 +107,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                   <GuideProse className="[&_h2]:mt-0">
                     <h2 id={`${id}-heading`}>{section.title}</h2>
                     <p>
-                      <SectionBody text={section.body} />
+                      <SectionBody text={content.sections.introduction.body} />
                     </p>
                     <p>
                       <strong>{content.commandUsageLabel}</strong>
@@ -144,7 +144,7 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                     <h2 id={`${id}-heading`}>{section.title}</h2>
                   </GuideProse>
                   <p className={guideSubClassName}>
-                    <SectionBody text={section.body} />
+                    <SectionBody text={content.sections.commands.body} />
                   </p>
                   <h3 className="mt-[var(--spacing-6)] mb-0 text-base font-semibold">
                     {content.commandsHeading}
@@ -226,9 +226,14 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                 <GuideProse className="[&_h2]:mt-0">
                   <h2 id={`${id}-heading`}>{section.title}</h2>
                 </GuideProse>
-                <p className={guideSubClassName}>
-                  <SectionBody text={section.body} />
-                </p>
+                {(Array.isArray(section.body)
+                  ? section.body
+                  : [section.body]
+                ).map((paragraph) => (
+                  <p key={paragraph} className={guideSubClassName}>
+                    <SectionBody text={paragraph} />
+                  </p>
+                ))}
               </section>
             )
           })}
