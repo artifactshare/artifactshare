@@ -162,6 +162,10 @@ export function createArgumentParser(catalog: Map<string, Options>) {
           error.hint =
             'Update only adds a new version. Use edit to change sharing settings, or remove unsupported options and retry.'
         }
+        if (command === 'profiles import-token' && spelling === '--token') {
+          error.hint =
+            'Pipe the token on standard input so it does not appear in process arguments.'
+        }
         return error
       }
       if (option.boolean) {

@@ -353,8 +353,7 @@ test('unknown options fail at root, parent, nested and implicit commands', () =>
   for (const [args, command] of [
     [['--bogus-flag', 'x'], 'unknown'],
     [['whoami', '--bogus-flag', 'x'], 'whoami'],
-    [['changelog', '--token', 'x'], 'changelog'],
-    [['changelog', '--base-url', 'x'], 'changelog'],
+    [['changelog', '--visibility', 'private'], 'changelog'],
     [['profiles', 'import-token', '--token', 'x'], 'profiles import-token'],
     [['share', 'test.md', '--visiblity', 'private'], 'share'],
     [['artifacts', '--bogus'], 'artifacts'],
@@ -510,5 +509,41 @@ test('update unknown sharing options retain actionable edit guidance', () => {
     assert.match(error.hint, /Update only adds a new version/)
     assert.match(error.hint, /edit/)
     assert.deepEqual(error.details, { option })
+  }
+})
+
+test('changelog accepts shared flags while rejecting undefined options', () => {
+  const result = run([
+    'changelog',
+    '--profile',
+    'p',
+    '--base-url',
+    'https://example.com',
+    '--allow-plaintext-token-store',
+    '--insecure-localhost',
+    '--token',
+    'test-token',
+    '--json',
+  ])
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(result.stdout).ok, true)
+  expectFailure(run(['changelog', '--bogus', '--json']), {
+    command: 'changelog',
+    code: 'unknown_option',
+  })
+})
+
+test('import-token rejects token options with standard-input guidance', () => {
+  for (const option of [['--token', 'x'], ['--token=x']]) {
+    const { error } = expectFailure(
+      run(['profiles', 'import-token', ...option, '--json']),
+      { command: 'profiles import-token', code: 'unknown_option' },
+    )
+    assert.equal(error.details.option, '--token')
+    assert.equal(
+      error.hint,
+      'Pipe the token on standard input so it does not appear in process arguments.',
+    )
+    assert.equal(error.recovery.kind, 'change_input')
   }
 })

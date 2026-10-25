@@ -167,3 +167,25 @@ test('every option advertised in command help is accepted by its catalog', async
     }
   }
 })
+
+test('every command accepts shared flags except import-token token input', () => {
+  for (const [command, options] of catalog) {
+    for (const spelling of [
+      '--json',
+      '--base-url',
+      '--baseUrl',
+      '--profile',
+      '--allow-plaintext-token-store',
+      '--allowPlaintextTokenStore',
+      '--insecure-localhost',
+      '--insecureLocalhost',
+      '--token',
+    ]) {
+      assert.equal(
+        options.has(spelling),
+        command !== 'profiles import-token' || spelling !== '--token',
+        `${command} ${spelling}`,
+      )
+    }
+  }
+})
