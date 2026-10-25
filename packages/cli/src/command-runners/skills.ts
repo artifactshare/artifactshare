@@ -97,6 +97,51 @@ type SkillTarget = {
   absolutePath: string
 }
 
+type UnavailableSkillTarget = {
+  tool: SkillTool
+  scope: SkillScope
+  path: null
+  error: CliError
+}
+type ResolvedSkillTarget = SkillTarget | UnavailableSkillTarget
+
+const CLAUDE_CONFIG_HINT =
+  'Set CLAUDE_CONFIG_DIR to a non-empty path or unset it to use ~/.claude.'
+
+function claudeUserRoot(): string | undefined {
+  const value = process.env.CLAUDE_CONFIG_DIR
+  if (value === undefined) return join(homedir(), '.claude')
+  return value.trim() ? resolve(value) : undefined
+}
+
+function availableTarget(target: ResolvedSkillTarget): target is SkillTarget {
+  return target.path !== null
+}
+
+function unavailableState(target: UnavailableSkillTarget) {
+  return {
+    tool: target.tool,
+    scope: target.scope,
+    path: null,
+    available: false,
+    code: target.error.code,
+    hint: CLAUDE_CONFIG_HINT,
+    installed: false,
+    managed: false,
+    installed_version: null,
+    update_available: false,
+  }
+}
+
+function unavailableSelection(
+  tools: SkillTool[],
+  scope: SkillScope | undefined,
+): CliError | undefined {
+  if (!tools.includes('claude') || scope === 'project') return undefined
+  const target = skillTarget('claude', 'user')
+  return availableTarget(target) ? undefined : target.error
+}
+
 type ManagedState =
   | { kind: 'missing' }
   | { kind: 'managed'; version: number }
@@ -108,7 +153,23 @@ type BundledSkills = {
   version: number
 }
 
-function skillTarget(tool: SkillTool, scope: SkillScope): SkillTarget {
+function skillTarget(tool: SkillTool, scope: SkillScope): ResolvedSkillTarget {
+  if (tool === 'claude' && scope === 'user') {
+    const root = claudeUserRoot()
+    if (root === undefined) {
+      return {
+        tool,
+        scope,
+        path: null,
+        error: validationError(
+          'Claude Code user skills are unavailable because CLAUDE_CONFIG_DIR is empty or whitespace-only.',
+          CLAUDE_CONFIG_HINT,
+        ),
+      }
+    }
+    const path = join(root, SKILL_FILE_PATH)
+    return { tool, scope, path, absolutePath: path }
+  }
   const relative = scopeTargetConfig(tool, scope).relativePath
   const path = scope === 'project' ? relative : join(homedir(), relative)
   return { tool, scope, path, absolutePath: resolve(path) }
@@ -122,7 +183,7 @@ function bundledContentForTarget(
   return bundled.contentsByFile[file]
 }
 
-function allTargets(): SkillTarget[] {
+function allTargets(): ResolvedSkillTarget[] {
   return SKILL_TOOLS.flatMap((tool) =>
     TOOL_CONFIG[tool].scopes.map((scope) => skillTarget(tool, scope)),
   )
@@ -284,11 +345,13 @@ function filteredTargets(
   tools: SkillTool[],
   scope: SkillScope | undefined,
 ): SkillTarget[] {
-  return allTargets().filter(
-    (target) =>
-      (tools.length === 0 || tools.includes(target.tool)) &&
-      (scope === undefined || target.scope === scope),
-  )
+  return allTargets()
+    .filter(availableTarget)
+    .filter(
+      (target) =>
+        (tools.length === 0 || tools.includes(target.tool)) &&
+        (scope === undefined || target.scope === scope),
+    )
 }
 
 function detectionBase(scope: SkillScope): string {
@@ -299,6 +362,13 @@ async function isToolDetected(
   tool: SkillTool,
   scope: SkillScope,
 ): Promise<boolean> {
+  if (tool === 'claude' && scope === 'user') {
+    const root = claudeUserRoot()
+    return (
+      root !== undefined &&
+      Boolean((await stat(root).catch(() => null))?.isDirectory())
+    )
+  }
   const base = detectionBase(scope)
   for (const dir of TOOL_CONFIG[tool].detectDirs) {
     const info = await stat(join(base, dir)).catch(() => null)
@@ -311,7 +381,10 @@ async function autoDetectedTools(): Promise<SkillTool[]> {
   const autoOrder: readonly SkillTool[] = ['claude', 'codex', 'cursor']
   const detected: SkillTool[] = []
   for (const tool of autoOrder) {
-    if (await isToolDetected(tool, 'project')) {
+    if (
+      (await isToolDetected(tool, 'project')) ||
+      (tool === 'claude' && (await isToolDetected(tool, 'user')))
+    ) {
       detected.push(tool)
     }
   }
@@ -326,6 +399,7 @@ async function autoTargets(
   return tools
     .filter((tool) => TOOL_CONFIG[tool].scopes.includes(targetScope))
     .map((tool) => skillTarget(tool, targetScope))
+    .filter(availableTarget)
 }
 
 type PlannedAction = {
@@ -479,6 +553,8 @@ export async function runSkillsInstall(
   const planned: PlannedAction[] = []
   for (const tool of tools) {
     const target = skillTarget(tool, scope)
+    if (!availableTarget(target))
+      return writeFailure(command, target.error, mode, 1)
     const state = await readTarget(target)
     if ((state.kind === 'unmanaged' || state.kind === 'broken') && !force) {
       return writeFailure(
@@ -530,6 +606,14 @@ export async function ensureSkills(
     )
     return undefined
   }
+  const unavailable = unavailableSelection(
+    filters.tools,
+    filters.scope ?? 'project',
+  )
+  if (unavailable) {
+    writeFailure(command, unavailable, mode, 1)
+    return undefined
+  }
   const bundled = await bundledOrFailure(command, mode)
   if (!bundled) return undefined
 
@@ -562,9 +646,9 @@ export async function ensureSkills(
     const plannedPaths = new Set(
       await Promise.all(planned.map((action) => targetPathKey(action.target))),
     )
-    for (const target of allTargets().filter(
-      (candidate) => candidate.scope === 'user',
-    )) {
+    for (const target of allTargets()
+      .filter(availableTarget)
+      .filter((candidate) => candidate.scope === 'user')) {
       if (plannedPaths.has(await targetPathKey(target))) continue
       const state = await readTarget(target)
       if (state.kind !== 'managed' || state.version === bundled.version) {
@@ -587,9 +671,9 @@ export async function autoUpdateUserManagedSkills(): Promise<
   try {
     const bundled = await loadBundledSkills()
     const planned: PlannedAction[] = []
-    for (const target of allTargets().filter(
-      (candidate) => candidate.scope === 'user',
-    )) {
+    for (const target of allTargets()
+      .filter(availableTarget)
+      .filter((candidate) => candidate.scope === 'user')) {
       const state = await readTarget(target)
       if (state.kind !== 'managed' || state.version >= bundled.version) {
         continue
@@ -655,6 +739,10 @@ export async function runSkillsList(
   if (!bundled) return
   const targets = []
   for (const target of allTargets()) {
+    if (!availableTarget(target)) {
+      targets.push({ ...unavailableState(target), detected: false })
+      continue
+    }
     const state = await readTarget(target)
     targets.push({
       tool: target.tool,
@@ -676,6 +764,10 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
   const bundled = await loadBundledSkills()
   const targets = []
   for (const target of allTargets()) {
+    if (!availableTarget(target)) {
+      targets.push({ ...unavailableState(target), update_command: null })
+      continue
+    }
     const state = await readTarget(target)
     const updateAvailable =
       state.kind === 'managed' && state.version !== bundled.version
@@ -709,6 +801,8 @@ export async function runSkillsUpdate(
   const command = 'skills update'
   const filters = parseFilters(parsed)
   if (filters.error) return writeFailure(command, filters.error, mode, 1)
+  const unavailable = unavailableSelection(filters.tools, filters.scope)
+  if (unavailable) return writeFailure(command, unavailable, mode, 1)
   const force = parsed.options.force === true
   const bundled = await bundledOrFailure(command, mode)
   if (!bundled) return
@@ -748,6 +842,8 @@ export async function runSkillsRemove(
   const command = 'skills remove'
   const filters = parseFilters(parsed)
   if (filters.error) return writeFailure(command, filters.error, mode, 1)
+  const unavailable = unavailableSelection(filters.tools, filters.scope)
+  if (unavailable) return writeFailure(command, unavailable, mode, 1)
 
   const planned: PlannedAction[] = []
   for (const target of filteredTargets(filters.tools, filters.scope)) {

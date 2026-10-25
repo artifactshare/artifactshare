@@ -12,6 +12,23 @@ import {
 } from './cli-reference-content'
 
 describe('CLI reference content', () => {
+  test.each(['en', 'ja'] as const)(
+    'explains Claude user skill location and recovery in %s',
+    (locale) => {
+      const body = cliReferenceContent(locale).sections.introduction.body
+      expect(body).toContain('CLAUDE_CONFIG_DIR')
+      expect(body).toContain('~/.claude')
+      expect(body).toContain('skills list')
+      expect(body).toContain('doctor')
+      expect(body).toContain(
+        locale === 'en' ? 'unset CLAUDE_CONFIG_DIR' : '変数を解除',
+      )
+      expect(body).toContain(
+        locale === 'en' ? 'without tilde expansion' : '~ は展開しません',
+      )
+    },
+  )
+
   test('explains trusted download parents and per-artifact manifest failures in both locales', () => {
     const en = cliReferenceContent('en').sections.recovery.body.join('')
     const ja = cliReferenceContent('ja').sections.recovery.body.join('')

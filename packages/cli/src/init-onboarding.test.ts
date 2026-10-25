@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 import {
@@ -47,6 +48,7 @@ const runSkillsFromHome = (args: string[]) =>
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-init-work-'))
+  workDir = await realpath(workDir)
   configHome = await mkdtemp(join(tmpdir(), 'artifactshare-cli-init-config-'))
   homeDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-init-home-'))
 })
@@ -363,3 +365,33 @@ test('init fails with skill_update_conflict for an unmanaged cursor user skill d
     'hand-written user skill\n',
   )
 })
+
+for (const value of ['absolute', 'relative', '', ' \t ']) {
+  test(`init resolves Claude config ${JSON.stringify(value)}`, async () => {
+    const root =
+      value === 'absolute' ? join(homeDir, 'custom') : join(workDir, value)
+    if (value.trim()) await mkdir(root, { recursive: true })
+    // A project tool must not hide detection of the configured user root.
+    await mkdir(join(workDir, '.cursor'))
+    const result = expectSuccess(
+      runInit([], { CLAUDE_CONFIG_DIR: value === 'absolute' ? root : value }),
+    )
+    const targets = result.data.skills.targets
+    assert.deepEqual(
+      targets.map((t: any) => t.tool),
+      value.trim() ? ['claude', 'cursor'] : ['cursor'],
+    )
+    if (value.trim()) {
+      const path = join(root, 'skills', 'artifactshare', 'SKILL.md')
+      assert.equal(targets[0].path, path)
+      assert.equal(
+        await readFile(path, 'utf8'),
+        await readFile(
+          join(import.meta.dirname, '../skills/artifactshare/SKILL.md'),
+          'utf8',
+        ),
+      )
+    }
+    assert.equal(await pathExists(userClaudeSkillPath()), false)
+  })
+}

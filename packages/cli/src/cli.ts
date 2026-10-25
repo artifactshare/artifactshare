@@ -1677,7 +1677,8 @@ Common failures:
 
 const skillsEnsureDefinition = define({
   name: 'ensure',
-  description: 'Install or update the bundled Artifact Share skill.',
+  description:
+    'Install or update the bundled Artifact Share skill; Claude user scope follows CLAUDE_CONFIG_DIR.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -1693,9 +1694,14 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --too
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool claude --json
 
 Use --tool auto from an agent workspace. It detects .claude, .codex/.agents, or
-.cursor in the current directory and installs or updates the matching user-scope
-skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
+.cursor in the current directory, or the resolved Claude user root, and installs
+or updates the matching user-scope skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
 skills. Cursor project scope needs skills install --tool cursor --scope project.
+
+Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude.
+Relative paths resolve against cwd; tilde is literal. Blank values skip automatic
+writes. Set CLAUDE_CONFIG_DIR to a non-empty path or unset it. Explicit Claude
+user mutations fail with validation_failed; list and doctor report unavailable.
 
 Common failures:
   validation_failed       Pass --tool auto|codex|claude|cursor; --tool auto supports --scope user only (omit --scope or pass --scope user). Project scope needs skills install --tool <tool> --scope project

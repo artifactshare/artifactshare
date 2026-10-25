@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Respect `CLAUDE_CONFIG_DIR` for Claude Code user skills, including automatic detection and updates. Blank settings skip automatic writes and report recovery guidance in diagnostics.
+
 ## 0.19.1 - 2026-10-26
 
 - Reword the local preview's Japanese messages: the reopen button now reads 「下書きに戻す」, and pending-delivery notices name the agent that has yet to receive the comments.

@@ -9,6 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import {
@@ -53,6 +54,7 @@ const cursorUserSkillPath = () =>
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-auto-skill-work-'))
+  workDir = await realpath(workDir)
   homeDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-auto-skill-home-'))
   configHome = await mkdtemp(
     join(tmpdir(), 'artifactshare-cli-auto-skill-config-'),
@@ -484,3 +486,64 @@ test('skill auto-update human output reports updated and recommended targets', (
     ].join('\n'),
   )
 })
+
+for (const value of ['custom', '', ' \t ']) {
+  test(`ordinary command updates only available Claude config ${JSON.stringify(value)}`, async () => {
+    const content = await readFile(
+      join(import.meta.dirname, '../skills/artifactshare/SKILL.md'),
+      'utf8',
+    )
+    const old = content.replace(/version: \d+/, 'version: 0')
+    const custom = join(workDir, 'custom/skills/artifactshare/SKILL.md')
+    for (const path of [custom, claudeUserSkillPath(), codexUserSkillPath()]) {
+      await mkdir(join(path, '..'), { recursive: true })
+      await writeFile(path, old)
+    }
+    const result = expectSuccess(
+      run(
+        ['profiles', 'list', '--json'],
+        { ...env(), CLAUDE_CONFIG_DIR: value },
+        { cwd: workDir },
+      ),
+    )
+    assert.equal(await readFile(codexUserSkillPath(), 'utf8'), content)
+    assert.equal(await readFile(custom, 'utf8'), value.trim() ? content : old)
+    assert.equal(await readFile(claudeUserSkillPath(), 'utf8'), old)
+    const targets = result.data.skills.auto_update.targets
+    assert.equal(
+      targets.some((t: any) => t.tool === 'claude'),
+      Boolean(value.trim()),
+    )
+    if (value.trim())
+      assert.equal(targets.find((t: any) => t.tool === 'claude').path, custom)
+  })
+}
+
+for (const state of ['newer', 'unmanaged', 'broken']) {
+  test(`custom Claude root preserves ${state} files on ordinary commands`, async () => {
+    const bundled = await readFile(
+      join(import.meta.dirname, '../skills/artifactshare/SKILL.md'),
+      'utf8',
+    )
+    const content =
+      state === 'newer'
+        ? bundled.replace(/version: \d+/, 'version: 999999')
+        : state === 'broken'
+          ? bundled.replace(/version: \d+/, 'version: x')
+          : 'Custom user instructions\n'
+    const root = join(workDir, 'custom')
+    const path = join(root, 'skills/artifactshare/SKILL.md')
+    await mkdir(join(path, '..'), { recursive: true })
+    await writeFile(path, content)
+    const result = expectSuccess(
+      run(
+        ['profiles', 'list', '--json'],
+        { ...env(), CLAUDE_CONFIG_DIR: root },
+        { cwd: workDir },
+      ),
+    )
+    assert.equal(result.data.skills, undefined)
+    assert.equal(await readFile(path, 'utf8'), content)
+    assert.equal(await pathExists(claudeUserSkillPath()), false)
+  })
+}

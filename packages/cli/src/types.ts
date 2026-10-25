@@ -422,7 +422,10 @@ export type OpenData = {
 export type SkillsListTarget = {
   tool: string
   scope: string
-  path: string
+  path: string | null
+  available?: boolean
+  code?: string
+  hint?: string
   detected: boolean
   installed: boolean
   managed: boolean
@@ -498,7 +501,10 @@ export type DoctorConfigData = {
 export type DoctorSkillsTarget = {
   tool: string
   scope: string
-  path: string
+  path: string | null
+  available?: boolean
+  code?: string
+  hint?: string
   installed: boolean
   managed: boolean
   installed_version: number | null

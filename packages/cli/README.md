@@ -104,7 +104,7 @@ project's Slack channel must be reauthorized.
 | `changelog`                                                        | Show the installed version, this release's notes, and the public updates page                                                                                             |
 | `profiles list / use / import-token / delete`                      | Switch between local account profiles, import an issued token from stdin, and delete profile entries                                                                      |
 | `init`                                                             | Set up this directory: detect Claude Code, Codex, or Cursor and install the skill in user scope, then show next steps; or save defaults with `--profile` / `--project-id` |
-| `skills ensure / install / list / update / remove`                 | Install or update the bundled usage guide in your AI agent's skills                                                                                                       |
+| `skills ensure / install / list / update / remove`                 | Install or update the bundled usage guide in your AI agent's skills; Claude user scope follows CLAUDE_CONFIG_DIR (blank values are unavailable)                           |
 
 Public command paths covered by this reference:
 
@@ -214,7 +214,7 @@ For first-time setup in a project, start here:
 npm exec --yes --package=@artifactshare/cli -- artifactshare init --json
 ```
 
-`init` detects Claude Code, Codex, or Cursor in the working directory, installs or updates the bundled skill in user scope, and reports the next steps (sign in, then share). With no agent detected, it installs user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use `skills install --tool cursor --scope project`. Existing project-scope skills are not modified. Add `--dry-run` to preview without writing.
+`init` detects Claude Code, Codex, or Cursor in the working directory (and Claude Code at its resolved user root), installs or updates the bundled skill in user scope, and reports the next steps (sign in, then share). With no agent detected, it installs user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use `skills install --tool cursor --scope project`. Existing project-scope skills are not modified. Add `--dry-run` to preview without writing.
 
 When an agent receives an Artifact Share URL instead, start with `open`:
 
@@ -223,6 +223,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare open <artifact-id-o
 ```
 
 This installs or updates the local skill first, then reads single-file artifacts. Static sites and multi-file artifacts return a `download` next command.
+
+Claude Code user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude. Nonblank values resolve against the CLI working directory without tilde expansion; surrounding spaces are preserved. Empty or whitespace-only values disable Claude user-scope writes: automatic setup skips them, while explicit Claude user mutations fail with validation_failed. Set CLAUDE_CONFIG_DIR to a non-empty path or unset it to use ~/.claude. skills list and doctor report unavailable targets with path: null and the recovery hint. An existing resolved root also detects Claude Code for automatic setup. Old ~/.claude skills are left untouched; project scope, Codex and Cursor paths are unchanged. The skill file is `<root>/skills/artifactshare/SKILL.md`. The variable must reach the CLI process; settings confined to another launcher are not visible.
 
 To target a specific tool manually, use `skills install --tool <codex|claude|cursor> [--scope project|user]`; project scope is opt-in for team commits. `skills ensure --tool auto` is the same user-scope detection `init` and `open` use (omit `--scope` or pass `--scope user`; `--scope project` fails). Regular successful commands also update outdated managed user-scope Codex, Claude Code, and Cursor skills when they are already installed, but do not create a missing Cursor user-scope skill.
 
