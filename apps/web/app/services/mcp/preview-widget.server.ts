@@ -131,7 +131,7 @@ const WIDGET_HTML = `
     var locale = data.locale === 'ja' ? 'ja' : 'en';
     var labels = kindLabels[data.artifact_kind] || {
       en: 'Artifact',
-      ja: 'アーティファクト',
+      ja: 'ファイル',
     };
     titleEl.textContent = data.title || labels[locale];
     eyebrowEl.textContent = 'Artifact Share · ' + labels[locale];

@@ -173,7 +173,7 @@ const jaRoleByPath: Record<string, string> = {
   'comments list':
     '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。',
   'comments post':
-    'コメントや返信を投稿します。引用位置は、その版をビューアーで開いてから完全一致で確認します。',
+    'コメントや返信を投稿します。引用位置は投稿時には確認せず、その版をビューアーで開いたときに完全一致で確認します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
   'comments resolve': 'コメントスレッドを解決済みにします。',
   config: 'ローカル CLI 設定を確認、変更します。',
@@ -187,7 +187,7 @@ const jaRoleByPath: Record<string, string> = {
   init: 'agent を検出し、skill をインストールして初期設定を始めます。',
   login:
     '通常権限または1プロジェクトに制限した agent 権限で CLI を認証します。',
-  logout: '保存済みの認証情報を失効して削除します。',
+  logout: '保存済みの認証情報を失効させて削除します。',
   move: '成果物を project または home へ移動します。',
   preview:
     'ローカルファイルを共有ページと同じ見た目で表示し、コメントできます。',
@@ -218,7 +218,7 @@ const jaRoleByPath: Record<string, string> = {
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
   update:
-    '既存の共有 URL の背後に新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+    '既存の共有 URL のまま、新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
   whoami: 'active account と workspace を表示します。',
 }
 
@@ -308,7 +308,7 @@ const JA: CliReferenceContent = {
     },
     edit: {
       '--retain-versions':
-        'N または all(持ち主のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+        'N または all(所有者のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
     },
   },
   title: 'Artifact Share CLI リファレンス',
@@ -318,15 +318,15 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効します。publisher は API 専用です。publisher による版の追加は定期更新として扱い、一覧の順序やフィード、未読表示を変えません。履歴で定期更新の印を確認できます。API の updated_at は実際の更新時刻です。publisher の資格では、device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。publisher の資格では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格では、個別アセットの取得はできません。publisher の資格では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、対象となる古い版の削除は取り消せません。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格で追加した版だけを数えます。publisher の資格で追加した最新 N 件の版と現在の版を残し、人が追加した版はすべて残します。下書きは数えません。このルールは所有者が unrestricted 資格情報で設定するときも同じです。それ以外のファイルでは、これまでどおりすべての公開版を数えます。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格では、一覧、検索、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
+      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効させます。publisher は API 専用です。publisher による版の追加は定期更新として扱い、一覧の順序やフィード、未読表示を変えません。履歴で定期更新の印を確認できます。API の updated_at は実際の更新時刻です。publisher の資格情報では、device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。publisher の資格情報では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格情報では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格情報では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格情報では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格情報では、個別アセットの取得はできません。publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格情報では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、対象となる古い版の削除は取り消せません。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格で追加した版だけを数えます。publisher の資格で追加した最新 N 件の版と現在の版を残し、人が追加した版はすべて残します。下書きは数えません。このルールは所有者が unrestricted 資格情報で設定するときも同じです。それ以外のファイルでは、これまでどおりすべての公開版を数えます。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格情報では、一覧、検索、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
     },
     basics: {
       title: '基本操作',
-      body: '対象には成果物 ID、共有 URL、artifactshareusercontent.com のバージョン付き実行 URL（認証済みは a-、リンク閲覧は l-）を指定できます。旧配信 URL は ID の解決だけに使います。ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。REST API の POST /api/shareables/:id/versions?artifact_kind=static_site では、base_version=v1 と繰り返しの delete_path（例: delete_path=data/old.parquet）を指定できます。送信したファイルを差し替え、残りを継承します。基準は現在の公開バージョンに限り、古い場合は 409 version_conflict を返します。基準はエージェントの更新にも必要な期待バージョンを兼ね、expected_version を併記する場合は一致が必要です。削除には基準の指定が必要で、同じパスの送信と削除はできません。削除だけの更新でも index.html または index.md を残してください。バージョンのサイズはファイル一覧の合計、保存容量は重複を除いた実体の合計です。CLI update に継承用のオプションはありません。ブラウザーの共有ページは URL のフラグメント（#）を HTML・Markdown・静的サイトに渡し、フレーム内の変更を URL に反映します。「リンクをコピー」にも含まれるため、絞り込み状態や見出しを共有できます。静的サイトでは入口のページだけが共有 URL のフラグメントを更新し、サブページでは変更しません。CLI のローカルプレビューは対象外です。',
+      body: '対象には成果物 ID、共有 URL、artifactshareusercontent.com のバージョン付き実行 URL（認証済みは a-、リンク閲覧は l-）を指定できます。旧配信 URL は ID の解決だけに使います。ファイル、フォルダ、静的サイトは share、同じ URL の差し替えは update、読み取りは open または artifacts get、保存は download、レビューは comments、整理は projects、アカウントと設定は profiles と config、agent の準備は skills を使います。REST API の POST /api/shareables/:id/versions?artifact_kind=static_site では、base_version=v1 と繰り返しの delete_path（例: delete_path=data/old.parquet）を指定できます。送信したファイルを差し替え、それ以外のファイルは現在の版から引き継ぎます。基準は現在の公開バージョンに限り、古い場合は 409 version_conflict を返します。base_version は、エージェントの更新で必要な expected_version の代わりにもなります。expected_version も指定する場合は、base_version と同じ値にしてください。削除には基準の指定が必要で、同じパスの送信と削除はできません。削除だけの更新でも index.html または index.md を残してください。バージョンのサイズはファイル一覧の合計、保存容量は重複を除いた実体の合計です。CLI update に継承用のオプションはありません。ブラウザーの共有ページは URL のフラグメント（#）を HTML・Markdown・静的サイトに渡し、フレーム内の変更を URL に反映します。「リンクをコピー」にも含まれるため、絞り込み状態や見出しを共有できます。静的サイトでは最初に開くページだけが共有 URL のフラグメントを更新し、サブページでは変更しません。CLI のローカルプレビューは対象外です。',
     },
     commands: {
       title: 'コマンドリファレンス',
-      body: '以下の command surface は公開 CLI の help から生成されています。構文と受理する option も生成 snapshot から描画します。',
+      body: '以下のコマンド一覧は、公開 CLI の help から生成しています。構文と使える option も、生成した snapshot から表示しています。',
     },
     'json-exit': {
       title: 'JSON と終了コード',
@@ -334,7 +334,7 @@ const JA: CliReferenceContent = {
     },
     destinations: {
       title: 'project、home、audience、設定',
-      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus の管理者権限、閲覧権限、成果物への個別共有だけでは投稿できません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。edit は --visibility private|workspace|project|link を指定できます。project の共有範囲には、編集後の保存先がプロジェクトであることが必要です。必要なら同じコマンドに --project-id <id> を指定します。home での明示的な --visibility project（--home との併用を含む）は変更せずに拒否します。プロジェクトの成果物を home に移す場合、project を明示指定していなければ private になります。 project への投稿はその project の audience に届きます。投稿先を指定しない share は home に投稿します。home_audience は目的別に使い分けます。個人の安全な既定値には user、一緒に使う全員が合意した方針には repository、一回限りの指定には明示 --visibility を使い、config get home_audience --scope effective --json で実効値を確認します。正本の設定は home_audience で、private は自分だけ、workspace は社内全員です。repository 設定は .artifactshare/config.json、user 設定は user config directory に保存します。home の解決順は repository の home_audience、repository の default_artifact_visibility、user の home_audience、user の default_artifact_visibility、製品既定 workspace です。default_artifact_visibility は互換 alias の補足に限ります。default_project_visibility は projects create 用の独立した既定値です。--grant-email は project の個別共有先を追加するだけで、project の visibility を暗黙に変更しません。',
+      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus の管理者権限、閲覧権限、成果物への個別共有だけでは投稿できません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。edit は --visibility private|workspace|project|link を指定できます。project の共有範囲には、編集後の保存先がプロジェクトであることが必要です。必要なら同じコマンドに --project-id <id> を指定します。home での明示的な --visibility project（--home との併用を含む）は変更せずに拒否します。プロジェクトの成果物を home に移す場合、project を明示指定していなければ private になります。 project への投稿はその project の audience に届きます。投稿先を指定しない share は home に投稿します。home_audience は目的別に使い分けます。個人の安全な既定値には user、一緒に使う全員が合意した方針には repository、一回限りの指定には明示 --visibility を使い、config get home_audience --scope effective --json で実効値を確認します。正本の設定は home_audience で、private は自分だけ、workspace は社内全員です。repository 設定は .artifactshare/config.json、user 設定は user config directory に保存します。home の解決順は repository の home_audience、repository の default_artifact_visibility、user の home_audience、user の default_artifact_visibility、製品既定 workspace です。default_artifact_visibility は、互換性のために残している別名です。default_project_visibility は projects create 用の独立した既定値です。--grant-email は project の個別共有先を追加するだけで、project の visibility を暗黙に変更しません。',
     },
     recovery: {
       title: '失敗と復旧',
@@ -350,7 +350,7 @@ const JA: CliReferenceContent = {
       body: '接続方法は connect ガイド、agent への頼み方は AI から Artifact Share を使うガイド、変更情報は updates、導入の詳細は npm package ページを参照してください。',
     },
   },
-  commandsHeading: '公開 command 一覧',
+  commandsHeading: '公開コマンド一覧',
   commandUsageLabel: '構文',
   commandOptionsLabel: 'option',
   commandExampleLabel: '代表例',
@@ -360,7 +360,7 @@ const JA: CliReferenceContent = {
   })),
   representativeExamples: Object.values(CLI_REFERENCE_EXAMPLES),
   copyLabels: {
-    copy: 'command をコピー',
+    copy: 'コマンドをコピー',
     copied: 'コピーしました',
     failed: 'コピーに失敗しました',
   },

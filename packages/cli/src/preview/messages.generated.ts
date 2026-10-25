@@ -139,7 +139,7 @@ export const PREVIEW_MESSAGES = {
     'preview.annotateMode': 'コメントモード',
     'preview.panelTitle': 'コメント',
     'preview.emptyHint':
-      '気になる要素をクリックしてコメント。リンクを操作したいときは右下のトグルでコメントモードを OFF',
+      '気になる要素をクリックしてコメントできます。リンクを操作したいときは、右下のトグルでコメントモードをオフにしてください',
     'preview.requestFixesOne': '修正を依頼する（{n} 件）',
     'preview.requestFixesOther': '修正を依頼する（{n} 件）',
     'preview.discardDrafts': '下書きを破棄',
@@ -150,27 +150,27 @@ export const PREVIEW_MESSAGES = {
     'preview.stateResolved': '解決済み',
     'preview.stateDismissed': '見送り',
     'preview.delete': '削除',
-    'preview.reopen': '差し戻す',
+    'preview.reopen': '未解決に戻す',
     'preview.reopenNote':
-      '差し戻したコメントは、再度依頼するまでエージェントには届きません',
+      '未解決に戻したコメントは、再度依頼するまでエージェントには届きません',
     'preview.batchWorkingOne': 'エージェントが {n} 件を修正中',
     'preview.batchWorkingOther': 'エージェントが {n} 件を修正中',
     'preview.batchQueuedOne':
-      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
+      'エージェントへ通知済みです。エージェントが {n} 件を受け取るのを待っています。この状態が続く場合は preview next の実行を依頼してください',
     'preview.batchQueuedOther':
-      'エージェントへ通知済みです。{n} 件の取得を待っています。待機が続く場合は preview next の実行を依頼してください',
+      'エージェントへ通知済みです。エージェントが {n} 件を受け取るのを待っています。この状態が続く場合は preview next の実行を依頼してください',
     'preview.batchQueuedCodexOne':
-      'Codexへ通知済みです。{n} 件の取得待ちです。続く場合は codex resume でセッションを再開してください',
+      'Codexへ通知済みです。Codex が {n} 件を受け取るのを待っています。この状態が続く場合は codex resume でセッションを再開してください',
     'preview.batchQueuedCodexOther':
-      'Codexへ通知済みです。{n} 件の取得待ちです。続く場合は codex resume でセッションを再開してください',
+      'Codexへ通知済みです。Codex が {n} 件を受け取るのを待っています。この状態が続く場合は codex resume でセッションを再開してください',
     'preview.batchQueuedClaudeOne':
-      'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
+      'Claude Codeが依頼を確認しました。Claude Code が {n} 件を受け取るのを待っています',
     'preview.batchQueuedClaudeOther':
-      'Claude Codeが依頼を確認しました。{n} 件の取得を待っています',
+      'Claude Codeが依頼を確認しました。Claude Code が {n} 件を受け取るのを待っています',
     'preview.batchQueuedCursorOne':
-      '管理対象のCursorセッションへ通知済みです。{n} 件の取得を待っています',
+      '管理対象のCursorセッションへ通知済みです。Cursor が {n} 件を受け取るのを待っています',
     'preview.batchQueuedCursorOther':
-      '管理対象のCursorセッションへ通知済みです。{n} 件の取得を待っています',
+      '管理対象のCursorセッションへ通知済みです。Cursor が {n} 件を受け取るのを待っています',
     'preview.batchManualOne':
       '{n} 件を保存しました。エージェントに preview next の実行を依頼してください',
     'preview.batchManualOther':
@@ -202,9 +202,9 @@ export const PREVIEW_MESSAGES = {
     'preview.resolvedToastOne': '{n} 件を解決しました',
     'preview.resolvedToastOther': '{n} 件を解決しました',
     'preview.orphanNoticeOne':
-      'ページが大きく変わったため {n} 件のコメントが対象を見失いました',
+      'ページが大きく変わったため、{n} 件のコメントの対象箇所が見つからなくなりました',
     'preview.orphanNoticeOther':
-      'ページが大きく変わったため {n} 件のコメントが対象を見失いました',
+      'ページが大きく変わったため、{n} 件のコメントの対象箇所が見つからなくなりました',
     'preview.orphanDiscard': 'まとめて破棄',
     'preview.positionChecking': 'コメントの位置を確認しています…',
     'preview.positionNeedsCheck': '引用した文がこの版に見つかりません',
@@ -223,7 +223,7 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.destination': '宛先',
     'preview.shareDialog.visibility': '共有範囲',
     'preview.shareDialog.notCarried':
-      'ローカルのコメントは共有先に持ち込まれません。共有後は共有先で新しくコメントできます',
+      'ローカルのコメントは共有先には引き継がれません。共有後は共有先で新しくコメントできます',
     'preview.shareDialog.snapshotNote':
       '{time} 時点の内容です。それ以降の変更は含まれません',
     'preview.shareDialog.confirm': '共有する',
@@ -237,7 +237,7 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.finish': '完了',
     'preview.shareDialog.continue': 'プレビューを続ける',
     'preview.shareDialog.visibilityUnknown':
-      '設定から共有範囲を判定できなかったため、共有を停止しました。設定を直してからもう一度開いてください。',
+      '設定から共有範囲を判定できなかったため、共有できません。設定を直してから、このダイアログを開き直してください。',
     'preview.shareDialog.visibilityAdjusted':
       '選択した範囲ではなく {visibility} の共有範囲で共有されました。',
     'preview.shareDialog.confirmDestination':

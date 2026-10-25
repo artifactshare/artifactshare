@@ -331,11 +331,13 @@ test('publisher-specific download and read responses are explicitly scoped', () 
   )
   const ja = cliReferenceContent('ja').sections.introduction.body
   expect(ja).toContain(
-    'publisher の資格では、download は単一ファイルなら元データ',
+    'publisher の資格情報では、download は単一ファイルなら元データ',
   )
-  expect(ja).toContain('publisher の資格では、個別アセットの取得はできません。')
   expect(ja).toContain(
-    'publisher の資格では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します',
+    'publisher の資格情報では、個別アセットの取得はできません。',
+  )
+  expect(ja).toContain(
+    'publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します',
   )
   expect(ja).not.toContain('readback')
 })
@@ -347,7 +349,7 @@ test('retention option localization is scoped to the edit command', () => {
     surface.commands.find((command) => command.path === 'edit')?.option_help,
   ).toContain(help)
   expect(cliReferenceOptionHelp('edit', help, 'ja')).toBe(
-    '--retain-versions <retain-versions> N または all(持ち主のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+    '--retain-versions <retain-versions> N または all(所有者のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
   )
   expect(cliReferenceOptionHelp('edit', help, 'en')).toBe(help)
   expect(cliReferenceOptionHelp('share', help, 'ja')).toBe(help)

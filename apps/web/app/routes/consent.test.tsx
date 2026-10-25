@@ -96,7 +96,7 @@ describe('/consent', () => {
     )
 
     expect(jaMessages['oa.consent.sub']).toBe(
-      '接続すると、アプリがあなたとして、あなたの共有範囲内で Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理できます。',
+      '接続すると、アプリがあなたの権限で、あなたのワークスペース内の Artifact Share のファイルを閲覧、共有、更新、完全に削除し、プロジェクトやコメントを管理できます。',
     )
     expect(jaMessages['oa.scope.openid']).toBe('本人確認')
     expect(jaMessages['oa.scope.profile']).toBe('名前とプロフィール画像')

@@ -130,7 +130,7 @@ export const taskWalkthroughs = [
       phase('success', '同じ URL の版メニューで更新版とラベルを確認する', {
         kind: 'gotoCliArtifactAndClick',
         selector:
-          'button[aria-label^="Version status:"], button[aria-label^="版の表示:"]',
+          'button[aria-label^="Version status:"], button[aria-label^="版の状態:"]',
       }),
       phase('failure', '対象を指定せずに投稿し、別ファイルとして一覧に並ぶ', {
         kind: 'cliShareSeparately',

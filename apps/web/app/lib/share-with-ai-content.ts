@@ -192,7 +192,7 @@ const JA: ShareWithAiContent = {
   },
   tasksHeading: 'できること',
   tasksIntro:
-    'やりたいことを AI に伝えるだけで使えます。「as で共有して」で Artifact Share と通じます。',
+    'やりたいことを AI に伝えるだけで使えます。共有や更新、共有リンクを開く・読む依頼では、「Artifact Share」の代わりに「as」と書いても通じます。',
   detailLabel: '解説',
   askLabel: 'プロンプト',
   outputLabel: '出力例',
@@ -265,7 +265,7 @@ const JA: ShareWithAiContent = {
     mcp: 'MCP',
     cli: 'CLI',
   },
-  nextHeading: '次の行動',
+  nextHeading: '次のステップ',
   nextConnectHeading: '接続・セットアップ',
   nextConnectLinks: [
     { path: '/guides/cli', anchor: '', label: 'CLI リファレンス' },
@@ -294,7 +294,7 @@ const JA: ShareWithAiContent = {
     },
     {
       label: 'チャット接続',
-      body: 'チャットの MCP は小さな 1 ファイル向きです。フォルダや大きなサイトは CLI ルートを使ってください。',
+      body: 'チャットの MCP は小さな 1 ファイル向きです。フォルダや大きなサイトは CLI を使ってください。',
     },
   ],
   copyLabels: {

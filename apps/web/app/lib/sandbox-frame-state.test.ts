@@ -36,7 +36,7 @@ describe('sandbox frame transitions', () => {
         '再読み込み',
         '別のネットワークで開くと表示できることがあります。',
         '社内ネットワークで利用する場合',
-        'IT管理者へ、表示画面用のartifactshare.comと*.artifactshare.link、ファイルの内容を隔離して配信する*.artifactshareusercontent.comへのHTTPS通信の許可を依頼してください。',
+        'IT管理者に、次のドメインへのHTTPS通信を許可するよう依頼してください。表示画面用の artifactshare.com と *.artifactshare.link、ファイルの内容を隔離して配信する *.artifactshareusercontent.com。',
         '表示を一時停止しています',
         '読み込みを完了できなかったため、表示を一時停止しました。',
         'ファイルと共有リンクに問題はありません',

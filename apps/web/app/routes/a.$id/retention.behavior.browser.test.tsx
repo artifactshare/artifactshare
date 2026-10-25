@@ -685,7 +685,7 @@ test.each(['en', 'ja'] as const)(
       await waitForBrowserLayout()
       await page
         .getByRole('button', {
-          name: locale === 'en' ? 'Version status: v1' : '版の表示: v1',
+          name: locale === 'en' ? 'Version status: v1' : '版の状態: v1',
           exact: true,
         })
         .click()
