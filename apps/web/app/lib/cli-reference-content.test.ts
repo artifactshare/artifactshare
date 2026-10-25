@@ -582,9 +582,22 @@ test('uses consistent Japanese terms in CLI reference guidance', () => {
   expect(content.sections.commands.body).toBe(
     '以下のコマンド一覧は、公開 CLI の help から生成しています。構文と使えるオプションも、生成した snapshot から表示しています。',
   )
+  const jsonExit = content.sections['json-exit'].body
+  expect(jsonExit).toContain('1 はコマンドの失敗')
+  expect(jsonExit).toContain('承認後に同じコマンドを再実行します')
+  expect(jsonExit).not.toContain('1 は command の失敗')
+  expect(jsonExit).not.toContain('承認後に同じ command を再実行します')
+  expect(jsonExit).toContain('ok: true、command、data')
+  expect(jsonExit).toContain('ok: false、command、error')
+  expect(content.og.description).toBe(
+    '公開 CLI の全コマンド、JSON 出力、設定、投稿先、復旧方法をまとめたリファレンスです。',
+  )
   const recovery = content.sections.recovery.body.join('')
+  expect(recovery).not.toContain(
+    'login か有効な profile token の import を行い、同じコマンドを再実行します',
+  )
   expect(recovery).toContain(
-    'auth_required または token_invalid なら login か有効な profile token の import を行い、同じコマンドを再実行します。',
+    'auth_required または token_invalid なら login を実行し直すか、有効なトークンをプロファイルに取り込みます。そのあと、同じコマンドを再実行します。',
   )
   expect(recovery).toContain(
     'self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。',
