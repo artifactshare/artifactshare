@@ -173,7 +173,7 @@ const jaRoleByPath: Record<string, string> = {
   'comments list':
     '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。',
   'comments post':
-    'コメントや返信を投稿します。引用位置は投稿時には確認せず、その版をビューアーで開いたときに完全一致で確認します。',
+    'コメントや返信を投稿します。引用位置は投稿時には確認せず、その版を共有ページで開いたときに完全一致で確認します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',
   'comments resolve': 'コメントスレッドを解決済みにします。',
   config: 'ローカル CLI 設定を確認、変更します。',
@@ -218,7 +218,7 @@ const jaRoleByPath: Record<string, string> = {
   'skills remove': 'tool からインストール済み skill を削除します。',
   'skills update': 'インストール済み skill を更新します。',
   update:
-    '既存の共有 URL のまま、新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
+    '既存の共有リンクのまま、新しい版をアップロードします。login --preset agent でログインしたプロファイルでは --expected-version の指定も必要です（「失敗と復旧」を参照）。任意の --label で変更内容のメモを付けられます。NFC 正規化と前後の Unicode 空白の除去後、1〜80 コードポイントが必要です。内部の空白と大文字小文字は保持します。文字・結合文字・数字・句読点・記号・空白・結合絵文字を許可します。省略時はラベルなしの版を作成し、作成後のラベルは変更できません。成功時の JSON は data.version.label に保存されたラベルを返し、省略時は null を返します。data.version.number は Viewer の版番号（v{number}）と一致します。古いサーバーではこのフィールドが省略される場合があります。artifacts get --include versions で履歴を取得できます。--label の値が空、制御文字を含む、不正、不可視文字のみ、または指定が重複している場合は、認証前にローカルで validation_failed エラーになります。',
   whoami: 'active account と workspace を表示します。',
 }
 
@@ -308,7 +308,7 @@ const JA: CliReferenceContent = {
     },
     edit: {
       '--retain-versions':
-        'N または all(所有者のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+        'N または all(所有者のみ)。最新の N 版を残します。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格情報で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
     },
   },
   title: 'Artifact Share CLI リファレンス',
@@ -318,7 +318,7 @@ const JA: CliReferenceContent = {
   sections: {
     introduction: {
       title: '導入と認証',
-      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効させます。publisher は API 専用です。publisher による版の追加は定期更新として扱い、一覧の順序やフィード、未読表示を変えません。履歴で定期更新の印を確認できます。API の updated_at は実際の更新時刻です。publisher の資格情報では、device_name を指定し、ブラウザで新規作成か既存クライアントの継続を選択します。publisher の資格情報では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格情報では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格情報では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格情報では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格情報では、個別アセットの取得はできません。publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格情報では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、対象となる古い版の削除は取り消せません。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格で追加した版だけを数えます。publisher の資格で追加した最新 N 件の版と現在の版を残し、人が追加した版はすべて残します。下書きは数えません。このルールは所有者が unrestricted 資格情報で設定するときも同じです。それ以外のファイルでは、これまでどおりすべての公開版を数えます。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格情報では、一覧、検索、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
+      body: `Node.js 22.19 以降が必要です。${CLI_REFERENCE_EXAMPLES.init} から始め、ブラウザでログインします。CI では、代わりに profiles import-token でトークンを取り込めます。login --preset agent を使うと、AIエージェントの権限を選択した1プロジェクトだけに制限できます。新しいプロファイルの既定は unrestricted で、既存のプロファイルは前回の preset を引き継ぎます。資格情報は --profile で分け、ブラウザでログインしたCLIセッションは logout、APIトークンは「設定」→「トークン」から失効させます。publisher は API 専用です。publisher による版の追加は定期更新として扱い、一覧の順序やフィード、未読表示を変えません。履歴で定期更新の印を確認できます。API の updated_at は実際の更新時刻です。publisher の資格情報では、device_name を指定し、ブラウザで新規作成か既存のクライアントを使い続けるかを選びます。publisher の資格情報では、同名での新規作成はできません。別の名前でログインをやり直してください。publisher の資格情報では、ホームにあなただけが見られるファイルや静的サイトを作成し、作成・割り当て済みのものを管理できます。publisher の資格情報では、単一ファイルの更新は expected_version、静的サイトの差分更新は base_version と delete_path を使います。publisher の資格情報では、download は単一ファイルなら元データ、静的サイトならパスとハッシュのマニフェストを返します。publisher の資格情報では、個別アセットの取得はできません。publisher の資格情報では、内容を取得すると共有範囲も返し、静的サイトではメタデータだけを返します。publisher の資格情報では、削除と POST/PATCH による retain_versions（正整数または null）の変更ができ、対象となる古い版の削除は取り消せません。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、以前のクライアントによる版も含め、publisher の資格情報で追加した版だけを数えます。publisher の資格情報で追加した最新 N 件の版と現在の版を残し、人が追加した版はすべて残します。下書きは数えません。このルールは所有者が unrestricted 資格情報で設定するときも同じです。それ以外のファイルでは、これまでどおりすべての公開版を数えます。所有者は unrestricted 資格情報かブラウザセッションで POST /api/cli/artifacts/:id/adopt に publisher_client_id を送り、既存の成果物を割り当てられます。ID は whoami/doctor で確認します。割り当ては以前のクライアントのアクセスを置き換え、毎回監査ログに記録されます。publisher の資格情報では、一覧、検索、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。CLI での publisher ログイン・再開や投稿・ダウンロードには対応していません。doctor はクライアントの権限を表示します。`,
     },
     basics: {
       title: '基本操作',

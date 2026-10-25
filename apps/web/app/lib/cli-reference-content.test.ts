@@ -349,7 +349,7 @@ test('retention option localization is scoped to the edit command', () => {
     surface.commands.find((command) => command.path === 'edit')?.option_help,
   ).toContain(help)
   expect(cliReferenceOptionHelp('edit', help, 'ja')).toBe(
-    '--retain-versions <retain-versions> N または all(所有者のみ)。最新の N 版を残します。publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
+    '--retain-versions <retain-versions> N または all(所有者のみ)。最新の N 版を残します。publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイルでは、publisher の資格情報で追加した版だけを数え、人が追加した版はすべて残します。対象となる古い版の削除は取り消せません。all で制限を外します。',
   )
   expect(cliReferenceOptionHelp('edit', help, 'en')).toBe(help)
   expect(cliReferenceOptionHelp('share', help, 'ja')).toBe(help)
@@ -377,7 +377,7 @@ test.each(['en', 'ja'] as const)(
             'Unmanaged artifacts continue to count all published versions.',
           ]
         : [
-            'publisher の資格で作成したファイル、または publisher のクライアントに割り当てられたファイル',
+            'publisher の資格情報で作成したファイル、または publisher のクライアントに割り当てられたファイル',
             '以前のクライアントによる版も含め',
             '人が追加した版はすべて残します。',
             'このルールは所有者が unrestricted 資格情報で設定するときも同じです。',

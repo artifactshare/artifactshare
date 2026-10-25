@@ -52,6 +52,22 @@ describe('t', () => {
     )
   })
 
+  test('uses consistent Japanese research, preview, and sharing copy', () => {
+    expect(t('ja', 'lp.uc.research.title')).toBe(
+      '調査レポートに読み手の視点を加える',
+    )
+    expect(t('ja', 'preview.reopen')).toBe('下書きに戻す')
+    expect(t('ja', 'preview.reopenNote')).toBe(
+      '下書きに戻したコメントは、再度依頼するまでエージェントには届きません',
+    )
+    expect(t('ja', 'device.publisher.nameHelp')).toBe(
+      '別のクライアントとして登録するには、別の名前でログインをやり直してください。作成済み・割り当て済みのファイルや静的サイトを引き続き管理するには、既存のクライアントを使い続けてください。',
+    )
+    expect(t('ja', 'visibilityDialog.grants.header.title.project')).toBe(
+      'プロジェクトの関係者以外の人への個別共有',
+    )
+  })
+
   test('falls back to English for missing JA key', () => {
     // Both catalogs share the same key surface (TKey union), so a true
     // "missing in JA, present in EN" scenario requires casting. We instead

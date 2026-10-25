@@ -150,9 +150,9 @@ export const PREVIEW_MESSAGES = {
     'preview.stateResolved': '解決済み',
     'preview.stateDismissed': '見送り',
     'preview.delete': '削除',
-    'preview.reopen': '未解決に戻す',
+    'preview.reopen': '下書きに戻す',
     'preview.reopenNote':
-      '未解決に戻したコメントは、再度依頼するまでエージェントには届きません',
+      '下書きに戻したコメントは、再度依頼するまでエージェントには届きません',
     'preview.batchWorkingOne': 'エージェントが {n} 件を修正中',
     'preview.batchWorkingOther': 'エージェントが {n} 件を修正中',
     'preview.batchQueuedOne':
