@@ -180,6 +180,9 @@ test('agent environment strips secrets and inherited config while CLI keeps temp
       HOME: '/real',
       CODEX_HOME: '/real/codex',
       CLAUDE_CONFIG_DIR: '/real/claude',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      ZDOTDIR: '/real/zsh',
       XDG_CONFIG_HOME: '/real/config',
       ARTIFACTSHARE_TOKEN: 'poison',
       ARTIFACTSHARE_BASE_URL: 'https://example.com',
@@ -195,6 +198,9 @@ test('agent environment strips secrets and inherited config while CLI keeps temp
   assert.equal(env.cli.ARTIFACTSHARE_TOKEN, 'synthetic-secret')
   assert.equal(env.cli.HOME, env.agent.HOME)
   assert.equal(env.agent.CODEX_HOME, '/tmp/evaluation/codex')
+  assert.equal(env.agent.CLAUDECODE, undefined)
+  assert.equal(env.agent.CLAUDE_CODE_ENTRYPOINT, undefined)
+  assert.equal(env.agent.ZDOTDIR, env.agent.HOME)
   assert.equal(env.agent.CLAUDE_CONFIG_DIR, undefined)
   assert.equal(env.cli.CLAUDE_CONFIG_DIR, undefined)
 })
@@ -233,6 +239,29 @@ test('JSON scoring requires an option before the argument terminator', () => {
       expected,
     )
   }
+})
+
+test('JSON scoring requires explicit JSON even for help and version probes', () => {
+  const check = (argv, next = ['share', 'report.html', '--json']) =>
+    score({
+      record: { complete: true, finalMessage: '' },
+      actions: [{ argv }, { argv: next }],
+      scenario: 'share',
+    }).json.status
+  for (const flag of ['--help', '-h', '--version', '-v']) {
+    assert.equal(check(['share', flag]), 'fail')
+    assert.equal(check(['share', flag, '--json']), 'pass')
+    assert.equal(check(['share', flag, '--', '--json']), 'fail')
+    assert.equal(check([flag]), 'fail')
+    assert.equal(check([flag, '--json']), 'pass')
+    assert.equal(check(['share', '--', flag]), 'fail')
+    assert.equal(check(['share', flag], ['share', 'report.html']), 'fail')
+  }
+  assert.equal(check(['help']), 'fail')
+  assert.equal(check(['help', '--json']), 'pass')
+  assert.equal(check(['share', 'help']), 'fail')
+  assert.equal(check(['--', 'help']), 'fail')
+  assert.equal(check(['help', 'report.html']), 'fail')
 })
 
 test('scoring requires persisted content, same identity and a changed version', () => {
@@ -992,6 +1021,7 @@ test('fake share/update executions retain evidence and clean only their owned fi
 test('inventory ignores other skills, distinguishes path mappings and retains changes', async (t) => {
   const { root, version } = await fixture(t)
   await mkdir(join(root, 'home'))
+  await mkdir(join(root, 'codex'))
   await mkdir(join(root, 'work/other'), { recursive: true })
   await writeFile(join(root, 'work/other/SKILL.md'), 'Unrelated account skill')
   let snapshot = await inventory(root, version.files)
@@ -1135,7 +1165,12 @@ test('Claude keeps its default Keychain identity while HOME isolates project and
     keychains,
   )
   assert.deepEqual(await readdir(run.workdir), ['.claude'])
-  assert.deepEqual(await readdir(join(run.root, 'home')), ['Library'])
+  assert.deepEqual((await readdir(join(run.root, 'home'))).sort(), [
+    '.bash_profile',
+    '.profile',
+    '.zprofile',
+    'Library',
+  ])
   await run.cleanup()
   assert.equal(await readFile(join(keychains, 'sentinel'), 'utf8'), 'unchanged')
 })
@@ -1143,6 +1178,7 @@ test('Claude keeps its default Keychain identity while HOME isolates project and
 test('inventory tolerates unrelated rename churn and installer staging while continuing the scan', async (t) => {
   const { root, version } = await fixture(t)
   await mkdir(join(root, 'home'))
+  await mkdir(join(root, 'codex'))
   const skillRoot = join(root, 'work/.agents/skills/artifactshare')
   await mkdir(skillRoot, { recursive: true })
   await writeFile(join(skillRoot, 'SKILL.md'), skill)
@@ -1179,6 +1215,7 @@ test('inventory tolerates unrelated rename churn and installer staging while con
 test('partial selected-skill writes stay pending until reconciliation, without hiding lasting or foreign changes', async (t) => {
   const { root, version } = await fixture(t)
   await mkdir(join(root, 'home'))
+  await mkdir(join(root, 'codex'))
   const skillRoot = join(root, 'work/.agents/skills/artifactshare')
   await mkdir(skillRoot, { recursive: true })
   const path = join(skillRoot, 'SKILL.md')
@@ -1249,4 +1286,62 @@ test('action log salvage retains valid records around malformed lines and a trun
     [2, 4],
   )
   assert.ok(parsed.raw.endsWith('{"argv":'))
+})
+
+test('login profiles restore guarded commands after system PATH reordering', async (t) => {
+  const { root, version } = await fixture(t)
+  const run = await createRun({
+    agent: 'codex',
+    version,
+    selectedOverlay: { target: join(root, 'unused'), files: version.files },
+    baseUrl: 'http://localhost',
+    token: 'synthetic-token',
+    linkCredentials: false,
+  })
+  t.after(run.cleanup)
+  for (const profile of ['.zprofile', '.bash_profile', '.profile']) {
+    const source = await readFile(join(run.env.agent.HOME, profile), 'utf8')
+    const result = await exec('/bin/sh', ['-c', source + 'command -v npm'], {
+      env: { ...run.env.agent, PATH: '/usr/bin:/bin' },
+    })
+    assert.equal(result.stdout.trim(), run.env.agent.HOME + '/../bin/npm')
+  }
+  if (process.platform === 'darwin') {
+    const result = await exec('/bin/zsh', ['-lc', 'command -v npm'], {
+      env: run.env.agent,
+    })
+    assert.equal(result.stdout.trim(), run.env.agent.HOME + '/../bin/npm')
+  }
+})
+
+test('Claude error result cannot establish successful completion', () => {
+  const record = parseStream(
+    'claude',
+    JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'Synthetic failure',
+    }),
+  )
+  assert.equal(record.complete, false)
+  assert.equal(record.errors.length, 1)
+  assert.equal(record.finalMessage, 'Synthetic failure')
+})
+
+test('CODEX_HOME skill changes contaminate the run and retain user location evidence', async (t) => {
+  const { root, version } = await fixture(t)
+  for (const dir of ['home', 'work', 'codex']) await mkdir(join(root, dir))
+  const history = { files: [], errors: [], complete: true, contaminated: false }
+  observe(history, await inventory(root, version.files))
+  const target = join(root, 'codex/skills/artifactshare')
+  await mkdir(target, { recursive: true })
+  await writeFile(join(target, 'SKILL.md'), 'Different selected version')
+  observe(history, await inventory(root, version.files))
+  assert.equal(history.complete, true)
+  assert.equal(history.contaminated, true)
+  assert.equal(history.files[0].path, 'codex/skills/artifactshare/SKILL.md')
+  assert.equal(history.files[0].scope, 'user')
+  assert.equal(history.files[0].location, 'codex')
+  assert.equal(history.files[0].change, 'created')
 })

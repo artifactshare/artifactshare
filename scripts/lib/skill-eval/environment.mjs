@@ -92,13 +92,18 @@ export function environments({
     env: inherited,
   }).env
   for (const name of Object.keys(base))
-    if (/^(?:CLAUDE_|CODEX_|CURSOR_|AGENTS_|ANTHROPIC_|OPENAI_)/u.test(name))
+    if (
+      /^(?:CLAUDECODE$|CLAUDE_|CODEX_|CURSOR_|AGENTS_|ANTHROPIC_|OPENAI_)/u.test(
+        name,
+      )
+    )
       delete base[name]
   const home = join(root, 'home')
   const agent = {
     ...base,
     HOME: home,
     USERPROFILE: home,
+    ZDOTDIR: home,
     CODEX_HOME: join(root, 'codex'),
     // HOME alone selects Claude's default config and existing Keychain identity.
     CURSOR_CONFIG_DIR: join(home, '.cursor'),
@@ -138,6 +143,12 @@ export async function createRun({
     for (const dir of ['home', 'work', 'codex', 'bin', 'cli-config'])
       await mkdir(join(root, dir), { mode: 0o700 })
     const env = environments({ root, baseUrl, token, inherited })
+    // Login startup may reorder PATH (macOS path_helper); restore our shims.
+    for (const profile of ['.zprofile', '.bash_profile', '.profile'])
+      await privateFile(
+        join(root, 'home', profile),
+        'export PATH="$HOME/../bin:$PATH"\n',
+      )
     if (linkCredentials) {
       const source =
         agent === 'codex'
@@ -275,12 +286,15 @@ export async function inventory(
           fingerprint: fingerprint(content),
           expected,
           pending,
-          scope: name.startsWith('home/')
-            ? 'user'
-            : name.startsWith('work/')
-              ? 'project'
-              : 'unknown',
-          location: name.match(/\.(claude|agents|cursor)\//u)?.[1] ?? 'unknown',
+          scope:
+            name.startsWith('home/') || name.startsWith('codex/')
+              ? 'user'
+              : name.startsWith('work/')
+                ? 'project'
+                : 'unknown',
+          location: name.startsWith('codex/')
+            ? 'codex'
+            : (name.match(/\.(claude|agents|cursor)\//u)?.[1] ?? 'unknown'),
         })
       } catch (error) {
         // Rename/unlink churn is local to this entry, not a failed directory.
@@ -289,7 +303,8 @@ export async function inventory(
       }
     }
   }
-  for (const folder of ['home', 'work']) await walk(join(root, folder), true)
+  for (const folder of ['home', 'work', 'codex'])
+    await walk(join(root, folder), true)
   return {
     files,
     errors,

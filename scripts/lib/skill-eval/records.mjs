@@ -101,7 +101,7 @@ export function parseStream(agent, text, cwd = '.') {
             .join(','),
         )
       if (event.type === 'result') {
-        record.complete = event.subtype === 'success'
+        record.complete = event.subtype === 'success' && !event.is_error
         record.finalMessage =
           typeof event.result === 'string' ? event.result : record.finalMessage
         if (!record.complete)
@@ -254,9 +254,10 @@ export function score({
   checks.json = actions.length
     ? decide(
         actions.every((action) => {
-          const index = action.argv?.indexOf('--json') ?? -1
-          const terminator = action.argv?.indexOf('--') ?? -1
-          return index >= 0 && (terminator < 0 || index < terminator)
+          const argv = action.argv ?? []
+          const terminator = argv.indexOf('--')
+          const options = terminator < 0 ? argv : argv.slice(0, terminator)
+          return options.includes('--json')
         }),
         actions.map((action) => action.argv),
       )
