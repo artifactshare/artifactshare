@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.19.2 - 2026-10-26
 
 - Respect `CLAUDE_CONFIG_DIR` for Claude Code user skills, including automatic detection and updates. Blank settings skip automatic writes and report recovery guidance in diagnostics.
 
