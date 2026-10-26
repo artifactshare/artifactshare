@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","model":"grok-4.7-high","permissionMode":"bypassPermissions"}
+{"type":"thinking","subtype":"delta","text":"Inspect"}
+{"type":"tool_call","subtype":"started","call_id":"shell","tool_call":{"shellToolCall":{"args":{"command":"cat .cursor/skills/artifactshare/references/share.md"}}}}
+{"type":"tool_call","subtype":"completed","call_id":"shell","tool_call":{"shellToolCall":{"args":{"command":"cat .cursor/skills/artifactshare/references/share.md"},"result":{"exitCode":0,"stdout":"Share instructions"}}}}
+{"type":"tool_call","subtype":"completed","call_id":"unknown","tool_call":{"futureToolCall":{}}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Shared"}]}}
+{"type":"result","is_error":false,"result":"http://localhost:5173/a/sample","usage":{}}

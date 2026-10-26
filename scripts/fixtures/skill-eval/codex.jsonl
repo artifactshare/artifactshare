@@ -1,0 +1,7 @@
+Reading additional input from stdin...
+{"type":"thread.started","thread_id":"sample"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"shell","type":"command_execution","command":"cat .agents/skills/artifactshare/references/share.md","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"shell","type":"command_execution","command":"cat .agents/skills/artifactshare/references/share.md","aggregated_output":"Share instructions","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"answer","type":"agent_message","text":"http://localhost:5173/a/sample"}}
+{"type":"turn.completed","usage":{}}
