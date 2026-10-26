@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -470,3 +477,42 @@ test('doctor reports publisher client scope without substituting unrestricted', 
     },
   )
 })
+
+for (const value of ['custom', '', ' \t ']) {
+  test(`doctor reports Claude config ${JSON.stringify(value)}`, async () => {
+    const home = await mkdtemp(join(tmpdir(), 'artifactshare-doctor-claude-'))
+    try {
+      const env = {
+        HOME: home,
+        CLAUDE_CONFIG_DIR: value,
+        ARTIFACTSHARE_TOKEN: '',
+      }
+      const result = expectSuccess(
+        run(['doctor', '--json'], env, { cwd: home }),
+      )
+      const target = result.data.skills.targets.find(
+        (t: any) => t.tool === 'claude' && t.scope === 'user',
+      )
+      assert.equal(
+        target.path,
+        value
+          ? value.trim()
+            ? join(await realpath(home), value, 'skills/artifactshare/SKILL.md')
+            : null
+          : null,
+      )
+      assert.equal(target.update_command, null)
+      assert.equal(result.data.skills.update_available, false)
+      if (!value.trim()) {
+        assert.equal(target.available, false)
+        assert.equal(target.code, 'validation_failed')
+        assert.match(target.hint, /CLAUDE_CONFIG_DIR.*non-empty.*unset/)
+        assert.equal(target.installed, false)
+        assert.equal(target.managed, false)
+        assert.equal(target.installed_version, null)
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+}

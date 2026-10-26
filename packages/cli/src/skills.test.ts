@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
@@ -45,6 +52,7 @@ const userCursorSkillPath = () =>
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-skills-work-'))
+  workDir = await realpath(workDir)
   homeDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-skills-home-'))
 })
 
@@ -637,3 +645,258 @@ test('skills without a subcommand fails with guidance', async () => {
     code: 'validation_failed',
   })
 })
+
+for (const value of [
+  undefined,
+  'absolute',
+  'relative',
+  '~/.claude',
+  ' spaced ',
+]) {
+  test(`Claude user target resolves ${JSON.stringify(value)} across actions and status`, async () => {
+    const root =
+      value === undefined
+        ? join(homeDir, '.claude')
+        : value === 'absolute'
+          ? join(homeDir, 'custom-claude')
+          : join(workDir, value)
+    const env = {
+      ...isolation(),
+      ...(value === undefined
+        ? {}
+        : { CLAUDE_CONFIG_DIR: value === 'absolute' ? root : value }),
+    }
+    const invoke = (args: string[]) =>
+      run(['skills', ...args, '--json'], env, { cwd: workDir })
+    const args = ['--tool', 'claude', '--scope', 'user']
+    const path = join(root, 'skills', 'artifactshare', 'SKILL.md')
+    const content = await bundled('SKILL.md')
+    const dry = expectSuccess(invoke(['install', ...args, '--dry-run']))
+    assert.equal(dry.data.targets[0].path, path)
+    assert.equal(await pathExists(path), false)
+    expectSuccess(invoke(['install', ...args]))
+    assert.equal(await readFile(path, 'utf8'), content)
+    if (value !== undefined)
+      assert.equal(await pathExists(userClaudeSkillPath()), false)
+    const listed = expectSuccess(invoke(['list'])).data.targets.find(
+      (t: any) => t.tool === 'claude' && t.scope === 'user',
+    )
+    assert.equal(listed.path, path)
+    assert.equal(listed.detected, true)
+    assert.equal(listed.installed, true)
+    const diagnostic = expectSuccess(
+      run(
+        ['doctor', '--json'],
+        { ...env, ARTIFACTSHARE_TOKEN: '' },
+        { cwd: workDir },
+      ),
+    ).data.skills.targets.find(
+      (t: any) => t.tool === 'claude' && t.scope === 'user',
+    )
+    assert.equal(diagnostic.path, path)
+    assert.equal(diagnostic.installed, true)
+    assert.equal(diagnostic.installed_version, listed.installed_version)
+
+    for (const action of ['update', 'ensure']) {
+      await writeFile(path, content.replace(/version: \d+/, 'version: 0'))
+      const result = expectSuccess(invoke([action, ...args]))
+      assert.equal(result.data.targets[0].path, path)
+      assert.equal(result.data.targets[0].action, 'updated')
+      assert.equal(await readFile(path, 'utf8'), content)
+    }
+    expectSuccess(invoke(['remove', ...args, '--dry-run']))
+    assert.equal(await readFile(path, 'utf8'), content)
+    const removed = expectSuccess(invoke(['remove', ...args]))
+    assert.equal(removed.data.targets[0].path, path)
+    assert.equal(await pathExists(join(root, 'skills')), false)
+    assert.equal(await pathExists(root), true)
+  })
+}
+
+for (const value of ['', ' \t ']) {
+  test(`blank Claude root ${JSON.stringify(value)} is diagnostic only`, async () => {
+    const env = { ...isolation(), CLAUDE_CONFIG_DIR: value }
+    const invoke = (args: string[]) =>
+      run(['skills', ...args, '--json'], env, { cwd: workDir })
+    for (const action of ['install', 'ensure', 'update', 'remove']) {
+      const failure = expectFailure(
+        invoke([action, '--tool', 'codex,claude', '--scope', 'user']),
+        { code: 'validation_failed' },
+      )
+      assert.match(failure.error.hint, /CLAUDE_CONFIG_DIR.*non-empty.*unset/)
+      assert.equal(await pathExists(userCodexSkillPath()), false)
+    }
+    const automatic = expectSuccess(invoke(['ensure', '--tool', 'auto']))
+    assert.deepEqual(
+      automatic.data.targets.map((t: any) => t.tool),
+      ['codex', 'cursor'],
+    )
+    const target = expectSuccess(invoke(['list'])).data.targets.find(
+      (t: any) => t.tool === 'claude' && t.scope === 'user',
+    )
+    assert.deepEqual(target, {
+      tool: 'claude',
+      scope: 'user',
+      path: null,
+      available: false,
+      code: 'validation_failed',
+      hint: 'Set CLAUDE_CONFIG_DIR to a non-empty path or unset it to use ~/.claude.',
+      installed: false,
+      managed: false,
+      installed_version: null,
+      update_available: false,
+      detected: false,
+    })
+    for (const action of ['update', 'remove']) {
+      for (const scopeArgs of [[], ['--scope', 'user']]) {
+        const result = expectSuccess(invoke([action, ...scopeArgs]))
+        const diagnostic = result.data.targets.find(
+          (t: any) => t.tool === 'claude' && t.scope === 'user',
+        )
+        assert.deepEqual(diagnostic, {
+          tool: 'claude',
+          scope: 'user',
+          path: null,
+          action: 'skipped',
+          code: target.code,
+          hint: target.hint,
+        })
+        assert.ok(result.data.targets.some((t: any) => t.tool === 'codex'))
+        assert.ok(result.data.targets.some((t: any) => t.tool === 'cursor'))
+        if (scopeArgs.length > 0) {
+          assert.ok(result.data.targets.every((t: any) => t.scope === 'user'))
+        }
+      }
+    }
+    expectSuccess(invoke(['install', '--tool', 'claude', '--scope', 'project']))
+    assert.equal(
+      await readFile(claudeSkillPath(), 'utf8'),
+      await bundled('SKILL.md'),
+    )
+    assert.equal(await pathExists(userClaudeSkillPath()), false)
+    assert.equal(await pathExists(join(workDir, 'skills')), false)
+  })
+}
+
+test('custom Claude root leaves legacy files and other tool paths unchanged', async () => {
+  expectSuccess(runSkills(['install', '--tool', 'claude', '--scope', 'user']))
+  const legacy = (await bundled('SKILL.md')).replace(
+    /version: \d+/,
+    'version: 0',
+  )
+  await writeFile(userClaudeSkillPath(), legacy)
+  const root = join(homeDir, 'custom')
+  const env = {
+    ...isolation(),
+    CLAUDE_CONFIG_DIR: root,
+    CODEX_HOME: root,
+    CURSOR_CONFIG_DIR: root,
+  }
+  for (const scope of ['user', 'project']) {
+    expectSuccess(
+      run(
+        [
+          'skills',
+          'install',
+          '--tool',
+          'codex,claude,cursor',
+          '--scope',
+          scope,
+          '--json',
+        ],
+        env,
+        { cwd: workDir },
+      ),
+    )
+  }
+  for (const path of [
+    userCodexSkillPath(),
+    userCursorSkillPath(),
+    codexSkillPath(),
+    claudeSkillPath(),
+  ]) {
+    assert.equal(await readFile(path, 'utf8'), await bundled('SKILL.md'))
+  }
+  assert.equal(
+    await readFile(cursorRulePath(), 'utf8'),
+    await bundled('artifactshare.mdc'),
+  )
+  expectSuccess(
+    run(
+      ['skills', 'remove', '--tool', 'claude', '--scope', 'user', '--json'],
+      env,
+      { cwd: workDir },
+    ),
+  )
+  assert.equal(await readFile(userClaudeSkillPath(), 'utf8'), legacy)
+})
+
+test('existing custom Claude root preserves all-tool fallback in an empty project', async () => {
+  const root = join(homeDir, 'custom-claude')
+  await mkdir(root)
+  const result = expectSuccess(
+    run(
+      ['skills', 'ensure', '--tool', 'auto', '--json'],
+      {
+        ...isolation(),
+        CLAUDE_CONFIG_DIR: root,
+      },
+      { cwd: workDir },
+    ),
+  )
+  const paths = [
+    userCodexSkillPath(),
+    join(root, 'skills', 'artifactshare', 'SKILL.md'),
+    userCursorSkillPath(),
+  ]
+  assert.deepEqual(
+    result.data.targets.map((t: any) => t.path),
+    paths,
+  )
+  for (const path of paths) {
+    assert.equal(await readFile(path, 'utf8'), await bundled('SKILL.md'))
+  }
+  assert.equal(await pathExists(userClaudeSkillPath()), false)
+})
+
+for (const value of ['', ' \t ']) {
+  for (const action of ['update', 'remove']) {
+    test(`Claude ${action} without scope processes project with blank root ${JSON.stringify(value)}`, async () => {
+      const env = { ...isolation(), CLAUDE_CONFIG_DIR: value }
+      const invoke = (args: string[]) =>
+        run(['skills', ...args, '--json'], env, { cwd: workDir })
+      expectSuccess(
+        invoke(['install', '--tool', 'claude', '--scope', 'project']),
+      )
+      const content = await bundled('SKILL.md')
+      await writeFile(
+        claudeSkillPath(),
+        content.replace(/version: \d+/, 'version: 0'),
+      )
+      const diagnostic = expectSuccess(invoke(['list'])).data.targets.find(
+        (t: any) => t.tool === 'claude' && t.scope === 'user',
+      )
+      const result = expectSuccess(invoke([action, '--tool', 'claude']))
+      assert.equal(result.data.targets.length, 2)
+      assert.equal(
+        result.data.targets[0].action,
+        action === 'update' ? 'updated' : 'removed',
+      )
+      assert.deepEqual(result.data.targets[1], {
+        tool: 'claude',
+        scope: 'user',
+        path: null,
+        action: 'skipped',
+        code: diagnostic.code,
+        hint: diagnostic.hint,
+      })
+      if (action === 'update') {
+        assert.equal(await readFile(claudeSkillPath(), 'utf8'), content)
+      } else {
+        assert.equal(await pathExists(claudeSkillPath()), false)
+      }
+      assert.equal(await pathExists(userClaudeSkillPath()), false)
+      assert.equal(await pathExists(join(workDir, 'skills')), false)
+    })
+  }
+}

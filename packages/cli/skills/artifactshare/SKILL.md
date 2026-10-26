@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 45
+version: 46
 managed: true
 -->
 
@@ -382,10 +382,13 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
 ```
 
 - `open`, flag-less `init`, and `skills ensure --tool auto` detect Claude Code,
-  Codex, or Cursor in the working directory and install or update this skill in
-  user scope (`~/.claude/skills/`, `~/.agents/skills/`, or
+  Codex, or Cursor in the working directory (also Claude at its resolved user
+  root when CLAUDE_CONFIG_DIR is nonblank) and install or update this skill in user scope
+  (`$CLAUDE_CONFIG_DIR/skills/` or `~/.claude/skills/` when unset, `~/.agents/skills/`, or
   `~/.cursor/skills/artifactshare/SKILL.md`). With no agent detected,
   user-scope Codex, Claude Code, and Cursor skills are prepared.
+  Claude Code user-scope skills go to `$CLAUDE_CONFIG_DIR/skills` when set, otherwise `~/.claude/skills`. A blank value skips automatic writes; `doctor` explains why. Mutations explicitly selecting `--tool claude --scope user` fail with `validation_failed`. With `--tool claude` and no `--scope`, `skills update` and `skills remove` process the project target and report the user target as skipped.
+
 - Cursor project scope is not auto-installed. Install the Cursor rule explicitly
   with `skills install --tool cursor --scope project`.
 - Use `skills install --tool cursor --scope user` to install or manage the

@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
@@ -31,6 +38,7 @@ const runSkills = (args: string[]) =>
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-open-work-'))
+  workDir = await realpath(workDir)
   homeDir = await mkdtemp(join(tmpdir(), 'artifactshare-cli-open-home-'))
 })
 
@@ -458,3 +466,110 @@ test('open fails with auth_required instead of starting login', () => {
 
   expectFailure(result, { command: 'open', code: 'auth_required' })
 })
+
+for (const value of ['custom', '', ' \t ']) {
+  test(`open retains read result with Claude config ${JSON.stringify(value)}`, async () => {
+    if (value.trim()) await mkdir(join(workDir, value))
+    await withServer(
+      (_request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            id: 'abc123def4',
+            share_url: 'http://127.0.0.1/a/abc123def4',
+            version_id: 'ver123',
+            format: 'markdown',
+            content: '# Report',
+            size_bytes: 8,
+            truncated: false,
+            next_offset: null,
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = expectSuccess(
+          await runAsync(
+            ['open', 'abc123def4', '--base-url', baseUrl, '--json'],
+            {
+              ...isolation(),
+              CLAUDE_CONFIG_DIR: value,
+              ARTIFACTSHARE_TOKEN: 'test-token',
+            },
+            { cwd: workDir },
+          ),
+        )
+        assert.equal(result.data.open.artifact.content, '# Report')
+        const claude = result.data.skills.targets.find(
+          (t: any) => t.tool === 'claude',
+        )
+        if (value.trim()) {
+          const path = join(workDir, value, 'skills/artifactshare/SKILL.md')
+          assert.equal(claude.path, path)
+          assert.equal(
+            await readFile(path, 'utf8'),
+            await readFile(
+              join(import.meta.dirname, '../skills/artifactshare/SKILL.md'),
+              'utf8',
+            ),
+          )
+        } else {
+          assert.equal(claude, undefined)
+          assert.deepEqual(
+            result.data.skills.targets.map((t: any) => t.tool),
+            ['codex', 'cursor'],
+          )
+        }
+        assert.equal(await pathExists(userClaudeSkillPath()), false)
+      },
+    )
+  })
+}
+
+for (const unmanaged of [false, true]) {
+  test(`open ignores home Claude detection when config is unset (unmanaged: ${unmanaged})`, async () => {
+    await mkdir(join(workDir, '.codex'))
+    await mkdir(join(homeDir, '.claude'))
+    const original = '# Hand-written skill\n'
+    if (unmanaged) {
+      await mkdir(join(homeDir, '.claude', 'skills', 'artifactshare'), {
+        recursive: true,
+      })
+      await writeFile(userClaudeSkillPath(), original)
+    }
+    const payload = await withServer(
+      (_request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            id: 'abc123def4',
+            share_url: 'http://127.0.0.1/a/abc123def4',
+            version_id: 'ver123',
+            format: 'markdown',
+            content: '# Report',
+            size_bytes: 8,
+            truncated: false,
+            next_offset: null,
+          }),
+        )
+      },
+      async (baseUrl) =>
+        expectSuccess(
+          await runAsync(
+            ['open', 'abc123def4', '--base-url', baseUrl, '--json'],
+            { ...isolation(), ARTIFACTSHARE_TOKEN: 'test-token' },
+            { cwd: workDir },
+          ),
+        ),
+    )
+    assert.equal(payload.data.open.artifact.content, '# Report')
+    assert.deepEqual(
+      payload.data.skills.targets.map((target: any) => target.tool),
+      ['codex'],
+    )
+    if (unmanaged) {
+      assert.equal(await readFile(userClaudeSkillPath(), 'utf8'), original)
+    } else {
+      assert.equal(await pathExists(join(homeDir, '.claude', 'skills')), false)
+    }
+  })
+}

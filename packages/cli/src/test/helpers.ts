@@ -63,6 +63,19 @@ type JsonPayload = {
   error?: any
 }
 
+function subprocessEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  delete env.CLAUDE_CONFIG_DIR
+  return {
+    ...env,
+    HOME: defaultHome,
+    ARTIFACTSHARE_CONFIG_HOME: defaultConfigHome,
+    ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    CI: '',
+    ...overrides,
+  }
+}
+
 export function run(
   args: string[],
   env: NodeJS.ProcessEnv = {},
@@ -71,14 +84,7 @@ export function run(
   recordCliSubprocessLaunch()
   return spawnSync(process.execPath, [bin, ...args], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      HOME: defaultHome,
-      ARTIFACTSHARE_CONFIG_HOME: defaultConfigHome,
-      ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
-      CI: '',
-      ...env,
-    },
+    env: subprocessEnv(env),
     cwd: options.cwd ?? testCwd,
     input: options.input,
     timeout: 10_000,
@@ -93,14 +99,7 @@ export function runAsync(
   return new Promise((resolve, reject) => {
     recordCliSubprocessLaunch()
     const child = spawn(process.execPath, [bin, ...args], {
-      env: {
-        ...process.env,
-        HOME: defaultHome,
-        ARTIFACTSHARE_CONFIG_HOME: defaultConfigHome,
-        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
-        CI: '',
-        ...env,
-      },
+      env: subprocessEnv(env),
       cwd: options.cwd ?? testCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     })

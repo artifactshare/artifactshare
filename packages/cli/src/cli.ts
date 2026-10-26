@@ -727,6 +727,11 @@ auto-installed; use skills install --tool cursor --scope project. Existing
 project-scope skills are not modified. For static sites or multi-file artifacts,
 the JSON includes a download next_command.
 
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+
 Common failures:
   auth_required           Set ARTIFACTSHARE_TOKEN before open
   skill_update_conflict   Inspect the file or run skills install --tool <tool> --force
@@ -1636,6 +1641,12 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --to
 Writes a managed SKILL.md (codex, claude) or Cursor rule (cursor).
 Files without the Artifact Share managed marker are never overwritten without --force.
 
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+Explicit Claude user installs reject blank values with validation_failed.
+
 Common failures:
   validation_failed       Pass --tool codex|claude|cursor; cursor supports --scope project only
   skill_update_conflict   An unmanaged file exists at the target path; inspect it or pass --force`,
@@ -1677,7 +1688,8 @@ Common failures:
 
 const skillsEnsureDefinition = define({
   name: 'ensure',
-  description: 'Install or update the bundled Artifact Share skill.',
+  description:
+    'Install or update the bundled Artifact Share skill; Claude user scope follows CLAUDE_CONFIG_DIR.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -1693,9 +1705,17 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --too
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool claude --json
 
 Use --tool auto from an agent workspace. It detects .claude, .codex/.agents, or
-.cursor in the current directory and installs or updates the matching user-scope
-skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
+.cursor in the current directory, or the Claude user root when CLAUDE_CONFIG_DIR
+is nonblank, and installs
+or updates the matching user-scope skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
 skills. Cursor project scope needs skills install --tool cursor --scope project.
+
+Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude.
+Relative paths resolve against cwd; tilde is literal. Blank values skip automatic
+writes. Set CLAUDE_CONFIG_DIR to a non-empty path or unset it. Selecting both --tool claude
+and --scope user makes mutations fail with validation_failed. Omit --scope from
+skills update/remove --tool claude to process project scope and get a skipped
+user entry. List and doctor show the unavailable user target.
 
 Common failures:
   validation_failed       Pass --tool auto|codex|claude|cursor; --tool auto supports --scope user only (omit --scope or pass --scope user). Project scope needs skills install --tool <tool> --scope project
@@ -1763,6 +1783,12 @@ in, then share). With no agent detected, it prepares user-scope Codex, Claude Co
 and Cursor skills. Cursor project scope is not auto-installed; use skills install
 --tool cursor --scope project. Existing project-scope skills are not modified.
 data.mode is "onboarding".
+
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+
 With --profile or --project-id, init saves working-directory defaults to
 .artifactshare/config.local.json instead (data.mode is "config"); secrets are never written there.
 Config saves preserve unknown keys and refuse linked or changed paths.
