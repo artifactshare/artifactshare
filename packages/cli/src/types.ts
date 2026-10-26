@@ -395,14 +395,9 @@ export type SkillsActionData = {
         tool: string
         scope: string
         path: null
-        available: false
+        action: 'skipped'
         code: string
         hint?: string
-        installed: boolean
-        managed: boolean
-        installed_version: null
-        update_available: boolean
-        detected: boolean
       }
   )[]
 }

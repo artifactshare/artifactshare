@@ -748,10 +748,25 @@ for (const value of ['', ' \t ']) {
       detected: false,
     })
     for (const action of ['update', 'remove']) {
-      const diagnostic = expectSuccess(invoke([action])).data.targets.find(
-        (t: any) => t.tool === 'claude' && t.scope === 'user',
-      )
-      assert.deepEqual(diagnostic, target)
+      for (const scopeArgs of [[], ['--scope', 'user']]) {
+        const result = expectSuccess(invoke([action, ...scopeArgs]))
+        const diagnostic = result.data.targets.find(
+          (t: any) => t.tool === 'claude' && t.scope === 'user',
+        )
+        assert.deepEqual(diagnostic, {
+          tool: 'claude',
+          scope: 'user',
+          path: null,
+          action: 'skipped',
+          code: target.code,
+          hint: target.hint,
+        })
+        assert.ok(result.data.targets.some((t: any) => t.tool === 'codex'))
+        assert.ok(result.data.targets.some((t: any) => t.tool === 'cursor'))
+        if (scopeArgs.length > 0) {
+          assert.ok(result.data.targets.every((t: any) => t.scope === 'user'))
+        }
+      }
     }
     expectSuccess(invoke(['install', '--tool', 'claude', '--scope', 'project']))
     assert.equal(
@@ -867,7 +882,14 @@ for (const value of ['', ' \t ']) {
         result.data.targets[0].action,
         action === 'update' ? 'updated' : 'removed',
       )
-      assert.deepEqual(result.data.targets[1], diagnostic)
+      assert.deepEqual(result.data.targets[1], {
+        tool: 'claude',
+        scope: 'user',
+        path: null,
+        action: 'skipped',
+        code: diagnostic.code,
+        hint: diagnostic.hint,
+      })
       if (action === 'update') {
         assert.equal(await readFile(claudeSkillPath(), 'utf8'), content)
       } else {

@@ -133,6 +133,15 @@ function unavailableState(target: UnavailableSkillTarget) {
   }
 }
 
+function unavailableActionTargets(tools: SkillTool[], scope?: SkillScope) {
+  return allTargets().filter(
+    (target): target is UnavailableSkillTarget =>
+      !availableTarget(target) &&
+      (tools.length === 0 || tools.includes(target.tool)) &&
+      scope !== 'project',
+  )
+}
+
 function unavailableSelection(
   tools: SkillTool[],
   scope: SkillScope | undefined,
@@ -512,8 +521,12 @@ async function runActions(
   if (data) {
     data.targets.push(
       ...unavailableTargets.map((target) => ({
-        ...unavailableState(target),
-        detected: false,
+        tool: target.tool,
+        scope: target.scope,
+        path: null,
+        action: 'skipped' as const,
+        code: target.error.code,
+        hint: target.error.hint,
       })),
     )
     writeSuccess(command, data, mode)
@@ -849,12 +862,7 @@ export async function runSkillsUpdate(
     planned,
     parsed.options.dryRun === true,
     mode,
-    allTargets().filter(
-      (target): target is UnavailableSkillTarget =>
-        !availableTarget(target) &&
-        (filters.tools.length === 0 || filters.tools.includes(target.tool)) &&
-        filters.scope === undefined,
-    ),
+    unavailableActionTargets(filters.tools, filters.scope),
   )
 }
 
@@ -884,11 +892,6 @@ export async function runSkillsRemove(
     planned,
     parsed.options.dryRun === true,
     mode,
-    allTargets().filter(
-      (target): target is UnavailableSkillTarget =>
-        !availableTarget(target) &&
-        (filters.tools.length === 0 || filters.tools.includes(target.tool)) &&
-        filters.scope === undefined,
-    ),
+    unavailableActionTargets(filters.tools, filters.scope),
   )
 }
