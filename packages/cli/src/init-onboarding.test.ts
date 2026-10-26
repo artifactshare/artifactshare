@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 import {
@@ -393,5 +399,29 @@ for (const value of ['absolute', 'relative', '', ' \t ']) {
       )
     }
     assert.equal(await pathExists(userClaudeSkillPath()), false)
+  })
+}
+
+for (const unmanaged of [false, true]) {
+  test(`init ignores home Claude detection when config is unset (unmanaged: ${unmanaged})`, async () => {
+    await mkdir(join(workDir, '.codex'))
+    await mkdir(join(homeDir, '.claude'))
+    const original = '# Hand-written skill\n'
+    if (unmanaged) {
+      await mkdir(join(homeDir, '.claude', 'skills', 'artifactshare'), {
+        recursive: true,
+      })
+      await writeFile(userClaudeSkillPath(), original)
+    }
+    const payload = expectSuccess(runInit([]), 'init')
+    assert.deepEqual(
+      payload.data.skills.targets.map((target: any) => target.tool),
+      ['codex'],
+    )
+    if (unmanaged) {
+      assert.equal(await readFile(userClaudeSkillPath(), 'utf8'), original)
+    } else {
+      assert.equal(await pathExists(join(homeDir, '.claude', 'skills')), false)
+    }
   })
 }

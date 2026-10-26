@@ -727,6 +727,11 @@ auto-installed; use skills install --tool cursor --scope project. Existing
 project-scope skills are not modified. For static sites or multi-file artifacts,
 the JSON includes a download next_command.
 
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+
 Common failures:
   auth_required           Set ARTIFACTSHARE_TOKEN before open
   skill_update_conflict   Inspect the file or run skills install --tool <tool> --force
@@ -1636,6 +1641,12 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --to
 Writes a managed SKILL.md (codex, claude) or Cursor rule (cursor).
 Files without the Artifact Share managed marker are never overwritten without --force.
 
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+Explicit Claude user installs reject blank values with validation_failed.
+
 Common failures:
   validation_failed       Pass --tool codex|claude|cursor; cursor supports --scope project only
   skill_update_conflict   An unmanaged file exists at the target path; inspect it or pass --force`,
@@ -1694,7 +1705,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --too
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool claude --json
 
 Use --tool auto from an agent workspace. It detects .claude, .codex/.agents, or
-.cursor in the current directory, or the resolved Claude user root, and installs
+.cursor in the current directory, or the Claude user root when CLAUDE_CONFIG_DIR
+is nonblank, and installs
 or updates the matching user-scope skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
 skills. Cursor project scope needs skills install --tool cursor --scope project.
 
@@ -1769,6 +1781,12 @@ in, then share). With no agent detected, it prepares user-scope Codex, Claude Co
 and Cursor skills. Cursor project scope is not auto-installed; use skills install
 --tool cursor --scope project. Existing project-scope skills are not modified.
 data.mode is "onboarding".
+
+Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
+~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
+A nonblank CLAUDE_CONFIG_DIR also enables detection at that root; blank values
+skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
+
 With --profile or --project-id, init saves working-directory defaults to
 .artifactshare/config.local.json instead (data.mode is "config"); secrets are never written there.
 Config saves preserve unknown keys and refuse linked or changed paths.

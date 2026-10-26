@@ -5,11 +5,11 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import {

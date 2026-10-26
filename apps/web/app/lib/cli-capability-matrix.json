@@ -1265,7 +1265,7 @@
       "cli_commands": ["init"],
       "literal_allowances": [
         {
-          "text": "Without flags, init detects Claude Code, Codex, or Cursor in the working directory (and Claude Code at its resolved user root), installs or updates the bundled skill in user scope, and shows the next steps (sign in, then share). With no agent detected, it prepares user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use skills install --tool cursor --scope project. Existing project-scope skills are not modified. Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude; relative values resolve against cwd without tilde expansion. Blank values skip automatic writes; set a non-empty path or unset the variable. skills list and doctor report unavailable targets.",
+          "text": "Without flags, init detects Claude Code, Codex, or Cursor in the working directory (and Claude Code at its resolved user root when CLAUDE_CONFIG_DIR is nonblank), installs or updates the bundled skill in user scope, and shows the next steps (sign in, then share). With no agent detected, it prepares user-scope Codex, Claude Code, and Cursor skills. Cursor project scope is not auto-installed; use skills install --tool cursor --scope project. Existing project-scope skills are not modified. Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude; relative values resolve against cwd without tilde expansion. Blank values skip automatic writes; set a non-empty path or unset the variable. skills list and doctor report unavailable targets.",
           "reason": "CLI help と README の双方で、init が検出する agent と導入動作を自己完結して案内する必要がある"
         }
       ],

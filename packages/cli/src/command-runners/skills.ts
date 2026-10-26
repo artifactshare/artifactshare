@@ -383,7 +383,9 @@ async function autoDetectedTools(): Promise<SkillTool[]> {
   for (const tool of autoOrder) {
     if (
       (await isToolDetected(tool, 'project')) ||
-      (tool === 'claude' && (await isToolDetected(tool, 'user')))
+      (tool === 'claude' &&
+        Boolean(process.env.CLAUDE_CONFIG_DIR?.trim()) &&
+        (await isToolDetected(tool, 'user')))
     ) {
       detected.push(tool)
     }
