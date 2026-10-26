@@ -387,7 +387,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
   (`$CLAUDE_CONFIG_DIR/skills/` or `~/.claude/skills/` when unset, `~/.agents/skills/`, or
   `~/.cursor/skills/artifactshare/SKILL.md`). With no agent detected,
   user-scope Codex, Claude Code, and Cursor skills are prepared.
-  Claude Code user-scope skills go to `$CLAUDE_CONFIG_DIR/skills` when set, otherwise `~/.claude/skills`. A blank value skips automatic writes; `doctor` explains why.
+  Claude Code user-scope skills go to `$CLAUDE_CONFIG_DIR/skills` when set, otherwise `~/.claude/skills`. A blank value skips automatic writes; `doctor` explains why. Mutations explicitly selecting `--tool claude --scope user` fail with `validation_failed`. With `--tool claude` and no `--scope`, `skills update` and `skills remove` process the project target and report the user target as skipped.
 
 - Cursor project scope is not auto-installed. Install the Cursor rule explicitly
   with `skills install --tool cursor --scope project`.

@@ -108,10 +108,16 @@ type ResolvedSkillTarget = SkillTarget | UnavailableSkillTarget
 const CLAUDE_CONFIG_HINT =
   'Set CLAUDE_CONFIG_DIR to a non-empty path or unset it to use ~/.claude.'
 
-function claudeUserRoot(): string | undefined {
+function claudeUserRoot():
+  | { state: 'unset' | 'set'; path: string }
+  | { state: 'blank'; path: undefined } {
   const value = process.env.CLAUDE_CONFIG_DIR
-  if (value === undefined) return join(homedir(), '.claude')
-  return value.trim() ? resolve(value) : undefined
+  if (value === undefined) {
+    return { state: 'unset', path: join(homedir(), '.claude') }
+  }
+  return value.trim()
+    ? { state: 'set', path: resolve(value) }
+    : { state: 'blank', path: undefined }
 }
 
 function availableTarget(target: ResolvedSkillTarget): target is SkillTarget {
@@ -165,7 +171,7 @@ type BundledSkills = {
 function skillTarget(tool: SkillTool, scope: SkillScope): ResolvedSkillTarget {
   if (tool === 'claude' && scope === 'user') {
     const root = claudeUserRoot()
-    if (root === undefined) {
+    if (root.state === 'blank') {
       return {
         tool,
         scope,
@@ -176,7 +182,7 @@ function skillTarget(tool: SkillTool, scope: SkillScope): ResolvedSkillTarget {
         ),
       }
     }
-    const path = join(root, SKILL_FILE_PATH)
+    const path = join(root.path, SKILL_FILE_PATH)
     return { tool, scope, path, absolutePath: path }
   }
   const relative = scopeTargetConfig(tool, scope).relativePath
@@ -374,8 +380,8 @@ async function isToolDetected(
   if (tool === 'claude' && scope === 'user') {
     const root = claudeUserRoot()
     return (
-      root !== undefined &&
-      Boolean((await stat(root).catch(() => null))?.isDirectory())
+      root.state !== 'blank' &&
+      Boolean((await stat(root.path).catch(() => null))?.isDirectory())
     )
   }
   const base = detectionBase(scope)
@@ -386,32 +392,38 @@ async function isToolDetected(
   return false
 }
 
-async function autoDetectedTools(): Promise<SkillTool[]> {
+async function autoDetectedTools(): Promise<{
+  tools: SkillTool[]
+  fallback: boolean
+}> {
   const autoOrder: readonly SkillTool[] = ['claude', 'codex', 'cursor']
   const detected: SkillTool[] = []
   for (const tool of autoOrder) {
     if (await isToolDetected(tool, 'project')) detected.push(tool)
   }
-  if (detected.length === 0) return ['codex', 'claude', 'cursor']
+  if (detected.length === 0) {
+    return { tools: ['codex', 'claude', 'cursor'], fallback: true }
+  }
   if (
     !detected.includes('claude') &&
-    process.env.CLAUDE_CONFIG_DIR !== undefined &&
+    claudeUserRoot().state === 'set' &&
     (await isToolDetected('claude', 'user'))
   ) {
     detected.unshift('claude')
   }
-  return detected
+  return { tools: detected, fallback: false }
 }
 
 async function autoTargets(
   scope: SkillScope | undefined,
-): Promise<SkillTarget[]> {
+): Promise<{ targets: SkillTarget[]; fallback: boolean }> {
   const targetScope = scope ?? 'user'
-  const tools = await autoDetectedTools()
-  return tools
+  const { tools, fallback } = await autoDetectedTools()
+  const targets = tools
     .filter((tool) => TOOL_CONFIG[tool].scopes.includes(targetScope))
     .map((tool) => skillTarget(tool, targetScope))
     .filter(availableTarget)
+  return { targets, fallback }
 }
 
 type PlannedAction = {
@@ -642,9 +654,10 @@ export async function ensureSkills(
   const bundled = await bundledOrFailure(command, mode)
   if (!bundled) return undefined
 
-  const targets = filters.auto
-    ? await autoTargets(filters.scope)
-    : filteredTargets(filters.tools, filters.scope ?? 'project')
+  const automatic = filters.auto ? await autoTargets(filters.scope) : undefined
+  const targets =
+    automatic?.targets ??
+    filteredTargets(filters.tools, filters.scope ?? 'project')
   const planned: PlannedAction[] = []
   for (const target of targets) {
     const state = await readTarget(target)

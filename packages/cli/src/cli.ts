@@ -1712,8 +1712,10 @@ skills. Cursor project scope needs skills install --tool cursor --scope project.
 
 Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude.
 Relative paths resolve against cwd; tilde is literal. Blank values skip automatic
-writes. Set CLAUDE_CONFIG_DIR to a non-empty path or unset it. Explicit Claude
-user mutations fail with validation_failed; list and doctor report unavailable.
+writes. Set CLAUDE_CONFIG_DIR to a non-empty path or unset it. Selecting both --tool claude
+and --scope user makes mutations fail with validation_failed. Omit --scope from
+skills update/remove --tool claude to process project scope and get a skipped
+user entry. List and doctor show the unavailable user target.
 
 Common failures:
   validation_failed       Pass --tool auto|codex|claude|cursor; --tool auto supports --scope user only (omit --scope or pass --scope user). Project scope needs skills install --tool <tool> --scope project
