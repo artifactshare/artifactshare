@@ -82,7 +82,8 @@
     "visual:compose": "docker compose -f compose.playwright.yml run --rm visual",
     "visual:compose:update": "docker compose -f compose.playwright.yml run --rm visual-update",
     "visual:fault-injection": "node scripts/verify-visual-fault-injection.mjs",
-    "task:scope": "node scripts/task-scope.mjs"
+    "task:scope": "node scripts/task-scope.mjs",
+    "skill-eval": "node scripts/skill-eval.mjs"
   },
   "devDependencies": {
     "@tanstack/markdown": "0.0.14",

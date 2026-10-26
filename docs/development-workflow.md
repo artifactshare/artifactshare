@@ -253,3 +253,120 @@ engines are not a passing result. The local `.localhost` harness cannot establis
 cross-site cookie behavior. See [the content-origin decision](decisions/link-share-domain.md)
 for authorization, routes, and the supported cookie-policy matrix, including the
 in-frame message when a browser blocks partitioned cookies. No local validation command authorizes production writes.
+
+## Local CLI skill evaluation
+
+`pnpm skill-eval -- --dry-run` plans a comparison without requiring a CLI
+build, running dev app, agent executable, authentication, or credential links.
+It validates only arguments, selected skill trees and the output destination.
+The current harness implements the reduced scope: Claude Code
+(`claude-opus-5-5`, `claude-sonnet-5-5`) and Codex (`gpt-6.1-sol`,
+`gpt-6-astra`), with `share` and `update`. Cursor and `comments` are deferred
+and rejected. All three stream formats have synthetic parser fixtures; that
+parser coverage does not imply Cursor execution support.
+
+```sh
+pnpm skill-eval -- --dry-run --combination codex:gpt-6.1-sol --scenario share --runs 1
+pnpm --filter @artifactshare/cli build
+# In a separate terminal, start the local application:
+pnpm dev
+pnpm skill-eval -- --combination codex:gpt-6.1-sol --scenario share --runs 1
+pnpm skill-eval -- --combination claude:claude-sonnet-5-5 --scenario update \
+  --skill-version /tmp/before --skill-version /tmp/after --runs 3
+```
+
+Defaults are all four supported combinations, both scenarios, one repetition,
+300000 milliseconds per run, 20 completed tool cycles per run, the checkout's
+`packages/cli/skills/artifactshare` version, and `https://localhost:5173`.
+Use repeatable `--combination`, `--scenario` and `--skill-version`; version
+directory basenames must be distinct. `--timeout-ms`, `--max-turns`,
+`--base-url` and `--output-dir` override the remaining defaults. Claude also
+receives its native maximum-turns option. Exactly the configured number of
+completed cycles may still produce a final answer; an extra cycle exhausts the
+budget even when its result and the terminal event arrive in one output chunk.
+Cases run serially with identical
+scenario inputs and budgets across versions. No model substitution occurs.
+
+Actual execution requires the installed agent and its existing macOS sign-in.
+Each case has a fresh temporary HOME, workdir, agent config roots and CLI
+credential directory. Claude links only `Library/Keychains`; Codex links only
+`CODEX_HOME/auth.json`. No user skill/config directory is copied or linked.
+Inherited `CLAUDE_CONFIG_DIR` is removed and left unset: temporary HOME selects
+the default Claude config directory without changing its Keychain identity.
+The initial project skill lives only in `.claude/skills/artifactshare` or
+`.agents/skills/artifactshare`. Account-provided hooks/plugins may still run.
+This isolation assumes cooperative agents and trusted skills; it is not an
+OS security boundary against arbitrary code.
+
+Only local app origins are accepted. Dev authentication uses the existing
+sign-in endpoint without a screen scenario so it does not reset walkthrough
+data. API requests reject redirects, and CLI dispatches are pinned to the
+approved origin, including redirects. Agents receive the safe base origin,
+but the dev token and local TLS override are injected only into CLI children.
+Never point this harness at production. A private copied CLI package overlay
+uses checkout dependencies, the checkout package metadata (including its CLI
+version), and the selected skill bundle. The original build
+and bundled documents remain unchanged. Managed version markers must match;
+when a selected version omits `artifactshare.mdc`, an exact copy of SKILL.md
+is used only as the overlay companion and that derivation is recorded.
+
+The guarded `artifactshare` binary and the bundled
+`npm exec --yes --package=@artifactshare/cli -- artifactshare` form both use
+that overlay, preserving arguments and JSON omissions. Other npm forms and
+`npx`, `pnpm`, and `bunx` are rejected in agent shells. This is a harness
+limitation, not published CLI behavior. Real CLI-triggered skill installation
+remains enabled and installs the selected bundle. Initial, periodic and
+post-CLI inventories retain observed skill path/fingerprint changes, including
+observed files later deleted or restored. Brief changes between observations
+may not be visible. Credential symlinks are never traversed by inventories.
+Installer staging files and unrelated rename/unlink activity do not invalidate
+a scan. A partial prefix of the selected skill seen during a live poll is
+retained as pending until a post-action or final snapshot resolves it. A lasting
+mismatch is contaminated; an unresolved observation is unknown. Unknown
+inspection results cannot qualify as uncontaminated evidence.
+
+Results default to a unique private directory under the system temporary
+folder's `artifactshare-skill-eval`, outside the checkout. JSON, Markdown,
+stdout and stderr files are private, with dev credentials redacted. Keep these
+local; do not commit transcripts or real-run results. The JSON includes raw
+paths, normalized commands, reference reads, server evidence, cleanup results
+and skill observations. Temporary run/overlay directories are removed after
+completion, timeout, turn exhaustion or handled interruption. Only newly
+created artifact IDs evidenced by CLI responses are eligible for cleanup;
+pre-existing artifacts are preserved. Valid launcher records survive malformed
+lines or a truncated tail; the damaged log is retained and the run is incomplete.
+Cleanup records identify the CLI response proving ownership. Newly listed IDs
+without ownership evidence are reported as unattributed and left untouched,
+since other dev-app users may create artifacts during a run. Cleanup failures
+remain in the result.
+
+The summary groups by combination/scenario and compares version columns.
+Pass/eligible counts include completed, inspected, uncontaminated runs only;
+unknown, not-applicable, incomplete and contaminated outcomes are explicit.
+Reference reads are observations, not grades. Recovery actions with uncertain
+semantics (such as changing inputs or waiting) remain unknown; no LLM judge
+is required or enabled. A missing terminal event or malformed stream cannot
+establish a passing run. The report makes no statistical significance or
+model-ranking claim. Full baselines and live share/update smoke runs are
+maintainer follow-up; automated validation never launches real agents.
+
+Sanitized dry-run evidence for the one-case example above:
+
+```text
+combination: codex:gpt-6.1-sol
+scenario: share; repetition: 1; version: artifactshare
+source: <checkout>/packages/cli/skills/artifactshare
+budget: timeoutMs=300000; maxTurns=20
+HOME: <temporary>/home; CODEX_HOME: <temporary>/codex
+workdir: <temporary>/work; skill: .agents/skills/artifactshare
+bin: <temporary>/bin; overlay: <temporary-overlay>/dist/index.js
+command: codex exec --skip-git-repo-check -m gpt-6.1-sol --json --sandbox workspace-write -c sandbox_workspace_write.network_access=true
+output: <system-temporary>/artifactshare-skill-eval/evaluation-<unique>
+```
+
+Build before targeted tests. The real-CLI regression also builds a missing
+CLI prerequisite when invoked by `test:scripts` in the static lane. It tests
+selected-bundle auto-installation offline using `skills ensure --tool auto`
+and `open` with an empty target (a missing positional is rejected earlier
+by the current CLI argument parser); it does not contact a dev app or
+agent account.

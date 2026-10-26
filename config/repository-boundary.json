@@ -183,7 +183,20 @@
     "scripts/flaky-runs.test.mjs",
     "scripts/flaky-detector-contract.test.mjs",
     "scripts/ci/changed-browser-repetitions.mjs",
-    "scripts/changed-browser-repetitions.test.mjs"
+    "scripts/changed-browser-repetitions.test.mjs",
+    "scripts/skill-eval.mjs",
+    "scripts/skill-eval.test.mjs",
+    "scripts/lib/skill-eval/environment.mjs",
+    "scripts/lib/skill-eval/launcher.mjs",
+    "scripts/lib/skill-eval/network-guard.mjs",
+    "scripts/lib/skill-eval/plan.mjs",
+    "scripts/lib/skill-eval/process.mjs",
+    "scripts/lib/skill-eval/records.mjs",
+    "scripts/lib/skill-eval/server.mjs",
+    "scripts/fixtures/skill-eval/claude.jsonl",
+    "scripts/fixtures/skill-eval/codex.jsonl",
+    "scripts/fixtures/skill-eval/cursor.jsonl",
+    "scripts/lib/walkthrough-cli-environment.mjs"
   ],
   "canonical_prefixes": [
     "apps/web/app/",

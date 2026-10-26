@@ -1,0 +1,6 @@
+{"type":"system","subtype":"hook_started"}
+{"type":"system","subtype":"init","skills":["artifactshare"],"model":"claude-sonnet-5-5"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"read","name":"Read","input":{"file_path":".claude/skills/artifactshare/references/share.md"}},{"type":"tool_use","id":"shell","name":"Bash","input":{"command":"artifactshare share report.html --json"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"shell","content":"ok","is_error":false}]},"tool_use_result":{"stdout":"ok","stderr":""}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}
+{"type":"result","subtype":"success","result":"http://localhost:5173/a/sample","usage":{}}
