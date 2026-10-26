@@ -65,9 +65,12 @@ export function parseStream(agent, text, cwd = '.') {
     }
     const content = Array.isArray(event.message?.content)
       ? event.message.content
-      : []
+      : typeof event.message?.content === 'string'
+        ? [{ type: 'text', text: event.message.content }]
+        : []
     if (
       event.message?.content !== undefined &&
+      typeof event.message.content !== 'string' &&
       !Array.isArray(event.message.content)
     )
       record.malformed++
@@ -93,13 +96,11 @@ export function parseStream(agent, text, cwd = '.') {
           record.finalMessage =
             typeof item.text === 'string' ? item.text : record.finalMessage
       }
-      if (content.some((item) => item?.type === 'tool_result'))
-        cycle(
-          content
-            .filter((item) => item?.type === 'tool_result')
-            .map((item) => item.tool_use_id)
-            .join(','),
-        )
+      if (
+        event.type === 'assistant' &&
+        content.some((item) => item?.type === 'tool_use')
+      )
+        cycle(event.message?.id ?? event)
       if (event.type === 'result') {
         record.complete = event.subtype === 'success' && !event.is_error
         record.finalMessage =
@@ -355,7 +356,9 @@ export function score({
     ? decide(
         urls.some(
           (value) =>
-            urlKey(value.replace(/[.,]$/u, '')) === urlKey(after.share_url),
+            urlKey(
+              value.replace(/[*_`\])}"'.,;:!?！？，．；：。、）]+$/u, ''),
+            ) === urlKey(after.share_url),
         ),
         { actual: after.share_url, reported: urls },
       )

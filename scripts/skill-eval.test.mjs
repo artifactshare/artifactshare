@@ -223,6 +223,106 @@ for (const agent of ['claude', 'codex', 'cursor'])
       false,
     )
   })
+test('Claude counts parallel tools once per assistant message', () => {
+  const assistant = {
+    type: 'assistant',
+    message: {
+      id: 'parallel-turn',
+      content: ['one', 'two', 'three'].map((id) => ({
+        type: 'tool_use',
+        id,
+        name: 'Bash',
+        input: { command: 'pwd' },
+      })),
+    },
+  }
+  const events = [
+    assistant,
+    assistant,
+    ...['one', 'two', 'three'].map((id) => ({
+      type: 'user',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: id, content: '/tmp/work' },
+        ],
+      },
+    })),
+    { type: 'result', subtype: 'success' },
+  ]
+  const record = parseStream(
+    'claude',
+    events.map((event) => JSON.stringify(event)).join('\n'),
+  )
+  assert.equal(record.complete, true)
+  assert.equal(record.commands.length, 3)
+  assert.equal(record.turns, 1)
+  delete assistant.message.id
+  assert.equal(parseStream('claude', JSON.stringify(assistant)).turns, 1)
+})
+
+test('Claude accepts string user and assistant content without losing completion', () => {
+  const events = [
+    {
+      type: 'assistant',
+      message: { content: 'Shared at http://localhost/a/sample' },
+    },
+    { type: 'user', message: { content: 'Thanks' } },
+    { type: 'result', subtype: 'success' },
+  ]
+  const record = parseStream(
+    'claude',
+    events.map((event) => JSON.stringify(event)).join('\n'),
+  )
+  assert.equal(record.complete, true)
+  assert.equal(record.malformed, 0)
+  assert.equal(record.finalMessage, 'Shared at http://localhost/a/sample')
+})
+
+test('final URL scoring accepts Markdown and sentence punctuation', () => {
+  const url = 'https://localhost:5173/a/sample'
+  for (const finalMessage of [
+    `**${url}**`,
+    `[shared artifact](${url})`,
+    `<${url}>`,
+    `こちら：${url}。`,
+    `（${url}）、`,
+    `\`${url}\``,
+    `_${url}_`,
+    ...[
+      '.',
+      ',',
+      ';',
+      ':',
+      '!',
+      '?',
+      '！',
+      '？',
+      '．',
+      '，',
+      '；',
+      '：',
+      '。',
+      '、',
+      '）',
+      ']',
+      ')',
+      '}',
+      '"',
+      "'",
+    ].map((suffix) => `${url}${suffix}`),
+  ]) {
+    assert.equal(
+      score({
+        record: { complete: true, finalMessage },
+        server: { after: { share_url: url } },
+        scenario: 'share',
+      }).finalUrl.status,
+      'pass',
+      finalMessage,
+    )
+  }
+})
+
 test('JSON scoring requires an option before the argument terminator', () => {
   for (const [argv, expected] of [
     [['share', '--', '--json'], 'fail'],
