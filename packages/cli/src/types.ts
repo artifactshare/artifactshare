@@ -389,7 +389,22 @@ export type SkillsActionTarget = {
 
 export type SkillsActionData = {
   dry_run: boolean
-  targets: SkillsActionTarget[]
+  targets: (
+    | SkillsActionTarget
+    | {
+        tool: string
+        scope: string
+        path: null
+        available: false
+        code: string
+        hint?: string
+        installed: boolean
+        managed: boolean
+        installed_version: null
+        update_available: boolean
+        detected: boolean
+      }
+  )[]
 }
 
 export type SkillAutoUpdateTarget = {

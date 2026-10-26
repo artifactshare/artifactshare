@@ -123,9 +123,9 @@ function unavailableState(target: UnavailableSkillTarget) {
     tool: target.tool,
     scope: target.scope,
     path: null,
-    available: false,
+    available: false as const,
     code: target.error.code,
-    hint: CLAUDE_CONFIG_HINT,
+    hint: target.error.hint,
     installed: false,
     managed: false,
     installed_version: null,
@@ -137,7 +137,7 @@ function unavailableSelection(
   tools: SkillTool[],
   scope: SkillScope | undefined,
 ): CliError | undefined {
-  if (!tools.includes('claude') || scope === 'project') return undefined
+  if (!tools.includes('claude') || scope !== 'user') return undefined
   const target = skillTarget('claude', 'user')
   return availableTarget(target) ? undefined : target.error
 }
@@ -381,16 +381,17 @@ async function autoDetectedTools(): Promise<SkillTool[]> {
   const autoOrder: readonly SkillTool[] = ['claude', 'codex', 'cursor']
   const detected: SkillTool[] = []
   for (const tool of autoOrder) {
-    if (
-      (await isToolDetected(tool, 'project')) ||
-      (tool === 'claude' &&
-        Boolean(process.env.CLAUDE_CONFIG_DIR?.trim()) &&
-        (await isToolDetected(tool, 'user')))
-    ) {
-      detected.push(tool)
-    }
+    if (await isToolDetected(tool, 'project')) detected.push(tool)
   }
-  return detected.length > 0 ? detected : ['codex', 'claude', 'cursor']
+  if (detected.length === 0) return ['codex', 'claude', 'cursor']
+  if (
+    !detected.includes('claude') &&
+    process.env.CLAUDE_CONFIG_DIR !== undefined &&
+    (await isToolDetected('claude', 'user'))
+  ) {
+    detected.unshift('claude')
+  }
+  return detected
 }
 
 async function autoTargets(
@@ -505,9 +506,18 @@ async function runActions(
   planned: PlannedAction[],
   dryRun: boolean,
   mode: OutputMode,
+  unavailableTargets: UnavailableSkillTarget[] = [],
 ): Promise<void> {
   const data = await finishActions(command, planned, dryRun, mode)
-  if (data) writeSuccess(command, data, mode)
+  if (data) {
+    data.targets.push(
+      ...unavailableTargets.map((target) => ({
+        ...unavailableState(target),
+        detected: false,
+      })),
+    )
+    writeSuccess(command, data, mode)
+  }
 }
 
 async function bundledOrFailure(
@@ -834,7 +844,18 @@ export async function runSkillsUpdate(
       planned.push({ target, action: 'unchanged' })
     }
   }
-  await runActions(command, planned, parsed.options.dryRun === true, mode)
+  await runActions(
+    command,
+    planned,
+    parsed.options.dryRun === true,
+    mode,
+    allTargets().filter(
+      (target): target is UnavailableSkillTarget =>
+        !availableTarget(target) &&
+        (filters.tools.length === 0 || filters.tools.includes(target.tool)) &&
+        filters.scope === undefined,
+    ),
+  )
 }
 
 export async function runSkillsRemove(
@@ -858,5 +879,16 @@ export async function runSkillsRemove(
           : 'skipped_unmanaged'
     planned.push({ target, action })
   }
-  await runActions(command, planned, parsed.options.dryRun === true, mode)
+  await runActions(
+    command,
+    planned,
+    parsed.options.dryRun === true,
+    mode,
+    allTargets().filter(
+      (target): target is UnavailableSkillTarget =>
+        !availableTarget(target) &&
+        (filters.tools.length === 0 || filters.tools.includes(target.tool)) &&
+        filters.scope === undefined,
+    ),
+  )
 }
