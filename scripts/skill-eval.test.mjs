@@ -12,7 +12,7 @@ import {
   lstat,
   readlink,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
@@ -987,7 +987,7 @@ test(
     const dist = await readFile('packages/cli/dist/index.js')
     const selected = await overlay(version)
     t.after(() => rm(selected.root, { recursive: true, force: true }))
-    assert.equal(selected.derivedCompanion, true)
+    assert.equal(selected.derivedCompanion, false)
     assert.deepEqual(
       JSON.parse(await readFile(join(selected.root, 'package.json'), 'utf8')),
       JSON.parse(await readFile('packages/cli/package.json', 'utf8')),
@@ -1035,7 +1035,7 @@ test(
         { cwd: run.workdir, env: run.env.agent },
       )
       assert.equal(await readFile(installed, 'utf8'), skill)
-      await rm(installed)
+      await rm(dirname(installed), { recursive: true, force: true })
       await assert.rejects(
         exec(join(run.root, 'bin', bin), [...prefix, 'open', '', '--json'], {
           cwd: run.workdir,

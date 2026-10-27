@@ -882,9 +882,9 @@ export function configHomeUnavailableError(profile?: string): CliError {
 export function skillUpdateConflictError(path: string): CliError {
   return cliError({
     code: 'skill_update_conflict',
-    message: `The file at ${path} is not managed by Artifact Share CLI.`,
-    why: 'Artifact Share only rewrites or removes skill files it created with a managed marker comment.',
-    hint: 'Inspect the file and resolve it yourself, or rerun skills install --tool <tool> --force to overwrite it.',
+    message: `The skill folder at ${path} has an ownership or path conflict.`,
+    why: 'Artifact Share requires a managed entry, valid ownership metadata, regular owned files, and no unowned path collisions.',
+    hint: 'Inspect the skill folder and repair invalid metadata or unsafe paths before reinstalling. Use skills install --tool <tool> --force only to take over bundled paths; user additions are preserved.',
     agentRecoverable: false,
     requiresHuman: true,
     recovery: { kind: 'ask_human' },

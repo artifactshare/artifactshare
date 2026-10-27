@@ -334,9 +334,9 @@ but the dev token and local TLS override are injected only into CLI children.
 Never point this harness at production. A private copied CLI package overlay
 uses checkout dependencies, the checkout package metadata (including its CLI
 version), and the selected skill bundle. The original build
-and bundled documents remain unchanged. Managed version markers must match;
-when a selected version omits `artifactshare.mdc`, an exact copy of SKILL.md
-is used only as the overlay companion and that derivation is recorded.
+and bundled documents remain unchanged. SKILL.md must carry a valid managed version marker. The overlay copies the
+selected folder, including nested references, without synthesizing a Cursor rule.
+Historical versions that include a Cursor rule retain their original evaluation layout.
 
 The guarded `artifactshare` binary and the bundled
 `npm exec --yes --package=@artifactshare/cli -- artifactshare` form both use

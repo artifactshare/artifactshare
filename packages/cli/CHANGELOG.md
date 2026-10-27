@@ -3,6 +3,12 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Install and manage complete skill folders, including nested references, for Claude Code, Codex and Cursor at both scopes.
+- Track owned files in a manifest, preserve user additions, repair same-version drift, and expose folder diagnostics in list and doctor JSON.
+- Migrate managed project Cursor rules to `.cursor/skills/artifactshare/`; preserve user-owned rules with recovery guidance.
+
 ## 0.19.2 - 2026-10-26
 
 - Respect `CLAUDE_CONFIG_DIR` for Claude Code user skills, including automatic detection and updates. Blank settings skip automatic writes and report recovery guidance in diagnostics.

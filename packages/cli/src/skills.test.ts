@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 import {
   expectFailure,
@@ -20,7 +20,7 @@ import {
 /** Install writes the bundled file through unchanged, so comparing against the
  * source is what actually verifies the install. Asserting its wording here
  * only restated the source and broke on every edit to the skill. */
-const bundled = (file: 'SKILL.md' | 'artifactshare.mdc') =>
+const bundled = (file: 'SKILL.md') =>
   readFile(
     join(import.meta.dirname, '..', 'skills', 'artifactshare', file),
     'utf8',
@@ -46,7 +46,7 @@ const codexSkillPath = () =>
 const claudeSkillPath = () =>
   join(workDir, '.claude', 'skills', 'artifactshare', 'SKILL.md')
 const cursorRulePath = () =>
-  join(workDir, '.cursor', 'rules', 'artifactshare.mdc')
+  join(workDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 const userCursorSkillPath = () =>
   join(homeDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 
@@ -121,36 +121,7 @@ test('skills install writes managed skill files for each tool', async () => {
   assert.ok(!codexSkill.includes('@artifactshare/cli@'))
   assert.equal(await readFile(claudeSkillPath(), 'utf8'), codexSkill)
   const cursorRule = await readFile(cursorRulePath(), 'utf8')
-  assert.equal(cursorRule, await bundled('artifactshare.mdc'))
-  assert.ok(cursorRule.includes('as でアップして'))
-  assert.ok(cursorRule.includes('as に上げて'))
-  assert.ok(cursorRule.includes('bare English "as" alone is not'))
-  assert.ok(cursorRule.includes('Do not use this rule just because'))
-  assert.ok(cursorRule.includes('Claude Artifact is'))
-  assert.ok(cursorRule.includes('A user-named CLI or MCP route overrides'))
-  assert.ok(cursorRule.includes('automatic capability selection'))
-  assert.ok(cursorRule.includes('do not use `share --artifact-id`'))
-  assert.ok(cursorRule.includes('share <path> --key <key> --json'))
-  assert.ok(cursorRule.includes('give the user `data.artifact.url`'))
-  assert.ok(cursorRule.includes('Do not rerun `share`'))
-  assert.ok(cursorRule.includes('--scope user --json'))
-  assert.ok(cursorRule.includes('--scope effective --json'))
-  assert.ok(cursorRule.includes('policy agreed by all participants'))
-  assert.ok(cursorRule.includes('open <artifact-id-or-url> --json'))
-  assert.ok(cursorRule.includes('edit <target>'))
-  assert.ok(cursorRule.includes('delete <artifact-id-or-url> --json'))
-  assert.ok(cursorRule.includes('logout --profile <name> --json'))
-  assert.ok(cursorRule.includes('profiles delete <name> --json'))
-  assert.ok(cursorRule.includes('https://artifactshare.com/settings/tokens'))
-  assert.ok(cursorRule.includes('remote MCP for source text in chat or'))
-  assert.ok(cursorRule.includes('temporary sandbox'))
-  assert.ok(cursorRule.includes('data.content'))
-  assert.ok(cursorRule.includes('data.version_id'))
-  assert.ok(cursorRule.includes('--agent'))
-  assert.ok(cursorRule.includes('--quote'))
-  assert.ok(cursorRule.includes('--include versions'))
-  assert.ok(cursorRule.includes('skills ensure'))
-  assert.ok(cursorRule.includes('alwaysApply'))
+  assert.equal(cursorRule, await bundled('SKILL.md'))
 })
 
 test('skills install --scope user writes under the home directory', async () => {
@@ -165,7 +136,7 @@ test('skills install --scope user writes under the home directory', async () => 
   assert.ok(await pathExists(path))
 })
 
-test('skills install --tool cursor --scope project writes artifactshare.mdc and keeps .cursor on remove', async () => {
+test('skills install --tool cursor --scope project writes the skill folder and keeps .cursor on remove', async () => {
   const payload = expectSuccess(
     runSkills(['install', '--tool', 'cursor', '--scope', 'project']),
     'skills install',
@@ -175,7 +146,7 @@ test('skills install --tool cursor --scope project writes artifactshare.mdc and 
     [['cursor', 'project', 'installed']],
   )
   const rule = await readFile(cursorRulePath(), 'utf8')
-  assert.equal(rule, await bundled('artifactshare.mdc'))
+  assert.equal(rule, await bundled('SKILL.md'))
   assert.ok(!(await pathExists(userCursorSkillPath())))
 
   const removed = expectSuccess(
@@ -185,7 +156,6 @@ test('skills install --tool cursor --scope project writes artifactshare.mdc and 
   assert.equal(removed.data.targets[0].action, 'removed')
   assert.ok(!(await pathExists(cursorRulePath())))
   assert.ok(await pathExists(join(workDir, '.cursor')))
-  assert.ok(await pathExists(join(workDir, '.cursor', 'rules')))
 })
 
 test('skills install --tool cursor --scope user writes SKILL.md under home', async () => {
@@ -238,7 +208,9 @@ test('skills update and remove reject blank filters instead of widening', async 
 })
 
 test('skills install never overwrites an unmanaged file without --force', async () => {
-  await mkdir(join(workDir, '.cursor', 'rules'), { recursive: true })
+  await mkdir(join(workDir, '.cursor', 'skills', 'artifactshare'), {
+    recursive: true,
+  })
   await writeFile(cursorRulePath(), 'my own rule\n')
 
   const payload = expectFailure(
@@ -247,7 +219,7 @@ test('skills install never overwrites an unmanaged file without --force', async 
   )
   assert.equal(
     payload.error.details.path,
-    join('.cursor', 'rules', 'artifactshare.mdc'),
+    join('.cursor', 'skills', 'artifactshare', 'SKILL.md'),
   )
   assert.equal(await readFile(cursorRulePath(), 'utf8'), 'my own rule\n')
   assert.ok(
@@ -281,7 +253,7 @@ test('skills ensure installs missing and updates outdated managed skills', async
   )
   assert.equal(installed.data.targets[0].action, 'installed')
   const original = await readFile(codexSkillPath(), 'utf8')
-  await writeFile(
+  await writeLegacySkill(
     codexSkillPath(),
     original.replace(/version: \d+/, 'version: 0'),
   )
@@ -339,7 +311,7 @@ test('skills ensure --tool auto updates outdated user skills explicitly', async 
   )
   assert.equal(installed.data.targets[0].action, 'installed')
   const original = await readFile(userClaudeSkillPath(), 'utf8')
-  await writeFile(
+  await writeLegacySkill(
     userClaudeSkillPath(),
     original.replace(/version: \d+/, 'version: 0'),
   )
@@ -472,6 +444,14 @@ test('skills list reports detection, install state, and update availability', as
     scope: 'project',
     path: join('.agents', 'skills', 'artifactshare', 'SKILL.md'),
     detected: true,
+    folder_path: join('.agents', 'skills', 'artifactshare'),
+    complete: true,
+    current: true,
+    older_version: false,
+    missing_files: [],
+    different_files: [],
+    modified_files: [],
+    ownership_manifest: 'valid',
     installed: true,
     managed: true,
     installed_version: payload.data.bundled_version,
@@ -497,7 +477,7 @@ test('skills list reports detection, install state, and update availability', as
   )
   assert.equal(
     cursorProject.path,
-    join('.cursor', 'rules', 'artifactshare.mdc'),
+    join('.cursor', 'skills', 'artifactshare', 'SKILL.md'),
   )
   assert.equal(cursorProject.installed, true)
   assert.equal(cursorProject.managed, true)
@@ -509,11 +489,13 @@ test('skills update rewrites outdated managed files and skips unmanaged ones', a
     'skills install',
   )
   const installed = await readFile(codexSkillPath(), 'utf8')
-  await writeFile(
+  await writeLegacySkill(
     codexSkillPath(),
     installed.replace(/version: \d+/, 'version: 0'),
   )
-  await mkdir(join(workDir, '.cursor', 'rules'), { recursive: true })
+  await mkdir(join(workDir, '.cursor', 'skills', 'artifactshare'), {
+    recursive: true,
+  })
   await writeFile(cursorRulePath(), 'my own rule\n')
 
   const payload = expectSuccess(runSkills(['update']), 'skills update')
@@ -584,7 +566,7 @@ test('skills update and remove handle cursor user scope targets', async () => {
     'skills install',
   )
   const installed = await readFile(userCursorSkillPath(), 'utf8')
-  await writeFile(
+  await writeLegacySkill(
     userCursorSkillPath(),
     installed.replace(/version: \d+/, 'version: 0'),
   )
@@ -698,7 +680,10 @@ for (const value of [
     assert.equal(diagnostic.installed_version, listed.installed_version)
 
     for (const action of ['update', 'ensure']) {
-      await writeFile(path, content.replace(/version: \d+/, 'version: 0'))
+      await writeLegacySkill(
+        path,
+        content.replace(/version: \d+/, 'version: 0'),
+      )
       const result = expectSuccess(invoke([action, ...args]))
       assert.equal(result.data.targets[0].path, path)
       assert.equal(result.data.targets[0].action, 'updated')
@@ -746,6 +731,14 @@ for (const value of ['', ' \t ']) {
       installed_version: null,
       update_available: false,
       detected: false,
+      folder_path: null,
+      complete: false,
+      current: false,
+      older_version: false,
+      missing_files: [],
+      different_files: [],
+      modified_files: [],
+      ownership_manifest: 'absent',
     })
     for (const action of ['update', 'remove']) {
       for (const scopeArgs of [[], ['--scope', 'user']]) {
@@ -757,6 +750,7 @@ for (const value of ['', ' \t ']) {
           tool: 'claude',
           scope: 'user',
           path: null,
+          folder_path: null,
           action: 'skipped',
           code: target.code,
           hint: target.hint,
@@ -819,7 +813,7 @@ test('custom Claude root leaves legacy files and other tool paths unchanged', as
   }
   assert.equal(
     await readFile(cursorRulePath(), 'utf8'),
-    await bundled('artifactshare.mdc'),
+    await bundled('SKILL.md'),
   )
   expectSuccess(
     run(
@@ -869,7 +863,7 @@ for (const value of ['', ' \t ']) {
         invoke(['install', '--tool', 'claude', '--scope', 'project']),
       )
       const content = await bundled('SKILL.md')
-      await writeFile(
+      await writeLegacySkill(
         claudeSkillPath(),
         content.replace(/version: \d+/, 'version: 0'),
       )
@@ -886,6 +880,7 @@ for (const value of ['', ' \t ']) {
         tool: 'claude',
         scope: 'user',
         path: null,
+        folder_path: null,
         action: 'skipped',
         code: diagnostic.code,
         hint: diagnostic.hint,
@@ -899,4 +894,9 @@ for (const value of ['', ' \t ']) {
       assert.equal(await pathExists(join(workDir, 'skills')), false)
     })
   }
+}
+
+async function writeLegacySkill(path: string, content: string) {
+  await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
+  await writeFile(path, content)
 }

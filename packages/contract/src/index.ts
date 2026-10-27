@@ -1428,3 +1428,81 @@ export const CLI_EDIT_RESPONSE_SCHEMA = CliEditResponseSchema
 export const CLI_MOVE_REQUEST_SCHEMA = CliMoveRequestSchema
 export const CLI_MOVE_RESPONSE_SCHEMA = CliMoveResponseSchema
 export const RESOLVE_RESPONSE_SCHEMA = ResolveResponseSchema
+
+// Local CLI results: intentionally separate from the HTTP doctor response.
+export const SkillLegacyDiagnosticSchema = z.object({
+  path: z.string(),
+  present: z.boolean(),
+  managed: z.boolean(),
+  coexistence: z.boolean(),
+  hint: z.string().nullable(),
+})
+export const SkillFolderDiagnosticSchema = z.object({
+  folder_path: z.string().nullable(),
+  complete: z.boolean(),
+  current: z.boolean(),
+  older_version: z.boolean(),
+  missing_files: z.array(z.string()),
+  different_files: z.array(z.string()),
+  modified_files: z.array(z.string()),
+  ownership_manifest: z.enum(['valid', 'absent', 'invalid']),
+  legacy_rule: SkillLegacyDiagnosticSchema.optional(),
+})
+const LocalSkillTargetSchema = SkillFolderDiagnosticSchema.extend({
+  tool: z.string(),
+  scope: z.string(),
+  path: z.string().nullable(),
+  available: z.boolean().optional(),
+  code: z.string().optional(),
+  hint: z.string().optional(),
+  installed: z.boolean(),
+  managed: z.boolean(),
+  installed_version: z.number().nullable(),
+  update_available: z.boolean(),
+})
+export const SkillsListDataSchema = z.object({
+  bundled_version: z.number(),
+  targets: z.array(LocalSkillTargetSchema.extend({ detected: z.boolean() })),
+})
+export const DoctorSkillsDataSchema = z.object({
+  bundled_version: z.number(),
+  update_available: z.boolean(),
+  update_command: z.string().nullable(),
+  targets: z.array(
+    LocalSkillTargetSchema.extend({ update_command: z.string().nullable() }),
+  ),
+})
+export const SkillLegacyActionSchema = z.object({
+  path: z.string(),
+  action: z.enum([
+    'removed',
+    'would_remove',
+    'kept_unmanaged',
+    'remove_failed',
+  ]),
+  hint: z.string().optional(),
+})
+export const SkillsActionTargetSchema = z.object({
+  tool: z.string(),
+  scope: z.string(),
+  path: z.string().nullable(),
+  folder_path: z.string().nullable(),
+  action: z.enum([
+    'installed',
+    'updated',
+    'update_recommended',
+    'unchanged',
+    'removed',
+    'not_installed',
+    'skipped_unmanaged',
+    'skipped',
+  ]),
+  update_command: z.string().optional(),
+  code: z.string().optional(),
+  hint: z.string().optional(),
+  legacy_rule: SkillLegacyActionSchema.optional(),
+})
+export const SkillsActionDataSchema = z.object({
+  dry_run: z.boolean(),
+  targets: z.array(SkillsActionTargetSchema),
+})

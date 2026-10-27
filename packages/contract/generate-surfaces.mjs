@@ -48,7 +48,6 @@ export const DOCUMENT_PATHS = [
   'packages/cli/README.md',
   'docs/reference/cli-command-catalog.md',
   'packages/cli/skills/artifactshare/SKILL.md',
-  'packages/cli/skills/artifactshare/artifactshare.mdc',
   'apps/web/app/lib/cli-reference-content.ts',
 ]
 export const CAPABILITY_MATRIX_PATH = resolve(
