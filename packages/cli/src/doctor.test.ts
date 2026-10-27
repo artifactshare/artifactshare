@@ -307,6 +307,10 @@ test('doctor reports outdated managed skills with update commands', async () => 
       'SKILL.md',
     )
     const installed = await readFile(skillPath, 'utf8')
+    await rm(join(skillPath, '..', 'references'), {
+      recursive: true,
+      force: true,
+    })
     await rm(join(skillPath, '..', '.artifactshare-managed.json'))
     await writeFile(skillPath, installed.replace(/version: \d+/, 'version: 0'))
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -751,8 +751,10 @@ export function replaceCliReadmeCommandTable(content) {
 export function replaceSkillQuickReferenceTable(content) {
   const marker = '## Quick reference\n\n'
   const start = content.indexOf(marker)
-  const end = content.indexOf('\n\n## Authentication', start + marker.length)
-  if (start < 0 || end < 0)
+  const tableStart = start + marker.length
+  const table = content.slice(tableStart).match(/^(?:\|[^\n]*(?:\n|$))+/)?.[0]
+  const end = tableStart + (table?.trimEnd().length ?? 0)
+  if (start < 0 || !table)
     throw new Error('bundled skill command table not found')
   return `${content.slice(0, start + marker.length)}${renderSkillQuickReferenceTable()}${content.slice(end)}`
 }
@@ -1017,11 +1019,25 @@ function compareGeneratedFile(path, expected) {
   return null
 }
 
-function documentsAtRoot() {
+export function documentsAtRoot(root = ROOT) {
+  const references = 'packages/cli/skills/artifactshare/references'
+  function collect(directory) {
+    if (!existsSync(resolve(root, directory))) return []
+    return readdirSync(resolve(root, directory), { withFileTypes: true })
+      .flatMap((entry) => {
+        const path = `${directory}/${entry.name}`
+        return entry.isDirectory()
+          ? collect(path)
+          : path.endsWith('.md')
+            ? [path]
+            : []
+      })
+      .sort()
+  }
   return Object.fromEntries(
-    DOCUMENT_PATHS.map((path) => [
+    [...DOCUMENT_PATHS, ...collect(references)].map((path) => [
       path,
-      readFileSync(resolve(ROOT, path), 'utf8'),
+      readFileSync(resolve(root, path), 'utf8'),
     ]),
   )
 }

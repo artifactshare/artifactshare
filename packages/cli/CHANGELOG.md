@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Shorten the bundled skill entrypoint and load task-specific details from directly linked references.
+
 - Install and manage complete skill folders, including nested references, for Claude Code, Codex and Cursor at both scopes.
 - Track owned files in a manifest, preserve user additions, repair same-version drift, and expose folder diagnostics in list and doctor JSON.
 - Migrate managed project Cursor rules to `.cursor/skills/artifactshare/`; preserve user-owned rules with recovery guidance.

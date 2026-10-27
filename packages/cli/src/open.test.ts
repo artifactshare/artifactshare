@@ -164,6 +164,10 @@ test('open updates outdated managed user skills before reading', async () => {
   const installed = await readFile(userClaudeSkillPath(), 'utf8')
   // Model a legacy single-file install, not an interrupted folder update
   // whose entry version disagrees with its ownership manifest.
+  await rm(join(userClaudeSkillPath(), '..', 'references'), {
+    recursive: true,
+    force: true,
+  })
   await rm(join(userClaudeSkillPath(), '..', '.artifactshare-managed.json'))
   await writeFile(
     userClaudeSkillPath(),

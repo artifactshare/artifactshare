@@ -308,7 +308,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/comments.md",
           "identifier": "comments delete"
         },
         "generated_snapshot": {
@@ -391,7 +391,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/comments.md",
           "identifier": "comments edit"
         },
         "generated_snapshot": {
@@ -659,7 +659,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/comments.md",
           "identifier": "comments reopen"
         },
         "generated_snapshot": {
@@ -741,7 +741,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/comments.md",
           "identifier": "comments resolve"
         },
         "generated_snapshot": {
@@ -984,7 +984,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/organize-settings.md",
           "identifier": "delete"
         },
         "generated_snapshot": {
@@ -1445,7 +1445,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/organize-settings.md",
           "identifier": "move"
         },
         "generated_snapshot": {
@@ -1662,7 +1662,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/authentication-profiles-skills.md",
           "identifier": "profiles delete"
         },
         "generated_snapshot": {
@@ -1721,7 +1721,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/authentication-profiles-skills.md",
           "identifier": "profiles import-token"
         },
         "generated_snapshot": {
@@ -1964,7 +1964,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/organize-settings.md",
           "identifier": "projects edit"
         },
         "generated_snapshot": {
@@ -2063,7 +2063,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/organize-settings.md",
           "identifier": "projects list"
         },
         "generated_snapshot": {
@@ -2352,7 +2352,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/authentication-profiles-skills.md",
           "identifier": "skills install"
         },
         "generated_snapshot": {
@@ -2409,7 +2409,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/authentication-profiles-skills.md",
           "identifier": "skills list"
         },
         "generated_snapshot": {
