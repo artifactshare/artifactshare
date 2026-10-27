@@ -281,6 +281,7 @@ Defaults are all four supported combinations, both scenarios, one repetition,
 `--persona <id>` selects `free-owner` (the default), `plus-owner`,
 `team-owner`, or `team-member`. The default is a personal account because
 personal and team personas differ in which sharing visibilities succeed.
+The update scenario seeds a private artifact before the agent starts.
 Use repeatable `--combination`, `--scenario` and `--skill-version`; version
 directory basenames must be distinct. `--timeout-ms`, `--max-turns`,
 `--base-url` and `--output-dir` override the remaining defaults. Claude also

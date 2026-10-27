@@ -102,6 +102,8 @@ export async function executeCase(
           join(run.root, 'bin/artifactshare'),
           'share',
           'report.html',
+          '--visibility',
+          'private',
           '--json',
         ],
         cwd: run.workdir,
@@ -114,13 +116,20 @@ export async function executeCase(
         stdout: redact(setup.stdout, secrets),
         stderr: redact(setup.stderr, secrets),
       }
+      if (setup.status !== 'completed') {
+        let detail = setup.stderr.trim() || setup.error || setup.status
+        try {
+          const error = JSON.parse(setup.stderr).error
+          if (error?.code && error?.message)
+            detail = `${error.code}: ${error.message}`
+        } catch {
+          /* Non-JSON failures retain the process diagnostic. */
+        }
+        throw new Error(`Update artifact seed failed: ${detail}`)
+      }
       const body = JSON.parse(setup.stdout)
       seededId = body.data?.artifact?.id
-      if (
-        !seededId ||
-        setup.status !== 'completed' ||
-        beforeList.some((artifact) => artifact.id === seededId)
-      )
+      if (!seededId || beforeList.some((artifact) => artifact.id === seededId))
         throw new Error('Could not seed an owned update artifact')
       owned.set(seededId, 'setup-cli-response')
       result.server.before = await client.get(seededId)

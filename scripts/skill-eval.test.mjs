@@ -972,6 +972,66 @@ if (process.argv[2] === 'remote') {
   )
 })
 
+test('failed update seed reports the CLI error without starting the agent', async (t) => {
+  const { executeCase } = await import('./skill-eval.mjs')
+  const { root, version } = await fixture(t)
+  const commands = []
+  const result = await executeCase(
+    {
+      combination: 'codex:gpt-6.1-sol',
+      scenario: 'update',
+      version: version.label,
+      command: ['fake-agent'],
+    },
+    { baseUrl: 'http://localhost:5173', timeoutMs: 1000, maxTurns: 2 },
+    version,
+    {
+      target: join(root, 'unused'),
+      files: version.files,
+      derivedCompanion: true,
+    },
+    { list: () => Promise.resolve([]) },
+    'fixture-token',
+    root,
+    new AbortController().signal,
+    {
+      createRun: (options) => createRun({ ...options, linkCredentials: false }),
+      runProcess(options) {
+        commands.push(options.command)
+        return {
+          status: 'infrastructure-error',
+          exitCode: 1,
+          stdout: '',
+          stderr: JSON.stringify({
+            ok: false,
+            command: 'share',
+            error: {
+              code: 'validation_failed',
+              message: 'Workspace visibility is unavailable for this account.',
+            },
+          }),
+        }
+      },
+    },
+  )
+  assert.equal(commands.length, 1)
+  assert.deepEqual(commands[0].slice(1), [
+    'share',
+    'report.html',
+    '--visibility',
+    'private',
+    '--json',
+  ])
+  assert.equal(result.status, 'infrastructure-error')
+  assert.match(result.error, /Update artifact seed failed/u)
+  assert.match(result.error, /validation_failed/u)
+  assert.match(
+    result.error,
+    /Workspace visibility is unavailable for this account\./u,
+  )
+  assert.equal(result.cleanup.temporary, true)
+})
+
 test('fake share/update executions retain evidence and clean only their owned files and artifacts', async (t) => {
   const { executeCase } = await import('./skill-eval.mjs')
   const { root, version } = await fixture(t)
@@ -1019,6 +1079,13 @@ test('fake share/update executions retain evidence and clean only their owned fi
         },
         async runProcess(options) {
           if (options.command[0].endsWith('/artifactshare')) {
+            assert.deepEqual(options.command.slice(1), [
+              'share',
+              'report.html',
+              '--visibility',
+              'private',
+              '--json',
+            ])
             artifacts.set('sample', { ...target })
             return {
               status: 'completed',
