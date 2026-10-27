@@ -278,6 +278,9 @@ pnpm skill-eval -- --combination claude:claude-sonnet-5-5 --scenario update \
 Defaults are all four supported combinations, both scenarios, one repetition,
 300000 milliseconds per run, 20 completed tool cycles per run, the checkout's
 `packages/cli/skills/artifactshare` version, and `https://localhost:5173`.
+`--persona <id>` selects `free-owner` (the default), `plus-owner`,
+`team-owner`, or `team-member`. The default is a personal account because
+personal and team personas differ in which sharing visibilities succeed.
 Use repeatable `--combination`, `--scenario` and `--skill-version`; version
 directory basenames must be distinct. `--timeout-ms`, `--max-turns`,
 `--base-url` and `--output-dir` override the remaining defaults. Claude also
@@ -353,6 +356,7 @@ maintainer follow-up; automated validation never launches real agents.
 Sanitized dry-run evidence for the one-case example above:
 
 ```text
+persona: free-owner
 combination: codex:gpt-6.1-sol
 scenario: share; repetition: 1; version: artifactshare
 source: <checkout>/packages/cli/skills/artifactshare

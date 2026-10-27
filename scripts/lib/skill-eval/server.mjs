@@ -22,7 +22,7 @@ export async function localRequest(
   const body = await response.json()
   return { response, body }
 }
-export async function signIn(baseUrl, fetcher) {
+export async function signIn(baseUrl, persona, fetcher) {
   // No screen scenario: sign-in must not reset/seed a walkthrough's existing data.
   const { response, body } = await localRequest(
     baseUrl,
@@ -30,7 +30,7 @@ export async function signIn(baseUrl, fetcher) {
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ persona: 'team-owner' }),
+      body: JSON.stringify({ persona }),
     },
     fetcher,
   )

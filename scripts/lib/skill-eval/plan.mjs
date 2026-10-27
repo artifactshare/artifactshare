@@ -10,8 +10,14 @@ export const combinations = [
   'codex:gpt-6.1-sol',
   'codex:gpt-6-astra',
 ]
+export const personas = [
+  'free-owner',
+  'plus-owner',
+  'team-owner',
+  'team-member',
+]
 export const usage =
-  'pnpm skill-eval -- [--dry-run] [--combination agent:model] [--scenario share|update] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
+  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model] [--scenario share|update] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
 export const fingerprint = (bytes) =>
   createHash('sha256').update(bytes).digest('hex')
 export function localOrigin(value) {
@@ -119,6 +125,7 @@ export async function plan(argv) {
     combinations: [],
     scenarios: [],
     sources: [],
+    persona: 'free-owner',
     runs: 1,
     timeoutMs: 300000,
     maxTurns: 20,
@@ -130,6 +137,7 @@ export async function plan(argv) {
     '--combination': 'combinations',
     '--scenario': 'scenarios',
     '--skill-version': 'sources',
+    '--persona': 'persona',
     '--runs': 'runs',
     '--timeout-ms': 'timeoutMs',
     '--max-turns': 'maxTurns',
@@ -155,6 +163,8 @@ export async function plan(argv) {
       options[name] = Number(value)
     } else options[name] = value
   }
+  if (!personas.includes(options.persona))
+    throw new Error(`Unsupported persona ${options.persona}\n${usage}`)
   if (!options.combinations.length) options.combinations = [...combinations]
   if (!options.scenarios.length) options.scenarios = ['share', 'update']
   for (const id of options.combinations)

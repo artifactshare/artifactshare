@@ -67,6 +67,7 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
     '--output-dir',
     join(root, 'output'),
   ])
+  assert.equal(p.persona, 'free-owner')
   assert.equal(p.matrix.length, 2)
   assert.deepEqual(p.matrix[0].command, [
     'codex',
@@ -87,6 +88,8 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
       'scripts/skill-eval.mjs',
       '--',
       '--dry-run',
+      '--persona',
+      'team-owner',
       '--combination',
       'codex:gpt-6.1-sol',
       '--scenario',
@@ -103,6 +106,7 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
     },
   )
   assert.equal(JSON.parse(result.stdout).matrix.length, 1)
+  assert.equal(JSON.parse(result.stdout).persona, 'team-owner')
   for (const args of [
     ['--runs', '0'],
     ['--runs'],
@@ -112,6 +116,60 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
     ['--skill-version', source, '--skill-version', source],
   ])
     await assert.rejects(plan(args))
+})
+test('planner accepts exactly the dev personas and rejects invalid input before preflight', async (t) => {
+  const { source } = await fixture(t)
+  for (const persona of [
+    'free-owner',
+    'plus-owner',
+    'team-owner',
+    'team-member',
+  ]) {
+    const options = await plan([
+      '--skill-version',
+      source,
+      '--persona',
+      persona,
+    ])
+    assert.equal(options.persona, persona)
+  }
+  await assert.rejects(
+    plan(['--persona', 'unknown', '--skill-version', '/missing-skill']),
+    /Unsupported persona unknown\npnpm skill-eval.*--persona/u,
+  )
+  await assert.rejects(
+    plan(['--persona']),
+    /Invalid or missing argument.*--persona/u,
+  )
+})
+test('sign-in sends the selected persona without a screen scenario', async () => {
+  for (const persona of [
+    'free-owner',
+    'plus-owner',
+    'team-owner',
+    'team-member',
+  ]) {
+    const token = await signIn(
+      'http://localhost',
+      persona,
+      (origin, url, options) => {
+        assert.equal(origin, 'http://localhost')
+        assert.equal(url, 'http://localhost/api/auth/dev/sign-in')
+        assert.equal(options.method, 'POST')
+        assert.deepEqual(JSON.parse(options.body), { persona })
+        return Response.json(
+          { userId: 'sample' },
+          {
+            headers: {
+              'set-cookie':
+                'better-auth.session_token=sample-token.signature; Path=/',
+            },
+          },
+        )
+      },
+    )
+    assert.equal(token, 'sample-token')
+  }
 })
 test('origin, output and skill guards reject unsafe destinations including aliases', async (t) => {
   for (const origin of [
@@ -155,11 +213,13 @@ test('local requests refuse redirects and missing dev authentication before exec
     /redirect/u,
   )
   await assert.rejects(
-    signIn('http://localhost', () => Response.json({ userId: 'sample' })),
+    signIn('http://localhost', 'free-owner', () =>
+      Response.json({ userId: 'sample' }),
+    ),
     /session token/u,
   )
   await assert.rejects(
-    signIn('http://localhost', () => {
+    signIn('http://localhost', 'free-owner', () => {
       throw new Error('unreachable')
     }),
     /unreachable/u,
@@ -535,6 +595,7 @@ test('report compares versions and excludes contamination and incomplete results
     checks: { json: { status: 'pass' } },
   }
   const report = markdown({
+    persona: 'plus-owner',
     combinations: [run.combination],
     scenarios: ['share'],
     versions: [{ label: 'one' }, { label: 'two' }],
@@ -548,6 +609,7 @@ test('report compares versions and excludes contamination and incomplete results
       { ...run, version: 'two', status: 'timeout' },
     ],
   })
+  assert.match(report, /^# Local skill evaluation — plus-owner\n/u)
   assert.match(report, /\| Check \| one \| two \|/u)
   assert.match(report, /1\/1; unknown 0; N\/A 0 \| 0\/0/u)
   assert.match(report, /contaminated 1/u)
