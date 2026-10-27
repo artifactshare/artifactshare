@@ -117,6 +117,45 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
   ])
     await assert.rejects(plan(args))
 })
+test('Claude dry-run allows file tools for both models', async (t) => {
+  const { source, root } = await fixture(t)
+  for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5']) {
+    const result = await exec(
+      process.execPath,
+      [
+        'scripts/skill-eval.mjs',
+        '--dry-run',
+        '--combination',
+        `claude:${model}`,
+        '--scenario',
+        'update',
+        '--skill-version',
+        source,
+        '--max-turns',
+        '7',
+      ],
+      { env: { PATH: '', HOME: join(root, 'absent') } },
+    )
+    assert.deepEqual(JSON.parse(result.stdout).matrix[0].command, [
+      'claude',
+      '-p',
+      '--model',
+      model,
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--allowedTools',
+      'Bash',
+      'Read',
+      'Edit',
+      'Write',
+      'Glob',
+      'Grep',
+      '--max-turns',
+      '7',
+    ])
+  }
+})
 test('planner accepts exactly the dev personas and rejects invalid input before preflight', async (t) => {
   const { source } = await fixture(t)
   for (const persona of [

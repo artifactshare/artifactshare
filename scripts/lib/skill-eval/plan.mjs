@@ -104,6 +104,11 @@ export function agentCommand(combination, maxTurns) {
       '--verbose',
       '--allowedTools',
       'Bash',
+      'Read',
+      'Edit',
+      'Write',
+      'Glob',
+      'Grep',
       '--max-turns',
       String(maxTurns),
     ]
