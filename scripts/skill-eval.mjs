@@ -128,7 +128,9 @@ export async function executeCase(
         } catch {
           /* Non-JSON failures retain the process diagnostic. */
         }
-        throw new Error(`Update artifact seed failed: ${detail}`)
+        throw new Error(
+          `${item.scenario === 'comments' ? 'Comments' : 'Update'} artifact seed failed: ${detail}`,
+        )
       }
       const body = JSON.parse(setup.stdout)
       seededId = body.data?.artifact?.id

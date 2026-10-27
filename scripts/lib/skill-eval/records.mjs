@@ -23,6 +23,7 @@ export function parseStream(agent, text, cwd = '.') {
   let cursorCompleted = false
   const cursorPending = new Set()
   const commands = new Map()
+  const unknownCursorResults = new Set()
   const cycles = new Set()
   const cycle = (id) => {
     if (!cycles.has(id)) {
@@ -51,6 +52,7 @@ export function parseStream(agent, text, cwd = '.') {
       item.output = typeof output === 'string' ? output : JSON.stringify(output)
     if (exitCode !== undefined) item.exitCode = exitCode
     commands.set(id, item)
+    return item
   }
   for (const line of text.split('\n')) {
     if (!line.trim() || line.startsWith('Reading additional input from stdin'))
@@ -131,7 +133,11 @@ export function parseStream(agent, text, cwd = '.') {
         })
     } else if (agent === 'cursor') {
       const shell = event.tool_call?.shellToolCall
-      const id = event.call_id ?? event.tool_call_id ?? event.id
+      const id =
+        event.call_id ??
+        event.tool_call_id ??
+        event.id ??
+        shell?.args?.toolCallId
       const started = event.type === 'tool_call' && event.subtype === 'started'
       // A tool-only step may have thinking but no assistant text. Keep
       // interleaved parallel calls together until every started call finishes.
@@ -144,8 +150,24 @@ export function parseStream(agent, text, cwd = '.') {
         cursorCompleted = false
       }
       if (started) cursorPending.add(id)
-      if (shell)
-        command(id, shell.args?.command, shell.result, shell.result?.exitCode)
+      if (shell) {
+        const variants = Object.values(shell.result ?? {})
+        const variant =
+          variants.length === 1 &&
+          variants[0] !== null &&
+          typeof variants[0] === 'object'
+            ? variants[0]
+            : undefined
+        const result = variant ?? shell.result
+        const output =
+          typeof result?.stdout === 'string' ||
+          typeof result?.stderr === 'string'
+            ? `${result.stdout ?? ''}${result.stderr ?? ''}`
+            : result
+        const item = command(id, shell.args?.command, output, result?.exitCode)
+        if (event.subtype === 'completed' && variant && result.exitCode == null)
+          unknownCursorResults.add(item)
+      }
       const nativeRead = event.tool_call?.readToolCall
       if (nativeRead) read(nativeRead.args?.path, id)
       if (event.type === 'tool_call' && event.subtype === 'completed') {
@@ -187,7 +209,9 @@ export function parseStream(agent, text, cwd = '.') {
   if (
     record.malformed ||
     record.commands.some(
-      (entry) => entry.exitCode === null || typeof entry.raw !== 'string',
+      (entry) =>
+        (entry.exitCode === null && !unknownCursorResults.has(entry)) ||
+        typeof entry.raw !== 'string',
     ) ||
     record.errors.some((error) =>
       ['turn.failed', 'error', 'result_error'].includes(error.type),

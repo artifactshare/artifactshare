@@ -394,6 +394,16 @@ for (const agent of ['claude', 'codex', 'cursor'])
     assert.equal(record.complete, true)
     assert.equal(record.commands.length, 1)
     assert.equal(record.commands[0].exitCode, 0)
+    if (agent === 'cursor') {
+      assert.equal(record.commands[0].output, 'Share instructions')
+      assert.deepEqual(
+        record.reads.find((read) => read.evidence === 'read'),
+        {
+          path: '/tmp/work/.cursor/skills/artifactshare/references/share.md',
+          evidence: 'read',
+        },
+      )
+    }
     assert.equal(record.referencesRead.length, 1)
     assert.equal(record.finalMessage, 'http://localhost:5173/a/sample')
     assert.equal(parseStream(agent, `${text}\n{broken`).complete, false)
@@ -403,6 +413,49 @@ for (const agent of ['claude', 'codex', 'cursor'])
       false,
     )
   })
+test('Cursor unwraps shell results while retaining missing-result detection', () => {
+  const terminal = { type: 'result', subtype: 'success', is_error: false }
+  const event = (subtype, result) => ({
+    type: 'tool_call',
+    subtype,
+    tool_call: {
+      shellToolCall: {
+        args: { command: 'artifactshare open --json', toolCallId: 'shell' },
+        result,
+      },
+    },
+  })
+  const parse = (...events) =>
+    parseStream('cursor', events.map(JSON.stringify).join('\n'))
+  for (const key of ['success', 'failure', 'error', 'rejected']) {
+    const result = {
+      [key]: {
+        exitCode: key === 'success' ? 0 : 1,
+        stdout: 'output',
+        stderr: 'diagnostic',
+      },
+    }
+    for (const prefix of [[], [event('started')]]) {
+      const record = parse(...prefix, event('completed', result), terminal)
+      assert.equal(record.complete, true)
+      assert.equal(record.commands.length, 1)
+      assert.equal(record.commands[0].raw, 'artifactshare open --json')
+      assert.equal(record.commands[0].exitCode, result[key].exitCode)
+      assert.equal(record.commands[0].output, 'outputdiagnostic')
+    }
+  }
+  assert.equal(
+    parse(event('completed', { exitCode: 0, stdout: 'flat' }), terminal)
+      .commands[0].output,
+    'flat',
+  )
+  const unknown = event('completed', { rejected: { reason: 'Unavailable' } })
+  assert.equal(parse(unknown, terminal).complete, true)
+  assert.equal(parse(unknown, terminal).commands[0].exitCode, null)
+  assert.equal(parse(unknown).complete, false)
+  assert.equal(parse(event('started'), terminal).complete, false)
+  assert.equal(parse(event('completed'), terminal).complete, false)
+})
 test('Claude counts parallel tools once per assistant message', () => {
   const assistant = {
     type: 'assistant',
@@ -1013,6 +1066,25 @@ if (process.argv[2] === 'remote') {
   })
   t.after(run.cleanup)
   assert.deepEqual(await readdir(run.workdir), ['.claude'])
+  await assert.rejects(
+    exec(
+      join(run.root, 'bin/npx'),
+      ['-y', 'typescript-language-server', '--stdio'],
+      {
+        cwd: run.workdir,
+        env: run.env.agent,
+      },
+    ),
+    /Package runners are disabled/u,
+  )
+  await assert.rejects(access(run.config.log))
+  const jsonCheck = (actions) =>
+    score({
+      record: { complete: true, finalMessage: '' },
+      actions: [{ argv: ['open', '--json'] }, ...actions],
+      scenario: 'share',
+    }).json.status
+  assert.equal(jsonCheck([]), 'pass')
   const npmPrefix = [
     'exec',
     '--yes',
@@ -1084,6 +1156,17 @@ if (process.argv[2] === 'remote') {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
+  assert.equal(
+    actions.some((action) =>
+      action.original.includes('typescript-language-server'),
+    ),
+    false,
+  )
+  const refused = actions.filter((action) => action.bin === 'npx')
+  assert.equal(refused.length, 1)
+  assert.deepEqual(refused[0].original, ['@artifactshare/cli'])
+  assert.equal(refused[0].exitCode, 1)
+  assert.equal(jsonCheck(refused), 'fail')
   assert.equal(actions.filter((action) => action.exitCode === 7).length, 2)
   assert.equal(
     actions.filter((action) => action.bin === 'npm' && action.exitCode === 7)
@@ -1809,6 +1892,7 @@ test('comments setup posts feedback and reports observations without grading the
     'missing-exit',
     'not-reply',
     'setup-error',
+    'seed-error',
   ]) {
     const failPost = observation === 'setup-error'
     let run
@@ -1846,6 +1930,14 @@ test('comments setup posts feedback and reports observations without grading the
         async runProcess(options) {
           commands.push(options.command)
           if (commands.length === 1) {
+            if (observation === 'seed-error')
+              return {
+                status: 'infrastructure-error',
+                stdout: '',
+                stderr: JSON.stringify({
+                  error: { code: 'seed_rejected', message: 'Cannot seed' },
+                }),
+              }
             assert.equal(
               await readFile(join(run.workdir, 'report.html'), 'utf8'),
               initialHtml,
@@ -1933,6 +2025,16 @@ test('comments setup posts feedback and reports observations without grading the
       'private',
       '--json',
     ])
+    if (observation === 'seed-error') {
+      assert.equal(commands.length, 1)
+      assert.equal(result.status, 'infrastructure-error')
+      assert.match(
+        result.error,
+        /Comments artifact seed failed: seed_rejected/u,
+      )
+      assert.equal(result.cleanup.temporary, true)
+      continue
+    }
     assert.deepEqual(commands[1].slice(1), [
       'comments',
       'post',
