@@ -17,6 +17,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   plan,
+  parseCombination,
+  agentCommand,
+  combinations,
   localOrigin,
   outputPath,
   repository,
@@ -593,27 +596,85 @@ test('JSON scoring requires an option before the argument terminator', () => {
   }
 })
 
-test('JSON scoring requires explicit JSON even for help and version probes', () => {
-  const check = (argv, next = ['share', 'report.html', '--json']) =>
+test('JSON scoring excludes help probes but retains their evidence', () => {
+  const check = (args) =>
     score({
       record: { complete: true, finalMessage: '' },
-      actions: [{ argv }, { argv: next }],
+      actions: args.map((argv) => ({ argv })),
       scenario: 'share',
-    }).json.status
-  for (const flag of ['--help', '-h', '--version', '-v']) {
-    assert.equal(check(['share', flag]), 'fail')
-    assert.equal(check(['share', flag, '--json']), 'pass')
-    assert.equal(check(['share', flag, '--', '--json']), 'fail')
-    assert.equal(check([flag]), 'fail')
-    assert.equal(check([flag, '--json']), 'pass')
-    assert.equal(check(['share', '--', flag]), 'fail')
-    assert.equal(check(['share', flag], ['share', 'report.html']), 'fail')
+    }).json
+  for (const argv of [
+    ['share', '--help'],
+    ['share', '-h'],
+    ['--help'],
+    ['-h'],
+    ['help'],
+    ['--profile', 'sample', 'help'],
+    ['--base-url', 'http://localhost', 'help'],
+    ['--json', 'help', 'share'],
+    ['share', '--help', '--', '--json'],
+  ]) {
+    const result = check([argv, ['share', 'x', '--json']])
+    assert.equal(result.status, 'pass')
+    assert.deepEqual(result.evidence[0].argv, argv)
+    assert.equal(result.evidence[0].excluded, true)
+    assert.equal(result.evidence[0].reason, 'Help request')
+    assert.equal(result.evidence[1].excluded, false)
+    assert.equal(check([argv]).status, 'fail')
+    assert.equal(check([argv, ['share', 'x']]).status, 'fail')
   }
-  assert.equal(check(['help']), 'fail')
-  assert.equal(check(['help', '--json']), 'pass')
-  assert.equal(check(['share', 'help']), 'fail')
-  assert.equal(check(['--', 'help']), 'fail')
-  assert.equal(check(['help', 'report.html']), 'fail')
+  for (const argv of [
+    ['share', '--version'],
+    ['-v'],
+    ['share', 'help'],
+    ['--profile', 'help', 'share'],
+    ['--', 'help'],
+    ['share', '--', '--help'],
+    ['share', '--', '-h'],
+  ]) {
+    assert.equal(check([argv, ['share', 'x', '--json']]).status, 'fail')
+    assert.equal(check([['--json', ...argv]]).status, 'pass')
+  }
+  assert.equal(check([['share', 'x']]).status, 'fail')
+})
+
+test('JSON help detection skips command option values before the command', () => {
+  const check = (argv) =>
+    score({
+      record: { complete: true, finalMessage: '' },
+      actions: [{ argv }, { argv: ['share', 'report.html', '--json'] }],
+      scenario: 'share',
+    }).json
+  for (const option of [
+    '--title',
+    '--body',
+    '--project',
+    '--project-id',
+    '--projectId',
+    '--output',
+    '--limit',
+    '--tool',
+    '--visibility',
+    '--expected-version',
+    '--expectedVersion',
+    '--wait',
+  ]) {
+    // A value named help must not hide an invocation lacking --json.
+    const ordinary = check([option, 'help', 'share', 'report.html'])
+    assert.equal(ordinary.status, 'fail', option)
+    assert.equal(ordinary.evidence[0].excluded, false, option)
+    // Conversely, skip the value to recognize a real help command.
+    const help = check([option, 'sample', 'help', 'share'])
+    assert.equal(help.status, 'pass', option)
+    assert.equal(help.evidence[0].excluded, true, option)
+    assert.equal(check([`${option}=sample`, 'help']).status, 'pass', option)
+    assert.equal(check([`${option}=help`, 'share']).status, 'fail', option)
+  }
+  assert.equal(
+    check(['--title', 'help', '--project', 'help', 'share']).status,
+    'fail',
+  )
+  assert.equal(check(['--home', 'help']).status, 'pass')
 })
 
 test('scoring requires persisted content, same identity and a changed version', () => {
@@ -2083,4 +2144,103 @@ test('comments setup posts feedback and reports observations without grading the
       )
     }
   }
+})
+
+test('combinations preserve defaults and validate optional provider effort', async () => {
+  assert.equal(combinations.length, 5)
+  assert.ok(!combinations.includes('cursor:grok-4.7-low'))
+  for (const id of combinations) {
+    assert.equal(parseCombination(id).effort, 'default')
+    assert.ok(!agentCommand(id, 20).includes('--effort'))
+    assert.ok(
+      !agentCommand(id, 20).some((arg) =>
+        arg.startsWith('model_reasoning_effort='),
+      ),
+    )
+  }
+  for (const [agent, model, efforts] of [
+    ['claude', 'claude-sonnet-5-5', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['codex', 'gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh']],
+  ]) {
+    for (const effort of efforts) {
+      const id = `${agent}:${model}:${effort}`
+      assert.deepEqual(parseCombination(id), { agent, model, effort })
+      const command = agentCommand(id, 20)
+      const flags =
+        agent === 'claude'
+          ? ['--effort', effort]
+          : ['-c', `model_reasoning_effort=${effort}`]
+      const index = command.indexOf(flags[1])
+      assert.deepEqual(command.slice(index - 1, index + 1), flags)
+      assert.deepEqual(
+        command.filter((_, i) => i !== index - 1 && i !== index),
+        agentCommand(`${agent}:${model}`, 20),
+      )
+    }
+  }
+  for (const id of [
+    'claude:claude-sonnet-5-5:',
+    'claude:claude-sonnet-5-5:extreme',
+    'claude:claude-sonnet-5-5:low:extra',
+    'codex:gpt-6.1-sol:max',
+    'codex:gpt-6.1-sol:default',
+    'codex:unknown:low',
+    'codex',
+  ]) {
+    assert.throws(() => parseCombination(id), /Unsupported/u)
+    await assert.rejects(
+      plan(['--dry-run', '--combination', id]),
+      /Unsupported/u,
+    )
+  }
+  assert.throws(
+    () => parseCombination('cursor:grok-4.7-low:low'),
+    /Cursor effort is part of the model name/u,
+  )
+  const p = await plan([
+    '--dry-run',
+    '--scenario',
+    'share',
+    '--combination',
+    'claude:claude-sonnet-5-5',
+    '--combination',
+    'claude:claude-sonnet-5-5:low',
+    '--combination',
+    'codex:gpt-6.1-sol:low',
+    '--combination',
+    'cursor:grok-4.7-low',
+  ])
+  assert.deepEqual(
+    p.matrix.map((row) => row.effort),
+    ['default', 'low', 'low', 'default'],
+  )
+  assert.deepEqual(p.matrix[3].command, [
+    'cursor-agent',
+    '-p',
+    '--trust',
+    '-f',
+    '--model',
+    'grok-4.7-low',
+    '--output-format',
+    'stream-json',
+  ])
+  const result = {
+    ...p,
+    runs: p.matrix.map((row) => ({
+      ...row,
+      status: 'completed',
+      skills: { complete: true, contaminated: false },
+      checks: { json: { status: row.effort === 'low' ? 'fail' : 'pass' } },
+    })),
+  }
+  assert.equal(JSON.parse(JSON.stringify(result)).runs[1].effort, 'low')
+  const report = markdown(result)
+  assert.match(
+    report,
+    /## claude:claude-sonnet-5-5 \/ share \(effort: default\)[\s\S]*?\| json \| 1\/1/u,
+  )
+  assert.match(
+    report,
+    /## claude:claude-sonnet-5-5:low \/ share \(effort: low\)[\s\S]*?\| json \| 0\/1/u,
+  )
 })

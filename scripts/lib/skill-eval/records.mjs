@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { parseCombination } from './plan.mjs'
 
 // Conservative tokenization for ordinary command lines. Shell programs remain raw evidence.
 export function words(text) {
@@ -282,6 +283,56 @@ function urlKey(value) {
     return null
   }
 }
+// Value-taking options from packages/cli/src/cli.ts. Both public kebab-case
+// spellings and accepted camelCase aliases consume the following argument.
+const valueOptions = new Set(
+  [
+    'addEmail',
+    'agent',
+    'aroundMessageId',
+    'baseUrl',
+    'before',
+    'body',
+    'cursor',
+    'description',
+    'expectedVersion',
+    'grantEmail',
+    'include',
+    'key',
+    'label',
+    'limit',
+    'linkExpiresAt',
+    'messageId',
+    'name',
+    'offset',
+    'output',
+    'preset',
+    'profile',
+    'project',
+    'projectId',
+    'query',
+    'quote',
+    'quoteAfter',
+    'quoteBefore',
+    'removeEmail',
+    'replyTo',
+    'retainVersions',
+    'revokeEmail',
+    'scope',
+    'session',
+    'thread',
+    'threadId',
+    'title',
+    'token',
+    'tool',
+    'visibility',
+    'wait',
+  ].flatMap((name) => [
+    `--${name}`,
+    `--${name.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)}`,
+  ]),
+)
+
 export function score({
   record,
   actions = [],
@@ -292,15 +343,36 @@ export function score({
   const unknown = (reason) => outcome('unknown', reason)
   const eligible = record.complete && status === 'completed'
   const checks = {}
+  const jsonEvidence = actions.map((action) => {
+    const argv = action.argv ?? []
+    const terminator = argv.indexOf('--')
+    const options = terminator < 0 ? argv : argv.slice(0, terminator)
+    let firstPositional
+    for (let i = 0; i < options.length; i++) {
+      const arg = options[i]
+      if (valueOptions.has(arg)) {
+        i++
+      } else if (!arg.startsWith('-')) {
+        firstPositional = arg
+        break
+      }
+    }
+    const help =
+      options.includes('--help') ||
+      options.includes('-h') ||
+      firstPositional === 'help'
+    return {
+      argv,
+      excluded: help,
+      reason: help ? 'Help request' : undefined,
+      json: options.includes('--json'),
+    }
+  })
+  const judged = jsonEvidence.filter((action) => !action.excluded)
   checks.json = actions.length
     ? decide(
-        actions.every((action) => {
-          const argv = action.argv ?? []
-          const terminator = argv.indexOf('--')
-          const options = terminator < 0 ? argv : argv.slice(0, terminator)
-          return options.includes('--json')
-        }),
-        actions.map((action) => action.argv),
+        judged.length > 0 && judged.every((action) => action.json),
+        jsonEvidence,
       )
     : eligible
       ? decide(false, 'No CLI invocations')
@@ -419,7 +491,7 @@ export function markdown(result) {
   for (const combination of result.combinations)
     for (const scenario of result.scenarios) {
       lines.push(
-        `## ${combination} / ${scenario}`,
+        `## ${combination} / ${scenario} (effort: ${parseCombination(combination).effort})`,
         '',
         `| Check | ${result.versions.map((v) => v.label).join(' | ')} |`,
         `| --- | ${result.versions.map(() => '---').join(' | ')} |`,
