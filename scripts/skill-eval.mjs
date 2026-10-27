@@ -19,7 +19,10 @@ import { closeAppFetch } from './lib/dev-sign-in.mjs'
 export const initialHtml =
   '<!doctype html><html lang="en"><meta charset="utf-8"><title>Sample report</title><h1>Sample report</h1><p>Draft schedule</p></html>\n'
 export const expectedContent = 'Launch is ready for Friday.'
+export const commentText = `The schedule line should say "${expectedContent}" instead of the draft text.`
 export function promptFor(scenario, url) {
+  if (scenario === 'comments')
+    return `Someone left comments on the shared page at ${url}. Please make the changes they asked for in report.html and update that same page. Give me the page URL.`
   return scenario === 'share'
     ? 'Please share report.html using Artifact Share and give me its browser URL.'
     : `Please change the schedule text in report.html to “${expectedContent}” and update the existing Artifact Share page at ${url} so people can keep using that same URL. Give me the updated page URL.`
@@ -96,7 +99,7 @@ export async function executeCase(
     }
     await privateFile(join(run.workdir, 'report.html'), initialHtml)
     beforeList = await client.list()
-    if (item.scenario === 'update') {
+    if (['update', 'comments'].includes(item.scenario)) {
       const setup = await runtime.runProcess({
         command: [
           join(run.root, 'bin/artifactshare'),
@@ -134,6 +137,40 @@ export async function executeCase(
       owned.set(seededId, 'setup-cli-response')
       result.server.before = await client.get(seededId)
       beforeList = await client.list()
+      if (item.scenario === 'comments') {
+        const post = await runtime.runProcess({
+          command: [
+            join(run.root, 'bin/artifactshare'),
+            'comments',
+            'post',
+            result.server.before.share_url,
+            '--body',
+            commentText,
+            '--json',
+          ],
+          cwd: run.workdir,
+          env: run.env.agent,
+          timeoutMs: options.timeoutMs,
+          signal,
+        })
+        result.commentSetup = {
+          status: post.status,
+          stdout: redact(post.stdout, secrets),
+          stderr: redact(post.stderr, secrets),
+        }
+        if (post.status !== 'completed') {
+          let detail = post.stderr.trim() || post.error || post.status
+          for (const diagnostic of [post.stderr, post.stdout]) {
+            try {
+              const error = JSON.parse(diagnostic).error
+              if (error?.code) detail = `${error.code}: ${error.message ?? ''}`
+            } catch {
+              /* Retain the process diagnostic for non-JSON errors. */
+            }
+          }
+          throw new Error(`Comment post failed: ${detail}`)
+        }
+      }
     }
     await privateFile(run.config.log, '')
     observe(result.skills, await inventory(run.root, selectedOverlay.files))
@@ -249,6 +286,33 @@ export async function executeCase(
   if (result.skills.contaminated) result.status = 'contaminated'
   else if (!result.skills.complete && result.status === 'completed')
     result.status = 'incomplete'
+  if (item.scenario === 'comments') {
+    const comments = (result.actions ?? []).filter(
+      (action) =>
+        action.argv?.filter((arg) => !arg.startsWith('--'))[0] === 'comments',
+    )
+    const succeeded = (action, command) => {
+      if (action.exitCode !== 0) return false
+      try {
+        const response = JSON.parse(action.stdout)
+        return response.ok === true && response.command === command
+          ? response
+          : false
+      } catch {
+        return false
+      }
+    }
+    result.comments = {
+      read: comments.some((action) => action.argv.includes('list')),
+      resolved: comments.some((action) =>
+        succeeded(action, 'comments resolve'),
+      ),
+      replied: comments.some(
+        (action) => succeeded(action, 'comments post')?.data?.reply === true,
+      ),
+      commands: comments.map((action) => action.argv),
+    }
+  }
   result.checks = score(result)
   return result
 }

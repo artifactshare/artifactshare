@@ -19,6 +19,9 @@ export function parseStream(agent, text, cwd = '.') {
     turns: 0,
     malformed: 0,
   }
+  let cursorStep = 0
+  let cursorCompleted = false
+  const cursorPending = new Set()
   const commands = new Map()
   const cycles = new Set()
   const cycle = (id) => {
@@ -129,16 +132,27 @@ export function parseStream(agent, text, cwd = '.') {
     } else if (agent === 'cursor') {
       const shell = event.tool_call?.shellToolCall
       const id = event.call_id ?? event.tool_call_id ?? event.id
+      const started = event.type === 'tool_call' && event.subtype === 'started'
+      // A tool-only step may have thinking but no assistant text. Keep
+      // interleaved parallel calls together until every started call finishes.
+      if (
+        cursorCompleted &&
+        cursorPending.size === 0 &&
+        (started || ['thinking', 'assistant'].includes(event.type))
+      ) {
+        cursorStep++
+        cursorCompleted = false
+      }
+      if (started) cursorPending.add(id)
       if (shell)
         command(id, shell.args?.command, shell.result, shell.result?.exitCode)
       const nativeRead = event.tool_call?.readToolCall
       if (nativeRead) read(nativeRead.args?.path, id)
-      if (
-        event.type === 'tool_call' &&
-        event.subtype === 'completed' &&
-        (shell || nativeRead)
-      )
-        cycle(id)
+      if (event.type === 'tool_call' && event.subtype === 'completed') {
+        cursorPending.delete(id)
+        cursorCompleted = true
+        cycle(event.message?.id ?? event.step_id ?? `cursor-step-${cursorStep}`)
+      }
       if (event.type === 'assistant')
         record.finalMessage = content
           .filter(
@@ -419,6 +433,10 @@ export function markdown(result) {
           `${version.label}: incomplete ${runs.filter((run) => run.status !== 'completed' && run.status !== 'contaminated').length}; contaminated ${runs.filter((run) => run.skills?.contaminated).length}.`,
           `Reference reads: ${[...new Set(runs.flatMap((run) => run.record?.referencesRead ?? []))].join(', ') || 'none observed'}.`,
         )
+        if (scenario === 'comments')
+          lines.push(
+            `Comments observations: ${runs.map((run) => JSON.stringify(run.comments ?? {})).join('; ')}.`,
+          )
       }
       lines.push('')
     }

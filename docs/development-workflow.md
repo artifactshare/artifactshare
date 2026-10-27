@@ -259,11 +259,10 @@ in-frame message when a browser blocks partitioned cookies. No local validation 
 `pnpm skill-eval -- --dry-run` plans a comparison without requiring a CLI
 build, running dev app, agent executable, authentication, or credential links.
 It validates only arguments, selected skill trees and the output destination.
-The current harness implements the reduced scope: Claude Code
-(`claude-opus-5-5`, `claude-sonnet-5-5`) and Codex (`gpt-6.1-sol`,
-`gpt-6-astra`), with `share` and `update`. Cursor and `comments` are deferred
-and rejected. All three stream formats have synthetic parser fixtures; that
-parser coverage does not imply Cursor execution support.
+The harness supports Claude Code (`claude-opus-5-5`, `claude-sonnet-5-5`),
+Codex (`gpt-6.1-sol`, `gpt-6-astra`), and Cursor (`grok-4.7-high`),
+with `share`, `update`, and `comments` scenarios. All three stream formats
+have synthetic parser fixtures.
 
 ```sh
 pnpm skill-eval -- --dry-run --combination codex:gpt-6.1-sol --scenario share --runs 1
@@ -275,30 +274,43 @@ pnpm skill-eval -- --combination claude:claude-sonnet-5-5 --scenario update \
   --skill-version /tmp/before --skill-version /tmp/after --runs 3
 ```
 
-Defaults are all four supported combinations, both scenarios, one repetition,
+Defaults are all five supported combinations, all three scenarios, one repetition,
 300000 milliseconds per run, 20 completed tool cycles per run, the checkout's
 `packages/cli/skills/artifactshare` version, and `https://localhost:5173`.
 `--persona <id>` selects `free-owner` (the default), `plus-owner`,
 `team-owner`, or `team-member`. The default is a personal account because
 personal and team personas differ in which sharing visibilities succeed.
-The update scenario seeds a private artifact before the agent starts.
+The update and comments scenarios seed a private artifact before the agent
+starts. Comments also posts a request to change the schedule line; the agent
+must read the feedback, edit the local report, and update the same page.
+It uses update's checks and separately reports observed comment reads,
+resolutions, and replies without grading those observations.
 Use repeatable `--combination`, `--scenario` and `--skill-version`; version
 directory basenames must be distinct. `--timeout-ms`, `--max-turns`,
 `--base-url` and `--output-dir` override the remaining defaults. Claude also
 receives its native maximum-turns option. Exactly the configured number of
 completed cycles may still produce a final answer; an extra cycle exhausts the
 budget even when its result and the terminal event arrive in one output chunk.
+Cursor runs `cursor-agent -p --trust -f --model <model> --output-format stream-json`
+with the prompt as a positional argument. Its budget counts completed tool-call
+groups per assistant step; it has no native maximum-turns flag.
 Cases run serially with identical
 scenario inputs and budgets across versions. No model substitution occurs.
 
 Actual execution requires the installed agent and its existing macOS sign-in.
 Each case has a fresh temporary HOME, workdir, agent config roots and CLI
 credential directory. Claude links only `Library/Keychains`; Codex links only
-`CODEX_HOME/auth.json`. No user skill/config directory is copied or linked.
+`CODEX_HOME/auth.json`. Cursor links only `Library/Keychains` and
+`~/.cursor/cli-config.json` into the temporary HOME. Cursor may replace that
+config link with a local file, removed with the run; the harness never writes
+to the real config. No other user skill/config directory is copied or linked.
 Inherited `CLAUDE_CONFIG_DIR` is removed and left unset: temporary HOME selects
 the default Claude config directory without changing its Keychain identity.
-The initial project skill lives only in `.claude/skills/artifactshare` or
-`.agents/skills/artifactshare`. Account-provided hooks/plugins may still run.
+The initial project skill lives only in `.claude/skills/artifactshare` for
+Claude or `.agents/skills/artifactshare` for Codex. Cursor gets only
+`.cursor/rules/artifactshare.mdc` when the selected version includes that file,
+otherwise `.cursor/skills/artifactshare/`. Inventory covers project and
+temporary HOME Cursor locations. Account-provided hooks/plugins may still run.
 This isolation assumes cooperative agents and trusted skills; it is not an
 OS security boundary against arbitrary code.
 
@@ -351,7 +363,7 @@ Reference reads are observations, not grades. Recovery actions with uncertain
 semantics (such as changing inputs or waiting) remain unknown; no LLM judge
 is required or enabled. A missing terminal event or malformed stream cannot
 establish a passing run. The report makes no statistical significance or
-model-ranking claim. Full baselines and live share/update smoke runs are
+model-ranking claim. Full baselines and live share/update/comments smoke runs are
 maintainer follow-up; automated validation never launches real agents.
 
 Sanitized dry-run evidence for the one-case example above:
