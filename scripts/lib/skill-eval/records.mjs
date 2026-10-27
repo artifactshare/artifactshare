@@ -371,7 +371,7 @@ export function score({
 }
 export function markdown(result) {
   const lines = [
-    '# Local skill evaluation',
+    `# Local skill evaluation — ${result.persona}`,
     '',
     'Pass counts use completed, inspected, uncontaminated runs only. Unknown and not-applicable outcomes are excluded from eligible denominators.',
     '',

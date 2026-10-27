@@ -266,7 +266,7 @@ export async function main(argv = process.argv.slice(2)) {
     selectedOverlay = null
     await mkdir(options.outputDir, { recursive: true, mode: 0o700 })
     output = await mkdtemp(join(options.outputDir, 'evaluation-'))
-    const token = await signIn(options.baseUrl)
+    const token = await signIn(options.baseUrl, options.persona)
     const client = serverClient(options.baseUrl, token)
     for (const version of options.versions) {
       selectedOverlay = await overlay(version)
