@@ -9,6 +9,7 @@ export const combinations = [
   'claude:claude-sonnet-5-5',
   'codex:gpt-6.1-sol',
   'codex:gpt-6-astra',
+  'cursor:grok-4.7-high',
 ]
 export const personas = [
   'free-owner',
@@ -17,7 +18,7 @@ export const personas = [
   'team-member',
 ]
 export const usage =
-  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model] [--scenario share|update] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
+  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model] [--scenario share|update|comments] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
 export const fingerprint = (bytes) =>
   createHash('sha256').update(bytes).digest('hex')
 export function localOrigin(value) {
@@ -91,8 +92,28 @@ export async function skillVersion(source) {
     files,
   }
 }
+export function skillLocation(agent, version) {
+  if (agent === 'cursor')
+    return version.files['artifactshare.mdc'] !== undefined
+      ? '.cursor/rules/artifactshare.mdc'
+      : '.cursor/skills/artifactshare'
+  return agent === 'claude'
+    ? '.claude/skills/artifactshare'
+    : '.agents/skills/artifactshare'
+}
 export function agentCommand(combination, maxTurns) {
   const [agent, model] = combination.split(':')
+  if (agent === 'cursor')
+    return [
+      'cursor-agent',
+      '-p',
+      '--trust',
+      '-f',
+      '--model',
+      model,
+      '--output-format',
+      'stream-json',
+    ]
   if (agent === 'claude')
     return [
       'claude',
@@ -171,17 +192,14 @@ export async function plan(argv) {
   if (!personas.includes(options.persona))
     throw new Error(`Unsupported persona ${options.persona}\n${usage}`)
   if (!options.combinations.length) options.combinations = [...combinations]
-  if (!options.scenarios.length) options.scenarios = ['share', 'update']
+  if (!options.scenarios.length)
+    options.scenarios = ['share', 'update', 'comments']
   for (const id of options.combinations)
     if (!combinations.includes(id))
-      throw new Error(
-        `Unsupported combination ${id}; Cursor is deferred\n${usage}`,
-      )
+      throw new Error(`Unsupported combination ${id}\n${usage}`)
   for (const id of options.scenarios)
-    if (!['share', 'update'].includes(id))
-      throw new Error(
-        `Unsupported scenario ${id}; comments is deferred\n${usage}`,
-      )
+    if (!['share', 'update', 'comments'].includes(id))
+      throw new Error(`Unsupported scenario ${id}\n${usage}`)
   options.combinations = [...new Set(options.combinations)]
   options.scenarios = [...new Set(options.scenarios)]
   options.baseUrl = localOrigin(options.baseUrl)
@@ -209,9 +227,7 @@ export async function plan(argv) {
               home: '<temporary>/home',
               codexHome: '<temporary>/codex',
               workdir: '<temporary>/work',
-              skill: combination.startsWith('claude:')
-                ? '.claude/skills/artifactshare'
-                : '.agents/skills/artifactshare',
+              skill: skillLocation(combination.split(':')[0], version),
               bin: '<temporary>/bin',
               overlay: '<temporary-overlay>/dist/index.js',
             },

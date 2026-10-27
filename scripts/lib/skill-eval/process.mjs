@@ -48,7 +48,12 @@ export function runProcess({
       status,
       killTimer,
       done = false
-    const child = spawn(command[0], command.slice(1), {
+    // Cursor documents the initial prompt as a positional argument.
+    const args =
+      agent === 'cursor' && prompt
+        ? [...command.slice(1), prompt]
+        : command.slice(1)
+    const child = spawn(command[0], args, {
       cwd,
       env,
       detached: true,
@@ -74,7 +79,7 @@ export function runProcess({
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdin.on('error', () => {})
-    child.stdin.end(prompt)
+    child.stdin.end(agent === 'cursor' ? '' : prompt)
     child.stdout.on('data', (data) => {
       stdout += data
       onOutput('stdout', stdout)

@@ -14,7 +14,7 @@ import {
 import { join, relative, resolve } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { walkthroughCliEnvironment } from '../walkthrough-cli-environment.mjs'
-import { fingerprint, repository } from './plan.mjs'
+import { fingerprint, repository, skillLocation } from './plan.mjs'
 
 export async function privateFile(path, data) {
   await mkdir(resolve(path, '..'), { recursive: true, mode: 0o700 })
@@ -161,17 +161,28 @@ export async function createRun({
           : join(root, 'home/Library/Keychains')
       await mkdir(resolve(target, '..'), { recursive: true, mode: 0o700 })
       await symlink(source, target)
+      if (agent === 'cursor') {
+        const configSource = join(realHome, '.cursor/cli-config.json')
+        await access(configSource)
+        await mkdir(join(root, 'home/.cursor'), {
+          recursive: true,
+          mode: 0o700,
+        })
+        await symlink(configSource, join(root, 'home/.cursor/cli-config.json'))
+      }
     }
-    const location =
-      agent === 'codex'
-        ? '.agents/skills/artifactshare'
-        : '.claude/skills/artifactshare'
+    const location = skillLocation(agent, version)
     const projectFiles = Object.fromEntries(
       Object.entries(version.files).filter(
         ([name]) => name === 'SKILL.md' || name.startsWith('references/'),
       ),
     )
-    await copyFiles(join(workdir, location), projectFiles)
+    if (location.endsWith('.mdc'))
+      await privateFile(
+        join(workdir, location),
+        version.files['artifactshare.mdc'],
+      )
+    else await copyFiles(join(workdir, location), projectFiles)
     const config = {
       target: selectedOverlay.target,
       baseUrl,

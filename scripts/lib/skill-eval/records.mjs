@@ -19,7 +19,11 @@ export function parseStream(agent, text, cwd = '.') {
     turns: 0,
     malformed: 0,
   }
+  let cursorStep = 0
+  let cursorCompleted = false
+  const cursorPending = new Set()
   const commands = new Map()
+  const unknownCursorResults = new Set()
   const cycles = new Set()
   const cycle = (id) => {
     if (!cycles.has(id)) {
@@ -48,6 +52,7 @@ export function parseStream(agent, text, cwd = '.') {
       item.output = typeof output === 'string' ? output : JSON.stringify(output)
     if (exitCode !== undefined) item.exitCode = exitCode
     commands.set(id, item)
+    return item
   }
   for (const line of text.split('\n')) {
     if (!line.trim() || line.startsWith('Reading additional input from stdin'))
@@ -128,17 +133,50 @@ export function parseStream(agent, text, cwd = '.') {
         })
     } else if (agent === 'cursor') {
       const shell = event.tool_call?.shellToolCall
-      const id = event.call_id ?? event.tool_call_id ?? event.id
-      if (shell)
-        command(id, shell.args?.command, shell.result, shell.result?.exitCode)
+      const id =
+        event.call_id ??
+        event.tool_call_id ??
+        event.id ??
+        shell?.args?.toolCallId
+      const started = event.type === 'tool_call' && event.subtype === 'started'
+      // A tool-only step may have thinking but no assistant text. Keep
+      // interleaved parallel calls together until every started call finishes.
+      if (
+        cursorCompleted &&
+        cursorPending.size === 0 &&
+        (started || ['thinking', 'assistant'].includes(event.type))
+      ) {
+        cursorStep++
+        cursorCompleted = false
+      }
+      if (started) cursorPending.add(id)
+      if (shell) {
+        const variants = Object.entries(shell.result ?? {}).filter(
+          ([, value]) => value !== null && typeof value === 'object',
+        )
+        const variant =
+          variants.length === 1
+            ? variants[0][1]
+            : ['success', 'failure', 'error', 'rejected']
+                .map((key) => variants.find(([name]) => name === key)?.[1])
+                .find((value) => value !== undefined)
+        const result = variant ?? shell.result
+        const output =
+          typeof result?.stdout === 'string' ||
+          typeof result?.stderr === 'string'
+            ? `${result.stdout ?? ''}${result.stderr ?? ''}`
+            : result
+        const item = command(id, shell.args?.command, output, result?.exitCode)
+        if (event.subtype === 'completed' && variant && result.exitCode == null)
+          unknownCursorResults.add(item)
+      }
       const nativeRead = event.tool_call?.readToolCall
       if (nativeRead) read(nativeRead.args?.path, id)
-      if (
-        event.type === 'tool_call' &&
-        event.subtype === 'completed' &&
-        (shell || nativeRead)
-      )
-        cycle(id)
+      if (event.type === 'tool_call' && event.subtype === 'completed') {
+        cursorPending.delete(id)
+        cursorCompleted = true
+        cycle(event.message?.id ?? event.step_id ?? `cursor-step-${cursorStep}`)
+      }
       if (event.type === 'assistant')
         record.finalMessage = content
           .filter(
@@ -173,7 +211,9 @@ export function parseStream(agent, text, cwd = '.') {
   if (
     record.malformed ||
     record.commands.some(
-      (entry) => entry.exitCode === null || typeof entry.raw !== 'string',
+      (entry) =>
+        (entry.exitCode === null && !unknownCursorResults.has(entry)) ||
+        typeof entry.raw !== 'string',
     ) ||
     record.errors.some((error) =>
       ['turn.failed', 'error', 'result_error'].includes(error.type),
@@ -419,6 +459,10 @@ export function markdown(result) {
           `${version.label}: incomplete ${runs.filter((run) => run.status !== 'completed' && run.status !== 'contaminated').length}; contaminated ${runs.filter((run) => run.skills?.contaminated).length}.`,
           `Reference reads: ${[...new Set(runs.flatMap((run) => run.record?.referencesRead ?? []))].join(', ') || 'none observed'}.`,
         )
+        if (scenario === 'comments')
+          lines.push(
+            `Comments observations: ${runs.map((run) => JSON.stringify(run.comments ?? {})).join('; ')}.`,
+          )
       }
       lines.push('')
     }

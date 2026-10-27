@@ -40,6 +40,87 @@ import {
   inspectTree,
 } from './public-development-guard.mjs'
 const exec = promisify(execFile)
+test('Cursor groups completed tools by assistant step and enforces the budget', () => {
+  const events = [
+    { type: 'assistant', message: { content: 'Inspect' } },
+    { type: 'tool_call', subtype: 'started', call_id: 'one' },
+    {
+      type: 'tool_call',
+      subtype: 'completed',
+      call_id: 'one',
+      tool_call: { readToolCall: { args: { path: 'report.html' } } },
+    },
+    {
+      type: 'tool_call',
+      subtype: 'completed',
+      call_id: 'two',
+      tool_call: { editToolCall: {} },
+    },
+    { type: 'assistant', message: { content: 'Update' } },
+    {
+      type: 'tool_call',
+      subtype: 'completed',
+      call_id: 'three',
+      tool_call: { editToolCall: {} },
+    },
+    { type: 'result', is_error: false },
+  ]
+  const lines = events.map((event) => JSON.stringify(event))
+  assert.equal(parseStream('cursor', lines.slice(0, 4).join('\n')).turns, 1)
+  assert.equal(parseStream('cursor', lines.join('\n')).turns, 2)
+  assert.equal(turnBudget('cursor', 1).push(lines.join('\n') + '\n'), true)
+  assert.equal(turnBudget('cursor', 2).push(lines.join('\n') + '\n'), false)
+})
+
+test('Cursor counts thinking-only and tool-only steps without splitting parallel calls', () => {
+  const tool = (subtype, id) => ({
+    type: 'tool_call',
+    subtype,
+    call_id: id,
+    tool_call: { editToolCall: {} },
+  })
+  for (const boundary of ['thinking', 'assistant', 'started']) {
+    const events = [
+      { type: 'thinking', subtype: 'delta', text: 'Inspect' },
+      tool('started', 'one'),
+      tool('started', 'two'),
+      tool('completed', 'one'),
+      // Outstanding parallel work keeps these events in the first group.
+      { type: 'thinking', subtype: 'delta', text: 'Continue' },
+      { type: 'assistant', message: { content: 'Continue' } },
+      tool('started', 'three'),
+      tool('completed', 'two'),
+      tool('completed', 'three'),
+      ...(boundary === 'started'
+        ? []
+        : [{ type: boundary, message: { content: 'Next' } }]),
+      tool('started', 'four'),
+      tool('completed', 'four'),
+      { type: 'result', is_error: false },
+    ]
+    const lines = events.map((event) => JSON.stringify(event))
+    assert.equal(parseStream('cursor', lines.slice(0, 9).join('\n')).turns, 1)
+    assert.equal(parseStream('cursor', lines.join('\n')).turns, 2)
+    assert.equal(turnBudget('cursor', 1).push(lines.join('\n') + '\n'), true)
+    assert.equal(turnBudget('cursor', 2).push(lines.join('\n') + '\n'), false)
+  }
+})
+
+test('Cursor receives the prompt as one positional argument', async () => {
+  const prompt = 'Please update "report.html"; keep its URL.'
+  const result = await runProcess({
+    command: [
+      process.execPath,
+      '-e',
+      'process.stdin.resume(); process.stdin.on("end", () => console.log(JSON.stringify(process.argv.slice(1))))',
+    ],
+    agent: 'cursor',
+    prompt,
+    timeoutMs: 1000,
+  })
+  assert.equal(result.status, 'completed')
+  assert.deepEqual(JSON.parse(result.stdout), [prompt])
+})
 const marker = '<!-- artifactshare-skill\nversion: 46\nmanaged: true\n-->\n'
 const skill = `---\nname: artifactshare\ndescription: Synthetic evaluation skill\n---\n${marker}Selected synthetic skill\n`
 async function fixture(t) {
@@ -110,8 +191,8 @@ test('planner accepts pnpm separator and dry-run needs only input files', async 
   for (const args of [
     ['--runs', '0'],
     ['--runs'],
-    ['--scenario', 'comments'],
-    ['--combination', 'cursor:grok-4.7-high'],
+    ['--scenario', 'unsupported'],
+    ['--combination', 'cursor:unsupported'],
     ['--wat'],
     ['--skill-version', source, '--skill-version', source],
   ])
@@ -313,6 +394,16 @@ for (const agent of ['claude', 'codex', 'cursor'])
     assert.equal(record.complete, true)
     assert.equal(record.commands.length, 1)
     assert.equal(record.commands[0].exitCode, 0)
+    if (agent === 'cursor') {
+      assert.equal(record.commands[0].output, 'Share instructions')
+      assert.deepEqual(
+        record.reads.find((read) => read.evidence === 'read'),
+        {
+          path: '/tmp/work/.cursor/skills/artifactshare/references/share.md',
+          evidence: 'read',
+        },
+      )
+    }
     assert.equal(record.referencesRead.length, 1)
     assert.equal(record.finalMessage, 'http://localhost:5173/a/sample')
     assert.equal(parseStream(agent, `${text}\n{broken`).complete, false)
@@ -322,6 +413,68 @@ for (const agent of ['claude', 'codex', 'cursor'])
       false,
     )
   })
+test('Cursor unwraps shell results while retaining missing-result detection', () => {
+  const terminal = { type: 'result', subtype: 'success', is_error: false }
+  const event = (subtype, result) => ({
+    type: 'tool_call',
+    subtype,
+    tool_call: {
+      shellToolCall: {
+        args: { command: 'artifactshare open --json', toolCallId: 'shell' },
+        result,
+      },
+    },
+  })
+  const parse = (...events) =>
+    parseStream('cursor', events.map(JSON.stringify).join('\n'))
+  for (const key of ['success', 'failure', 'error', 'rejected', 'future']) {
+    const result = {
+      isBackground: false,
+      [key]: {
+        exitCode: key === 'success' ? 0 : 1,
+        stdout: 'output',
+        stderr: 'diagnostic',
+      },
+    }
+    for (const prefix of [[], [event('started')]]) {
+      const record = parse(...prefix, event('completed', result), terminal)
+      assert.equal(record.complete, true)
+      assert.equal(record.commands.length, 1)
+      assert.equal(record.commands[0].raw, 'artifactshare open --json')
+      assert.equal(record.commands[0].exitCode, result[key].exitCode)
+      assert.equal(record.commands[0].output, 'outputdiagnostic')
+    }
+  }
+  for (const key of ['success', 'failure', 'error', 'rejected']) {
+    const variants = {
+      metadata: { duration: 1 },
+      rejected: { exitCode: 4, stdout: 'rejected' },
+      error: { exitCode: 3, stdout: 'error' },
+      failure: { exitCode: 2, stdout: 'failure' },
+      success: { exitCode: 0, stdout: 'success' },
+      isBackground: false,
+    }
+    for (const preferred of ['success', 'failure', 'error', 'rejected']) {
+      if (preferred === key) break
+      delete variants[preferred]
+    }
+    const record = parse(event('completed', variants), terminal)
+    assert.equal(record.complete, true)
+    assert.equal(record.commands[0].exitCode, variants[key].exitCode)
+    assert.equal(record.commands[0].output, key)
+  }
+  assert.equal(
+    parse(event('completed', { exitCode: 0, stdout: 'flat' }), terminal)
+      .commands[0].output,
+    'flat',
+  )
+  const unknown = event('completed', { rejected: { reason: 'Unavailable' } })
+  assert.equal(parse(unknown, terminal).complete, true)
+  assert.equal(parse(unknown, terminal).commands[0].exitCode, null)
+  assert.equal(parse(unknown).complete, false)
+  assert.equal(parse(event('started'), terminal).complete, false)
+  assert.equal(parse(event('completed'), terminal).complete, false)
+})
 test('Claude counts parallel tools once per assistant message', () => {
   const assistant = {
     type: 'assistant',
@@ -932,6 +1085,25 @@ if (process.argv[2] === 'remote') {
   })
   t.after(run.cleanup)
   assert.deepEqual(await readdir(run.workdir), ['.claude'])
+  await assert.rejects(
+    exec(
+      join(run.root, 'bin/npx'),
+      ['-y', 'typescript-language-server', '--stdio'],
+      {
+        cwd: run.workdir,
+        env: run.env.agent,
+      },
+    ),
+    /Package runners are disabled/u,
+  )
+  await assert.rejects(access(run.config.log))
+  const jsonCheck = (actions) =>
+    score({
+      record: { complete: true, finalMessage: '' },
+      actions: [{ argv: ['open', '--json'] }, ...actions],
+      scenario: 'share',
+    }).json.status
+  assert.equal(jsonCheck([]), 'pass')
   const npmPrefix = [
     'exec',
     '--yes',
@@ -1003,6 +1175,17 @@ if (process.argv[2] === 'remote') {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
+  assert.equal(
+    actions.some((action) =>
+      action.original.includes('typescript-language-server'),
+    ),
+    false,
+  )
+  const refused = actions.filter((action) => action.bin === 'npx')
+  assert.equal(refused.length, 1)
+  assert.deepEqual(refused[0].original, ['@artifactshare/cli'])
+  assert.equal(refused[0].exitCode, 1)
+  assert.equal(jsonCheck(refused), 'fail')
   assert.equal(actions.filter((action) => action.exitCode === 7).length, 2)
   assert.equal(
     actions.filter((action) => action.bin === 'npm' && action.exitCode === 7)
@@ -1612,4 +1795,292 @@ test('CODEX_HOME skill changes contaminate the run and retain user location evid
   assert.equal(history.files[0].scope, 'user')
   assert.equal(history.files[0].location, 'codex')
   assert.equal(history.files[0].change, 'created')
+})
+
+test('Cursor defaults, command, placement and credential links stay isolated', async (t) => {
+  const { root, source } = await fixture(t)
+  const realHome = join(root, 'real-home')
+  await mkdir(join(realHome, 'Library/Keychains'), { recursive: true })
+  await mkdir(join(realHome, '.cursor'), { recursive: true })
+  const realConfig = join(realHome, '.cursor/cli-config.json')
+  await writeFile(realConfig, '{"fixture":true}')
+  const before = await stat(realConfig)
+  for (const mdc of [false, true]) {
+    if (mdc) await writeFile(join(source, 'artifactshare.mdc'), marker + 'Rule')
+    const options = await plan(['--dry-run', '--skill-version', source])
+    assert.ok(options.combinations.includes('cursor:grok-4.7-high'))
+    assert.deepEqual(options.scenarios, ['share', 'update', 'comments'])
+    const item = options.matrix.find(
+      (entry) =>
+        entry.combination === 'cursor:grok-4.7-high' &&
+        entry.scenario === 'comments',
+    )
+    assert.deepEqual(item.command, [
+      'cursor-agent',
+      '-p',
+      '--trust',
+      '-f',
+      '--model',
+      'grok-4.7-high',
+      '--output-format',
+      'stream-json',
+    ])
+    assert.equal(
+      item.layout.skill,
+      mdc ? '.cursor/rules/artifactshare.mdc' : '.cursor/skills/artifactshare',
+    )
+    const version = options.versions[0]
+    const run = await createRun({
+      agent: 'cursor',
+      version,
+      selectedOverlay: { target: join(root, 'unused'), files: version.files },
+      baseUrl: 'http://localhost:5173',
+      token: 'fixture',
+      realHome,
+    })
+    try {
+      assert.deepEqual(await readdir(run.workdir), ['.cursor'])
+      assert.deepEqual(await readdir(join(run.env.agent.HOME, '.cursor')), [
+        'cli-config.json',
+      ])
+      assert.equal(
+        await readlink(join(run.env.agent.HOME, '.cursor/cli-config.json')),
+        realConfig,
+      )
+      assert.equal(
+        await readlink(join(run.env.agent.HOME, 'Library/Keychains')),
+        join(realHome, 'Library/Keychains'),
+      )
+      const snapshot = await inventory(run.root, version.files)
+      assert.equal(snapshot.complete, true)
+      assert.ok(snapshot.files.every((file) => file.expected))
+      assert.deepEqual(
+        snapshot.files.map((file) => file.path).sort(),
+        mdc
+          ? ['work/.cursor/rules/artifactshare.mdc']
+          : [
+              'work/.cursor/skills/artifactshare/SKILL.md',
+              'work/.cursor/skills/artifactshare/references/share.md',
+            ],
+      )
+      await rm(join(run.env.agent.HOME, '.cursor/cli-config.json'))
+      await writeFile(join(run.env.agent.HOME, '.cursor/cli-config.json'), '{}')
+      await mkdir(join(run.env.agent.HOME, '.cursor/skills/artifactshare'), {
+        recursive: true,
+      })
+      await writeFile(
+        join(run.env.agent.HOME, '.cursor/skills/artifactshare/SKILL.md'),
+        'unexpected',
+      )
+      const changed = await inventory(run.root, version.files)
+      assert.ok(
+        changed.files.some(
+          (file) =>
+            file.scope === 'user' &&
+            file.location === 'cursor' &&
+            !file.expected,
+        ),
+      )
+    } finally {
+      await run.cleanup()
+    }
+    await assert.rejects(access(run.root))
+    assert.equal(await readFile(realConfig, 'utf8'), '{"fixture":true}')
+    assert.equal((await stat(realConfig)).mtimeMs, before.mtimeMs)
+  }
+})
+
+test('comments setup posts feedback and reports observations without grading them', async (t) => {
+  const { executeCase, promptFor, commentText, expectedContent, initialHtml } =
+    await import('./skill-eval.mjs')
+  const { root, version } = await fixture(t)
+  const url = 'http://localhost:5173/a/sample'
+  const prompt = promptFor('comments', url)
+  assert.match(prompt, /report\.html/u)
+  assert.ok(prompt.includes(url))
+  assert.doesNotMatch(
+    prompt,
+    /artifactshare|comments (?:list|post|resolve)|--json|--body|Launch is ready/iu,
+  )
+  assert.ok(commentText.includes(expectedContent))
+  for (const observation of [
+    'success',
+    'nonzero',
+    'error-envelope',
+    'malformed',
+    'missing-exit',
+    'not-reply',
+    'setup-error',
+    'seed-error',
+  ]) {
+    const failPost = observation === 'setup-error'
+    let run
+    const commands = []
+    const artifacts = new Map()
+    const artifact = {
+      id: 'sample',
+      share_url: url,
+      version_id: 'old',
+      content: 'Draft schedule',
+    }
+    const result = await executeCase(
+      {
+        combination: 'cursor:grok-4.7-high',
+        scenario: 'comments',
+        version: version.label,
+        command: ['fake-agent'],
+      },
+      { baseUrl: 'http://localhost:5173', timeoutMs: 1000, maxTurns: 2 },
+      version,
+      { target: join(root, 'unused'), files: version.files },
+      {
+        list: () => Promise.resolve([...artifacts.values()]),
+        get: (id) => Promise.resolve({ ...artifacts.get(id) }),
+        delete: (id) => Promise.resolve(artifacts.delete(id)),
+      },
+      'fixture-token',
+      root,
+      new AbortController().signal,
+      {
+        async createRun(options) {
+          run = await createRun({ ...options, linkCredentials: false })
+          return run
+        },
+        async runProcess(options) {
+          commands.push(options.command)
+          if (commands.length === 1) {
+            if (observation === 'seed-error')
+              return {
+                status: 'infrastructure-error',
+                stdout: '',
+                stderr: JSON.stringify({
+                  error: { code: 'seed_rejected', message: 'Cannot seed' },
+                }),
+              }
+            assert.equal(
+              await readFile(join(run.workdir, 'report.html'), 'utf8'),
+              initialHtml,
+            )
+            artifacts.set('sample', artifact)
+            return {
+              status: 'completed',
+              stdout: JSON.stringify({ data: { artifact } }),
+              stderr: '',
+            }
+          }
+          if (commands.length === 2) {
+            assert.equal(options.env, run.env.agent)
+            return failPost
+              ? {
+                  status: 'infrastructure-error',
+                  stdout: '',
+                  stderr: JSON.stringify({
+                    error: { code: 'comment_rejected', message: 'Cannot post' },
+                  }),
+                }
+              : { status: 'completed', stdout: '{}', stderr: '' }
+          }
+          assert.equal(options.prompt, prompt)
+          artifacts.set('sample', {
+            ...artifact,
+            version_id: 'new',
+            content: expectedContent,
+          })
+          await writeFile(
+            run.config.log,
+            [
+              ['comments', 'list', url, '--json'],
+              [
+                'comments',
+                'post',
+                url,
+                '--reply-to',
+                'thread',
+                '--body',
+                'Done',
+                '--json',
+              ],
+              ['comments', 'resolve', url, '--thread-id', 'thread', '--json'],
+              ['update', url, 'report.html', '--json'],
+            ]
+              .map((argv) =>
+                JSON.stringify({
+                  argv,
+                  exitCode:
+                    observation === 'nonzero'
+                      ? 1
+                      : observation === 'missing-exit'
+                        ? null
+                        : 0,
+                  stdout:
+                    observation === 'malformed'
+                      ? '{broken'
+                      : JSON.stringify({
+                          ok: observation !== 'error-envelope',
+                          command: argv.slice(0, 2).join(' '),
+                          data: { reply: observation !== 'not-reply' },
+                        }),
+                }),
+              )
+              .join('\n'),
+          )
+          return {
+            status: 'completed',
+            stdout: JSON.stringify({
+              type: 'result',
+              is_error: false,
+              result: url,
+            }),
+            stderr: '',
+            exitCode: 0,
+          }
+        },
+      },
+    )
+    assert.deepEqual(commands[0].slice(1), [
+      'share',
+      'report.html',
+      '--visibility',
+      'private',
+      '--json',
+    ])
+    if (observation === 'seed-error') {
+      assert.equal(commands.length, 1)
+      assert.equal(result.status, 'infrastructure-error')
+      assert.match(
+        result.error,
+        /Comments artifact seed failed: seed_rejected/u,
+      )
+      assert.equal(result.cleanup.temporary, true)
+      continue
+    }
+    assert.deepEqual(commands[1].slice(1), [
+      'comments',
+      'post',
+      url,
+      '--body',
+      commentText,
+      '--json',
+    ])
+    assert.equal(result.cleanup.temporary, true)
+    assert.equal(artifacts.size, 0)
+    if (failPost) {
+      assert.equal(commands.length, 2)
+      assert.equal(result.status, 'infrastructure-error')
+      assert.match(result.error, /Comment post failed: comment_rejected/u)
+    } else {
+      assert.equal(result.status, 'completed')
+      for (const check of ['content', 'identity', 'finalUrl', 'json'])
+        assert.equal(result.checks[check].status, 'pass')
+      assert.equal(result.comments.read, true)
+      assert.equal(result.comments.replied, observation === 'success')
+      assert.equal(
+        result.comments.resolved,
+        ['success', 'not-reply'].includes(observation),
+      )
+      assert.ok(
+        !Object.keys(result.checks).some((key) => key.startsWith('comments')),
+      )
+    }
+  }
 })

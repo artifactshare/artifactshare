@@ -96,6 +96,14 @@ export async function launch(configPath, bin) {
     record.exitCode = 1
     record.stderr = error.message
     process.stderr.write(`${error.message}\n`)
+    if (
+      record.argv === null &&
+      bin !== 'artifactshare' &&
+      !original.some((arg) => arg.includes('artifactshare'))
+    ) {
+      process.exitCode = record.exitCode
+      return
+    }
   }
   record.skills = await inventory(config.root, config.files)
   await appendFile(config.log, `${redact(JSON.stringify(record), secrets)}\n`, {
