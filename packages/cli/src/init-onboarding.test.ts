@@ -427,6 +427,7 @@ for (const unmanaged of [false, true]) {
 }
 
 async function writeLegacySkill(path: string, content: string) {
+  await rm(join(dirname(path), 'references'), { recursive: true, force: true })
   await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
   await writeFile(path, content)
 }

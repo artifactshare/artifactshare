@@ -156,6 +156,7 @@ async function installSkill(args: string[]) {
 
 async function downgrade(path: string): Promise<string> {
   const installed = await readFile(path, 'utf8')
+  await rm(join(dirname(path), 'references'), { recursive: true, force: true })
   await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
   await writeFile(path, installed.replace(/version: \d+/, 'version: 0'))
   return installed

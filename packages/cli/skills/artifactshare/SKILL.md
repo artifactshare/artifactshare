@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 47
+version: 48
 managed: true
 -->
 
@@ -42,63 +42,31 @@ When passing paths or free-form text through a shell, quote them. Paths may
 contain `$`, spaces, `*`, or `?`; use single quotes such as
 `'apps/web/app/routes/a.$id/index.tsx'` so the shell does not expand them.
 
-The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
+## Output contract
 
-Targets accept artifact IDs, app share URLs, per-ID `artifactshare.link` viewer URLs, and `a-<id>--v-<hex-version>.artifactshareusercontent.com` or `l-<id>--v-<hex-version>.artifactshareusercontent.com` execution URLs. Legacy sandbox and link-content URLs still resolve to IDs through the API; they no longer serve file content. Public share URLs are unchanged.
+- Always pass `--json`. Success prints
+  `{"schema_version":2,"ok":true,"command":...,"data":...}` to stdout; failure
+  prints `{"schema_version":2,"ok":false,"error":...}` to stderr with exit
+  code 1.
+- On failure, read `error.code`, `error.hint`, and `error.recovery`.
+  `recovery.kind` is one of `change_input`, `run_command`, `retry_later`,
+  `ask_human`, `report_issue`. When `error.requires_human` is true, report to
+  the user instead of retrying.
 
-## Quick reference
+## First-time setup
 
-| Task                     | Command                                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| Share a file or folder   | `share <path> --json`                                                               |
-| Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json`           |
-| Replace with same URL    | `update <target> <path> --json`                                                     |
-| Append to same URL       | `append <target> <path> --json`                                                     |
-| Read back source         | `artifacts get <target> --json`                                                     |
-| Download a site bundle   | `download <target> --output ./out --json`                                           |
-| Download a whole project | `download --project-id <id> --output ./out --json`                                  |
-| List your artifacts      | `artifacts list --json`                                                             |
-| Post a comment           | `comments post <target> --body '<text>' --json`                                     |
-| Read comments            | `comments list <target> --json`                                                     |
-| Read older replies       | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
-| Change title or sharing  | `edit <target> --title 'New' --json`                                                |
-| Move to a project        | `edit <target> --project-id <id> --json`                                            |
-| Create a project         | `projects create 'Name' --json`                                                     |
-| Find an ID from a title  | `resolve <value> --json`                                                            |
-| Open a share URL         | `open <url> --json`                                                                 |
-| Preview a local file     | `preview <file> --json` (local, no sign-in)                                         |
-| Log out                  | `logout --profile <name> --json`                                                    |
+`npm exec --yes --package=@artifactshare/cli -- artifactshare init --json` detects the agent, installs or updates
+this skill, and reports the next steps (sign in, then share). When you receive
+a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
+this skill is installed or updated, then reads single-file artifacts or returns
+a `download` next command for static sites and multi-file artifacts.
 
-## Authentication
+For attended setup, use `login --profile <name> --preset agent --json` and approve
+the browser request. Omit `--preset` for unrestricted personal login. Check
+`whoami --json` or `doctor --json`; follow `auth_required` recovery.
 
-- `login --profile <name> --preset agent --json` is for an attended coding
-  agent on the user's own machine. It creates a project-scoped profile and may
-  open the OS browser. Add `--project <exact-name-or-id>` to confirm one fixed
-  eligible project; omit it to select a project in the browser. Omit `--preset`
-  for unrestricted personal login. The pending event on stderr includes
-  `browser_open`. Do not pass tokens to `login`. Device-login profiles renew
-  expired CLI sessions automatically.
-- In unattended CI or scripts without browser approval, ask the user to issue
-  an API token at `https://artifactshare.com/settings/tokens`, then inject it
-  with `ARTIFACTSHARE_TOKEN` or `--token`. A shared agent platform uses a
-  workspace-managed bot credential in a trusted host service outside the model
-  sandbox; never expose it to model shell commands.
-- `logout --profile <name> --json` revokes a device-login refresh credential
-  before removing it locally and leaves profile metadata in `config.json`.
-  If remote revoke fails, the local credential is kept and logout fails.
-  API-token profiles are removed locally only and are not revoked on the server.
-- To keep using an issued token as a named profile without TTY or browser
-  login, pipe it on standard input:
-  `printf '%s' "$TOKEN" | npm exec --yes --package=@artifactshare/cli -- artifactshare profiles import-token --profile <name> --json`.
-  Bot tokens (`asb_` prefix, issued by a workspace admin) use the same command; the first
-  refresh consumes the displayed token, overwriting an existing profile credential requires
-  `--force`, and a revoked or superseded bot token fails with `bot_token_invalid` (ask the
-  admin to reissue).
-  Imported API-token profiles are not renewed by the CLI.
-  Use `--allow-plaintext-token-store` only on a trusted machine without a native token store.
-  That fallback is mode `0600` on POSIX and unavailable on Windows, where saved profiles require Credential Manager.
-- Check the current state with `whoami --json`, or `doctor --json` for token
-  storage, authentication, destination, network, upload access, and skill update status.
+Read [authentication, profiles and skills](references/authentication-profiles-skills.md)
+when choosing credentials, importing tokens, changing profiles, or managing installations.
 
 ## Share
 
@@ -146,38 +114,8 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --
   runs add versions to the same artifact.
 - Run `share --help` for all flags.
 
-## Audience and visibility settings
-
-Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Agents and bots still require their fixed project and a verified contributor/manager grant for private projects; publisher credentials cannot select projects.
-
-Posting to a project delivers to the audience defined by that project. Without
-a destination, `share` posts to home. Choose the home audience by purpose:
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience private --scope user --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --visibility private --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare config get home_audience --scope effective --json
-```
-
-Use the user scope for a personal safe default in this CLI environment, the
-repository scope only for a policy agreed by all participants, and
-`--visibility` for a one-time audience.
-
-Use `--visibility private|workspace|project|link` as a per-post override. For new
-projects, pass `projects create --visibility private|workspace`; persistent
-project defaults are documented in `projects create --help`.
-
-The complete `config --help` reference covers user and repository scopes,
-effective resolution, and the canonical `home_audience` key. The old
-`default_artifact_visibility` remains a compatibility alias, while
-`default_project_visibility` is the advanced `projects create` default. Home
-resolution checks repository then user settings (including the alias at each
-scope), then product default `workspace`; project defaults use repository,
-user, then `workspace`. Keyless `config get --json` returns only
-`home_audience`; pass an explicit key for either other setting. These settings
-only affect new home posts and project creation; update, edit, Web, and MCP
-defaults are unchanged.
+Read [upload path safety](references/upload-path-safety.md) when selecting linked paths or recovering from upload filesystem errors.
+Read [static-site scripts and data](references/static-sites.md) when a folder uses workers, WebAssembly, fonts, or data files.
 
 ## Update
 
@@ -213,6 +151,8 @@ it reports the current version and uses `recovery.kind: ask_human` with
 - `update` does not change title, visibility, viewers, or placement. Use `edit`
   for those.
 - Run `update --help` for all flags.
+
+Use `--label <label>` for an immutable version note. Read [version labels](references/version-labels.md) when adding labels or interpreting version history.
 
 ## Read back and download
 
@@ -252,545 +192,81 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare download --project-
   `resolve <value> --json` first and use the returned ID.
 - Run `artifacts get --help` or `download --help` for all flags.
 
-## Comment
+The browser share page opens HTML, Markdown, and static sites with its URL fragment (`#…`) and follows fragment changes inside the frame. Copy link includes the current fragment, so filtered views and Markdown headings can be shared. For static sites, only the entrypoint updates the share fragment; subpages leave it unchanged. This does not change CLI local preview.
 
-Use `comments list` to read, `comments post` to write. IDs from `list` feed
-into `edit`, `resolve`, `reopen`, and `delete`.
+Targets accept artifact IDs, app share URLs, per-ID `artifactshare.link` viewer URLs, and `a-<id>--v-<hex-version>.artifactshareusercontent.com` or `l-<id>--v-<hex-version>.artifactshareusercontent.com` execution URLs. Legacy sandbox and link-content URLs also resolve to IDs through the API.
 
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --reply-to <thread-id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --quote 'exact text' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --agent 'Claude' --json
-```
+Read [local write recovery](references/local-write-recovery.md) before overwriting downloads or recovering from filesystem or config-write failures.
 
-Quoted comments are resolved in the viewer using the exact quote and surrounding context, never the nearest repeated words. `--quote-before` and `--quote-after` accept up to 400 characters per side; preserve spaces next to the quote. Creation does not search the artifact. Optional `anchor.position_state` is `unchecked` until that version is viewed, then `attached` or `needs-check`. Only `attached` maps to `anchor.state: attached`; both other states map to `orphaned`. Older responses may omit `position_state`. Local preview uses the same strict resolution on every reload and preserves the original quote when its position needs checking.
+## Comments
 
-- `--reply-to <thread-id>` replies to an existing thread from `comments list`.
-- `--quote <text>` anchors a new thread to the quoted text. Copy the text from
-  `artifacts get` so it matches exactly. When the same text appears more than
-  once, add `--quote-before` and/or `--quote-after` to pick the right one.
-  Do not combine `--quote` with `--reply-to`.
-- `--agent <name>` declares the posting agent (e.g. `Claude`, `Cursor`).
-  The comment shows an agent badge in the viewer. Omit to post without a badge.
-  `comments list` returns an `agent` field on messages posted with this flag.
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments resolve <artifact-id-or-url> --thread-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments reopen <artifact-id-or-url> --thread-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare comments delete <artifact-id-or-url> --thread-id <id> --message-id <id> --json
-```
-
-- Comment deletion cannot be undone. Omit `--message-id` only when the user
-  wants the whole thread deleted.
-- Run `comments post --help` for all flags.
-
-## Organize and settings
-
-Use `edit` for post-share changes. Use `projects list/create/edit` for
-project management.
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --title 'New title' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility private --grant-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --project-id <id> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --visibility project --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare edit <artifact-id-or-url> --home --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare delete <artifact-id-or-url> --json
-```
-
-- Owners with unrestricted credentials can set `edit <target> --retain-versions N`
-  to keep the latest N eligible published versions, or `--retain-versions all` to keep all
-  future versions. For files created by or assigned to a publisher client, this counts only published publisher versions (including earlier clients) and keeps every version people added, even when an unrestricted owner changes the setting. Other files keep counting all published versions. The current version is always kept. Setting or lowering retention immediately deletes older eligible
-  versions; the response reports `retain_versions` and `deleted_versions`.
-  Owners can also use the file history panel, which confirms existing removals.
-  Authorized viewers of versions removed by retention see an explanation and
-  a latest-version link (HTTP 410). Unknown IDs still return 404 for signed-in
-  viewers. Clearing the limit never restores deleted content. Comments and
-  surviving version numbers remain. Agent-preset credentials cannot change retention.
-- `edit` changes title, visibility, explicit viewers, or project placement
-  without adding a new version.
-- Set `--visibility link` with `--link-expires-at <RFC3339 UTC>` for a finite
-  expiry or `--no-link-expiry` for unlimited expiry. The expiry options are
-  mutually exclusive; omit both to preserve an existing link expiry.
-- If `edit` changes visibility away from `link`, the link expiry is cleared.
-  If a link operation fails, use
-  `link_sharing_plan_required` as a legacy code (Free can use link sharing now),
-  `link_sharing_disabled` to ask the workspace owner or a Team admin to resume link sharing,
-  `link_expiry_invalid` to pass a future RFC3339 UTC timestamp within policy
-  (or use `--no-link-expiry` when the policy allows it), or
-  `link_publish_rate_limited` when, under the default thresholds, the service
-  observes 20 counted files before a publication in a Free workspace less than
-  14 days old during its rolling 24-hour window. A file counts once for its
-  most recent change to link visibility, or for creation with link visibility.
-  Making an artifact private, hiding it, or
-  deleting it does not erase its publication history during the 24-hour window,
-  so those actions do not restore a slot. A concurrent publication may be
-  refused even if an earlier preflight saw room. Share with specific people.
-  `error.recovery` indicates `retry_later`; use `error.message` and
-  `error.hint` for when to retry, and honor the returned retry duration. Retry
-  the link publication later instead of retrying immediately with unchanged
-  input.
-- edit accepts --visibility private|workspace|project|link. Project visibility requires the artifact to be in a project after the edit; use --project-id <id> in the same request if needed. An explicit --visibility project at home (including --home) is refused without changes. Moving a project-visible artifact home makes it private only when project visibility is not explicitly requested.
-- The older `move` command remains available for placement-only automation, but
-  prefer `edit` for new flows.
-- `artifacts delete <artifact-id-or-url>` is an alias of `delete`; both return JSON `command: "delete"`. Keep using top-level `delete` in deletion workflows.
-- `delete` permanently removes an artifact and its version history. Use only
-  when the user explicitly asks.
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Client reports' --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects create 'Internal' --visibility private --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --add-email viewer@example.com --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --archive --json
-```
-
-- `projects create` uses `default_project_visibility` when saved, otherwise
-  `workspace`. Pass `--visibility private` for a confidential project.
-- `projects edit` changes name, description, visibility, audience
-  (`--add-email` / `--remove-email`), and archive state (`--archive` /
-  `--unarchive`).
-- `init --project-id <id> --json` saves a default project for the working
-  directory. `init --dry-run --json` previews the setup without side effects.
-- Run `edit --help`, `projects create --help`, or `projects edit --help` for
-  all flags.
-
-## Profiles
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles list --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles use <name> --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare profiles delete <name> --json
-```
-
-- `profiles list` shows saved profiles and the default.
-- `profiles use` switches the default profile.
-- `profiles delete` removes the profile entry and its saved credential. Use
-  `logout --profile <name>` when you only want to remove the credential.
-- To create a profile, use `login --profile <name>` (interactive) or
-  `profiles import-token` (non-interactive, see Authentication).
-
-## Skills
-
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills ensure --tool auto --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
-npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
-```
-
-- `open`, flag-less `init`, and `skills ensure --tool auto` detect Claude Code,
-  Codex, or Cursor in the working directory (also Claude at its resolved user
-  root when CLAUDE_CONFIG_DIR is nonblank) and install or update this skill in user scope
-  (`$CLAUDE_CONFIG_DIR/skills/` or `~/.claude/skills/` when unset, `~/.agents/skills/`, or
-  `~/.cursor/skills/artifactshare/`). With no agent detected,
-  user-scope Codex, Claude Code, and Cursor skills are prepared.
-  Claude Code user-scope skills go to `$CLAUDE_CONFIG_DIR/skills` when set, otherwise `~/.claude/skills`. A blank value skips automatic writes; `doctor` explains why. Mutations explicitly selecting `--tool claude --scope user` fail with `validation_failed`. With `--tool claude` and no `--scope`, `skills update` and `skills remove` process the project target and report the user target as skipped.
-
-- Cursor project scope is not auto-installed. Install the Cursor skill folder at `.cursor/skills/artifactshare/` explicitly
-  with `skills install --tool cursor --scope project`; existing managed legacy rules migrate automatically.
-- Use `skills install --tool cursor --scope user` to install or manage the
-  Cursor user-scope skill explicitly.
-- `skills ensure --tool auto` accepts omitted `--scope` or `--scope user`;
-  `--scope project` fails with `validation_failed`. Project-scope skills are
-  opt-in via `skills install --tool <tool> --scope project`.
-- `skills update` updates installed managed skills to the bundled version.
-- `--force` overwrites an unmanaged file on install.
-- Run `skills --help` for all subcommands.
+Use `comments list <target> --json` to pick up feedback and
+`comments post <target> --body '<text>' --json` to respond. List results contain
+partial thread histories. Read [comments](references/comments.md) when reading
+older replies, anchoring feedback, editing or resolving threads, or handling posting limits.
 
 ## Preview (local annotate-and-fix loop)
 
-`preview` is a local, unauthenticated feature: it serves one local `.md` or
-`.html` file with the same rendering as the product viewer, the user annotates
-elements or text selections in the browser and submits them as an explicit
-batch, and the agent fixes the file. Nothing is uploaded by previewing;
-an upload happens only if the user opens the share dialog from the page.
+Preview serves one local HTML or Markdown file without sign-in or uploading.
+Read [preview](references/preview.md) before starting: it explains process ownership,
+agent-specific notifications, manual pickup, recovery, and local isolation.
 
-### Start and own one preview
+Start `preview <file> --json` once using the environment's long-running task
+mechanism. Keep the process handle. Wait for the ready JSON line with `url` and
+`session` before telling the user it opened; a running task alone is not readiness.
+Do not launch duplicates while startup is indeterminate.
 
-`preview` starts a long-lived local service; process exit is not its success
-condition. Start it once for the file using the environment's supported
-long-running or background process mechanism. Keep that process or task handle
-for the lifetime of the preview.
+When the user submits feedback, read the whole batch with `preview next --json`,
+fix it in one editing pass, save once, and report the batch with
+`preview done --stdin --json`. Skip orphaned anchors with an explanatory note.
+Saving reloads the preview. Sharing happens only when the user opens its share dialog.
 
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview start ./lp.html --no-open
-```
+## Audience and visibility settings
 
-- Run the CLI invocation itself as the long-running task. Do not add shell
-  pipelines, redirections, command substitutions, or wrappers that wait for
-  output or process exit; output capture managed by the agent's background-task
-  tool is part of that tool's contract. Extra shell layers change ownership and
-  the service's output contract.
-- Bare `preview <file>` is rewritten to `preview start <file>`. Start prints
-  exactly one ready JSON line with `url`, `session`, `share_origin`, `reused`,
-  and a sanitized `agent` notification projection, then keeps serving.
-  `--no-open` skips opening the browser.
-- The ready JSON is the startup handshake. A background task id or running PID
-  only proves that launch began. Treat the preview as ready, retain its `url`
-  and `session`, and tell the user it opened only after reading that line.
-- `session` is generated by start. Use the returned value only with
-  `preview next`, `done`, `reply`, or `stop`; do not pass `--session` to start.
-- After one launch begins, do not launch another copy until that attempt either
-  returns a CLI failure or exits without a ready line. If the task is still
-  running but its ready output cannot be read, the state is indeterminate:
-  keep the task, report that startup could not be verified, and ask the user
-  how to proceed. Do not infer a preview URL from ports or unrelated processes.
-- A later deliberate start for the same file may return `reused: true`. Its
-  ready JSON is a valid handshake, but that invocation exits because the
-  original preview process still owns the service. Do not treat the reused
-  invocation's task or process handle as the server owner.
-- Editing and saving the file reloads the page automatically; annotations
-  stay anchored where possible.
-- `preview next` returns every batch the user has submitted; it is
-  non-claiming (calling it again returns the same open items) and with
-  `--wait <sec>` it long-polls. `timed_out: true` and `session_ended: true`
-  are normal empty results, not errors. The error
-  `preview_session_not_found` means no live session exists; ask the user to
-  start one. `preview_wait_conflict` means another long poll owns the session;
-  use that wait or retry after it returns. `preview_request_failed` means the session is alive but rejected
-  the request, so fix the payload (thread id, generation, size) and retry.
-  `preview_session_unverified` on startup means a recorded session did not
-  answer, or it was started before the current notification contract. Retry a
-  temporarily unresponsive session; for an older session, ask the user to stop
-  that preview process and start it again with the current CLI. The `--force`
-  fallback clears an unresponsive record only once the process is gone.
-- Report outcomes with `preview done --stdin`; reply into a thread with
-  `preview reply --thread <id> --body <text>` (state unchanged); end the
-  session with `preview stop` (annotations stay saved on disk).
+Project posts use the project's audience; without a destination, share posts to home.
+Use `--visibility private|workspace|project|link` for a per-post override.
+Use `config set home_audience private --scope user --json` for a personal default;
+use repository scope only for an agreed policy. Confirm with
+`config get home_audience --scope effective --json` before posting.
 
-### Waking up when the user submits a batch
+Use `edit` to change title, audience, expiry or placement without creating a version.
+Read [organize and settings](references/organize-settings.md) when managing projects,
+access, expiry, retention, deletion, or persistent defaults. Delete only on explicit request.
 
-Pick the first mode your environment supports:
+## Skills and profiles
 
-1. In Codex, start preview from the session that owns the work. Current Codex
-   environments expose the session UUID to the trusted local preview process;
-   Artifact Share registers it and uses `codex queue` to send a fixed
-   batch-ready notice. End your turn after preview is ready. When the notice
-   resumes the session, run `preview next`, fix the whole batch, and report it
-   with `preview done`. A `queued` state means Codex accepted the notice, not
-   that it started processing. If it remains queued, the session may have
-   ended: use `codex resume`, then run `preview next`. Never copy comments into
-   a queue message; `preview next` is their source of truth.
-2. In Claude Code, if `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is neither `1` nor
-   `true` and Bash exposes `run_in_background`, run the preview start command
-   itself as one Bash background task and read it through Claude Code's
-   task-output mechanism until the ready JSON arrives; add no shell pipeline or
-   redirection. Keep a non-reused task alive as the server owner. After the
-   handshake,
-   use the background-wait path only if starting
-   `preview next --wait 3600` in a separate background task returns a task ID.
-   End your turn. A submitted batch completes the wait and resumes you; fix the
-   file, report with `preview done`, then arm one new wait. If the wait returns
-   `timed_out: true`, do not re-arm it automatically. If background waiting is
-   unavailable or rejected after start, use manual pickup and do not describe
-   the session as waiting. If background Bash tasks are unavailable before
-   start, ask the user to run and keep the preview command open in their own
-   terminal; that user-owned process is the server owner, and comment pickup is
-   manual.
-3. For an Artifact Share-managed Cursor ACP session, start with
-   `npm exec --yes --package=@artifactshare/cli -- artifactshare-preview-cursor <file>`.
-   Run one managed launcher per workspace. The launcher creates or loads the
-   workspace's managed conversation and sends a fixed batch-ready prompt only
-   while that session is idle. Read all comment content with `preview next`;
-   never place it in the ACP prompt. Keep the launcher attended and approve
-   Cursor tool permissions only after checking the request shown in its
-   terminal.
-4. In the interactive Cursor Agent CLI, start preview with
-   `ARTIFACTSHARE_CURSOR_FOREGROUND_WAIT=1`, then block in the foreground on
-   `preview next --wait 90` and repeat. Do not use that marker for a normal
-   Cursor IDE chat: IDE chats are manual pickup and must not be described as
-   automatically resumable.
-5. Fallback: run `preview next` only when the user tells you a batch is
-   ready.
+`skills ensure --tool auto --json` prepares user-scope skills;
+`skills update --json` updates managed installations. Project installation is opt-in.
+`profiles list --json` shows saved profiles; `profiles use <name> --json` switches
+selection. Use `logout --profile <name> --json` to revoke a device-login credential.
+The authentication, profiles and skills reference above covers tools, scopes, storage,
+removal and unattended token imports.
 
-If `preview next` immediately returns the same item set as the previous
-call, do not re-arm; report the situation to the user instead.
+## REST API integrations
 
-### Working through a batch
+Read [REST API only](references/rest-api-only.md) when working directly with
+static-site inheritance or publisher device credentials. These have no supported
+CLI workflows; do not invent flags for them.
 
-```bash
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90
-npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --session 0123456789abcdef
-```
+## Quick reference
 
-- Read the whole batch first, then fix everything in one editing pass and
-  save once, then report the whole batch with a single `preview done` call.
-- Successful `preview next` and `preview done` results include the same
-  sanitized `agent` notification projection as the ready result.
-- Each done item is `{thread, generation, outcome, note}` with outcome
-  `fixed` (you changed the file) or `skipped` (`note` explaining why is
-  required). The `note` is shown to the user as the thread summary, so
-  write it for them.
-- An item whose `anchor.state` is `orphaned` lost its place in the document;
-  do not try to re-fix it — report it as `skipped` with a note.
-- `done` is idempotent per generation: each item comes back as `accepted`,
-  `stale` (the thread was reopened with a newer generation), or
-  `already_reported`, plus `unknown_thread` for ids the session does not
-  know.
-
-```bash
-printf '%s' '{"items":[{"thread":"t1","generation":1,"outcome":"fixed","note":"Tightened the headline"}]}' | npm exec --yes --package=@artifactshare/cli -- artifactshare preview done ./lp.html --stdin
-```
-
-Sharing is user-driven: the page's share button opens a separate-origin
-dialog that publishes the snapshot bytes; local annotations are never
-carried into the shared copy.
-
-## Output contract
-
-- Always pass `--json`. Success prints
-  `{"schema_version":2,"ok":true,"command":...,"data":...}` to stdout; failure
-  prints `{"schema_version":2,"ok":false,"error":...}` to stderr with exit
-  code 1.
-- On failure, read `error.code`, `error.hint`, and `error.recovery`.
-  `recovery.kind` is one of `change_input`, `run_command`, `retry_later`,
-  `ask_human`, `report_issue`. When `error.requires_human` is true, report to
-  the user instead of retrying.
-
-## First-time setup
-
-`npm exec --yes --package=@artifactshare/cli -- artifactshare init` detects the agent, installs or updates
-this skill, and reports the next steps (sign in, then share). When you receive
-a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
-this skill is installed or updated, then reads single-file artifacts or returns
-a `download` next command for static sites and multi-file artifacts.
-
-### Version labels
-
-Successful update API responses include `number`, a positive integer matching the
-Viewer’s `v{number}` for the created version. CLI JSON exposes it as
-`data.version.number`, with or without a label. Older server responses may omit
-`number`; the CLI accepts them and omits `data.version.number`.
-
-The optional `--label <label>` option on `artifactshare update <target> <path>`
-attaches an immutable note to the new version of an HTML file, Markdown file, or static-site
-bundle. Labels are normalized to Unicode NFC, then leading and trailing Unicode
-space separators (Zs) are trimmed. Internal spacing and case are preserved.
-The result must contain 1–80 Unicode code points (not bytes or UTF-16 units).
-Letters, marks, numbers, punctuation, symbols, space separators, and U+200D
-(joined emoji) are allowed. Empty values, tabs, newlines, controls, bidi formatting
-controls, and unpaired surrogates are rejected; labels are never truncated.
-CLI validation happens before authentication or upload. For a value beginning
-with a known flag, use `--label=--text` to pass it explicitly.
-
-The update API accepts one optional `label` query parameter on
-`POST /api/shareables/:id/versions`, including `artifact_kind=static_site` uploads.
-Invalid or repeated labels return HTTP 400 `validation-failed` before upload work.
-Omission stores NULL and never inherits a prior label. Successful update API responses include `label`, and CLI JSON includes
-`data.version.label`: the normalized, stored label or `null` when omitted.
-Existing unlabeled rows are unchanged. Authorized history at
-`GET /api/cli/artifacts/:id?include=versions` includes `label` only when present;
-`artifacts get <target> --include versions --json` preserves it. The viewer's
-version menu and full history show the label as plain text.
-`GET /api/shareables/:id/versions` remains a current-version lookup.
-Labels are update-only: initial uploads, `share --key`, `append`, preview,
-bridge publishing, and MCP update inputs do not accept them.
-
-## Static-site scripts and data
-
-Folder shares load external HTTPS images, stylesheets from jsDelivr, cdnjs,
-unpkg, and Google Fonts (`fonts.googleapis.com`), and font files from jsDelivr
-and Google Fonts (`fonts.gstatic.com`). Load icon/font packages from jsDelivr
-or bundle the font files because cdnjs and unpkg font files are blocked.
-JavaScript `eval` and `new Function` remain blocked.
-
-Folder shares support WebAssembly, same-origin worker files, and `blob:` workers.
-DuckDB-WASM can load from jsDelivr: its `getJsDelivrBundles()` setup uses a blob
-worker to `importScripts()` the CDN worker and fetch its `.wasm` file. The existing
-script CDNs are allowed inside blob workers; JavaScript `eval` and `new Function`
-remain blocked in the page and its blob workers.
-
-DuckDB-WASM loads runtime extensions such as `parquet` and `json` from
-`https://extensions.duckdb.org/<duckdb-version>/<wasm_eh|wasm_mvp>/<name>.duckdb_extension.wasm`.
-Static-site `connect-src` permits that origin: blob workers inherit the page's
-policy, and same-origin JavaScript workers carry it. This permission covers
-extension fetching, not arbitrary network origins.
-
-To avoid the external extension request, bundle every needed extension matching
-the DuckDB engine version and selected WASM platform. Preserve the repository's
-version/platform layout, for example
-`extensions/v1.4.3/wasm_eh/parquet.duckdb_extension.wasm` for `@duckdb/duckdb-wasm@1.32.0`.
-The folder must match the engine version the page loads, which `SELECT version()`
-reports, so pin the package version. In the page, compute
-`new URL('extensions', location.href).href` (no trailing slash; DuckDB appends `/<version>/...`) and use that absolute same-origin
-repository URL in `SET custom_extension_repository = '<absolute same-origin repository URL>'`
-before any extension loads or queries. This avoids requests to the extension
-host; jsDelivr core bundles still require CDN requests.
-
-Keep data such as `data/*.parquet` in the shared folder. In the page, build an
-absolute same-origin URL with `new URL('data/rows.parquet', location.href).href`
-and pass it to DuckDB-WASM's `registerFileURL()` before querying the registered
-file with SQL. Relative URLs cannot be resolved inside its blob worker.
-Static-site binary assets support HTTP byte ranges. To refresh data while keeping
-the same share URL, replace the data locally and update the folder as a new
-version; each version retains its own isolated origin. Single-file HTML and
-Markdown have different script policies; these permissions apply to folder shares.
-
-### API-only static-site inheritance
-
-`POST /api/shareables/:id/versions?artifact_kind=static_site` accepts one
-`base_version` and repeated `delete_path` query parameters. For example,
-`?artifact_kind=static_site&base_version=v1&delete_path=data/old.parquet&delete_path=old.js`
-with multipart `file` parts for `data/a.parquet` replaces that data file, removes
-the two listed paths, and inherits all other files without copying their objects.
-The base must be the current published version; a stale base returns HTTP 409
-`version_conflict`. It also supplies the expected version for agent credentials.
-If `expected_version` is supplied, it must equal the base (otherwise HTTP 400
-`validation-failed`). Neither parameter changes write permissions.
-
-Deletion paths use the same normalization and validation as uploaded paths.
-Sending and deleting the same path is invalid. A case-only addition requires
-explicitly deleting the old spelling. An absent deletion path is harmless.
-A base permits zero sent files, provided the resulting manifest still includes
-`index.html` or `index.md`. Entrypoint precedence, file-count, total-size, and
-case-collision checks apply to the complete resulting manifest. Without a base,
-the existing full replacement behavior applies. Empty or repeated bases,
-deletion without a base, and inheritance parameters on other artifact kinds
-return HTTP 400 `validation-failed`.
-
-Version size is the logical sum of that version's files. Workspace quota counts
-physical objects once across retained versions; only sent files add bytes.
-Pruning keeps objects referenced by remaining versions. Version URLs retain
-immutable manifests. This is a REST API feature: there are no CLI `update`
-flags, MCP inputs, or bridge inputs for inheritance.
-
-### Publisher device credentials (API only)
-
-Versions added with publisher credentials are scheduled updates: content and live viewers refresh, but list order, feeds, unread indicators, and human update labels do not change. Browser history marks Scheduled update without exposing client names. API `updated_at` remains the actual mutation time; internal `activity_at` controls human activity ordering. Initial creation and versions published through other credentials keep their existing behavior.
-
-The device API accepts `preset: "publisher"` with a required `device_name`.
-Names are trimmed, NFC-normalized, case-sensitive, and limited to 1–100 Unicode
-letters, marks, numbers, ASCII spaces, or `._-()`. The browser approver explicitly
-creates a new client or continues one of their existing clients in that workspace.
-Names cannot be edited on the approval screen: if a name already exists, continue
-that client or request login again with a different name. Only explicit continuation
-restores access to earlier files; `device_id` never selects a client.
-
-A publisher can create private HTML, Markdown, or static-site artifacts in the
-approver's home. Static sites use `POST /api/shareables/uploads?artifact_kind=static_site`.
-It can manage only artifacts created by or assigned to its client, still owned by
-that approver in the same workspace, including after the owner shares or moves them.
-Single-file versions require `expected_version`. Static-site versions accept
-`artifact_kind=static_site` with either `expected_version` for replacement or
-`base_version` for changed-files uploads and repeated `delete_path` removals.
-The base must be current. Version uploads preserve audience, location and retention.
-
-On artifacts created by or assigned to a publisher client, retention counts only published versions added with publisher credentials, including earlier clients, and keeps every other version. This also applies to unrestricted owner edits. The newest N publisher versions and every current version are kept; drafts do not count. Unmanaged artifacts continue to count all published versions.
-
-The exact `GET /api/cli/artifacts/:id/download` returns raw source bytes for
-single files and a JSON manifest with version id, paths and SHA-256 hashes for
-static sites. Individual `download/*` requests are denied. `GET /api/cli/artifacts/:id`
-includes visibility; static-site readback contains metadata only. No `include`
-expansions are allowed. `DELETE /api/cli/artifacts/:id` deletes the artifact.
-POST or PATCH `/api/cli/shareables/:id/edit` accepts only `retain_versions`, a
-positive integer or null. Setting a limit prunes older versions immediately;
-clearing it never restores deleted content. Other presets remain POST-only.
-
-The owner can assign an existing artifact using an unrestricted credential or
-browser session: `POST /api/cli/artifacts/:id/adopt` with
-`{"publisher_client_id":"client1"}`. Obtain the verified client id from whoami or
-doctor. Assignment replaces the previous client's access and is audited even when
-repeated; historical creation attribution stays unchanged. Publisher credentials
-cannot adopt. There is no adoption UI or CLI command.
-
-Other clients' artifacts, list, resolve, comments, audience/title/expiry edits,
-move, projects, append and upsert remain denied. Existing presets' download and
-readback responses are unchanged. CLI publisher login/resume and publishing/download
-workflows remain unsupported; use the API. Credentials retain their client across
-rotation and can be revoked from Settings → CLI sessions.
-
-## Comment windows and posting limits
-
-`comments list <target> --json` returns at most 50 threads, open first. Each
-thread contains its current first message and latest three replies, plus
-`message_count`, `reply_count` and `older_cursor`. These are partial histories.
-Use `comments list <target> --thread-id <id> --before <older_cursor> --limit 50
---json` for older replies. Repeat with the returned cursor until it is null;
-merge by message ID and display in `(created_at, message_id)` order. Each page
-also includes the current first message. Cursors remain usable after their
-boundary message is deleted. `--around-message-id <id>` selects a bounded page
-containing a message; do not combine it with `--before`.
-
-A thread holds 500 currently stored messages, including its first message.
-`thread_capacity` means start a new thread. Existing excess messages are kept;
-deletions can restore space. Deleting the first message promotes the next
-earliest message; deleting the last removes the thread and anchor. Resolved
-threads still refuse replies.
-
-Creation and replies share 20 admissions per authenticated user and artifact
-per fixed UTC minute across browser, CLI, MCP and API tokens. Adjacent minute
-boundaries can admit 40 posts within a sliding 60 seconds. `rate_limited`
-includes `retry_after_seconds` and UTC `retry_at`; HTTP also sends `Retry-After`.
-Keep unsent content and retry after that time. Invalid requests, capacity refusals
-and closed-thread refusals observed before admission consume nothing. Rate
-refusals do not increment the counter; quota storage failures refuse the post.
-Once admitted, commit failures and status/version/capacity races consume the admission without a
-refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
-Mutation readback contains only the affected thread window and changed message.
-`refresh_required: true` means the write committed but advisory readback failed:
-read that thread by ID; do not replay the write automatically.
-
-### Upload path safety
-
-For `share`, `append`, and `update`, use a regular file or directory (`append`
-requires one nonempty UTF-8 file). Relative selections stay in physical cwd and
-reject linked components. Absolute selections trust parent directories but reject
-a linked selection or included descendant. Never normalize `..`: every such
-component is rejected; pass a direct absolute path. Copy linked content into the
-selection or pass the target by absolute path. Hidden names, `__MACOSX`, excluded
-dependency/metadata directories, and ignored OS filenames are skipped before
-inspection. Other entries use `lstat`; cloud placeholders work with stable file
-identities. Content is verified before authentication or project lookup, and auth
-retries reuse it. `validation_failed` includes `details.path` and `details.reason`:
-`parent_traversal`, `link`, `outside_cwd`, `not_found`, `changed`,
-`unsupported_guarantee`, or `invalid_type`. Follow the specific hint; retry for
-`changed` or `upload_read_failed` (filesystem errno in `details.errno`). POSIX uses
-available `O_NOFOLLOW`; Windows uses the same handle identity checks and rejects
-links reported by `lstat`. Neither detects every transient swap-and-restore or
-same-identity, same-size in-place edit. See the CLI README for the full guarantee.
-
-## Local write recovery
-
-Download accepts only unique artifact IDs matching `^[a-z0-9]{10}$`, including
-IDs from list pages and the previous index.
-Artifact IDs with surrounding whitespace are rejected, not trimmed, including
-single-download targets. Remove the whitespace before retrying. URLs use normal
-URL-to-ID resolution. Output parents may be links; their resolved directory identities are rechecked.
-Linked output roots, indexes, and listed artifact trees are refused even with `--force`. Preflight checks every listed
-artifact tree, including unchanged versions, and the index; unrelated content is
-not walked. Network failures and invalid manifest paths, bodies, or identities are recorded per artifact;
-every boundary violation stops further publication, including the final index.
-Successful replacements retain originals and previous indexes in `data.backup_paths`
-and report them in human output. Inspect those paths before manual cleanup.
-Failed recovery also names retained paths in the error. Cleanup removes only
-CLI-created temporary entries, never containers holding originals. Staging and
-backups live in one private directory inside the output root for project
-downloads, or in its parent for single downloads. Project index temporary files
-use that same private directory so publication stays on the output filesystem.
-Identity checks detect observed swaps;
-Node path-based operations do not provide atomic confinement against arbitrary
-concurrent changes.
-
-Config-mode `init` preserves unknown keys and refuses links at `.artifactshare`
-or `config.local.json`. Git worktrees/submodules save config normally but warn
-instead of following `.git` files, links, or redirect metadata. Only a real
-repository `.git` directory with regular or absent `info/exclude` is updated.
-Follow `git_exclude_warning` to add the exact exclude line manually. Onboarding
-without config arguments still installs user-scope skills.
-
-Upload aliases use the stored filename for kind, filename, and content type.
-Retry `changed` when an enumerated file disappears; correct `not_found` when a
-relative path passes through a regular file. Both `share --help` and
-`append --help` list `upload_read_failed` and all `validation_failed` reasons:
-`link`, `outside_cwd`, `parent_traversal`, `changed`, `not_found`, `invalid_type`,
-and `unsupported_guarantee`.
-
-### Local preview isolation
-
-Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.
-
-Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.
+| Task                     | Command                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| Share a file or folder   | `share <path> --json`                                                               |
+| Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json`           |
+| Replace with same URL    | `update <target> <path> --json`                                                     |
+| Append to same URL       | `append <target> <path> --json`                                                     |
+| Read back source         | `artifacts get <target> --json`                                                     |
+| Download a site bundle   | `download <target> --output ./out --json`                                           |
+| Download a whole project | `download --project-id <id> --output ./out --json`                                  |
+| List your artifacts      | `artifacts list --json`                                                             |
+| Post a comment           | `comments post <target> --body '<text>' --json`                                     |
+| Read comments            | `comments list <target> --json`                                                     |
+| Read older replies       | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
+| Change title or sharing  | `edit <target> --title 'New' --json`                                                |
+| Move to a project        | `edit <target> --project-id <id> --json`                                            |
+| Create a project         | `projects create 'Name' --json`                                                     |
+| Find an ID from a title  | `resolve <value> --json`                                                            |
+| Open a share URL         | `open <url> --json`                                                                 |
+| Preview a local file     | `preview <file> --json` (local, no sign-in)                                         |
+| Log out                  | `logout --profile <name> --json`                                                    |

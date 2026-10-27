@@ -17,6 +17,7 @@ import {
   SkillsListDataSchema,
   SkillsActionDataSchema,
 } from '@artifactshare/contract'
+import { loadSkillBundle } from './command-runners/skill-folder.js'
 import { expectSuccess, expectFailure } from './test/helpers.js'
 
 let root: string, work: string, home: string, overlay: string
@@ -474,5 +475,25 @@ test('automatic paths skip edited newer folders without downgrade recommendation
     }
     assert.equal(await readFile(legacy(), 'utf8'), marker(1))
     if (args[0] === 'skills') await mkdir(join(work, '.agents'))
+  }
+})
+
+test('real bundled references install byte-for-byte across all six targets', async () => {
+  const bundle = await loadSkillBundle(
+    join(import.meta.dirname, '../skills/artifactshare'),
+  )
+  await setBundle(bundle.files)
+  for (const scope of ['project', 'user']) {
+    expectSuccess(
+      skills('install', '--tool', 'claude,codex,cursor', '--scope', scope),
+    )
+    for (const tool of ['.claude', '.agents', '.cursor']) {
+      for (const [path, content] of Object.entries(bundle.files)) {
+        assert.equal(
+          await readFile(join(target(tool, scope), path), 'utf8'),
+          content,
+        )
+      }
+    }
   }
 })

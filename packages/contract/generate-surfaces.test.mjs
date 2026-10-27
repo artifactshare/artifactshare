@@ -34,6 +34,8 @@ import {
   productContractProblems,
   renderCliReadmeCommandTable,
   renderSkillQuickReferenceTable,
+  replaceSkillQuickReferenceTable,
+  documentsAtRoot,
 } from './generate-surfaces.mjs'
 
 const HELP = `Artifact Share CLI
@@ -1077,4 +1079,57 @@ test('OpenAPI describes publisher REST operations separately from MCP OAuth', ()
   for (const [, name] of refs) assert.ok(spec.components.schemas[name], name)
   assert.equal(spec.components.securitySchemes.cliBearer.scheme, 'bearer')
   assert.equal(spec.components.securitySchemes.browserSession.in, 'cookie')
+})
+
+test('skill table replacement preserves reordered sections and is idempotent', () => {
+  const before =
+    '## Output contract\n\nKeep recovery.\n\n## Quick reference\n\n'
+  const after = '\n\nKeep this prose.\n\n## Share\n\nKeep sharing.\n'
+  const result = replaceSkillQuickReferenceTable(
+    `${before}| Old | Table |${after}`,
+  )
+  assert.equal(result, `${before}${renderSkillQuickReferenceTable()}${after}`)
+  assert.equal(replaceSkillQuickReferenceTable(result), result)
+})
+
+test('document collection checks examples in nested bundled references', () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'skill-documents-'))
+  try {
+    for (const path of DOCUMENT_PATHS) {
+      mkdirSync(dirname(resolve(root, path)), { recursive: true })
+      writeFileSync(resolve(root, path), '')
+    }
+    const reference =
+      'packages/cli/skills/artifactshare/references/nested/detail.md'
+    mkdirSync(dirname(resolve(root, reference)), { recursive: true })
+    writeFileSync(
+      resolve(root, reference),
+      '`artifactshare share report.md --unknown`',
+    )
+    const documents = documentsAtRoot(root)
+    assert.ok(Object.hasOwn(documents, reference))
+    const errors = validateDocumentExamples(
+      { commands: [{ path: 'share', options: ['--json'] }] },
+      documents,
+    )
+    assert.ok(
+      errors.some(
+        (error) =>
+          error.includes(reference) &&
+          error.includes('unknown option --unknown'),
+      ),
+    )
+    writeFileSync(
+      resolve(root, reference),
+      '`artifactshare invented report.md`',
+    )
+    assert.ok(
+      validateDocumentExamples(
+        { commands: [{ path: 'share', options: [] }] },
+        documentsAtRoot(root),
+      ).length > 0,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

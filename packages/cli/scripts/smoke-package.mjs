@@ -99,7 +99,14 @@ try {
   )
   assert.match(updateHelp, /--label/)
   for (const path of ['README.md', 'skills/artifactshare/SKILL.md']) {
-    const document = readFileSync(join(installed, path), 'utf8')
+    let document = readFileSync(join(installed, path), 'utf8')
+    if (path.endsWith('SKILL.md')) {
+      assert.match(document, /\(references\/version-labels\.md\)/)
+      document += readFileSync(
+        join(installed, 'skills/artifactshare/references/version-labels.md'),
+        'utf8',
+      )
+    }
     assert.match(document, /--label/)
     assert.match(document, /1–80 Unicode code points/)
   }

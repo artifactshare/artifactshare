@@ -6,7 +6,7 @@ const surfaces = [
   ['../README.md', /Artifact IDs with surrounding whitespace are rejected/],
   ['../CHANGELOG.md', /Artifact IDs with surrounding whitespace are rejected/],
   [
-    '../skills/artifactshare/SKILL.md',
+    '../skills/artifactshare/references/local-write-recovery.md',
     /Artifact IDs with surrounding whitespace are rejected/,
   ],
   [
@@ -19,6 +19,13 @@ for (const [path, rejection] of surfaces) {
   test(`download whitespace rejection is documented in ${path}`, async () => {
     const content = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.match(content, rejection)
+    if (path.includes('/references/')) {
+      const entry = await readFile(
+        new URL('../skills/artifactshare/SKILL.md', import.meta.url),
+        'utf8',
+      )
+      assert.ok(entry.includes('(references/local-write-recovery.md)'))
+    }
     assert.doesNotMatch(
       content,
       /Single targets (?:are trimmed|use normal whitespace)/,

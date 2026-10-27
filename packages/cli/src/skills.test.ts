@@ -84,41 +84,47 @@ test('skills install writes managed skill files for each tool', async () => {
     ],
   )
   const codexSkill = await readFile(codexSkillPath(), 'utf8')
-  assert.equal(codexSkill, await bundled('SKILL.md'))
-  assert.ok(codexSkill.includes('as でアップして'))
-  assert.ok(codexSkill.includes('as に上げて'))
-  assert.ok(codexSkill.includes('bare English "as" alone is not'))
-  assert.ok(codexSkill.includes('Do not use this skill just because'))
-  assert.ok(codexSkill.includes('Claude Artifact is'))
-  assert.ok(
-    codexSkill.includes('Honor an explicit user request to use CLI or MCP'),
+  const linkedContent = await Promise.all(
+    [...codexSkill.matchAll(/\]\((references\/[^)]+)\)/g)].map((match) =>
+      readFile(join(dirname(codexSkillPath()), match[1]!), 'utf8'),
+    ),
   )
-  assert.ok(codexSkill.includes('before selecting the default'))
-  assert.ok(codexSkill.includes('do not run `share --artifact-id`'))
-  assert.ok(codexSkill.includes('share <path> --key <key> --json'))
-  assert.ok(codexSkill.includes('give the user `data.artifact.url`'))
-  assert.ok(codexSkill.includes('Do not rerun `share`'))
-  assert.ok(codexSkill.includes('--scope user --json'))
-  assert.ok(codexSkill.includes('--scope effective --json'))
-  assert.ok(codexSkill.includes('policy agreed by all participants'))
-  assert.ok(codexSkill.includes('open <artifact-id-or-url> --json'))
-  assert.ok(codexSkill.includes('edit <artifact-id-or-url> --title'))
-  assert.ok(codexSkill.includes('delete <artifact-id-or-url> --json'))
-  assert.ok(codexSkill.includes('logout --profile <name> --json'))
-  assert.ok(codexSkill.includes('profiles delete <name> --json'))
-  assert.ok(codexSkill.includes('https://artifactshare.com/settings/tokens'))
+  const skillContent = [codexSkill, ...linkedContent].join('\n')
+  assert.equal(codexSkill, await bundled('SKILL.md'))
+  assert.ok(skillContent.includes('as でアップして'))
+  assert.ok(skillContent.includes('as に上げて'))
+  assert.ok(skillContent.includes('bare English "as" alone is not'))
+  assert.ok(skillContent.includes('Do not use this skill just because'))
+  assert.ok(skillContent.includes('Claude Artifact is'))
   assert.ok(
-    codexSkill.includes(
+    skillContent.includes('Honor an explicit user request to use CLI or MCP'),
+  )
+  assert.ok(skillContent.includes('before selecting the default'))
+  assert.ok(skillContent.includes('do not run `share --artifact-id`'))
+  assert.ok(skillContent.includes('share <path> --key <key> --json'))
+  assert.ok(skillContent.includes('give the user `data.artifact.url`'))
+  assert.ok(skillContent.includes('Do not rerun `share`'))
+  assert.ok(skillContent.includes('--scope user --json'))
+  assert.ok(skillContent.includes('--scope effective --json'))
+  assert.ok(skillContent.includes('policy agreed by all participants'))
+  assert.ok(skillContent.includes('open <artifact-id-or-url> --json'))
+  assert.ok(skillContent.includes('edit <artifact-id-or-url> --title'))
+  assert.ok(skillContent.includes('delete <artifact-id-or-url> --json'))
+  assert.ok(skillContent.includes('logout --profile <name> --json'))
+  assert.ok(skillContent.includes('profiles delete <name> --json'))
+  assert.ok(skillContent.includes('https://artifactshare.com/settings/tokens'))
+  assert.ok(
+    skillContent.includes(
       'remote MCP for source text in chat or a temporary sandbox',
     ),
   )
-  assert.ok(codexSkill.includes('--agent'))
-  assert.ok(codexSkill.includes('--quote'))
-  assert.ok(codexSkill.includes('--include versions'))
-  assert.ok(codexSkill.includes('data.content'))
-  assert.ok(codexSkill.includes('data.version_id'))
-  assert.ok(codexSkill.includes('skills ensure'))
-  assert.ok(!codexSkill.includes('@artifactshare/cli@'))
+  assert.ok(skillContent.includes('--agent'))
+  assert.ok(skillContent.includes('--quote'))
+  assert.ok(skillContent.includes('--include versions'))
+  assert.ok(skillContent.includes('data.content'))
+  assert.ok(skillContent.includes('data.version_id'))
+  assert.ok(skillContent.includes('skills ensure'))
+  assert.ok(!skillContent.includes('@artifactshare/cli@'))
   assert.equal(await readFile(claudeSkillPath(), 'utf8'), codexSkill)
   const cursorRule = await readFile(cursorRulePath(), 'utf8')
   assert.equal(cursorRule, await bundled('SKILL.md'))
@@ -897,6 +903,7 @@ for (const value of ['', ' \t ']) {
 }
 
 async function writeLegacySkill(path: string, content: string) {
+  await rm(join(dirname(path), 'references'), { recursive: true, force: true })
   await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
   await writeFile(path, content)
 }
