@@ -260,7 +260,7 @@ in-frame message when a browser blocks partitioned cookies. No local validation 
 build, running dev app, agent executable, authentication, or credential links.
 It validates only arguments, selected skill trees and the output destination.
 The harness supports Claude Code (`claude-opus-5-5`, `claude-sonnet-5-5`),
-Codex (`gpt-6.1-sol`, `gpt-6-astra`), and Cursor (`grok-4.7-high`),
+Codex (`gpt-6.1-sol`, `gpt-6-astra`), and Cursor (`grok-4.7-high`, `grok-4.7-low`),
 with `share`, `update`, and `comments` scenarios. All three stream formats
 have synthetic parser fixtures.
 
@@ -274,7 +274,7 @@ pnpm skill-eval -- --combination claude:claude-sonnet-5-5 --scenario update \
   --skill-version /tmp/before --skill-version /tmp/after --runs 3
 ```
 
-Defaults are all five supported combinations, all three scenarios, one repetition,
+Defaults remain the original five combinations (Cursor uses `grok-4.7-high`), all three scenarios, one repetition,
 300000 milliseconds per run, 20 completed tool cycles per run, the checkout's
 `packages/cli/skills/artifactshare` version, and `https://localhost:5173`.
 `--persona <id>` selects `free-owner` (the default), `plus-owner`,
@@ -285,6 +285,18 @@ starts. Comments also posts a request to change the schedule line; the agent
 must read the feedback, edit the local report, and update the same page.
 It uses update's checks and separately reports observed comment reads,
 resolutions, and replies without grading those observations.
+Combination IDs accept `agent:model[:effort]`. Claude supports `low`, `medium`,
+`high`, `xhigh`, and `max` through `--effort`; Codex supports `low`, `medium`,
+`high`, and `xhigh` through `-c model_reasoning_effort=<level>` and rejects `max`.
+Omitting effort preserves the agent default without adding a flag. Cursor encodes
+effort in its model name and rejects a third segment. Plans, JSON results and
+summary headings show the effort or `default`, with distinct groups per full ID.
+
+The JSON check excludes help requests: `--help` or `-h` before `--`, or `help`
+as the first positional argument before `--`. Help calls remain in evidence,
+marked as excluded, and do not need `--json`. All other invocations require
+`--json` before `--`; a run with only help calls fails this check.
+
 Use repeatable `--combination`, `--scenario` and `--skill-version`; version
 directory basenames must be distinct. `--timeout-ms`, `--max-turns`,
 `--base-url` and `--output-dir` override the remaining defaults. Claude also
@@ -370,7 +382,7 @@ Sanitized dry-run evidence for the one-case example above:
 
 ```text
 persona: free-owner
-combination: codex:gpt-6.1-sol
+combination: codex:gpt-6.1-sol; effort: default
 scenario: share; repetition: 1; version: artifactshare
 source: <checkout>/packages/cli/skills/artifactshare
 budget: timeoutMs=300000; maxTurns=20

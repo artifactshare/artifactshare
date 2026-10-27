@@ -18,7 +18,7 @@ export const personas = [
   'team-member',
 ]
 export const usage =
-  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model] [--scenario share|update|comments] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
+  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model[:effort]] [--scenario share|update|comments] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
 export const fingerprint = (bytes) =>
   createHash('sha256').update(bytes).digest('hex')
 export function localOrigin(value) {
@@ -101,8 +101,31 @@ export function skillLocation(agent, version) {
     ? '.claude/skills/artifactshare'
     : '.agents/skills/artifactshare'
 }
+export function parseCombination(id) {
+  const parts = id.split(':')
+  const [agent, model, effort] = parts
+  if (
+    parts.length < 2 ||
+    parts.length > 3 ||
+    ![...combinations, 'cursor:grok-4.7-low'].includes(`${agent}:${model}`)
+  )
+    throw new Error(`Unsupported combination ${id}`)
+  if (parts.length === 3) {
+    if (agent === 'cursor')
+      throw new Error(
+        'Cursor effort is part of the model name; omit the effort segment',
+      )
+    if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))
+      throw new Error(`Unsupported effort ${effort} for ${agent}`)
+    if (agent === 'codex' && effort === 'max')
+      throw new Error(
+        'Unsupported effort max for Codex; use low, medium, high or xhigh',
+      )
+  }
+  return { agent, model, effort: effort ?? 'default' }
+}
 export function agentCommand(combination, maxTurns) {
-  const [agent, model] = combination.split(':')
+  const { agent, model, effort } = parseCombination(combination)
   if (agent === 'cursor')
     return [
       'cursor-agent',
@@ -130,6 +153,7 @@ export function agentCommand(combination, maxTurns) {
       'Write',
       'Glob',
       'Grep',
+      ...(effort === 'default' ? [] : ['--effort', effort]),
       '--max-turns',
       String(maxTurns),
     ]
@@ -144,6 +168,7 @@ export function agentCommand(combination, maxTurns) {
     'workspace-write',
     '-c',
     'sandbox_workspace_write.network_access=true',
+    ...(effort === 'default' ? [] : ['-c', `model_reasoning_effort=${effort}`]),
   ]
 }
 export async function plan(argv) {
@@ -194,9 +219,7 @@ export async function plan(argv) {
   if (!options.combinations.length) options.combinations = [...combinations]
   if (!options.scenarios.length)
     options.scenarios = ['share', 'update', 'comments']
-  for (const id of options.combinations)
-    if (!combinations.includes(id))
-      throw new Error(`Unsupported combination ${id}\n${usage}`)
+  for (const id of options.combinations) parseCombination(id)
   for (const id of options.scenarios)
     if (!['share', 'update', 'comments'].includes(id))
       throw new Error(`Unsupported scenario ${id}\n${usage}`)
@@ -220,6 +243,7 @@ export async function plan(argv) {
           matrix.push({
             version: version.label,
             combination,
+            effort: parseCombination(combination).effort,
             scenario,
             repetition,
             command: agentCommand(combination, options.maxTurns),
