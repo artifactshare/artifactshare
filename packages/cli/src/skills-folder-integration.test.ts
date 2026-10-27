@@ -316,3 +316,163 @@ test('automatic migration never downgrades a newer legacy rule', async () => {
   await assert.rejects(readFile(join(target(), 'SKILL.md')), /ENOENT/)
   assert.equal(await readFile(legacy(), 'utf8'), marker(999))
 })
+
+for (const version of [10, 11])
+  for (const edited of ['SKILL.md', 'references/usage.md'])
+    test(`automatic paths preserve edited ${edited} with bundle version ${version}`, async () => {
+      expectSuccess(skills('install', '--tool', 'codex', '--scope', 'user'))
+      const path = join(target('.agents', 'user'), edited)
+      const content = initial[edited as keyof typeof initial] + 'personal edits'
+      await put(path, content)
+      await setBundle({ ...initial, 'SKILL.md': marker(version) })
+      for (const args of [
+        ['profiles', 'list'],
+        ['skills', 'ensure', '--tool', 'auto'],
+        ['init'],
+      ]) {
+        const data = expectSuccess(run(args)).data
+        assert.equal(await readFile(path, 'utf8'), content)
+        const actions =
+          data.skills?.auto_update?.targets ??
+          data.skills?.targets ??
+          data.targets
+        assert.ok(
+          actions?.some(
+            (item: any) =>
+              item.tool === 'codex' && item.action === 'update_recommended',
+          ),
+        )
+      }
+    })
+
+test('automatic commands leave an equal-version manifestless installation unchanged', async () => {
+  const entry = join(target('.agents', 'user'), 'SKILL.md')
+  await put(entry, initial['SKILL.md'])
+  expectSuccess(run(['profiles', 'list']))
+  expectSuccess(skills('ensure', '--tool', 'auto'))
+  await assert.rejects(
+    readFile(join(dirname(entry), '.artifactshare-managed.json')),
+    /ENOENT/,
+  )
+})
+
+test('remove and update report edited retirement paths without deleting them', async () => {
+  expectSuccess(skills('install', '--tool', 'cursor'))
+  const path = join(target(), 'references/usage.md')
+  await put(path, 'personal edits')
+  for (const args of [['remove', '--dry-run'], ['remove']]) {
+    const result = expectFailure(skills(...args, '--tool', 'cursor'))
+    assert.match(result.error.hint, /references\/usage.md/)
+    assert.equal(await readFile(path, 'utf8'), 'personal edits')
+  }
+  const next = { ...initial, 'SKILL.md': marker(11) }
+  delete (next as Partial<typeof initial>)['references/usage.md']
+  await setBundle(next)
+  const result = expectFailure(skills('update', '--tool', 'cursor'))
+  assert.match(result.error.hint, /references\/usage.md/)
+  assert.equal(await readFile(path, 'utf8'), 'personal edits')
+  expectSuccess(skills('update', '--tool', 'cursor', '--force'))
+  await assert.rejects(readFile(path), /ENOENT/)
+})
+
+for (const conflict of ['invalid manifest', 'unowned reference'])
+  test(`doctor recommends force install for ${conflict}`, async () => {
+    expectSuccess(skills('install', '--tool', 'cursor'))
+    if (conflict === 'invalid manifest') {
+      await put(join(target(), '.artifactshare-managed.json'), '{}')
+    } else {
+      await put(join(target(), 'references/new.md'), 'user content')
+      await setBundle({ ...initial, 'references/new.md': 'bundled content' })
+    }
+    const data = expectSuccess(run(['doctor'])).data.skills
+    const item = data.targets.find(
+      (candidate: any) =>
+        candidate.tool === 'cursor' && candidate.scope === 'project',
+    )
+    assert.match(
+      item.update_command,
+      /skills install --tool cursor --scope project --force --json/,
+    )
+  })
+
+for (const manifest of ['absent', 'invalid'])
+  test(`automatic migration preserves the legacy rule when the equal-version folder manifest is ${manifest}`, async () => {
+    expectSuccess(skills('install', '--tool', 'cursor'))
+    const manifestPath = join(target(), '.artifactshare-managed.json')
+    if (manifest === 'absent') await rm(manifestPath)
+    else await put(manifestPath, '{}')
+    await put(legacy(), marker(1))
+    for (const args of [
+      ['profiles', 'list'],
+      ['skills', 'ensure', '--tool', 'auto', '--dry-run'],
+      ['skills', 'ensure', '--tool', 'auto'],
+      ['init'],
+    ]) {
+      const data = expectSuccess(run(args)).data
+      const actions =
+        data.skills?.auto_update?.targets ??
+        data.skills?.targets ??
+        data.targets
+      const migration = actions.find(
+        (item: any) => item.tool === 'cursor' && item.scope === 'project',
+      )
+      assert.equal(migration.action, 'update_recommended')
+      assert.equal(migration.legacy_rule, undefined)
+      assert.match(
+        migration.update_command,
+        /skills update --tool cursor --scope project/,
+      )
+      assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+      assert.equal(
+        await readFile(join(target(), 'SKILL.md'), 'utf8'),
+        initial['SKILL.md'],
+      )
+      if (manifest === 'absent')
+        await assert.rejects(readFile(manifestPath), /ENOENT/)
+      else assert.equal(await readFile(manifestPath, 'utf8'), '{}')
+    }
+  })
+
+test('automatic paths skip edited newer folders without downgrade recommendations or legacy cleanup', async () => {
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  expectSuccess(skills('install', '--tool', 'codex', '--scope', 'user'))
+  expectSuccess(skills('install', '--tool', 'cursor', '--scope', 'project'))
+  const folders = [target('.agents', 'user'), target()]
+  for (const folder of folders)
+    await put(join(folder, 'references/usage.md'), 'personal edits')
+  await put(legacy(), marker(1))
+  await setBundle(initial)
+  for (const args of [
+    ['profiles', 'list'],
+    ['skills', 'ensure', '--tool', 'auto'],
+    ['init'],
+  ]) {
+    const data = expectSuccess(run(args)).data
+    const actions =
+      data.skills?.auto_update?.targets ??
+      data.skills?.targets ??
+      data.targets ??
+      []
+    assert.equal(
+      actions.some(
+        (item: any) => item.tool === 'codex' || item.scope === 'project',
+      ),
+      false,
+    )
+    for (const folder of folders) {
+      assert.equal(await readFile(join(folder, 'SKILL.md'), 'utf8'), marker(11))
+      assert.equal(
+        await readFile(join(folder, 'references/usage.md'), 'utf8'),
+        'personal edits',
+      )
+      assert.equal(
+        JSON.parse(
+          await readFile(join(folder, '.artifactshare-managed.json'), 'utf8'),
+        ).version,
+        11,
+      )
+    }
+    assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+    if (args[0] === 'skills') await mkdir(join(work, '.agents'))
+  }
+})

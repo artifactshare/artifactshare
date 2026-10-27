@@ -222,7 +222,15 @@ test('updates replace a retired owned file with nested references without adopti
   await put(folder, 'references/user.md', 'user')
   const next = bundle(2)
   next.files['references/topic/nested/detail.txt'] = 'new topic'
-  await writeSkillFolder(entry, next)
+  await assert.rejects(
+    writeSkillFolder(entry, next),
+    /Modified skill file: references\/topic/,
+  )
+  assert.equal(
+    await readFile(join(folder, 'references/topic'), 'utf8'),
+    'edited owned topic',
+  )
+  await writeSkillFolder(entry, next, false, true)
   assert.equal(
     await readFile(join(folder, 'references/topic/nested/detail.txt'), 'utf8'),
     'new topic',
@@ -305,4 +313,29 @@ test('force reinstall recovers a manifest committed before the entry without tru
     writeSkillFolder(entry, bundle(2)),
     /SKILL.md.*user-edited/,
   )
+})
+
+test('removal and retirement preserve modified owned files and report their paths', async () => {
+  const root = await fixture()
+  const folder = join(root, '.agents/skills/artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle())
+  await put(folder, 'references/usage.md', 'personal edits')
+  await assert.rejects(
+    removeSkillFolder(entry),
+    /Modified skill file: references\/usage.md/,
+  )
+  const next = bundle(2)
+  delete next.files['references/usage.md']
+  await assert.rejects(
+    writeSkillFolder(entry, next),
+    /Modified skill file: references\/usage.md/,
+  )
+  assert.equal(
+    await readFile(join(folder, 'references/usage.md'), 'utf8'),
+    'personal edits',
+  )
+  assert.equal(await readFile(entry, 'utf8'), marker(1))
+  await writeSkillFolder(entry, next, false, true)
+  await assert.rejects(readFile(join(folder, 'references/usage.md')), /ENOENT/)
 })

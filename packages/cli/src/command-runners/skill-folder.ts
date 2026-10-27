@@ -223,6 +223,7 @@ export async function preflightFolder(
   entry: string,
   bundle?: SkillBundle,
   force = false,
+  forceRetirement = force,
 ) {
   const root = await rootFor(entry)
   const state = await stateAt(root)
@@ -240,6 +241,16 @@ export async function preflightFolder(
     (state.kind === 'managed' ? { 'SKILL.md': '' } : {})
   await safe(root, MANIFEST)
   for (const path of Object.keys(previous)) await safe(root, path)
+  if (!forceRetirement) {
+    for (const [path, expected] of Object.entries(previous)) {
+      if (bundle && Object.hasOwn(bundle.files, path)) continue
+      const bytes = await bytesAt(root, path)
+      if (expected && bytes !== null && hash(bytes) !== expected)
+        throw new Error(
+          `Modified skill file: ${path}. Preserve your edits before removing or retiring this file, or reinstall with skills install --force.`,
+        )
+    }
+  }
   const blockers = Object.keys(previous).filter(
     (path) =>
       bundle &&
@@ -301,9 +312,10 @@ export async function writeSkillFolder(
   entry: string,
   bundle: SkillBundle,
   force = false,
+  forceRetirement = force,
 ) {
   const { root, previous, blockers, replacedDirectories } =
-    await preflightFolder(entry, bundle, force)
+    await preflightFolder(entry, bundle, force, forceRetirement)
   const files = {
     ...bundle.files,
     [MANIFEST]:

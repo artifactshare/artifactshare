@@ -11,6 +11,7 @@ import {
   access,
   chmod,
 } from 'node:fs/promises'
+import { isDeepStrictEqual } from 'node:util'
 import { join, relative, resolve } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { walkthroughCliEnvironment } from '../walkthrough-cli-environment.mjs'
@@ -310,7 +311,20 @@ export async function inventory(
           expectedContents[selectedPath] === undefined
             ? undefined
             : Buffer.from(expectedContents[selectedPath])
-        const expected = expectedContent?.equals(content) ?? false
+        let expected = expectedContent?.equals(content) ?? false
+        if (
+          selectedPath === '.artifactshare-managed.json' &&
+          expectedManifest
+        ) {
+          try {
+            expected = isDeepStrictEqual(
+              JSON.parse(content.toString()),
+              JSON.parse(expectedManifest),
+            )
+          } catch {
+            expected = false
+          }
+        }
         // writeFile truncates before copying. A prefix seen during a live poll
         // is retained as pending, then resolved by a post-action/final snapshot.
         const pending =

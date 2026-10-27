@@ -423,6 +423,8 @@ type PlannedAction = {
   action: SkillsTargetAction
   content?: BundledSkills
   force?: boolean
+  forceRetirement?: boolean
+  automatic?: boolean
   removeLegacy?: boolean
   legacy?: {
     path: string
@@ -438,10 +440,31 @@ function targetPathKey(target: SkillTarget): Promise<string> {
 }
 
 async function prepareAction(item: PlannedAction, dryRun: boolean) {
-  if (item.content)
-    await preflightFolder(item.target.absolutePath, item.content, item.force)
+  if (item.content) {
+    if (item.automatic) {
+      const details = await diagnostic(item.target, item.content)
+      if (details.modified_files.length)
+        throw new Error(
+          `Modified skill files: ${details.modified_files.join(', ')}`,
+        )
+    }
+    await preflightFolder(
+      item.target.absolutePath,
+      item.content,
+      item.force,
+      item.forceRetirement,
+    )
+  }
   if (item.action === 'removed') await preflightFolder(item.target.absolutePath)
   const legacy = await legacyRule(item.target)
+  if (
+    legacy?.managed &&
+    item.action === 'unchanged' &&
+    !(await isCurrent(item.target, await loadBundledSkills()))
+  ) {
+    item.action = 'update_recommended'
+    return
+  }
   if (legacy?.present) {
     if (!legacy.managed)
       item.legacy = {
@@ -464,7 +487,12 @@ async function prepareAction(item: PlannedAction, dryRun: boolean) {
 }
 async function applyAction(item: PlannedAction): Promise<void> {
   if (item.content)
-    await writeSkillFolder(item.target.absolutePath, item.content, item.force)
+    await writeSkillFolder(
+      item.target.absolutePath,
+      item.content,
+      item.force,
+      item.forceRetirement,
+    )
   if (item.action === 'removed')
     await removeSkillFolder(item.target.absolutePath)
   if (item.legacy?.action === 'removed') {
@@ -499,13 +527,15 @@ async function finishActions(
   for (const item of planned) {
     try {
       await prepareAction(item, dryRun)
-    } catch {
+    } catch (error) {
       if (item.fallbackAction) {
         item.action = item.fallbackAction
         delete item.content
         continue
       }
-      writeFailure(command, skillUpdateConflictError(item.target.path), mode, 1)
+      const conflict = skillUpdateConflictError(item.target.path)
+      if (error instanceof Error) conflict.hint = error.message
+      writeFailure(command, conflict, mode, 1)
       return undefined
     }
   }
@@ -698,9 +728,28 @@ export async function ensureSkills(
       writeFailure(command, skillUpdateConflictError(target.path), mode, 1)
       return undefined
     }
+    const automaticUpdate =
+      filters.auto || options.command === 'init' || options.command === 'open'
+    if (
+      automaticUpdate &&
+      state.kind === 'managed' &&
+      state.version > bundled.version
+    )
+      continue
+    const details = await diagnostic(target, bundled)
+    if (
+      automaticUpdate &&
+      state.kind === 'managed' &&
+      details.modified_files.length
+    ) {
+      planned.push({ target, action: 'update_recommended' })
+      continue
+    }
     const unchanged =
       state.kind === 'managed' &&
-      (state.version > bundled.version || (await isCurrent(target, bundled)))
+      ((state.version >= bundled.version && automaticUpdate) ||
+        state.version > bundled.version ||
+        details.current)
     planned.push(
       unchanged
         ? { target, action: 'unchanged' }
@@ -708,6 +757,10 @@ export async function ensureSkills(
             target,
             action: state.kind === 'missing' ? 'installed' : 'updated',
             content: bundled,
+            automatic: automaticUpdate,
+            ...(automaticUpdate
+              ? { fallbackAction: 'update_recommended' as const }
+              : {}),
           },
     )
   }
@@ -718,10 +771,20 @@ export async function ensureSkills(
     for (const target of await automaticTargets(bundled)) {
       if (plannedPaths.has(await targetPathKey(target))) continue
       const state = await readTarget(target)
+      if (state.kind === 'managed' && state.version > bundled.version) continue
+      const details = await diagnostic(target, bundled)
+      if (state.kind === 'managed' && details.modified_files.length) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          installedVersion: state.version,
+        })
+        continue
+      }
       if (
         target.scope !== 'project' &&
         (state.kind !== 'managed' ||
-          state.version > bundled.version ||
+          state.version >= bundled.version ||
           (await isCurrent(target, bundled)))
       ) {
         continue
@@ -729,12 +792,13 @@ export async function ensureSkills(
       planned.push({
         target,
         action:
-          state.kind === 'managed' && state.version > bundled.version
+          state.kind === 'managed' && state.version >= bundled.version
             ? 'unchanged'
             : 'updated',
-        ...(state.kind === 'managed' && state.version > bundled.version
+        ...(state.kind === 'managed' && state.version >= bundled.version
           ? {}
           : { content: bundled }),
+        automatic: true,
         fallbackAction: 'update_recommended',
       })
     }
@@ -763,10 +827,20 @@ export async function autoUpdateUserManagedSkills(): Promise<
     const planned: PlannedAction[] = []
     for (const target of await automaticTargets(bundled)) {
       const state = await readTarget(target)
+      if (state.kind === 'managed' && state.version > bundled.version) continue
+      const details = await diagnostic(target, bundled)
+      if (state.kind === 'managed' && details.modified_files.length) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          installedVersion: state.version,
+        })
+        continue
+      }
       if (
         target.scope !== 'project' &&
         (state.kind !== 'managed' ||
-          state.version > bundled.version ||
+          state.version >= bundled.version ||
           (await isCurrent(target, bundled)))
       ) {
         continue
@@ -774,12 +848,13 @@ export async function autoUpdateUserManagedSkills(): Promise<
       planned.push({
         target,
         action:
-          state.kind === 'managed' && state.version > bundled.version
+          state.kind === 'managed' && state.version >= bundled.version
             ? 'unchanged'
             : 'updated',
-        ...(state.kind === 'managed' && state.version > bundled.version
+        ...(state.kind === 'managed' && state.version >= bundled.version
           ? {}
           : { content: bundled }),
+        automatic: true,
         fallbackAction: 'update_recommended',
         installedVersion:
           state.kind === 'managed'
@@ -880,6 +955,14 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
     const details = await diagnostic(target, bundled)
     const updateAvailable =
       state.kind === 'managed' && state.version !== bundled.version
+    let recoveryCommand = skillUpdateCommand(target)
+    if (state.kind === 'managed' && !details.current) {
+      try {
+        await preflightFolder(target.absolutePath, bundled)
+      } catch {
+        recoveryCommand = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
+      }
+    }
     targets.push({
       tool: target.tool,
       scope: target.scope,
@@ -891,7 +974,7 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       ...details,
       update_command:
         updateAvailable || (state.kind === 'managed' && !details.current)
-          ? skillUpdateCommand(target)
+          ? recoveryCommand
           : null,
     })
   }
@@ -946,6 +1029,7 @@ export async function runSkillsUpdate(
         target,
         action: 'updated',
         content: bundled,
+        forceRetirement: force,
       })
     } else {
       planned.push({ target, action: 'unchanged' })
