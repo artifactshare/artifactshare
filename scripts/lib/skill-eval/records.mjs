@@ -151,13 +151,15 @@ export function parseStream(agent, text, cwd = '.') {
       }
       if (started) cursorPending.add(id)
       if (shell) {
-        const variants = Object.values(shell.result ?? {})
+        const variants = Object.entries(shell.result ?? {}).filter(
+          ([, value]) => value !== null && typeof value === 'object',
+        )
         const variant =
-          variants.length === 1 &&
-          variants[0] !== null &&
-          typeof variants[0] === 'object'
-            ? variants[0]
-            : undefined
+          variants.length === 1
+            ? variants[0][1]
+            : ['success', 'failure', 'error', 'rejected']
+                .map((key) => variants.find(([name]) => name === key)?.[1])
+                .find((value) => value !== undefined)
         const result = variant ?? shell.result
         const output =
           typeof result?.stdout === 'string' ||

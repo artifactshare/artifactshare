@@ -427,8 +427,9 @@ test('Cursor unwraps shell results while retaining missing-result detection', ()
   })
   const parse = (...events) =>
     parseStream('cursor', events.map(JSON.stringify).join('\n'))
-  for (const key of ['success', 'failure', 'error', 'rejected']) {
+  for (const key of ['success', 'failure', 'error', 'rejected', 'future']) {
     const result = {
+      isBackground: false,
       [key]: {
         exitCode: key === 'success' ? 0 : 1,
         stdout: 'output',
@@ -443,6 +444,24 @@ test('Cursor unwraps shell results while retaining missing-result detection', ()
       assert.equal(record.commands[0].exitCode, result[key].exitCode)
       assert.equal(record.commands[0].output, 'outputdiagnostic')
     }
+  }
+  for (const key of ['success', 'failure', 'error', 'rejected']) {
+    const variants = {
+      metadata: { duration: 1 },
+      rejected: { exitCode: 4, stdout: 'rejected' },
+      error: { exitCode: 3, stdout: 'error' },
+      failure: { exitCode: 2, stdout: 'failure' },
+      success: { exitCode: 0, stdout: 'success' },
+      isBackground: false,
+    }
+    for (const preferred of ['success', 'failure', 'error', 'rejected']) {
+      if (preferred === key) break
+      delete variants[preferred]
+    }
+    const record = parse(event('completed', variants), terminal)
+    assert.equal(record.complete, true)
+    assert.equal(record.commands[0].exitCode, variants[key].exitCode)
+    assert.equal(record.commands[0].output, key)
   }
   assert.equal(
     parse(event('completed', { exitCode: 0, stdout: 'flat' }), terminal)
