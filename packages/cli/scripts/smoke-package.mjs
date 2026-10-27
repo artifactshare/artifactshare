@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   existsSync,
+  cpSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -96,15 +98,72 @@ try {
     { encoding: 'utf8' },
   )
   assert.match(updateHelp, /--label/)
-  for (const path of [
-    'README.md',
-    'skills/artifactshare/SKILL.md',
-    'skills/artifactshare/artifactshare.mdc',
-  ]) {
+  for (const path of ['README.md', 'skills/artifactshare/SKILL.md']) {
     const document = readFileSync(join(installed, path), 'utf8')
     assert.match(document, /--label/)
     assert.match(document, /1–80 Unicode code points/)
   }
+  assert.equal(
+    existsSync(join(installed, 'skills/artifactshare/artifactshare.mdc')),
+    false,
+  )
+  // Compare every packaged reference, including arbitrarily nested files.
+  const sourceSkill = join(packageDir, 'skills/artifactshare')
+  for (const relative of readdirSync(sourceSkill, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!relative.isFile()) continue
+    const source = join(relative.parentPath, relative.name)
+    const suffix = source.slice(sourceSkill.length + 1)
+    assert.deepEqual(
+      readFileSync(join(installed, 'skills/artifactshare', suffix)),
+      readFileSync(source),
+    )
+  }
+  // Exercise folder loading even before the production prose is split.
+  const overlay = join(temporary, 'folder-overlay')
+  cpSync(installed, overlay, { recursive: true })
+  const nested = 'references/nested/detail.txt'
+  mkdirSync(join(overlay, 'skills/artifactshare/references/nested'), {
+    recursive: true,
+  })
+  writeFileSync(
+    join(overlay, 'skills/artifactshare', nested),
+    'synthetic nested reference\n',
+  )
+  const work = join(temporary, 'skill-work')
+  const home = join(temporary, 'skill-home')
+  mkdirSync(work)
+  mkdirSync(home)
+  execFileSync(
+    process.execPath,
+    [
+      join(overlay, 'dist/index.js'),
+      'skills',
+      'install',
+      '--tool',
+      'cursor',
+      '--scope',
+      'project',
+      '--json',
+    ],
+    {
+      cwd: work,
+      env: {
+        ...process.env,
+        HOME: home,
+        ARTIFACTSHARE_CONFIG_HOME: home,
+        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      },
+      stdio: 'pipe',
+    },
+  )
+  assert.equal(
+    readFileSync(join(work, '.cursor/skills/artifactshare', nested), 'utf8'),
+    'synthetic nested reference\n',
+  )
+  assert.equal(existsSync(join(work, '.cursor/rules/artifactshare.mdc')), false)
   console.log(
     'CLI pack/install smoke passed without workspace runtime dependencies.',
   )

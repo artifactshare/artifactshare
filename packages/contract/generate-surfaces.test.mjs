@@ -1030,26 +1030,6 @@ test('edit catalog lists all visibility values and distinguishes combined writes
   assert.match(description, /逐次適用する場合.*ロールバックしない/)
 })
 
-test('Cursor edit guidance lists visibility values once and retains placement requirements', () => {
-  const rule = readFileSync(
-    new URL('../cli/skills/artifactshare/artifactshare.mdc', import.meta.url),
-    'utf8',
-  )
-  const guidance = rule
-    .split('\n')
-    .find((line) => line.startsWith('- Change post-share settings'))
-  assert.ok(guidance)
-  assert.equal(
-    guidance.match(/--visibility private\|workspace\|project\|link/g)?.length,
-    1,
-  )
-  assert.match(
-    guidance,
-    /Project visibility requires the artifact to be in a project after the edit/,
-  )
-  assert.match(guidance, /--project-id <id>/)
-})
-
 test('OpenAPI describes publisher REST operations separately from MCP OAuth', () => {
   const spec = generateOpenApiSurface()
   assert.ok(spec.paths['/api/cli/artifacts/{id}/adopt'].post.responses[415])

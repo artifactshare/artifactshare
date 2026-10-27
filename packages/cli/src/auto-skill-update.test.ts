@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import {
   expectSuccess,
@@ -48,7 +48,7 @@ const claudeUserSkillPath = () =>
 const codexProjectSkillPath = () =>
   join(workDir, '.agents', 'skills', 'artifactshare', 'SKILL.md')
 const cursorProjectRulePath = () =>
-  join(workDir, '.cursor', 'rules', 'artifactshare.mdc')
+  join(workDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 const cursorUserSkillPath = () =>
   join(homeDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 
@@ -62,6 +62,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await chmod(dirname(codexUserSkillPath()), 0o700).catch(() => undefined)
   await chmod(codexUserSkillPath(), 0o600).catch(() => undefined)
   await rm(workDir, { recursive: true, force: true })
   await rm(homeDir, { recursive: true, force: true })
@@ -155,6 +156,7 @@ async function installSkill(args: string[]) {
 
 async function downgrade(path: string): Promise<string> {
   const installed = await readFile(path, 'utf8')
+  await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
   await writeFile(path, installed.replace(/version: \d+/, 'version: 0'))
   return installed
 }
@@ -286,7 +288,7 @@ test.skipIf(rootBypassesFilePermissions)(
   async () => {
     await installSkill(['--tool', 'codex', '--scope', 'user'])
     await downgrade(codexUserSkillPath())
-    await chmod(codexUserSkillPath(), 0o400)
+    await chmod(dirname(codexUserSkillPath()), 0o500)
     const target = await writeShareTarget()
 
     await runSuccessfulShare(async (baseUrl) => {
@@ -452,7 +454,7 @@ test('doctor reports cursor project and user skill targets', async () => {
   )
   assert.equal(
     cursorProject.path,
-    join('.cursor', 'rules', 'artifactshare.mdc'),
+    join('.cursor', 'skills', 'artifactshare', 'SKILL.md'),
   )
   assert.equal(cursorProject.installed, true)
   assert.equal(cursorProject.managed, true)

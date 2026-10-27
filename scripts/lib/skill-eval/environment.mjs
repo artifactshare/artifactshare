@@ -11,6 +11,7 @@ import {
   access,
   chmod,
 } from 'node:fs/promises'
+import { isDeepStrictEqual } from 'node:util'
 import { join, relative, resolve } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { walkthroughCliEnvironment } from '../walkthrough-cli-environment.mjs'
@@ -42,10 +43,9 @@ export async function overlay(
     )
   }
   const files = { ...version.files }
-  const derivedCompanion = !files['artifactshare.mdc']
-  if (derivedCompanion) files['artifactshare.mdc'] = files['SKILL.md']
+  const derivedCompanion = false
   let markerVersion
-  for (const name of ['SKILL.md', 'artifactshare.mdc']) {
+  for (const name of ['SKILL.md']) {
     const block = files[name].match(
       /<!--\s*artifactshare-skill\b([\s\S]*?)-->/u,
     )?.[1]
@@ -56,7 +56,7 @@ export async function overlay(
       (markerVersion && markerVersion !== number)
     )
       throw new Error(
-        'Selected skill needs matching managed artifactshare-skill version markers in SKILL.md and artifactshare.mdc',
+        'Selected skill needs a managed artifactshare-skill version marker in SKILL.md',
       )
     markerVersion = number
   }
@@ -221,6 +221,34 @@ export async function inventory(
   expectedFiles,
   { live = false, io = { readdir, lstat, readFile } } = {},
 ) {
+  const marker = expectedFiles['SKILL.md']?.match(
+    /<!--\s*artifactshare-skill([\s\S]*?)-->/u,
+  )?.[1]
+  const version = marker?.match(/(?:^|\n)\s*version:\s*(\d+)\s*(?:\n|$)/u)?.[1]
+  const expectedManifest =
+    version && /(?:^|\n)\s*managed:\s*true\s*(?:\n|$)/u.test(marker)
+      ? JSON.stringify(
+          {
+            schema_version: 1,
+            version: Number(version),
+            files: Object.fromEntries(
+              Object.entries(expectedFiles)
+                .filter(
+                  ([path]) =>
+                    path === 'SKILL.md' || path.startsWith('references/'),
+                )
+                .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+                .map(([path, content]) => [path, fingerprint(content)]),
+            ),
+          },
+          null,
+          2,
+        ) + '\n'
+      : undefined
+  const expectedContents = {
+    ...expectedFiles,
+    '.artifactshare-managed.json': expectedManifest,
+  }
   const files = []
   const errors = []
   const vanished = []
@@ -280,10 +308,23 @@ export async function inventory(
         )
           continue
         const expectedContent =
-          expectedFiles[selectedPath] === undefined
+          expectedContents[selectedPath] === undefined
             ? undefined
-            : Buffer.from(expectedFiles[selectedPath])
-        const expected = expectedContent?.equals(content) ?? false
+            : Buffer.from(expectedContents[selectedPath])
+        let expected = expectedContent?.equals(content) ?? false
+        if (
+          selectedPath === '.artifactshare-managed.json' &&
+          expectedManifest
+        ) {
+          try {
+            expected = isDeepStrictEqual(
+              JSON.parse(content.toString()),
+              JSON.parse(expectedManifest),
+            )
+          } catch {
+            expected = false
+          }
+        }
         // writeFile truncates before copying. A prefix seen during a live poll
         // is retained as pending, then resolved by a post-action/final snapshot.
         const pending =

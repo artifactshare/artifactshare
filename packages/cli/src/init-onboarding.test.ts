@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, test } from 'vitest'
 import {
   expectFailure,
@@ -39,7 +39,7 @@ const userCodexSkillPath = () =>
 const userClaudeSkillPath = () =>
   join(homeDir, '.claude', 'skills', 'artifactshare', 'SKILL.md')
 const cursorRulePath = () =>
-  join(workDir, '.cursor', 'rules', 'artifactshare.mdc')
+  join(workDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 const userCursorSkillPath = () =>
   join(homeDir, '.cursor', 'skills', 'artifactshare', 'SKILL.md')
 
@@ -164,7 +164,7 @@ test('init updates outdated managed user skills', async () => {
     'skills install',
   )
   const installed = await readFile(userCodexSkillPath(), 'utf8')
-  await writeFile(
+  await writeLegacySkill(
     userCodexSkillPath(),
     installed.replace(/version: \d+/, 'version: 0'),
   )
@@ -186,7 +186,7 @@ test('init installs user scope skill without touching outdated project skill', a
   expectSuccess(runSkills(['install', '--tool', 'codex']), 'skills install')
   const installed = await readFile(codexSkillPath(), 'utf8')
   const outdated = installed.replace(/version: \d+/, 'version: 0')
-  await writeFile(codexSkillPath(), outdated)
+  await writeLegacySkill(codexSkillPath(), outdated)
 
   const payload = expectSuccess(runInit([]), 'init')
   assert.deepEqual(
@@ -205,7 +205,7 @@ test('init updates user scope skill without touching outdated project skill when
   )
   const installed = await readFile(userCodexSkillPath(), 'utf8')
   const outdated = installed.replace(/version: \d+/, 'version: 0')
-  await writeFile(userCodexSkillPath(), outdated)
+  await writeLegacySkill(userCodexSkillPath(), outdated)
 
   const payload = expectSuccess(runInitFromHome([]), 'init')
   assert.ok(
@@ -234,7 +234,7 @@ test('init --dry-run reports outdated user skills without writing', async () => 
   )
   const installed = await readFile(userCodexSkillPath(), 'utf8')
   const outdated = installed.replace(/version: \d+/, 'version: 0')
-  await writeFile(userCodexSkillPath(), outdated)
+  await writeLegacySkill(userCodexSkillPath(), outdated)
 
   const payload = expectSuccess(runInit(['--dry-run']), 'init')
   assert.ok(
@@ -424,4 +424,9 @@ for (const unmanaged of [false, true]) {
       assert.equal(await pathExists(join(homeDir, '.claude', 'skills')), false)
     }
   })
+}
+
+async function writeLegacySkill(path: string, content: string) {
+  await rm(join(dirname(path), '.artifactshare-managed.json'), { force: true })
+  await writeFile(path, content)
 }

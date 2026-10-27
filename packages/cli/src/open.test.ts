@@ -162,6 +162,9 @@ test('open updates outdated managed user skills before reading', async () => {
     'skills install',
   )
   const installed = await readFile(userClaudeSkillPath(), 'utf8')
+  // Model a legacy single-file install, not an interrupted folder update
+  // whose entry version disagrees with its ownership manifest.
+  await rm(join(userClaudeSkillPath(), '..', '.artifactshare-managed.json'))
   await writeFile(
     userClaudeSkillPath(),
     installed.replace(/version: \d+/, 'version: 0'),
@@ -206,6 +209,11 @@ test('open updates outdated managed user skills before reading', async () => {
         ),
       )
       assert.equal(await readFile(userClaudeSkillPath(), 'utf8'), installed)
+      const listed = expectSuccess(runSkills(['list'])).data.targets.find(
+        (target: any) => target.tool === 'claude' && target.scope === 'user',
+      )
+      assert.equal(listed.ownership_manifest, 'valid')
+      assert.equal(listed.current, true)
     },
   )
 })

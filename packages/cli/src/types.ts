@@ -379,7 +379,31 @@ export type SkillsTargetAction =
   | 'not_installed'
   | 'skipped_unmanaged'
 
+export type SkillLegacyAction = {
+  path: string
+  action: 'removed' | 'would_remove' | 'kept_unmanaged' | 'remove_failed'
+  hint?: string
+}
+export type SkillFolderDiagnostic = {
+  folder_path: string | null
+  complete: boolean
+  current: boolean
+  older_version: boolean
+  missing_files: string[]
+  different_files: string[]
+  modified_files: string[]
+  ownership_manifest: 'valid' | 'absent' | 'invalid'
+  legacy_rule?: {
+    path: string
+    present: boolean
+    managed: boolean
+    coexistence: boolean
+    hint: string | null
+  }
+}
 export type SkillsActionTarget = {
+  folder_path: string
+  legacy_rule?: SkillLegacyAction
   tool: string
   scope: string
   path: string
@@ -395,6 +419,7 @@ export type SkillsActionData = {
         tool: string
         scope: string
         path: null
+        folder_path: null
         action: 'skipped'
         code: string
         hint?: string
@@ -403,8 +428,10 @@ export type SkillsActionData = {
 }
 
 export type SkillAutoUpdateTarget = {
+  folder_path: string
+  legacy_rule?: SkillLegacyAction
   tool: string
-  scope: 'user'
+  scope: 'user' | 'project'
   path: string
   action: 'updated' | 'update_recommended'
   installed_version: number
@@ -429,7 +456,7 @@ export type OpenData = {
     | { kind: 'download_required'; next_command: string }
 }
 
-export type SkillsListTarget = {
+export type SkillsListTarget = SkillFolderDiagnostic & {
   tool: string
   scope: string
   path: string | null
@@ -508,7 +535,7 @@ export type DoctorConfigData = {
   effective: DoctorConfigEffectiveData
 }
 
-export type DoctorSkillsTarget = {
+export type DoctorSkillsTarget = SkillFolderDiagnostic & {
   tool: string
   scope: string
   path: string | null

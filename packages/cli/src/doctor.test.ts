@@ -307,6 +307,7 @@ test('doctor reports outdated managed skills with update commands', async () => 
       'SKILL.md',
     )
     const installed = await readFile(skillPath, 'utf8')
+    await rm(join(skillPath, '..', '.artifactshare-managed.json'))
     await writeFile(skillPath, installed.replace(/version: \d+/, 'version: 0'))
 
     const payload = expectSuccess(
@@ -322,6 +323,8 @@ test('doctor reports outdated managed skills with update commands', async () => 
       (target: any) => target.tool === 'codex' && target.scope === 'project',
     )
     assert.equal(codexProject.update_available, true)
+    assert.equal(codexProject.older_version, true)
+    assert.equal(codexProject.ownership_manifest, 'absent')
     assert.equal(
       codexProject.update_command,
       'npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope project --json',

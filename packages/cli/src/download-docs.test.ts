@@ -10,10 +10,6 @@ const surfaces = [
     /Artifact IDs with surrounding whitespace are rejected/,
   ],
   [
-    '../skills/artifactshare/artifactshare.mdc',
-    /Artifact IDs with surrounding whitespace are rejected/,
-  ],
-  [
     '../../../docs/reference/cli-command-catalog.md',
     /前後に空白を含む成果物 ID は、空白を除去せず拒否する/,
   ],

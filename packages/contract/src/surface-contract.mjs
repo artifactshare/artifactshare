@@ -141,7 +141,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'init',
-    'Set up this directory: detect Claude Code, Codex, or Cursor and install the skill in user scope, then show next steps; or save defaults with `--profile` / `--project-id`',
+    'Set up this directory: detect Claude Code, Codex, or Cursor and install the full skill folder in user scope (migrating managed legacy Cursor project rules), then show next steps; or save defaults with `--profile` / `--project-id`',
   ],
   [
     'skills ensure / install / list / update / remove',
@@ -186,6 +186,8 @@ export const CLI_REFERENCE_OPTION_HELP = {
   share: ['--expected-version'],
   update: ['--expected-version'],
   download: ['--force'],
+  'skills install': ['--force'],
+  'skills update': ['--force'],
   edit: ['--visibility', '--retain-versions'],
 }
 

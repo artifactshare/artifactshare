@@ -1,14 +1,17 @@
+import { readFile, realpath, stat, lstat, unlink } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import {
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  rmdir,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+  managedState,
+  readSkillState,
+  loadSkillBundle,
+  folderDiagnostics,
+  preflightFolder,
+  writeSkillFolder,
+  removeSkillFolder,
+  type SkillBundle,
+} from './skill-folder.js'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type {
   CliError,
   DoctorSkillsData,
@@ -33,11 +36,9 @@ const SKILL_TOOLS = ['codex', 'claude', 'cursor'] as const
 type SkillTool = (typeof SKILL_TOOLS)[number]
 type SkillToolFilter = SkillTool | 'auto'
 type SkillScope = 'project' | 'user'
-type BundledSkillFile = 'SKILL.md' | 'artifactshare.mdc'
 
 type ScopeTargetConfig = {
   relativePath: string
-  bundledFile: BundledSkillFile
   // Directories created by install, innermost first; remove prunes them
   // when empty but never the tool root (.agents, .cursor, ...).
   pruneDirs: readonly string[]
@@ -66,26 +67,12 @@ const TOOL_CONFIG: Record<SkillTool, ToolConfig> = {
 
 function scopeTargetConfig(
   tool: SkillTool,
-  scope: SkillScope,
+  _scope: SkillScope,
 ): ScopeTargetConfig {
-  if (tool === 'cursor') {
-    if (scope === 'project') {
-      return {
-        relativePath: join('.cursor', 'rules', 'artifactshare.mdc'),
-        bundledFile: 'artifactshare.mdc',
-        pruneDirs: [],
-      }
-    }
-    return {
-      relativePath: join('.cursor', 'skills', 'artifactshare', 'SKILL.md'),
-      bundledFile: 'SKILL.md',
-      pruneDirs: ['artifactshare', 'skills'],
-    }
-  }
-  const toolRoot = tool === 'codex' ? '.agents' : '.claude'
+  const toolRoot =
+    tool === 'codex' ? '.agents' : tool === 'cursor' ? '.cursor' : '.claude'
   return {
     relativePath: join(toolRoot, SKILL_FILE_PATH),
-    bundledFile: 'SKILL.md',
     pruneDirs: ['artifactshare', 'skills'],
   }
 }
@@ -136,6 +123,14 @@ function unavailableState(target: UnavailableSkillTarget) {
     managed: false,
     installed_version: null,
     update_available: false,
+    folder_path: null,
+    complete: false,
+    current: false,
+    older_version: false,
+    missing_files: [],
+    different_files: [],
+    modified_files: [],
+    ownership_manifest: 'absent' as const,
   }
 }
 
@@ -157,16 +152,7 @@ function unavailableSelection(
   return availableTarget(target) ? undefined : target.error
 }
 
-type ManagedState =
-  | { kind: 'missing' }
-  | { kind: 'managed'; version: number }
-  | { kind: 'unmanaged' }
-  | { kind: 'broken' }
-
-type BundledSkills = {
-  contentsByFile: Record<BundledSkillFile, string>
-  version: number
-}
+type BundledSkills = SkillBundle
 
 function skillTarget(tool: SkillTool, scope: SkillScope): ResolvedSkillTarget {
   if (tool === 'claude' && scope === 'user') {
@@ -190,57 +176,63 @@ function skillTarget(tool: SkillTool, scope: SkillScope): ResolvedSkillTarget {
   return { tool, scope, path, absolutePath: resolve(path) }
 }
 
-function bundledContentForTarget(
-  bundled: BundledSkills,
-  target: SkillTarget,
-): string {
-  const file = scopeTargetConfig(target.tool, target.scope).bundledFile
-  return bundled.contentsByFile[file]
-}
-
 function allTargets(): ResolvedSkillTarget[] {
   return SKILL_TOOLS.flatMap((tool) =>
     TOOL_CONFIG[tool].scopes.map((scope) => skillTarget(tool, scope)),
   )
 }
 
-function managedState(content: string | null): ManagedState {
-  if (content === null) return { kind: 'missing' }
-  // A half-broken marker (e.g. lost "-->") must surface as a conflict, not
-  // pass as an unmanaged file, so the marker name is checked separately.
-  if (!content.includes('artifactshare-skill')) return { kind: 'unmanaged' }
-  const block = content.match(/<!--\s*artifactshare-skill([\s\S]*?)-->/)?.[1]
-  const version = block?.match(/(?:^|\n)\s*version:\s*(\d+)\s*(?:\n|$)/)?.[1]
-  const managed =
-    block !== undefined && /(?:^|\n)\s*managed:\s*true\s*(?:\n|$)/.test(block)
-  if (version === undefined || !managed) return { kind: 'broken' }
-  return { kind: 'managed', version: Number(version) }
+function readTarget(target: SkillTarget) {
+  return readSkillState(target.absolutePath)
 }
-
-async function readTarget(target: SkillTarget): Promise<ManagedState> {
-  const content = await readFile(target.absolutePath, 'utf8').catch(() => null)
-  return managedState(content)
+function loadBundledSkills(): Promise<BundledSkills> {
+  return loadSkillBundle(
+    fileURLToPath(new URL('../skills/artifactshare/', import.meta.url)),
+  )
 }
-
-async function loadBundledSkills(): Promise<BundledSkills> {
-  const contentsByFile = {} as Record<BundledSkillFile, string>
-  let version: number | undefined
-  for (const file of ['SKILL.md', 'artifactshare.mdc'] as const) {
-    const url = new URL(`../skills/artifactshare/${file}`, import.meta.url)
-    const content = await readFile(url, 'utf8')
-    const state = managedState(content)
-    if (
-      state.kind !== 'managed' ||
-      (version ?? state.version) !== state.version
-    ) {
-      throw new Error(
-        `The bundled ${file} has a missing or mismatched managed marker.`,
-      )
-    }
-    version = state.version
-    contentsByFile[file] = content
+async function legacyRule(target: SkillTarget) {
+  if (target.tool !== 'cursor' || target.scope !== 'project') return undefined
+  const path = join('.cursor', 'rules', 'artifactshare.mdc')
+  const info = await lstat(path).catch(() => null)
+  const parent = await lstat(dirname(path)).catch(() => null)
+  const content =
+    info?.isFile() && !parent?.isSymbolicLink()
+      ? await readFile(path, 'utf8').catch(() => null)
+      : null
+  const present = info !== null
+  const managed = managedState(content).kind === 'managed'
+  const coexistence =
+    present && (await lstat(target.absolutePath).catch(() => null)) !== null
+  return {
+    path,
+    present,
+    managed,
+    coexistence,
+    hint:
+      present && !managed
+        ? 'Inspect the legacy Cursor rule and manually remove it if the skill folder replaces it.'
+        : null,
   }
-  return { contentsByFile, version: version as number }
+}
+async function legacyManagedVersion(
+  target: SkillTarget,
+): Promise<number | undefined> {
+  const legacy = await legacyRule(target)
+  if (!legacy?.managed) return undefined
+  const state = managedState(await readFile(legacy.path, 'utf8'))
+  return state.kind === 'managed' ? state.version : undefined
+}
+async function diagnostic(target: SkillTarget, bundle: BundledSkills) {
+  return {
+    ...(await folderDiagnostics(target.absolutePath, bundle)),
+    folder_path: dirname(target.path),
+    ...(target.tool === 'cursor' && target.scope === 'project'
+      ? { legacy_rule: (await legacyRule(target))! }
+      : {}),
+  }
+}
+async function isCurrent(target: SkillTarget, bundle: BundledSkills) {
+  return (await folderDiagnostics(target.absolutePath, bundle)).current
 }
 
 function parseTools(
@@ -429,7 +421,16 @@ async function autoTargets(
 type PlannedAction = {
   target: SkillTarget
   action: SkillsTargetAction
-  content?: string
+  content?: BundledSkills
+  force?: boolean
+  forceRetirement?: boolean
+  automatic?: boolean
+  removeLegacy?: boolean
+  legacy?: {
+    path: string
+    action: 'removed' | 'would_remove' | 'kept_unmanaged' | 'remove_failed'
+    hint?: string
+  }
   fallbackAction?: SkillsTargetAction
   installedVersion?: number
 }
@@ -438,33 +439,72 @@ function targetPathKey(target: SkillTarget): Promise<string> {
   return realpath(target.absolutePath).catch(() => target.absolutePath)
 }
 
-async function applyAction({
-  target,
-  action,
-  content,
-}: PlannedAction): Promise<void> {
-  if (content !== undefined) {
-    await mkdir(dirname(target.absolutePath), { recursive: true })
-    await writeFile(target.absolutePath, content)
+async function prepareAction(item: PlannedAction, dryRun: boolean) {
+  if (item.content) {
+    if (item.automatic) {
+      const details = await diagnostic(item.target, item.content)
+      if (details.modified_files.length)
+        throw new Error(
+          `Modified skill files: ${details.modified_files.join(', ')}`,
+        )
+    }
+    await preflightFolder(
+      item.target.absolutePath,
+      item.content,
+      item.force,
+      item.forceRetirement,
+    )
+  }
+  if (item.action === 'removed') await preflightFolder(item.target.absolutePath)
+  const legacy = await legacyRule(item.target)
+  if (
+    legacy?.managed &&
+    item.action === 'unchanged' &&
+    !(await isCurrent(item.target, await loadBundledSkills()))
+  ) {
+    item.action = 'update_recommended'
     return
   }
-  if (action === 'removed') {
-    await rm(target.absolutePath, { force: true })
-    await cleanupSkillDirs(target)
+  if (legacy?.present) {
+    if (!legacy.managed)
+      item.legacy = {
+        path: legacy.path,
+        action: 'kept_unmanaged',
+        hint: legacy.hint ?? 'Inspect the legacy rule.',
+      }
+    else if (
+      item.content ||
+      item.action === 'unchanged' ||
+      item.action === 'removed' ||
+      item.action === 'not_installed' ||
+      item.removeLegacy
+    )
+      item.legacy = {
+        path: legacy.path,
+        action: dryRun ? 'would_remove' : 'removed',
+      }
   }
 }
-
-async function cleanupSkillDirs(target: SkillTarget): Promise<void> {
-  let dir = dirname(target.absolutePath)
-  for (const expected of scopeTargetConfig(target.tool, target.scope)
-    .pruneDirs) {
-    if (basename(dir) !== expected) return
+async function applyAction(item: PlannedAction): Promise<void> {
+  if (item.content)
+    await writeSkillFolder(
+      item.target.absolutePath,
+      item.content,
+      item.force,
+      item.forceRetirement,
+    )
+  if (item.action === 'removed')
+    await removeSkillFolder(item.target.absolutePath)
+  if (item.legacy?.action === 'removed') {
     try {
-      await rmdir(dir)
+      await unlink(item.legacy.path)
     } catch {
-      return
+      item.legacy = {
+        path: item.legacy.path,
+        action: 'remove_failed',
+        hint: 'Retry skills update --tool cursor --scope project --json to remove the legacy rule.',
+      }
     }
-    dir = dirname(dir)
   }
 }
 
@@ -484,10 +524,26 @@ async function finishActions(
   dryRun: boolean,
   mode: OutputMode,
 ): Promise<SkillsActionData | undefined> {
+  for (const item of planned) {
+    try {
+      await prepareAction(item, dryRun)
+    } catch (error) {
+      if (item.fallbackAction) {
+        item.action = item.fallbackAction
+        delete item.content
+        continue
+      }
+      const conflict = skillUpdateConflictError(item.target.path)
+      if (error instanceof Error) conflict.hint = error.message
+      writeFailure(command, conflict, mode, 1)
+      return undefined
+    }
+  }
   const completed = [...planned]
   if (!dryRun) {
     for (const [index, item] of planned.entries()) {
       try {
+        await prepareAction(item, false)
         await applyAction(item)
         completed[index] = item
       } catch (error) {
@@ -505,10 +561,12 @@ async function finishActions(
   }
   const data: SkillsActionData = {
     dry_run: dryRun,
-    targets: completed.map(({ target, action }) => ({
+    targets: completed.map(({ target, action, legacy }) => ({
       tool: target.tool,
       scope: target.scope,
       path: target.path,
+      folder_path: dirname(target.path),
+      ...(legacy ? { legacy_rule: legacy } : {}),
       action,
       ...(action === 'update_recommended'
         ? { update_command: skillUpdateCommand(target) }
@@ -536,6 +594,7 @@ async function runActions(
         tool: target.tool,
         scope: target.scope,
         path: null,
+        folder_path: null,
         action: 'skipped' as const,
         code: target.error.code,
         hint: target.error.hint,
@@ -602,7 +661,7 @@ export async function runSkillsInstall(
       )
     }
     const unchanged =
-      state.kind === 'managed' && state.version === bundled.version && !force
+      state.kind === 'managed' && (await isCurrent(target, bundled)) && !force
     if (unchanged) {
       planned.push({ target, action: 'unchanged' })
       continue
@@ -610,7 +669,8 @@ export async function runSkillsInstall(
     planned.push({
       target,
       action: state.kind === 'missing' ? 'installed' : 'updated',
-      content: bundledContentForTarget(bundled, target),
+      content: bundled,
+      force,
     })
   }
   await runActions(command, planned, parsed.options.dryRun === true, mode)
@@ -668,39 +728,95 @@ export async function ensureSkills(
       writeFailure(command, skillUpdateConflictError(target.path), mode, 1)
       return undefined
     }
+    const automaticUpdate =
+      filters.auto || options.command === 'init' || options.command === 'open'
+    if (
+      automaticUpdate &&
+      state.kind === 'managed' &&
+      state.version > bundled.version
+    )
+      continue
+    const details = await diagnostic(target, bundled)
+    if (
+      automaticUpdate &&
+      state.kind === 'managed' &&
+      details.modified_files.length
+    ) {
+      planned.push({ target, action: 'update_recommended' })
+      continue
+    }
     const unchanged =
-      state.kind === 'managed' && state.version === bundled.version
+      state.kind === 'managed' &&
+      ((state.version >= bundled.version && automaticUpdate) ||
+        state.version > bundled.version ||
+        details.current)
     planned.push(
       unchanged
         ? { target, action: 'unchanged' }
         : {
             target,
             action: state.kind === 'missing' ? 'installed' : 'updated',
-            content: bundledContentForTarget(bundled, target),
+            content: bundled,
+            automatic: automaticUpdate,
+            ...(automaticUpdate
+              ? { fallbackAction: 'update_recommended' as const }
+              : {}),
           },
     )
   }
-  if (options.autoUpdateUserManaged) {
+  if (options.autoUpdateUserManaged || filters.auto) {
     const plannedPaths = new Set(
       await Promise.all(planned.map((action) => targetPathKey(action.target))),
     )
-    for (const target of allTargets()
-      .filter(availableTarget)
-      .filter((candidate) => candidate.scope === 'user')) {
+    for (const target of await automaticTargets(bundled)) {
       if (plannedPaths.has(await targetPathKey(target))) continue
       const state = await readTarget(target)
-      if (state.kind !== 'managed' || state.version === bundled.version) {
+      if (state.kind === 'managed' && state.version > bundled.version) continue
+      const details = await diagnostic(target, bundled)
+      if (state.kind === 'managed' && details.modified_files.length) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          installedVersion: state.version,
+        })
+        continue
+      }
+      if (
+        target.scope !== 'project' &&
+        (state.kind !== 'managed' ||
+          state.version >= bundled.version ||
+          (await isCurrent(target, bundled)))
+      ) {
         continue
       }
       planned.push({
         target,
-        action: 'updated',
-        content: bundledContentForTarget(bundled, target),
+        action:
+          state.kind === 'managed' && state.version >= bundled.version
+            ? 'unchanged'
+            : 'updated',
+        ...(state.kind === 'managed' && state.version >= bundled.version
+          ? {}
+          : { content: bundled }),
+        automatic: true,
         fallbackAction: 'update_recommended',
       })
     }
   }
   return finishActions(command, planned, parsed.options.dryRun === true, mode)
+}
+
+async function automaticTargets(bundled: BundledSkills) {
+  const targets = allTargets()
+    .filter(availableTarget)
+    .filter((target) => target.scope === 'user')
+  const project = skillTarget('cursor', 'project')
+  if (availableTarget(project)) {
+    const version = await legacyManagedVersion(project)
+    if (version !== undefined && version <= bundled.version)
+      targets.push(project)
+  }
+  return targets
 }
 
 export async function autoUpdateUserManagedSkills(): Promise<
@@ -709,19 +825,41 @@ export async function autoUpdateUserManagedSkills(): Promise<
   try {
     const bundled = await loadBundledSkills()
     const planned: PlannedAction[] = []
-    for (const target of allTargets()
-      .filter(availableTarget)
-      .filter((candidate) => candidate.scope === 'user')) {
+    for (const target of await automaticTargets(bundled)) {
       const state = await readTarget(target)
-      if (state.kind !== 'managed' || state.version >= bundled.version) {
+      if (state.kind === 'managed' && state.version > bundled.version) continue
+      const details = await diagnostic(target, bundled)
+      if (state.kind === 'managed' && details.modified_files.length) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          installedVersion: state.version,
+        })
+        continue
+      }
+      if (
+        target.scope !== 'project' &&
+        (state.kind !== 'managed' ||
+          state.version >= bundled.version ||
+          (await isCurrent(target, bundled)))
+      ) {
         continue
       }
       planned.push({
         target,
-        action: 'updated',
-        content: bundledContentForTarget(bundled, target),
+        action:
+          state.kind === 'managed' && state.version >= bundled.version
+            ? 'unchanged'
+            : 'updated',
+        ...(state.kind === 'managed' && state.version >= bundled.version
+          ? {}
+          : { content: bundled }),
+        automatic: true,
         fallbackAction: 'update_recommended',
-        installedVersion: state.version,
+        installedVersion:
+          state.kind === 'managed'
+            ? state.version
+            : ((await legacyManagedVersion(target)) ?? bundled.version),
       })
     }
 
@@ -730,6 +868,7 @@ export async function autoUpdateUserManagedSkills(): Promise<
     const completed = [...planned]
     for (const [index, item] of planned.entries()) {
       try {
+        await prepareAction(item, false)
         await applyAction(item)
         completed[index] = item
       } catch {
@@ -744,17 +883,22 @@ export async function autoUpdateUserManagedSkills(): Promise<
     }
 
     return {
-      targets: completed.map(({ target, action, installedVersion }) => ({
-        tool: target.tool,
-        scope: 'user',
-        path: target.path,
-        action: action === 'updated' ? 'updated' : 'update_recommended',
-        installed_version: installedVersion ?? bundled.version,
-        bundled_version: bundled.version,
-        ...(action === 'update_recommended'
-          ? { update_command: skillUpdateCommand(target) }
-          : {}),
-      })),
+      targets: completed.map(
+        ({ target, action, installedVersion, legacy }) => ({
+          tool: target.tool,
+          scope: target.scope,
+          path: target.path,
+          folder_path: dirname(target.path),
+          ...(legacy ? { legacy_rule: legacy } : {}),
+          action:
+            action === 'update_recommended' ? 'update_recommended' : 'updated',
+          installed_version: installedVersion ?? bundled.version,
+          bundled_version: bundled.version,
+          ...(action === 'update_recommended'
+            ? { update_command: skillUpdateCommand(target) }
+            : {}),
+        }),
+      ),
     }
   } catch {
     return undefined
@@ -786,6 +930,7 @@ export async function runSkillsList(
       tool: target.tool,
       scope: target.scope,
       path: target.path,
+      ...(await diagnostic(target, bundled)),
       detected: await isToolDetected(target.tool, target.scope),
       installed: state.kind !== 'missing',
       managed: state.kind === 'managed',
@@ -807,8 +952,17 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       continue
     }
     const state = await readTarget(target)
+    const details = await diagnostic(target, bundled)
     const updateAvailable =
       state.kind === 'managed' && state.version !== bundled.version
+    let recoveryCommand = skillUpdateCommand(target)
+    if (state.kind === 'managed' && !details.current) {
+      try {
+        await preflightFolder(target.absolutePath, bundled)
+      } catch {
+        recoveryCommand = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
+      }
+    }
     targets.push({
       tool: target.tool,
       scope: target.scope,
@@ -817,13 +971,19 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       managed: state.kind === 'managed',
       installed_version: state.kind === 'managed' ? state.version : null,
       update_available: updateAvailable,
-      update_command: updateAvailable ? skillUpdateCommand(target) : null,
+      ...details,
+      update_command:
+        updateAvailable || (state.kind === 'managed' && !details.current)
+          ? recoveryCommand
+          : null,
     })
   }
-  const updateTargets = targets.filter((target) => target.update_available)
+  const updateTargets = targets.filter(
+    (target) => target.update_command !== null,
+  )
   return {
     bundled_version: bundled.version,
-    update_available: updateTargets.length > 0,
+    update_available: targets.some((target) => target.update_available),
     update_command:
       updateTargets.length > 0
         ? `${CLI_INVOCATION} skills update --json`
@@ -857,14 +1017,19 @@ export async function runSkillsUpdate(
       )
     }
     if (state.kind === 'missing') {
-      planned.push({ target, action: 'not_installed' })
+      planned.push(
+        (await legacyRule(target))?.managed
+          ? { target, action: 'installed', content: bundled }
+          : { target, action: 'not_installed' },
+      )
     } else if (state.kind === 'unmanaged') {
       planned.push({ target, action: 'skipped_unmanaged' })
-    } else if (state.version !== bundled.version || force) {
+    } else if (!(await isCurrent(target, bundled)) || force) {
       planned.push({
         target,
         action: 'updated',
-        content: bundledContentForTarget(bundled, target),
+        content: bundled,
+        forceRetirement: force,
       })
     } else {
       planned.push({ target, action: 'unchanged' })
@@ -892,13 +1057,23 @@ export async function runSkillsRemove(
   const planned: PlannedAction[] = []
   for (const target of filteredTargets(filters.tools, filters.scope)) {
     const state = await readTarget(target)
+    if (state.kind === 'broken')
+      return writeFailure(
+        command,
+        skillUpdateConflictError(target.path),
+        mode,
+        1,
+      )
+    const managedLegacy = (await legacyRule(target))?.managed === true
     const action: SkillsTargetAction =
       state.kind === 'missing'
-        ? 'not_installed'
+        ? managedLegacy
+          ? 'removed'
+          : 'not_installed'
         : state.kind === 'managed'
           ? 'removed'
           : 'skipped_unmanaged'
-    planned.push({ target, action })
+    planned.push({ target, action, removeLegacy: true })
   }
   await runActions(
     command,

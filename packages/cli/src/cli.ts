@@ -1631,14 +1631,14 @@ const skillsInstallDefinition = define({
     force: {
       type: 'boolean',
       toKebab: true,
-      description:
-        'Overwrite an existing unmanaged file or reinstall the same version',
+      description: 'Take over bundled paths only; preserve user additions',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --scope project --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool claude --tool cursor --dry-run --json
 
-Writes a managed SKILL.md (codex, claude) or Cursor rule (cursor).
+Writes SKILL.md and bundled references into skills/artifactshare/ for every tool and scope.
+Project Cursor uses .cursor/skills/artifactshare/. A manifest tracks owned files.
 Files without the Artifact Share managed marker are never overwritten without --force.
 
 Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
@@ -1648,7 +1648,7 @@ skip automatic writes. Set a non-empty path or unset CLAUDE_CONFIG_DIR.
 Explicit Claude user installs reject blank values with validation_failed.
 
 Common failures:
-  validation_failed       Pass --tool codex|claude|cursor; cursor supports --scope project only
+  validation_failed       Pass --tool codex|claude|cursor; all tools support --scope project or user
   skill_update_conflict   An unmanaged file exists at the target path; inspect it or pass --force`,
 })
 
@@ -1659,7 +1659,8 @@ const skillsListDefinition = define({
   args: commonArgs,
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
 
-Reports each tool and scope with detection, install state, and update availability.
+Reports each tool and scope with detection, version, completeness, missing/differing files,
+ownership metadata, and legacy Cursor rule coexistence.
 Runs locally; no network or authentication is used.`,
 })
 
@@ -1674,13 +1675,14 @@ const skillsUpdateDefinition = define({
       type: 'boolean',
       toKebab: true,
       description:
-        'Rewrite managed files even when the version already matches',
+        'Rewrite managed folder files; never take over an unmanaged entry',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json
 
-Only files created by skills install (managed marker present) are updated.
+Updates managed folders, repairs same-version drift, and preserves user-added files.
+Managed legacy Cursor rules migrate after the new project folder is ready.
 
 Common failures:
   skill_update_conflict   A managed marker is broken; inspect the file or reinstall with --force`,
@@ -1708,7 +1710,8 @@ Use --tool auto from an agent workspace. It detects .claude, .codex/.agents, or
 .cursor in the current directory, or the Claude user root when CLAUDE_CONFIG_DIR
 is nonblank, and installs
 or updates the matching user-scope skills. If none are present, it prepares user-scope Codex, Claude Code, and Cursor
-skills. Cursor project scope needs skills install --tool cursor --scope project.
+skills. Cursor project scope needs skills install --tool cursor --scope project,
+except existing managed legacy Cursor rules migrate automatically.
 
 Claude user skills use CLAUDE_CONFIG_DIR when set, otherwise ~/.claude.
 Relative paths resolve against cwd; tilde is literal. Blank values skip automatic
@@ -1733,7 +1736,8 @@ const skillsRemoveDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --tool cursor --json
 
-Only files created by skills install are deleted; unmanaged files are skipped.`,
+Only manifest-owned files (or a legacy managed SKILL.md) are deleted; user files are preserved.
+Project Cursor removal also cleans managed legacy rules.`,
 })
 
 const skillsDefinition = define({
@@ -1781,7 +1785,7 @@ Without flags, init detects Claude Code, Codex, or Cursor in the working directo
 installs or updates the bundled skill in user scope, and shows the next steps (sign
 in, then share). With no agent detected, it prepares user-scope Codex, Claude Code,
 and Cursor skills. Cursor project scope is not auto-installed; use skills install
---tool cursor --scope project. Existing project-scope skills are not modified.
+--tool cursor --scope project. Existing project-scope skills are not modified, except managed legacy Cursor rules migrate to .cursor/skills/artifactshare/.
 data.mode is "onboarding".
 
 Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise

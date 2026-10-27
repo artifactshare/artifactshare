@@ -12,7 +12,7 @@ import {
   lstat,
   readlink,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
@@ -987,7 +987,7 @@ test(
     const dist = await readFile('packages/cli/dist/index.js')
     const selected = await overlay(version)
     t.after(() => rm(selected.root, { recursive: true, force: true }))
-    assert.equal(selected.derivedCompanion, true)
+    assert.equal(selected.derivedCompanion, false)
     assert.deepEqual(
       JSON.parse(await readFile(join(selected.root, 'package.json'), 'utf8')),
       JSON.parse(await readFile('packages/cli/package.json', 'utf8')),
@@ -1035,7 +1035,7 @@ test(
         { cwd: run.workdir, env: run.env.agent },
       )
       assert.equal(await readFile(installed, 'utf8'), skill)
-      await rm(installed)
+      await rm(dirname(installed), { recursive: true, force: true })
       await assert.rejects(
         exec(join(run.root, 'bin', bin), [...prefix, 'open', '', '--json'], {
           cwd: run.workdir,
@@ -2242,5 +2242,44 @@ test('combinations preserve defaults and validate optional provider effort', asy
   assert.match(
     report,
     /## claude:claude-sonnet-5-5:low \/ share \(effort: low\)[\s\S]*?\| json \| 0\/1/u,
+  )
+})
+
+test('inventory compares ownership manifests independently of recursive bundle key order', async (t) => {
+  const { root } = await fixture(t)
+  const files = {
+    'SKILL.md': marker + 'Skill',
+    'references/api/x.md': 'nested',
+    'references/api.md': 'sibling',
+  }
+  for (const dir of ['home', 'codex']) await mkdir(join(root, dir))
+  const folder = join(root, 'work/.agents/skills/artifactshare')
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(folder, path)), { recursive: true })
+    await writeFile(join(folder, path), content)
+  }
+  const version = Number(marker.match(/version: (\d+)/u)[1])
+  const manifest = {
+    schema_version: 1,
+    version,
+    files: Object.fromEntries(
+      Object.entries(files).map(([path, content]) => [
+        path,
+        fingerprint(content),
+      ]),
+    ),
+  }
+  const path = join(folder, '.artifactshare-managed.json')
+  await writeFile(path, JSON.stringify(manifest, null, 2) + '\n')
+  const snapshot = await inventory(root, files)
+  assert.equal(snapshot.complete, true)
+  assert.ok(snapshot.files.every((file) => file.expected))
+  manifest.files['references/api.md'] = fingerprint('edited')
+  await writeFile(path, JSON.stringify(manifest))
+  assert.equal(
+    (await inventory(root, files)).files.find((file) =>
+      file.path.endsWith('.artifactshare-managed.json'),
+    ).expected,
+    false,
   )
 })

@@ -738,6 +738,9 @@
         "--scope",
         "--dry-run",
         "--force"
+      ],
+      "option_help": [
+        "--force Take over bundled paths only; preserve user additions"
       ]
     },
     {
@@ -787,6 +790,9 @@
         "--scope",
         "--dry-run",
         "--force"
+      ],
+      "option_help": [
+        "--force Rewrite managed folder files; never take over an unmanaged entry"
       ]
     },
     {
@@ -823,5 +829,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-26"
+  "generated_date": "2026-10-27"
 }
