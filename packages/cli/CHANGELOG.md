@@ -3,9 +3,9 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.20.3 - 2026-10-28
 
-- Preserve newer managed legacy Cursor rules during install and update unless force explicitly requests a downgrade.
+- Preserve newer managed legacy Cursor rules during install, update and ensure unless force explicitly requests a downgrade, and keep doctor from recommending a combined forced update that would downgrade them.
 - Restore forced-install recovery commands and collision hints for unowned skill folders blocked by regular files or directories, while keeping user links untouched.
 
 ## 0.20.2 - 2026-10-28
