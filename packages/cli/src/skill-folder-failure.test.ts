@@ -6,11 +6,12 @@ import {
   writeFile,
   readFile,
   readdir,
+  realpath,
   rm,
   rename,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, basename } from 'node:path'
+import { join, basename, dirname } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
   writeSkillFolder,
@@ -19,7 +20,12 @@ import {
 
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
-  return { ...fs, writeFile: vi.fn(fs.writeFile), rename: vi.fn(fs.rename) }
+  return {
+    ...fs,
+    mkdir: vi.fn(fs.mkdir),
+    writeFile: vi.fn(fs.writeFile),
+    rename: vi.fn(fs.rename),
+  }
 })
 const marker = (version: number) =>
   `<!-- artifactshare-skill\nversion: ${version}\nmanaged: true\n-->\n`
@@ -36,6 +42,7 @@ const cleanup = async () => {
   if (root) await rm(root, { recursive: true, force: true })
 }
 afterEach(async () => {
+  vi.mocked(mkdir).mockRestore()
   vi.mocked(writeFile).mockRestore()
   vi.mocked(rename).mockRestore()
   await cleanup()
@@ -252,7 +259,7 @@ test('ordinary retired references remain readable until replacement references a
   assert.equal(await readFile(entry, 'utf8'), marker(2))
 })
 
-test('EXDEV fails without a copy fallback and removes staging before retry', async () => {
+test('EXDEV from both staging locations rolls back and removes staging before retry', async () => {
   root = await mkdtemp(join(tmpdir(), 'skill-exdev-'))
   const folder = join(root, '.agents/skills/artifactshare')
   const entry = join(folder, 'SKILL.md')
@@ -311,4 +318,103 @@ test('force update intent retains committed hashes instead of blessing edited ba
     await readFile(join(folder, 'references/a.md'), 'utf8'),
     'personal edits',
   )
+})
+
+for (const code of ['EACCES', 'EPERM', 'EROFS', 'EXDEV'])
+  test(`${code} from sibling staging falls back to private internal staging`, async () => {
+    root = await realpath(
+      await mkdtemp(join(tmpdir(), 'skill-staging-fallback-')),
+    )
+    const folder = join(root, 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    await writeSkillFolder(entry, bundle(1))
+    const fs =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      )
+    vi.mocked(mkdir).mockImplementation(async (...args) => {
+      if (
+        code !== 'EXDEV' &&
+        basename(String(args[0])).startsWith('.artifactshare-staging-') &&
+        dirname(String(args[0])) === root
+      )
+        throw Object.assign(new Error('sibling staging unavailable'), { code })
+      return fs.mkdir(...args)
+    })
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        code === 'EXDEV' &&
+        !String(args[0]).startsWith(`${folder}/`) &&
+        String(args[1]).endsWith('/SKILL.md')
+      )
+        throw Object.assign(new Error('cross-device commit'), { code })
+      return fs.rename(...args)
+    })
+    await writeSkillFolder(entry, bundle(2))
+    for (const [path, text] of Object.entries(bundle(2).files))
+      assert.equal(await readFile(join(folder, path), 'utf8'), text)
+    assert.ok(
+      vi
+        .mocked(rename)
+        .mock.calls.some(([source]) =>
+          String(source).startsWith(`${folder}/.artifactshare-staging-`),
+        ),
+    )
+    assert.ok(
+      vi
+        .mocked(mkdir)
+        .mock.calls.some(
+          ([path, options]) =>
+            String(path).startsWith(`${folder}/.artifactshare-staging-`) &&
+            typeof options === 'object' &&
+            options?.mode === 0o700,
+        ),
+    )
+    assert.ok(
+      !(await readdir(root, { recursive: true })).some((path) =>
+        path.includes('.artifactshare-staging-'),
+      ),
+    )
+  })
+
+test('a failed internal restage after EXDEV restores committed bytes and permits retry', async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), 'skill-restage-failure-')))
+  const folder = join(root, 'artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle(1))
+  const before = await readFile(join(folder, '.artifactshare-managed.json'))
+  const fs =
+    await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(rename).mockImplementation(async (...args) => {
+    if (String(args[1]).endsWith('/SKILL.md'))
+      throw Object.assign(new Error('cross-device commit'), { code: 'EXDEV' })
+    return fs.rename(...args)
+  })
+  vi.mocked(writeFile).mockImplementation(async (...args) => {
+    if (
+      String(args[0]).startsWith(`${folder}/.artifactshare-staging-`) &&
+      String(args[0]).endsWith('/b.md')
+    )
+      throw new Error('internal staging write failed')
+    return fs.writeFile(...args)
+  })
+  await assert.rejects(
+    writeSkillFolder(entry, bundle(2)),
+    /internal staging write failed/,
+  )
+  assert.deepEqual(
+    await readFile(join(folder, '.artifactshare-managed.json')),
+    before,
+  )
+  for (const [path, text] of Object.entries(bundle(1).files))
+    assert.equal(await readFile(join(folder, path), 'utf8'), text)
+  assert.ok(
+    !(await readdir(root, { recursive: true })).some((path) =>
+      path.includes('.artifactshare-staging-'),
+    ),
+  )
+  vi.mocked(rename).mockImplementation(fs.rename)
+  vi.mocked(writeFile).mockImplementation(fs.writeFile)
+  await writeSkillFolder(entry, bundle(2))
+  assert.equal(await readFile(entry, 'utf8'), marker(2))
 })

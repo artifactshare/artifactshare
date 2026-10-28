@@ -11,6 +11,7 @@ import {
   writeSkillFolder,
   removeSkillFolder,
   type SkillBundle,
+  type ManagedState,
 } from './skill-folder.js'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -605,6 +606,58 @@ function skillUpdateCommand(target: SkillTarget): string {
   return `${CLI_INVOCATION} skills update --tool ${target.tool} --scope ${target.scope} --json`
 }
 
+async function recoveryRecommendation(
+  target: SkillTarget,
+  bundled: BundledSkills,
+): Promise<{
+  update_command?: string
+  modified_files?: string[]
+  hint?: string
+}> {
+  const details = await diagnostic(target, bundled)
+  let update_command = skillUpdateCommand(target)
+  try {
+    await preflightFolder(target.absolutePath, bundled)
+  } catch {
+    try {
+      await preflightFolder(target.absolutePath, bundled, false, true)
+      update_command = update_command.replace(' --json', ' --force --json')
+    } catch {
+      try {
+        await preflightFolder(target.absolutePath, bundled, true)
+        update_command = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
+      } catch (error) {
+        return {
+          hint: (error as Error).message,
+          ...(details.modified_files.length
+            ? { modified_files: details.modified_files }
+            : {}),
+        }
+      }
+    }
+  }
+  return {
+    update_command,
+    ...(details.modified_files.length
+      ? {
+          modified_files: details.modified_files,
+          hint: `Modified skill files: ${details.modified_files.join(', ')}. Preserve your edits before running the recommended command.`,
+        }
+      : {}),
+  }
+}
+
+async function skipAutomaticTarget(target: SkillTarget, state: ManagedState) {
+  if ((await legacyManagedVersion(target)) !== undefined) return false
+  if (state.kind === 'unmanaged') return true
+  return (
+    state.kind === 'missing' &&
+    !(await lstat(
+      join(dirname(target.absolutePath), '.artifactshare-pending.json'),
+    ).catch(() => null))
+  )
+}
+
 async function finishActions(
   command:
     | 'skills install'
@@ -658,19 +711,21 @@ async function finishActions(
   }
   const data: SkillsActionData = {
     dry_run: dryRun,
-    targets: completed.map(({ target, action, legacy, hint }) => ({
-      ...(hint ? { hint } : {}),
-      tool: target.tool,
-      scope: target.scope,
-      path: target.path,
-      ...identity(target),
-      folder_path: dirname(target.path),
-      ...(legacy ? { legacy_rule: legacy } : {}),
-      action,
-      ...(action === 'update_recommended'
-        ? { update_command: skillUpdateCommand(target) }
-        : {}),
-    })),
+    targets: await Promise.all(
+      completed.map(async ({ target, action, legacy, hint }) => ({
+        ...(hint ? { hint } : {}),
+        tool: target.tool,
+        scope: target.scope,
+        path: target.path,
+        ...identity(target),
+        folder_path: dirname(target.path),
+        ...(legacy ? { legacy_rule: legacy } : {}),
+        action,
+        ...(action === 'update_recommended'
+          ? await recoveryRecommendation(target, await loadBundledSkills())
+          : {}),
+      })),
+    ),
   }
   return data
 }
@@ -837,6 +892,7 @@ export async function ensureSkills(
     }
     const automaticUpdate =
       filters.auto || options.command === 'init' || options.command === 'open'
+    if (automaticUpdate && state.kind === 'missing' && state.hint) continue
     if (
       automaticUpdate &&
       state.kind === 'managed' &&
@@ -909,6 +965,7 @@ export async function ensureSkills(
         continue
       }
       const state = await readTarget(target)
+      if (await skipAutomaticTarget(target, state)) continue
       if (state.kind === 'managed' && state.version > bundled.version) continue
       if (parsed.options.dryRun !== true) {
         try {
@@ -985,6 +1042,7 @@ export async function autoUpdateUserManagedSkills(): Promise<
     const planned: PlannedAction[] = []
     for (const target of await groupTargets(await automaticTargets(bundled))) {
       const state = await readTarget(target)
+      if (await skipAutomaticTarget(target, state)) continue
       if (state.kind === 'managed' && state.version > bundled.version) continue
       try {
         await cleanupTarget(target)
@@ -1074,23 +1132,27 @@ export async function autoUpdateUserManagedSkills(): Promise<
     }
 
     return {
-      targets: completed.map(
-        ({ target, action, installedVersion, legacy, hint }) => ({
-          ...(hint ? { hint } : {}),
-          tool: target.tool,
-          scope: target.scope,
-          path: target.path,
-          ...identity(target),
-          folder_path: dirname(target.path),
-          ...(legacy ? { legacy_rule: legacy } : {}),
-          action:
-            action === 'update_recommended' ? 'update_recommended' : 'updated',
-          installed_version: installedVersion ?? bundled.version,
-          bundled_version: bundled.version,
-          ...(action === 'update_recommended'
-            ? { update_command: skillUpdateCommand(target) }
-            : {}),
-        }),
+      targets: await Promise.all(
+        completed.map(
+          async ({ target, action, installedVersion, legacy, hint }) => ({
+            ...(hint ? { hint } : {}),
+            tool: target.tool,
+            scope: target.scope,
+            path: target.path,
+            ...identity(target),
+            folder_path: dirname(target.path),
+            ...(legacy ? { legacy_rule: legacy } : {}),
+            action:
+              action === 'update_recommended'
+                ? 'update_recommended'
+                : 'updated',
+            installed_version: installedVersion ?? bundled.version,
+            bundled_version: bundled.version,
+            ...(action === 'update_recommended'
+              ? await recoveryRecommendation(target, bundled)
+              : {}),
+          }),
+        ),
       ),
     }
   } catch {
@@ -1155,17 +1217,8 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
     const details = await diagnostic(target, bundled)
     const updateAvailable =
       state.kind === 'managed' && state.version !== bundled.version
-    let recoveryCommand = skillUpdateCommand(target)
-    if (
-      (state.kind === 'managed' && !details.current) ||
-      details.interrupted_update
-    ) {
-      try {
-        await preflightFolder(target.absolutePath, bundled)
-      } catch {
-        recoveryCommand = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
-      }
-    }
+    const recommendation = await recoveryRecommendation(target, bundled)
+    const recoveryCommand = recommendation.update_command ?? null
     targets.push({
       tool: target.tool,
       scope: target.scope,
@@ -1176,6 +1229,9 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       update_available: updateAvailable,
       ...identity(target),
       ...details,
+      ...(!recoveryCommand && recommendation.hint
+        ? { hint: recommendation.hint }
+        : {}),
       update_command: details.hint
         ? null
         : updateAvailable ||
@@ -1193,7 +1249,12 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
     update_available: targets.some((target) => target.update_available),
     update_command:
       updateTargets.length > 0
-        ? `${CLI_INVOCATION} skills update --json`
+        ? (updateTargets.find((target) =>
+            target.update_command?.includes(' --force'),
+          )?.update_command ??
+          (targets.some((target) => target.hint)
+            ? updateTargets[0]!.update_command
+            : `${CLI_INVOCATION} skills update --json`))
         : null,
     targets,
   }
@@ -1221,6 +1282,10 @@ export async function runSkillsUpdate(
       return writeFailure(command, await conflictFor(target), mode, 1)
     }
     if (state.kind === 'missing') {
+      if (state.hint) {
+        planned.push({ target, action: 'not_installed', hint: state.hint })
+        continue
+      }
       planned.push(
         (await legacyRule(target))?.managed ||
           (await diagnostic(target, bundled)).interrupted_update
@@ -1266,6 +1331,10 @@ export async function runSkillsRemove(
     const state = await readTarget(target)
     if (state.kind === 'broken')
       return writeFailure(command, await conflictFor(target), mode, 1)
+    if (state.kind === 'missing' && state.hint) {
+      planned.push({ target, action: 'not_installed', hint: state.hint })
+      continue
+    }
     const managedLegacy = (await legacyRule(target))?.managed === true
     const action: SkillsTargetAction =
       state.kind === 'missing'

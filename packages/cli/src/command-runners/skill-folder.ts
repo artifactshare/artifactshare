@@ -15,7 +15,7 @@ import { basename, dirname, join, sep } from 'node:path'
 import type { SkillFolderDiagnostic } from '../types.js'
 
 export type ManagedState =
-  | { kind: 'missing' | 'unmanaged' | 'broken' }
+  | { kind: 'missing' | 'unmanaged' | 'broken'; hint?: string }
   | { kind: 'managed'; version: number }
 export type SkillBundle = { files: Record<string, string>; version: number }
 const MANIFEST = '.artifactshare-managed.json'
@@ -54,19 +54,34 @@ async function info(path: string) {
   }
 }
 // Only the configured folder boundary may be an alias. Descendants never are.
+class SkillFolderResolutionError extends Error {
+  constructor(
+    path: string,
+    readonly missingAncestor = false,
+  ) {
+    super(
+      `${missingAncestor ? 'Skill not installed; dangling ancestor link' : 'Unsafe skill folder'}: ${path}. Restore or repoint the link to a directory, or replace it with a real directory, then retry.`,
+    )
+  }
+}
 export function resolveSkillFolder(entry: string): Promise<string> {
   const resolveDirectory = async (path: string): Promise<string> => {
+    let item
     try {
-      const item = await info(path)
+      item = await info(path)
       if (!item)
         return join(await resolveDirectory(dirname(path)), basename(path))
       const canonical = await realpath(path)
       if (!(await lstat(canonical)).isDirectory())
         throw new Error('Not a directory')
       return canonical
-    } catch {
-      throw new Error(
-        `Unsafe skill folder: ${path}. Restore or repoint the link to a directory, or replace it with a real directory, then retry.`,
+    } catch (error) {
+      if (error instanceof SkillFolderResolutionError) throw error
+      throw new SkillFolderResolutionError(
+        path,
+        path !== dirname(entry) &&
+          item?.isSymbolicLink() === true &&
+          (error as NodeJS.ErrnoException).code === 'ENOENT',
       )
     }
   }
@@ -76,7 +91,13 @@ const rootFor = resolveSkillFolder
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const legacyTemp = new RegExp(`^\\.artifactshare-${uuid}\\.tmp$`, 'i')
 const stagingName = new RegExp(`^\\.artifactshare-staging-${uuid}$`, 'i')
-async function inspectTree(root: string, cleanup = false): Promise<void> {
+const stale = (item: { mtimeMs: number }) =>
+  item.mtimeMs < Date.now() - 10 * 60 * 1000
+async function inspectTree(
+  root: string,
+  cleanup = false,
+  folderRoot = root,
+): Promise<void> {
   if (!(await info(root))) return
   for (const name of await readdir(root)) {
     const path = join(root, name)
@@ -85,8 +106,11 @@ async function inspectTree(root: string, cleanup = false): Promise<void> {
       throw new Error(
         `Unsafe skill path (link): ${path}. Preserve edits and replace the internal link with ordinary bundled content, then retry.`,
       )
-    if (item.isDirectory()) await inspectTree(path, cleanup)
-    else if (cleanup && item.isFile() && legacyTemp.test(name))
+    if (item.isDirectory() && root === folderRoot && stagingName.test(name)) {
+      if (cleanup && stale(item))
+        await rm(path, { recursive: true, force: true })
+    } else if (item.isDirectory()) await inspectTree(path, cleanup, folderRoot)
+    else if (cleanup && item.isFile() && legacyTemp.test(name) && stale(item))
       await unlink(path)
   }
 }
@@ -95,12 +119,12 @@ export async function cleanupSkillFolder(entry: string) {
   await inspectTree(root, true)
   const parent = dirname(root)
   if (await info(parent))
-    for (const name of await readdir(parent))
-      if (
-        stagingName.test(name) &&
-        (await lstat(join(parent, name))).isDirectory()
-      )
+    for (const name of await readdir(parent)) {
+      if (!stagingName.test(name)) continue
+      const item = await lstat(join(parent, name))
+      if (item.isDirectory() && stale(item))
         await rm(join(parent, name), { recursive: true, force: true })
+    }
 }
 async function safe(
   root: string,
@@ -162,7 +186,9 @@ async function stateAt(root: string): Promise<ManagedState> {
 export async function readSkillState(entry: string): Promise<ManagedState> {
   try {
     return await stateAt(await rootFor(entry))
-  } catch {
+  } catch (error) {
+    if (error instanceof SkillFolderResolutionError && error.missingAncestor)
+      return { kind: 'missing', hint: error.message }
     return { kind: 'broken' }
   }
 }
@@ -303,8 +329,12 @@ export async function folderDiagnostics(
       missing_files: [],
       different_files: [],
       modified_files: [],
-      ownership_manifest: 'invalid' as const,
-      code: 'skill_update_conflict',
+      ...(error instanceof SkillFolderResolutionError && error.missingAncestor
+        ? { ownership_manifest: 'absent' as const }
+        : {
+            ownership_manifest: 'invalid' as const,
+            code: 'skill_update_conflict',
+          }),
       hint: (error as Error).message,
     }
   }
@@ -381,7 +411,7 @@ export async function preflightFolder(
       const bytes = await bytesAt(root, path)
       if (expected && bytes !== null && hash(bytes) !== expected)
         throw new Error(
-          `Modified skill file: ${path}. Preserve your edits before removing or retiring this file, or reinstall with skills install --force.`,
+          `Modified skill file: ${path}. Preserve your edits before removing this file, or use skills update --force to replace edited managed files.`,
         )
     }
   }
@@ -401,7 +431,12 @@ export async function preflightFolder(
     for (const name of await readdir(join(root, relative))) {
       const child = `${relative}/${name}`
       const item = await info(join(root, child))
-      if (item?.isFile() && legacyTemp.test(name)) continue
+      if (item?.isFile() && legacyTemp.test(name)) {
+        if (stale(item)) continue
+        throw new Error(
+          `Recent skill temporary file: ${child}. Retry after the active update has finished and temporary files are older than ten minutes.`,
+        )
+      }
       if (item?.isDirectory()) await checkDirectory(child)
       else if (!item?.isFile() || !Object.hasOwn(previous, child))
         throw new Error(
@@ -471,10 +506,8 @@ export async function writeSkillFolder(
         2,
       ) + '\n',
   }
-  const stagingDir = join(
-    dirname(root),
-    `.artifactshare-staging-${randomUUID()}`,
-  )
+  const stagingDirectories: string[] = []
+  let internalStaging = false
   const staged = new Map<string, string>()
   const backups = new Map<string, Buffer | null>()
   const changed = new Set<string>()
@@ -504,6 +537,25 @@ export async function writeSkillFolder(
       ...JSON.parse(files[MANIFEST]),
       previous_files: previous,
     }) + '\n'
+  const stage = async (parent: string) => {
+    await ensureDirectory(parent)
+    const stagingDir = join(parent, `.artifactshare-staging-${randomUUID()}`)
+    await mkdir(stagingDir, { mode: 0o700 })
+    stagingDirectories.push(stagingDir)
+    for (const [path, text] of Object.entries({
+      ...files,
+      [PENDING]: intent,
+    })) {
+      const temp = join(stagingDir, path)
+      await mkdir(dirname(temp), { recursive: true })
+      await writeFile(temp, text, { flag: 'wx' })
+      staged.set(path, temp)
+    }
+  }
+  const stageInside = async () => {
+    internalStaging = true
+    await stage(root)
+  }
   const retire = async (path: string) => {
     if (backups.get(path) !== null) {
       await unlink(join(root, path))
@@ -512,20 +564,30 @@ export async function writeSkillFolder(
   }
   const commit = async (path: string) => {
     await ensureDirectory(dirname(join(root, path)))
-    await rename(staged.get(path)!, join(root, path))
+    try {
+      await rename(staged.get(path)!, join(root, path))
+    } catch (error) {
+      if (internalStaging || (error as NodeJS.ErrnoException).code !== 'EXDEV')
+        throw error
+      // Restage known payloads on the destination filesystem, then retain the
+      // same rename order and rollback bookkeeping. Never copy to live paths.
+      await stageInside()
+      await rename(staged.get(path)!, join(root, path))
+    }
     changed.add(path)
   }
   try {
-    await ensureDirectory(dirname(root))
-    await mkdir(stagingDir, { mode: 0o700 })
-    for (const [path, text] of Object.entries({
-      ...files,
-      [PENDING]: intent,
-    })) {
-      const temp = join(stagingDir, path)
-      await mkdir(dirname(temp), { recursive: true })
-      staged.set(path, temp)
-      await writeFile(temp, text, { flag: 'wx' })
+    try {
+      await stage(dirname(root))
+    } catch (error) {
+      if (
+        stagingDirectories.length !== 0 ||
+        !['EACCES', 'EPERM', 'EROFS'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      )
+        throw error
+      await stageInside()
     }
     await commit(PENDING)
     const retired = Object.keys(previous).filter(
@@ -582,7 +644,8 @@ export async function writeSkillFolder(
     }
     throw error
   } finally {
-    await rm(stagingDir, { recursive: true, force: true })
+    for (const dir of stagingDirectories)
+      await rm(dir, { recursive: true, force: true })
     for (const dir of [...createdDirectories].reverse())
       await rmdir(dir).catch(() => {})
   }
