@@ -192,6 +192,8 @@ export async function runShare(
         parsed.options,
         request.init,
         {
+          authenticated: true,
+          baseUrl,
           credentialSource: credential.source,
           profile: credential.profile,
           profileCredentialKind: credential.profileCredentialKind,

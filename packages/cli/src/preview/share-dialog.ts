@@ -993,11 +993,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
-    // Explain a private Home default that came from the account, not a choice.
-    el('privateDefaultNote').style.display =
-      !projectSelected && context.private_default && visibility.value === 'private'
-        ? ''
-        : 'none';
     el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed;
     if (snapshotFailed) {
       // Nothing about the destination can make an unreadable file shareable.
@@ -1020,6 +1015,11 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     } else if (visibility.value === 'project') {
       visibility.value = context.default_visibility || 'private';
     }
+    // Explain a private Home default that came from the account, not a choice.
+    el('privateDefaultNote').style.display =
+      !projectSelected && context.private_default && visibility.value === 'private'
+        ? ''
+        : 'none';
   }
   el('destination').addEventListener('change', syncVisibility);
   el('visibility').addEventListener('change', syncVisibility);

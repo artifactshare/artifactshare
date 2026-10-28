@@ -235,6 +235,9 @@ test.each([true, false])(
     vi.mocked(apiGet).mockResolvedValue({
       body: { workspace: { visibility_available: available } },
     })
+    vi.mocked(fetchProjects).mockResolvedValue({
+      projects: [{ id: 'prj1', name: 'Reports' }],
+    } as never)
     const handle = handler()
     const page = await call(handle, '/')
     vi.stubGlobal(
@@ -261,5 +264,18 @@ test.each([true, false])(
     visibility.value = 'link'
     visibility.dispatchEvent(new Event('change'))
     expect(note.style.display).toBe('none')
+    if (!available) {
+      const destination = document.getElementById(
+        'destination',
+      ) as HTMLSelectElement
+      destination.value = 'prj1'
+      destination.dispatchEvent(new Event('change'))
+      expect(note.style.display).toBe('none')
+      visibility.value = 'project'
+      destination.value = ''
+      destination.dispatchEvent(new Event('change'))
+      expect(visibility.value).toBe('private')
+      expect(note.style.display).toBe('')
+    }
   },
 )

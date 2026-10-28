@@ -293,3 +293,29 @@ test('an existing keyed artifact keeps private without a fallback label', async 
   expect(data.share.visibility).toBe('private')
   expect(data.share).not.toHaveProperty('visibility_source')
 })
+
+test.each([
+  { source: 'env' as const },
+  {
+    source: 'profile' as const,
+    profile: 'ci',
+    profileCredentialKind: 'api_token' as const,
+    botProfile: false,
+  },
+])(
+  'a revoked API token stops with token_invalid before upload (%o)',
+  async (credential) => {
+    vi.mocked(resolveCredential).mockResolvedValue({
+      ok: true,
+      token: 'test-token',
+      ...credential,
+    })
+    identityStatus = 401
+    await share()
+    expect(posts).toEqual([])
+    expect(reads).toBe(1)
+    expect(
+      vi.mocked(writeFailure).mock.calls.map(([, error]) => error.code),
+    ).toEqual(['token_invalid'])
+  },
+)
