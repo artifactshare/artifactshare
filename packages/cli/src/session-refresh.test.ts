@@ -326,13 +326,16 @@ const refreshCases: RefreshCase[] = [
     outputCwd: () => workDir,
     args: (baseUrl) =>
       withProfileArgs(baseUrl, ['share', 'report.md', '--home']),
-    respond: () =>
-      jsonResponse({
-        id: ARTIFACT_ID,
-        shareUrl: `https://artifactshare.test/a/${ARTIFACT_ID}`,
-        artifactKind: 'markdown_page',
-        versionId: 'ver1',
-      }),
+    respond: (request) =>
+      request.url === '/api/cli/whoami'
+        ? jsonResponse({ workspace: { visibility_available: false } })
+        : jsonResponse({
+            id: ARTIFACT_ID,
+            shareUrl: `https://artifactshare.test/a/${ARTIFACT_ID}`,
+            artifactKind: 'markdown_page',
+            visibility: 'private',
+            versionId: 'ver1',
+          }),
   },
   {
     name: 'update',
@@ -612,6 +615,18 @@ for (const item of refreshCases) {
             `/api/cli/artifacts/${ARTIFACT_ID}/download/file%2Etxt`,
           )
           assert.equal(fileRequests[0]!.auth, `Bearer ${FRESH_TOKEN}`)
+        }
+        if (item.name === 'share') {
+          assert.equal(
+            payload.data.share.visibility_source,
+            'product_default_private',
+          )
+          assert.equal(
+            requests.filter(
+              (request) => request.url === '/api/shareables/uploads',
+            ).length,
+            1,
+          )
         }
         if (item.name === 'whoami') {
           assert.equal(payload.data.session_expires_at, FRESH_EXPIRES_AT)

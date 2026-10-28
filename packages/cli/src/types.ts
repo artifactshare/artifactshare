@@ -603,6 +603,7 @@ export type DeviceAuthErrorDetails = {
 }
 
 export type DoctorData = {
+  workspace?: import('@artifactshare/contract').CliWorkspace
   next_command: string | null
   base_url: string
   token_store: {

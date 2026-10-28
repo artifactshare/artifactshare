@@ -25,6 +25,38 @@ describe('/api/cli/whoami', () => {
     })
   })
 
+  test.each([
+    ['personal', null, null, false],
+    ['hosted domain', 'example.com', null, true],
+    ['claimed domain', 'example.com', null, true],
+    ['tenant only', null, 'ws1', true],
+  ])(
+    'reports workspace capability for %s',
+    async (_name, hd, msTenantId, available) => {
+      requireUserMock.mockReturnValue({
+        id: 'u1',
+        email: 'user@example.com',
+        workspaceId: 'ws1',
+        hd,
+        msTenantId,
+      })
+      const response = await loader({ context: new Map() } as never)
+      const body = (await response.json()) as {
+        workspace: {
+          id: string
+          hosted_domain: string | null
+          visibility_available: boolean
+        }
+      }
+      expect(body.workspace).toEqual({
+        id: 'ws1',
+        hosted_domain: hd,
+        visibility_available: available,
+      })
+      expect(body.workspace).not.toHaveProperty('msTenantId')
+    },
+  )
+
   test('returns the authenticated user and workspace', async () => {
     const response = await loader({ context: new Map() } as never)
     const body = (await response.json()) as {
@@ -35,7 +67,11 @@ describe('/api/cli/whoami', () => {
 
     expect(response.status).toBe(200)
     expect(body.user).toEqual({ id: 'u1', email: 'owner@example.com' })
-    expect(body.workspace).toEqual({ id: 'ws1', hosted_domain: 'example.com' })
+    expect(body.workspace).toEqual({
+      id: 'ws1',
+      hosted_domain: 'example.com',
+      visibility_available: true,
+    })
     expect(body.auth.kind).toBe('bearer_or_session')
   })
 })

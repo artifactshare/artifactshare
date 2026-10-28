@@ -1,5 +1,6 @@
 import {
   CLI_DOCTOR_RESPONSE_SCHEMA,
+  CliWorkspaceSchema,
   type DoctorAuthority as ContractDoctorAuthority,
 } from '@artifactshare/contract'
 import type {
@@ -220,6 +221,8 @@ export async function runDoctor(
       : null
   if (!body) throw new Error('Doctor response was not valid JSON.')
 
+  const workspace = CliWorkspaceSchema.safeParse(body.workspace)
+  if (workspace.success) data.workspace = workspace.data
   const auth = isRecord(body.auth) ? body.auth : null
   const user = isRecord(body.user) ? body.user : null
   const upload = isRecord(body.upload) ? body.upload : null

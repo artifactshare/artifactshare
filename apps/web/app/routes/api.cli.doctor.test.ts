@@ -42,6 +42,39 @@ describe('/api/cli/doctor', () => {
     getCliAuthorityMock.mockReturnValue({ kind: 'unrestricted' })
   })
 
+  test.each([
+    ['personal', null, null, false],
+    ['hosted domain', 'example.com', null, true],
+    ['claimed domain', 'example.com', null, true],
+    ['tenant only', null, 'ws1', true],
+  ])(
+    'reports workspace capability for %s',
+    async (_name, hd, msTenantId, available) => {
+      requireUserMock.mockReturnValue({
+        id: 'u1',
+        email: 'user@example.com',
+        workspaceId: 'ws1',
+        hd,
+        msTenantId,
+      })
+      checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
+      const response = await loader({ context: new Map() } as never)
+      const body = (await response.json()) as {
+        workspace: {
+          id: string
+          hosted_domain: string | null
+          visibility_available: boolean
+        }
+      }
+      expect(body.workspace).toEqual({
+        id: 'ws1',
+        hosted_domain: hd,
+        visibility_available: available,
+      })
+      expect(body.workspace).not.toHaveProperty('msTenantId')
+    },
+  )
+
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

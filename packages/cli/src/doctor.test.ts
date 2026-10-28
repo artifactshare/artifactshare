@@ -523,3 +523,37 @@ for (const value of ['custom', '', ' \t ']) {
     }
   })
 }
+
+for (const command of ['whoami', 'doctor']) {
+  for (const available of [true, false]) {
+    test(`${command} JSON preserves workspace capability ${available}`, async () => {
+      await withServer(
+        (_request, response) => {
+          response.setHeader('content-type', 'application/json')
+          response.end(
+            JSON.stringify({
+              user: { id: 'u1', email: 'user@example.com' },
+              workspace: {
+                id: 'ws1',
+                hosted_domain: null,
+                visibility_available: available,
+              },
+              auth: { kind: 'bearer_or_session', ok: true },
+              upload: { ok: true },
+            }),
+          )
+        },
+        async (baseUrl) => {
+          const result = expectSuccess(
+            await runAsync([command, '--base-url', baseUrl, '--json'], {
+              ARTIFACTSHARE_TOKEN: 'test-token',
+            }),
+            command,
+          )
+          assert.equal(result.data.workspace.visibility_available, available)
+          assert.equal(result.data.workspace.hosted_domain, null)
+        },
+      )
+    })
+  }
+}
