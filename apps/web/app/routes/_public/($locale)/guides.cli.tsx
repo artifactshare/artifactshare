@@ -18,6 +18,7 @@ export const screen = {
   sections: [
     { id: 'introduction', selector: '#introduction' },
     { id: 'basics', selector: '#basics' },
+    { id: 'destinations', selector: '#destinations' },
     { id: 'commands', selector: '#commands' },
     { id: 'recovery', selector: '#recovery' },
   ],
