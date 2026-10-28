@@ -145,7 +145,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'skills ensure / install / list / update / remove',
-    'Install or update the bundled usage guide; shared directory aliases are handled once, user links are ignored, protected links refused, and newer installed versions preserved unless forced; Claude user scope follows CLAUDE_CONFIG_DIR (blank values are unavailable)',
+    'Install or update the bundled usage guide; shared directory aliases are handled once, unmanaged folders are skipped, protected links refused for mutations, and newer installed versions preserved unless forced; Claude user scope follows CLAUDE_CONFIG_DIR (blank values are unavailable)',
   ],
 ]
 

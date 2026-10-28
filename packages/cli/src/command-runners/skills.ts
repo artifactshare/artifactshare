@@ -323,10 +323,17 @@ function isNewer(
 function newerCliHint(installed: number, bundled: number) {
   return `A newer CLI installed skill version ${installed}; this CLI bundles version ${bundled}. Keeping the installed version. Use --force only for an intentional downgrade.`
 }
+function downgradeHint(installed: number, bundled: number) {
+  return `Intentional downgrade from skill version ${installed} to bundled version ${bundled}.`
+}
 async function diagnostic(target: SkillTarget, bundle: BundledSkills) {
   const legacy = await legacyRule(target)
   const state = await readTarget(target)
-  const details = await folderDiagnostics(target.absolutePath, bundle)
+  const details = await folderDiagnostics(
+    target.absolutePath,
+    bundle,
+    legacy?.managed,
+  )
   return {
     ...details,
     folder_path: dirname(target.path),
@@ -654,6 +661,14 @@ async function recoveryRecommendation(
 }> {
   const state = await readTarget(target)
   const details = await diagnostic(target, bundled)
+  if (
+    state.kind === 'unmanaged' &&
+    details.ownership_manifest === 'absent' &&
+    !details.interrupted_update &&
+    !details.code &&
+    !details.legacy_rule?.managed
+  )
+    return {}
   if (isNewer(state, bundled))
     return {
       hint: details.hint ?? newerCliHint(state.version, bundled.version),
@@ -861,6 +876,21 @@ export async function runSkillsInstall(
     if ((state.kind === 'unmanaged' || state.kind === 'broken') && !force) {
       return writeFailure(command, await conflictFor(target), mode, 1)
     }
+    const details = await diagnostic(target, bundled)
+    if (details.code === 'skill_update_conflict') {
+      const conflict = skillUpdateConflictError(target.path)
+      conflict.hint = details.hint ?? conflict.hint
+      return writeFailure(command, conflict, mode, 1)
+    }
+    if (isNewer(state, bundled) && !force) {
+      planned.push({
+        target,
+        action: 'unchanged',
+        preserve: true,
+        hint: newerCliHint(state.version, bundled.version),
+      })
+      continue
+    }
     const unchanged =
       state.kind === 'managed' && (await isCurrent(target, bundled)) && !force
     if (unchanged) {
@@ -872,6 +902,9 @@ export async function runSkillsInstall(
       action: state.kind === 'missing' ? 'installed' : 'updated',
       content: bundled,
       force,
+      ...(isNewer(state, bundled)
+        ? { hint: downgradeHint(state.version, bundled.version) }
+        : {}),
     })
   }
   await runActions(command, planned, parsed.options.dryRun === true, mode)
@@ -1404,7 +1437,7 @@ export async function runSkillsUpdate(
         forceRetirement: force,
         ...(isNewer(state, bundled)
           ? {
-              hint: `Intentional downgrade from skill version ${state.version} to bundled version ${bundled.version}.`,
+              hint: downgradeHint(state.version, bundled.version),
             }
           : {}),
       })

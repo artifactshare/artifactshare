@@ -249,8 +249,17 @@ async function bytesAt(root: string, path: string) {
 async function textAt(root: string, path: string) {
   return (await bytesAt(root, path))?.toString('utf8') ?? null
 }
+// Presence includes invalid and dangling records; never inspect their referents.
+async function recordsAbsent(root: string) {
+  return (
+    !(await info(join(root, MANIFEST))) && !(await info(join(root, PENDING)))
+  )
+}
 async function stateAt(root: string): Promise<ManagedState> {
   try {
+    const entry = await info(join(root, 'SKILL.md'))
+    if (entry?.isSymbolicLink() && (await recordsAbsent(root)))
+      return { kind: 'unmanaged' }
     return managedState(await textAt(root, 'SKILL.md'))
   } catch {
     return { kind: 'broken' }
@@ -387,11 +396,32 @@ async function recoveryOwnership(root: string, state: ManagedState) {
 export async function folderDiagnostics(
   entry: string,
   bundle: SkillBundle,
+  managedLegacy = false,
 ): Promise<SkillFolderDiagnostic & { code?: string }> {
   let root: string | null = null
   let user_links: string[] = []
   try {
     root = await rootFor(entry)
+    if (
+      !managedLegacy &&
+      (await recordsAbsent(root)) &&
+      (await stateAt(root)).kind === 'unmanaged'
+    ) {
+      // Enumerate without traversing links or comparing unowned bundle content.
+      user_links = await inspectTree(root)
+      return {
+        folder_path: dirname(entry),
+        resolved_folder_path: root,
+        complete: false,
+        current: false,
+        older_version: false,
+        missing_files: [],
+        different_files: [],
+        modified_files: [],
+        ownership_manifest: 'absent',
+        user_links,
+      }
+    }
     user_links = await inspectTree(
       root,
       false,
