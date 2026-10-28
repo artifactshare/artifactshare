@@ -2195,3 +2195,24 @@ test('doctor does not combine forced updates when a newer legacy-only rule exist
     assert.match(command, / --tool (claude|codex) --scope project /)
   assert.equal(await readFile(legacy(), 'utf8'), marker(12))
 })
+
+test('doctor names a regular user reference collision beside a personal SKILL.md', async () => {
+  const folder = target('.agents', 'user')
+  await put(join(folder, 'SKILL.md'), 'personal skill')
+  await put(join(folder, 'references/usage.md'), 'personal reference')
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.match(
+    row.hint!,
+    /Skill ownership conflict: .*SKILL.md.*skills install --force/,
+  )
+  assert.equal(row.update_command, null)
+  assert.equal(
+    await readFile(join(folder, 'SKILL.md'), 'utf8'),
+    'personal skill',
+  )
+})

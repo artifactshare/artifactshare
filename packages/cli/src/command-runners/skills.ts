@@ -713,9 +713,8 @@ async function recoveryRecommendation(
       try {
         await preflightFolder(target.absolutePath, bundled, true)
         update_command = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
-        // doctor shows no command for a folder without SKILL.md; name the collision.
-        if (folder.unowned && folder.state.kind === 'missing')
-          collision = (first as Error).message
+        // doctor shows no command for an unowned folder; name the collision.
+        if (folder.unowned) collision = (first as Error).message
       } catch (error) {
         // An unowned folder blocked only by user links needs no repair advice.
         if (folder.unowned && error instanceof SkillPathError && error.isLink)
