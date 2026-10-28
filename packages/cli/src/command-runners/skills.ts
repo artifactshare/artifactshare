@@ -342,6 +342,12 @@ async function legacyRule(target: SkillTarget) {
         : null,
   }
 }
+function legacyRuleOutput({
+  version: _version,
+  ...rule
+}: NonNullable<Awaited<ReturnType<typeof legacyRule>>>) {
+  return rule
+}
 async function legacyManagedVersion(
   target: SkillTarget,
 ): Promise<number | undefined> {
@@ -368,17 +374,7 @@ async function diagnostic(target: SkillTarget, bundle: BundledSkills) {
             .join(' '),
         }
       : {}),
-    ...(legacy
-      ? {
-          legacy_rule: {
-            path: legacy.path,
-            present: legacy.present,
-            managed: legacy.managed,
-            coexistence: legacy.coexistence,
-            hint: legacy.hint,
-          },
-        }
-      : {}),
+    ...(legacy ? { legacy_rule: legacyRuleOutput(legacy) } : {}),
   }
 }
 async function isCurrent(target: SkillTarget, bundle: BundledSkills) {
@@ -998,8 +994,8 @@ export async function ensureSkills(
     filteredTargets(filters.tools, filters.scope ?? 'project')
   const planned: PlannedAction[] = []
   for (const target of await groupTargets(targets)) {
-    const state = await readTarget(target)
     const { folder } = await targetInspection(target)
+    const state = folder.state
     const linkedSkill =
       state.kind === 'unmanaged' &&
       (filters.auto || options.skipBrokenUserSkills) &&
@@ -1370,6 +1366,8 @@ export async function runSkillsList(
 export async function skillDiagnostics(): Promise<DoctorSkillsData> {
   const bundled = await loadBundledSkills()
   const targets = []
+  // A combined --force would also downgrade a newer legacy-only rule.
+  let newerLegacyOnly = false
   for (const target of await groupTargets(allTargets())) {
     if (!availableTarget(target)) {
       targets.push({ ...unavailableState(target), update_command: null })
@@ -1381,6 +1379,11 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       state.kind === 'managed' && state.version < bundled.version
     const recommendation = await recoveryRecommendation(target, bundled)
     const recoveryCommand = recommendation.update_command ?? null
+    if (
+      state.kind === 'missing' &&
+      (await newerInstalledVersion(target, bundled)) !== undefined
+    )
+      newerLegacyOnly = true
     const update_command = details.hint
       ? null
       : updateAvailable ||
@@ -1425,7 +1428,8 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
         (target.installed ||
           ('interrupted_update' in target && target.interrupted_update)) &&
         target.hint,
-    )
+    ) &&
+    !(newerLegacyOnly && commonCommand.includes(' --force'))
   return {
     bundled_version: bundled.version,
     update_available: targets.some((target) => target.update_available),

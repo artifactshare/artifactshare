@@ -2179,3 +2179,19 @@ test('automatic ensure gives no advice for a folder blocked only by a user refer
   assert.equal(await readlink(join(folder, 'references')), outside)
   assert.equal(await readFile(join(outside, 'usage.md'), 'utf8'), 'untouched')
 })
+
+test('doctor does not combine forced updates when a newer legacy-only rule exists', async () => {
+  expectSuccess(skills('install', '--tool', 'claude'))
+  expectSuccess(skills('install', '--tool', 'codex'))
+  for (const tool of ['.claude', '.agents'])
+    await put(join(target(tool), 'references/usage.md'), 'edited')
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(legacy(), marker(12))
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  assert.match(data.update_command!, /--force/)
+  for (const command of data.update_command!.split(' && '))
+    assert.match(command, / --tool (claude|codex) --scope project /)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+})
