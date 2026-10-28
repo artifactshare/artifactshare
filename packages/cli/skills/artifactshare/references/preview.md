@@ -154,4 +154,4 @@ Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow
 
 Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.
 
-The Home share dialog uses workspace when the account supports it, otherwise private, only when no audience is configured. Before sign-in that default is unresolved; sign in, confirm the resolved audience and destination, then click Share. Sign-in does not upload the snapshot. Explicit or configured audiences are preserved.
+When no audience is configured, the Home share dialog asks the server after sign-in whether the account can use workspace visibility and defaults to private when it cannot. Explicit or configured audiences are preserved.

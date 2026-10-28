@@ -39,6 +39,7 @@ let reads: number
 let rejectWorkspace: boolean
 let confirmed: string | undefined
 let identityStatus: number
+let uploadCreated: boolean | undefined
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -70,6 +71,7 @@ beforeEach(async () => {
   rejectWorkspace = false
   confirmed = undefined
   identityStatus = 200
+  uploadCreated = undefined
   vi.mocked(cliFetch).mockImplementation(async (input, init) => {
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer test-token' })
     const url = new URL(String(input))
@@ -108,6 +110,7 @@ beforeEach(async () => {
         shareUrl: 'https://artifactshare.test/a/abc123def4',
         artifactKind: 'html_page',
         visibility: confirmed ?? visibility,
+        ...(uploadCreated === undefined ? {} : { created: uploadCreated }),
       }),
     )
   })
@@ -260,12 +263,10 @@ test('server-confirmed visibility wins and cannot be mislabeled as private fallb
   expect(data.share).not.toHaveProperty('visibility_source')
 })
 
-test('capability error stops before content POST', async () => {
+test('a failed capability check keeps the workspace product default', async () => {
   identityStatus = 503
   await share()
-  expect(posts).toEqual([])
-  expect(writeSuccess).not.toHaveBeenCalled()
-  expect(writeFailure).toHaveBeenCalled()
+  expect(posts).toEqual(['workspace'])
 })
 
 test('agent/bot profile uses its selected login for capability and upload', async () => {
@@ -280,4 +281,15 @@ test('agent/bot profile uses its selected login for capability and upload', asyn
   await share()
   expect(reads).toBe(1)
   expect(posts).toEqual(['private'])
+})
+
+test('an existing keyed artifact keeps private without a fallback label', async () => {
+  uploadCreated = false
+  await share({ key: 'job1' })
+  expect(posts).toEqual(['private'])
+  const data = vi.mocked(writeSuccess).mock.calls[0]![1] as {
+    share: Record<string, unknown>
+  }
+  expect(data.share.visibility).toBe('private')
+  expect(data.share).not.toHaveProperty('visibility_source')
 })

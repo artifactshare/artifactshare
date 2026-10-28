@@ -86,13 +86,6 @@ export function createShareDialogHandler(
   // Session token obtained through the dialog's device flow. Held in memory
   // for this preview process; persisting to a profile is best-effort.
   let memoryToken: string | null = null
-  // Keep a rejected stored session from sending context/sign-in back through
-  // the same expired token. A replacement credential is still usable.
-  let rejectedSession: {
-    token: string
-    baseUrl: string
-    profile: string | undefined
-  } | null = null
   // Provenance of the token `currentToken` last returned, so a 401 is mapped
   // against the credential that produced it.
   let tokenProvenance: Partial<ApiErrorOptions> | null = null
@@ -164,9 +157,6 @@ export function createShareDialogHandler(
         snapshots.delete(id)
         return sendJson(response, 200, { ok: true })
       }
-      if (url.pathname === '/api/auth-start') {
-        return await handleAuthStart(response)
-      }
       if (url.pathname === '/api/share') {
         return await handleShare(payload, response)
       }
@@ -213,26 +203,17 @@ export function createShareDialogHandler(
         projects: null,
         // null, never a guess: the dialog disables sharing rather than
         // publishing to an audience the config did not actually ask for.
-        default_visibility:
-          request.error ||
-          (resolved &&
-            !('error' in resolved) &&
-            resolved.source === 'product_default')
-            ? null
-            : defaultVisibility,
+        default_visibility: request.error ? null : defaultVisibility,
         file_name: handlerOptions.fileName,
       })
     }
     let contextToken = token.token
-    let refreshAttempted = false
     let projectsResult = await fetchProjects(
       token.token,
       cliOptions,
       request.init,
-      uploadErrorOptions(baseUrlOf(cliOptions)),
     )
     if (projectsResult.error?.code === 'auth_required') {
-      refreshAttempted = true
       // Without the projects the dialog offers Home only, and the upload's own
       // refresh comes too late: the destination has to be chosen first.
       const refreshed = await refreshTokenOnce(cliOptions, projectsResult.error)
@@ -242,39 +223,19 @@ export function createShareDialogHandler(
           refreshed,
           cliOptions,
           request.init,
-          uploadErrorOptions(baseUrlOf(cliOptions)),
         )
       }
     }
-    if (projectsResult.error?.code === 'auth_required') {
-      rejectSession(contextToken, cliOptions)
-      return sendJson(response, 200, {
-        authenticated: false,
-        projects: null,
-        default_visibility: null,
-        file_name: handlerOptions.fileName,
-      })
-    }
     if (resolved && !('error' in resolved)) {
-      const current = await currentToken(cliOptions)
-      if (current.ok) {
-        const audience = await accountHomeVisibility(
-          resolved,
-          current.token,
-          cliOptions,
-          request.init,
-          !refreshAttempted,
-        )
-        if ('error' in audience && audience.error.code === 'auth_required') {
-          return sendJson(response, 200, {
-            authenticated: false,
-            projects: null,
-            default_visibility: null,
-            file_name: handlerOptions.fileName,
-          })
-        }
-        defaultVisibility = 'error' in audience ? null : audience.value
-      } else defaultVisibility = null
+      const audience = await resolveAccountHomeVisibility(
+        resolved,
+        contextToken,
+        cliOptions,
+        request.init,
+        uploadErrorOptions(baseUrlOf(cliOptions)),
+      )
+      // The upload's own sign-in handling covers credential failures.
+      defaultVisibility = 'error' in audience ? resolved.value : audience.value
     }
     const projects = projectsResult.error
       ? null
@@ -326,27 +287,7 @@ export function createShareDialogHandler(
       profileCredentialKind: credential.profileCredentialKind,
       botProfile: credential.botProfile,
     }
-    if (
-      credential.profileCredentialKind === 'session' &&
-      rejectedSession?.token === credential.token &&
-      rejectedSession.baseUrl === baseUrlOf(cliOptions) &&
-      rejectedSession.profile === credential.profile
-    ) {
-      return { ok: false, error: null }
-    }
     return { ok: true, token: credential.token }
-  }
-
-  function rejectSession(token: string, cliOptions: CliOptions): void {
-    // Explicit/env tokens and PAT profiles never become interactive logins.
-    // Preserve bot provenance so botProfileBlocked still requires admin recovery.
-    if (tokenProvenance?.profileCredentialKind !== 'session') return
-    rejectedSession = {
-      token,
-      baseUrl: baseUrlOf(cliOptions),
-      profile: tokenProvenance.profile,
-    }
-    memoryToken = null
   }
 
   /** The profile a later CLI run would resolve for this preview's options. */
@@ -442,58 +383,6 @@ export function createShareDialogHandler(
     return null
   }
 
-  async function accountHomeVisibility(
-    resolved: import('../destination.js').VisibilityResolution,
-    token: string,
-    cliOptions: CliOptions,
-    init: FetchInit,
-    allowRefresh = true,
-  ) {
-    let refreshed = false
-    let checkedToken = token
-    let result = await resolveAccountHomeVisibility(
-      resolved,
-      token,
-      cliOptions,
-      init,
-      uploadErrorOptions(baseUrlOf(cliOptions)),
-    )
-    if (
-      allowRefresh &&
-      'error' in result &&
-      result.error.code === 'auth_required'
-    ) {
-      refreshed = true
-      const refreshedToken = await refreshTokenOnce(cliOptions, result.error)
-      if (refreshedToken) {
-        checkedToken = refreshedToken
-        result = await resolveAccountHomeVisibility(
-          resolved,
-          refreshedToken,
-          cliOptions,
-          init,
-          uploadErrorOptions(baseUrlOf(cliOptions)),
-        )
-      }
-    }
-    if ('error' in result && result.error.code === 'auth_required') {
-      rejectSession(checkedToken, cliOptions)
-    }
-    return { ...result, refreshed }
-  }
-
-  async function handleAuthStart(response: ServerResponse): Promise<void> {
-    const cliOptions = options.cliOptions
-    const token = await currentToken(cliOptions)
-    const request = requestConfig(cliOptions)
-    if (request.error) return sendCliError(response, request.error)
-    if (token.ok) return sendJson(response, 200, { refresh_context: true })
-    if (token.error) return sendCliError(response, token.error)
-    const blocked = await botProfileBlocked(cliOptions)
-    if (blocked) return sendCliError(response, blocked)
-    return await startDeviceAuth(cliOptions, request.init, response)
-  }
-
   async function handleShare(
     payload: Record<string, unknown>,
     response: ServerResponse,
@@ -507,7 +396,7 @@ export function createShareDialogHandler(
     const cliOptions = options.cliOptions
     // Resolving first lets a profile's own base URL reach requestConfig, which
     // is what --insecure-localhost is validated against.
-    let token = await currentToken(cliOptions)
+    const token = await currentToken(cliOptions)
     const request = requestConfig(cliOptions)
     if (request.error) {
       return sendCliError(response, request.error)
@@ -521,7 +410,6 @@ export function createShareDialogHandler(
       return await startDeviceAuth(cliOptions, request.init, response)
     }
 
-    let capabilityRefreshed = false
     const projectId =
       typeof payload.project_id === 'string' && payload.project_id !== ''
         ? payload.project_id
@@ -543,21 +431,15 @@ export function createShareDialogHandler(
       if ('error' in resolved) {
         return sendCliError(response, resolved.error)
       }
-      const audience = await accountHomeVisibility(
+      const audience = await resolveAccountHomeVisibility(
         resolved,
         token.token,
         cliOptions,
         request.init,
+        uploadErrorOptions(baseUrlOf(cliOptions)),
       )
-      if ('error' in audience) return sendCliError(response, audience.error)
-      visibility = audience.value
-      capabilityRefreshed = audience.refreshed
-      token = await currentToken(cliOptions)
-      if (!token.ok)
-        return sendCliError(
-          response,
-          token.error ?? visibilityUnresolvedError(),
-        )
+      // The upload's own sign-in handling covers credential failures.
+      visibility = 'error' in audience ? resolved.value : audience.value
     }
 
     const { FormData } = await import('undici')
@@ -587,12 +469,6 @@ export function createShareDialogHandler(
       artifactKindForName(options.fileName),
     )
     if ('error' in result && result.error.code === 'auth_required') {
-      if (capabilityRefreshed)
-        return sendCliError(
-          response,
-          result.error,
-          tokenProvenance?.credentialSource ?? null,
-        )
       const refreshed = await refreshTokenOnce(cliOptions, result.error)
       if (!refreshed) {
         const blocked = await botProfileBlocked(cliOptions)
@@ -980,7 +856,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     <div class="error" id="shareError"></div>
     <div class="row">
       <button class="btn" id="cancelBtn"></button>
-      <button class="btn" id="signInBtn"></button>
       <button class="btn btn-primary" id="shareBtn"></button>
     </div>
   </div>
@@ -1022,7 +897,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('notCarried').textContent = t('notCarried');
   el('cancelBtn').textContent = t('cancel');
   el('shareBtn').textContent = t('confirm');
-  el('signInBtn').textContent = t('signIn');
   el('authTitle').textContent = t('title');
   el('authRequired').textContent = t('authRequired');
   el('authWaiting').textContent = t('authWaiting');
@@ -1050,13 +924,11 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   var context = { authenticated: false, projects: null, default_visibility: null };
   var pollTimer = null;
   var shareInFlight = false;
-  var selectedVisibility = null;
 
   function reportSnapshotFailure() {
     // Without a snapshot there is nothing to upload, and a Share button that
     // silently does nothing reads as a broken dialog.
     snapshotFailed = true;
-    syncVisibility();
     el('shareError').textContent = t('snapshotFailed');
     el('shareError').style.display = 'block';
     el('shareBtn').disabled = true;
@@ -1069,7 +941,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         return;
       }
       snapshotId = result.body.snapshot_id;
-      syncVisibility();
       var takenAt = new Date(result.body.taken_at);
       el('snapshotNote').textContent =
         t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
@@ -1078,7 +949,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
 
   function loadContext() {
     return fetch('/api/context')
-      .then(function (response) { if (!response.ok) throw new Error('context'); return response.json(); })
+      .then(function (response) { return response.json(); })
       .then(function (body) {
         context = body;
         var destination = el('destination');
@@ -1096,7 +967,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         });
         destination.value = previous;
         if (body.default_visibility) {
-          el('visibility').value = selectedVisibility || body.default_visibility;
+          el('visibility').value = body.default_visibility;
         }
         syncVisibility();
       })
@@ -1117,11 +988,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
-    if (audienceUnknown && !selectedVisibility) visibility.value = '';
-    el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed || !snapshotId;
-    el('signInBtn').style.display = context.authenticated && context.default_visibility ? 'none' : '';
-    el('signInBtn').textContent = context.authenticated ? t('retryContext') : t('signIn');
-    el('signInBtn').disabled = shareInFlight || snapshotFailed || !snapshotId;
+    el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed;
     if (snapshotFailed) {
       // Nothing about the destination can make an unreadable file shareable.
       el('shareError').textContent = t('snapshotFailed');
@@ -1141,14 +1008,13 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       }
       visibility.value = 'project';
     } else if (visibility.value === 'project') {
-      visibility.value = selectedVisibility || context.default_visibility || '';
+      visibility.value = context.default_visibility || 'private';
     }
   }
   el('destination').addEventListener('change', syncVisibility);
-  el('visibility').addEventListener('change', function () { selectedVisibility = el('visibility').value; });
 
   function share() {
-    if (!snapshotId || shareInFlight || snapshotFailed || el('shareBtn').disabled) return;
+    if (!snapshotId || shareInFlight) return;
     shareInFlight = true;
     el('shareBtn').disabled = true;
     el('shareError').style.display = 'none';
@@ -1158,7 +1024,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     else payload.visibility = el('visibility').value;
     post('/api/share', payload).then(function (result) {
       shareInFlight = false;
-      syncVisibility();
+      el('shareBtn').disabled = false;
       if (result.ok && result.body.auth_required) {
         showAuth(result.body);
         return;
@@ -1171,35 +1037,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       el('shareError').style.display = 'block';
     }).catch(function () {
       shareInFlight = false;
-      syncVisibility();
+      el('shareBtn').disabled = false;
       el('shareError').textContent = t('shareFailed');
       el('shareError').style.display = 'block';
     });
   }
   el('shareBtn').addEventListener('click', share);
-  el('signInBtn').addEventListener('click', function () {
-    if (!snapshotId || shareInFlight || snapshotFailed) return;
-    if (context.authenticated) {
-      shareInFlight = true;
-      syncVisibility();
-      return loadContext().finally(function () { shareInFlight = false; syncVisibility(); });
-    }
-    shareInFlight = true;
-    syncVisibility();
-    post('/api/auth-start').then(function (result) {
-      shareInFlight = false;
-      syncVisibility();
-      if (result.ok && result.body.auth_required) return showAuth(result.body);
-      if (result.ok && result.body.refresh_context) return loadContext();
-      el('shareError').textContent = shareErrorText(result.body);
-      el('shareError').style.display = 'block';
-    }).catch(function () {
-      shareInFlight = false;
-      syncVisibility();
-      el('shareError').textContent = t('shareFailed');
-      el('shareError').style.display = 'block';
-    });
-  });
 
   var SHARE_ERROR_KEYS = {
     token_invalid: 'errorTokenInvalid',
@@ -1257,7 +1100,6 @@ function renderPage(options: ShareDialogHandlerOptions): string {
             // Projects only become visible once authenticated; sharing straight
             // away would silently pick Home for a first-time user.
             loadContext().then(function () {
-              if (!context.default_visibility) return;
               el('shareError').textContent = t('confirmDestination');
               el('shareError').style.display = 'block';
             });

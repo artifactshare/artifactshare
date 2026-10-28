@@ -313,7 +313,10 @@ export async function runShare(
         // The server may adjust the stored visibility for the destination, so
         // report its confirmed value over the requested one.
         visibility: visibility ?? requestedVisibility,
-        ...(accountVisibility?.privateDefault && visibility === 'private'
+        // Only a newly created artifact got its audience from this default.
+        ...(accountVisibility?.privateDefault &&
+        created &&
+        visibility === 'private'
           ? {
               visibility_source: 'product_default_private',
               visibility_hint: PRIVATE_DEFAULT_HINT,

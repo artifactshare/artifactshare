@@ -1553,8 +1553,6 @@
   "preview.shareDialog.snapshotNote": "Captured at {time}. Later changes are not included.",
   "preview.shareDialog.confirm": "Share",
   "preview.shareDialog.cancel": "Cancel",
-  "preview.shareDialog.signIn": "Sign in",
-  "preview.shareDialog.retryContext": "Retry",
   "preview.shareDialog.authRequired": "Sign in to share. Open the link below and approve this device.",
   "preview.shareDialog.authWaiting": "Waiting for approval…",
   "preview.shareDialog.done": "Shared",

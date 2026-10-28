@@ -98,8 +98,6 @@ export const PREVIEW_MESSAGES = {
       'Captured at {time}. Later changes are not included.',
     'preview.shareDialog.confirm': 'Share',
     'preview.shareDialog.cancel': 'Cancel',
-    'preview.shareDialog.signIn': 'Sign in',
-    'preview.shareDialog.retryContext': 'Retry',
     'preview.shareDialog.authRequired':
       'Sign in to share. Open the link below and approve this device.',
     'preview.shareDialog.authWaiting': 'Waiting for approval…',
@@ -230,8 +228,6 @@ export const PREVIEW_MESSAGES = {
       '{time} 時点の内容です。それ以降の変更は含まれません',
     'preview.shareDialog.confirm': '共有する',
     'preview.shareDialog.cancel': 'キャンセル',
-    'preview.shareDialog.signIn': 'ログイン',
-    'preview.shareDialog.retryContext': '再試行',
     'preview.shareDialog.authRequired':
       '共有にはログインが必要です。下のリンクを開いてこの端末を承認してください',
     'preview.shareDialog.authWaiting': '承認を待っています…',

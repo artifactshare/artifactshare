@@ -142,6 +142,7 @@ function humanSuccess(command: string, data: unknown): string {
       `URL: ${fields.url}`,
       `Destination: ${fields.destinationType}${fields.projectId ? ` (${fields.projectId})` : ''}`,
       `Visibility: ${fields.visibility}`,
+      ...(fields.visibilityHint ? [`Note: ${fields.visibilityHint}`] : []),
       '',
     ].join('\n')
     const warnings = shareWarnings(data)
@@ -327,6 +328,7 @@ function shareSuccessFields(data: unknown): {
   destinationType: string
   projectId: string | null
   visibility: string
+  visibilityHint: string | null
 } | null {
   if (!isRecord(data)) return null
   const artifact = data.artifact
@@ -347,6 +349,8 @@ function shareSuccessFields(data: unknown): {
     artifactId: artifact.id,
     url: artifact.url,
     destinationType: destination.type,
+    visibilityHint:
+      typeof share.visibility_hint === 'string' ? share.visibility_hint : null,
     projectId:
       typeof destination.project_id === 'string'
         ? destination.project_id

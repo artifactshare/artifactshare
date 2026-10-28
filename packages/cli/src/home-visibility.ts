@@ -11,7 +11,12 @@ import { isRecord } from './validators.js'
 export const PRIVATE_DEFAULT_HINT =
   'Workspace visibility is unavailable for this account, so Home defaults to private. Choose --visibility link deliberately to share with anyone who has the link.'
 
-/** Only the server knows workspace capability; absent legacy fields stay unknown. */
+/**
+ * Only the server knows workspace capability. Credential failures go back to
+ * the caller's sign-in handling; any other failure, or an older server that
+ * omits the field, keeps the product default, which the server still rejects
+ * for personal accounts, so nothing is published more widely.
+ */
 export async function resolveAccountHomeVisibility(
   resolution: VisibilityResolution,
   token: string,
@@ -30,16 +35,21 @@ export async function resolveAccountHomeVisibility(
     options,
     init,
     errorOptions,
+  ).catch(() => null)
+  if (
+    result?.error?.code === 'auth_required' ||
+    result?.error?.code === 'token_invalid'
   )
-  if (result.error) return { error: result.error }
+    return { error: result.error }
   const workspace =
-    isRecord(result.body) && isRecord(result.body.workspace)
+    result && !result.error && isRecord(result.body)
       ? result.body.workspace
       : null
-  const privateDefault = workspace?.visibility_available === false
+  const privateDefault =
+    isRecord(workspace) && workspace.visibility_available === false
   return {
     ...resolution,
-    value: privateDefault ? 'private' : 'workspace',
+    value: privateDefault ? 'private' : resolution.value,
     privateDefault,
   }
 }

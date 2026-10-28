@@ -51,7 +51,7 @@ test.each(['explicit', 'repository', 'user'] as const)(
   },
 )
 
-test('propagates capability failures before upload', async () => {
+test('keeps the workspace product default when the capability check fails', async () => {
   const error = networkError(new Error('Unavailable'))
   vi.mocked(apiGet).mockResolvedValue({ error })
   expect(
@@ -62,5 +62,9 @@ test('propagates capability failures before upload', async () => {
       {},
       {},
     ),
-  ).toEqual({ error })
+  ).toEqual({
+    value: 'workspace',
+    source: 'product_default',
+    privateDefault: false,
+  })
 })

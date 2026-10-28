@@ -2017,7 +2017,7 @@ for (const kind of ['html', 'md', 'directory']) {
   }
 }
 
-test('share stops before content upload when capability read fails', async () => {
+test('share keeps the workspace default when the capability read fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'report.html')
   await writeFile(target, '<h1>Report</h1>')
@@ -2036,5 +2036,5 @@ test('share stops before content upload when capability read fails', async () =>
       )
     },
   )
-  assert.equal(uploads, 0)
+  assert.equal(uploads, 1)
 })
