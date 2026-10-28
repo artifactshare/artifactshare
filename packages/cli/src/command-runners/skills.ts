@@ -949,11 +949,23 @@ export async function ensureSkills(
   const planned: PlannedAction[] = []
   for (const target of await groupTargets(targets)) {
     const state = await readTarget(target)
+    // A linked SKILL.md is the user's own folder unless something is managed.
+    const linkedSkill =
+      state.kind === 'unmanaged' &&
+      (filters.auto || options.skipBrokenUserSkills) &&
+      (await lstat(target.absolutePath).catch(() => null))?.isSymbolicLink()
     if (
-      filters.auto &&
-      command === 'skills ensure' &&
-      state.kind === 'broken'
+      linkedSkill &&
+      (await isUnownedFolder(
+        target.absolutePath,
+        (await legacyRule(target))?.managed,
+      ))
     ) {
+      if (filters.auto) planned.push({ target, action: 'skipped_unmanaged' })
+      continue
+    }
+    const conflicted = state.kind === 'broken' || linkedSkill
+    if (filters.auto && command === 'skills ensure' && conflicted) {
       const details = await diagnostic(target, bundled)
       if (details.code === 'skill_update_conflict') {
         planned.push({
@@ -964,17 +976,8 @@ export async function ensureSkills(
         continue
       }
     }
-    if (
-      state.kind === 'unmanaged' &&
-      (filters.auto || options.skipBrokenUserSkills) &&
-      (await lstat(target.absolutePath).catch(() => null))?.isSymbolicLink()
-    ) {
-      // A linked SKILL.md without ownership records is the user's own folder.
-      if (filters.auto) planned.push({ target, action: 'skipped_unmanaged' })
-      continue
-    }
     if (state.kind === 'unmanaged' || state.kind === 'broken') {
-      if (options.skipBrokenUserSkills && state.kind === 'broken') {
+      if (options.skipBrokenUserSkills && conflicted) {
         const details = await diagnostic(target, bundled)
         if (details.hint)
           planned.push({

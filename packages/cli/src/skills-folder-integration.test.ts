@@ -1911,3 +1911,19 @@ test('install preserves a newer installation despite a link at a path only the o
     'installed',
   )
 })
+
+test('automatic ensure refuses a linked SKILL.md when the legacy rule is managed', async () => {
+  await put(legacy(), marker(1))
+  const outside = join(root, 'outside')
+  await put(join(outside, 'SKILL.md'), marker(99))
+  await mkdir(target(), { recursive: true })
+  await symlink(join(outside, 'SKILL.md'), join(target(), 'SKILL.md'))
+  const row = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto')).data,
+  ).targets.find((item) => item.tool === 'cursor' && item.scope === 'project')!
+  // Not skipped as the user's folder: the link is refused with a repair hint.
+  assert.equal(row.action, 'update_recommended')
+  assert.match(row.hint!, /Unsafe skill path \(link\): SKILL.md/)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+  assert.equal(await readFile(join(outside, 'SKILL.md'), 'utf8'), marker(99))
+})
