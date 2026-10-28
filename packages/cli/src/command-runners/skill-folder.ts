@@ -137,11 +137,12 @@ export async function isProtectedLink(
   }
   return false
 }
+// Without protected entries (an unowned folder), every link is a user link.
 async function inspectTree(
   root: string,
   cleanup = false,
   folderRoot = root,
-  protectedEntries = new Set<string>(),
+  protectedEntries?: Set<string>,
   userLinks: string[] = [],
 ): Promise<string[]> {
   if (!(await info(root))) return userLinks
@@ -151,12 +152,13 @@ async function inspectTree(
     if (item.isSymbolicLink()) {
       const entry = relativePath(folderRoot, path).split(sep).join('/')
       if (
-        protectedEntries.has(entry) ||
-        (await isProtectedLink(folderRoot, item, protectedEntries)) ||
-        name === MANIFEST ||
-        name === PENDING ||
-        stagingName.test(name) ||
-        legacyTemp.test(name)
+        protectedEntries &&
+        (protectedEntries.has(entry) ||
+          (await isProtectedLink(folderRoot, item, protectedEntries)) ||
+          name === MANIFEST ||
+          name === PENDING ||
+          stagingName.test(name) ||
+          legacyTemp.test(name))
       )
         throw new Error(
           `Unsafe skill path (link): ${entry}. Replace the link with a regular file or directory or remove it, then retry.`,
@@ -254,6 +256,21 @@ async function recordsAbsent(root: string) {
   return (
     !(await info(join(root, MANIFEST))) && !(await info(join(root, PENDING)))
   )
+}
+// A folder without ownership records or a managed SKILL.md belongs to the user.
+async function unownedAt(root: string) {
+  if (!(await recordsAbsent(root))) return false
+  const entry = await info(join(root, 'SKILL.md'))
+  if (!entry || entry.isSymbolicLink()) return true
+  return (await stateAt(root)).kind === 'unmanaged'
+}
+export async function isUnownedFolder(entry: string, managedLegacy = false) {
+  if (managedLegacy) return false
+  try {
+    return await unownedAt(await rootFor(entry))
+  } catch {
+    return false
+  }
 }
 async function stateAt(root: string): Promise<ManagedState> {
   try {
@@ -402,31 +419,13 @@ export async function folderDiagnostics(
   let user_links: string[] = []
   try {
     root = await rootFor(entry)
-    if (
-      !managedLegacy &&
-      (await recordsAbsent(root)) &&
-      (await stateAt(root)).kind === 'unmanaged'
-    ) {
-      // Enumerate without traversing links or comparing unowned bundle content.
-      user_links = await inspectTree(root)
-      return {
-        folder_path: dirname(entry),
-        resolved_folder_path: root,
-        complete: false,
-        current: false,
-        older_version: false,
-        missing_files: [],
-        different_files: [],
-        modified_files: [],
-        ownership_manifest: 'absent',
-        user_links,
-      }
-    }
     user_links = await inspectTree(
       root,
       false,
       root,
-      await protectedPaths(root, bundle),
+      !managedLegacy && (await unownedAt(root))
+        ? undefined
+        : await protectedPaths(root, bundle),
     )
   } catch (error) {
     return {

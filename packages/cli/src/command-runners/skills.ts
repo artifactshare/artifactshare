@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import {
   resolveSkillFolder,
   cleanupSkillFolder,
+  isUnownedFolder,
   managedState,
   readSkillState,
   loadSkillBundle,
@@ -661,13 +662,7 @@ async function recoveryRecommendation(
 }> {
   const state = await readTarget(target)
   const details = await diagnostic(target, bundled)
-  if (
-    state.kind === 'unmanaged' &&
-    details.ownership_manifest === 'absent' &&
-    !details.interrupted_update &&
-    !details.code &&
-    !details.legacy_rule?.managed
-  )
+  if (await isUnownedFolder(target.absolutePath, details.legacy_rule?.managed))
     return {}
   if (isNewer(state, bundled))
     return {
@@ -876,12 +871,6 @@ export async function runSkillsInstall(
     if ((state.kind === 'unmanaged' || state.kind === 'broken') && !force) {
       return writeFailure(command, await conflictFor(target), mode, 1)
     }
-    const details = await diagnostic(target, bundled)
-    if (details.code === 'skill_update_conflict') {
-      const conflict = skillUpdateConflictError(target.path)
-      conflict.hint = details.hint ?? conflict.hint
-      return writeFailure(command, conflict, mode, 1)
-    }
     if (isNewer(state, bundled) && !force) {
       planned.push({
         target,
@@ -891,8 +880,13 @@ export async function runSkillsInstall(
       })
       continue
     }
-    const unchanged =
-      state.kind === 'managed' && (await isCurrent(target, bundled)) && !force
+    const details = await diagnostic(target, bundled)
+    if (details.code === 'skill_update_conflict') {
+      const conflict = skillUpdateConflictError(target.path)
+      conflict.hint = details.hint ?? conflict.hint
+      return writeFailure(command, conflict, mode, 1)
+    }
+    const unchanged = state.kind === 'managed' && details.current && !force
     if (unchanged) {
       planned.push({ target, action: 'unchanged' })
       continue
@@ -969,6 +963,15 @@ export async function ensureSkills(
         })
         continue
       }
+    }
+    if (
+      state.kind === 'unmanaged' &&
+      (filters.auto || options.skipBrokenUserSkills) &&
+      (await lstat(target.absolutePath).catch(() => null))?.isSymbolicLink()
+    ) {
+      // A linked SKILL.md without ownership records is the user's own folder.
+      if (filters.auto) planned.push({ target, action: 'skipped_unmanaged' })
+      continue
     }
     if (state.kind === 'unmanaged' || state.kind === 'broken') {
       if (options.skipBrokenUserSkills && state.kind === 'broken') {

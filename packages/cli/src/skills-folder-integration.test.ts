@@ -1566,6 +1566,7 @@ for (const command of ['install', 'update'])
         '--dry-run',
       ],
       [command, '--tool', 'codex', '--tool', 'claude', '--tool', 'cursor'],
+      ...(command === 'update' ? [[command, '--dry-run'], [command]] : []),
     ]) {
       const data = SkillsActionDataSchema.parse(
         expectSuccess(skills(...args)).data,
@@ -1581,7 +1582,8 @@ for (const command of ['install', 'update'])
           (candidate) =>
             candidate.tool === 'claude' && candidate.scope === 'project',
         )!.action,
-        'updated',
+        // Unfiltered runs follow the filtered update of the same target.
+        args.includes('--tool') ? 'updated' : 'unchanged',
       )
       assert.match(row.hint!, /A newer CLI installed/)
       assert.equal(await readFile(manifest, 'utf8'), before)
@@ -1813,3 +1815,99 @@ syncBuiltinESMExports();`,
           )
         }
       })
+
+for (const kind of ['references without SKILL.md', 'reserved name'])
+  test(`unowned folder with a ${kind} link is never a conflict`, async () => {
+    const folder = target('.agents')
+    const outside = join(root, 'outside')
+    await put(join(outside, 'sentinel'), 'untouched')
+    if (kind === 'reserved name') await put(join(folder, 'SKILL.md'), 'mine')
+    const link = join(
+      folder,
+      kind === 'reserved name'
+        ? '.artifactshare-staging-00000000-0000-4000-8000-000000000000'
+        : 'references',
+    )
+    await mkdir(folder, { recursive: true })
+    await symlink(outside, link)
+    expectSuccess(skills('install', '--tool', 'claude'))
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    const expected = kind === 'reserved name' ? 'skipped_unmanaged' : null
+    for (const data of [
+      SkillsListDataSchema.parse(expectSuccess(skills('list')).data),
+      DoctorSkillsDataSchema.parse(expectSuccess(run(['doctor'])).data.skills),
+    ]) {
+      const row = data.targets.find(
+        (candidate) =>
+          candidate.tool === 'codex' && candidate.scope === 'project',
+      )!
+      assert.equal(row.code, undefined)
+      assert.equal(row.hint, undefined)
+    }
+    for (const args of [
+      ['update', '--tool', 'codex', '--scope', 'project'],
+      ['update'],
+      ['remove', '--tool', 'codex', '--scope', 'project'],
+      ['remove'],
+    ]) {
+      const data = SkillsActionDataSchema.parse(
+        expectSuccess(skills(...args, '--dry-run')).data,
+      )
+      assert.equal(
+        data.targets.find(
+          (row) => row.tool === 'codex' && row.scope === 'project',
+        )!.action,
+        expected ?? 'not_installed',
+      )
+    }
+    assert.equal((await lstat(link)).isSymbolicLink(), true)
+    assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+  })
+
+test('automatic ensure, open and init skip an unowned folder whose SKILL.md is a link', async () => {
+  expectSuccess(skills('install', '--tool', 'claude', '--scope', 'user'))
+  const folder = target('.agents', 'user')
+  const outside = join(root, 'outside')
+  await put(join(outside, 'SKILL.md'), marker(99))
+  await mkdir(folder, { recursive: true })
+  await symlink(join(outside, 'SKILL.md'), join(folder, 'SKILL.md'))
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto', '--scope', 'user')).data,
+  )
+  assert.equal(
+    data.targets.find((row) => row.tool === 'codex' && row.scope === 'user')!
+      .action,
+    'skipped_unmanaged',
+  )
+  assert.equal(
+    data.targets.find((row) => row.tool === 'claude' && row.scope === 'user')!
+      .action,
+    'updated',
+  )
+  assert.equal(await readFile(join(outside, 'SKILL.md'), 'utf8'), marker(99))
+})
+
+test('install preserves a newer installation despite a link at a path only the older bundle ships', async () => {
+  await setBundle({ ...initial, 'SKILL.md': marker(12) })
+  expectSuccess(skills('install', '--tool', 'codex'))
+  await setBundle({
+    ...initial,
+    'SKILL.md': marker(11),
+    'references/old.md': 'old',
+  })
+  const outside = join(root, 'outside')
+  await put(join(outside, 'sentinel'), 'untouched')
+  await symlink(outside, join(target('.agents'), 'references/old.md'))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('install', '--tool', 'codex', '--tool', 'claude'))
+      .data,
+  )
+  const row = data.targets.find((candidate) => candidate.tool === 'codex')!
+  assert.equal(row.action, 'unchanged')
+  assert.match(row.hint!, /A newer CLI installed/)
+  assert.equal(
+    data.targets.find((candidate) => candidate.tool === 'claude')!.action,
+    'installed',
+  )
+})
