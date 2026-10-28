@@ -1550,6 +1550,7 @@
   "preview.shareDialog.destination": "Destination",
   "preview.shareDialog.visibility": "Visibility",
   "preview.shareDialog.notCarried": "Local annotations are not carried over. You can comment again after sharing.",
+  "preview.shareDialog.privateDefault": "This account cannot share with everyone in a workspace, so Home defaults to “Specific people”. Choose “Anyone with the link” only when you mean to share with anyone who has the link.",
   "preview.shareDialog.snapshotNote": "Captured at {time}. Later changes are not included.",
   "preview.shareDialog.confirm": "Share",
   "preview.shareDialog.cancel": "Cancel",

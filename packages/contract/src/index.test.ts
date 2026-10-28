@@ -1,6 +1,7 @@
 import { File as NodeFile } from 'node:buffer'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  CliWorkspaceSchema,
   API_ERROR_RESPONSE_SCHEMA,
   ARTIFACT_APPEND_REQUEST_SCHEMA,
   ARTIFACT_APPEND_RESPONSE_SCHEMA,
@@ -1444,4 +1445,22 @@ it('preserves optional ignored user links and partial skill failure rows', async
   expect(
     SkillsActionDataSchema.parse({ dry_run: false, targets: [failed] }).targets,
   ).toEqual([failed])
+})
+
+it('accepts optional workspace capability without conflating false and omission', () => {
+  for (const capability of [true, false, undefined]) {
+    const workspace = {
+      id: 'ws1',
+      hosted_domain: null,
+      ...(capability === undefined ? {} : { visibility_available: capability }),
+    }
+    expect(CliWorkspaceSchema.parse(workspace)).toEqual(workspace)
+  }
+  expect(
+    CliWorkspaceSchema.safeParse({
+      id: 'ws1',
+      hosted_domain: null,
+      visibility_available: null,
+    }).success,
+  ).toBe(false)
 })

@@ -36,6 +36,11 @@
   ],
   "contracts": [
     {
+      "id": "workspace-visibility-capability",
+      "identifier": "CliWorkspaceSchema",
+      "implementation_path": "packages/contract/src/index.ts"
+    },
+    {
       "id": "skill-folder-aliases",
       "identifier": "SkillFolderDiagnosticSchema",
       "implementation_path": "packages/contract/src/index.ts"
@@ -2800,7 +2805,7 @@
         "cli_json": ["cli_help"],
         "cli_auth": ["cli_help"]
       },
-      "contracts": [],
+      "contracts": ["workspace-visibility-capability"],
       "cli_options": {
         "whoami": [
           "--help",

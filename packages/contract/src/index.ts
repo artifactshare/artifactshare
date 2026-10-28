@@ -342,6 +342,7 @@ export type CliUser = z.infer<typeof CliUserSchema>
 export const CliWorkspaceSchema = z.object({
   id: stringId,
   hosted_domain: z.string().nullable(),
+  visibility_available: z.boolean().optional(),
 })
 export type CliWorkspace = z.infer<typeof CliWorkspaceSchema>
 

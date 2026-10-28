@@ -31,7 +31,7 @@ The complete `config --help` reference covers user and repository scopes,
 effective resolution, and the canonical `home_audience` key. `default_artifact_visibility` is a compatibility alias, while
 `default_project_visibility` is the advanced `projects create` default. Home
 resolution checks repository then user settings (including the alias at each
-scope), then product default `workspace`; project defaults use repository,
+scope), then the account-aware product default; project defaults use repository,
 user, then `workspace`. Keyless `config get --json` returns only
 `home_audience`; pass an explicit key for either other setting. These settings
 only affect new home posts and project creation; update, edit, Web, and MCP
@@ -107,3 +107,5 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> 
   directory. `init --dry-run --json` previews the setup without side effects.
 - Run `edit --help`, `projects create --help`, or `projects edit --help` for
   all flags.
+
+Home without an explicit or configured audience defaults to workspace when the account supports it, otherwise private. Explicit or configured workspace still fails when unavailable; sharing never automatically switches to link. Choose --visibility link deliberately. Config inspection is offline: value workspace with source product_default is an unresolved policy placeholder. Share and preview resolve it against the account. Older servers without workspace.visibility_available retain workspace and its existing rejection.

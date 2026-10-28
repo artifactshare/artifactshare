@@ -609,6 +609,64 @@ describe('uploadShareable', () => {
     sqliteRef.afterNextBatch = null
   })
 
+  test.each(['html', 'md', 'static_site'])(
+    'personal Home %s rejects workspace without creating rows and creates exactly one private version',
+    async (kind) => {
+      const user = { ...OWNER, hd: null, msTenantId: null }
+      await db
+        .updateTable('workspaces')
+        .set({ hd: null })
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+      const publish = async (visibility: 'workspace' | 'private') => {
+        const file = new File(
+          [kind === 'md' ? '# Report' : '<h1>Report</h1>'],
+          kind === 'md' ? 'report.md' : 'index.html',
+          { type: kind === 'md' ? 'text/markdown' : 'text/html' },
+        )
+        if (kind !== 'static_site')
+          return await uploadShareable(db, user, file, visibility)
+        const form = new FormData()
+        form.set('visibility', visibility)
+        form.set('file', file)
+        return await staticSiteRequestContent(
+          new Request(
+            'https://example.com/api/shareables/uploads?artifact_kind=static_site',
+            { method: 'POST', body: form },
+          ),
+          { expectedContainerId: null },
+        ).session.publish({
+          db,
+          user,
+          authority: null,
+          target: { kind: 'create' },
+          containerId: null,
+          idempotencyKey: null,
+          touchArtifactKeyId: null,
+        })
+      }
+      expect(await publish('workspace')).toMatchObject({
+        kind: 'workspace-unavailable',
+      })
+      expect(
+        await db.selectFrom('shareables').selectAll().execute(),
+      ).toHaveLength(0)
+      expect(
+        await db.selectFrom('versions').selectAll().execute(),
+      ).toHaveLength(0)
+      expect(await publish('private')).toMatchObject({
+        kind: 'ok',
+        visibility: 'private',
+      })
+      expect(
+        await db.selectFrom('shareables').select('visibility').execute(),
+      ).toEqual([{ visibility: 'private' }])
+      expect(
+        await db.selectFrom('versions').selectAll().execute(),
+      ).toHaveLength(1)
+    },
+  )
+
   test('records a link-visible file creation in the durable ledger', async () => {
     await db
       .updateTable('workspaces')

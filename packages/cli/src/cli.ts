@@ -398,6 +398,7 @@ With no destination, share posts to home. Choose the setting by purpose:
   Shared policy agreed by all repository participants:
     npm exec --yes --package=@artifactshare/cli -- artifactshare config set home_audience workspace --scope repository --json
   One-time audience for a single post: pass --visibility private|workspace|link.
+    With no audience setting, Home uses workspace for organization accounts and private otherwise. Explicit/configured workspace still rejects when unavailable. Link sharing requires --visibility link.
   Link sharing accepts --link-expires-at <RFC3339 UTC> or --no-link-expiry;
   these expiry options are mutually exclusive.
   Pass --no-slack-notify to suppress the project Slack notification for this post.
@@ -1445,7 +1446,7 @@ Keys:
   default_artifact_visibility    Compatibility alias for home_audience.
   default_project_visibility     Advanced default for projects create.
 
-Scopes: user stores in the global config; repository stores in the shared .artifactshare/config.json; effective reads the resolved value. Home audience resolution is repository home_audience, repository alias, user home_audience, user alias, then product default workspace. Project defaults resolve repository, user, then workspace. Keyless config get --json returns only home_audience; pass an explicit key to read default_project_visibility or the compatibility alias. Explicit --visibility overrides the destination default for one post.`,
+Scopes: user stores in the global config; repository stores in the shared .artifactshare/config.json; effective reads the resolved value. Home audience resolution is repository home_audience, repository alias, user home_audience, user alias, then the account-aware product default (workspace when available, otherwise private). Config inspection is offline: value workspace with source product_default is unresolved until share or preview reads the account capability. Older servers without the capability retain workspace. Project defaults resolve repository, user, then workspace. Keyless config get --json returns only home_audience; pass an explicit key to read default_project_visibility or the compatibility alias. Explicit --visibility overrides the destination default for one post.`,
   run: parentCommandRunner('config'),
 })
 

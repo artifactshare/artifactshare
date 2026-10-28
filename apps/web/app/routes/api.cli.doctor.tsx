@@ -1,3 +1,4 @@
+import { isOrgWorkspace } from '~/lib/user'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
 import { CLI_DOCTOR_RESPONSE_SCHEMA } from '@artifactshare/contract'
@@ -27,6 +28,7 @@ export async function loader({ context }: Route.LoaderArgs) {
     workspace: {
       id: user.workspaceId,
       hosted_domain: user.hd,
+      visibility_available: isOrgWorkspace(user),
     },
     auth: {
       kind: 'bearer_or_session',

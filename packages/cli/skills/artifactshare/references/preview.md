@@ -153,3 +153,5 @@ carried into the shared copy.
 Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.
 
 Local preview and share-dialog HTTP routes still lack per-session authentication. Loopback binding, Host checks and fixed mutation headers do not authenticate other local clients. Do not treat knowledge of the local port as an access-control boundary. Session authentication and private browser launchers are deferred; the existing ready `url` and `--no-open` behavior are unchanged.
+
+When no audience is configured, the Home share dialog asks the server after sign-in whether the account can use workspace visibility and defaults to private when it cannot. Explicit or configured audiences are preserved.

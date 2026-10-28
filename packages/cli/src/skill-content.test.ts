@@ -57,8 +57,8 @@ test('bundled entrypoint is short, valid, managed and links every reference', as
   assert.equal(metadata.name, 'artifactshare')
   assert.equal(typeof metadata.description, 'string')
   assert.ok(metadata.description.length > 0)
-  assert.deepEqual(managedState(entry), { kind: 'managed', version: 50 })
-  assert.equal(bundle.version, 50)
+  assert.deepEqual(managedState(entry), { kind: 'managed', version: 51 })
+  assert.equal(bundle.version, 51)
 })
 
 test('bundle checks reject missing, unlinked, oversized and chained documentation', () => {

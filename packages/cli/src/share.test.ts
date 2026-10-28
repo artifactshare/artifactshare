@@ -116,6 +116,10 @@ test('share sends link visibility and finite expiry', async () => {
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -158,6 +162,10 @@ test('share --no-slack-notify sends slack_notify=false', async () => {
   const bodies: string[] = []
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -184,7 +192,11 @@ test('share preserves Slack reauthorization warnings in successful JSON', async 
   const target = join(root, 'report.html')
   await writeFile(target, '<html></html>')
   await withServer(
-    async (_request, response) => {
+    async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       writeJson(response, {
         id: 'abc123def4',
         versionId: 'v1',
@@ -360,7 +372,11 @@ test('share --json keeps auth_required when device auth cannot start', async (t)
   await writeFile(uploadPath, '<p>report</p>')
   const configHome = await mkdtemp(join(tmpdir(), 'artifactshare-share-auth-'))
   await withServer(
-    (_request, response) => {
+    (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       writeJson(response, { error: { code: 'not-found' } }, 404)
     },
     async (baseUrl) => {
@@ -761,6 +777,10 @@ test('share --json refreshes an expired session profile and retries once', async
   await withServer(
     (request, response) => {
       const url = request.url ?? ''
+      if (url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       if (url === '/api/auth/device/code') {
         deviceCodeRequests += 1
         mockDeviceCode(response)
@@ -857,6 +877,10 @@ test('share without a destination defaults to home', async () => {
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -911,6 +935,10 @@ test('share --key sends publish_key and reports created and key', async () => {
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       urls.push(request.url ?? '')
       await collectBody(request)
       response.setHeader('content-type', 'application/json')
@@ -957,6 +985,10 @@ test('share --key preserves version conflicts as recoverable input changes', asy
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       assert.equal(
         new URL(request.url!, 'http://localhost').searchParams.get(
           'expected_version',
@@ -1014,7 +1046,11 @@ test('share --key maps key error codes from the server', async () => {
     ['key-conflict', 'key_conflict'],
   ] as const) {
     await withServer(
-      (_request, response) => {
+      (request, response) => {
+        if (request.url === '/api/cli/whoami')
+          return writeJson(response, {
+            workspace: { visibility_available: true },
+          })
         response.statusCode = 409
         response.setHeader('content-type', 'application/json')
         response.end(
@@ -1181,6 +1217,10 @@ test('share to a project defaults visibility to project and reports the confirme
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1226,7 +1266,11 @@ test('share blocked by self-upload access asks a human for help', async () => {
   await writeFile(target, '<html></html>')
 
   await withServer(
-    (_request, response) => {
+    (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       response.statusCode = 403
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1314,6 +1358,10 @@ test('share to home uses the workspace product default and server-confirmed visi
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1350,6 +1398,10 @@ test('share to a project with explicit grant emails keeps project visibility', a
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1400,6 +1452,10 @@ test('share --home overrides the working-directory default project', async () =>
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1459,6 +1515,10 @@ test('share --home uses shared visibility with an explicit home despite local de
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -1506,6 +1566,10 @@ test('share --home prefers repository home audience over the legacy key', async 
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -1550,6 +1614,10 @@ test('share visibility explicit flag wins over project and default visibility, i
 
   await withServer(
     async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       writeJson(response, {
         id: 'abc123def4',
@@ -1614,6 +1682,10 @@ test('share --project resolves destination.project_id by exact name match', asyn
         )
         return
       }
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
       bodies.push(await collectBody(request))
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -1870,4 +1942,99 @@ test('direct share runner rejects numeric version ids before file work', async (
     stderr.mockRestore()
     process.exitCode = previousExitCode
   }
+})
+
+for (const kind of ['html', 'md', 'directory']) {
+  for (const available of [false, true, undefined]) {
+    test(`share ${kind} resolves product default from capability ${available} with one upload`, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
+      const target = kind === 'directory' ? root : join(root, `report.${kind}`)
+      await writeFile(
+        kind === 'directory' ? join(root, 'index.html') : target,
+        '<h1>Report</h1>',
+      )
+      let uploads = 0
+      let reads = 0
+      await withServer(
+        async (request, response) => {
+          assert.equal(request.headers.authorization, 'Bearer test-token')
+          if (request.url === '/api/cli/whoami') {
+            reads++
+            return writeJson(response, {
+              workspace: {
+                hosted_domain: null,
+                ...(available === undefined
+                  ? {}
+                  : { visibility_available: available }),
+              },
+            })
+          }
+          assert.equal(request.method, 'POST')
+          uploads++
+          const visibility = formField(await collectBody(request), 'visibility')
+          assert.equal(
+            visibility,
+            available === false ? 'private' : 'workspace',
+          )
+          writeJson(response, {
+            id: 'abc123def4',
+            versionId: 'v1',
+            artifactKind:
+              kind === 'directory'
+                ? 'static_site'
+                : kind === 'md'
+                  ? 'markdown_page'
+                  : 'html_page',
+            visibility,
+            shareUrl: 'https://example.com/a/abc123def4',
+          })
+        },
+        async (baseUrl) => {
+          const result = expectSuccess(
+            await runAsync(['share', target, '--base-url', baseUrl, '--json'], {
+              ARTIFACTSHARE_TOKEN: 'test-token',
+            }),
+            'share',
+          )
+          assert.equal(
+            result.data.share.visibility,
+            available === false ? 'private' : 'workspace',
+          )
+          assert.equal(
+            result.data.share.visibility_source,
+            available === false ? 'product_default_private' : undefined,
+          )
+          if (available === false)
+            assert.match(
+              result.data.share.visibility_hint,
+              /--visibility link deliberately/,
+            )
+        },
+      )
+      assert.equal(uploads, 1)
+      assert.equal(reads, 1)
+    })
+  }
+}
+
+test('share keeps the workspace default when the capability read fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
+  const target = join(root, 'report.html')
+  await writeFile(target, '<h1>Report</h1>')
+  let uploads = 0
+  await withServer(
+    (request, response) => {
+      if (request.method === 'POST') uploads++
+      writeJson(response, { error: { code: 'service-error' } }, 503)
+    },
+    async (baseUrl) => {
+      expectFailure(
+        await runAsync(['share', target, '--base-url', baseUrl, '--json'], {
+          ARTIFACTSHARE_TOKEN: 'test-token',
+        }),
+        { command: 'share', code: 'service_error' },
+      )
+    },
+  )
+  assert.equal(uploads, 1)
 })

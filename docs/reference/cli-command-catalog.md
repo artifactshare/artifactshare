@@ -240,7 +240,7 @@ it reports the current version and uses `recovery.kind: ask_human` with
 
 - 件数が増え続ける一覧系（`artifacts list`）はページングを持つ。読み戻しの継続には、`artifacts get` の `offset` / `next_offset` と同じ「次の位置を返す」方式に揃える。`projects list` は利用者が手で整理する小さな集合のため全件返しにする（MCP の `list_projects` と同じ）。`comments list` は未解決を優先した上限 50 スレッド + `has_more` で返し、offset は持たない（MCP の `list_comments` と同じ）。
 - 上限値や容量はバイト単位の整数で返す（`limit_bytes` など）。人間向け文言は読みやすさを優先してよいが、判定の正本はバイト値にする。
-- 非対話・パイプ・`CI=true` では JSON を既定にする。`share` の投稿先未指定は home、共有範囲未指定はリポジトリ設定、利用者設定、`workspace` の順で決定する。それ以外の対象が曖昧なときは候補と次に指定すべき値を `error` で返して失敗する。
+- 非対話・パイプ・`CI=true` では JSON を既定にする。`share` の投稿先未指定は home、共有範囲未指定はリポジトリ設定、利用者設定、アカウントに応じた製品既定値の順で決定する。製品既定値は組織の共有範囲を利用できれば `workspace`、それ以外は `private`。明示・設定済みの `workspace` は従来どおり拒否され、CLI では `validation_failed` になる。`link` へ自動変更しない。`whoami` / `doctor` の `workspace.visibility_available` が可否を示し、private への変更時は share 結果の `visibility_source: "product_default_private"` と `visibility_hint` が理由を示す。config はオフラインで、`source: product_default` の `workspace` は share / preview 時に確定する未解決の方針。可否を返さない旧サーバーでは従来の workspace を維持する。それ以外の対象が曖昧なときは候補と次に指定すべき値を `error` で返して失敗する。
 - プロジェクト投稿で `--visibility` を省略した場合は `project` を使い、`--grant-email` は個別共有先だけを加える。CLI は利用者が共有範囲と個別共有を独立して組み立てる操作面なので、MCP の暗黙補正に合わせて `private` へ変更しない。
 
 ## 大きな成果物の読み取り

@@ -463,6 +463,7 @@ test('opaque version ids are sent unchanged with every accepted spelling', async
       export const FormData = globalThis.FormData;
       export class Agent {}
       export async function fetch(input) {
+        if (new URL(String(input)).pathname === '/api/cli/whoami') return new Response(JSON.stringify({workspace:{visibility_available:true}}));
         writeFileSync(${JSON.stringify(request)}, JSON.stringify(String(input)));
         return new Response(JSON.stringify({error:{code:'version_conflict',message:'Changed'}}), {status:409});
       }`

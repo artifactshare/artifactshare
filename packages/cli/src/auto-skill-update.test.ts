@@ -85,6 +85,10 @@ async function runSuccessfulShare<T>(
   callback: (baseUrl: string) => Promise<T>,
 ) {
   return withServer((request, response) => {
+    if (request.url === '/api/cli/whoami') {
+      writeJson(response, { workspace: { visibility_available: false } })
+      return
+    }
     if (request.url === '/api/shareables/uploads') {
       request.resume()
       request.on('end', () => {

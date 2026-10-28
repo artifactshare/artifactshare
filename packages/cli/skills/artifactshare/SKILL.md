@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 50
+version: 51
 managed: true
 -->
 
@@ -97,8 +97,11 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --
 --scope user --json` for a personal safe default in this CLI environment,
   use `--scope repository` only for a policy agreed by all participants, and
   use `--visibility private|workspace|link` for one home post.
-- Confirm the resolved home audience before posting with
+- Inspect the home audience policy before posting with
   `config get home_audience --scope effective --json`.
+- An unconfigured Home share checks the server: workspace-capable accounts use workspace; personal accounts use private. Keep explicit/configured values, including workspace rejections. Never retry as link without the user choosing --visibility link.
+  Offline config output leaves the product_default workspace policy unresolved. The account determines the audience during share or preview; an older server that omits visibility_available keeps the legacy workspace behavior.
+  Private fallback results include `data.share.visibility_source: "product_default_private"` and `visibility_hint`.
 - Set visibility at share time with `--visibility private|workspace|project|link`.
   This is a per-post override; `--grant-email` does not change the resolved
   default visibility.

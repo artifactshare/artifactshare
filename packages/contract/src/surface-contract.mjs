@@ -81,7 +81,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'share <path>',
-    'Share a file or folder as a new shared file (`--project`, `--home`, `--visibility`, `--key`, link expiry options)',
+    'Share a file or folder; unspecified Home audiences use workspace when available, otherwise private (`--project`, `--home`, `--visibility`, `--key`, link expiry options)',
   ],
   [
     'update <target> <path>',

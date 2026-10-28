@@ -276,15 +276,16 @@ describe('CLI reference content', () => {
               'repository default_artifact_visibility',
               'user home_audience',
               'user default_artifact_visibility',
-              'product default workspace',
+              'account-aware product default',
             ]
           : [
               'repository の home_audience',
               'repository の default_artifact_visibility',
               'user の home_audience',
               'user の default_artifact_visibility',
-              '製品既定 workspace',
+              'アカウントに応じた製品既定値',
             ]
+      for (const key of keys) expect(body).toContain(key)
       for (let index = 1; index < keys.length; index += 1) {
         expect(body.indexOf(keys[index - 1])).toBeLessThan(
           body.indexOf(keys[index]),
@@ -299,6 +300,13 @@ describe('CLI reference content', () => {
       expect(body).toMatch(/policy agreed|合意した方針/)
       expect(body).toMatch(/one post|一回限り/)
       expect(body).toContain('--scope effective')
+      expect(body).toContain('workspace.visibility_available')
+      expect(body).toContain('product_default_private')
+      expect(body).toMatch(/otherwise private|それ以外のアカウントなら private/)
+      expect(body).toMatch(/Config inspection is offline|config は通信せず/)
+      expect(body).toMatch(
+        /never automatically switches to link|link へ自動変更しません/,
+      )
     }
   })
 })

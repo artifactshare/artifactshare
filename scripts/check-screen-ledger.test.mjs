@@ -970,17 +970,19 @@ test('static optional sections validate and propagate checker errors', () => {
   }
 })
 
-test('CLI guide declares four ordered sections for both locale routes', () => {
+test('CLI guide declares five ordered sections for both locale routes', () => {
   const screen = ledgerScreens.find(
     (candidate) => candidate.id === 'guides-cli',
   )
   assert.deepEqual(screen.route, { en: '/guides/cli', ja: '/ja/guides/cli' })
   assert.deepEqual(
     screen.sections,
-    ['introduction', 'basics', 'commands', 'recovery'].map((id) => ({
-      id,
-      selector: `#${id}`,
-    })),
+    ['introduction', 'basics', 'destinations', 'commands', 'recovery'].map(
+      (id) => ({
+        id,
+        selector: `#${id}`,
+      }),
+    ),
   )
 })
 

@@ -1,3 +1,4 @@
+import { isOrgWorkspace } from '~/lib/user'
 import { CLI_WHOAMI_RESPONSE_SCHEMA } from '@artifactshare/contract'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
@@ -22,6 +23,7 @@ export function loader({ context }: Route.LoaderArgs) {
       workspace: {
         id: user.workspaceId,
         hosted_domain: user.hd,
+        visibility_available: isOrgWorkspace(user),
       },
       auth: {
         kind: 'bearer_or_session',

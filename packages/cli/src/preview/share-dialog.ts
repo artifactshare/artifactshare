@@ -6,6 +6,7 @@ import { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname } from 'node:path'
 import { mutationOriginAllowed } from './request-origin.js'
+import { resolveAccountHomeVisibility } from '../home-visibility.js'
 import {
   apiUrl,
   baseUrlOf,
@@ -189,7 +190,7 @@ export function createShareDialogHandler(
       'home_audience',
       await resolveSharedProjectConfig(),
     ).catch(() => null)
-    const defaultVisibility =
+    let defaultVisibility =
       resolved && !('error' in resolved) ? resolved.value : null
 
     // Resolving first lets a profile's own base URL reach requestConfig, which
@@ -206,6 +207,8 @@ export function createShareDialogHandler(
         file_name: handlerOptions.fileName,
       })
     }
+    let contextToken = token.token
+    let privateDefault = false
     let projectsResult = await fetchProjects(
       token.token,
       cliOptions,
@@ -216,12 +219,25 @@ export function createShareDialogHandler(
       // refresh comes too late: the destination has to be chosen first.
       const refreshed = await refreshTokenOnce(cliOptions, projectsResult.error)
       if (refreshed !== null) {
+        contextToken = refreshed
         projectsResult = await fetchProjects(
           refreshed,
           cliOptions,
           request.init,
         )
       }
+    }
+    if (resolved && !('error' in resolved)) {
+      const audience = await resolveAccountHomeVisibility(
+        resolved,
+        contextToken,
+        cliOptions,
+        request.init,
+        uploadErrorOptions(baseUrlOf(cliOptions)),
+      )
+      // The upload's own sign-in handling covers credential failures.
+      defaultVisibility = 'error' in audience ? resolved.value : audience.value
+      privateDefault = !('error' in audience) && audience.privateDefault
     }
     const projects = projectsResult.error
       ? null
@@ -233,6 +249,7 @@ export function createShareDialogHandler(
       authenticated: true,
       projects,
       default_visibility: defaultVisibility,
+      private_default: privateDefault,
       file_name: handlerOptions.fileName,
     })
   }
@@ -417,7 +434,15 @@ export function createShareDialogHandler(
       if ('error' in resolved) {
         return sendCliError(response, resolved.error)
       }
-      visibility = resolved.value
+      const audience = await resolveAccountHomeVisibility(
+        resolved,
+        token.token,
+        cliOptions,
+        request.init,
+        uploadErrorOptions(baseUrlOf(cliOptions)),
+      )
+      // The upload's own sign-in handling covers credential failures.
+      visibility = 'error' in audience ? resolved.value : audience.value
     }
 
     const { FormData } = await import('undici')
@@ -829,6 +854,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         <option value="link" id="visLink"></option>
       </select>
     </div>
+    <div class="note" id="privateDefaultNote"></div>
     <div class="note" id="notCarried"></div>
     <div class="note" id="snapshotNote"></div>
     <div class="error" id="shareError"></div>
@@ -872,6 +898,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('visPrivate').textContent = t('visibilityPrivate');
   el('visWorkspace').textContent = t('visibilityWorkspace');
   el('visLink').textContent = t('visibilityLink');
+  el('privateDefaultNote').textContent = t('privateDefault');
   el('notCarried').textContent = t('notCarried');
   el('cancelBtn').textContent = t('cancel');
   el('shareBtn').textContent = t('confirm');
@@ -988,8 +1015,14 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     } else if (visibility.value === 'project') {
       visibility.value = context.default_visibility || 'private';
     }
+    // Explain a private Home default that came from the account, not a choice.
+    el('privateDefaultNote').style.display =
+      !projectSelected && context.private_default && visibility.value === 'private'
+        ? ''
+        : 'none';
   }
   el('destination').addEventListener('change', syncVisibility);
+  el('visibility').addEventListener('change', syncVisibility);
 
   function share() {
     if (!snapshotId || shareInFlight) return;

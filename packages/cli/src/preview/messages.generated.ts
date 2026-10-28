@@ -94,6 +94,8 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.visibility': 'Visibility',
     'preview.shareDialog.notCarried':
       'Local annotations are not carried over. You can comment again after sharing.',
+    'preview.shareDialog.privateDefault':
+      'This account cannot share with everyone in a workspace, so Home defaults to “Specific people”. Choose “Anyone with the link” only when you mean to share with anyone who has the link.',
     'preview.shareDialog.snapshotNote':
       'Captured at {time}. Later changes are not included.',
     'preview.shareDialog.confirm': 'Share',
@@ -224,6 +226,8 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.visibility': '共有範囲',
     'preview.shareDialog.notCarried':
       'ローカルのコメントは共有先には引き継がれません。共有後は共有先で新しくコメントできます',
+    'preview.shareDialog.privateDefault':
+      'このアカウントでは「社内全員」に共有できないため、ホームの既定は「個別共有」です。リンクを知っている人全員に共有するときだけ、「リンクを知っている全員」を選んでください',
     'preview.shareDialog.snapshotNote':
       '{time} 時点の内容です。それ以降の変更は含まれません',
     'preview.shareDialog.confirm': '共有する',

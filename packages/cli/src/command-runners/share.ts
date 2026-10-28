@@ -1,4 +1,8 @@
 import {
+  resolveAccountHomeVisibility,
+  PRIVATE_DEFAULT_HINT,
+} from '../home-visibility.js'
+import {
   ARTIFACT_KEY_MAX_LENGTH,
   type ArtifactUploadQuery,
 } from '@artifactshare/contract'
@@ -181,9 +185,36 @@ export async function runShare(
   if (defaultVisibility && 'error' in defaultVisibility) {
     return writeFailure(command, defaultVisibility.error, mode, 1)
   }
+  const accountVisibility = defaultVisibility
+    ? await resolveAccountHomeVisibility(
+        defaultVisibility,
+        credential.token,
+        parsed.options,
+        request.init,
+        {
+          authenticated: true,
+          baseUrl,
+          credentialSource: credential.source,
+          profile: credential.profile,
+          profileCredentialKind: credential.profileCredentialKind,
+          botProfile: credential.botProfile,
+        },
+      )
+    : null
+  if (accountVisibility && 'error' in accountVisibility) {
+    return handleAuthenticatedCredentialFailure(
+      command,
+      accountVisibility.error,
+      credential,
+      parsed.options,
+      mode,
+      () => runShare(parsed, mode, true, upload),
+      isRetry,
+    )
+  }
   const requestedVisibility =
     parsed.options.visibility ??
-    (destination.containerId ? 'project' : defaultVisibility!.value)
+    (destination.containerId ? 'project' : accountVisibility!.value)
   initialForm.set('visibility', requestedVisibility)
   for (const email of grantEmails) {
     initialForm.append('grant_email', email)
@@ -284,6 +315,15 @@ export async function runShare(
         // The server may adjust the stored visibility for the destination, so
         // report its confirmed value over the requested one.
         visibility: visibility ?? requestedVisibility,
+        // Only a newly created artifact got its audience from this default.
+        ...(accountVisibility?.privateDefault &&
+        created &&
+        visibility === 'private'
+          ? {
+              visibility_source: 'product_default_private',
+              visibility_hint: PRIVATE_DEFAULT_HINT,
+            }
+          : {}),
         grant_emails: grantEmails,
         link_expires_at: linkExpiresAt,
       },
