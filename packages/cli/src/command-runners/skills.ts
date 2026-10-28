@@ -1,6 +1,8 @@
-import { readFile, realpath, stat, lstat, unlink } from 'node:fs/promises'
+import { readFile, stat, lstat, unlink } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import {
+  resolveSkillFolder,
+  cleanupSkillFolder,
   managedState,
   readSkillState,
   loadSkillBundle,
@@ -77,11 +79,87 @@ function scopeTargetConfig(
   }
 }
 
+type SkillAlias = {
+  tool: string
+  scope: string
+  path: string | null
+  folder_path: string | null
+}
+function aliases(target: ResolvedSkillTarget): SkillAlias[] {
+  return (
+    ('aliases' in target && target.aliases) || [
+      {
+        tool: target.tool,
+        scope: target.scope,
+        path: target.path,
+        folder_path: target.path === null ? null : dirname(target.path),
+      },
+    ]
+  )
+}
+function identity(target: ResolvedSkillTarget) {
+  return {
+    aliases: aliases(target),
+    resolved_folder_path:
+      'resolved_folder_path' in target
+        ? (target.resolved_folder_path ?? null)
+        : null,
+  }
+}
+function targetOrder(a: SkillAlias, b: SkillAlias) {
+  return (
+    SKILL_TOOLS.indexOf(a.tool as SkillTool) -
+      SKILL_TOOLS.indexOf(b.tool as SkillTool) ||
+    (a.scope === b.scope ? 0 : a.scope === 'project' ? -1 : 1)
+  )
+}
+async function cleanupTarget(target: SkillTarget) {
+  if (target.cleaned) return
+  await cleanupSkillFolder(target.absolutePath)
+  target.cleaned = true
+}
+async function groupTargets<T extends ResolvedSkillTarget>(
+  targets: T[],
+): Promise<T[]> {
+  const groups = new Map<string, T>()
+  const result: T[] = []
+  for (const target of [...targets].sort((a, b) =>
+    targetOrder(aliases(a)[0]!, aliases(b)[0]!),
+  )) {
+    if (!availableTarget(target)) {
+      result.push(target)
+      continue
+    }
+    const key = await resolveSkillFolder(target.absolutePath).catch(() => null)
+    target.resolved_folder_path = key
+    const existing = key === null ? undefined : groups.get(key)
+    if (existing && availableTarget(existing))
+      existing.aliases = [...aliases(existing), ...aliases(target)]
+    else {
+      target.aliases = aliases(target)
+      result.push(target)
+      if (key !== null) groups.set(key, target)
+    }
+  }
+  return result
+}
+async function conflictFor(target: SkillTarget) {
+  const error = skillUpdateConflictError(target.path)
+  try {
+    await preflightFolder(target.absolutePath)
+  } catch (cause) {
+    error.hint = (cause as Error).message
+  }
+  return error
+}
 type SkillTarget = {
   tool: SkillTool
   scope: SkillScope
   path: string
   absolutePath: string
+  cleaned?: boolean
+  aliases?: SkillAlias[]
+  resolved_folder_path?: string | null
 }
 
 type UnavailableSkillTarget = {
@@ -113,6 +191,7 @@ function availableTarget(target: ResolvedSkillTarget): target is SkillTarget {
 
 function unavailableState(target: UnavailableSkillTarget) {
   return {
+    ...identity(target),
     tool: target.tool,
     scope: target.scope,
     path: null,
@@ -190,8 +269,14 @@ function loadBundledSkills(): Promise<BundledSkills> {
     fileURLToPath(new URL('../skills/artifactshare/', import.meta.url)),
   )
 }
+function cursorProjectAlias(target: SkillTarget) {
+  return aliases(target).find(
+    (alias) => alias.tool === 'cursor' && alias.scope === 'project',
+  )
+}
 async function legacyRule(target: SkillTarget) {
-  if (target.tool !== 'cursor' || target.scope !== 'project') return undefined
+  const cursor = cursorProjectAlias(target)
+  if (!cursor) return undefined
   const path = join('.cursor', 'rules', 'artifactshare.mdc')
   const info = await lstat(path).catch(() => null)
   const parent = await lstat(dirname(path)).catch(() => null)
@@ -202,7 +287,7 @@ async function legacyRule(target: SkillTarget) {
   const present = info !== null
   const managed = managedState(content).kind === 'managed'
   const coexistence =
-    present && (await lstat(target.absolutePath).catch(() => null)) !== null
+    present && (await lstat(resolve(cursor.path!)).catch(() => null)) !== null
   return {
     path,
     present,
@@ -223,12 +308,11 @@ async function legacyManagedVersion(
   return state.kind === 'managed' ? state.version : undefined
 }
 async function diagnostic(target: SkillTarget, bundle: BundledSkills) {
+  const legacy = await legacyRule(target)
   return {
     ...(await folderDiagnostics(target.absolutePath, bundle)),
     folder_path: dirname(target.path),
-    ...(target.tool === 'cursor' && target.scope === 'project'
-      ? { legacy_rule: (await legacyRule(target))! }
-      : {}),
+    ...(legacy ? { legacy_rule: legacy } : {}),
   }
 }
 async function isCurrent(target: SkillTarget, bundle: BundledSkills) {
@@ -432,14 +516,19 @@ type PlannedAction = {
     hint?: string
   }
   fallbackAction?: SkillsTargetAction
+  hint?: string
   installedVersion?: number
 }
 
 function targetPathKey(target: SkillTarget): Promise<string> {
-  return realpath(target.absolutePath).catch(() => target.absolutePath)
+  return resolveSkillFolder(target.absolutePath).catch(
+    () => target.absolutePath,
+  )
 }
 
 async function prepareAction(item: PlannedAction, dryRun: boolean) {
+  if (!dryRun && (item.content || item.action === 'unchanged'))
+    await cleanupTarget(item.target)
   if (item.content) {
     if (item.automatic) {
       const details = await diagnostic(item.target, item.content)
@@ -492,9 +581,13 @@ async function applyAction(item: PlannedAction): Promise<void> {
       item.content,
       item.force,
       item.forceRetirement,
+      false,
     )
   if (item.action === 'removed')
-    await removeSkillFolder(item.target.absolutePath)
+    await removeSkillFolder(
+      item.target.absolutePath,
+      aliases(item.target).length > 1,
+    )
   if (item.legacy?.action === 'removed') {
     try {
       await unlink(item.legacy.path)
@@ -524,11 +617,15 @@ async function finishActions(
   dryRun: boolean,
   mode: OutputMode,
 ): Promise<SkillsActionData | undefined> {
+  planned.sort((a, b) =>
+    targetOrder(aliases(a.target)[0]!, aliases(b.target)[0]!),
+  )
   for (const item of planned) {
     try {
       await prepareAction(item, dryRun)
     } catch (error) {
       if (item.fallbackAction) {
+        item.hint = (error as Error).message
         item.action = item.fallbackAction
         delete item.content
         continue
@@ -543,7 +640,6 @@ async function finishActions(
   if (!dryRun) {
     for (const [index, item] of planned.entries()) {
       try {
-        await prepareAction(item, false)
         await applyAction(item)
         completed[index] = item
       } catch (error) {
@@ -551,6 +647,7 @@ async function finishActions(
           completed[index] = {
             target: item.target,
             action: item.fallbackAction,
+            hint: (error as Error).message,
           }
           continue
         }
@@ -561,10 +658,12 @@ async function finishActions(
   }
   const data: SkillsActionData = {
     dry_run: dryRun,
-    targets: completed.map(({ target, action, legacy }) => ({
+    targets: completed.map(({ target, action, legacy, hint }) => ({
+      ...(hint ? { hint } : {}),
       tool: target.tool,
       scope: target.scope,
       path: target.path,
+      ...identity(target),
       folder_path: dirname(target.path),
       ...(legacy ? { legacy_rule: legacy } : {}),
       action,
@@ -594,6 +693,7 @@ async function runActions(
         tool: target.tool,
         scope: target.scope,
         path: null,
+        ...identity(target),
         folder_path: null,
         action: 'skipped' as const,
         code: target.error.code,
@@ -647,18 +747,17 @@ export async function runSkillsInstall(
   if (!bundled) return
 
   const planned: PlannedAction[] = []
-  for (const tool of tools) {
-    const target = skillTarget(tool, scope)
+  for (const target of await groupTargets(
+    allTargets().filter(
+      (candidate) =>
+        tools.includes(candidate.tool) && candidate.scope === scope,
+    ),
+  )) {
     if (!availableTarget(target))
       return writeFailure(command, target.error, mode, 1)
     const state = await readTarget(target)
     if ((state.kind === 'unmanaged' || state.kind === 'broken') && !force) {
-      return writeFailure(
-        command,
-        skillUpdateConflictError(target.path),
-        mode,
-        1,
-      )
+      return writeFailure(command, await conflictFor(target), mode, 1)
     }
     const unchanged =
       state.kind === 'managed' && (await isCurrent(target, bundled)) && !force
@@ -719,13 +818,21 @@ export async function ensureSkills(
     automatic?.targets ??
     filteredTargets(filters.tools, filters.scope ?? 'project')
   const planned: PlannedAction[] = []
-  for (const target of targets) {
+  for (const target of await groupTargets(targets)) {
     const state = await readTarget(target)
     if (state.kind === 'unmanaged' || state.kind === 'broken') {
       if (options.skipBrokenUserSkills && state.kind === 'broken') {
+        const details = await diagnostic(target, bundled)
+        if (details.hint)
+          planned.push({
+            target,
+            action: 'update_recommended',
+            hint: details.hint,
+            fallbackAction: 'update_recommended',
+          })
         continue
       }
-      writeFailure(command, skillUpdateConflictError(target.path), mode, 1)
+      writeFailure(command, await conflictFor(target), mode, 1)
       return undefined
     }
     const automaticUpdate =
@@ -747,12 +854,20 @@ export async function ensureSkills(
     }
     const unchanged =
       state.kind === 'managed' &&
-      ((state.version >= bundled.version && automaticUpdate) ||
+      ((state.version >= bundled.version &&
+        !details.interrupted_update &&
+        automaticUpdate) ||
         state.version > bundled.version ||
         details.current)
     planned.push(
       unchanged
-        ? { target, action: 'unchanged' }
+        ? {
+            target,
+            action: 'unchanged',
+            ...(automaticUpdate
+              ? { fallbackAction: 'update_recommended' as const }
+              : {}),
+          }
         : {
             target,
             action: state.kind === 'missing' ? 'installed' : 'updated',
@@ -768,10 +883,46 @@ export async function ensureSkills(
     const plannedPaths = new Set(
       await Promise.all(planned.map((action) => targetPathKey(action.target))),
     )
-    for (const target of await automaticTargets(bundled)) {
-      if (plannedPaths.has(await targetPathKey(target))) continue
+    for (const target of await groupTargets(await automaticTargets(bundled))) {
+      if (plannedPaths.has(await targetPathKey(target))) {
+        const existing = planned.find((item) =>
+          target.resolved_folder_path !== null
+            ? item.target.resolved_folder_path === target.resolved_folder_path
+            : item.target.absolutePath === target.absolutePath,
+        )
+        if (existing) {
+          existing.target.aliases = [
+            ...aliases(existing.target),
+            ...aliases(target).filter(
+              (alias) =>
+                !aliases(existing.target).some(
+                  (old) => old.tool === alias.tool && old.scope === alias.scope,
+                ),
+            ),
+          ].sort(targetOrder)
+          const primary = existing.target.aliases[0]!
+          existing.target.tool = primary.tool as SkillTool
+          existing.target.scope = primary.scope as SkillScope
+          existing.target.path = primary.path!
+          existing.target.absolutePath = resolve(primary.path!)
+        }
+        continue
+      }
       const state = await readTarget(target)
       if (state.kind === 'managed' && state.version > bundled.version) continue
+      if (parsed.options.dryRun !== true) {
+        try {
+          await cleanupTarget(target)
+        } catch (error) {
+          planned.push({
+            target,
+            action: 'update_recommended',
+            hint: (error as Error).message,
+            fallbackAction: 'update_recommended',
+          })
+          continue
+        }
+      }
       const details = await diagnostic(target, bundled)
       if (state.kind === 'managed' && details.modified_files.length) {
         planned.push({
@@ -782,9 +933,12 @@ export async function ensureSkills(
         continue
       }
       if (
-        target.scope !== 'project' &&
-        (state.kind !== 'managed' ||
-          state.version >= bundled.version ||
+        !cursorProjectAlias(target) &&
+        ((state.kind !== 'managed' &&
+          !(state.kind === 'missing' && details.interrupted_update)) ||
+          (state.kind === 'managed' &&
+            state.version >= bundled.version &&
+            !details.interrupted_update) ||
           (await isCurrent(target, bundled)))
       ) {
         continue
@@ -792,10 +946,14 @@ export async function ensureSkills(
       planned.push({
         target,
         action:
-          state.kind === 'managed' && state.version >= bundled.version
+          state.kind === 'managed' &&
+          state.version >= bundled.version &&
+          !details.interrupted_update
             ? 'unchanged'
             : 'updated',
-        ...(state.kind === 'managed' && state.version >= bundled.version
+        ...(state.kind === 'managed' &&
+        state.version >= bundled.version &&
+        !details.interrupted_update
           ? {}
           : { content: bundled }),
         automatic: true,
@@ -825,10 +983,35 @@ export async function autoUpdateUserManagedSkills(): Promise<
   try {
     const bundled = await loadBundledSkills()
     const planned: PlannedAction[] = []
-    for (const target of await automaticTargets(bundled)) {
+    for (const target of await groupTargets(await automaticTargets(bundled))) {
       const state = await readTarget(target)
       if (state.kind === 'managed' && state.version > bundled.version) continue
+      try {
+        await cleanupTarget(target)
+      } catch (error) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          hint: (error as Error).message,
+          ...(state.kind === 'managed'
+            ? { installedVersion: state.version }
+            : {}),
+        })
+        continue
+      }
       const details = await diagnostic(target, bundled)
+      if (details.hint) {
+        planned.push({
+          target,
+          action: 'update_recommended',
+          hint: details.hint,
+          fallbackAction: 'update_recommended',
+          ...(state.kind === 'managed'
+            ? { installedVersion: state.version }
+            : {}),
+        })
+        continue
+      }
       if (state.kind === 'managed' && details.modified_files.length) {
         planned.push({
           target,
@@ -838,9 +1021,12 @@ export async function autoUpdateUserManagedSkills(): Promise<
         continue
       }
       if (
-        target.scope !== 'project' &&
-        (state.kind !== 'managed' ||
-          state.version >= bundled.version ||
+        !cursorProjectAlias(target) &&
+        ((state.kind !== 'managed' &&
+          !(state.kind === 'missing' && details.interrupted_update)) ||
+          (state.kind === 'managed' &&
+            state.version >= bundled.version &&
+            !details.interrupted_update) ||
           (await isCurrent(target, bundled)))
       ) {
         continue
@@ -848,10 +1034,14 @@ export async function autoUpdateUserManagedSkills(): Promise<
       planned.push({
         target,
         action:
-          state.kind === 'managed' && state.version >= bundled.version
+          state.kind === 'managed' &&
+          state.version >= bundled.version &&
+          !details.interrupted_update
             ? 'unchanged'
             : 'updated',
-        ...(state.kind === 'managed' && state.version >= bundled.version
+        ...(state.kind === 'managed' &&
+        state.version >= bundled.version &&
+        !details.interrupted_update
           ? {}
           : { content: bundled }),
         automatic: true,
@@ -871,8 +1061,9 @@ export async function autoUpdateUserManagedSkills(): Promise<
         await prepareAction(item, false)
         await applyAction(item)
         completed[index] = item
-      } catch {
+      } catch (error) {
         completed[index] = {
+          hint: (error as Error).message,
           target: item.target,
           action: 'update_recommended',
           ...(item.installedVersion !== undefined
@@ -884,10 +1075,12 @@ export async function autoUpdateUserManagedSkills(): Promise<
 
     return {
       targets: completed.map(
-        ({ target, action, installedVersion, legacy }) => ({
+        ({ target, action, installedVersion, legacy, hint }) => ({
+          ...(hint ? { hint } : {}),
           tool: target.tool,
           scope: target.scope,
           path: target.path,
+          ...identity(target),
           folder_path: dirname(target.path),
           ...(legacy ? { legacy_rule: legacy } : {}),
           action:
@@ -920,7 +1113,7 @@ export async function runSkillsList(
   const bundled = await bundledOrFailure('skills list', mode)
   if (!bundled) return
   const targets = []
-  for (const target of allTargets()) {
+  for (const target of await groupTargets(allTargets())) {
     if (!availableTarget(target)) {
       targets.push({ ...unavailableState(target), detected: false })
       continue
@@ -930,8 +1123,15 @@ export async function runSkillsList(
       tool: target.tool,
       scope: target.scope,
       path: target.path,
+      ...identity(target),
       ...(await diagnostic(target, bundled)),
-      detected: await isToolDetected(target.tool, target.scope),
+      detected: (
+        await Promise.all(
+          aliases(target).map((alias) =>
+            isToolDetected(alias.tool as SkillTool, alias.scope as SkillScope),
+          ),
+        )
+      ).some(Boolean),
       installed: state.kind !== 'missing',
       managed: state.kind === 'managed',
       installed_version: state.kind === 'managed' ? state.version : null,
@@ -946,7 +1146,7 @@ export async function runSkillsList(
 export async function skillDiagnostics(): Promise<DoctorSkillsData> {
   const bundled = await loadBundledSkills()
   const targets = []
-  for (const target of allTargets()) {
+  for (const target of await groupTargets(allTargets())) {
     if (!availableTarget(target)) {
       targets.push({ ...unavailableState(target), update_command: null })
       continue
@@ -956,7 +1156,10 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
     const updateAvailable =
       state.kind === 'managed' && state.version !== bundled.version
     let recoveryCommand = skillUpdateCommand(target)
-    if (state.kind === 'managed' && !details.current) {
+    if (
+      (state.kind === 'managed' && !details.current) ||
+      details.interrupted_update
+    ) {
       try {
         await preflightFolder(target.absolutePath, bundled)
       } catch {
@@ -971,9 +1174,13 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       managed: state.kind === 'managed',
       installed_version: state.kind === 'managed' ? state.version : null,
       update_available: updateAvailable,
+      ...identity(target),
       ...details,
-      update_command:
-        updateAvailable || (state.kind === 'managed' && !details.current)
+      update_command: details.hint
+        ? null
+        : updateAvailable ||
+            details.interrupted_update ||
+            (state.kind === 'managed' && !details.current)
           ? recoveryCommand
           : null,
     })
@@ -1006,19 +1213,17 @@ export async function runSkillsUpdate(
   if (!bundled) return
 
   const planned: PlannedAction[] = []
-  for (const target of filteredTargets(filters.tools, filters.scope)) {
+  for (const target of await groupTargets(
+    filteredTargets(filters.tools, filters.scope),
+  )) {
     const state = await readTarget(target)
     if (state.kind === 'broken') {
-      return writeFailure(
-        command,
-        skillUpdateConflictError(target.path),
-        mode,
-        1,
-      )
+      return writeFailure(command, await conflictFor(target), mode, 1)
     }
     if (state.kind === 'missing') {
       planned.push(
-        (await legacyRule(target))?.managed
+        (await legacyRule(target))?.managed ||
+          (await diagnostic(target, bundled)).interrupted_update
           ? { target, action: 'installed', content: bundled }
           : { target, action: 'not_installed' },
       )
@@ -1055,19 +1260,18 @@ export async function runSkillsRemove(
   if (unavailable) return writeFailure(command, unavailable, mode, 1)
 
   const planned: PlannedAction[] = []
-  for (const target of filteredTargets(filters.tools, filters.scope)) {
+  for (const target of await groupTargets(
+    filteredTargets(filters.tools, filters.scope),
+  )) {
     const state = await readTarget(target)
     if (state.kind === 'broken')
-      return writeFailure(
-        command,
-        skillUpdateConflictError(target.path),
-        mode,
-        1,
-      )
+      return writeFailure(command, await conflictFor(target), mode, 1)
     const managedLegacy = (await legacyRule(target))?.managed === true
     const action: SkillsTargetAction =
       state.kind === 'missing'
-        ? managedLegacy
+        ? managedLegacy ||
+          (await diagnostic(target, await loadBundledSkills()))
+            .interrupted_update
           ? 'removed'
           : 'not_installed'
         : state.kind === 'managed'

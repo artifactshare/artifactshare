@@ -1660,7 +1660,8 @@ const skillsListDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
 
 Reports each tool and scope with detection, version, completeness, missing/differing files,
-ownership metadata, and legacy Cursor rule coexistence.
+ownership metadata, and legacy Cursor rule coexistence. Shared folders appear once with aliases
+and resolved_folder_path; broken links include repair hints.
 Runs locally; no network or authentication is used.`,
 })
 
@@ -1681,7 +1682,10 @@ const skillsUpdateDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json
 
-Updates managed folders, repairs same-version drift, and preserves user-added files.
+Updates managed folders and repairs missing files. Edited owned files require --force; user additions are preserved.
+Folder and ancestor directory symlinks are resolved; internal links are refused even with --force.
+Shared folders are written once. JSON rows include aliases and resolved_folder_path.
+Real mutations clean reserved stale staging and UUID temporary files; dry runs do not.
 Managed legacy Cursor rules migrate after the new project folder is ready.
 
 Common failures:

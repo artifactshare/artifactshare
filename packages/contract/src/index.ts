@@ -1437,7 +1437,21 @@ export const SkillLegacyDiagnosticSchema = z.object({
   coexistence: z.boolean(),
   hint: z.string().nullable(),
 })
+const SkillTargetIdentityShape = {
+  aliases: z
+    .array(
+      z.object({
+        tool: z.string(),
+        scope: z.string(),
+        path: z.string().nullable(),
+        folder_path: z.string().nullable(),
+      }),
+    )
+    .optional(),
+  resolved_folder_path: z.string().nullable().optional(),
+}
 export const SkillFolderDiagnosticSchema = z.object({
+  ...SkillTargetIdentityShape,
   folder_path: z.string().nullable(),
   complete: z.boolean(),
   current: z.boolean(),
@@ -1445,6 +1459,7 @@ export const SkillFolderDiagnosticSchema = z.object({
   missing_files: z.array(z.string()),
   different_files: z.array(z.string()),
   modified_files: z.array(z.string()),
+  interrupted_update: z.boolean().optional(),
   ownership_manifest: z.enum(['valid', 'absent', 'invalid']),
   legacy_rule: SkillLegacyDiagnosticSchema.optional(),
 })
@@ -1483,6 +1498,7 @@ export const SkillLegacyActionSchema = z.object({
   hint: z.string().optional(),
 })
 export const SkillsActionTargetSchema = z.object({
+  ...SkillTargetIdentityShape,
   tool: z.string(),
   scope: z.string(),
   path: z.string().nullable(),
@@ -1505,4 +1521,21 @@ export const SkillsActionTargetSchema = z.object({
 export const SkillsActionDataSchema = z.object({
   dry_run: z.boolean(),
   targets: z.array(SkillsActionTargetSchema),
+})
+
+export const SkillAutoUpdateTargetSchema = SkillsActionTargetSchema.extend({
+  path: z.string(),
+  folder_path: z.string(),
+  scope: z.enum(['user', 'project']),
+  action: z.enum(['updated', 'update_recommended']),
+  installed_version: z.number(),
+  bundled_version: z.number(),
+})
+export const SkillAutoUpdateDataSchema = z.object({
+  targets: z.array(SkillAutoUpdateTargetSchema),
+})
+export const SkillAutoUpdateContainerSchema = z.object({
+  skills: z
+    .object({ auto_update: SkillAutoUpdateDataSchema.optional() })
+    .optional(),
 })

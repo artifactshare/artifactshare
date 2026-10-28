@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   mkdtemp,
   mkdir,
@@ -67,6 +68,10 @@ for (const failure of ['write', 'rename'])
         return fs.rename(...args)
       })
     await assert.rejects(writeSkillFolder(entry, bundle(2)), /synthetic/)
+    await assert.rejects(
+      readFile(join(folder, '.artifactshare-pending.json')),
+      /ENOENT/,
+    )
     assert.equal(await readFile(entry, 'utf8'), marker(1))
     assert.equal(
       await readFile(join(folder, '.artifactshare-managed.json'), 'utf8'),
@@ -82,14 +87,50 @@ for (const failure of ['write', 'rename'])
 test('references precede manifest and entry is always renamed last', async () => {
   root = await mkdtemp(join(tmpdir(), 'skill-order-'))
   await mkdir(join(root, '.agents'))
+  const fs =
+    await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(rename).mockImplementation(async (...args) => {
+    if (String(args[1]).endsWith('/a.md')) {
+      const intent = JSON.parse(
+        await readFile(
+          join(
+            root,
+            '.agents/skills/artifactshare/.artifactshare-pending.json',
+          ),
+          'utf8',
+        ),
+      )
+      assert.equal(intent.version, 1)
+      assert.deepEqual(
+        intent.files,
+        Object.fromEntries(
+          Object.entries(bundle(1).files).map(([path, text]) => [
+            path,
+            createHash('sha256').update(text).digest('hex'),
+          ]),
+        ),
+      )
+    }
+    return fs.rename(...args)
+  })
   await writeSkillFolder(
     join(root, '.agents/skills/artifactshare/SKILL.md'),
     bundle(1),
+  )
+  for (const [source] of vi.mocked(rename).mock.calls) {
+    assert.match(String(source), /skills\/\.artifactshare-staging-/)
+    assert.ok(!String(source).includes('/artifactshare/'))
+  }
+  assert.ok(
+    !(await readdir(join(root, '.agents/skills'))).some((name) =>
+      name.startsWith('.artifactshare-staging-'),
+    ),
   )
   const destinations = vi
     .mocked(rename)
     .mock.calls.map((args) => basename(String(args[1])))
   assert.deepEqual(destinations, [
+    '.artifactshare-pending.json',
     'a.md',
     'b.md',
     '.artifactshare-managed.json',
@@ -97,7 +138,11 @@ test('references precede manifest and entry is always renamed last', async () =>
   ])
 })
 
-for (const failurePath of ['references/new/b.md', 'SKILL.md'])
+for (const failurePath of [
+  'references/new/b.md',
+  '.artifactshare-managed.json',
+  'SKILL.md',
+])
   test(`failed commit at ${failurePath} rolls back new paths and permits retry`, async () => {
     root = await mkdtemp(join(tmpdir(), 'skill-retry-'))
     const folder = join(root, '.agents/skills/artifactshare')
@@ -120,6 +165,10 @@ for (const failurePath of ['references/new/b.md', 'SKILL.md'])
       return fs.rename(...args)
     })
     await assert.rejects(writeSkillFolder(entry, next), /synthetic/)
+    await assert.rejects(
+      readFile(join(folder, '.artifactshare-pending.json')),
+      /ENOENT/,
+    )
     assert.equal(await readFile(entry, 'utf8'), marker(1))
     assert.equal(
       await readFile(join(folder, 'references/a.md'), 'utf8'),
@@ -201,4 +250,65 @@ test('ordinary retired references remain readable until replacement references a
     /ENOENT/,
   )
   assert.equal(await readFile(entry, 'utf8'), marker(2))
+})
+
+test('EXDEV fails without a copy fallback and removes staging before retry', async () => {
+  root = await mkdtemp(join(tmpdir(), 'skill-exdev-'))
+  const folder = join(root, '.agents/skills/artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle(1))
+  const before = await readFile(join(folder, '.artifactshare-managed.json'))
+  const fs =
+    await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(rename).mockImplementation(async (...args) => {
+    if (String(args[1]).endsWith('/SKILL.md'))
+      throw Object.assign(new Error('cross-device commit'), { code: 'EXDEV' })
+    return fs.rename(...args)
+  })
+  await assert.rejects(writeSkillFolder(entry, bundle(2)), { code: 'EXDEV' })
+  assert.deepEqual(
+    await readFile(join(folder, '.artifactshare-managed.json')),
+    before,
+  )
+  for (const [path, text] of Object.entries(bundle(1).files))
+    assert.equal(await readFile(join(folder, path), 'utf8'), text)
+  assert.deepEqual(await readdir(join(root, '.agents/skills')), [
+    'artifactshare',
+  ])
+  vi.mocked(rename).mockImplementation(fs.rename)
+  await writeSkillFolder(entry, bundle(2))
+})
+
+test('force update intent retains committed hashes instead of blessing edited backup bytes', async () => {
+  root = await mkdtemp(join(tmpdir(), 'skill-intent-'))
+  const folder = join(root, 'artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle(1))
+  const previous = JSON.parse(
+    await readFile(join(folder, '.artifactshare-managed.json'), 'utf8'),
+  )
+  await writeFile(join(folder, 'references/a.md'), 'personal edits')
+  const fs =
+    await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  let observed = false
+  vi.mocked(rename).mockImplementation(async (...args) => {
+    if (String(args[1]).endsWith('/a.md')) {
+      const intent = JSON.parse(
+        await readFile(join(folder, '.artifactshare-pending.json'), 'utf8'),
+      )
+      assert.deepEqual(intent.previous_files, previous.files)
+      observed = true
+      throw new Error('synthetic interrupted force update')
+    }
+    return fs.rename(...args)
+  })
+  await assert.rejects(
+    writeSkillFolder(entry, bundle(2), false, true),
+    /synthetic interrupted/,
+  )
+  assert.equal(observed, true)
+  assert.equal(
+    await readFile(join(folder, 'references/a.md'), 'utf8'),
+    'personal edits',
+  )
 })

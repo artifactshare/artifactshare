@@ -20,6 +20,14 @@ describe('CLI reference content', () => {
       expect(body).toContain('~/.claude')
       expect(body).toContain('skills list')
       expect(body).toContain('doctor')
+      for (const term of [
+        'aliases',
+        'resolved_folder_path',
+        'SKILL.md',
+        'skills update --force',
+        'dry-run',
+      ])
+        expect(body).toContain(term)
       expect(body).toContain(
         locale === 'en' ? 'unset CLAUDE_CONFIG_DIR' : '変数を解除',
       )

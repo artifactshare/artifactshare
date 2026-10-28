@@ -9,18 +9,22 @@ import {
   rename,
   unlink,
   rmdir,
+  rm,
 } from 'node:fs/promises'
-import { dirname, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
+import type { SkillFolderDiagnostic } from '../types.js'
 
 export type ManagedState =
   | { kind: 'missing' | 'unmanaged' | 'broken' }
   | { kind: 'managed'; version: number }
 export type SkillBundle = { files: Record<string, string>; version: number }
 const MANIFEST = '.artifactshare-managed.json'
+const PENDING = '.artifactshare-pending.json'
 type Manifest = {
   schema_version: 1
   version: number
   files: Record<string, string>
+  previous_files?: Record<string, string>
 }
 export function managedState(content: string | null): ManagedState {
   if (content === null) return { kind: 'missing' }
@@ -49,11 +53,54 @@ async function info(path: string) {
     throw error
   }
 }
-// Resolve the configuration root, but never follow links in the skills tree.
-async function rootFor(entry: string) {
-  const config = dirname(dirname(dirname(entry)))
-  const root = await realpath(config).catch(() => config)
-  return join(root, 'skills', 'artifactshare')
+// Only the configured folder boundary may be an alias. Descendants never are.
+export function resolveSkillFolder(entry: string): Promise<string> {
+  const resolveDirectory = async (path: string): Promise<string> => {
+    try {
+      const item = await info(path)
+      if (!item)
+        return join(await resolveDirectory(dirname(path)), basename(path))
+      const canonical = await realpath(path)
+      if (!(await lstat(canonical)).isDirectory())
+        throw new Error('Not a directory')
+      return canonical
+    } catch {
+      throw new Error(
+        `Unsafe skill folder: ${path}. Restore or repoint the link to a directory, or replace it with a real directory, then retry.`,
+      )
+    }
+  }
+  return resolveDirectory(dirname(entry))
+}
+const rootFor = resolveSkillFolder
+const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const legacyTemp = new RegExp(`^\\.artifactshare-${uuid}\\.tmp$`, 'i')
+const stagingName = new RegExp(`^\\.artifactshare-staging-${uuid}$`, 'i')
+async function inspectTree(root: string, cleanup = false): Promise<void> {
+  if (!(await info(root))) return
+  for (const name of await readdir(root)) {
+    const path = join(root, name)
+    const item = await lstat(path)
+    if (item.isSymbolicLink())
+      throw new Error(
+        `Unsafe skill path (link): ${path}. Preserve edits and replace the internal link with ordinary bundled content, then retry.`,
+      )
+    if (item.isDirectory()) await inspectTree(path, cleanup)
+    else if (cleanup && item.isFile() && legacyTemp.test(name))
+      await unlink(path)
+  }
+}
+export async function cleanupSkillFolder(entry: string) {
+  const root = await rootFor(entry)
+  await inspectTree(root, true)
+  const parent = dirname(root)
+  if (await info(parent))
+    for (const name of await readdir(parent))
+      if (
+        stagingName.test(name) &&
+        (await lstat(join(parent, name))).isDirectory()
+      )
+        await rm(join(parent, name), { recursive: true, force: true })
 }
 async function safe(
   root: string,
@@ -89,7 +136,7 @@ async function safe(
         (i === parts.length - 1 ? !item.isFile() : !item.isDirectory()))
     )
       throw new Error(
-        `Unsafe skill path (type change or link): ${parts[i]}. Inspect the path and reinstall the skill.`,
+        `Unsafe skill path (type change or link): ${parts[i]}. Preserve edits and replace internal links with ordinary bundled content, then retry.`,
       )
   }
 }
@@ -113,7 +160,11 @@ async function stateAt(root: string): Promise<ManagedState> {
   }
 }
 export async function readSkillState(entry: string): Promise<ManagedState> {
-  return stateAt(await rootFor(entry))
+  try {
+    return await stateAt(await rootFor(entry))
+  } catch {
+    return { kind: 'broken' }
+  }
 }
 export async function loadSkillBundle(root: string): Promise<SkillBundle> {
   const files: Record<string, string> = {}
@@ -145,41 +196,120 @@ export async function loadSkillBundle(root: string): Promise<SkillBundle> {
 async function ownership(
   root: string,
   state: ManagedState,
+  record = MANIFEST,
+  pending?: Manifest,
 ): Promise<{ status: 'absent' | 'valid' | 'invalid'; manifest?: Manifest }> {
   try {
-    const text = await textAt(root, MANIFEST)
+    const text = await textAt(root, record)
     if (text === null) return { status: 'absent' }
     const value = JSON.parse(text) as Manifest
     if (
-      state.kind !== 'managed' ||
       value.schema_version !== 1 ||
-      value.version !== state.version ||
+      !Number.isSafeInteger(value.version) ||
+      value.version < 0 ||
+      (record === MANIFEST &&
+        (state.kind === 'managed'
+          ? value.version !== state.version &&
+            value.version !== pending?.version
+          : state.kind !== 'missing' || !pending)) ||
       !value.files ||
       typeof value.files !== 'object' ||
       Array.isArray(value.files) ||
       !Object.hasOwn(value.files, 'SKILL.md')
     )
       return { status: 'invalid' }
-    const paths = Object.keys(value.files)
-    if (
-      new Set(paths.map((path) => path.toLowerCase())).size !== paths.length ||
-      !paths.every(
-        (path) =>
-          validPath(path) &&
-          typeof value.files[path] === 'string' &&
-          /^[a-f0-9]{64}$/.test(value.files[path]),
+    for (const files of [
+      value.files,
+      ...(value.previous_files === undefined ? [] : [value.previous_files]),
+    ]) {
+      if (!files || typeof files !== 'object' || Array.isArray(files))
+        return { status: 'invalid' }
+      const paths = Object.keys(files)
+      if (
+        new Set(paths.map((path) => path.toLowerCase())).size !==
+          paths.length ||
+        !paths.every(
+          (path) =>
+            validPath(path) &&
+            typeof files[path] === 'string' &&
+            /^[a-f0-9]{64}$/.test(files[path]),
+        )
       )
-    )
-      return { status: 'invalid' }
+        return { status: 'invalid' }
+    }
     return { status: 'valid', manifest: value }
   } catch {
     return { status: 'invalid' }
   }
 }
-export async function folderDiagnostics(entry: string, bundle: SkillBundle) {
-  const root = await rootFor(entry)
+// Only recorded intent hashes authorize partially committed content, never the bundle.
+async function recoveryOwnership(root: string, state: ManagedState) {
+  const pending = await ownership(root, state, PENDING)
+  const owned = await ownership(root, state, MANIFEST, pending.manifest)
+  const recorded = {
+    ...(owned.manifest?.files ??
+      (state.kind === 'managed' && pending.status === 'absent'
+        ? { 'SKILL.md': hash((await bytesAt(root, 'SKILL.md'))!) }
+        : {})),
+  }
+  // Preserve the old hashes across the manifest-before-entry commit window.
+  for (const [path, expected] of Object.entries(
+    pending.manifest?.previous_files ?? {},
+  )) {
+    const bytes = await bytesAt(root, path).catch(() => null)
+    if (bytes !== null && hash(bytes) === expected) recorded[path] = expected
+  }
+  for (const [path, expected] of Object.entries(
+    pending.manifest?.files ?? {},
+  )) {
+    const bytes = await bytesAt(root, path).catch(() => null)
+    if (bytes !== null && hash(bytes) === expected) recorded[path] = expected
+  }
+  // A committed file replacement makes the old descendants inaccessible.
+  for (const [path, expected] of Object.entries(
+    pending.manifest?.files ?? {},
+  )) {
+    const bytes = await bytesAt(root, path).catch(() => null)
+    if (bytes !== null && hash(bytes) === expected)
+      for (const old of Object.keys(recorded))
+        if (old.startsWith(`${path}/`)) delete recorded[old]
+  }
+  // Conversely, an intended descendant can replace an old file with a directory.
+  for (const path of Object.keys(recorded))
+    if (
+      (await info(join(root, path)).catch(() => null))?.isDirectory() &&
+      Object.keys(pending.manifest?.files ?? {}).some((next) =>
+        next.startsWith(`${path}/`),
+      )
+    )
+      delete recorded[path]
+  return { owned, pending, recorded }
+}
+export async function folderDiagnostics(
+  entry: string,
+  bundle: SkillBundle,
+): Promise<SkillFolderDiagnostic & { code?: string }> {
+  let root: string | null = null
+  try {
+    root = await rootFor(entry)
+    await inspectTree(root)
+  } catch (error) {
+    return {
+      folder_path: dirname(entry),
+      resolved_folder_path: root,
+      complete: false,
+      current: false,
+      older_version: false,
+      missing_files: [],
+      different_files: [],
+      modified_files: [],
+      ownership_manifest: 'invalid' as const,
+      code: 'skill_update_conflict',
+      hint: (error as Error).message,
+    }
+  }
   const state = await stateAt(root)
-  const owned = await ownership(root, state)
+  const { owned, pending, recorded } = await recoveryOwnership(root, state)
   const missing_files: string[] = [],
     different_files: string[] = [],
     modified_files: string[] = []
@@ -189,12 +319,14 @@ export async function folderDiagnostics(entry: string, bundle: SkillBundle) {
     else if (!text.equals(Buffer.from(bundle.files[path]!)))
       different_files.push(path)
   }
-  if (owned.manifest)
-    for (const path of Object.keys(owned.manifest.files).sort()) {
-      const text = await bytesAt(root, path).catch(() => null)
-      if (text === null || hash(text) !== owned.manifest.files[path])
-        modified_files.push(path)
-    }
+  for (const [path, expected] of Object.entries(recorded).sort()) {
+    const text = await bytesAt(root, path).catch(() => null)
+    if (
+      expected &&
+      (text === null ? pending.status === 'absent' : hash(text) !== expected)
+    )
+      modified_files.push(path)
+  }
   const manifestMatches =
     owned.manifest !== undefined &&
     Object.keys(owned.manifest.files).length ===
@@ -204,6 +336,7 @@ export async function folderDiagnostics(entry: string, bundle: SkillBundle) {
     )
   return {
     folder_path: dirname(entry),
+    resolved_folder_path: root,
     complete: missing_files.length === 0,
     current:
       state.kind === 'managed' &&
@@ -211,7 +344,9 @@ export async function folderDiagnostics(entry: string, bundle: SkillBundle) {
       !missing_files.length &&
       !different_files.length &&
       owned.status === 'valid' &&
-      manifestMatches,
+      manifestMatches &&
+      pending.status === 'absent',
+    ...(pending.status !== 'absent' ? { interrupted_update: true } : {}),
     older_version: state.kind === 'managed' && state.version < bundle.version,
     missing_files,
     different_files,
@@ -227,23 +362,22 @@ export async function preflightFolder(
 ) {
   const root = await rootFor(entry)
   const state = await stateAt(root)
+  await inspectTree(root)
   await safe(root, 'SKILL.md')
-  const owned = await ownership(root, state)
+  const { owned, pending, recorded } = await recoveryOwnership(root, state)
   if (
-    (owned.status === 'invalid' && !force) ||
+    ((owned.status === 'invalid' || pending.status === 'invalid') && !force) ||
     (!force && state.kind !== 'managed' && state.kind !== 'missing')
   )
     throw new Error(
       `Skill ownership conflict: ${join(root, state.kind === 'managed' ? MANIFEST : 'SKILL.md')} (${state.kind === 'managed' ? 'invalid ownership metadata' : 'user-edited file'}). Inspect the folder and use skills install --force to reinstall bundled paths.`,
     )
-  const previous =
-    owned.manifest?.files ??
-    (state.kind === 'managed' ? { 'SKILL.md': '' } : {})
+  const previous = recorded
+  await safe(root, PENDING)
   await safe(root, MANIFEST)
   for (const path of Object.keys(previous)) await safe(root, path)
   if (!forceRetirement) {
     for (const [path, expected] of Object.entries(previous)) {
-      if (bundle && Object.hasOwn(bundle.files, path)) continue
       const bytes = await bytesAt(root, path)
       if (expected && bytes !== null && hash(bytes) !== expected)
         throw new Error(
@@ -267,6 +401,7 @@ export async function preflightFolder(
     for (const name of await readdir(join(root, relative))) {
       const child = `${relative}/${name}`
       const item = await info(join(root, child))
+      if (item?.isFile() && legacyTemp.test(name)) continue
       if (item?.isDirectory()) await checkDirectory(child)
       else if (!item?.isFile() || !Object.hasOwn(previous, child))
         throw new Error(
@@ -313,7 +448,9 @@ export async function writeSkillFolder(
   bundle: SkillBundle,
   force = false,
   forceRetirement = force,
+  cleanup = true,
 ) {
+  if (cleanup) await cleanupSkillFolder(entry)
   const { root, previous, blockers, replacedDirectories } =
     await preflightFolder(entry, bundle, force, forceRetirement)
   const files = {
@@ -334,6 +471,10 @@ export async function writeSkillFolder(
         2,
       ) + '\n',
   }
+  const stagingDir = join(
+    dirname(root),
+    `.artifactshare-staging-${randomUUID()}`,
+  )
   const staged = new Map<string, string>()
   const backups = new Map<string, Buffer | null>()
   const changed = new Set<string>()
@@ -348,6 +489,7 @@ export async function writeSkillFolder(
   for (const path of new Set([
     ...Object.keys(previous),
     ...Object.keys(files),
+    PENDING,
   ])) {
     const blocked = blockers.some((ancestor) => path.startsWith(`${ancestor}/`))
     backups.set(
@@ -357,6 +499,11 @@ export async function writeSkillFolder(
         : null,
     )
   }
+  const intent =
+    JSON.stringify({
+      ...JSON.parse(files[MANIFEST]),
+      previous_files: previous,
+    }) + '\n'
   const retire = async (path: string) => {
     if (backups.get(path) !== null) {
       await unlink(join(root, path))
@@ -369,16 +516,18 @@ export async function writeSkillFolder(
     changed.add(path)
   }
   try {
-    for (const [path, text] of Object.entries(files)) {
-      const blocker = blockers.find((ancestor) =>
-        path.startsWith(`${ancestor}/`),
-      )
-      const stagingDir = dirname(join(root, blocker ?? path))
-      await ensureDirectory(stagingDir)
-      const temp = join(stagingDir, `.artifactshare-${randomUUID()}.tmp`)
+    await ensureDirectory(dirname(root))
+    await mkdir(stagingDir, { mode: 0o700 })
+    for (const [path, text] of Object.entries({
+      ...files,
+      [PENDING]: intent,
+    })) {
+      const temp = join(stagingDir, path)
+      await mkdir(dirname(temp), { recursive: true })
       staged.set(path, temp)
       await writeFile(temp, text, { flag: 'wx' })
     }
+    await commit(PENDING)
     const retired = Object.keys(previous).filter(
       (path) => !Object.hasOwn(bundle.files, path),
     )
@@ -405,10 +554,12 @@ export async function writeSkillFolder(
     for (const path of retired) if (!earlyRetired.has(path)) await retire(path)
     await commit(MANIFEST)
     await commit('SKILL.md')
+    await unlink(join(root, PENDING))
     await prune(root, retired)
   } catch (error) {
     // Undo new paths before restoring files that became directories (or vice versa).
     for (const path of [...changed].reverse()) {
+      if (path === PENDING) continue
       if ((await info(join(root, path)))?.isFile())
         await unlink(join(root, path))
     }
@@ -417,27 +568,42 @@ export async function writeSkillFolder(
     for (const dir of removedDirectories.reverse())
       await mkdir(dir, { recursive: true })
     for (const path of changed) {
+      if (path === PENDING) continue
       const bytes = backups.get(path)
       if (bytes !== null && bytes !== undefined) {
         await mkdir(dirname(join(root, path)), { recursive: true })
         await writeFile(join(root, path), bytes)
       }
     }
+    if (changed.has(PENDING)) {
+      const previousIntent = backups.get(PENDING)
+      if (previousIntent) await writeFile(join(root, PENDING), previousIntent)
+      else await unlink(join(root, PENDING))
+    }
     throw error
   } finally {
-    for (const path of staged.values()) await unlink(path).catch(() => {})
+    await rm(stagingDir, { recursive: true, force: true })
     for (const dir of [...createdDirectories].reverse())
       await rmdir(dir).catch(() => {})
   }
 }
 
-export async function removeSkillFolder(entry: string) {
+export async function removeSkillFolder(entry: string, retainRoot = false) {
   const { root, previous } = await preflightFolder(entry)
-  for (const path of [...Object.keys(previous), MANIFEST])
+  for (const path of [...Object.keys(previous), MANIFEST, PENDING])
     await unlink(join(root, path)).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
     })
   await prune(root, Object.keys(previous))
-  await rmdir(root).catch(() => {})
-  await rmdir(dirname(root)).catch(() => {})
+  // Keep configured aliases usable, including aliases on an ancestor.
+  let path = dirname(entry)
+  while (path !== dirname(path)) {
+    if ((await info(path))?.isSymbolicLink()) retainRoot = true
+    if (path === dirname(dirname(dirname(entry)))) break
+    path = dirname(path)
+  }
+  if (!retainRoot) {
+    await rmdir(root).catch(() => {})
+    await rmdir(dirname(root)).catch(() => {})
+  }
 }

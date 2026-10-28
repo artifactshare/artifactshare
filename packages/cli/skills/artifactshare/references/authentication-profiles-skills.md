@@ -67,6 +67,10 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills list --json
 - `skills ensure --tool auto` accepts omitted `--scope` or `--scope user`;
   `--scope project` fails with `validation_failed`. Project-scope skills are
   opt-in via `skills install --tool <tool> --scope project`.
-- `skills update` updates installed managed skills to the bundled version.
+- `skills update` updates installed managed skills to the bundled version. Edits to owned files require `skills update --force`; additions are preserved.
 - `--force` overwrites an unmanaged file on install.
 - Run `skills --help` for all subcommands.
+
+Skill folders and their configured ancestors may be directory symlinks. The CLI resolves the folder with realpath and handles each shared destination once, in Codex, Claude, Cursor order (project before user); the first selected alias supplies the legacy fields. JSON target rows include `aliases` (tool, scope, path, folder_path) and `resolved_folder_path`. Explicit filters include only selected aliases. Internal links, including SKILL.md, references and the manifest, are refused even with force. Restore dangling links to a directory; preserve edits and replace internal links with ordinary content before retrying. Removal preserves configured links and their destination directory.
+
+Writes use a private sibling `.artifactshare-staging-<uuid>` directory on the destination filesystem. Real install, update, ensure and automatic updates clean stale staging directories and exact UUID-shaped `.artifactshare-<uuid>.tmp` regular files in the managed tree before checking conflicts, including no-op selections. Diagnostics and dry runs never clean files. Unrelated names and symlink referents are never deleted. Failed writes roll back committed paths and remove staging; interrupted processes leave debris for the next mutation.

@@ -230,8 +230,12 @@ export function skillAutoUpdateHumanOutput(data: unknown): string {
   const autoUpdate = skills.auto_update
   if (!isRecord(autoUpdate) || !Array.isArray(autoUpdate.targets)) return ''
   const lines = autoUpdate.targets.filter(isRecord).map((target) => {
-    const label =
-      typeof target.tool === 'string' && typeof target.scope === 'string'
+    const label = Array.isArray(target.aliases)
+      ? target.aliases
+          .filter(isRecord)
+          .map((alias) => `${alias.tool}:${alias.scope}`)
+          .join(', ')
+      : typeof target.tool === 'string' && typeof target.scope === 'string'
         ? `${target.tool}:${target.scope}`
         : 'unknown'
     if (

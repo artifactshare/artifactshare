@@ -145,7 +145,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'skills ensure / install / list / update / remove',
-    "Install or update the bundled usage guide in your AI agent's skills; Claude user scope follows CLAUDE_CONFIG_DIR (blank values are unavailable)",
+    'Install or update the bundled usage guide; shared directory aliases are handled once, internal links are refused; Claude user scope follows CLAUDE_CONFIG_DIR (blank values are unavailable)',
   ],
 ]
 
