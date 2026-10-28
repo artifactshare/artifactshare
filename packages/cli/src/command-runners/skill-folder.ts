@@ -11,7 +11,13 @@ import {
   rmdir,
   rm,
 } from 'node:fs/promises'
-import { basename, dirname, join, sep } from 'node:path'
+import {
+  basename,
+  dirname,
+  join,
+  sep,
+  relative as relativePath,
+} from 'node:path'
 import type { SkillFolderDiagnostic } from '../types.js'
 
 export type ManagedState =
@@ -53,7 +59,7 @@ async function info(path: string) {
     throw error
   }
 }
-// Only the configured folder boundary may be an alias. Descendants never are.
+// Configured folder aliases are resolved; descendant user links are never followed.
 class SkillFolderResolutionError extends Error {
   constructor(
     path: string,
@@ -92,26 +98,87 @@ const legacyTemp = new RegExp(`^\\.artifactshare-${uuid}\\.tmp$`, 'i')
 const stagingName = new RegExp(`^\\.artifactshare-staging-${uuid}$`, 'i')
 const stale = (item: { mtimeMs: number }) =>
   item.mtimeMs < Date.now() - 10 * 60 * 1000
+async function protectedPaths(root: string, bundle?: SkillBundle) {
+  await safe(root, MANIFEST)
+  await safe(root, PENDING)
+  const state = await stateAt(root)
+  const pending = await ownership(root, state, PENDING)
+  const owned = await ownership(root, state, MANIFEST, pending.manifest)
+  const paths = new Set(['SKILL.md', 'references', MANIFEST, PENDING])
+  for (const path of [
+    ...Object.keys(bundle?.files ?? {}),
+    ...Object.keys(owned.manifest?.files ?? {}),
+    ...Object.keys(pending.manifest?.files ?? {}),
+    ...Object.keys(pending.manifest?.previous_files ?? {}),
+  ]) {
+    const parts = path.split('/')
+    for (let i = 1; i <= parts.length; i++)
+      paths.add(parts.slice(0, i).join('/'))
+  }
+  return paths
+}
+// Resolve protected spellings one component at a time, stopping at links.
+// This uses the filesystem's own name equivalence without visiting referents.
+export async function isProtectedLink(
+  root: string,
+  item: { dev: number; ino: number },
+  protectedEntries: Set<string>,
+  lookup = info,
+): Promise<boolean> {
+  for (const entry of protectedEntries) {
+    let path = root
+    for (const part of entry.split('/')) {
+      path = join(path, part)
+      const candidate = await lookup(path)
+      if (!candidate) break
+      if (candidate.dev === item.dev && candidate.ino === item.ino) return true
+      if (!candidate.isDirectory()) break
+    }
+  }
+  return false
+}
 async function inspectTree(
   root: string,
   cleanup = false,
   folderRoot = root,
-): Promise<void> {
-  if (!(await info(root))) return
-  for (const name of await readdir(root)) {
+  protectedEntries = new Set<string>(),
+  userLinks: string[] = [],
+): Promise<string[]> {
+  if (!(await info(root))) return userLinks
+  for (const name of (await readdir(root)).sort()) {
     const path = join(root, name)
     const item = await lstat(path)
-    if (item.isSymbolicLink())
-      throw new Error(
-        `Unsafe skill path (link): ${path}. Preserve edits and replace the internal link with ordinary bundled content, then retry.`,
+    if (item.isSymbolicLink()) {
+      const entry = relativePath(folderRoot, path).split(sep).join('/')
+      if (
+        protectedEntries.has(entry) ||
+        (await isProtectedLink(folderRoot, item, protectedEntries)) ||
+        name === MANIFEST ||
+        name === PENDING ||
+        stagingName.test(name) ||
+        legacyTemp.test(name)
       )
+        throw new Error(
+          `Unsafe skill path (link): ${entry}. Replace the link with a regular file or directory or remove it, then retry.`,
+        )
+      userLinks.push(entry)
+      continue
+    }
     if (item.isDirectory() && root === folderRoot && stagingName.test(name)) {
-      if (cleanup && stale(item))
+      // Inspect staging descendants before recursive cleanup, too.
+      await inspectTree(path, false, folderRoot, protectedEntries, userLinks)
+      if (
+        cleanup &&
+        stale(item) &&
+        !userLinks.some((link) => link.startsWith(`${name}/`))
+      )
         await rm(path, { recursive: true, force: true })
-    } else if (item.isDirectory()) await inspectTree(path, cleanup, folderRoot)
+    } else if (item.isDirectory())
+      await inspectTree(path, cleanup, folderRoot, protectedEntries, userLinks)
     else if (cleanup && item.isFile() && legacyTemp.test(name) && stale(item))
       await unlink(path)
   }
+  return userLinks.sort()
 }
 export async function cleanupSkillFolder(entry: string, bundle?: SkillBundle) {
   const root = await rootFor(entry)
@@ -120,7 +187,9 @@ export async function cleanupSkillFolder(entry: string, bundle?: SkillBundle) {
     if (pending.manifest && pending.manifest.version > bundle.version)
       throw new Error(newerIntentHint(pending.manifest.version))
   }
-  await inspectTree(root, true)
+  const protection = await protectedPaths(root, bundle)
+  await inspectTree(root, false, root, protection)
+  await inspectTree(root, true, root, protection)
   const parent = dirname(root)
   if (await info(parent))
     for (const name of await readdir(parent)) {
@@ -164,7 +233,7 @@ async function safe(
         (i === parts.length - 1 ? !item.isFile() : !item.isDirectory()))
     )
       throw new Error(
-        `Unsafe skill path (type change or link): ${parts[i]}. Preserve edits and replace internal links with ordinary bundled content, then retry.`,
+        `Unsafe skill path (type change or link): ${parts[i]}. Replace the link with a regular file or directory or remove it, then retry.`,
       )
   }
 }
@@ -320,9 +389,15 @@ export async function folderDiagnostics(
   bundle: SkillBundle,
 ): Promise<SkillFolderDiagnostic & { code?: string }> {
   let root: string | null = null
+  let user_links: string[] = []
   try {
     root = await rootFor(entry)
-    await inspectTree(root)
+    user_links = await inspectTree(
+      root,
+      false,
+      root,
+      await protectedPaths(root, bundle),
+    )
   } catch (error) {
     return {
       folder_path: dirname(entry),
@@ -384,6 +459,7 @@ export async function folderDiagnostics(
       pending.status === 'absent',
     ...(pending.status !== 'absent' ? { interrupted_update: true } : {}),
     older_version: state.kind === 'managed' && state.version < bundle.version,
+    user_links,
     missing_files,
     different_files,
     modified_files,
@@ -401,13 +477,19 @@ export async function preflightFolder(
   bundle?: SkillBundle,
   force = false,
   forceRetirement = force,
+  removing = false,
 ) {
   const root = await rootFor(entry)
   const state = await stateAt(root)
-  await inspectTree(root)
+  await inspectTree(root, false, root, await protectedPaths(root, bundle))
   await safe(root, 'SKILL.md')
   const { owned, pending, recorded } = await recoveryOwnership(root, state)
-  if (bundle && pending.manifest && pending.manifest.version > bundle.version)
+  if (
+    !removing &&
+    bundle &&
+    pending.manifest &&
+    pending.manifest.version > bundle.version
+  )
     throw new Error(newerIntentHint(pending.manifest.version))
 
   if (
@@ -460,7 +542,7 @@ export async function preflightFolder(
     }
     replacedDirectories.add(join(root, relative))
   }
-  for (const path of Object.keys(bundle?.files ?? {})) {
+  for (const path of Object.keys(removing ? {} : (bundle?.files ?? {}))) {
     if (!blockers.some((ancestor) => path.startsWith(`${ancestor}/`))) {
       // Check ancestors before inspecting or traversing the destination.
       await safe(root, path, retiredAncestors, new Set([join(root, path)]))
@@ -671,8 +753,18 @@ export async function writeSkillFolder(
   }
 }
 
-export async function removeSkillFolder(entry: string, retainRoot = false) {
-  const { root, previous } = await preflightFolder(entry)
+export async function removeSkillFolder(
+  entry: string,
+  retainRoot = false,
+  bundle?: SkillBundle,
+) {
+  const { root, previous } = await preflightFolder(
+    entry,
+    bundle,
+    false,
+    false,
+    true,
+  )
   for (const path of [...Object.keys(previous), MANIFEST, PENDING])
     await unlink(join(root, path)).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error

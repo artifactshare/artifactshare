@@ -371,6 +371,7 @@ export type ProjectsEditData = {
 }
 
 export type SkillsTargetAction =
+  | 'failed'
   | 'installed'
   | 'updated'
   | 'update_recommended'
@@ -402,6 +403,7 @@ export type SkillFolderDiagnostic = SkillTargetIdentity & {
   missing_files: string[]
   different_files: string[]
   modified_files: string[]
+  user_links?: string[]
   interrupted_update?: boolean
   ownership_manifest: 'valid' | 'absent' | 'invalid'
   legacy_rule?: {
@@ -419,6 +421,7 @@ export type SkillsActionTarget = SkillTargetIdentity & {
   scope: string
   path: string
   action: SkillsTargetAction
+  code?: string
   update_command?: string
 }
 

@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
   cleanupSkillFolder,
+  isProtectedLink,
   resolveSkillFolder,
   preflightFolder,
   loadSkillBundle,
@@ -421,9 +422,12 @@ for (const path of [
     )
     await assert.rejects(
       writeSkillFolder(entry, bundle(), true),
-      /internal link/,
+      /regular file or directory or remove/,
     )
-    await assert.rejects(removeSkillFolder(entry), /internal link/)
+    await assert.rejects(
+      removeSkillFolder(entry),
+      /regular file or directory or remove/,
+    )
     assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
   })
 
@@ -492,7 +496,10 @@ test('cleanup rejects internal temporary links and never follows staging links',
     '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
   )
   await symlink(join(outside, 'sentinel'), temp)
-  await assert.rejects(cleanupSkillFolder(entry), /internal link/)
+  await assert.rejects(
+    cleanupSkillFolder(entry),
+    /regular file or directory or remove/,
+  )
   assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
 })
 
@@ -632,4 +639,70 @@ test('a fresh legacy temp delays a directory replacement without removing active
     await readFile(join(folder, 'references/nested'), 'utf8'),
     'flat',
   )
+})
+
+for (const source of ['manifest', 'pending', 'previous']) {
+  test(`protects retired ${source} paths even when the bundle no longer includes them`, async () => {
+    const root = await fixture()
+    const folder = join(root, 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    const previous = bundle()
+    previous.files['references/retired.md'] = 'retired'
+    await writeSkillFolder(entry, previous)
+    const owned = JSON.parse(
+      await readFile(join(folder, '.artifactshare-managed.json'), 'utf8'),
+    )
+    if (source !== 'manifest') {
+      const files = { ...owned.files }
+      delete owned.files['references/retired.md']
+      await put(folder, '.artifactshare-managed.json', JSON.stringify(owned))
+      await put(
+        folder,
+        '.artifactshare-pending.json',
+        JSON.stringify({
+          ...owned,
+          ...(source === 'pending' ? { files } : { previous_files: files }),
+        }),
+      )
+    }
+    await rm(join(folder, 'references/retired.md'))
+    const outside = join(root, 'sentinel')
+    await writeFile(outside, 'untouched')
+    await symlink(outside, join(folder, 'references/retired.md'))
+    for (const operation of [
+      () => writeSkillFolder(entry, bundle(2), true),
+      () => removeSkillFolder(entry, false, bundle(2)),
+    ])
+      await assert.rejects(
+        operation(),
+        /references\/retired.md.*regular file or directory or remove/,
+      )
+    assert.equal(await readFile(outside, 'utf8'), 'untouched')
+  })
+}
+
+test('protected link identity uses filesystem name resolution without following links', async () => {
+  const root = await fixture()
+  const link = join(root, 'skill.md')
+  await symlink(join(root, 'missing'), link)
+  const item = await lstat(link)
+  const lookups: string[] = []
+  const lookup = async (path: string) => {
+    lookups.push(path)
+    return path.toLowerCase() === link.toLowerCase() ? item : null
+  }
+  assert.equal(
+    await isProtectedLink(root, item, new Set(['SKILL.md']), lookup),
+    true,
+  )
+  assert.equal(
+    await isProtectedLink(
+      root,
+      { dev: item.dev + 1, ino: item.ino },
+      new Set(['SKILL.md/child']),
+      lookup,
+    ),
+    false,
+  )
+  assert.deepEqual(lookups, [join(root, 'SKILL.md'), join(root, 'SKILL.md')])
 })

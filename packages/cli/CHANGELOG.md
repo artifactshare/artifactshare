@@ -3,6 +3,12 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Preserve user-added skill links and report them in list/doctor; isolate protected-link conflicts so other selected targets finish.
+- Never recommend downgrading newer installed skills; require explicit force and describe the downgrade.
+- Clarify Japanese interrupted-update cleanup guidance and skill JSON partial failures.
+
 ## 0.20.1 - 2026-10-28
 
 - Support skill folder and ancestor directory symlinks, deduplicate shared destinations, and expose selected aliases and resolved folder paths in JSON. Internal file and directory links remain refused, including SKILL.md.

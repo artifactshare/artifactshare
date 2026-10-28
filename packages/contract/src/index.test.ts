@@ -1409,3 +1409,39 @@ it('preserves interrupted update diagnostics in doctor target rows', async () =>
   })
   expect(parsed.targets[0]?.interrupted_update).toBe(true)
 })
+
+it('preserves optional ignored user links and partial skill failure rows', async () => {
+  const { SkillFolderDiagnosticSchema, SkillsActionDataSchema } =
+    await import('./index.js')
+  const diagnostic = {
+    folder_path: '.agents/skills/artifactshare',
+    complete: true,
+    current: true,
+    older_version: false,
+    missing_files: [],
+    different_files: [],
+    modified_files: [],
+    ownership_manifest: 'valid',
+  }
+  expect(SkillFolderDiagnosticSchema.parse(diagnostic)).not.toHaveProperty(
+    'user_links',
+  )
+  expect(
+    SkillFolderDiagnosticSchema.parse({
+      ...diagnostic,
+      user_links: ['notes', 'references/local'],
+    }).user_links,
+  ).toEqual(['notes', 'references/local'])
+  const failed = {
+    tool: 'codex',
+    scope: 'project',
+    path: '.agents/skills/artifactshare/SKILL.md',
+    folder_path: diagnostic.folder_path,
+    action: 'failed',
+    code: 'skill_update_conflict',
+    hint: 'Replace references with a regular file or directory or remove it.',
+  }
+  expect(
+    SkillsActionDataSchema.parse({ dry_run: false, targets: [failed] }).targets,
+  ).toEqual([failed])
+})

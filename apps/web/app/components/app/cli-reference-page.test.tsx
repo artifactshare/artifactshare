@@ -51,6 +51,17 @@ vi.mock('~/components/layout/stack', () => ({
 import { CliReferencePage } from './cli-reference-page'
 
 describe.each(['en', 'ja'] as const)('CliReferencePage (%s)', (locale) => {
+  test('renders interrupted-update cleanup guidance', () => {
+    const html = renderToStaticMarkup(
+      <CliReferencePage locale={locale} />,
+    ).replace(/<[^>]*>/g, '')
+    expect(html).toContain(
+      locale === 'en'
+        ? 'Updates without --dry-run remove temporary files left by an interrupted CLI update; --dry-run leaves them untouched.'
+        : '--dry-run 以外の更新では、途中で止まった更新が残した一時ファイルを削除します。--dry-run では削除しません。',
+    )
+  })
+
   test('wraps both Usage locations and opts every unchanged Example into wrapping', () => {
     const html = renderToStaticMarkup(<CliReferencePage locale={locale} />)
     const commands = cliReferenceContent(locale).commands

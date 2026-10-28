@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 49
+version: 50
 managed: true
 -->
 
@@ -236,7 +236,7 @@ access, expiry, retention, deletion, or persistent defaults. Delete only on expl
 ## Skills and profiles
 
 `skills ensure --tool auto --json` prepares user-scope skills;
-`skills update --json` updates managed installations. Project installation is opt-in.
+`skills update --json` updates managed installations, preserving versions installed by a newer CLI unless `--force` explicitly requests a downgrade. User-added links are ignored; protected-path links are refused. Project installation is opt-in.
 `profiles list --json` shows saved profiles; `profiles use <name> --json` switches
 selection. Use `logout --profile <name> --json` to revoke a device-login credential.
 The authentication, profiles and skills reference above covers tools, scopes, storage,

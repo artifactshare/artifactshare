@@ -466,6 +466,7 @@ test('skills list reports detection, install state, and update availability', as
     missing_files: [],
     different_files: [],
     modified_files: [],
+    user_links: [],
     ownership_manifest: 'valid',
     installed: true,
     managed: true,
