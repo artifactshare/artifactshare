@@ -271,7 +271,6 @@ export type SkillFolderInspection = {
   state: ManagedState
   unowned: boolean
   linkedEntry: boolean
-  folderAbsent: boolean
   error?: Error
 }
 // Presence includes invalid and dangling records; never inspect their referents.
@@ -297,7 +296,6 @@ async function inspectAt(
     root,
     state,
     linkedEntry,
-    folderAbsent: !(await info(root)),
     unowned:
       !managedLegacy &&
       recordsAbsent &&
@@ -308,24 +306,34 @@ export async function inspectSkillFolder(
   entry: string,
   managedLegacy: boolean,
 ): Promise<SkillFolderInspection> {
+  const failed = (
+    root: string | null,
+    state: ManagedState,
+    error: unknown,
+  ): SkillFolderInspection => ({
+    root,
+    state,
+    unowned: false,
+    linkedEntry: false,
+    error: error as Error,
+  })
+  let root: string
   try {
-    return await inspectAt(await rootFor(entry), managedLegacy)
+    root = await rootFor(entry)
   } catch (error) {
-    return {
-      root: null,
-      state:
-        error instanceof SkillFolderResolutionError && error.missingAncestor
-          ? { kind: 'missing', hint: error.message }
-          : { kind: 'broken' },
-      unowned: false,
-      linkedEntry: false,
-      folderAbsent: false,
-      error: error as Error,
-    }
+    return failed(
+      null,
+      error instanceof SkillFolderResolutionError && error.missingAncestor
+        ? { kind: 'missing', hint: error.message }
+        : { kind: 'broken' },
+      error,
+    )
   }
-}
-export async function isUnownedFolder(entry: string, managedLegacy = false) {
-  return (await inspectSkillFolder(entry, managedLegacy)).unowned
+  try {
+    return await inspectAt(root, managedLegacy)
+  } catch (error) {
+    return failed(root, { kind: 'broken' }, error)
+  }
 }
 async function stateAt(root: string): Promise<ManagedState> {
   try {
@@ -333,9 +341,6 @@ async function stateAt(root: string): Promise<ManagedState> {
   } catch {
     return { kind: 'broken' }
   }
-}
-export async function readSkillState(entry: string): Promise<ManagedState> {
-  return (await inspectSkillFolder(entry, false)).state
 }
 export async function loadSkillBundle(root: string): Promise<SkillBundle> {
   const files: Record<string, string> = {}

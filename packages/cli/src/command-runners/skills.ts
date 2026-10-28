@@ -291,15 +291,19 @@ function targetInspection(target: SkillTarget) {
 async function readTarget(target: SkillTarget) {
   return (await targetInspection(target)).folder.state
 }
-async function applicableInstalledVersion(
+// A missing folder inherits the managed legacy rule's version.
+async function newerInstalledVersion(
   target: SkillTarget,
+  bundle: BundledSkills,
 ): Promise<number | undefined> {
   const { folder, legacy } = await targetInspection(target)
-  return folder.state.kind === 'managed'
-    ? folder.state.version
-    : folder.folderAbsent
-      ? legacy?.version
-      : undefined
+  const version =
+    folder.state.kind === 'managed'
+      ? folder.state.version
+      : folder.state.kind === 'missing'
+        ? legacy?.version
+        : undefined
+  return version !== undefined && version > bundle.version ? version : undefined
 }
 function loadBundledSkills(): Promise<BundledSkills> {
   return loadSkillBundle(
@@ -341,7 +345,7 @@ async function legacyRule(target: SkillTarget) {
 async function legacyManagedVersion(
   target: SkillTarget,
 ): Promise<number | undefined> {
-  return (await targetInspection(target)).legacy?.version
+  return (await legacyRule(target))?.version
 }
 
 function newerCliHint(installed: number, bundled: number) {
@@ -352,12 +356,12 @@ function downgradeHint(installed: number, bundled: number) {
 }
 async function diagnostic(target: SkillTarget, bundle: BundledSkills) {
   const { folder, legacy } = await targetInspection(target)
-  const version = await applicableInstalledVersion(target)
+  const version = await newerInstalledVersion(target, bundle)
   const details = await folderDiagnostics(target.absolutePath, bundle, folder)
   return {
     ...details,
     folder_path: dirname(target.path),
-    ...(version !== undefined && version > bundle.version
+    ...(version !== undefined
       ? {
           hint: [details.hint, newerCliHint(version, bundle.version)]
             .filter(Boolean)
@@ -692,18 +696,20 @@ async function recoveryRecommendation(
   update_command?: string
   modified_files?: string[]
   hint?: string
+  suppressHint?: true
 }> {
   const details = await diagnostic(target, bundled)
   const { folder } = await targetInspection(target)
-  const version = await applicableInstalledVersion(target)
-  if (version !== undefined && version > bundled.version)
+  const version = await newerInstalledVersion(target, bundled)
+  if (version !== undefined)
     return {
       hint: details.hint ?? newerCliHint(version, bundled.version),
     }
   let update_command = skillUpdateCommand(target)
+  let collision: string | undefined
   try {
     await preflightFolder(target.absolutePath, bundled)
-  } catch {
+  } catch (first) {
     try {
       await preflightFolder(target.absolutePath, bundled, false, true)
       update_command = update_command.replace(' --json', ' --force --json')
@@ -711,9 +717,13 @@ async function recoveryRecommendation(
       try {
         await preflightFolder(target.absolutePath, bundled, true)
         update_command = `${CLI_INVOCATION} skills install --tool ${target.tool} --scope ${target.scope} --force --json`
+        // doctor shows no command for a folder without SKILL.md; name the collision.
+        if (folder.unowned && folder.state.kind === 'missing')
+          collision = (first as Error).message
       } catch (error) {
+        // An unowned folder blocked only by user links needs no repair advice.
         if (folder.unowned && error instanceof SkillPathError && error.isLink)
-          return {}
+          return { suppressHint: true }
         return {
           hint: (error as Error).message,
           ...(details.modified_files.length
@@ -725,6 +735,7 @@ async function recoveryRecommendation(
   }
   return {
     update_command,
+    ...(collision ? { hint: collision } : {}),
     ...(details.modified_files.length
       ? {
           modified_files: details.modified_files,
@@ -800,20 +811,24 @@ async function finishActions(
   const data: SkillsActionData = {
     dry_run: dryRun,
     targets: await Promise.all(
-      completed.map(async ({ target, action, legacy, hint }) => ({
-        ...(hint ? { hint } : {}),
-        tool: target.tool,
-        scope: target.scope,
-        path: target.path,
-        ...identity(target),
-        folder_path: dirname(target.path),
-        ...(legacy ? { legacy_rule: legacy } : {}),
-        action,
-        ...(action === 'failed' ? { code: 'skill_update_conflict' } : {}),
-        ...(action === 'update_recommended'
-          ? await recoveryRecommendation(target, await loadBundledSkills())
-          : {}),
-      })),
+      completed.map(async ({ target, action, legacy, hint }) => {
+        const { suppressHint, ...recommendation } =
+          action === 'update_recommended'
+            ? await recoveryRecommendation(target, await loadBundledSkills())
+            : {}
+        return {
+          ...(hint && !suppressHint ? { hint } : {}),
+          tool: target.tool,
+          scope: target.scope,
+          path: target.path,
+          ...identity(target),
+          folder_path: dirname(target.path),
+          ...(legacy ? { legacy_rule: legacy } : {}),
+          action,
+          ...(action === 'failed' ? { code: 'skill_update_conflict' } : {}),
+          ...recommendation,
+        }
+      }),
     ),
   }
   return data
@@ -905,8 +920,8 @@ export async function runSkillsInstall(
     if ((state.kind === 'unmanaged' || state.kind === 'broken') && !force) {
       return writeFailure(command, await conflictFor(target), mode, 1)
     }
-    const version = await applicableInstalledVersion(target)
-    if (version !== undefined && version > bundled.version && !force) {
+    const version = await newerInstalledVersion(target, bundled)
+    if (version !== undefined && !force) {
       planned.push({
         target,
         action: 'unchanged',
@@ -931,7 +946,7 @@ export async function runSkillsInstall(
       action: state.kind === 'missing' ? 'installed' : 'updated',
       content: bundled,
       force,
-      ...(version !== undefined && version > bundled.version
+      ...(version !== undefined
         ? { hint: downgradeHint(version, bundled.version) }
         : {}),
     })
@@ -1023,12 +1038,17 @@ export async function ensureSkills(
     const automaticUpdate =
       filters.auto || options.command === 'init' || options.command === 'open'
     if (automaticUpdate && state.kind === 'missing' && state.hint) continue
-    if (
-      automaticUpdate &&
-      state.kind === 'managed' &&
-      state.version > bundled.version
-    )
+    const newer = await newerInstalledVersion(target, bundled)
+    if (automaticUpdate && newer !== undefined) continue
+    if (state.kind === 'missing' && newer !== undefined) {
+      planned.push({
+        target,
+        action: 'unchanged',
+        preserve: true,
+        hint: newerCliHint(newer, bundled.version),
+      })
       continue
+    }
     const details = await diagnostic(target, bundled)
     if (
       automaticUpdate &&
@@ -1265,27 +1285,31 @@ export async function autoUpdateUserManagedSkills(): Promise<
     return {
       targets: await Promise.all(
         completed.map(
-          async ({ target, action, installedVersion, legacy, hint }) => ({
-            ...(hint ? { hint } : {}),
-            tool: target.tool,
-            scope: target.scope,
-            path: target.path,
-            ...identity(target),
-            folder_path: dirname(target.path),
-            ...(legacy ? { legacy_rule: legacy } : {}),
-            action:
+          async ({ target, action, installedVersion, legacy, hint }) => {
+            const { suppressHint, ...recommendation } =
               action === 'update_recommended'
-                ? 'update_recommended'
-                : 'updated',
-            installed_version:
-              action === 'update_recommended'
-                ? (installedVersion ?? null)
-                : (installedVersion ?? bundled.version),
-            bundled_version: bundled.version,
-            ...(action === 'update_recommended'
-              ? await recoveryRecommendation(target, bundled)
-              : {}),
-          }),
+                ? await recoveryRecommendation(target, bundled)
+                : {}
+            return {
+              ...(hint && !suppressHint ? { hint } : {}),
+              tool: target.tool,
+              scope: target.scope,
+              path: target.path,
+              ...identity(target),
+              folder_path: dirname(target.path),
+              ...(legacy ? { legacy_rule: legacy } : {}),
+              action:
+                action === 'update_recommended'
+                  ? 'update_recommended'
+                  : 'updated',
+              installed_version:
+                action === 'update_recommended'
+                  ? (installedVersion ?? null)
+                  : (installedVersion ?? bundled.version),
+              bundled_version: bundled.version,
+              ...recommendation,
+            }
+          },
         ),
       ),
     }
@@ -1357,6 +1381,13 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       state.kind === 'managed' && state.version < bundled.version
     const recommendation = await recoveryRecommendation(target, bundled)
     const recoveryCommand = recommendation.update_command ?? null
+    const update_command = details.hint
+      ? null
+      : updateAvailable ||
+          details.interrupted_update ||
+          (state.kind === 'managed' && !details.current)
+        ? recoveryCommand
+        : null
     targets.push({
       tool: target.tool,
       scope: target.scope,
@@ -1367,16 +1398,11 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
       update_available: updateAvailable,
       ...identity(target),
       ...details,
-      ...(!recoveryCommand && recommendation.hint
+      ...((!recoveryCommand || (!update_command && !details.hint)) &&
+      recommendation.hint
         ? { hint: recommendation.hint }
         : {}),
-      update_command: details.hint
-        ? null
-        : updateAvailable ||
-            details.interrupted_update ||
-            (state.kind === 'managed' && !details.current)
-          ? recoveryCommand
-          : null,
+      update_command,
     })
   }
   const updateTargets = targets.filter(
@@ -1443,8 +1469,8 @@ export async function runSkillsUpdate(
     if (state.kind === 'broken') {
       return writeFailure(command, await conflictFor(target), mode, 1)
     }
-    const version = await applicableInstalledVersion(target)
-    if (version !== undefined && version > bundled.version && !force) {
+    const version = await newerInstalledVersion(target, bundled)
+    if (version !== undefined && !force) {
       planned.push({
         target,
         action: 'unchanged',
@@ -1465,7 +1491,7 @@ export async function runSkillsUpdate(
               target,
               action: 'installed',
               content: bundled,
-              ...(version !== undefined && version > bundled.version
+              ...(version !== undefined
                 ? { hint: downgradeHint(version, bundled.version) }
                 : {}),
             }
@@ -1479,7 +1505,7 @@ export async function runSkillsUpdate(
         action: 'updated',
         content: bundled,
         forceRetirement: force,
-        ...(version !== undefined && version > bundled.version
+        ...(version !== undefined
           ? {
               hint: downgradeHint(version, bundled.version),
             }

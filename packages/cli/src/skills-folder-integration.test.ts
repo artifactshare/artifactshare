@@ -2108,3 +2108,74 @@ for (const installed of [false, true])
     assert.equal(await readlink(join(folder, 'notes')), outside)
     assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
   })
+
+for (const command of [
+  ['install', '--tool', 'cursor'],
+  ['update', '--tool', 'cursor', '--scope', 'project'],
+  ['ensure', '--tool', 'cursor', '--scope', 'project'],
+])
+  test(`newer legacy rule beside a folder without SKILL.md: ${command.join(' ')}`, async () => {
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    await put(legacy(), marker(12))
+    await mkdir(target(), { recursive: true })
+    const data = SkillsActionDataSchema.parse(
+      expectSuccess(skills(...command)).data,
+    )
+    const row = data.targets.find(
+      (item) => item.tool === 'cursor' && item.scope === 'project',
+    )!
+    assert.equal(row.action, 'unchanged')
+    assert.match(row.hint!, /A newer CLI installed skill version 12/)
+    assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+    await assert.rejects(lstat(join(target(), 'SKILL.md')), /ENOENT/)
+  })
+
+test('ensure keeps a newer legacy-only rule without a folder', async () => {
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(legacy(), marker(12))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'cursor', '--scope', 'project'))
+      .data,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'cursor' && item.scope === 'project',
+  )!
+  assert.equal(row.action, 'unchanged')
+  assert.match(row.hint!, /A newer CLI installed skill version 12/)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+  await assert.rejects(lstat(target()), /ENOENT/)
+})
+
+test('doctor names a regular user reference collision in a folder without SKILL.md', async () => {
+  const path = join(target('.agents', 'user'), 'references/usage.md')
+  await put(path, 'personal reference')
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.match(row.hint!, /Unowned skill file: references\/usage.md/)
+  assert.equal(row.update_command, null)
+  assert.equal(await readFile(path, 'utf8'), 'personal reference')
+})
+
+test('automatic ensure gives no advice for a folder blocked only by a user references link', async () => {
+  const folder = target('.agents', 'user')
+  const outside = join(root, 'outside-references')
+  await put(join(outside, 'usage.md'), 'untouched')
+  await mkdir(folder, { recursive: true })
+  await symlink(outside, join(folder, 'references'))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto')).data,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.equal(row.action, 'update_recommended')
+  assert.equal(row.hint, undefined)
+  assert.equal(row.update_command, undefined)
+  assert.ok(!('suppressHint' in row))
+  assert.equal(await readlink(join(folder, 'references')), outside)
+  assert.equal(await readFile(join(outside, 'usage.md'), 'utf8'), 'untouched')
+})
