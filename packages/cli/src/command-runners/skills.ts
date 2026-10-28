@@ -114,9 +114,9 @@ function targetOrder(a: SkillAlias, b: SkillAlias) {
     (a.scope === b.scope ? 0 : a.scope === 'project' ? -1 : 1)
   )
 }
-async function cleanupTarget(target: SkillTarget) {
+async function cleanupTarget(target: SkillTarget, bundled: BundledSkills) {
   if (target.cleaned) return
-  await cleanupSkillFolder(target.absolutePath)
+  await cleanupSkillFolder(target.absolutePath, bundled)
   target.cleaned = true
 }
 async function groupTargets<T extends ResolvedSkillTarget>(
@@ -518,7 +518,7 @@ type PlannedAction = {
   }
   fallbackAction?: SkillsTargetAction
   hint?: string
-  installedVersion?: number
+  installedVersion?: number | null
 }
 
 function targetPathKey(target: SkillTarget): Promise<string> {
@@ -529,7 +529,10 @@ function targetPathKey(target: SkillTarget): Promise<string> {
 
 async function prepareAction(item: PlannedAction, dryRun: boolean) {
   if (!dryRun && (item.content || item.action === 'unchanged'))
-    await cleanupTarget(item.target)
+    await cleanupTarget(
+      item.target,
+      item.content ?? (await loadBundledSkills()),
+    )
   if (item.content) {
     if (item.automatic) {
       const details = await diagnostic(item.target, item.content)
@@ -969,7 +972,7 @@ export async function ensureSkills(
       if (state.kind === 'managed' && state.version > bundled.version) continue
       if (parsed.options.dryRun !== true) {
         try {
-          await cleanupTarget(target)
+          await cleanupTarget(target, bundled)
         } catch (error) {
           planned.push({
             target,
@@ -1045,7 +1048,7 @@ export async function autoUpdateUserManagedSkills(): Promise<
       if (await skipAutomaticTarget(target, state)) continue
       if (state.kind === 'managed' && state.version > bundled.version) continue
       try {
-        await cleanupTarget(target)
+        await cleanupTarget(target, bundled)
       } catch (error) {
         planned.push({
           target,
@@ -1107,7 +1110,7 @@ export async function autoUpdateUserManagedSkills(): Promise<
         installedVersion:
           state.kind === 'managed'
             ? state.version
-            : ((await legacyManagedVersion(target)) ?? bundled.version),
+            : ((await legacyManagedVersion(target)) ?? null),
       })
     }
 
@@ -1146,7 +1149,10 @@ export async function autoUpdateUserManagedSkills(): Promise<
               action === 'update_recommended'
                 ? 'update_recommended'
                 : 'updated',
-            installed_version: installedVersion ?? bundled.version,
+            installed_version:
+              action === 'update_recommended'
+                ? (installedVersion ?? null)
+                : (installedVersion ?? bundled.version),
             bundled_version: bundled.version,
             ...(action === 'update_recommended'
               ? await recoveryRecommendation(target, bundled)
@@ -1244,18 +1250,34 @@ export async function skillDiagnostics(): Promise<DoctorSkillsData> {
   const updateTargets = targets.filter(
     (target) => target.update_command !== null,
   )
+  const commonCommand = updateTargets[0]?.update_command?.replace(
+    / --tool \S+ --scope \S+/,
+    '',
+  )
+  const canUpdateTogether =
+    commonCommand?.includes(' skills update ') &&
+    updateTargets.every(
+      (target) =>
+        target.update_command?.replace(/ --tool \S+ --scope \S+/, '') ===
+        commonCommand,
+    ) &&
+    !targets.some(
+      (target) =>
+        target.path !== null &&
+        (target.installed ||
+          ('interrupted_update' in target && target.interrupted_update)) &&
+        target.hint,
+    )
   return {
     bundled_version: bundled.version,
     update_available: targets.some((target) => target.update_available),
     update_command:
-      updateTargets.length > 0
-        ? (updateTargets.find((target) =>
-            target.update_command?.includes(' --force'),
-          )?.update_command ??
-          (targets.some((target) => target.hint)
-            ? updateTargets[0]!.update_command
-            : `${CLI_INVOCATION} skills update --json`))
-        : null,
+      updateTargets.length === 0
+        ? null
+        : canUpdateTogether &&
+            (updateTargets.length > 1 || !commonCommand?.includes(' --force'))
+          ? commonCommand!
+          : updateTargets.map((target) => target.update_command).join(' && '),
     targets,
   }
 }

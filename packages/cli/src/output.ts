@@ -238,11 +238,11 @@ export function skillAutoUpdateHumanOutput(data: unknown): string {
       : typeof target.tool === 'string' && typeof target.scope === 'string'
         ? `${target.tool}:${target.scope}`
         : 'unknown'
-    if (
-      target.action === 'update_recommended' &&
-      typeof target.update_command === 'string'
-    ) {
-      return `Skill update recommended: ${label} (${target.update_command})`
+    if (target.action === 'update_recommended') {
+      const advice = [target.update_command, target.hint]
+        .filter((value) => typeof value === 'string')
+        .join('; ')
+      return `Skill update recommended: ${label}${advice ? ` (${advice})` : ''}`
     }
     return `Skill updated: ${label}`
   })

@@ -550,3 +550,23 @@ for (const state of ['newer', 'unmanaged', 'broken']) {
     assert.equal(await pathExists(claudeUserSkillPath()), false)
   })
 }
+
+test('human automatic recommendation includes a repair hint without claiming an update', () => {
+  const output = skillAutoUpdateHumanOutput({
+    skills: {
+      auto_update: {
+        targets: [
+          {
+            tool: 'codex',
+            scope: 'user',
+            action: 'update_recommended',
+            hint: 'Replace the internal link, then retry.',
+          },
+        ],
+      },
+    },
+  })
+  assert.match(output, /Skill update recommended: codex:user/)
+  assert.match(output, /Replace the internal link, then retry/)
+  assert.ok(!output.includes('Skill updated:'))
+})

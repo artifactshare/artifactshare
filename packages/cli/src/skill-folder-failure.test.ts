@@ -124,6 +124,8 @@ test('references precede manifest and entry is always renamed last', async () =>
     join(root, '.agents/skills/artifactshare/SKILL.md'),
     bundle(1),
   )
+  for (const [path] of vi.mocked(writeFile).mock.calls)
+    assert.notEqual(basename(String(path)), 'SKILL.md')
   for (const [source] of vi.mocked(rename).mock.calls) {
     assert.match(String(source), /skills\/\.artifactshare-staging-/)
     assert.ok(!String(source).includes('/artifactshare/'))
@@ -351,6 +353,8 @@ for (const code of ['EACCES', 'EPERM', 'EROFS', 'EXDEV'])
       return fs.rename(...args)
     })
     await writeSkillFolder(entry, bundle(2))
+    for (const [path] of vi.mocked(writeFile).mock.calls)
+      assert.notEqual(basename(String(path)), 'SKILL.md')
     for (const [path, text] of Object.entries(bundle(2).files))
       assert.equal(await readFile(join(folder, path), 'utf8'), text)
     assert.ok(
@@ -418,3 +422,66 @@ test('a failed internal restage after EXDEV restores committed bytes and permits
   await writeSkillFolder(entry, bundle(2))
   assert.equal(await readFile(entry, 'utf8'), marker(2))
 })
+
+for (const staging of ['sibling', 'EACCES', 'EXDEV'])
+  test(`${staging} staging hides nested skill entries until commit`, async () => {
+    root = await realpath(
+      await mkdtemp(join(tmpdir(), 'skill-nested-staging-')),
+    )
+    const folder = join(root, 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    await writeSkillFolder(entry, bundle(1))
+    const next = bundle(2)
+    Object.assign(next.files, {
+      'references/SKILL.md': 'nested skill',
+      'references/entry.tmp': 'ordinary reference',
+      'references/nested/SKILL.md': 'deeply nested skill',
+      'references/nested/entry.tmp': 'another ordinary reference',
+    })
+    const fs =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      )
+    vi.mocked(writeFile).mockClear()
+    vi.mocked(rename).mockClear()
+    vi.mocked(mkdir).mockImplementation(async (...args) => {
+      if (
+        staging === 'EACCES' &&
+        basename(String(args[0])).startsWith('.artifactshare-staging-') &&
+        dirname(String(args[0])) === root
+      )
+        throw Object.assign(new Error('sibling staging unavailable'), {
+          code: 'EACCES',
+        })
+      return fs.mkdir(...args)
+    })
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      const source = String(args[0])
+      const stagingDir = source.match(
+        /^(.*\/\.artifactshare-staging-[^/]+)/,
+      )?.[1]
+      assert.ok(stagingDir)
+      assert.ok(
+        !(await readdir(stagingDir, { recursive: true })).some(
+          (path) => basename(path) === 'SKILL.md',
+        ),
+      )
+      if (staging === 'EXDEV' && !source.startsWith(`${folder}/`))
+        throw Object.assign(new Error('cross-device commit'), { code: 'EXDEV' })
+      return fs.rename(...args)
+    })
+    await writeSkillFolder(entry, next)
+    for (const [path] of vi.mocked(writeFile).mock.calls)
+      assert.notEqual(basename(String(path)), 'SKILL.md')
+    assert.ok(
+      vi
+        .mocked(rename)
+        .mock.calls.some(([source]) =>
+          String(source).startsWith(
+            `${staging === 'sibling' ? root : folder}/.artifactshare-staging-`,
+          ),
+        ),
+    )
+    for (const [path, content] of Object.entries(next.files))
+      assert.equal(await readFile(join(folder, path), 'utf8'), content)
+  })

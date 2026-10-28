@@ -1528,7 +1528,7 @@ export const SkillAutoUpdateTargetSchema = SkillsActionTargetSchema.extend({
   folder_path: z.string(),
   scope: z.enum(['user', 'project']),
   action: z.enum(['updated', 'update_recommended']),
-  installed_version: z.number(),
+  installed_version: z.number().nullable(),
   bundled_version: z.number(),
 })
 export const SkillAutoUpdateDataSchema = z.object({

@@ -21,6 +21,7 @@ import {
   DoctorSkillsDataSchema,
   SkillsListDataSchema,
   SkillsActionDataSchema,
+  SkillAutoUpdateContainerSchema,
 } from '@artifactshare/contract'
 import { loadSkillBundle } from './command-runners/skill-folder.js'
 import { expectSuccess, expectFailure } from './test/helpers.js'
@@ -50,7 +51,7 @@ async function setBundle(files: Record<string, string>) {
   for (const [path, text] of Object.entries(files))
     await put(join(folder, path), text)
 }
-function run(args: string[], preload?: string) {
+function run(args: string[], preload?: string, env: NodeJS.ProcessEnv = {}) {
   return spawnSync(
     process.execPath,
     [
@@ -71,6 +72,7 @@ function run(args: string[], preload?: string) {
         ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
         ARTIFACTSHARE_TOKEN: '',
         CI: '',
+        ...env,
       },
     },
   )
@@ -640,7 +642,7 @@ for (const command of [
     )
   })
 
-for (const kind of ['dangling', 'file', 'entry'])
+for (const kind of ['file', 'entry'])
   test(`${kind} links have repair guidance in explicit mutations and read-only diagnostics`, async () => {
     const folder = target('.claude', 'user')
     const outside = join(root, 'outside')
@@ -683,18 +685,19 @@ for (const kind of ['dangling', 'file', 'entry'])
     assert.equal(automatic[0].action, 'update_recommended')
     assert.ok(automatic[0].hint)
     assert.equal(automatic[0].update_command, undefined)
-    if (kind !== 'dangling')
-      assert.equal(
-        await readFile(outside, 'utf8'),
-        kind === 'file' ? 'untouched' : initial['SKILL.md'],
-      )
+    assert.equal(
+      await readFile(outside, 'utf8'),
+      kind === 'file' ? 'untouched' : initial['SKILL.md'],
+    )
   })
 
 test('unresolvable folders retain separate aliases when init adds automatic targets', async () => {
   for (const tool of ['.agents', '.claude']) {
     const folder = target(tool, 'user')
     await mkdir(dirname(folder), { recursive: true })
-    await symlink(join(root, `missing-${tool}`), folder)
+    const outside = join(root, `file-${tool}`)
+    await put(outside, 'not a directory')
+    await symlink(outside, folder)
   }
   const rows = expectSuccess(run(['init'])).data.skills.targets.filter(
     (row: any) => row.action === 'update_recommended',
@@ -1158,54 +1161,56 @@ for (const installed of [false, true])
     assert.equal(await readFile(outside, 'utf8'), 'sentinel')
   })
 
-for (const action of ['update', 'remove'])
-  test(`a dangling unused tool root does not block unfiltered ${action} or automatic commands`, async () => {
-    for (const tool of ['codex', 'claude'])
-      expectSuccess(skills('install', '--tool', tool, '--scope', 'user'))
-    const dangling = join(home, '.cursor')
-    await symlink(join(root, 'missing-cursor'), dangling)
-    await setBundle({ ...initial, 'SKILL.md': marker(11) })
-    for (const args of [['skills', 'list'], ['doctor']]) {
-      const data = expectSuccess(run(args)).data
-      const row = (data.skills ?? data).targets.find(
+for (const danglingPart of ['.cursor', '.cursor/skills/artifactshare'])
+  for (const action of ['update', 'remove'])
+    test(`a dangling ${danglingPart} does not block unfiltered ${action} or automatic commands`, async () => {
+      for (const tool of ['codex', 'claude'])
+        expectSuccess(skills('install', '--tool', tool, '--scope', 'user'))
+      const dangling = join(home, danglingPart)
+      await mkdir(dirname(dangling), { recursive: true })
+      await symlink(join(root, 'missing-cursor'), dangling)
+      await setBundle({ ...initial, 'SKILL.md': marker(11) })
+      for (const args of [['skills', 'list'], ['doctor']]) {
+        const data = expectSuccess(run(args)).data
+        const row = (data.skills ?? data).targets.find(
+          (item: any) => item.tool === 'cursor' && item.scope === 'user',
+        )
+        assert.equal(row.installed, false)
+        assert.equal(row.resolved_folder_path, null)
+        assert.ok(row.hint.includes(`${dangling}. Restore`))
+      }
+      for (const args of [
+        ['profiles', 'list'],
+        ['init'],
+        ['skills', 'ensure', '--tool', 'auto'],
+      ]) {
+        const data = expectSuccess(run(args)).data
+        const rows =
+          data.skills?.auto_update?.targets ??
+          data.skills?.targets ??
+          data.targets ??
+          []
+        assert.ok(
+          !rows.some(
+            (item: any) => item.tool === 'cursor' && item.scope === 'user',
+          ),
+        )
+      }
+      await setBundle({ ...initial, 'SKILL.md': marker(12) })
+      const rows = expectSuccess(skills(action)).data.targets
+      const missing = rows.find(
         (item: any) => item.tool === 'cursor' && item.scope === 'user',
       )
-      assert.equal(row.installed, false)
-      assert.equal(row.resolved_folder_path, null)
-      assert.ok(row.hint.includes(`${dangling}. Restore`))
-    }
-    for (const args of [
-      ['profiles', 'list'],
-      ['init'],
-      ['skills', 'ensure', '--tool', 'auto'],
-    ]) {
-      const data = expectSuccess(run(args)).data
-      const rows =
-        data.skills?.auto_update?.targets ??
-        data.skills?.targets ??
-        data.targets ??
-        []
-      assert.ok(
-        !rows.some(
-          (item: any) => item.tool === 'cursor' && item.scope === 'user',
-        ),
-      )
-    }
-    await setBundle({ ...initial, 'SKILL.md': marker(12) })
-    const rows = expectSuccess(skills(action)).data.targets
-    const missing = rows.find(
-      (item: any) => item.tool === 'cursor' && item.scope === 'user',
-    )
-    assert.equal(missing.action, 'not_installed')
-    assert.ok(missing.hint.includes(`${dangling}. Restore`))
-    for (const tool of ['codex', 'claude']) {
-      const row = rows.find(
-        (item: any) => item.tool === tool && item.scope === 'user',
-      )
-      assert.equal(row.action, action === 'remove' ? 'removed' : 'updated')
-    }
-    assert.equal((await lstat(dangling)).isSymbolicLink(), true)
-  })
+      assert.equal(missing.action, 'not_installed')
+      assert.ok(missing.hint.includes(`${dangling}. Restore`))
+      for (const tool of ['codex', 'claude']) {
+        const row = rows.find(
+          (item: any) => item.tool === tool && item.scope === 'user',
+        )
+        assert.equal(row.action, action === 'remove' ? 'removed' : 'updated')
+      }
+      assert.equal((await lstat(dangling)).isSymbolicLink(), true)
+    })
 
 for (const kind of ['internal link', 'directory replacement'])
   test(`automatic recommendations give repair hints without force commands for ${kind}`, async () => {
@@ -1274,4 +1279,122 @@ test('doctor scopes a working update recommendation when another folder has an u
     marker(11),
   )
   assert.equal(await readFile(outside, 'utf8'), 'sentinel')
+})
+
+for (const force of [false, true])
+  test(`doctor covers all stale targets with the same command (force=${force}) despite unavailable Claude`, async () => {
+    expectSuccess(
+      skills('install', '--tool', 'codex,cursor', '--scope', 'project'),
+    )
+    if (force)
+      for (const tool of ['.agents', '.cursor'])
+        await put(join(target(tool), 'references/usage.md'), 'personal edits')
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    const data = expectSuccess(
+      run(['doctor'], undefined, { CLAUDE_CONFIG_DIR: 'relative' }),
+    ).data.skills
+    assert.match(
+      data.update_command,
+      force ? /skills update --force --json$/ : /skills update --json$/,
+    )
+    const args = data.update_command
+      .slice(data.update_command.indexOf('skills update'))
+      .split(' ')
+    expectSuccess(run(args))
+    for (const tool of ['.agents', '.cursor'])
+      assert.equal(
+        await readFile(join(target(tool), 'SKILL.md'), 'utf8'),
+        marker(11),
+      )
+  })
+
+test('doctor lists both commands when stale targets need different repairs', async () => {
+  expectSuccess(
+    skills('install', '--tool', 'codex,cursor', '--scope', 'project'),
+  )
+  await put(join(target('.agents'), 'references/usage.md'), 'personal edits')
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  const data = expectSuccess(run(['doctor'])).data.skills
+  const commands = data.targets
+    .filter((row: any) => row.update_command)
+    .map((row: any) => row.update_command)
+  assert.equal(commands.length, 2)
+  assert.equal(data.update_command, commands.join(' && '))
+})
+
+for (const installed of [false, true])
+  test(`newer interrupted intent requires a newer CLI (installed=${installed})`, async () => {
+    if (installed)
+      expectSuccess(skills('install', '--tool', 'codex', '--scope', 'user'))
+    const folder = target('.agents', 'user')
+    const next = {
+      ...initial,
+      'SKILL.md': marker(11),
+      'references/usage.md': 'newer reference',
+    }
+    await pendingIntent(folder, next, 11)
+    await put(join(folder, 'references/usage.md'), next['references/usage.md'])
+    const staleFile = join(
+      folder,
+      '.artifactshare-12345678-1234-1234-1234-123456789abc.tmp',
+    )
+    await put(staleFile, 'stale staging')
+    await age(staleFile)
+    const pending = await readFile(
+      join(folder, '.artifactshare-pending.json'),
+      'utf8',
+    )
+    const doctor = expectSuccess(run(['doctor'])).data.skills.targets.find(
+      (row: any) => row.tool === 'codex' && row.scope === 'user',
+    )
+    assert.equal(doctor.update_command, null)
+    assert.match(doctor.hint, /newer CLI/)
+    const auto = expectSuccess(run(['profiles', 'list'])).data.skills
+      .auto_update.targets[0]
+    assert.equal(auto.action, 'update_recommended')
+    assert.equal(auto.update_command, undefined)
+    assert.match(auto.hint, /newer CLI/)
+    for (const command of ['update', 'install'])
+      expectFailure(
+        skills(command, '--tool', 'codex', '--scope', 'user', '--force'),
+      )
+    assert.equal(await readFile(staleFile, 'utf8'), 'stale staging')
+    assert.equal(
+      await readFile(join(folder, '.artifactshare-pending.json'), 'utf8'),
+      pending,
+    )
+    assert.equal(
+      await readFile(join(folder, 'references/usage.md'), 'utf8'),
+      'newer reference',
+    )
+    if (installed)
+      assert.equal(
+        await readFile(join(folder, 'SKILL.md'), 'utf8'),
+        initial['SKILL.md'],
+      )
+    else await assert.rejects(readFile(join(folder, 'SKILL.md')), /ENOENT/)
+  })
+
+test('failed automatic recovery of a fresh install reports no installed version', async () => {
+  const folder = target('.agents', 'user')
+  await pendingIntent(folder, initial, 10)
+  const preload = join(root, 'fail-entry.mjs')
+  await put(
+    preload,
+    `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+const rename = fs.rename;
+fs.rename = async (...args) => {
+  if (String(args[1]).endsWith('/SKILL.md')) throw new Error('synthetic commit failure');
+  return rename(...args);
+};
+syncBuiltinESMExports();
+`,
+  )
+  const data = expectSuccess(run(['profiles', 'list'], preload)).data
+  SkillAutoUpdateContainerSchema.parse(data)
+  const row = data.skills.auto_update.targets[0]
+  assert.equal(row.action, 'update_recommended')
+  assert.equal(row.installed_version, null)
+  await assert.rejects(readFile(join(folder, 'SKILL.md')), /ENOENT/)
 })

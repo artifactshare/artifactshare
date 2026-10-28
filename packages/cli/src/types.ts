@@ -445,7 +445,7 @@ export type SkillAutoUpdateTarget = SkillTargetIdentity & {
   scope: 'user' | 'project'
   path: string
   action: 'updated' | 'update_recommended'
-  installed_version: number
+  installed_version: number | null
   bundled_version: number
   update_command?: string
 }

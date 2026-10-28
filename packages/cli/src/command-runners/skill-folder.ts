@@ -79,8 +79,7 @@ export function resolveSkillFolder(entry: string): Promise<string> {
       if (error instanceof SkillFolderResolutionError) throw error
       throw new SkillFolderResolutionError(
         path,
-        path !== dirname(entry) &&
-          item?.isSymbolicLink() === true &&
+        item?.isSymbolicLink() === true &&
           (error as NodeJS.ErrnoException).code === 'ENOENT',
       )
     }
@@ -114,8 +113,13 @@ async function inspectTree(
       await unlink(path)
   }
 }
-export async function cleanupSkillFolder(entry: string) {
+export async function cleanupSkillFolder(entry: string, bundle?: SkillBundle) {
   const root = await rootFor(entry)
+  if (bundle) {
+    const pending = await ownership(root, await stateAt(root), PENDING)
+    if (pending.manifest && pending.manifest.version > bundle.version)
+      throw new Error(newerIntentHint(pending.manifest.version))
+  }
   await inspectTree(root, true)
   const parent = dirname(root)
   if (await info(parent))
@@ -340,6 +344,8 @@ export async function folderDiagnostics(
   }
   const state = await stateAt(root)
   const { owned, pending, recorded } = await recoveryOwnership(root, state)
+  const newerIntent =
+    pending.manifest && pending.manifest.version > bundle.version
   const missing_files: string[] = [],
     different_files: string[] = [],
     modified_files: string[] = []
@@ -382,7 +388,13 @@ export async function folderDiagnostics(
     different_files,
     modified_files,
     ownership_manifest: owned.status,
+    ...(newerIntent
+      ? { hint: newerIntentHint(pending.manifest!.version) }
+      : {}),
   }
+}
+function newerIntentHint(version: number) {
+  return `Interrupted skill update requires a newer CLI with bundled skill version ${version} or later. Upgrade the CLI, then retry.`
 }
 export async function preflightFolder(
   entry: string,
@@ -395,6 +407,9 @@ export async function preflightFolder(
   await inspectTree(root)
   await safe(root, 'SKILL.md')
   const { owned, pending, recorded } = await recoveryOwnership(root, state)
+  if (bundle && pending.manifest && pending.manifest.version > bundle.version)
+    throw new Error(newerIntentHint(pending.manifest.version))
+
   if (
     ((owned.status === 'invalid' || pending.status === 'invalid') && !force) ||
     (!force && state.kind !== 'managed' && state.kind !== 'missing')
@@ -485,7 +500,7 @@ export async function writeSkillFolder(
   forceRetirement = force,
   cleanup = true,
 ) {
-  if (cleanup) await cleanupSkillFolder(entry)
+  if (cleanup) await cleanupSkillFolder(entry, bundle)
   const { root, previous, blockers, replacedDirectories } =
     await preflightFolder(entry, bundle, force, forceRetirement)
   const files = {
@@ -546,7 +561,12 @@ export async function writeSkillFolder(
       ...files,
       [PENDING]: intent,
     })) {
-      const temp = join(stagingDir, path)
+      // Keep skill entry names out of every staging directory, including
+      // nested references. Root-level UUID names cannot collide with bundle paths.
+      const temp = join(
+        stagingDir,
+        basename(path) === 'SKILL.md' ? `${randomUUID()}.tmp` : path,
+      )
       await mkdir(dirname(temp), { recursive: true })
       await writeFile(temp, text, { flag: 'wx' })
       staged.set(path, temp)
