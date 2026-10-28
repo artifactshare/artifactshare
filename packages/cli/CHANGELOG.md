@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.20.2 - 2026-10-28
 
 - Preserve newer managed skills during install unless force explicitly requests a downgrade.
 - Skip unmanaged folders with protected-path links during update and removal (`skipped_unmanaged`), without reading their referents or reporting a list/doctor conflict.
