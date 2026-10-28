@@ -106,9 +106,11 @@ export function CliReferencePage({ locale }: { locale: Locale }) {
                 >
                   <GuideProse className="[&_h2]:mt-0">
                     <h2 id={`${id}-heading`}>{section.title}</h2>
-                    <p>
-                      <SectionBody text={content.sections.introduction.body} />
-                    </p>
+                    {content.sections.introduction.body.map((paragraph) => (
+                      <p key={paragraph}>
+                        <SectionBody text={paragraph} />
+                      </p>
+                    ))}
                     <p>
                       <strong>{content.commandUsageLabel}</strong>
                     </p>

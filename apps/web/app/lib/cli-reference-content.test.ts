@@ -15,7 +15,8 @@ describe('CLI reference content', () => {
   test.each(['en', 'ja'] as const)(
     'explains Claude user skill location and recovery in %s',
     (locale) => {
-      const body = cliReferenceContent(locale).sections.introduction.body
+      const body =
+        cliReferenceContent(locale).sections.introduction.body.join(' ')
       expect(body).toContain('CLAUDE_CONFIG_DIR')
       expect(body).toContain('~/.claude')
       expect(body).toContain('skills list')
@@ -79,10 +80,10 @@ describe('CLI reference content', () => {
     'documents token import for CI in the %s introduction',
     (locale) => {
       const content = cliReferenceContent(locale)
-      expect(content.sections.introduction.body).toContain(
+      expect(content.sections.introduction.body.join(' ')).toContain(
         'profiles import-token',
       )
-      expect(content.sections.introduction.body).toContain('CI')
+      expect(content.sections.introduction.body.join(' ')).toContain('CI')
       expect(content.commands.map((command) => command.path)).toContain(
         'profiles import-token',
       )
@@ -93,10 +94,10 @@ describe('CLI reference content', () => {
     'names the runnable init command in the %s introduction',
     (locale) => {
       const content = cliReferenceContent(locale)
-      expect(content.sections.introduction.body).toContain(
+      expect(content.sections.introduction.body.join(' ')).toContain(
         CLI_REFERENCE_EXAMPLES.init,
       )
-      expect(content.sections.introduction.body).not.toMatch(
+      expect(content.sections.introduction.body.join(' ')).not.toMatch(
         /\babove\b|上記の init コマンド/i,
       )
       expect(
@@ -335,7 +336,8 @@ test.each(['en', 'ja'] as const)(
 test.each(['en', 'ja'] as const)(
   'publisher reference covers expanded API scope in %s',
   (locale) => {
-    const body = cliReferenceContent(locale).sections.introduction.body
+    const body =
+      cliReferenceContent(locale).sections.introduction.body.join(' ')
     for (const field of [
       'base_version',
       'delete_path',
@@ -354,14 +356,14 @@ test.each(['en', 'ja'] as const)(
 )
 
 test('publisher-specific download and read responses are explicitly scoped', () => {
-  const en = cliReferenceContent('en').sections.introduction.body
+  const en = cliReferenceContent('en').sections.introduction.body.join(' ')
   expect(en).toContain(
     'With a publisher credential, the exact download endpoint returns source bytes',
   )
   expect(en).toContain(
     'With a publisher credential, readback includes visibility',
   )
-  const ja = cliReferenceContent('ja').sections.introduction.body
+  const ja = cliReferenceContent('ja').sections.introduction.body.join(' ')
   expect(ja).toContain(
     'publisher の資格情報では、download は単一ファイルなら元データ',
   )
@@ -397,7 +399,8 @@ test('retention option localization is scoped to the edit command', () => {
 test.each(['en', 'ja'] as const)(
   'publisher retention guidance explains owner edits and historical clients in %s',
   (locale) => {
-    const guidance = cliReferenceContent(locale).sections.introduction.body
+    const guidance =
+      cliReferenceContent(locale).sections.introduction.body.join(' ')
     const policy =
       locale === 'en'
         ? [
@@ -606,7 +609,7 @@ test.each(['en', 'ja'] as const)(
 
 test('uses consistent Japanese terms in CLI reference guidance', () => {
   const content = cliReferenceContent('ja')
-  expect(content.sections.introduction.body).toContain(
+  expect(content.sections.introduction.body.join(' ')).toContain(
     'publisher の資格情報は、一覧、解決、コメント、共有範囲変更、移動、プロジェクト操作、追記、上書き投稿には使えません。',
   )
   expect(content.sections.basics.body).toContain('ブラウザの共有ページ')
@@ -635,3 +638,20 @@ test('uses consistent Japanese terms in CLI reference guidance', () => {
     'self_upload_disabled は Google または Microsoft でログインして、同じコマンドを再実行します。',
   )
 })
+
+test.each(['en', 'ja'] as const)(
+  'splits the %s introduction into the same topic paragraphs',
+  (locale) => {
+    const paragraphs = cliReferenceContent(locale).sections.introduction.body
+    expect(paragraphs).toHaveLength(
+      cliReferenceContent('en').sections.introduction.body.length,
+    )
+    const publisher = paragraphs.filter((paragraph) =>
+      paragraph.includes('publisher'),
+    )
+    expect(publisher).toEqual([paragraphs.at(-1)])
+    expect(paragraphs[0]).toContain('Node.js 22.19')
+    expect(paragraphs[1]).toContain('CLAUDE_CONFIG_DIR')
+    expect(paragraphs[2]).toContain('--profile')
+  },
+)
