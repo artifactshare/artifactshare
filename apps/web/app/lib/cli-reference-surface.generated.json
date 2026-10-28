@@ -740,7 +740,7 @@
         "--force"
       ],
       "option_help": [
-        "--force Take over bundled paths only; preserve user additions"
+        "--force Take over bundled paths or intentionally downgrade; preserve user additions"
       ]
     },
     {

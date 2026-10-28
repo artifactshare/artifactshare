@@ -6,6 +6,7 @@ import {
   mkdir,
   lstat,
   readdir,
+  readlink,
   mkdtemp,
   readFile,
   realpath,
@@ -1513,80 +1514,106 @@ for (const path of [
   })
 }
 
-test('newer installations receive no recommendation, skip all writes, and require explicit downgrade', async () => {
-  await setBundle({ ...initial, 'SKILL.md': marker(12) })
-  expectSuccess(skills('install', '--tool', 'codex'))
-  await setBundle(initial)
-  expectSuccess(skills('install', '--tool', 'claude'))
-  await setBundle({ ...initial, 'SKILL.md': marker(11) })
-  const debris = join(
-    target('.agents'),
-    '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
-  )
-  await put(debris, 'debris')
-  await age(debris)
-  const manifest = join(target('.agents'), '.artifactshare-managed.json')
-  const before = await readFile(manifest, 'utf8')
-  const listed = SkillsListDataSchema.parse(expectSuccess(skills('list')).data)
-  const doctor = DoctorSkillsDataSchema.parse(
-    expectSuccess(run(['doctor'])).data.skills,
-  )
-  for (const data of [listed, doctor]) {
-    const row = data.targets.find(
-      (candidate) =>
-        candidate.tool === 'codex' && candidate.scope === 'project',
-    )!
-    assert.equal(row.update_available, false)
-    assert.equal(row.current, false)
-    assert.match(row.hint!, /A newer CLI installed/)
-  }
-  assert.equal(
-    doctor.targets.find(
-      (candidate) =>
-        candidate.tool === 'codex' && candidate.scope === 'project',
-    )!.update_command,
-    null,
-  )
-  assert.match(doctor.update_command!, /--tool claude/)
-  assert.doesNotMatch(doctor.update_command!, /--tool codex/)
-  for (const args of [['update', '--dry-run'], ['update']]) {
-    const data = SkillsActionDataSchema.parse(
-      expectSuccess(skills(...args)).data,
+for (const command of ['install', 'update'])
+  test(`${command}: newer installations receive no recommendation, skip all writes, and require explicit downgrade`, async () => {
+    await setBundle({ ...initial, 'SKILL.md': marker(12) })
+    expectSuccess(skills('install', '--tool', 'codex', '--tool', 'cursor'))
+    await put(legacy(), marker(12))
+    await setBundle(initial)
+    expectSuccess(skills('install', '--tool', 'claude'))
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    const debris = join(
+      target('.agents'),
+      '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
     )
-    const row = data.targets.find(
-      (candidate) =>
-        candidate.tool === 'codex' && candidate.scope === 'project',
-    )!
-    assert.equal(row.action, 'unchanged')
-    assert.match(row.hint!, /A newer CLI installed/)
-    assert.equal(await readFile(manifest, 'utf8'), before)
-    assert.equal(await readFile(debris, 'utf8'), 'debris')
+    await put(debris, 'debris')
+    await age(debris)
+    const manifest = join(target('.agents'), '.artifactshare-managed.json')
+    const before = await readFile(manifest, 'utf8')
+    const listed = SkillsListDataSchema.parse(
+      expectSuccess(skills('list')).data,
+    )
+    const doctor = DoctorSkillsDataSchema.parse(
+      expectSuccess(run(['doctor'])).data.skills,
+    )
+    for (const data of [listed, doctor]) {
+      const row = data.targets.find(
+        (candidate) =>
+          candidate.tool === 'codex' && candidate.scope === 'project',
+      )!
+      assert.equal(row.update_available, false)
+      assert.equal(row.current, false)
+      assert.match(row.hint!, /A newer CLI installed/)
+    }
     assert.equal(
-      await readFile(join(target('.agents'), 'SKILL.md'), 'utf8'),
-      marker(12),
+      doctor.targets.find(
+        (candidate) =>
+          candidate.tool === 'codex' && candidate.scope === 'project',
+      )!.update_command,
+      null,
     )
-  }
-  for (const dry of [true, false]) {
-    const data = SkillsActionDataSchema.parse(
-      expectSuccess(
-        skills(
-          'update',
-          '--tool',
-          'codex',
-          '--scope',
-          'project',
-          '--force',
-          ...(dry ? ['--dry-run'] : []),
-        ),
-      ).data,
-    )
-    assert.match(data.targets[0]!.hint!, /downgrade.*12.*11/)
-    assert.equal(
-      await readFile(join(target('.agents'), 'SKILL.md'), 'utf8'),
-      marker(dry ? 12 : 11),
-    )
-  }
-})
+    assert.match(doctor.update_command!, /--tool claude/)
+    assert.doesNotMatch(doctor.update_command!, /--tool codex/)
+    for (const args of [
+      [
+        command,
+        '--tool',
+        'codex',
+        '--tool',
+        'claude',
+        '--tool',
+        'cursor',
+        '--dry-run',
+      ],
+      [command, '--tool', 'codex', '--tool', 'claude', '--tool', 'cursor'],
+      ...(command === 'update' ? [[command, '--dry-run'], [command]] : []),
+    ]) {
+      const data = SkillsActionDataSchema.parse(
+        expectSuccess(skills(...args)).data,
+      )
+      const row = data.targets.find(
+        (candidate) =>
+          candidate.tool === 'codex' && candidate.scope === 'project',
+      )!
+      assert.equal(row.action, 'unchanged')
+      assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+      assert.equal(
+        data.targets.find(
+          (candidate) =>
+            candidate.tool === 'claude' && candidate.scope === 'project',
+        )!.action,
+        // Unfiltered runs follow the filtered update of the same target.
+        args.includes('--tool') ? 'updated' : 'unchanged',
+      )
+      assert.match(row.hint!, /A newer CLI installed/)
+      assert.equal(await readFile(manifest, 'utf8'), before)
+      assert.equal(await readFile(debris, 'utf8'), 'debris')
+      assert.equal(
+        await readFile(join(target('.agents'), 'SKILL.md'), 'utf8'),
+        marker(12),
+      )
+    }
+    for (const dry of [true, false]) {
+      const data = SkillsActionDataSchema.parse(
+        expectSuccess(
+          skills(
+            command,
+            '--tool',
+            'codex',
+            '--scope',
+            'project',
+            '--force',
+            ...(dry ? ['--dry-run'] : []),
+          ),
+        ).data,
+      )
+      assert.match(data.targets[0]!.hint!, /downgrade.*12.*11/)
+      assert.equal(
+        await readFile(join(target('.agents'), 'SKILL.md'), 'utf8'),
+        marker(dry ? 12 : 11),
+      )
+    }
+  })
 
 for (const spelling of ['SKILL.md', 'skill.md'])
   test(`protected ${spelling} link isolates automatic ensure and unfiltered mutations`, async (context) => {
@@ -1650,4 +1677,253 @@ test('removing a broken marker with newer pending intent reports the ownership c
     await readFile(join(folder, 'SKILL.md'), 'utf8'),
     '<!-- artifactshare-skill -->',
   )
+})
+
+for (const path of ['SKILL.md', 'references', 'dangling'])
+  for (const [command, force] of [
+    ['update', false],
+    ['update', true],
+    ['remove', false],
+  ] as const)
+    for (const filtered of [true, false])
+      test(`unmanaged ${path}: ${command} ${filtered ? 'filtered' : 'all'} force=${force} never reads or mutates links`, async () => {
+        const folder = target('.agents')
+        const outside = join(root, 'outside')
+        await put(join(outside, 'SKILL.md'), marker(99))
+        await put(join(folder, 'SKILL.md'), 'personal skill')
+        const link = join(folder, path === 'references' ? path : 'SKILL.md')
+        if (path !== 'references') await rm(link)
+        const referent =
+          path === 'references'
+            ? outside
+            : join(outside, path === 'dangling' ? 'missing' : 'SKILL.md')
+        await symlink(referent, link)
+        const debris = join(
+          folder,
+          '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
+        )
+        await put(debris, 'partial')
+        await age(debris)
+        await put(join(folder, 'personal.txt'), 'personal')
+        const before = await lstat(link)
+        expectSuccess(skills('install', '--tool', 'claude'))
+        await setBundle({ ...initial, 'SKILL.md': marker(11) })
+        const log = join(root, 'reads.log')
+        const preload = join(root, 'watch.mjs')
+        await put(
+          preload,
+          `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+const append = fs.appendFile;
+for (const name of ['readFile', 'open', 'readdir']) {
+  const original = fs[name];
+  fs[name] = async (...args) => {
+    const path = String(args[0]);
+    if (path === ${JSON.stringify(link)} || path.startsWith(${JSON.stringify(link + '/')}) || path.startsWith(${JSON.stringify(outside)}))
+      await append(${JSON.stringify(log)}, name + ':' + path + '\\n');
+    return original(...args);
+  };
+}
+syncBuiltinESMExports();`,
+        )
+        for (const args of [['skills', 'list'], ['doctor']]) {
+          const data = expectSuccess(run(args, preload)).data
+          const parsed =
+            args[0] === 'doctor'
+              ? DoctorSkillsDataSchema.parse(data.skills)
+              : SkillsListDataSchema.parse(data)
+          const row = parsed.targets.find(
+            (candidate) =>
+              candidate.tool === 'codex' && candidate.scope === 'project',
+          )!
+          assert.equal(row.installed, true)
+          assert.equal(row.managed, false)
+          assert.equal(row.ownership_manifest, 'absent')
+          assert.equal(row.code, undefined)
+          assert.equal(row.hint, undefined)
+          assert.equal(row.update_available, false)
+          if ('update_command' in row) assert.equal(row.update_command, null)
+        }
+        for (const dry of [true, false]) {
+          const data = SkillsActionDataSchema.parse(
+            expectSuccess(
+              run(
+                [
+                  'skills',
+                  command,
+                  ...(filtered
+                    ? [
+                        '--tool',
+                        'codex',
+                        '--tool',
+                        'claude',
+                        '--scope',
+                        'project',
+                      ]
+                    : []),
+                  ...(force ? ['--force'] : []),
+                  ...(dry ? ['--dry-run'] : []),
+                ],
+                preload,
+              ),
+            ).data,
+          )
+          assert.equal(
+            data.targets.find(
+              (row) => row.tool === 'codex' && row.scope === 'project',
+            )!.action,
+            'skipped_unmanaged',
+          )
+          assert.equal(
+            data.targets.find(
+              (row) => row.tool === 'claude' && row.scope === 'project',
+            )!.action,
+            command === 'update' ? 'updated' : 'removed',
+          )
+          assert.equal((await lstat(link)).ino, before.ino)
+          assert.equal(await readlink(link), referent)
+          assert.equal(await readFile(debris, 'utf8'), 'partial')
+          assert.equal(
+            await readFile(join(folder, 'personal.txt'), 'utf8'),
+            'personal',
+          )
+          for (const record of [
+            '.artifactshare-managed.json',
+            '.artifactshare-pending.json',
+          ])
+            await assert.rejects(lstat(join(folder, record)), /ENOENT/)
+        }
+        await assert.rejects(lstat(log), /ENOENT/)
+        assert.equal(
+          await readFile(join(outside, 'SKILL.md'), 'utf8'),
+          marker(99),
+        )
+        for (const dry of [true, false]) {
+          const result = expectFailure(
+            skills(
+              'install',
+              '--tool',
+              'codex',
+              '--force',
+              ...(dry ? ['--dry-run'] : []),
+            ),
+          )
+          assert.equal(result.error.code, 'skill_update_conflict')
+          assert.match(
+            result.error.hint,
+            path === 'references' ? /references/ : /SKILL.md/,
+          )
+        }
+      })
+
+for (const kind of ['references without SKILL.md', 'reserved name'])
+  test(`unowned folder with a ${kind} link is never a conflict`, async () => {
+    const folder = target('.agents')
+    const outside = join(root, 'outside')
+    await put(join(outside, 'sentinel'), 'untouched')
+    if (kind === 'reserved name') await put(join(folder, 'SKILL.md'), 'mine')
+    const link = join(
+      folder,
+      kind === 'reserved name'
+        ? '.artifactshare-staging-00000000-0000-4000-8000-000000000000'
+        : 'references',
+    )
+    await mkdir(folder, { recursive: true })
+    await symlink(outside, link)
+    expectSuccess(skills('install', '--tool', 'claude'))
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    const expected = kind === 'reserved name' ? 'skipped_unmanaged' : null
+    for (const data of [
+      SkillsListDataSchema.parse(expectSuccess(skills('list')).data),
+      DoctorSkillsDataSchema.parse(expectSuccess(run(['doctor'])).data.skills),
+    ]) {
+      const row = data.targets.find(
+        (candidate) =>
+          candidate.tool === 'codex' && candidate.scope === 'project',
+      )!
+      assert.equal(row.code, undefined)
+      assert.equal(row.hint, undefined)
+    }
+    for (const args of [
+      ['update', '--tool', 'codex', '--scope', 'project'],
+      ['update'],
+      ['remove', '--tool', 'codex', '--scope', 'project'],
+      ['remove'],
+    ]) {
+      const data = SkillsActionDataSchema.parse(
+        expectSuccess(skills(...args, '--dry-run')).data,
+      )
+      assert.equal(
+        data.targets.find(
+          (row) => row.tool === 'codex' && row.scope === 'project',
+        )!.action,
+        expected ?? 'not_installed',
+      )
+    }
+    assert.equal((await lstat(link)).isSymbolicLink(), true)
+    assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+  })
+
+test('automatic ensure, open and init skip an unowned folder whose SKILL.md is a link', async () => {
+  expectSuccess(skills('install', '--tool', 'claude', '--scope', 'user'))
+  const folder = target('.agents', 'user')
+  const outside = join(root, 'outside')
+  await put(join(outside, 'SKILL.md'), marker(99))
+  await mkdir(folder, { recursive: true })
+  await symlink(join(outside, 'SKILL.md'), join(folder, 'SKILL.md'))
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto', '--scope', 'user')).data,
+  )
+  assert.equal(
+    data.targets.find((row) => row.tool === 'codex' && row.scope === 'user')!
+      .action,
+    'skipped_unmanaged',
+  )
+  assert.equal(
+    data.targets.find((row) => row.tool === 'claude' && row.scope === 'user')!
+      .action,
+    'updated',
+  )
+  assert.equal(await readFile(join(outside, 'SKILL.md'), 'utf8'), marker(99))
+})
+
+test('install preserves a newer installation despite a link at a path only the older bundle ships', async () => {
+  await setBundle({ ...initial, 'SKILL.md': marker(12) })
+  expectSuccess(skills('install', '--tool', 'codex'))
+  await setBundle({
+    ...initial,
+    'SKILL.md': marker(11),
+    'references/old.md': 'old',
+  })
+  const outside = join(root, 'outside')
+  await put(join(outside, 'sentinel'), 'untouched')
+  await symlink(outside, join(target('.agents'), 'references/old.md'))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('install', '--tool', 'codex', '--tool', 'claude'))
+      .data,
+  )
+  const row = data.targets.find((candidate) => candidate.tool === 'codex')!
+  assert.equal(row.action, 'unchanged')
+  assert.match(row.hint!, /A newer CLI installed/)
+  assert.equal(
+    data.targets.find((candidate) => candidate.tool === 'claude')!.action,
+    'installed',
+  )
+})
+
+test('automatic ensure refuses a linked SKILL.md when the legacy rule is managed', async () => {
+  await put(legacy(), marker(1))
+  const outside = join(root, 'outside')
+  await put(join(outside, 'SKILL.md'), marker(99))
+  await mkdir(target(), { recursive: true })
+  await symlink(join(outside, 'SKILL.md'), join(target(), 'SKILL.md'))
+  const row = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto')).data,
+  ).targets.find((item) => item.tool === 'cursor' && item.scope === 'project')!
+  // Not skipped as the user's folder: the link is refused with a repair hint.
+  assert.equal(row.action, 'update_recommended')
+  assert.match(row.hint!, /Unsafe skill path \(link\): SKILL.md/)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+  assert.equal(await readFile(join(outside, 'SKILL.md'), 'utf8'), marker(99))
 })

@@ -706,3 +706,46 @@ test('protected link identity uses filesystem name resolution without following 
   )
   assert.deepEqual(lookups, [join(root, 'SKILL.md'), join(root, 'SKILL.md')])
 })
+
+for (const record of [
+  '.artifactshare-managed.json',
+  '.artifactshare-pending.json',
+])
+  for (const kind of ['invalid', 'dangling'])
+    test(`${kind} ${record} keeps protected-link checks strict`, async () => {
+      const root = await fixture()
+      const folder = join(root, 'artifactshare')
+      const entry = join(folder, 'SKILL.md')
+      await mkdir(folder)
+      await put(root, 'outside', marker(99))
+      await symlink(join(root, 'outside'), entry)
+      if (kind === 'invalid') await put(folder, record, '{}')
+      else await symlink(join(root, 'missing'), join(folder, record))
+      assert.equal(
+        (await folderDiagnostics(entry, bundle())).code,
+        'skill_update_conflict',
+      )
+      await assert.rejects(
+        preflightFolder(entry, bundle(), true),
+        /regular file or directory or remove/,
+      )
+      await assert.rejects(
+        removeSkillFolder(entry, false, bundle()),
+        /regular file or directory or remove/,
+      )
+      assert.equal(await readFile(join(root, 'outside'), 'utf8'), marker(99))
+    })
+
+test('managed legacy rules retain protected-link diagnostics for otherwise unowned folders', async () => {
+  const root = await fixture()
+  const folder = join(root, 'artifactshare')
+  await mkdir(folder)
+  const entry = join(folder, 'SKILL.md')
+  await symlink(join(root, 'missing'), entry)
+  const diagnostic = await folderDiagnostics(entry, bundle(), true)
+  assert.equal(diagnostic.code, 'skill_update_conflict')
+  assert.match(
+    diagnostic.hint!,
+    /SKILL.md.*regular file or directory or remove/,
+  )
+})

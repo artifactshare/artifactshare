@@ -1631,7 +1631,8 @@ const skillsInstallDefinition = define({
     force: {
       type: 'boolean',
       toKebab: true,
-      description: 'Take over bundled paths only; preserve user additions',
+      description:
+        'Take over bundled paths or intentionally downgrade; preserve user additions',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --scope project --json
@@ -1640,6 +1641,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --to
 Writes SKILL.md and bundled references into skills/artifactshare/ for every tool and scope.
 Project Cursor uses .cursor/skills/artifactshare/. A manifest tracks owned files.
 Files without the Artifact Share managed marker are never overwritten without --force.
+Newer installed versions are unchanged with a newer-CLI hint unless --force requests an intentional downgrade; dry runs report the same plan.
 
 Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
 ~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
@@ -1683,7 +1685,8 @@ const skillsUpdateDefinition = define({
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json
 
 Updates managed folders and repairs missing files. Edited owned files require --force; user additions are preserved.
-Folder and ancestor directory symlinks are resolved. User links outside bundled, owned, pending and reserved CLI paths are ignored and listed in user_links; protected links are refused even with --force.
+Folder and ancestor directory symlinks are resolved. User links outside bundled, owned, pending and reserved CLI paths are ignored and listed in user_links; protected links in managed folders are refused even with --force.
+Unmanaged folders without ownership records or a managed legacy rule are skipped_unmanaged, including protected-path links; link referents are never read.
 Newer installed versions are preserved without cleanup unless --force requests an explicit downgrade.
 Unfiltered update/remove continue other targets on conflict: ok: true stdout includes failed target rows with code and hint; exit status is 1.
 Shared folders are written once. JSON rows include aliases and resolved_folder_path.
@@ -1743,6 +1746,7 @@ const skillsRemoveDefinition = define({
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills remove --tool cursor --json
 
 Only manifest-owned files (or a legacy managed SKILL.md) are deleted; user files are preserved.
+Unmanaged folders are skipped_unmanaged, including protected-path links when no ownership records or managed legacy rule exist.
 Project Cursor removal also cleans managed legacy rules.`,
 })
 

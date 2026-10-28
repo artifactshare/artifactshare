@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Preserve newer managed skills during install unless force explicitly requests a downgrade.
+- Skip unmanaged folders with protected-path links during update and removal (`skipped_unmanaged`), without reading their referents or reporting a list/doctor conflict.
 - Preserve user-added skill links and report them in list/doctor; isolate protected-link conflicts so other selected targets finish.
 - Never recommend downgrading newer installed skills; require explicit force and describe the downgrade.
 - Clarify Japanese interrupted-update cleanup guidance and skill JSON partial failures.
