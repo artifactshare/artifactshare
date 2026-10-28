@@ -117,6 +117,26 @@ async function protectedPaths(root: string, bundle?: SkillBundle) {
   }
   return paths
 }
+// Resolve protected spellings one component at a time, stopping at links.
+// This uses the filesystem's own name equivalence without visiting referents.
+export async function isProtectedLink(
+  root: string,
+  item: { dev: number; ino: number },
+  protectedEntries: Set<string>,
+  lookup = info,
+): Promise<boolean> {
+  for (const entry of protectedEntries) {
+    let path = root
+    for (const part of entry.split('/')) {
+      path = join(path, part)
+      const candidate = await lookup(path)
+      if (!candidate) break
+      if (candidate.dev === item.dev && candidate.ino === item.ino) return true
+      if (!candidate.isDirectory()) break
+    }
+  }
+  return false
+}
 async function inspectTree(
   root: string,
   cleanup = false,
@@ -132,6 +152,7 @@ async function inspectTree(
       const entry = relativePath(folderRoot, path).split(sep).join('/')
       if (
         protectedEntries.has(entry) ||
+        (await isProtectedLink(folderRoot, item, protectedEntries)) ||
         name === MANIFEST ||
         name === PENDING ||
         stagingName.test(name) ||

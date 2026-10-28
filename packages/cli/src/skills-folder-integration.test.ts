@@ -1587,3 +1587,67 @@ test('newer installations receive no recommendation, skip all writes, and requir
     )
   }
 })
+
+for (const spelling of ['SKILL.md', 'skill.md'])
+  test(`protected ${spelling} link isolates automatic ensure and unfiltered mutations`, async (context) => {
+    expectSuccess(
+      skills('install', '--tool', 'codex,claude', '--scope', 'user'),
+    )
+    const folder = target('.agents', 'user')
+    if (
+      spelling === 'skill.md' &&
+      !(await lstat(join(folder, spelling)).catch(() => null))
+    ) {
+      context.skip()
+      return
+    }
+    const outside = join(root, 'outside')
+    await put(join(outside, 'sentinel'), 'untouched')
+    await rm(join(folder, 'SKILL.md'))
+    await symlink(outside, join(folder, spelling))
+    const inode = (await lstat(join(folder, spelling))).ino
+    for (const [index, args] of [
+      ['ensure', '--tool', 'auto', '--scope', 'user', '--dry-run'],
+      ['ensure', '--tool', 'auto', '--scope', 'user'],
+      ['update', '--force', '--dry-run'],
+      ['update', '--force'],
+      ['remove', '--dry-run'],
+      ['remove'],
+    ].entries()) {
+      await setBundle({ ...initial, 'SKILL.md': marker(11 + index) })
+      const result = skills(...args)
+      assert.equal(result.status, 1, result.stdout + result.stderr)
+      assert.notEqual(result.stdout, '', result.stderr)
+      const data = SkillsActionDataSchema.parse(JSON.parse(result.stdout).data)
+      const failed = data.targets.find(
+        (row) => row.tool === 'codex' && row.scope === 'user',
+      )!
+      assert.equal(failed.action, 'failed')
+      assert.equal(failed.code, 'skill_update_conflict')
+      assert.ok(failed.hint?.includes(spelling))
+      assert.match(failed.hint!, /regular file or directory or remove/)
+      const healthy = data.targets.find(
+        (row) => row.tool === 'claude' && row.scope === 'user',
+      )!
+      assert.equal(healthy.action, args[0] === 'remove' ? 'removed' : 'updated')
+      assert.equal((await lstat(join(folder, spelling))).ino, inode)
+      assert.equal(
+        await readFile(join(outside, 'sentinel'), 'utf8'),
+        'untouched',
+      )
+    }
+  })
+
+test('removing a broken marker with newer pending intent reports the ownership conflict', async () => {
+  expectSuccess(skills('install', '--tool', 'codex'))
+  const folder = target('.agents')
+  await pendingIntent(folder, { ...initial, 'SKILL.md': marker(11) }, 11)
+  await put(join(folder, 'SKILL.md'), '<!-- artifactshare-skill -->')
+  const result = expectFailure(skills('remove', '--tool', 'codex'))
+  assert.match(result.error.hint, /Skill ownership conflict/)
+  assert.doesNotMatch(result.error.hint, /newer CLI|Upgrade the CLI/)
+  assert.equal(
+    await readFile(join(folder, 'SKILL.md'), 'utf8'),
+    '<!-- artifactshare-skill -->',
+  )
+})

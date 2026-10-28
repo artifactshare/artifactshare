@@ -144,10 +144,16 @@ async function groupTargets<T extends ResolvedSkillTarget>(
   }
   return result
 }
-async function conflictFor(target: SkillTarget) {
+async function conflictFor(target: SkillTarget, removing = false) {
   const error = skillUpdateConflictError(target.path)
   try {
-    await preflightFolder(target.absolutePath, await loadBundledSkills())
+    await preflightFolder(
+      target.absolutePath,
+      await loadBundledSkills(),
+      false,
+      false,
+      removing,
+    )
   } catch (cause) {
     error.hint = (cause as Error).message
   }
@@ -916,6 +922,21 @@ export async function ensureSkills(
   const planned: PlannedAction[] = []
   for (const target of await groupTargets(targets)) {
     const state = await readTarget(target)
+    if (
+      filters.auto &&
+      command === 'skills ensure' &&
+      state.kind === 'broken'
+    ) {
+      const details = await diagnostic(target, bundled)
+      if (details.code === 'skill_update_conflict') {
+        planned.push({
+          target,
+          action: 'failed',
+          hint: details.hint ?? skillUpdateConflictError(target.path).hint,
+        })
+        continue
+      }
+    }
     if (state.kind === 'unmanaged' || state.kind === 'broken') {
       if (options.skipBrokenUserSkills && state.kind === 'broken') {
         const details = await diagnostic(target, bundled)
@@ -1209,7 +1230,11 @@ export async function runSkillsEnsure(
   mode: OutputMode,
 ): Promise<void> {
   const data = await ensureSkills(parsed, mode)
-  if (data) writeSuccess('skills ensure', data, mode)
+  if (data) {
+    writeSuccess('skills ensure', data, mode)
+    if (data.targets.some((target) => target.action === 'failed'))
+      process.exitCode = 1
+  }
 }
 
 export async function runSkillsList(
@@ -1422,7 +1447,7 @@ export async function runSkillsRemove(
       continue
     }
     if (state.kind === 'broken') {
-      return writeFailure(command, await conflictFor(target), mode, 1)
+      return writeFailure(command, await conflictFor(target, true), mode, 1)
     }
     if (state.kind === 'missing' && state.hint) {
       planned.push({ target, action: 'not_installed', hint: state.hint })

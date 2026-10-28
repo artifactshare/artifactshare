@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
   cleanupSkillFolder,
+  isProtectedLink,
   resolveSkillFolder,
   preflightFolder,
   loadSkillBundle,
@@ -679,3 +680,29 @@ for (const source of ['manifest', 'pending', 'previous']) {
     assert.equal(await readFile(outside, 'utf8'), 'untouched')
   })
 }
+
+test('protected link identity uses filesystem name resolution without following links', async () => {
+  const root = await fixture()
+  const link = join(root, 'skill.md')
+  await symlink(join(root, 'missing'), link)
+  const item = await lstat(link)
+  const lookups: string[] = []
+  const lookup = async (path: string) => {
+    lookups.push(path)
+    return path.toLowerCase() === link.toLowerCase() ? item : null
+  }
+  assert.equal(
+    await isProtectedLink(root, item, new Set(['SKILL.md']), lookup),
+    true,
+  )
+  assert.equal(
+    await isProtectedLink(
+      root,
+      { dev: item.dev + 1, ino: item.ino },
+      new Set(['SKILL.md/child']),
+      lookup,
+    ),
+    false,
+  )
+  assert.deepEqual(lookups, [join(root, 'SKILL.md'), join(root, 'SKILL.md')])
+})
