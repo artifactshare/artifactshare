@@ -302,7 +302,7 @@ describe('CLI reference content', () => {
       expect(body).toContain('--scope effective')
       expect(body).toContain('workspace.visibility_available')
       expect(body).toContain('product_default_private')
-      expect(body).toMatch(/otherwise private|それ以外は private/)
+      expect(body).toMatch(/otherwise private|それ以外のアカウントなら private/)
       expect(body).toMatch(/Config inspection is offline|config は通信せず/)
       expect(body).toMatch(
         /never automatically switches to link|link へ自動変更しません/,
