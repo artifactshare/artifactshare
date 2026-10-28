@@ -3,6 +3,14 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Support skill folder and ancestor directory symlinks, deduplicate shared destinations, and expose selected aliases and resolved folder paths in JSON. Internal file and directory links remain refused, including SKILL.md.
+- Prefer sibling staging for skill writes, falling back to private staging inside the skill folder when permissions or filesystem boundaries require it. Clean reserved debris only after ten minutes, including on no-op updates. Preserve configured links on removal and roll back failed writes.
+- Skip absent skills beneath dangling ancestor links without blocking other targets. Recommend force updates for managed edits, and show repair hints without force commands for unsafe links or layouts.
+- Preserve edits to retained managed files during normal updates; explicit `skills update --force` can replace those edits. User additions remain protected.
+- Clarify bundled setup guidance without changing the package or skill marker version. Existing installations can report documentation byte differences until explicitly updated.
+
 ## 0.20.0 - 2026-10-28
 
 - Shorten the bundled skill entrypoint and load task-specific details from directly linked references.

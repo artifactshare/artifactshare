@@ -446,6 +446,15 @@ test('skills list reports detection, install state, and update availability', as
     (t: any) => t.tool === 'codex' && t.scope === 'project',
   )
   assert.deepEqual(codexProject, {
+    aliases: [
+      {
+        tool: 'codex',
+        scope: 'project',
+        path: ' .agents/skills/artifactshare/SKILL.md'.trim(),
+        folder_path: '.agents/skills/artifactshare',
+      },
+    ],
+    resolved_folder_path: await realpath(dirname(codexSkillPath())),
     tool: 'codex',
     scope: 'project',
     path: join('.agents', 'skills', 'artifactshare', 'SKILL.md'),
@@ -726,6 +735,10 @@ for (const value of ['', ' \t ']) {
       (t: any) => t.tool === 'claude' && t.scope === 'user',
     )
     assert.deepEqual(target, {
+      aliases: [
+        { tool: 'claude', scope: 'user', path: null, folder_path: null },
+      ],
+      resolved_folder_path: null,
       tool: 'claude',
       scope: 'user',
       path: null,
@@ -753,6 +766,10 @@ for (const value of ['', ' \t ']) {
           (t: any) => t.tool === 'claude' && t.scope === 'user',
         )
         assert.deepEqual(diagnostic, {
+          aliases: [
+            { tool: 'claude', scope: 'user', path: null, folder_path: null },
+          ],
+          resolved_folder_path: null,
           tool: 'claude',
           scope: 'user',
           path: null,
@@ -883,6 +900,10 @@ for (const value of ['', ' \t ']) {
         action === 'update' ? 'updated' : 'removed',
       )
       assert.deepEqual(result.data.targets[1], {
+        aliases: [
+          { tool: 'claude', scope: 'user', path: null, folder_path: null },
+        ],
+        resolved_folder_path: null,
         tool: 'claude',
         scope: 'user',
         path: null,

@@ -384,7 +384,17 @@ export type SkillLegacyAction = {
   action: 'removed' | 'would_remove' | 'kept_unmanaged' | 'remove_failed'
   hint?: string
 }
-export type SkillFolderDiagnostic = {
+export type SkillTargetIdentity = {
+  aliases?: {
+    tool: string
+    scope: string
+    path: string | null
+    folder_path: string | null
+  }[]
+  resolved_folder_path?: string | null
+  hint?: string
+}
+export type SkillFolderDiagnostic = SkillTargetIdentity & {
   folder_path: string | null
   complete: boolean
   current: boolean
@@ -392,6 +402,7 @@ export type SkillFolderDiagnostic = {
   missing_files: string[]
   different_files: string[]
   modified_files: string[]
+  interrupted_update?: boolean
   ownership_manifest: 'valid' | 'absent' | 'invalid'
   legacy_rule?: {
     path: string
@@ -401,7 +412,7 @@ export type SkillFolderDiagnostic = {
     hint: string | null
   }
 }
-export type SkillsActionTarget = {
+export type SkillsActionTarget = SkillTargetIdentity & {
   folder_path: string
   legacy_rule?: SkillLegacyAction
   tool: string
@@ -415,7 +426,7 @@ export type SkillsActionData = {
   dry_run: boolean
   targets: (
     | SkillsActionTarget
-    | {
+    | (SkillTargetIdentity & {
         tool: string
         scope: string
         path: null
@@ -423,18 +434,18 @@ export type SkillsActionData = {
         action: 'skipped'
         code: string
         hint?: string
-      }
+      })
   )[]
 }
 
-export type SkillAutoUpdateTarget = {
+export type SkillAutoUpdateTarget = SkillTargetIdentity & {
   folder_path: string
   legacy_rule?: SkillLegacyAction
   tool: string
   scope: 'user' | 'project'
   path: string
   action: 'updated' | 'update_recommended'
-  installed_version: number
+  installed_version: number | null
   bundled_version: number
   update_command?: string
 }

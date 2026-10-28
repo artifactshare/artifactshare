@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 import {
   mkdtemp,
@@ -7,11 +8,17 @@ import {
   rm,
   symlink,
   readdir,
+  lstat,
+  realpath,
+  utimes,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
+  cleanupSkillFolder,
+  resolveSkillFolder,
+  preflightFolder,
   loadSkillBundle,
   writeSkillFolder,
   removeSkillFolder,
@@ -19,6 +26,10 @@ import {
   type SkillBundle,
 } from './command-runners/skill-folder.js'
 
+async function age(path: string) {
+  const old = new Date(Date.now() - 11 * 60 * 1000)
+  await utimes(path, old, old)
+}
 const roots: string[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -74,7 +85,7 @@ test('all six tool/scope folders install identical complete trees and remove onl
     }
 })
 
-test('updates replace and retire edited owned files, preserve user files and repair same-version drift', async () => {
+test('updates protect edits unless forced and repair missing owned files', async () => {
   const root = await fixture(),
     folder = join(root, '.agents/skills/artifactshare'),
     entry = join(folder, 'SKILL.md')
@@ -84,7 +95,8 @@ test('updates replace and retire edited owned files, preserve user files and rep
   const next = bundle(2)
   delete next.files['references/nested/detail.txt']
   next.files['references/new.md'] = 'new'
-  await writeSkillFolder(entry, next)
+  await assert.rejects(writeSkillFolder(entry, next), /Modified/)
+  await writeSkillFolder(entry, next, false, true)
   assert.equal(
     await readFile(join(folder, 'references/usage.md'), 'utf8'),
     'usage',
@@ -107,7 +119,8 @@ test('updates replace and retire edited owned files, preserve user files and rep
     'references/usage.md',
   ])
   assert.equal(diagnostic.current, false)
-  await writeSkillFolder(entry, next)
+  await assert.rejects(writeSkillFolder(entry, next), /Modified/)
+  await writeSkillFolder(entry, next, false, true)
   assert.equal((await folderDiagnostics(entry, next)).current, true)
   assert.equal((await folderDiagnostics(entry, bundle(3))).older_version, true)
   await writeSkillFolder(entry, next)
@@ -338,4 +351,285 @@ test('removal and retirement preserve modified owned files and report their path
   assert.equal(await readFile(entry, 'utf8'), marker(1))
   await writeSkillFolder(entry, next, false, true)
   await assert.rejects(readFile(join(folder, 'references/usage.md')), /ENOENT/)
+})
+
+for (const boundary of ['folder', 'skills', 'config'])
+  test(`resolves ${boundary} aliases and keeps linked removal usable`, async () => {
+    const root = await fixture()
+    const destination = join(root, 'destination')
+    await mkdir(destination)
+    const config = join(root, '.claude')
+    const link =
+      boundary === 'folder'
+        ? join(config, 'skills/artifactshare')
+        : boundary === 'skills'
+          ? join(config, 'skills')
+          : config
+    await mkdir(dirname(link), { recursive: true })
+    await symlink(destination, link)
+    const entry = join(config, 'skills/artifactshare/SKILL.md')
+    const canonical = await resolveSkillFolder(entry)
+    await writeSkillFolder(entry, bundle())
+    assert.equal(
+      await resolveSkillFolder(entry),
+      await realpath(dirname(entry)),
+    )
+    assert.equal((await folderDiagnostics(entry, bundle())).current, true)
+    await writeSkillFolder(entry, bundle(2))
+    assert.equal(await readFile(join(canonical, 'SKILL.md'), 'utf8'), marker(2))
+    await removeSkillFolder(entry)
+    assert.equal((await lstat(link)).isSymbolicLink(), true)
+    assert.deepEqual(await readdir(canonical), [])
+  })
+
+for (const kind of ['dangling', 'file'])
+  test(`refuses ${kind} folder links even with force and diagnoses recovery`, async () => {
+    const root = await fixture()
+    const folder = join(root, '.claude/skills/artifactshare')
+    const referent = join(root, 'outside')
+    if (kind === 'file') await writeFile(referent, 'sentinel')
+    await mkdir(dirname(folder), { recursive: true })
+    await symlink(referent, folder)
+    const entry = join(folder, 'SKILL.md')
+    for (const force of [false, true])
+      await assert.rejects(
+        writeSkillFolder(entry, bundle(), force),
+        /Restore or repoint/,
+      )
+    assert.match((await folderDiagnostics(entry, bundle())).hint!, /directory/)
+    if (kind === 'file')
+      assert.equal(await readFile(referent, 'utf8'), 'sentinel')
+  })
+
+for (const path of [
+  'SKILL.md',
+  'references',
+  'references/usage.md',
+  '.artifactshare-managed.json',
+])
+  test(`internal ${path} links are never followed or force-replaced`, async () => {
+    const root = await fixture()
+    const folder = join(root, '.agents/skills/artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    await writeSkillFolder(entry, bundle())
+    const outside = join(root, 'outside')
+    await put(outside, 'sentinel', 'untouched')
+    await rm(join(folder, path), { recursive: true })
+    await symlink(
+      path === 'references' ? outside : join(outside, 'sentinel'),
+      join(folder, path),
+    )
+    await assert.rejects(
+      writeSkillFolder(entry, bundle(), true),
+      /internal link/,
+    )
+    await assert.rejects(removeSkillFolder(entry), /internal link/)
+    assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+  })
+
+test('reserved debris is ignored read-only and cleaned before directory-to-file transitions', async () => {
+  const root = await fixture()
+  const folder = join(root, '.agents/skills/artifactshare'),
+    entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle())
+  const name = '.artifactshare-00000000-0000-4000-8000-000000000000.tmp'
+  const staging = join(
+    dirname(folder),
+    '.artifactshare-staging-00000000-0000-4000-8000-000000000000',
+  )
+  await put(folder, `references/nested/${name}`, 'partial')
+  await age(join(folder, `references/nested/${name}`))
+  await put(folder, name, 'partial')
+  await age(join(folder, name))
+  await put(staging, 'partial', 'partial')
+  await age(staging)
+  await put(folder, '.artifactshare-almost.tmp', 'user')
+  const next = bundle(2)
+  delete next.files['references/nested/detail.txt']
+  next.files['references/nested'] = 'flat'
+  await preflightFolder(entry, next)
+  await folderDiagnostics(entry, next)
+  assert.equal(await readFile(join(folder, name), 'utf8'), 'partial')
+  await writeSkillFolder(entry, next)
+  await assert.rejects(lstat(staging), /ENOENT/)
+  await assert.rejects(lstat(join(folder, name)), /ENOENT/)
+  assert.equal(
+    await readFile(join(folder, 'references/nested'), 'utf8'),
+    'flat',
+  )
+  assert.equal(
+    await readFile(join(folder, '.artifactshare-almost.tmp'), 'utf8'),
+    'user',
+  )
+  await put(folder, name, 'partial')
+  await age(join(folder, name))
+  await cleanupSkillFolder(entry)
+  await assert.rejects(lstat(join(folder, name)), /ENOENT/)
+})
+
+test('cleanup rejects internal temporary links and never follows staging links', async () => {
+  const root = await fixture()
+  const folder = join(root, '.agents/skills/artifactshare'),
+    entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle())
+  const outside = join(root, 'outside')
+  await put(outside, 'sentinel', 'untouched')
+  const staging = join(
+    dirname(folder),
+    '.artifactshare-staging-00000000-0000-4000-8000-000000000000',
+  )
+  await symlink(outside, staging)
+  await cleanupSkillFolder(entry)
+  assert.equal((await lstat(staging)).isSymbolicLink(), true)
+  await rm(staging)
+  await mkdir(staging)
+  await symlink(outside, join(staging, 'trap'))
+  await age(staging)
+  await cleanupSkillFolder(entry)
+  assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+  const temp = join(
+    folder,
+    '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
+  )
+  await symlink(join(outside, 'sentinel'), temp)
+  await assert.rejects(cleanupSkillFolder(entry), /internal link/)
+  assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+})
+
+test('matching the new bundle does not authorize an edited owned reference without intent', async () => {
+  const folder = join(await fixture(), 'artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle())
+  const next = bundle(2)
+  next.files['references/usage.md'] = 'changed usage'
+  await put(folder, 'references/usage.md', 'changed usage')
+  await assert.rejects(writeSkillFolder(entry, next), /Modified skill file/)
+  assert.deepEqual((await folderDiagnostics(entry, next)).modified_files, [
+    'references/usage.md',
+  ])
+})
+
+const digest = (text: string) => createHash('sha256').update(text).digest('hex')
+async function putIntent(
+  folder: string,
+  next: SkillBundle,
+  previous: Record<string, string>,
+) {
+  await put(
+    folder,
+    '.artifactshare-pending.json',
+    JSON.stringify({
+      schema_version: 1,
+      version: next.version,
+      files: Object.fromEntries(
+        Object.entries(next.files).map(([path, text]) => [path, digest(text)]),
+      ),
+      previous_files: previous,
+    }),
+  )
+}
+
+for (const edited of [false, true])
+  test(`pending legacy entry ${edited ? 'protects edits even with update force' : 'accepts its recorded old hash'}`, async () => {
+    const folder = join(await fixture(), 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    const old = marker(1)
+    const next = bundle(2)
+    await putIntent(folder, next, { 'SKILL.md': digest(old) })
+    await put(folder, 'SKILL.md', edited ? old + 'personal edits' : old)
+    if (edited) {
+      await assert.rejects(
+        writeSkillFolder(entry, next),
+        /Unowned skill file: SKILL.md/,
+      )
+      await assert.rejects(
+        writeSkillFolder(entry, next, false, true),
+        /Unowned skill file: SKILL.md/,
+      )
+      await removeSkillFolder(entry)
+      assert.equal(await readFile(entry, 'utf8'), old + 'personal edits')
+    } else {
+      await writeSkillFolder(entry, next)
+      assert.equal(await readFile(entry, 'utf8'), marker(2))
+    }
+  })
+
+for (const record of ['files', 'previous_files'])
+  test(`unmatched ${record} intent does not authorize takeover by force update or removal`, async () => {
+    const folder = join(await fixture(), 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    await writeSkillFolder(entry, bundle())
+    const next = bundle(2)
+    const path = 'references/new.md'
+    if (record === 'files') next.files[path] = 'planned content'
+    await putIntent(
+      folder,
+      next,
+      record === 'previous_files' ? { [path]: digest('old content') } : {},
+    )
+    await put(folder, path, 'personal content')
+    if (record === 'previous_files') next.files[path] = 'planned content'
+    assert.ok(
+      !(await folderDiagnostics(entry, next)).modified_files.includes(path),
+    )
+    await assert.rejects(
+      writeSkillFolder(entry, next, false, true),
+      /Unowned skill file: references\/new.md/,
+    )
+    await removeSkillFolder(entry)
+    assert.equal(await readFile(join(folder, path), 'utf8'), 'personal content')
+  })
+
+for (const location of ['sibling', 'internal'])
+  test(`cleanup preserves fresh ${location} staging and legacy temps, then removes old debris`, async () => {
+    const root = await fixture()
+    const folder = join(root, 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    await writeSkillFolder(entry, bundle())
+    const staging = join(
+      location === 'sibling' ? root : folder,
+      '.artifactshare-staging-00000000-0000-4000-8000-000000000000',
+    )
+    const temp = join(
+      folder,
+      'references/.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
+    )
+    await put(staging, 'payload', 'in progress')
+    await writeFile(temp, 'in progress')
+    await writeSkillFolder(entry, bundle(2))
+    assert.equal(
+      await readFile(join(staging, 'payload'), 'utf8'),
+      'in progress',
+    )
+    assert.equal(await readFile(temp, 'utf8'), 'in progress')
+    await age(staging)
+    await age(temp)
+    await writeSkillFolder(entry, bundle(3))
+    await assert.rejects(lstat(staging), /ENOENT/)
+    await assert.rejects(lstat(temp), /ENOENT/)
+  })
+
+test('a fresh legacy temp delays a directory replacement without removing active data', async () => {
+  const folder = join(await fixture(), 'artifactshare')
+  const entry = join(folder, 'SKILL.md')
+  await writeSkillFolder(entry, bundle())
+  const temp = join(
+    folder,
+    'references/nested/.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
+  )
+  await writeFile(temp, 'in progress')
+  const next = bundle(2)
+  delete next.files['references/nested/detail.txt']
+  next.files['references/nested'] = 'flat'
+  await assert.rejects(
+    writeSkillFolder(entry, next),
+    /Recent skill temporary file/,
+  )
+  assert.equal(await readFile(temp, 'utf8'), 'in progress')
+  await age(temp)
+  await writeSkillFolder(entry, next)
+  assert.equal(
+    await readFile(join(folder, 'references/nested'), 'utf8'),
+    'flat',
+  )
 })

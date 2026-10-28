@@ -1327,3 +1327,85 @@ it('artifact IDs use exactly ten lowercase ASCII letters or digits', async () =>
     )
   }
 })
+
+it('preserves shared skill identities in actions and nested automatic updates', async () => {
+  const { SkillsActionDataSchema, SkillAutoUpdateContainerSchema } =
+    await import('./index.js')
+  const aliases = [
+    {
+      tool: 'codex',
+      scope: 'user',
+      path: '/synthetic/agents/SKILL.md',
+      folder_path: '/synthetic/agents',
+    },
+    {
+      tool: 'claude',
+      scope: 'user',
+      path: '/synthetic/claude/SKILL.md',
+      folder_path: '/synthetic/claude',
+    },
+  ]
+  const target = {
+    ...aliases[0],
+    aliases,
+    resolved_folder_path: '/synthetic/agents',
+    action: 'updated',
+    installed_version: 1,
+    bundled_version: 2,
+  }
+  expect(
+    SkillsActionDataSchema.parse({ dry_run: false, targets: [target] })
+      .targets[0]?.aliases,
+  ).toEqual(aliases)
+  expect(
+    SkillAutoUpdateContainerSchema.parse({
+      skills: { auto_update: { targets: [target] } },
+    }).skills?.auto_update?.targets[0]?.resolved_folder_path,
+  ).toBe('/synthetic/agents')
+  const unavailable = {
+    tool: 'claude',
+    scope: 'user',
+    path: null,
+    folder_path: null,
+    aliases: [{ tool: 'claude', scope: 'user', path: null, folder_path: null }],
+    resolved_folder_path: null,
+    action: 'skipped',
+    hint: 'Restore the directory link.',
+  }
+  expect(
+    SkillsActionDataSchema.parse({ dry_run: false, targets: [unavailable] })
+      .targets[0],
+  ).toEqual(unavailable)
+})
+
+it('preserves interrupted update diagnostics in doctor target rows', async () => {
+  const { DoctorSkillsDataSchema } = await import('./index.js')
+  const parsed = DoctorSkillsDataSchema.parse({
+    bundled_version: 2,
+    update_available: true,
+    update_command: 'artifactshare skills update --json',
+    targets: [
+      {
+        tool: 'codex',
+        scope: 'user',
+        path: '/synthetic/agents/SKILL.md',
+        folder_path: '/synthetic/agents',
+        complete: false,
+        current: false,
+        older_version: true,
+        missing_files: [],
+        different_files: [],
+        modified_files: [],
+        ownership_manifest: 'valid',
+        installed: true,
+        managed: true,
+        installed_version: 1,
+        update_available: true,
+        update_command:
+          'artifactshare skills update --tool codex --scope user --json',
+        interrupted_update: true,
+      },
+    ],
+  })
+  expect(parsed.targets[0]?.interrupted_update).toBe(true)
+})
