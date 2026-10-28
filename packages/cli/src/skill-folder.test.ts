@@ -421,9 +421,12 @@ for (const path of [
     )
     await assert.rejects(
       writeSkillFolder(entry, bundle(), true),
-      /internal link/,
+      /regular file or directory or remove/,
     )
-    await assert.rejects(removeSkillFolder(entry), /internal link/)
+    await assert.rejects(
+      removeSkillFolder(entry),
+      /regular file or directory or remove/,
+    )
     assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
   })
 
@@ -492,7 +495,10 @@ test('cleanup rejects internal temporary links and never follows staging links',
     '.artifactshare-00000000-0000-4000-8000-000000000000.tmp',
   )
   await symlink(join(outside, 'sentinel'), temp)
-  await assert.rejects(cleanupSkillFolder(entry), /internal link/)
+  await assert.rejects(
+    cleanupSkillFolder(entry),
+    /regular file or directory or remove/,
+  )
   assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
 })
 
@@ -633,3 +639,43 @@ test('a fresh legacy temp delays a directory replacement without removing active
     'flat',
   )
 })
+
+for (const source of ['manifest', 'pending', 'previous']) {
+  test(`protects retired ${source} paths even when the bundle no longer includes them`, async () => {
+    const root = await fixture()
+    const folder = join(root, 'artifactshare')
+    const entry = join(folder, 'SKILL.md')
+    const previous = bundle()
+    previous.files['references/retired.md'] = 'retired'
+    await writeSkillFolder(entry, previous)
+    const owned = JSON.parse(
+      await readFile(join(folder, '.artifactshare-managed.json'), 'utf8'),
+    )
+    if (source !== 'manifest') {
+      const files = { ...owned.files }
+      delete owned.files['references/retired.md']
+      await put(folder, '.artifactshare-managed.json', JSON.stringify(owned))
+      await put(
+        folder,
+        '.artifactshare-pending.json',
+        JSON.stringify({
+          ...owned,
+          ...(source === 'pending' ? { files } : { previous_files: files }),
+        }),
+      )
+    }
+    await rm(join(folder, 'references/retired.md'))
+    const outside = join(root, 'sentinel')
+    await writeFile(outside, 'untouched')
+    await symlink(outside, join(folder, 'references/retired.md'))
+    for (const operation of [
+      () => writeSkillFolder(entry, bundle(2), true),
+      () => removeSkillFolder(entry, false, bundle(2)),
+    ])
+      await assert.rejects(
+        operation(),
+        /references\/retired.md.*regular file or directory or remove/,
+      )
+    assert.equal(await readFile(outside, 'utf8'), 'untouched')
+  })
+}

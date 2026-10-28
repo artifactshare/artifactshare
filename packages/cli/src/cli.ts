@@ -1676,14 +1676,16 @@ const skillsUpdateDefinition = define({
       type: 'boolean',
       toKebab: true,
       description:
-        'Rewrite managed folder files; never take over an unmanaged entry',
+        'Rewrite managed folder files, allowing an explicit downgrade; never take over an unmanaged entry',
     },
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare skills update --tool codex --scope user --json
 
 Updates managed folders and repairs missing files. Edited owned files require --force; user additions are preserved.
-Folder and ancestor directory symlinks are resolved; internal links are refused even with --force.
+Folder and ancestor directory symlinks are resolved. User links outside bundled, owned, pending and reserved CLI paths are ignored and listed in user_links; protected links are refused even with --force.
+Newer installed versions are preserved without cleanup unless --force requests an explicit downgrade.
+Unfiltered update/remove continue other targets on conflict: ok: true stdout includes failed target rows with code and hint; exit status is 1.
 Shared folders are written once. JSON rows include aliases and resolved_folder_path.
 Real mutations clean reserved stale staging and UUID temporary files; dry runs do not.
 Managed legacy Cursor rules migrate after the new project folder is ready.

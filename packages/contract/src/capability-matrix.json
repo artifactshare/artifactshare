@@ -37,7 +37,7 @@
   "contracts": [
     {
       "id": "skill-folder-aliases",
-      "identifier": "SkillTargetIdentityShape",
+      "identifier": "SkillFolderDiagnosticSchema",
       "implementation_path": "packages/contract/src/index.ts"
     },
     {

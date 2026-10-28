@@ -20,8 +20,15 @@ describe('CLI reference content', () => {
       expect(body).toContain('~/.claude')
       expect(body).toContain('skills list')
       expect(body).toContain('doctor')
+      expect(body).toContain(
+        locale === 'en'
+          ? 'Updates without --dry-run remove temporary files left by an interrupted CLI update; --dry-run leaves them untouched.'
+          : '--dry-run 以外の更新では、途中で止まった更新が残した一時ファイルを削除します。--dry-run では削除しません。',
+      )
       for (const term of [
         'aliases',
+        'user_links',
+        'update_available: false',
         'resolved_folder_path',
         'SKILL.md',
         'skills update --force',

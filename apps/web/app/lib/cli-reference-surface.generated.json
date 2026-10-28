@@ -792,7 +792,7 @@
         "--force"
       ],
       "option_help": [
-        "--force Rewrite managed folder files; never take over an unmanaged entry"
+        "--force Rewrite managed folder files, allowing an explicit downgrade; never take over an unmanaged entry"
       ]
     },
     {
