@@ -643,9 +643,7 @@ test.each(['en', 'ja'] as const)(
   'splits the %s introduction into the same topic paragraphs',
   (locale) => {
     const paragraphs = cliReferenceContent(locale).sections.introduction.body
-    expect(paragraphs).toHaveLength(
-      cliReferenceContent('en').sections.introduction.body.length,
-    )
+    expect(paragraphs).toHaveLength(4)
     const publisher = paragraphs.filter((paragraph) =>
       paragraph.includes('publisher'),
     )
