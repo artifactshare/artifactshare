@@ -1550,6 +1550,7 @@
   "preview.shareDialog.destination": "宛先",
   "preview.shareDialog.visibility": "共有範囲",
   "preview.shareDialog.notCarried": "ローカルのコメントは共有先には引き継がれません。共有後は共有先で新しくコメントできます",
+  "preview.shareDialog.privateDefault": "このアカウントでは「社内全員」に共有できないため、ホームの既定は「個別共有」です。リンクを知っている人全員に共有するときだけ、「リンクを知っている全員」を選んでください",
   "preview.shareDialog.snapshotNote": "{time} 時点の内容です。それ以降の変更は含まれません",
   "preview.shareDialog.confirm": "共有する",
   "preview.shareDialog.cancel": "キャンセル",

@@ -599,7 +599,7 @@ Common failures:
   target_not_found       Retry with an artifact ID, share URL, or sandbox URL
   destination_conflict   Choose either --project-id or --home
   invalid_destination    Use an active project id from projects list, or --home
-  workspace_unavailable  Explicit workspace requires an organization workspace; use --visibility private. Unspecified share audiences default to private when workspace is unavailable (share rejection remains validation_failed).
+  workspace_unavailable  Use --visibility private for personal Google accounts
   too_many_grants        Remove viewers or grant fewer email addresses`,
 })
 

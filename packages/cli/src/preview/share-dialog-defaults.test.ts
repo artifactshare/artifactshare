@@ -151,6 +151,7 @@ test.each([true, false])(
     expect(context.json.default_visibility).toBe(
       available ? 'workspace' : 'private',
     )
+    expect(context.json.private_default).toBe(!available)
     const snapshot = await call(handle, '/api/snapshot', {})
     const result = await call(handle, '/api/share', {
       snapshot_id: snapshot.json.snapshot_id,
@@ -226,3 +227,39 @@ test('a failed capability check keeps the workspace product default', async () =
       .mock.calls.map(([input]) => input.form.get('visibility')),
   ).toEqual(['workspace'])
 })
+
+test.each([true, false])(
+  'rendered dialog explains a private account default (capability %s)',
+  async (available) => {
+    vi.useFakeTimers()
+    vi.mocked(apiGet).mockResolvedValue({
+      body: { workspace: { visibility_available: available } },
+    })
+    const handle = handler()
+    const page = await call(handle, '/')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (path: string, init?: RequestInit) => {
+        const result = await call(
+          handle,
+          path,
+          init?.body ? JSON.parse(String(init.body)) : undefined,
+        )
+        return { ok: result.status < 400, json: async () => result.json }
+      }),
+    )
+    document.write(page.text)
+    // Happy DOM evaluates inline scripts from document.write.
+    await vi.advanceTimersByTimeAsync(0)
+    const note = document.getElementById('privateDefaultNote') as HTMLElement
+    const visibility = document.getElementById(
+      'visibility',
+    ) as HTMLSelectElement
+    expect(visibility.value).toBe(available ? 'workspace' : 'private')
+    expect(note.style.display).toBe(available ? 'none' : '')
+    expect(note.textContent).toContain('Specific people')
+    visibility.value = 'link'
+    visibility.dispatchEvent(new Event('change'))
+    expect(note.style.display).toBe('none')
+  },
+)

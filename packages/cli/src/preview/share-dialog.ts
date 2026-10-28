@@ -208,6 +208,7 @@ export function createShareDialogHandler(
       })
     }
     let contextToken = token.token
+    let privateDefault = false
     let projectsResult = await fetchProjects(
       token.token,
       cliOptions,
@@ -236,6 +237,7 @@ export function createShareDialogHandler(
       )
       // The upload's own sign-in handling covers credential failures.
       defaultVisibility = 'error' in audience ? resolved.value : audience.value
+      privateDefault = !('error' in audience) && audience.privateDefault
     }
     const projects = projectsResult.error
       ? null
@@ -247,6 +249,7 @@ export function createShareDialogHandler(
       authenticated: true,
       projects,
       default_visibility: defaultVisibility,
+      private_default: privateDefault,
       file_name: handlerOptions.fileName,
     })
   }
@@ -851,6 +854,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         <option value="link" id="visLink"></option>
       </select>
     </div>
+    <div class="note" id="privateDefaultNote"></div>
     <div class="note" id="notCarried"></div>
     <div class="note" id="snapshotNote"></div>
     <div class="error" id="shareError"></div>
@@ -894,6 +898,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('visPrivate').textContent = t('visibilityPrivate');
   el('visWorkspace').textContent = t('visibilityWorkspace');
   el('visLink').textContent = t('visibilityLink');
+  el('privateDefaultNote').textContent = t('privateDefault');
   el('notCarried').textContent = t('notCarried');
   el('cancelBtn').textContent = t('cancel');
   el('shareBtn').textContent = t('confirm');
@@ -988,6 +993,11 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
+    // Explain a private Home default that came from the account, not a choice.
+    el('privateDefaultNote').style.display =
+      !projectSelected && context.private_default && visibility.value === 'private'
+        ? ''
+        : 'none';
     el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed;
     if (snapshotFailed) {
       // Nothing about the destination can make an unreadable file shareable.
@@ -1012,6 +1022,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     }
   }
   el('destination').addEventListener('change', syncVisibility);
+  el('visibility').addEventListener('change', syncVisibility);
 
   function share() {
     if (!snapshotId || shareInFlight) return;
