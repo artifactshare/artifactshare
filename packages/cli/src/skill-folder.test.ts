@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path'
 import { afterEach, test, vi } from 'vitest'
 import {
   cleanupSkillFolder,
+  inspectSkillFolder,
   isProtectedLink,
   resolveSkillFolder,
   preflightFolder,
@@ -749,3 +750,64 @@ test('managed legacy rules retain protected-link diagnostics for otherwise unown
     /SKILL.md.*regular file or directory or remove/,
   )
 })
+
+for (const entry of ['missing', 'regular', 'managed', 'linked', 'broken'])
+  for (const record of [
+    'absent',
+    'invalid manifest',
+    'pending',
+    'dangling manifest',
+  ])
+    for (const managedLegacy of [false, true])
+      test(`ownership inspection: ${entry}, ${record}, legacy=${managedLegacy}`, async () => {
+        const root = await fixture()
+        const path = join(root, 'SKILL.md')
+        if (entry === 'linked')
+          await symlink(join(root, 'absent-referent'), path)
+        else if (entry !== 'missing')
+          await writeFile(
+            path,
+            entry === 'managed'
+              ? marker(1)
+              : entry === 'broken'
+                ? '<!-- artifactshare-skill -->'
+                : 'personal skill',
+          )
+        if (record === 'dangling manifest')
+          await symlink(
+            join(root, 'absent-record'),
+            join(root, '.artifactshare-managed.json'),
+          )
+        else if (record !== 'absent')
+          await writeFile(
+            join(
+              root,
+              record === 'pending'
+                ? '.artifactshare-pending.json'
+                : '.artifactshare-managed.json',
+            ),
+            'invalid record',
+          )
+        const result = await inspectSkillFolder(path, managedLegacy)
+        assert.equal(
+          result.unowned,
+          !managedLegacy &&
+            record === 'absent' &&
+            ['missing', 'regular', 'linked'].includes(entry),
+        )
+        assert.equal(result.linkedEntry, entry === 'linked')
+        assert.equal(
+          result.state.kind,
+          entry === 'linked'
+            ? record === 'absent'
+              ? 'unmanaged'
+              : 'broken'
+            : entry === 'regular'
+              ? 'unmanaged'
+              : entry,
+        )
+        const details = await folderDiagnostics(path, bundle(), result)
+        assert.equal(details.current, false)
+        if (entry === 'linked' && managedLegacy)
+          assert.equal(details.code, 'skill_update_conflict')
+      })

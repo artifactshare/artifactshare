@@ -1927,3 +1927,292 @@ test('automatic ensure refuses a linked SKILL.md when the legacy rule is managed
   assert.equal(await readFile(legacy(), 'utf8'), marker(1))
   assert.equal(await readFile(join(outside, 'SKILL.md'), 'utf8'), marker(99))
 })
+
+for (const command of [
+  ['install', '--tool', 'cursor'],
+  ['update', '--tool', 'cursor', '--scope', 'project'],
+  ['update'],
+])
+  for (const force of [false, true])
+    for (const dryRun of [false, true])
+      test(`newer legacy-only rule: ${command.join(' ')} force=${force} dryRun=${dryRun}`, async () => {
+        await setBundle({ ...initial, 'SKILL.md': marker(11) })
+        const original = marker(12) + 'newer rule content\n'
+        await put(legacy(), original)
+        const data = SkillsActionDataSchema.parse(
+          expectSuccess(
+            skills(
+              ...command,
+              ...(force ? ['--force'] : []),
+              ...(dryRun ? ['--dry-run'] : []),
+            ),
+          ).data,
+        )
+        const row = data.targets.find(
+          (item) => item.tool === 'cursor' && item.scope === 'project',
+        )!
+        assert.equal(row.action, force ? 'installed' : 'unchanged')
+        assert.match(
+          row.hint!,
+          force
+            ? /Intentional downgrade from skill version 12 to bundled version 11/
+            : /A newer CLI installed skill version 12; this CLI bundles version 11/,
+        )
+        if (force)
+          assert.equal(
+            row.legacy_rule?.action,
+            dryRun ? 'would_remove' : 'removed',
+          )
+        if (!force || dryRun) {
+          assert.equal(await readFile(legacy(), 'utf8'), original)
+          await assert.rejects(lstat(target()), /ENOENT/)
+        } else {
+          await assert.rejects(lstat(legacy()), /ENOENT/)
+          for (const [path, content] of Object.entries({
+            ...initial,
+            'SKILL.md': marker(11),
+          }))
+            assert.equal(await readFile(join(target(), path), 'utf8'), content)
+        }
+      })
+
+test('list and doctor preserve newer legacy-only advice alongside an outdated target', async () => {
+  expectSuccess(skills('install', '--tool', 'claude'))
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(legacy(), marker(12))
+  for (const command of [['skills', 'list'], ['doctor']]) {
+    const result = expectSuccess(run(command)).data
+    const data = command[0] === 'doctor' ? result.skills : result
+    const row = data.targets.find(
+      (item: any) => item.tool === 'cursor' && item.scope === 'project',
+    )
+    assert.equal(row.installed, false)
+    assert.equal(row.installed_version, null)
+    assert.match(row.hint, /A newer CLI installed skill version 12/)
+    assert.ok(!row.update_command)
+    if (command[0] === 'doctor')
+      assert.ok(!data.update_command.includes('--force'))
+  }
+  assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+  await assert.rejects(lstat(target()), /ENOENT/)
+})
+
+for (const command of ['ensure', 'init', 'open'])
+  test(`${command} recommends forced install for a regular user reference collision`, async () => {
+    const path = join(target('.agents', 'user'), 'references/usage.md')
+    await put(path, 'personal reference')
+    const preload = join(overlay, 'mock-open.mjs')
+    await put(
+      preload,
+      `
+import { MockAgent, setGlobalDispatcher } from 'undici';
+const agent = new MockAgent();
+agent.disableNetConnect();
+agent.get('https://artifactshare.com').intercept({ path: '/api/cli/artifacts/abc123def4', method: 'GET' }).reply(200, {
+  id: 'abc123def4', share_url: 'https://artifactshare.com/a/abc123def4', version_id: 'ver123', format: 'markdown', content: '# Report', size_bytes: 8, truncated: false, next_offset: null
+});
+setGlobalDispatcher(agent);
+`,
+    )
+    const result =
+      command === 'ensure'
+        ? expectSuccess(skills('ensure', '--tool', 'auto')).data
+        : expectSuccess(
+            run(
+              command === 'init' ? ['init'] : ['open', 'abc123def4'],
+              preload,
+              { ARTIFACTSHARE_TOKEN: 'test-token' },
+            ),
+          ).data.skills
+    const data = SkillsActionDataSchema.parse(result)
+    const row = data.targets.find(
+      (item) => item.tool === 'codex' && item.scope === 'user',
+    )!
+    assert.equal(row.action, 'update_recommended')
+    assert.equal(
+      row.update_command,
+      'npm exec --yes --package=@artifactshare/cli -- artifactshare skills install --tool codex --scope user --force --json',
+    )
+    assert.equal(await readFile(path, 'utf8'), 'personal reference')
+  })
+
+test('doctor exposes regular directory collisions and scopes other updates', async () => {
+  expectSuccess(skills('install', '--tool', 'claude'))
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(join(target('.agents'), 'SKILL.md'), 'personal skill')
+  await put(
+    join(target('.agents'), 'references/usage.md/personal.txt'),
+    'personal reference',
+  )
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'project',
+  )!
+  assert.match(row.hint!, /Unowned skill directory.*references\/usage.md/)
+  assert.equal(row.update_command, null)
+  assert.match(
+    data.update_command!,
+    /skills update --tool claude --scope project --json/,
+  )
+})
+
+for (const force of [false, true])
+  test(`managed legacy linked entry remains refused with force=${force}`, async () => {
+    await put(legacy(), marker(1))
+    const outside = join(root, 'outside.md')
+    await put(outside, marker(99))
+    await mkdir(target(), { recursive: true })
+    await symlink(outside, join(target(), 'SKILL.md'))
+    for (const command of ['install', 'update'])
+      expectFailure(
+        skills(command, '--tool', 'cursor', ...(force ? ['--force'] : [])),
+        { code: 'skill_update_conflict' },
+      )
+    assert.equal(await readFile(outside, 'utf8'), marker(99))
+    assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+  })
+
+for (const installed of [false, true])
+  test(`doctor keeps regular type-collision guidance beside an unrelated user link, installed=${installed}`, async () => {
+    expectSuccess(skills('install', '--tool', 'claude'))
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    const folder = target('.agents')
+    if (installed) await put(join(folder, 'SKILL.md'), 'personal skill')
+    await put(join(folder, 'references'), 'personal references')
+    const outside = join(root, 'outside')
+    await put(join(outside, 'sentinel'), 'untouched')
+    await symlink(outside, join(folder, 'notes'))
+    const data = DoctorSkillsDataSchema.parse(
+      expectSuccess(run(['doctor'])).data.skills,
+    )
+    const row = data.targets.find(
+      (item) => item.tool === 'codex' && item.scope === 'project',
+    )!
+    assert.deepEqual(row.user_links, ['notes'])
+    assert.match(
+      row.hint!,
+      /Unsafe skill path \(type change or link\): .*references/,
+    )
+    assert.equal(row.update_command, null)
+    if (installed)
+      assert.match(
+        data.update_command!,
+        /skills update --tool claude --scope project --json/,
+      )
+    assert.equal(
+      await readFile(join(folder, 'references'), 'utf8'),
+      'personal references',
+    )
+    assert.equal(await readlink(join(folder, 'notes')), outside)
+    assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'untouched')
+  })
+
+for (const command of [
+  ['install', '--tool', 'cursor'],
+  ['update', '--tool', 'cursor', '--scope', 'project'],
+  ['ensure', '--tool', 'cursor', '--scope', 'project'],
+])
+  test(`newer legacy rule beside a folder without SKILL.md: ${command.join(' ')}`, async () => {
+    await setBundle({ ...initial, 'SKILL.md': marker(11) })
+    await put(legacy(), marker(12))
+    await mkdir(target(), { recursive: true })
+    const data = SkillsActionDataSchema.parse(
+      expectSuccess(skills(...command)).data,
+    )
+    const row = data.targets.find(
+      (item) => item.tool === 'cursor' && item.scope === 'project',
+    )!
+    assert.equal(row.action, 'unchanged')
+    assert.match(row.hint!, /A newer CLI installed skill version 12/)
+    assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+    await assert.rejects(lstat(join(target(), 'SKILL.md')), /ENOENT/)
+  })
+
+test('ensure keeps a newer legacy-only rule without a folder', async () => {
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(legacy(), marker(12))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'cursor', '--scope', 'project'))
+      .data,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'cursor' && item.scope === 'project',
+  )!
+  assert.equal(row.action, 'unchanged')
+  assert.match(row.hint!, /A newer CLI installed skill version 12/)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+  await assert.rejects(lstat(target()), /ENOENT/)
+})
+
+test('doctor names a regular user reference collision in a folder without SKILL.md', async () => {
+  const path = join(target('.agents', 'user'), 'references/usage.md')
+  await put(path, 'personal reference')
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.match(row.hint!, /Unowned skill file: references\/usage.md/)
+  assert.equal(row.update_command, null)
+  assert.equal(await readFile(path, 'utf8'), 'personal reference')
+})
+
+test('automatic ensure gives no advice for a folder blocked only by a user references link', async () => {
+  const folder = target('.agents', 'user')
+  const outside = join(root, 'outside-references')
+  await put(join(outside, 'usage.md'), 'untouched')
+  await mkdir(folder, { recursive: true })
+  await symlink(outside, join(folder, 'references'))
+  const data = SkillsActionDataSchema.parse(
+    expectSuccess(skills('ensure', '--tool', 'auto')).data,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.equal(row.action, 'update_recommended')
+  assert.equal(row.hint, undefined)
+  assert.equal(row.update_command, undefined)
+  assert.ok(!('suppressHint' in row))
+  assert.equal(await readlink(join(folder, 'references')), outside)
+  assert.equal(await readFile(join(outside, 'usage.md'), 'utf8'), 'untouched')
+})
+
+test('doctor does not combine forced updates when a newer legacy-only rule exists', async () => {
+  expectSuccess(skills('install', '--tool', 'claude'))
+  expectSuccess(skills('install', '--tool', 'codex'))
+  for (const tool of ['.claude', '.agents'])
+    await put(join(target(tool), 'references/usage.md'), 'edited')
+  await setBundle({ ...initial, 'SKILL.md': marker(11) })
+  await put(legacy(), marker(12))
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  assert.match(data.update_command!, /--force/)
+  for (const command of data.update_command!.split(' && '))
+    assert.match(command, / --tool (claude|codex) --scope project /)
+  assert.equal(await readFile(legacy(), 'utf8'), marker(12))
+})
+
+test('doctor names a regular user reference collision beside a personal SKILL.md', async () => {
+  const folder = target('.agents', 'user')
+  await put(join(folder, 'SKILL.md'), 'personal skill')
+  await put(join(folder, 'references/usage.md'), 'personal reference')
+  const data = DoctorSkillsDataSchema.parse(
+    expectSuccess(run(['doctor'])).data.skills,
+  )
+  const row = data.targets.find(
+    (item) => item.tool === 'codex' && item.scope === 'user',
+  )!
+  assert.match(
+    row.hint!,
+    /Skill ownership conflict: .*SKILL.md.*skills install --force/,
+  )
+  assert.equal(row.update_command, null)
+  assert.equal(
+    await readFile(join(folder, 'SKILL.md'), 'utf8'),
+    'personal skill',
+  )
+})

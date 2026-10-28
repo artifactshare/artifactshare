@@ -98,10 +98,14 @@ const legacyTemp = new RegExp(`^\\.artifactshare-${uuid}\\.tmp$`, 'i')
 const stagingName = new RegExp(`^\\.artifactshare-staging-${uuid}$`, 'i')
 const stale = (item: { mtimeMs: number }) =>
   item.mtimeMs < Date.now() - 10 * 60 * 1000
-async function protectedPaths(root: string, bundle?: SkillBundle) {
+async function protectedPaths(
+  root: string,
+  bundle?: SkillBundle,
+  observedState?: ManagedState,
+) {
   await safe(root, MANIFEST)
   await safe(root, PENDING)
-  const state = await stateAt(root)
+  const state = observedState ?? (await stateAt(root))
   const pending = await ownership(root, state, PENDING)
   const owned = await ownership(root, state, MANIFEST, pending.manifest)
   const paths = new Set(['SKILL.md', 'references', MANIFEST, PENDING])
@@ -137,6 +141,15 @@ export async function isProtectedLink(
   }
   return false
 }
+// Preserve the observed blocking entry kind independently of the public message.
+export class SkillPathError extends Error {
+  constructor(
+    message: string,
+    readonly isLink: boolean,
+  ) {
+    super(message)
+  }
+}
 // Without protected entries (an unowned folder), every link is a user link.
 async function inspectTree(
   root: string,
@@ -160,8 +173,9 @@ async function inspectTree(
           stagingName.test(name) ||
           legacyTemp.test(name))
       )
-        throw new Error(
+        throw new SkillPathError(
           `Unsafe skill path (link): ${entry}. Replace the link with a regular file or directory or remove it, then retry.`,
+          true,
         )
       userLinks.push(entry)
       continue
@@ -234,8 +248,9 @@ async function safe(
       (item.isSymbolicLink() ||
         (i === parts.length - 1 ? !item.isFile() : !item.isDirectory()))
     )
-      throw new Error(
+      throw new SkillPathError(
         `Unsafe skill path (type change or link): ${parts[i]}. Replace the link with a regular file or directory or remove it, then retry.`,
+        item.isSymbolicLink(),
       )
   }
 }
@@ -251,43 +266,79 @@ async function bytesAt(root: string, path: string) {
 async function textAt(root: string, path: string) {
   return (await bytesAt(root, path))?.toString('utf8') ?? null
 }
+export type SkillFolderInspection = {
+  root: string | null
+  state: ManagedState
+  unowned: boolean
+  linkedEntry: boolean
+  error?: Error
+}
 // Presence includes invalid and dangling records; never inspect their referents.
-async function recordsAbsent(root: string) {
-  return (
-    !(await info(join(root, MANIFEST))) && !(await info(join(root, PENDING)))
-  )
-}
-// A folder without ownership records or a managed SKILL.md belongs to the user.
-async function unownedAt(root: string) {
-  if (!(await recordsAbsent(root))) return false
+// Legacy authority affects folder ownership, not the entry's state or safety.
+async function inspectAt(
+  root: string,
+  managedLegacy: boolean,
+): Promise<SkillFolderInspection> {
   const entry = await info(join(root, 'SKILL.md'))
-  if (!entry || entry.isSymbolicLink()) return true
-  return (await stateAt(root)).kind === 'unmanaged'
-}
-export async function isUnownedFolder(entry: string, managedLegacy = false) {
-  if (managedLegacy) return false
+  const recordsAbsent =
+    !(await info(join(root, MANIFEST))) && !(await info(join(root, PENDING)))
+  const linkedEntry = entry?.isSymbolicLink() === true
+  let state: ManagedState
   try {
-    return await unownedAt(await rootFor(entry))
+    state =
+      linkedEntry && recordsAbsent
+        ? { kind: 'unmanaged' }
+        : managedState(await textAt(root, 'SKILL.md'))
   } catch {
-    return false
+    state = { kind: 'broken' }
+  }
+  return {
+    root,
+    state,
+    linkedEntry,
+    unowned:
+      !managedLegacy &&
+      recordsAbsent &&
+      (!entry || linkedEntry || state.kind === 'unmanaged'),
+  }
+}
+export async function inspectSkillFolder(
+  entry: string,
+  managedLegacy: boolean,
+): Promise<SkillFolderInspection> {
+  const failed = (
+    root: string | null,
+    state: ManagedState,
+    error: unknown,
+  ): SkillFolderInspection => ({
+    root,
+    state,
+    unowned: false,
+    linkedEntry: false,
+    error: error as Error,
+  })
+  let root: string
+  try {
+    root = await rootFor(entry)
+  } catch (error) {
+    return failed(
+      null,
+      error instanceof SkillFolderResolutionError && error.missingAncestor
+        ? { kind: 'missing', hint: error.message }
+        : { kind: 'broken' },
+      error,
+    )
+  }
+  try {
+    return await inspectAt(root, managedLegacy)
+  } catch (error) {
+    return failed(root, { kind: 'broken' }, error)
   }
 }
 async function stateAt(root: string): Promise<ManagedState> {
   try {
-    const entry = await info(join(root, 'SKILL.md'))
-    if (entry?.isSymbolicLink() && (await recordsAbsent(root)))
-      return { kind: 'unmanaged' }
-    return managedState(await textAt(root, 'SKILL.md'))
+    return (await inspectAt(root, false)).state
   } catch {
-    return { kind: 'broken' }
-  }
-}
-export async function readSkillState(entry: string): Promise<ManagedState> {
-  try {
-    return await stateAt(await rootFor(entry))
-  } catch (error) {
-    if (error instanceof SkillFolderResolutionError && error.missingAncestor)
-      return { kind: 'missing', hint: error.message }
     return { kind: 'broken' }
   }
 }
@@ -413,19 +464,24 @@ async function recoveryOwnership(root: string, state: ManagedState) {
 export async function folderDiagnostics(
   entry: string,
   bundle: SkillBundle,
-  managedLegacy = false,
+  context: boolean | SkillFolderInspection = false,
 ): Promise<SkillFolderDiagnostic & { code?: string }> {
-  let root: string | null = null
+  const inspection =
+    typeof context === 'boolean'
+      ? await inspectSkillFolder(entry, context)
+      : context
+  let root: string | null = inspection.root
   let user_links: string[] = []
   try {
-    root = await rootFor(entry)
+    if (inspection.error) throw inspection.error
+    root = inspection.root!
     user_links = await inspectTree(
       root,
       false,
       root,
-      !managedLegacy && (await unownedAt(root))
+      inspection.unowned
         ? undefined
-        : await protectedPaths(root, bundle),
+        : await protectedPaths(root, bundle, inspection.state),
     )
   } catch (error) {
     return {
@@ -446,7 +502,7 @@ export async function folderDiagnostics(
       hint: (error as Error).message,
     }
   }
-  const state = await stateAt(root)
+  const state = inspection.state
   const { owned, pending, recorded } = await recoveryOwnership(root, state)
   const newerIntent =
     pending.manifest && pending.manifest.version > bundle.version
