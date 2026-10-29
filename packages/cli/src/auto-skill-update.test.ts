@@ -431,7 +431,9 @@ test('doctor reports outdated skills without auto-updating them', async () => {
   await downgrade(codexUserSkillPath())
 
   const payload = expectSuccess(
-    run(['doctor', '--json'], env(), { cwd: workDir }),
+    run(['doctor', '--base-url', 'http://127.0.0.1:1', '--json'], env(), {
+      cwd: workDir,
+    }),
     'doctor',
   )
   assert.equal(payload.data.skills.update_available, true)
@@ -448,7 +450,9 @@ test('doctor reports cursor project and user skill targets', async () => {
   await installSkill(['--tool', 'cursor', '--scope', 'user'])
 
   const payload = expectSuccess(
-    run(['doctor', '--json'], env(), { cwd: workDir }),
+    run(['doctor', '--base-url', 'http://127.0.0.1:1', '--json'], env(), {
+      cwd: workDir,
+    }),
     'doctor',
   )
   const cursorProject = payload.data.skills.targets.find(
