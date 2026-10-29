@@ -1,5 +1,5 @@
 import { readFile, mkdir, rm, mkdtemp } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { plan, publicPlan } from './lib/skill-eval/plan.mjs'
@@ -15,17 +15,17 @@ import { parseStream, score, markdown } from './lib/skill-eval/records.mjs'
 import { redact } from './lib/skill-eval/launcher.mjs'
 import { signIn, serverClient } from './lib/skill-eval/server.mjs'
 import { closeAppFetch } from './lib/dev-sign-in.mjs'
+import {
+  scenarios,
+  initialHtml,
+  expectedContent,
+  commentText,
+  siteFiles,
+} from './lib/skill-eval/scenarios.mjs'
 
-export const initialHtml =
-  '<!doctype html><html lang="en"><meta charset="utf-8"><title>Sample report</title><h1>Sample report</h1><p>Draft schedule</p></html>\n'
-export const expectedContent = 'Launch is ready for Friday.'
-export const commentText = `The schedule line should say "${expectedContent}" instead of the draft text.`
+export { initialHtml, expectedContent, commentText }
 export function promptFor(scenario, url) {
-  if (scenario === 'comments')
-    return `Someone left comments on the shared page at ${url}. Please make the changes they asked for in report.html and update that same page. Give me the page URL.`
-  return scenario === 'share'
-    ? 'Please share report.html using Artifact Share and give me its browser URL.'
-    : `Please change the schedule text in report.html to “${expectedContent}” and update the existing Artifact Share page at ${url} so people can keep using that same URL. Give me the updated page URL.`
+  return scenarios[scenario].prompt({ url })
 }
 export async function actionsAt(path) {
   let raw
@@ -71,6 +71,7 @@ export async function executeCase(
     cleanup: { artifacts: [], temporary: false },
   }
   const agent = item.combination.split(':')[0]
+  const scenario = scenarios[item.scenario]
   let run,
     timer,
     inspection = Promise.resolve(),
@@ -98,13 +99,25 @@ export async function executeCase(
       derivedCompanion: selectedOverlay.derivedCompanion,
     }
     await privateFile(join(run.workdir, 'report.html'), initialHtml)
+    const files = {
+      ...(scenario.seed.includes('site') ? siteFiles : {}),
+      ...scenario.files,
+    }
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(dirname(join(run.workdir, path)), { recursive: true })
+      await privateFile(join(run.workdir, path), text)
+    }
     beforeList = await client.list()
-    if (['update', 'comments'].includes(item.scenario)) {
+    if (scenario.commands.includes('projects'))
+      result.projects = {
+        before: await projectList(run, runtime, options, signal),
+      }
+    if (scenario.seed.some((step) => ['artifact', 'site'].includes(step))) {
       const setup = await runtime.runProcess({
         command: [
           join(run.root, 'bin/artifactshare'),
           'share',
-          'report.html',
+          scenario.seed.includes('site') ? 'site' : 'report.html',
           '--visibility',
           'private',
           '--json',
@@ -137,9 +150,13 @@ export async function executeCase(
       if (!seededId || beforeList.some((artifact) => artifact.id === seededId))
         throw new Error('Could not seed an owned update artifact')
       owned.set(seededId, 'setup-cli-response')
-      result.server.before = await client.get(seededId)
       beforeList = await client.list()
-      if (item.scenario === 'comments') {
+      // Static sites cannot be read as one source, so their listing is the
+      // server evidence.
+      result.server.before = scenario.seed.includes('site')
+        ? beforeList.find((artifact) => artifact.id === seededId)
+        : await client.get(seededId)
+      if (scenario.seed.includes('comment')) {
         const post = await runtime.runProcess({
           command: [
             join(run.root, 'bin/artifactshare'),
@@ -188,7 +205,7 @@ export async function executeCase(
       command: item.command,
       cwd: run.workdir,
       env: run.env.agent,
-      prompt: promptFor(item.scenario, result.server.before?.share_url),
+      prompt: scenario.prompt({ url: result.server.before?.share_url }),
       timeoutMs: options.timeoutMs,
       maxTurns: options.maxTurns,
       agent,
@@ -258,7 +275,20 @@ export async function executeCase(
             ]),
           ].filter((id) => !beforeList.some((before) => before.id === id))
         const id = seededId ?? [...owned.keys()][0]
-        if (id) result.server.after = await client.get(id)
+        const present = afterList.find((artifact) => artifact.id === id)
+        // A legacy run keeps reading an artifact the agent deleted, so the
+        // missing source is reported as a server error.
+        if (present || (id && scenario.legacy)) {
+          result.server.listItem = present
+          result.server.after =
+            present?.artifact_kind === 'static_site'
+              ? present
+              : await client.get(id)
+        }
+        result.server.created = afterList.filter((artifact) =>
+          result.server.createdIds?.includes(artifact.id),
+        )
+        result.server.afterIds = afterList.map((artifact) => artifact.id)
         result.cleanup.unattributedArtifactIds =
           result.server.createdIds?.filter(
             (createdId) => !owned.has(createdId),
@@ -268,7 +298,69 @@ export async function executeCase(
       } catch (error) {
         result.server.error = redact(error.message, secrets)
       }
+      if (result.projects)
+        try {
+          result.projects.after = await projectList(
+            run,
+            runtime,
+            options,
+            signal,
+          )
+          result.projects.created = result.projects.after.filter(
+            (project) =>
+              !result.projects.before.some(
+                (before) => before.id === project.id,
+              ),
+          )
+        } catch (error) {
+          result.projects.error = redact(error.message, secrets)
+        }
+      if (scenario.probe)
+        try {
+          result.probe = await scenario.probe({
+            workdir: run.workdir,
+            cli: async (args) =>
+              (
+                await runtime.runProcess({
+                  command: [join(run.root, 'bin/artifactshare'), ...args],
+                  cwd: run.workdir,
+                  env: run.env.agent,
+                  timeoutMs: options.timeoutMs,
+                  signal,
+                })
+              ).stdout,
+          })
+        } catch (error) {
+          result.probe = { error: redact(error.message, secrets) }
+        }
+      for (const project of result.projects?.created ?? [])
+        await runtime.runProcess({
+          command: [
+            join(run.root, 'bin/artifactshare'),
+            'projects',
+            'edit',
+            project.id,
+            '--archive',
+            '--json',
+          ],
+          cwd: run.workdir,
+          env: run.env.agent,
+          timeoutMs: options.timeoutMs,
+          signal,
+        })
       for (const [id, source] of owned) {
+        if (
+          !scenario.legacy &&
+          result.server.afterIds &&
+          !result.server.afterIds.includes(id)
+        ) {
+          result.cleanup.artifacts.push({
+            id,
+            source,
+            deleted: 'before-cleanup',
+          })
+          continue
+        }
         try {
           await client.delete(id)
           result.cleanup.artifacts.push({ id, source, deleted: true })
@@ -290,8 +382,92 @@ export async function executeCase(
     result.status = 'incomplete'
   if (item.scenario === 'comments')
     result.comments = commentObservations(result.actions ?? [])
-  result.checks = score(result)
+  result.checks = scenarioChecks(result, scenario, options.email)
   return result
+}
+async function projectList(run, runtime, options, signal) {
+  const listed = await runtime.runProcess({
+    command: [
+      join(run.root, 'bin/artifactshare'),
+      'projects',
+      'list',
+      '--json',
+    ],
+    cwd: run.workdir,
+    env: run.env.agent,
+    timeoutMs: options.timeoutMs,
+    signal,
+  })
+  const projects = JSON.parse(listed.stdout).data?.projects
+  if (!Array.isArray(projects)) throw new Error('Invalid project list evidence')
+  return projects
+}
+// Legacy scenarios keep their server checks; the others are judged by their
+// own task check. Every scenario reports whether the skill and the expected
+// reference were read, separately from whether the task succeeded.
+export function scenarioChecks(result, scenario, email) {
+  const all = score(result)
+  const eligible = result.record.complete && result.status === 'completed'
+  const checks = scenario.legacy
+    ? all
+    : { json: all.json, recovery: all.recovery }
+  checks.skill = {
+    status: result.record.skillLoaded ? 'pass' : 'fail',
+    evidence: result.record.skillInvocations.length
+      ? result.record.skillInvocations
+      : result.record.reads
+          .map((item) => item.path)
+          .filter((path) => path.includes('artifactshare')),
+  }
+  checks.reference = scenario.reference
+    ? {
+        status: result.record.referencesRead.some((path) =>
+          path.endsWith(`/references/${scenario.reference}`),
+        )
+          ? 'pass'
+          : 'fail',
+        evidence: {
+          expected: scenario.reference,
+          read: result.record.referencesRead,
+          // A run may find the flags through --help instead of the reference.
+          help: (result.actions ?? [])
+            .filter((action) =>
+              action.argv?.some((arg) => ['--help', '-h'].includes(arg)),
+            )
+            .map((action) => action.argv),
+        },
+      }
+    : { status: 'not-applicable', evidence: 'SKILL.md covers this task' }
+  if (!scenario.legacy) {
+    const created = result.server.created
+    const expected =
+      scenario.commands.includes('share') && !scenario.seed.length ? 1 : 0
+    checks.created = created
+      ? {
+          status: created.length === expected ? 'pass' : 'fail',
+          evidence: created.map((artifact) => artifact.id),
+        }
+      : { status: 'unknown', evidence: 'Missing artifact inventory' }
+    checks.task = scenario.verify({
+      before: result.server.before,
+      after: result.server.after,
+      listItem: result.server.listItem,
+      afterList: result.server.afterIds?.map((id) => ({ id })),
+      created,
+      projects: result.projects,
+      record: result.record,
+      email,
+      ...result.probe,
+    })
+  }
+  if (!eligible)
+    for (const [name, check] of Object.entries(checks))
+      if (check.status === 'pass')
+        checks[name] = {
+          status: 'unknown',
+          evidence: 'Incomplete run cannot establish a pass',
+        }
+  return checks
 }
 // `artifacts get --include comments` reads feedback as well as `comments list`.
 export function commentObservations(actions) {
@@ -360,6 +536,7 @@ export async function main(argv = process.argv.slice(2)) {
     output = await mkdtemp(join(options.outputDir, 'evaluation-'))
     const token = await signIn(options.baseUrl, options.persona)
     const client = serverClient(options.baseUrl, token)
+    options.email = (await client.whoami()).user?.email
     for (const version of options.versions) {
       selectedOverlay = await overlay(version)
       for (const item of options.matrix.filter(

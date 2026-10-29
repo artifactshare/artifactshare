@@ -14,6 +14,7 @@ export function parseStream(agent, text, cwd = '.') {
   const record = {
     commands: [],
     reads: [],
+    skillInvocations: [],
     finalMessage: '',
     errors: [],
     complete: false,
@@ -90,6 +91,8 @@ export function parseStream(agent, text, cwd = '.') {
           if (item.name === 'Bash') command(item.id, item.input?.command)
           if (['Read', 'ReadFile'].includes(item.name))
             read(item.input?.file_path ?? item.input?.path, item.id)
+          if (item.name === 'Skill')
+            record.skillInvocations.push(item.input?.skill)
         }
         if (item.type === 'tool_result') {
           const output = event.tool_use_result?.stdout ?? item.content
@@ -194,20 +197,21 @@ export function parseStream(agent, text, cwd = '.') {
     }
   }
   record.commands = [...commands.values()]
+  // File reads are often piped (`cat references/x.md | head -80`), so each
+  // pipeline or list segment is tokenized on its own.
   for (const item of record.commands) {
-    let argv = item.argv
-    if (
-      argv &&
-      ['bash', 'sh', 'zsh', '/bin/bash', '/bin/sh', '/bin/zsh'].includes(
-        argv[0],
-      ) &&
-      ['-c', '-lc'].includes(argv[1])
+    let raw = typeof item.raw === 'string' ? item.raw : ''
+    const wrapped = raw.match(
+      /^(?:\/bin\/)?(?:ba|z)?sh -l?c (?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/su,
     )
-      argv = words(argv.slice(2).join(' '))
-    if (argv && ['cat', 'head', 'tail', 'sed', 'rg'].includes(argv[0]))
-      for (const arg of argv.slice(1))
-        if (/\.(?:md|mdc|txt|html)$/u.test(arg) && !arg.startsWith('-'))
-          read(arg, item.toolId)
+    if (wrapped) raw = wrapped[1] ?? wrapped[2].replace(/\\(.)/gsu, '$1')
+    for (const segment of raw.split(/\|\||&&|[|;\n]/u)) {
+      const argv = words(segment.trim())
+      if (argv && ['cat', 'head', 'tail', 'sed', 'rg'].includes(argv[0]))
+        for (const arg of argv.slice(1))
+          if (/\.(?:md|mdc|txt|html)$/u.test(arg) && !arg.startsWith('-'))
+            read(arg, item.toolId)
+    }
   }
   if (
     record.malformed ||
@@ -221,6 +225,15 @@ export function parseStream(agent, text, cwd = '.') {
     )
   )
     record.complete = false
+  // Claude loads a skill through its Skill tool; other agents read the file.
+  record.skillLoaded =
+    record.skillInvocations.some(
+      (name) =>
+        typeof name === 'string' && name.split(':').pop() === 'artifactshare',
+    ) ||
+    record.reads.some((item) =>
+      /\/artifactshare\/SKILL\.md$|\/artifactshare\.mdc$/u.test(item.path),
+    )
   record.referencesRead = [
     ...new Set(
       record.reads
@@ -491,6 +504,38 @@ export function markdown(result) {
     'Pass counts use completed, inspected, uncontaminated runs only. Unknown and not-applicable outcomes are excluded from eligible denominators.',
     '',
   ]
+  // Overview: one row per scenario, one cell per combination, counting runs
+  // of every version together.
+  const tally = (runs, name) => {
+    const judged = runs.filter((run) =>
+      ['pass', 'fail'].includes(run.checks?.[name]?.status),
+    )
+    return judged.length
+      ? `${judged.filter((run) => run.checks[name].status === 'pass').length}/${judged.length}`
+      : '–'
+  }
+  const goal = (run) => run.checks?.task ?? run.checks?.content
+  lines.push(
+    '| Scenario | ' + result.combinations.join(' | ') + ' |',
+    '| --- | ' + result.combinations.map(() => '---').join(' | ') + ' |',
+  )
+  for (const scenario of result.scenarios)
+    lines.push(
+      `| ${scenario} | ${result.combinations
+        .map((combination) => {
+          const runs = result.runs.filter(
+            (run) =>
+              run.combination === combination && run.scenario === scenario,
+          )
+          const done = runs.map((run) => ({
+            ...run,
+            checks: { ...run.checks, goal: goal(run) },
+          }))
+          return `task ${tally(done, 'goal')} · skill ${tally(runs, 'skill')} · ref ${tally(runs, 'reference')}`
+        })
+        .join(' | ')} |`,
+    )
+  lines.push('')
   for (const combination of result.combinations)
     for (const scenario of result.scenarios) {
       lines.push(

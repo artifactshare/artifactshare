@@ -261,8 +261,18 @@ build, running dev app, agent executable, authentication, or credential links.
 It validates only arguments, selected skill trees and the output destination.
 The harness supports Claude Code (`claude-opus-5-5`, `claude-sonnet-5-5`),
 Codex (`gpt-6.1-sol`, `gpt-6-astra`), and Cursor (`grok-4.7-high`, `grok-4.7-low`),
-with `share`, `update`, and `comments` scenarios. All three stream formats
-have synthetic parser fixtures.
+with the `share`, `update`, and `comments` scenarios by default. `--scenario all`
+adds one scenario per CLI task: `append`, `label`, `edit`, `project`, `delete`,
+`read`, `resolve`, `reply`, `download`, `site`, `config`, and `whoami`.
+`scripts/lib/skill-eval/scenarios.mjs` defines each scenario's prompt, seed,
+the reference it requires when SKILL.md alone is not enough (currently only
+`reply`, whose `--reply-to` and `comments resolve` appear only in
+`references/comments.md`), and the server or local evidence its `task` check
+reads. `login`, `logout`, `profiles`, `skills`,
+`init`, `changelog`, and `preview` have no scenario because an unattended run
+would change the shared credential or installed skills, or needs a browser;
+`move` is accepted by the `project` scenario. All three stream formats have
+synthetic parser fixtures.
 
 ```sh
 pnpm skill-eval -- --dry-run --combination codex:gpt-6.1-sol --scenario share --runs 1
@@ -291,6 +301,19 @@ Combination IDs accept `agent:model[:effort]`. Claude supports `low`, `medium`,
 Omitting effort preserves the agent default without adding a flag. Cursor encodes
 effort in its model name and rejects a third segment. Plans, JSON results and
 summary headings show the effort or `default`, with distinct groups per full ID.
+`--effort <level>` applies one effort to every selected combination; Cursor maps
+it to the `-low` or `-high` model and rejects other levels. For example,
+`pnpm skill-eval -- --effort low --scenario all` checks every scenario at low
+effort.
+
+Every run reports three checks separately. `skill` passes when Claude invoked the
+`artifactshare` skill through its Skill tool, or another agent read `SKILL.md`
+(or Cursor's `artifactshare.mdc`). `reference` passes when the scenario's
+required reference was read, lists any `--help` calls as evidence, and is not
+applicable otherwise. Reads count through the Read tool or `cat`, `head`,
+`tail`, `sed` and `rg`, including inside pipelines and command lists. `task` (or the
+default scenarios' server checks) reports whether the requested change happened.
+The summary opens with a scenario-by-combination table of these three counts.
 
 The JSON check excludes help requests: `--help` or `-h` before `--`, or `help`
 as the first positional argument before `--`. Help calls remain in evidence,
@@ -371,7 +394,7 @@ remain in the result.
 The summary groups by combination/scenario and compares version columns.
 Pass/eligible counts include completed, inspected, uncontaminated runs only;
 unknown, not-applicable, incomplete and contaminated outcomes are explicit.
-Reference reads are observations, not grades. Recovery actions with uncertain
+Reference reads outside a scenario's required reference are observations, not grades. Recovery actions with uncertain
 semantics (such as changing inputs or waiting) remain unknown; no LLM judge
 is required or enabled. A missing terminal event or malformed stream cannot
 establish a passing run. The report makes no statistical significance or

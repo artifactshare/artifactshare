@@ -2325,3 +2325,249 @@ test('reading comments through artifacts get counts as a comments read', async (
     assert.equal(commentObservations([action(argv)]).read, false)
   assert.equal(commentObservations([{ argv: null }]).read, false)
 })
+test('--effort applies one effort to every combination, including Cursor model names', async () => {
+  const options = await plan(['--effort', 'low', '--dry-run'])
+  assert.deepEqual(options.combinations, [
+    'claude:claude-opus-5-5:low',
+    'claude:claude-sonnet-5-5:low',
+    'codex:gpt-6.1-sol:low',
+    'codex:gpt-6-astra:low',
+    'cursor:grok-4.7-low',
+  ])
+  await assert.rejects(
+    plan(['--effort', 'medium', '--combination', 'cursor:grok-4.7-high']),
+    /Cursor supports only low or high/u,
+  )
+  await assert.rejects(plan(['--effort', 'tiny']), /Unsupported effort tiny/u)
+})
+test('--scenario all expands to every registered scenario', async () => {
+  const { scenarioIds, legacyScenarioIds } =
+    await import('./lib/skill-eval/scenarios.mjs')
+  assert.deepEqual(
+    (await plan(['--scenario', 'all', '--dry-run'])).scenarios,
+    scenarioIds,
+  )
+  assert.deepEqual((await plan(['--dry-run'])).scenarios, legacyScenarioIds)
+  await assert.rejects(plan(['--scenario', 'nope']), /Unsupported scenario/u)
+})
+test('Claude Skill tool use and SKILL.md reads both count as loading the skill', () => {
+  const invoked = parseStream(
+    'claude',
+    [
+      {
+        type: 'assistant',
+        message: {
+          id: 'm1',
+          content: [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Skill',
+              input: { skill: 'artifactshare' },
+            },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', result: 'done' },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+  )
+  assert.equal(invoked.skillLoaded, true)
+  const read = parseStream(
+    'codex',
+    [
+      {
+        type: 'item.completed',
+        item: {
+          id: 'c1',
+          type: 'command_execution',
+          command: 'cat .agents/skills/artifactshare/SKILL.md',
+          aggregated_output: '',
+          exit_code: 0,
+        },
+      },
+      { type: 'turn.completed' },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+    '/work',
+  )
+  assert.equal(read.skillLoaded, true)
+  assert.equal(parseStream('codex', '').skillLoaded, false)
+})
+test('scenario checks report skill, reference and task separately', async () => {
+  const { scenarioChecks } = await import('./skill-eval.mjs')
+  const { scenarios, versionLabel, expectedContent } =
+    await import('./lib/skill-eval/scenarios.mjs')
+  const base = {
+    status: 'completed',
+    scenario: 'reply',
+    actions: [
+      { argv: ['comments', 'post', '--help'], exitCode: 0 },
+      { argv: ['update', 'x', 'report.html', '--json'], exitCode: 0 },
+    ],
+    record: {
+      complete: true,
+      finalMessage: '',
+      skillLoaded: true,
+      skillInvocations: ['artifactshare'],
+      reads: [],
+      referencesRead: [],
+    },
+    server: {
+      before: { id: 'a', version_id: 'v1' },
+      after: {
+        id: 'a',
+        version_id: 'v2',
+        content: expectedContent,
+        versions: [],
+        comments: [{ status: 'resolved', reply_count: 1 }],
+      },
+      created: [],
+    },
+  }
+  const checks = scenarioChecks(base, scenarios.reply, 'me@example.test')
+  assert.equal(checks.skill.status, 'pass')
+  assert.equal(checks.reference.status, 'fail')
+  assert.deepEqual(checks.reference.evidence.help, [
+    ['comments', 'post', '--help'],
+  ])
+  assert.equal(checks.task.status, 'pass')
+  assert.equal(checks.created.status, 'pass')
+  assert.equal(checks.content, undefined)
+  const read = scenarioChecks(
+    {
+      ...base,
+      record: {
+        ...base.record,
+        referencesRead: ['/s/references/comments.md'],
+      },
+    },
+    scenarios.reply,
+  )
+  assert.equal(read.reference.status, 'pass')
+  const incomplete = scenarioChecks(
+    { ...base, status: 'timeout' },
+    scenarios.reply,
+  )
+  assert.equal(incomplete.task.status, 'unknown')
+  assert.equal(
+    scenarioChecks(base, scenarios.append).reference.status,
+    'not-applicable',
+  )
+})
+test('scenario verifiers judge only the evidence each task leaves', async () => {
+  const { scenarios, editedTitle, linkExpiry, projectName, expectedContent } =
+    await import('./lib/skill-eval/scenarios.mjs')
+  const before = { id: 'a', version_id: 'v1' }
+  assert.equal(
+    scenarios.edit.verify({
+      before,
+      after: { version_id: 'v1', versions: [] },
+      listItem: {
+        title: editedTitle,
+        visibility: 'link',
+        link_expires_at: '2026-12-31T00:00:00.000Z',
+      },
+    }).status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.edit.verify({
+      before,
+      after: { version_id: 'v2', versions: [] },
+      listItem: {
+        title: editedTitle,
+        visibility: 'link',
+        link_expires_at: linkExpiry,
+      },
+    }).status,
+    'fail',
+  )
+  assert.equal(
+    scenarios.project.verify({
+      after: { project_id: 'p1' },
+      projects: { created: [{ id: 'p1', name: projectName }] },
+    }).status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.delete.verify({ before, afterList: [{ id: 'b' }] }).status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.delete.verify({ before, afterList: [{ id: 'a' }] }).status,
+    'fail',
+  )
+  assert.equal(
+    scenarios.reply.verify({
+      after: {
+        content: expectedContent,
+        comments: [{ status: 'resolved', reply_count: 1 }],
+      },
+    }).status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.reply.verify({
+      after: {
+        content: expectedContent,
+        comments: [{ status: 'open', reply_count: 1 }],
+      },
+    }).status,
+    'fail',
+  )
+  assert.equal(
+    scenarios.site.verify({ created: [{ artifact_kind: 'static_site' }] })
+      .status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.config.verify({
+      config: {
+        user: JSON.stringify({
+          data: { home_audience: { value: 'private', source: 'user' } },
+        }),
+        repository: JSON.stringify({
+          data: { home_audience: { value: null, source: 'repository' } },
+        }),
+      },
+      created: [],
+    }).status,
+    'pass',
+  )
+  assert.equal(
+    scenarios.whoami.verify({
+      record: { finalMessage: 'Signed in as me@example.test.' },
+      email: 'me@example.test',
+    }).status,
+    'pass',
+  )
+})
+test('reads inside pipelines and command lists count as reads', () => {
+  const record = parseStream(
+    'codex',
+    [
+      {
+        type: 'item.completed',
+        item: {
+          id: 'c1',
+          type: 'command_execution',
+          command:
+            "/bin/zsh -lc 'cat skills/artifactshare/references/comments.md | head -80 && sed -n 1,5p notes.txt'",
+          aggregated_output: '',
+          exit_code: 0,
+        },
+      },
+      { type: 'turn.completed' },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+    '/work',
+  )
+  assert.deepEqual(record.referencesRead, [
+    '/work/skills/artifactshare/references/comments.md',
+  ])
+  assert.ok(record.reads.some((item) => item.path === '/work/notes.txt'))
+})
