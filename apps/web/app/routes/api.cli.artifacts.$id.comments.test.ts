@@ -163,6 +163,53 @@ describe('/api/cli/artifacts/:id/comments', () => {
     })
   })
 
+  test('list and post retain stored text anchor metadata', async () => {
+    const thread = {
+      ...THREAD,
+      subject: {
+        kind: 'text',
+        quotedText: 'word',
+        prefixText: 'lead ',
+        suffixText: '',
+        state: 'orphaned',
+        positionState: 'unchecked',
+        versionId: 'v1',
+        selectorFormat: 'quote-v1',
+        ambiguousAtCreation: false,
+        targetPath: '/index.html',
+        textStart: null,
+        textEnd: null,
+        cssPath: null,
+      },
+    }
+    const anchor = {
+      kind: 'text',
+      quoted_text: 'word',
+      state: 'orphaned',
+      position_state: 'unchecked',
+      quote_before: 'lead ',
+      quote_after: '',
+      version_id: 'v1',
+    }
+    loadCommentThreadsMock.mockResolvedValue([thread])
+    const listed = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+    expect(await listed.json()).toMatchObject({ comments: [{ anchor }] })
+    postArtifactCommentMock.mockResolvedValue({
+      kind: 'ok',
+      threadId: 'thr1',
+      reply: false,
+      thread,
+    })
+    const posted = await action(postArgs({ body: 'Check', quote: 'word' }))
+    expect(await posted.json()).toMatchObject({ thread: { anchor } })
+  })
+
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

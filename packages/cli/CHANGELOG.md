@@ -3,6 +3,10 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Return stored quote context, original version and viewer creation ambiguity in text comment readback.
+
 ## 0.21.0 - 2026-10-29
 
 - Default unspecified Home shares to private for accounts without workspace visibility, using the server-reported capability before a single upload. Preserve explicit and configured audiences, report private fallback provenance, and resolve preview defaults after sign-in.

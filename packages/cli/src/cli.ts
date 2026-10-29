@@ -921,6 +921,16 @@ reply_count, older_cursor, status, and quoted-text anchor when present.
 Read older replies with --thread-id <id> --before <older_cursor> --limit 50.
 Repeat with the returned older_cursor until null. --around-message-id <id>
 loads a target-containing page; do not combine it with --before.
+Text anchor fields quote_before / quote_after preserve stored context spaces.
+They contain rendered text with collapsed whitespace; strip HTML tags and
+collapse whitespace to compare source, preserving spaces next to the quote.
+Empty context means a document boundary for viewer comments, or context not
+supplied for agent posts. version_id identifies the original comment version
+(null if deleted). state / position_state refer to the displayed version:
+unchecked means no browser has checked it; needs-check means it was opened
+but no unique position was found. ambiguous_at_creation records whether a
+viewer selection was ambiguous when created; agent and legacy anchors omit it.
+Older servers may omit these optional fields.
 
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before comments list

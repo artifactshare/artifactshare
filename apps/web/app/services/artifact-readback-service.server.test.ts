@@ -18,6 +18,7 @@ vi.mock('~/services/shareables.server', () => ({
   listArtifactVersions: history,
   listOwnedArtifactVersions: history,
 }))
+import { loadCommentThreads } from './comments.server'
 import { getArtifactReadback } from './artifact-readback-service.server'
 
 beforeEach(() => {
@@ -89,4 +90,58 @@ test('unauthorized read never loads labels or source', async () => {
   ).toEqual({ kind: 'not-found' })
   expect(history).not.toHaveBeenCalled()
   expect(fetchSource).not.toHaveBeenCalled()
+})
+
+test('included comments retain stored text metadata through the response contract', async () => {
+  vi.mocked(loadCommentThreads).mockResolvedValue([
+    {
+      id: 't1',
+      status: 'open',
+      messageCount: 0,
+      replyCount: 0,
+      olderCursor: null,
+      createdAt: '2026-09-01T00:00:00Z',
+      updatedAt: '2026-09-01T00:00:00Z',
+      resolvedAt: null,
+      canResolve: true,
+      messages: [],
+      subject: {
+        kind: 'text',
+        quotedText: 'word',
+        prefixText: 'lead ',
+        suffixText: '',
+        state: 'orphaned',
+        positionState: 'needs-check',
+        versionId: null,
+        selectorFormat: 'normalized-v1',
+        ambiguousAtCreation: false,
+        targetPath: '/index.html',
+        textStart: null,
+        textEnd: null,
+        cssPath: 'p',
+      },
+    },
+  ])
+  const result = await getArtifactReadback(
+    {} as never,
+    { workspaceId: 'ws1' } as never,
+    {
+      id: 's1',
+      baseUrl: 'https://artifactshare.test',
+      include: ['comments'],
+    },
+  )
+  if (result.kind !== 'ok') throw new Error('expected ok')
+  expect(
+    ArtifactReadResponseSchema.parse(result.data).comments?.[0].anchor,
+  ).toEqual({
+    kind: 'text',
+    quoted_text: 'word',
+    state: 'orphaned',
+    position_state: 'needs-check',
+    quote_before: 'lead ',
+    quote_after: '',
+    version_id: null,
+    ambiguous_at_creation: false,
+  })
 })

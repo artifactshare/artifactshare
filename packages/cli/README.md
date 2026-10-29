@@ -360,6 +360,19 @@ rotation and can be revoked from Settings → CLI sessions.
 
 ## Comment windows and posting limits
 
+Text-anchor JSON may include `quote_before` and `quote_after`: the saved rendered
+text on either side, with whitespace collapsed and adjacent spaces retained.
+When searching HTML source, remove tags and collapse whitespace first. An empty
+side from a viewer selection denotes the start or end of the document; for an
+agent-created comment it means that side was not supplied. `version_id` names
+the version where the comment originated, or is null if that version was deleted.
+The attachment fields describe the displayed version instead: `unchecked`
+means no browser has inspected that version, and `needs-check` means it has been
+opened but the position could not be uniquely located. Viewer selections also
+carry `ambiguous_at_creation` (including false), describing ambiguity at creation,
+not attachment today. Agent and legacy anchors omit that key. Older servers may
+omit all these additional fields. Artifact-level anchors are unchanged.
+
 `comments list <target> --json` returns at most 50 threads, open first. Each
 thread contains its current first message and latest three replies, plus
 `message_count`, `reply_count` and `older_cursor`. These are partial histories.

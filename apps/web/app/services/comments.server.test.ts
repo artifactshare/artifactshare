@@ -13,6 +13,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
 import { createD1BatchDbMock, createD1BatchFixture } from '~/test/d1-batch-mock'
+import { toAgentCommentThread } from './artifact-readback.server'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
 import {
@@ -545,6 +546,60 @@ describe('comments server', () => {
     expect(
       await fixture.db.selectFrom('comment_anchors').selectAll().execute(),
     ).toEqual([])
+  })
+
+  test('original context survives current-version checks and deletion of the original version', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      selector,
+    )
+    if (created.kind !== 'ok') throw new Error('creation failed')
+    const current = await addVersion('v2', 1)
+    const read = async () =>
+      toAgentCommentThread(
+        (await loadCommentThreads(fixture.db, current, viewerUser))[0],
+      ).anchor
+    const metadata = {
+      quote_before: 'the ',
+      quote_after: ' here',
+      version_id: 'v1',
+      ambiguous_at_creation: false,
+    }
+    expect(await read()).toMatchObject({
+      ...metadata,
+      state: 'orphaned',
+      position_state: 'unchecked',
+    })
+    await storeAnchorResolutions(fixture.db, current, {
+      versionId: 'v2',
+      generation: 1,
+      frameToken,
+      targetPath: '/artifact.html',
+      results: [
+        {
+          threadId: created.threadId,
+          state: 'needs-check',
+          textStart: null,
+          textEnd: null,
+          textHash: null,
+        },
+      ],
+    })
+    expect(await read()).toMatchObject({
+      ...metadata,
+      state: 'orphaned',
+      position_state: 'needs-check',
+    })
+    await fixture.db.deleteFrom('versions').where('id', '=', 'v1').execute()
+    expect(await read()).toMatchObject({
+      ...metadata,
+      version_id: null,
+      position_state: 'needs-check',
+    })
   })
 
   test('persists per-version results and reuses the last valid hint without changing the selector', async () => {
@@ -1911,6 +1966,33 @@ describe('comments server', () => {
       }
     },
   )
+
+  test('agent post readback preserves collapsed context and omits viewer ambiguity', async () => {
+    const result = await postArtifactComment(fixture.db, viewerUser, 's1', {
+      body: 'Check this word',
+      quote: 'word',
+      quoteBefore: 'a  b',
+      quoteAfter: ' tail ',
+    })
+    if (result.kind !== 'ok' || !result.thread)
+      throw new Error('expected thread')
+    const expected = {
+      kind: 'text',
+      quoted_text: 'word',
+      state: 'orphaned',
+      position_state: 'unchecked',
+      quote_before: 'a b',
+      quote_after: ' tail ',
+      version_id: 'v1',
+    }
+    expect(toAgentCommentThread(result.thread).anchor).toEqual(expected)
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    expect(
+      toAgentCommentThread(
+        (await loadCommentThreads(fixture.db, access, viewerUser))[0],
+      ).anchor,
+    ).toEqual(expected)
+  })
 
   test('a committed post stays successful if its advisory readback fails', async () => {
     let restore = () => {}

@@ -482,7 +482,7 @@
         },
         "bundled_skill": {
           "kind": "reference",
-          "path": "packages/cli/skills/artifactshare/SKILL.md",
+          "path": "packages/cli/skills/artifactshare/references/comments.md",
           "identifier": "comments list"
         },
         "generated_snapshot": {
@@ -506,7 +506,10 @@
           "contract_identifiers": {
             "mcp_name": ["'list_comments'"],
             "mcp_description": [
-              "List comment threads on an artifact you can view in your workspace. Returns at most 50 open-first threads,"
+              "List comment threads on an artifact you can view in your workspace. Returns at most 50 open-first threads,",
+              "quote_before/quote_after",
+              "version_id",
+              "ambiguous_at_creation"
             ],
             "mcp_input": [
               "thread_id",

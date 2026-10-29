@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { File as NodeFile } from 'node:buffer'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -1052,6 +1053,54 @@ describe('comment position compatibility', () => {
       CommentAnchorSchema.safeParse({ ...old, position_state: 'checking' })
         .success,
     ).toBe(false)
+  })
+  it('older non-strict clients strip new fields without rejecting responses', () => {
+    const legacy = z.object({
+      kind: z.literal('text'),
+      quoted_text: z.string(),
+      state: z.enum(['attached', 'orphaned']),
+    })
+    const old = { kind: 'text', quoted_text: 'word', state: 'attached' }
+    expect(
+      legacy.parse({
+        ...old,
+        quote_before: '',
+        quote_after: ' tail',
+        version_id: null,
+        ambiguous_at_creation: false,
+      }),
+    ).toEqual(old)
+  })
+  it('retains optional stored metadata and strips internal fields', () => {
+    const old = { kind: 'text', quoted_text: 'word', state: 'orphaned' }
+    for (const ambiguous_at_creation of [false, true]) {
+      for (const version_id of ['v1', null]) {
+        const anchor = {
+          ...old,
+          quote_before: ' lead ',
+          quote_after: '',
+          version_id,
+          ambiguous_at_creation,
+        }
+        expect(
+          CommentAnchorSchema.parse({
+            ...anchor,
+            css_path: 'p',
+            text_start: 1,
+          }),
+        ).toEqual(anchor)
+      }
+    }
+    for (const field of [
+      'quote_before',
+      'quote_after',
+      'version_id',
+      'ambiguous_at_creation',
+    ]) {
+      expect(
+        CommentAnchorSchema.safeParse({ ...old, [field]: 42 }).success,
+      ).toBe(false)
+    }
   })
   it('accepts exact context boundary spaces up to 400 characters and empty context', () => {
     for (const context of ['', 'a'.repeat(399) + ' ']) {
