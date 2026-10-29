@@ -189,3 +189,25 @@ test('every command accepts shared flags except import-token token input', () =>
     }
   }
 })
+
+test('only artifacts get gives the long version flag a value', () => {
+  assert.equal(catalog.get('artifacts get')?.get('--version')?.boolean, false)
+  assert.equal(catalog.get('artifacts get')?.get('-v')?.boolean, true)
+  for (const command of ['', 'open', 'update', 'download']) {
+    assert.equal(catalog.get(command)?.get('--version')?.boolean, true)
+  }
+  assert.equal(
+    parser.validateRawArgs(
+      ['artifacts', 'get', 'abc123def4', '--version=v1'],
+      'artifacts get',
+    ),
+    null,
+  )
+  assert.equal(
+    parser.validateRawArgs(
+      ['artifacts', 'get', 'abc123def4', '--version= '],
+      'artifacts get',
+    )?.code,
+    'validation_failed',
+  )
+})

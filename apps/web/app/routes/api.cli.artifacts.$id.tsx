@@ -37,11 +37,27 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
   if (!parsedParams.success) {
     return errorResponse('not-found', 'Artifact not found.', 404)
   }
+  if (
+    getCliAuthority(context)?.kind === 'publisher' &&
+    url.searchParams.has('version_id')
+  )
+    return cliScopeDeniedResponse()
   const parsedQueryParams = ArtifactReadQueryParamsSchema.safeParse({
+    version_id: url.searchParams.get('version_id') ?? undefined,
     offset: url.searchParams.get('offset') ?? undefined,
     include: url.searchParams.getAll('include'),
   })
   if (!parsedQueryParams.success) {
+    if (
+      parsedQueryParams.error.issues.some(
+        (issue) => issue.path[0] === 'version_id',
+      )
+    )
+      return errorResponse(
+        'invalid-version-id',
+        'Version id must not be empty.',
+        400,
+      )
     const hasOffsetError = parsedQueryParams.error.issues.some(
       (issue) => issue.path[0] === 'offset',
     )
@@ -59,6 +75,7 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
     )
   }
   const parsedQuery = ArtifactReadQuerySchema.safeParse({
+    version_id: parsedQueryParams.data.version_id,
     offset:
       parsedQueryParams.data.offset === undefined
         ? undefined
@@ -73,7 +90,7 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
     )
   }
   const { id } = parsedParams.data
-  const { offset, include } = parsedQuery.data
+  const { offset, include, version_id } = parsedQuery.data
 
   return await withDb(async (db) => {
     const resolved = getCliAuthority(context)
@@ -113,6 +130,7 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
       baseUrl: url.origin,
       offset,
       include,
+      version_id,
       includeSharedVersions: true,
       ...(agentRead?.kind === 'authorized'
         ? { agentReadAuthorization: agentRead.authorization }

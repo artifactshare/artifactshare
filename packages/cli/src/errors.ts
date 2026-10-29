@@ -283,11 +283,22 @@ export function mapApiError(
       recovery: { kind: 'change_input' },
     })
   }
+  if (options.artifactTarget && apiCode === 'version-removed') {
+    return cliError({
+      code: 'version_removed',
+      message: apiMessage ?? 'This version was removed by retention.',
+      why: 'Retention permanently removed the selected version.',
+      hint: 'Omit --version to inspect current content.',
+      agentRecoverable: true,
+      requiresHuman: false,
+      recovery: { kind: 'change_input' },
+    })
+  }
   if (options.artifactTarget && apiCode === 'source-unavailable') {
     return cliError({
       code: 'source_unavailable',
       message: apiMessage ?? 'Artifact source is unavailable.',
-      why: 'The current version exists but its stored source could not be read.',
+      why: 'The requested version exists but its stored source could not be read.',
       hint: 'Retry later. If this repeats, open the share URL and check the artifact.',
       agentRecoverable: true,
       requiresHuman: false,

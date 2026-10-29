@@ -28,6 +28,7 @@ export type CliOptions = {
   retainVersions?: string
   noSlackNotify?: boolean
   note?: string
+  artifactVersion?: string
   offset?: string
   output?: string
   profile?: string

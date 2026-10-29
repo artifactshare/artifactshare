@@ -1,3 +1,7 @@
+import {
+  selectArtifactVersion,
+  isRemovedArtifactVersion,
+} from '~/services/artifact-version-selection.server'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
 import { sql } from 'kysely'
@@ -492,21 +496,13 @@ export async function loader({
     return forbidden({ kind: 'unavailable', user: userInfo })
   }
 
+  const selectedVersion = requestedVersionId
+    ? await selectArtifactVersion(db, shareable.id, requestedVersionId)
+    : null
   const displayedVersion = requestedVersionId
-    ? await db
-        .selectFrom('versions')
-        .select([
-          'id',
-          'artifact_kind',
-          'entrypoint_path',
-          'r2_key',
-          'fallback_to_index',
-        ])
-        .where('shareable_id', '=', shareable.id)
-        .where('id', '=', requestedVersionId)
-        .where('status', '=', 'published')
-        .where('published_at', 'is not', null)
-        .executeTakeFirst()
+    ? selectedVersion?.kind === 'ok'
+      ? selectedVersion.version
+      : undefined
     : {
         id: shareable.current_version_id!,
         artifact_kind:
@@ -1565,12 +1561,7 @@ async function removedVersionResponse(
   latestUrl: string,
 ): Promise<LoaderData | null> {
   if (!versionId) return null
-  const removed = await db
-    .selectFrom('version_retention_tombstones')
-    .select('version_id')
-    .where('shareable_id', '=', shareableId)
-    .where('version_id', '=', versionId)
-    .executeTakeFirst()
+  const removed = await isRemovedArtifactVersion(db, shareableId, versionId)
   return removed
     ? (data(
         { kind: 'version-removed', user, latestUrl },

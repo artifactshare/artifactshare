@@ -31,6 +31,7 @@ import {
 export type ArtifactReadTarget = {
   artifactId: string
   include: string[]
+  versionId?: string | undefined
   offset: string | undefined
 }
 
@@ -102,6 +103,14 @@ function parseArtifactReadTarget(
   if (target.error) return { error: target.error }
   const artifactId = target.artifactId
 
+  const versionId = parsed.options.artifactVersion?.trim()
+  if (parsed.options.artifactVersion !== undefined && !versionId)
+    return {
+      error: validationError(
+        '--version must not be empty.',
+        'Pass --version <version-id> or omit it for current content.',
+      ),
+    }
   const offset = parseOffsetOption(parsed.options.offset)
   if (offset.error) return { error: offset.error }
   const include = parseIncludeOptions(parsed.options.include)
@@ -110,6 +119,7 @@ function parseArtifactReadTarget(
   return {
     value: {
       artifactId,
+      versionId,
       include: include.values,
       offset: offset.value,
     },
@@ -130,6 +140,8 @@ export async function fetchArtifact(
     `/api/cli/artifacts/${encodeURIComponent(target.artifactId)}`,
     baseUrlOf(parsed.options),
   )
+  if (target.versionId !== undefined)
+    url.searchParams.set('version_id', target.versionId)
   if (target.offset !== undefined) url.searchParams.set('offset', target.offset)
   for (const item of target.include) {
     url.searchParams.append('include', item)

@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 52
+version: 53
 managed: true
 -->
 
@@ -273,3 +273,5 @@ CLI workflows; do not invent flags for them.
 | Open a share URL         | `open <url> --json`                                                                 |
 | Preview a local file     | `preview <file> --json` (local, no sign-in)                                         |
 | Log out                  | `logout --profile <name> --json`                                                    |
+
+For an orphaned comment, read its original source with `artifacts get <target> --version <anchor.version_id> --json` or MCP `get_artifact` `version_id`. See [comments](references/comments.md) for null anchors, removed versions and continuation. Historical ids are not the current id required for safe updates.

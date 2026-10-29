@@ -251,7 +251,7 @@
     "/api/cli/artifacts/{id}": {
       "get": {
         "summary": "Read an artifact",
-        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All include requests and static-site offset are denied. Other presets retain single-file readback.",
+        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.",
         "security": [
           {
             "cliBearer": []
@@ -265,6 +265,15 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "query",
+            "description": "Published version id at any age; omitted reads current. Publisher credentials reject selection. Removed versions return 410 version-removed.",
             "schema": {
               "type": "string",
               "minLength": 1
@@ -330,6 +339,9 @@
           },
           "409": {
             "description": "Concurrent change or source unavailable."
+          },
+          "410": {
+            "description": "The selected version was removed by retention (version-removed). Omit version_id to read current content."
           }
         }
       },

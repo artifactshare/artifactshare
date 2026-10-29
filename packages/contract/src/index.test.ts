@@ -37,6 +37,7 @@ import {
   DEVICE_TOKEN_RESPONSE_SCHEMA,
   DOWNLOAD_MANIFEST_RESPONSE_SCHEMA,
   ArtifactReadQueryParamsSchema,
+  ArtifactReadQuerySchema,
   ArtifactUploadFormSchema,
   ArtifactVersionUpdateFormSchema,
   ArtifactVersionUpdateQuerySchema,
@@ -1512,4 +1513,16 @@ it('accepts optional workspace capability without conflating false and omission'
       visibility_available: null,
     }).success,
   ).toBe(false)
+})
+
+it('read query preserves opaque historical ids and rejects empty selections', () => {
+  for (const schema of [
+    ArtifactReadQuerySchema,
+    ArtifactReadQueryParamsSchema,
+  ]) {
+    expect(schema.parse({ version_id: ' v1 ' }).version_id).toBe('v1')
+    expect(schema.parse({}).version_id).toBeUndefined()
+    for (const version_id of ['', '   '])
+      expect(schema.safeParse({ version_id }).success).toBe(false)
+  }
 })

@@ -1117,13 +1117,16 @@ export function registerArtifactTools(
     {
       title: 'Get artifact',
       description: toolDescription(
-        'Read back the Markdown or HTML source of an artifact you can view — your own, or one shared with you in your workspace. The response returns the source in content and the current version in version_id. Pass include to also return the version history ("versions") of your own artifacts in the same call. To read comment threads, call list_comments. If you do not know the id, call list_artifacts first. If the response sets truncated:true, the source is larger than one read returns: call get_artifact again with offset set to the returned next_offset and concatenate the content parts, until truncated is false. Multi-file sites cannot be read this way.',
+        'Read back the Markdown or HTML source of an artifact you can view — your own, or one shared with you in your workspace. The response returns the source in content and the version actually read in version_id. Pass version_id to read an earlier published single-file version, including a comment anchor.version_id. Repeat that version_id on continuation calls. Pass include to also return the version history ("versions") of your own artifacts in the same call. To read comment threads, call list_comments. If you do not know the id, call list_artifacts first. If the response sets truncated:true, the source is larger than one read returns: call get_artifact again with offset set to the returned next_offset and concatenate the content parts, until truncated is false. Multi-file sites cannot be read this way.',
       ),
       outputSchema: GET_ARTIFACT_OUTPUT_SCHEMA,
       annotations: READ_ONLY_ANNOTATIONS,
       inputSchema: {
         id: ArtifactIdParamsSchema.shape.id.describe(
           'The artifact id from list_artifacts or share_artifact.',
+        ),
+        version_id: ArtifactReadQuerySchema.shape.version_id.describe(
+          'Published version id to read. Omit for current source.',
         ),
         offset: ArtifactReadQuerySchema.shape.offset.describe(
           'Character offset to start reading the source from. Omit to read from the start. When a read returns truncated:true, call again with offset set to the returned next_offset to continue.',
@@ -1146,6 +1149,7 @@ export function registerArtifactTools(
       const result = await getArtifactReadback(ctx.db, sessionUser, {
         id: args.id,
         baseUrl: ctx.baseUrl,
+        version_id: args.version_id,
         offset: args.offset,
         include: args.include,
       })
@@ -1156,6 +1160,13 @@ export function registerArtifactTools(
           return artifactNotViewableError()
         case 'unsupported-kind':
           return unreadableKindError(result.artifactKind)
+        case 'version-removed':
+          return toolError({
+            code: 'version-removed',
+            message: 'This version was removed by retention.',
+            hint: 'Omit version_id to inspect current content.',
+            recoverable_by: 'agent',
+          })
         case 'source-unavailable':
           return sourceUnavailableError()
         default: {

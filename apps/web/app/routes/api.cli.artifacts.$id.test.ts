@@ -56,6 +56,56 @@ describe('/api/cli/artifacts/:id', () => {
     })
   })
 
+  for (const version of ['', 'v1']) {
+    test(`publisher rejects presence of version_id=${version} before validation or source lookup`, async () => {
+      getCliAuthorityMock.mockReturnValue({ kind: 'publisher' })
+      const response = await loader({
+        context: new Map(),
+        params: { id: 'abc123def4' },
+        url: new URL(
+          `https://example.test/api/cli/artifacts/abc123def4?version_id=${version}`,
+        ),
+      } as never)
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({
+        error: { code: 'scope-denied' },
+      })
+      expect(getArtifactReadbackMock).not.toHaveBeenCalled()
+    })
+  }
+  test('read adapter forwards version selection and maps removed versions to 410', async () => {
+    getArtifactReadbackMock.mockResolvedValue({ kind: 'version-removed' })
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      url: new URL(
+        'https://example.test/api/cli/artifacts/abc123def4?version_id=%20v1%20',
+      ),
+    } as never)
+    expect(response.status).toBe(410)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'version-removed' },
+    })
+    expect(getArtifactReadbackMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ version_id: 'v1' }),
+    )
+  })
+  test('blank historical selection is invalid, never a current read', async () => {
+    const response = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      url: new URL(
+        'https://example.test/api/cli/artifacts/abc123def4?version_id=%20',
+      ),
+    } as never)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid-version-id' },
+    })
+    expect(getArtifactReadbackMock).not.toHaveBeenCalled()
+  })
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

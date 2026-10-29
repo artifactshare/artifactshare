@@ -183,6 +183,7 @@ export const MCP_OPENAPI_METADATA = {
 
 // Option explanations displayed alongside the generated command reference.
 export const CLI_REFERENCE_OPTION_HELP = {
+  'artifacts get': ['--version'],
   share: ['--expected-version'],
   update: ['--expected-version'],
   download: ['--force'],
@@ -461,7 +462,7 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'Read an artifact',
-        'Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All include requests and static-site offset are denied. Other presets retain single-file readback.',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.',
         {
           anyOf: [
             restRef('ArtifactReadResponse'),
@@ -470,9 +471,22 @@ export const REST_OPERATIONS = {
         },
         null,
         ['unrestricted', 'agent', 'publisher', 'browser-session'],
+        {
+          410: {
+            description:
+              'The selected version was removed by retention (version-removed). Omit version_id to read current content.',
+          },
+        },
       ),
       parameters: [
         pathId,
+        {
+          name: 'version_id',
+          in: 'query',
+          description:
+            'Published version id at any age; omitted reads current. Publisher credentials reject selection. Removed versions return 410 version-removed.',
+          schema: { type: 'string', minLength: 1 },
+        },
         {
           name: 'offset',
           in: 'query',

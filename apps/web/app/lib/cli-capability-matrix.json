@@ -161,7 +161,9 @@
             "To read comment threads, call list_comments",
             "If you do not know the id, call list_artifacts first",
             "If the response sets truncated:true",
-            "Multi-file sites cannot be read this way"
+            "Multi-file sites cannot be read this way",
+            "version-removed",
+            "Omit version_id"
           ],
           "file_scope": {
             "kind": "const_object",
@@ -178,7 +180,7 @@
             "mcp_description": [
               "Read back the Markdown or HTML source of an artifact you can view — your own, or one shared with you"
             ],
-            "mcp_input": ["id", "offset", "include"],
+            "mcp_input": ["id", "version_id", "offset", "include"],
             "mcp_output": [
               "id",
               "share_url",
