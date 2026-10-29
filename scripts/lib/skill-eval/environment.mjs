@@ -271,6 +271,9 @@ export async function inventory(
       const inSkill = /(?:^|\/)artifactshare(?:\/|\.mdc$|$)/u.test(name)
       // Installer staging files are not active skills or reference assets.
       if (/^\.artifactshare-[a-z\d-]+\.tmp$/iu.test(entry.name)) continue
+      // The CLI's write-intent marker exists only while an install is in
+      // progress; one left in a settled snapshot is still reported.
+      if (live && entry.name === '.artifactshare-pending.json') continue
       if (entry.isSymbolicLink()) {
         if (inSkill) recordError(path, { code: 'uninspected_skill_symlink' })
         continue
