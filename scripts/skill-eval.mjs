@@ -429,6 +429,12 @@ export function scenarioChecks(result, scenario, email) {
         evidence: {
           expected: scenario.reference,
           read: result.record.referencesRead,
+          // A run may find the flags through --help instead of the reference.
+          help: (result.actions ?? [])
+            .filter((action) =>
+              action.argv?.some((arg) => ['--help', '-h'].includes(arg)),
+            )
+            .map((action) => action.argv),
         },
       }
     : { status: 'not-applicable', evidence: 'SKILL.md covers this task' }

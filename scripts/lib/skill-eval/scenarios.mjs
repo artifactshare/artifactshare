@@ -67,7 +67,6 @@ export const scenarios = {
   },
   label: {
     commands: ['update'],
-    reference: 'version-labels.md',
     seed: ['artifact'],
     prompt: ({ url }) =>
       `Change the schedule text in report.html to “${expectedContent}”, update the page at ${url}, and record the note “${versionLabel}” on that new version so it shows in the version history.`,
@@ -82,7 +81,6 @@ export const scenarios = {
   },
   edit: {
     commands: ['edit'],
-    reference: 'organize-settings.md',
     seed: ['artifact'],
     prompt: ({ url }) =>
       `Rename the shared page at ${url} to “${editedTitle}” and let anyone with the link view it until ${linkExpiry}. Do not upload a new version.`,
@@ -103,7 +101,6 @@ export const scenarios = {
   },
   project: {
     commands: ['projects', 'edit'],
-    reference: 'organize-settings.md',
     seed: ['artifact'],
     prompt: ({ url }) =>
       `Create a project called “${projectName}” and put the shared page at ${url} in it.`,
@@ -135,7 +132,7 @@ export const scenarios = {
     commands: ['artifacts', 'open'],
     seed: ['artifact'],
     prompt: ({ url }) =>
-      `What does the schedule line say on the shared page at ${url}? Quote it exactly.`,
+      `What does the schedule line say on the Artifact Share page at ${url}? Quote it exactly.`,
     verify: ({ record }) =>
       decide(record.finalMessage.includes('Draft schedule'), {
         finalMessage: record.finalMessage.slice(0, 200),
@@ -207,7 +204,6 @@ export const scenarios = {
   },
   config: {
     commands: ['config'],
-    reference: 'organize-settings.md',
     seed: [],
     prompt: () =>
       'From now on, my new Artifact Share home posts should be private by default. Make that my personal setting only, not a repository policy. Do not share anything.',

@@ -2402,8 +2402,11 @@ test('scenario checks report skill, reference and task separately', async () => 
     await import('./lib/skill-eval/scenarios.mjs')
   const base = {
     status: 'completed',
-    scenario: 'label',
-    actions: [{ argv: ['update', 'x', 'report.html', '--json'], exitCode: 0 }],
+    scenario: 'reply',
+    actions: [
+      { argv: ['comments', 'post', '--help'], exitCode: 0 },
+      { argv: ['update', 'x', 'report.html', '--json'], exitCode: 0 },
+    ],
     record: {
       complete: true,
       finalMessage: '',
@@ -2418,14 +2421,18 @@ test('scenario checks report skill, reference and task separately', async () => 
         id: 'a',
         version_id: 'v2',
         content: expectedContent,
-        versions: [{ is_current: true, label: versionLabel }],
+        versions: [],
+        comments: [{ status: 'resolved', reply_count: 1 }],
       },
       created: [],
     },
   }
-  const checks = scenarioChecks(base, scenarios.label, 'me@example.test')
+  const checks = scenarioChecks(base, scenarios.reply, 'me@example.test')
   assert.equal(checks.skill.status, 'pass')
   assert.equal(checks.reference.status, 'fail')
+  assert.deepEqual(checks.reference.evidence.help, [
+    ['comments', 'post', '--help'],
+  ])
   assert.equal(checks.task.status, 'pass')
   assert.equal(checks.created.status, 'pass')
   assert.equal(checks.content, undefined)
@@ -2434,15 +2441,15 @@ test('scenario checks report skill, reference and task separately', async () => 
       ...base,
       record: {
         ...base.record,
-        referencesRead: ['/s/references/version-labels.md'],
+        referencesRead: ['/s/references/comments.md'],
       },
     },
-    scenarios.label,
+    scenarios.reply,
   )
   assert.equal(read.reference.status, 'pass')
   const incomplete = scenarioChecks(
     { ...base, status: 'timeout' },
-    scenarios.label,
+    scenarios.reply,
   )
   assert.equal(incomplete.task.status, 'unknown')
   assert.equal(
@@ -2537,4 +2544,30 @@ test('scenario verifiers judge only the evidence each task leaves', async () => 
     }).status,
     'pass',
   )
+})
+test('reads inside pipelines and command lists count as reads', () => {
+  const record = parseStream(
+    'codex',
+    [
+      {
+        type: 'item.completed',
+        item: {
+          id: 'c1',
+          type: 'command_execution',
+          command:
+            "/bin/zsh -lc 'cat skills/artifactshare/references/comments.md | head -80 && sed -n 1,5p notes.txt'",
+          aggregated_output: '',
+          exit_code: 0,
+        },
+      },
+      { type: 'turn.completed' },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n'),
+    '/work',
+  )
+  assert.deepEqual(record.referencesRead, [
+    '/work/skills/artifactshare/references/comments.md',
+  ])
+  assert.ok(record.reads.some((item) => item.path === '/work/notes.txt'))
 })

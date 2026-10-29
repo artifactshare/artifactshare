@@ -265,8 +265,10 @@ with the `share`, `update`, and `comments` scenarios by default. `--scenario all
 adds one scenario per CLI task: `append`, `label`, `edit`, `project`, `delete`,
 `read`, `resolve`, `reply`, `download`, `site`, `config`, and `whoami`.
 `scripts/lib/skill-eval/scenarios.mjs` defines each scenario's prompt, seed,
-the reference it requires (if SKILL.md alone is not enough), and the server or
-local evidence its `task` check reads. `login`, `logout`, `profiles`, `skills`,
+the reference it requires when SKILL.md alone is not enough (currently only
+`reply`, whose `--reply-to` and `comments resolve` appear only in
+`references/comments.md`), and the server or local evidence its `task` check
+reads. `login`, `logout`, `profiles`, `skills`,
 `init`, `changelog`, and `preview` have no scenario because an unattended run
 would change the shared credential or installed skills, or needs a browser;
 `move` is accepted by the `project` scenario. All three stream formats have
@@ -307,7 +309,9 @@ effort.
 Every run reports three checks separately. `skill` passes when Claude invoked the
 `artifactshare` skill through its Skill tool, or another agent read `SKILL.md`
 (or Cursor's `artifactshare.mdc`). `reference` passes when the scenario's
-required reference was read and is not applicable otherwise. `task` (or the
+required reference was read, lists any `--help` calls as evidence, and is not
+applicable otherwise. Reads count through the Read tool or `cat`, `head`,
+`tail`, `sed` and `rg`, including inside pipelines and command lists. `task` (or the
 default scenarios' server checks) reports whether the requested change happened.
 The summary opens with a scenario-by-combination table of these three counts.
 

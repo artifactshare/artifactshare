@@ -197,20 +197,21 @@ export function parseStream(agent, text, cwd = '.') {
     }
   }
   record.commands = [...commands.values()]
+  // File reads are often piped (`cat references/x.md | head -80`), so each
+  // pipeline or list segment is tokenized on its own.
   for (const item of record.commands) {
-    let argv = item.argv
-    if (
-      argv &&
-      ['bash', 'sh', 'zsh', '/bin/bash', '/bin/sh', '/bin/zsh'].includes(
-        argv[0],
-      ) &&
-      ['-c', '-lc'].includes(argv[1])
+    let raw = typeof item.raw === 'string' ? item.raw : ''
+    const wrapped = raw.match(
+      /^(?:\/bin\/)?(?:ba|z)?sh -l?c (?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/su,
     )
-      argv = words(argv.slice(2).join(' '))
-    if (argv && ['cat', 'head', 'tail', 'sed', 'rg'].includes(argv[0]))
-      for (const arg of argv.slice(1))
-        if (/\.(?:md|mdc|txt|html)$/u.test(arg) && !arg.startsWith('-'))
-          read(arg, item.toolId)
+    if (wrapped) raw = wrapped[1] ?? wrapped[2].replace(/\\(.)/gsu, '$1')
+    for (const segment of raw.split(/\|\||&&|[|;\n]/u)) {
+      const argv = words(segment.trim())
+      if (argv && ['cat', 'head', 'tail', 'sed', 'rg'].includes(argv[0]))
+        for (const arg of argv.slice(1))
+          if (/\.(?:md|mdc|txt|html)$/u.test(arg) && !arg.startsWith('-'))
+            read(arg, item.toolId)
+    }
   }
   if (
     record.malformed ||
