@@ -22,7 +22,15 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   cacheDir: 'node_modules/.vite-browser-behavior',
-  optimizeDeps: { include: ['mermaid', 'react-dom/server'] },
+  optimizeDeps: {
+    include: [
+      '@mozilla/readability',
+      'dompurify',
+      'mermaid',
+      'react-dom/server',
+      'turndown',
+    ],
+  },
   resolve: { alias: { '~': resolve(import.meta.dirname, 'app') } },
   plugins: [
     tailwindcss(),
@@ -41,7 +49,7 @@ export default defineConfig({
     api: { host: '127.0.0.1' },
     browser: {
       enabled: true,
-      provider: playwright(),
+      provider: playwright({ contextOptions: { locale: 'en-US' } }),
       commands: {
         previewSecurity,
         usercontentDelivery,
@@ -61,6 +69,7 @@ export default defineConfig({
         {
           browser: 'firefox',
           provider: playwright({
+            contextOptions: { locale: 'en-US' },
             launchOptions: {
               firefoxUserPrefs: {
                 'network.cookie.cookieBehavior': 5,

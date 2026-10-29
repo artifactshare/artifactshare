@@ -427,6 +427,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
       }
       context = await browser.newContext({
         ignoreHTTPSErrors: true,
+        locale: 'en-US',
         proxy: { server: `http://127.0.0.1:${proxyAddress.port}` },
       })
       await context.route('**/*', (route) =>

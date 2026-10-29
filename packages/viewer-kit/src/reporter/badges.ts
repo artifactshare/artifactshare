@@ -41,6 +41,34 @@ export function badgeStyleForHighlight(
   )
 }
 
+function badgeScale(
+  ctx: ReporterState,
+  badge: HTMLButtonElement,
+  base: DOMRect,
+) {
+  let style = ctx.win.getComputedStyle(badge)
+  let width = parseFloat(style.width)
+  let height = parseFloat(style.height)
+  if (style.boxSizing !== 'border-box') {
+    width +=
+      parseFloat(style.paddingLeft) +
+      parseFloat(style.paddingRight) +
+      parseFloat(style.borderLeftWidth) +
+      parseFloat(style.borderRightWidth)
+    height +=
+      parseFloat(style.paddingTop) +
+      parseFloat(style.paddingBottom) +
+      parseFloat(style.borderTopWidth) +
+      parseFloat(style.borderBottomWidth)
+  }
+  // offsetWidth/Height round fractional layout sizes and invent a scale.
+  let scaleX = width && isFinite(width) ? base.width / width : 1
+  let scaleY = height && isFinite(height) ? base.height / height : 1
+  if (!scaleX || !isFinite(scaleX)) scaleX = 1
+  if (!scaleY || !isFinite(scaleY)) scaleY = 1
+  return { scaleX, scaleY }
+}
+
 export function positionSingleBadge(ctx: ReporterState, entry: BadgeEntry) {
   let badge = entry.badge
   let rects = measureBadgeEntry(ctx, entry)
@@ -53,10 +81,7 @@ export function positionSingleBadge(ctx: ReporterState, entry: BadgeEntry) {
   badge.style.left = '0px'
   badge.style.top = '0px'
   let base = badge.getBoundingClientRect()
-  let scaleX = badge.offsetWidth ? base.width / badge.offsetWidth : 1
-  let scaleY = badge.offsetHeight ? base.height / badge.offsetHeight : 1
-  if (!scaleX || !isFinite(scaleX)) scaleX = 1
-  if (!scaleY || !isFinite(scaleY)) scaleY = 1
+  let { scaleX, scaleY } = badgeScale(ctx, badge, base)
   let badgeHeight = badge.offsetHeight || 16
   let threadId = badge.dataset.threadId!
   let offset = ctx.badgeOffsets[threadId] || { x: 0, y: 0 }
@@ -75,10 +100,7 @@ export function positionBadges(ctx: ReporterState) {
     badge.style.left = '0px'
     badge.style.top = '0px'
     let base = badge.getBoundingClientRect()
-    let scaleX = badge.offsetWidth ? base.width / badge.offsetWidth : 1
-    let scaleY = badge.offsetHeight ? base.height / badge.offsetHeight : 1
-    if (!scaleX || !isFinite(scaleX)) scaleX = 1
-    if (!scaleY || !isFinite(scaleY)) scaleY = 1
+    let { scaleX, scaleY } = badgeScale(ctx, badge, base)
     layouts.push({
       badge: badge,
       rect: rect,

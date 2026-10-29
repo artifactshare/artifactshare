@@ -1238,6 +1238,162 @@ describe('CSP reporter runtime behavior', () => {
     )
   })
 
+  test.each(['content-box', 'border-box'])(
+    'fractional badge width stays aligned with %s sizing',
+    async (boxSizing) => {
+      const doc = await fixture(`
+        <style>
+          * { box-sizing: ${boxSizing}; }
+          .ash-comment-highlight-badge {
+            width: ${boxSizing === 'content-box' ? '19.5' : '31.5'}px;
+            padding: 0 5px !important;
+            border-width: 1px !important;
+          }
+          p { margin-left: 280px; }
+        </style><p>Highlighted text</p>`)
+      await applyHighlights([{ threadId: 'position', count: 1 }])
+      const paragraph = doc.querySelector('p')!
+      const range = doc.createRange()
+      range.selectNodeContents(paragraph)
+      const badge = doc.querySelector<HTMLElement>(
+        '.ash-comment-highlight-badge',
+      )!
+      const assertAligned = () => {
+        const rect = badge.getBoundingClientRect()
+        expect(Math.abs(rect.width - Math.round(rect.width))).toBeGreaterThan(
+          0.4,
+        )
+        // Allow subpixel layout quantization, but not rounded-size scale drift.
+        expect(
+          Math.abs(rect.left - (range.getBoundingClientRect().right - 6)),
+        ).toBeLessThanOrEqual(0.5)
+      }
+      await vi.waitFor(assertAligned)
+      paragraph.style.marginLeft = '380px'
+      frame!.contentWindow!.dispatchEvent(new Event('resize'))
+      await vi.waitFor(assertAligned)
+    },
+  )
+
+  test.each([
+    { axis: 'width', value: '0px' },
+    { axis: 'width', value: 'NaN' },
+    { axis: 'width', value: 'Infinity' },
+    { axis: 'height', value: '0px' },
+    { axis: 'height', value: 'NaN' },
+    { axis: 'height', value: 'Infinity' },
+  ])(
+    'invalid computed $axis=$value falls back independently',
+    async ({ axis, value }) => {
+      const doc = await fixture(`
+      <style>
+        html { transform: scale(1.25, 1.5); transform-origin: 0 0; }
+        .ash-comment-highlight-badge { box-sizing: border-box; width: 31.5px; height: 20px; }
+      </style><p>Highlighted text</p>`)
+      await applyHighlights([{ threadId: 'position', count: 1 }])
+      const badge = doc.querySelector<HTMLElement>(
+        '.ash-comment-highlight-badge',
+      )!
+      const range = doc.createRange()
+      range.selectNodeContents(doc.querySelector('p')!)
+      const highlight = range.getBoundingClientRect()
+      badge.style.left = '0px'
+      badge.style.top = '0px'
+      const base = badge.getBoundingClientRect()
+      const win = frame!.contentWindow!
+      const getComputedStyle = win.getComputedStyle.bind(win)
+      const spy = vi
+        .spyOn(win, 'getComputedStyle')
+        .mockImplementation((element) => {
+          const style = getComputedStyle(element)
+          if (element !== badge) return style
+          return new Proxy(style, {
+            get(target, property) {
+              return property === axis
+                ? value
+                : Reflect.get(target, property, target)
+            },
+          })
+        })
+      try {
+        win.dispatchEvent(new Event('resize'))
+        await vi.waitFor(() => {
+          expect(parseFloat(badge.style.left)).toBeCloseTo(
+            (highlight.right - base.left) / (axis === 'width' ? 1 : 1.25) - 6,
+            1,
+          )
+          expect(parseFloat(badge.style.top)).toBeCloseTo(
+            (highlight.top - base.top) / (axis === 'height' ? 1 : 1.5) -
+              badge.offsetHeight +
+              3,
+            1,
+          )
+        })
+      } finally {
+        spy.mockRestore()
+      }
+    },
+  )
+
+  test('scaled root keeps fractional badges aligned through repositioning and drag', async () => {
+    const scaleX = 1.25
+    const scaleY = 1.5
+    const doc = await fixture(`
+      <style>
+        html { transform: scale(${scaleX}, ${scaleY}); transform-origin: 0 0; }
+        .ash-comment-highlight-badge {
+          box-sizing: content-box;
+          width: 19.5px;
+          height: 18px;
+          padding: 0 5px !important;
+          border-width: 1px !important;
+        }
+        p { margin-left: 200px; }
+      </style><p>Highlighted text</p>`)
+    await applyHighlights([{ threadId: 'drag', count: 1 }])
+    const paragraph = doc.querySelector('p')!
+    const range = doc.createRange()
+    range.selectNodeContents(paragraph)
+    const badge = doc.querySelector<HTMLElement>(
+      '.ash-comment-highlight-badge',
+    )!
+    const assertAligned = (x = 0, y = 0) => {
+      const rect = badge.getBoundingClientRect()
+      const highlight = range.getBoundingClientRect()
+      expect(
+        Math.abs(rect.left - (highlight.right + (x - 6) * scaleX)),
+      ).toBeLessThanOrEqual(0.5)
+      expect(
+        Math.abs(rect.bottom - (highlight.top + (y + 3) * scaleY)),
+      ).toBeLessThanOrEqual(0.5)
+    }
+    await vi.waitFor(() => assertAligned())
+    paragraph.style.marginLeft = '280px'
+    frame!.contentWindow!.dispatchEvent(new Event('resize'))
+    await vi.waitFor(() => assertAligned())
+    const rect = badge.getBoundingClientRect()
+    const pointer = (type: string, x: number, y: number) =>
+      badge.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+        }),
+      )
+    pointer('pointerdown', rect.left + 4, rect.top + 4)
+    pointer('pointermove', rect.left + 44, rect.top + 24)
+    pointer('pointerup', rect.left + 44, rect.top + 24)
+    badge.click()
+    await probeReporter()
+    assertAligned(40, 20)
+    expect(selected()).toBeUndefined()
+    paragraph.style.marginLeft = '320px'
+    frame!.contentWindow!.dispatchEvent(new Event('resize'))
+    await vi.waitFor(() => assertAligned(40, 20))
+  })
+
   test('badge position is updated from the highlight client rect', async () => {
     const doc = await fixture('<p>Highlighted text</p>')
     await applyHighlights([
