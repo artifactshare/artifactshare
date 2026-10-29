@@ -187,6 +187,15 @@ export function createArgumentParser(catalog: Map<string, Options>) {
           `Pass ${spelling} <value> and retry.`,
         )
       }
+      if (
+        command === 'artifacts get' &&
+        option.name === 'version' &&
+        !value.trim()
+      )
+        return validationError(
+          '--version must not be empty.',
+          'Pass --version <version-id> or omit it for current content.',
+        )
       if (option.name === 'expectedVersion') {
         const error = invalidExpectedVersion(value)
         if (error) return error

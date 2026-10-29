@@ -50,7 +50,8 @@ const roleByPath: Record<string, string> = {
     'Append a local UTF-8 file to an existing single-file HTML or Markdown artifact.',
   artifacts: 'Browse, read, and delete artifacts.',
   'artifacts delete': 'Alias of delete: permanently delete an artifact.',
-  'artifacts get': 'Read an artifact and its metadata.',
+  'artifacts get':
+    'Read current source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. Removed versions return version_removed.',
   'artifacts list':
     'List artifacts you can access, including project or home results.',
   changelog: 'Show CLI release notes.',
@@ -163,7 +164,8 @@ const jaRoleByPath: Record<string, string> = {
     'ローカルの UTF-8 ファイルを既存の単一 HTML / Markdown の末尾へ追記します。',
   artifacts: '成果物の一覧表示、読み取り、削除を行います。',
   'artifacts delete': 'delete の別名です。成果物を完全に削除します。',
-  'artifacts get': '成果物とメタデータを読み取ります。',
+  'artifacts get':
+    '現在の本文を読みます。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。',
   'artifacts list':
     'project または home を含む、アクセスできる成果物を一覧表示します。',
   changelog: 'CLI のリリースノートを表示します。',
@@ -300,6 +302,10 @@ const JA: CliReferenceContent = {
   ...EN,
   locale: 'ja',
   optionHelp: {
+    'artifacts get': {
+      '--version':
+        '読み取る公開済みバージョンの ID。省略すると現在の本文を返します。',
+    },
     share: {
       '--expected-version':
         '--key で更新する際の現在のバージョン ID。番号ではなく、前回の share/update の data.version.id を指定します。artifacts get では data.version_id として返されます。',

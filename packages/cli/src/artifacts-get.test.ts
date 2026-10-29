@@ -471,3 +471,98 @@ test('artifacts get --json rejects malformed success responses', async () => {
     },
   )
 })
+
+for (const flag of [
+  ['--version', 'v1'],
+  ['--version=v1'],
+  ['--version', '-AbCdEfGhIjKlMnO'],
+  ['--version=-AbCdEfGhIjKlMnO'],
+]) {
+  const versionId = flag.length === 2 ? flag[1] : flag[0]!.split('=')[1]
+  test(`historical get dispatches ${flag.join(' ')} and preserves common options`, async () => {
+    await withServer(
+      (request, response) => {
+        const url = new URL(request.url!, 'http://localhost')
+        assert.equal(url.searchParams.get('version_id'), versionId)
+        assert.equal(url.searchParams.get('offset'), '2')
+        assert.deepEqual(url.searchParams.getAll('include'), ['comments'])
+        writeJson(response, {
+          id: 'abc123def4',
+          share_url: 'https://artifactshare.test/a/abc123def4',
+          version_id: versionId,
+          format: 'markdown',
+          content: 'old',
+          size_bytes: 5,
+          truncated: false,
+          next_offset: null,
+          link_expires_at: null,
+        })
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'artifacts',
+            'get',
+            'abc123def4',
+            ...flag,
+            '--offset',
+            '2',
+            '--include',
+            'comments',
+            '--baseUrl',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        assert.equal(result.status, 0, result.stdout + result.stderr)
+        assert.equal(JSON.parse(result.stdout).data.version_id, versionId)
+      },
+    )
+  })
+}
+for (const flag of [['--version'], ['--version='], ['--version', '  ']]) {
+  test(`rejects empty version ${JSON.stringify(flag)}`, () => {
+    expectFailure(run(['artifacts', 'get', 'abc123def4', ...flag, '--json']), {
+      command: 'artifacts get',
+      code: 'validation_failed',
+    })
+  })
+}
+test('get short metadata flags remain functional', () => {
+  assert.match(run(['artifacts', 'get', '-h']).stdout, /--version <version>/)
+  assert.equal(
+    run(['artifacts', 'get', '-v']).stdout,
+    run(['--version']).stdout,
+  )
+  assert.equal(run(['-v']).stdout, run(['--version']).stdout)
+})
+test('removed version has actionable CLI recovery', async () => {
+  await withServer(
+    (_request, response) =>
+      writeJson(
+        response,
+        { error: { code: 'version-removed', message: 'Removed' } },
+        410,
+      ),
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'artifacts',
+          'get',
+          'abc123def4',
+          '--version=v1',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const body = expectFailure(result, {
+        command: 'artifacts get',
+        code: 'version_removed',
+      })
+      assert.match(body.error.hint, /Omit --version/)
+    },
+  )
+})

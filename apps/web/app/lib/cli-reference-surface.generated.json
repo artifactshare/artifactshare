@@ -72,6 +72,9 @@
         "--insecure-localhost",
         "--offset",
         "--include"
+      ],
+      "option_help": [
+        "--version <version> Published version id to read; omit for current source"
       ]
     },
     {

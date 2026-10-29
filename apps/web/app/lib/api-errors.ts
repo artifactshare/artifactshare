@@ -22,6 +22,7 @@ export function errorResponse(
  * caller may not see resolves to `not-found` so existence never leaks.
  */
 export type CliArtifactErrorResult =
+  | { kind: 'version-removed' }
   | { kind: 'not-found' }
   | { kind: 'unsupported-kind'; artifactKind: string }
   | { kind: 'source-unavailable' }
@@ -31,6 +32,12 @@ export function cliArtifactErrorResponse(
   unsupportedKindMessage: string,
 ): Response {
   switch (result.kind) {
+    case 'version-removed':
+      return errorResponse(
+        'version-removed',
+        'This version was removed by retention. Omit version_id to read current content.',
+        410,
+      )
     case 'not-found':
       return errorResponse('not-found', 'Artifact not found.', 404)
     case 'unsupported-kind':

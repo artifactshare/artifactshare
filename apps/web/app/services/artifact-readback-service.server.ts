@@ -1,3 +1,4 @@
+import { selectArtifactVersion } from './artifact-version-selection.server'
 import type { PublisherArtifactReadResponse } from '@artifactshare/contract'
 import {
   loadPublisherArtifact,
@@ -30,6 +31,7 @@ export type ArtifactReadbackInclude = 'versions' | 'comments'
 
 export type ArtifactReadbackResult =
   | { kind: 'ok'; data: ArtifactReadbackData }
+  | { kind: 'version-removed' }
   | { kind: 'not-found' }
   | { kind: 'unsupported-kind'; artifactKind: string }
   | { kind: 'source-unavailable' }
@@ -71,6 +73,7 @@ export async function getArtifactReadback(
   args: {
     id: string
     baseUrl: string
+    version_id?: string
     offset?: number
     include?: ArtifactReadbackInclude[]
     includeSharedVersions?: boolean
@@ -85,15 +88,29 @@ export async function getArtifactReadback(
   )
   if (!access) return { kind: 'not-found' }
 
-  const format = singleFileFormat(access.artifactKind as ArtifactKind)
+  let format = singleFileFormat(access.artifactKind as ArtifactKind)
   if (!format) {
     return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
   }
-  if (!access.currentVersionId || !access.r2Key) {
+  let versionId = access.currentVersionId
+  let r2Key = access.r2Key
+  if (args.version_id !== undefined) {
+    const selected = await selectArtifactVersion(db, args.id, args.version_id)
+    if (selected.kind !== 'ok') return selected
+    versionId = selected.version.id
+    r2Key = selected.version.r2_key
+    format = singleFileFormat(selected.version.artifact_kind as ArtifactKind)
+    if (!format)
+      return {
+        kind: 'unsupported-kind',
+        artifactKind: selected.version.artifact_kind,
+      }
+  }
+  if (!versionId || !r2Key) {
     return { kind: 'source-unavailable' }
   }
 
-  const fetched = await fetchArtifactSource(access.r2Key)
+  const fetched = await fetchArtifactSource(r2Key)
   if (fetched.kind !== 'ok') return { kind: 'source-unavailable' }
 
   const { content, truncated, nextOffset } = capSource(
@@ -103,7 +120,7 @@ export async function getArtifactReadback(
   const data: ArtifactReadbackData = {
     id: args.id,
     share_url: shareUrl(args.baseUrl, args.id, access.visibility),
-    version_id: access.currentVersionId,
+    version_id: versionId,
     format,
     content,
     size_bytes: fetched.sizeBytes,

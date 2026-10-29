@@ -596,6 +596,7 @@ export type ArtifactInclude = z.infer<typeof ArtifactIncludeSchema>
 
 /** Parsed query values after URLSearchParams handling. */
 export const ArtifactReadQuerySchema = z.object({
+  version_id: z.string().trim().min(1).optional(),
   offset: z.number().int().nonnegative().optional(),
   include: z.array(ArtifactIncludeSchema).optional(),
 })
@@ -603,6 +604,7 @@ export type ArtifactReadQuery = z.infer<typeof ArtifactReadQuerySchema>
 
 /** Raw query values before converting the decimal offset. */
 export const ArtifactReadQueryParamsSchema = z.object({
+  version_id: z.string().trim().min(1).optional(),
   offset: z.string().regex(/^\d+$/).optional(),
   // URLSearchParams.getAll('include') retains comma-separated values from
   // requests such as include=versions,comments, so validate the raw values

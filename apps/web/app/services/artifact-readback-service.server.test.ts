@@ -1,3 +1,7 @@
+const selectVersion = vi.hoisted(() => vi.fn())
+vi.mock('./artifact-version-selection.server', () => ({
+  selectArtifactVersion: selectVersion,
+}))
 import { beforeEach, expect, test, vi } from 'vitest'
 import { ArtifactReadResponseSchema } from '@artifactshare/contract'
 
@@ -22,6 +26,7 @@ import { loadCommentThreads } from './comments.server'
 import { getArtifactReadback } from './artifact-readback-service.server'
 
 beforeEach(() => {
+  selectVersion.mockReset()
   access.mockReset().mockResolvedValue({
     artifactKind: 'html_page',
     currentVersionId: 'v1',
@@ -145,3 +150,135 @@ test('included comments retain stored text metadata through the response contrac
     ambiguous_at_creation: false,
   })
 })
+
+for (const isOwner of [true, false]) {
+  for (const [current, selected, format] of [
+    ['html_page', 'markdown_page', 'markdown'],
+    ['markdown_page', 'html_page', 'html'],
+  ]) {
+    test(`historical source uses selected format for owner=${isOwner} ${format}`, async () => {
+      access.mockResolvedValue({
+        artifactKind: current,
+        currentVersionId: 'v2',
+        r2Key: 'current',
+        visibility: 'workspace',
+        isOwner,
+        workspaceId: 'ws1',
+      })
+      selectVersion.mockResolvedValue({
+        kind: 'ok',
+        version: { id: 'v1', artifact_kind: selected, r2_key: 'old' },
+      })
+      fetchSource.mockResolvedValue({
+        kind: 'ok',
+        body: 'old source',
+        sizeBytes: 10,
+      })
+      const result = await getArtifactReadback(
+        {} as never,
+        { workspaceId: 'ws1' } as never,
+        {
+          id: 's1',
+          version_id: 'v1',
+          baseUrl: 'https://artifactshare.test',
+          include: ['versions'],
+        },
+      )
+      expect(result).toMatchObject({
+        kind: 'ok',
+        data: { version_id: 'v1', format, content: 'old source' },
+      })
+      expect(fetchSource).toHaveBeenCalledWith('old')
+      if (!isOwner && result.kind === 'ok')
+        expect(result.data.versions).toBeUndefined()
+    })
+  }
+}
+test('access denial precedes version and tombstone lookup', async () => {
+  access.mockResolvedValue(null)
+  expect(
+    await getArtifactReadback({} as never, {} as never, {
+      id: 's1',
+      version_id: 'removed',
+      baseUrl: 'https://artifactshare.test',
+    }),
+  ).toEqual({ kind: 'not-found' })
+  expect(selectVersion).not.toHaveBeenCalled()
+  expect(fetchSource).not.toHaveBeenCalled()
+})
+for (const kind of ['not-found', 'version-removed']) {
+  test(`historical ${kind} never reads current storage`, async () => {
+    selectVersion.mockResolvedValue({ kind })
+    expect(
+      await getArtifactReadback({} as never, {} as never, {
+        id: 's1',
+        version_id: 'v0',
+        baseUrl: 'https://artifactshare.test',
+      }),
+    ).toEqual({ kind })
+    expect(fetchSource).not.toHaveBeenCalled()
+  })
+}
+test('historical source continuation preserves a surrogate pair at the cap', async () => {
+  const source = 'x'.repeat(199999) + '😀tail'
+  selectVersion.mockResolvedValue({
+    kind: 'ok',
+    version: { id: 'v0', artifact_kind: 'markdown_page', r2_key: 'old' },
+  })
+  fetchSource.mockResolvedValue({
+    kind: 'ok',
+    body: source,
+    sizeBytes: source.length + 2,
+  })
+  const args = {
+    id: 's1',
+    version_id: 'v0',
+    baseUrl: 'https://artifactshare.test',
+  }
+  const first = await getArtifactReadback({} as never, {} as never, args)
+  if (first.kind !== 'ok' || first.data.next_offset === null)
+    throw new Error('expected chunk')
+  const second = await getArtifactReadback({} as never, {} as never, {
+    ...args,
+    offset: first.data.next_offset,
+  })
+  if (second.kind !== 'ok') throw new Error('expected continuation')
+  expect(first.data.content + second.data.content).toBe(source)
+  expect(first.data.version_id).toBe('v0')
+  expect(second.data.version_id).toBe('v0')
+  expect(first.data.content.length).toBe(199999)
+})
+test('missing historical storage does not fall back to current content', async () => {
+  selectVersion.mockResolvedValue({
+    kind: 'ok',
+    version: { id: 'v0', artifact_kind: 'markdown_page', r2_key: 'old' },
+  })
+  fetchSource.mockResolvedValue({ kind: 'not-found' })
+  expect(
+    await getArtifactReadback({} as never, {} as never, {
+      id: 's1',
+      version_id: 'v0',
+      baseUrl: 'https://artifactshare.test',
+    }),
+  ).toEqual({ kind: 'source-unavailable' })
+  expect(fetchSource.mock.calls).toEqual([['old']])
+})
+
+for (const selectedStatic of [true, false]) {
+  test(`historical reads reject static sites (selected=${selectedStatic})`, async () => {
+    if (selectedStatic)
+      selectVersion.mockResolvedValue({
+        kind: 'ok',
+        version: { id: 'v0', artifact_kind: 'static_site', r2_key: 'old' },
+      })
+    else access.mockResolvedValue({ artifactKind: 'static_site' })
+    expect(
+      await getArtifactReadback({} as never, {} as never, {
+        id: 's1',
+        version_id: 'v0',
+        baseUrl: 'https://artifactshare.test',
+      }),
+    ).toEqual({ kind: 'unsupported-kind', artifactKind: 'static_site' })
+    expect(fetchSource).not.toHaveBeenCalled()
+  })
+}

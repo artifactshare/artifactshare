@@ -354,6 +354,7 @@ export function registerArtifactResource(
               },
             ],
           }
+        case 'version-removed':
         case 'not-found':
           throw new McpError(
             ErrorCode.InvalidParams,

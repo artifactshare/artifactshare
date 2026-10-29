@@ -2819,6 +2819,155 @@ describe('headless publish wiring', () => {
     expect(result.structuredContent?.version_id).toBeTruthy()
   })
 
+  for (const owner of [true, false]) {
+    for (const format of ['markdown', 'html'] as const) {
+      test(`get_artifact selects old published ${format} for owner=${owner} beyond history cap`, async () => {
+        if (!owner) await seedUser(db, { id: 'mate-7', workspaceId: 'ws-a' })
+        const user = await loadMcpUser(db, owner ? 'owner-1' : 'mate-7')
+        if (!user) throw new Error('seed failed')
+        const published = await uploadShareable(
+          db,
+          user,
+          buildArtifactFile('original source', format),
+          'workspace',
+          [],
+          null,
+        )
+        if (published.kind !== 'ok') throw new Error('publish failed')
+        const old = await db
+          .selectFrom('versions')
+          .selectAll()
+          .where('shareable_id', '=', published.id)
+          .executeTakeFirstOrThrow()
+        // More than 50 newer publications must not bound explicit selection.
+        for (let i = 0; i < 51; i++) {
+          await db
+            .insertInto('versions')
+            .values({
+              id: `newer-${i}`,
+              shareable_id: published.id,
+              artifact_kind:
+                format === 'markdown' ? 'html_page' : 'markdown_page',
+              status: 'published',
+              entrypoint_path: '/index.html',
+              r2_key: `newer-key-${i}`,
+              size_bytes: 3,
+              sha256: 'hash',
+              created_by_id: user.id,
+              created_at: new Date(
+                Date.parse(old.created_at) + 86400000,
+              ).toISOString(),
+              published_at: new Date(
+                Date.parse(old.created_at) + 86400000,
+              ).toISOString(),
+            })
+            .execute()
+        }
+        await db
+          .updateTable('shareables')
+          .set({
+            current_version_id: 'newer-50',
+            artifact_kind:
+              format === 'markdown' ? 'html_page' : 'markdown_page',
+          })
+          .where('id', '=', published.id)
+          .execute()
+        storageMock.getArtifact.mockImplementation(
+          async (_bucket: unknown, key: string) => ({
+            text: async () => (key === old.r2_key ? 'original source' : 'new'),
+            size: key === old.r2_key ? 15 : 3,
+          }),
+        )
+        const body = await callTool(db, 'get_artifact', {
+          id: published.id,
+          version_id: old.id,
+          include: ['versions'],
+        })
+        const result = body.result as {
+          isError?: boolean
+          structuredContent?: Record<string, unknown>
+        }
+        expect(result.isError).toBeFalsy()
+        expect(result.structuredContent).toMatchObject({
+          version_id: old.id,
+          format,
+          content: 'original source',
+        })
+        if (!owner)
+          expect(result.structuredContent).not.toHaveProperty('versions')
+        const other = await uploadShareable(
+          db,
+          user,
+          buildArtifactFile('other source', format),
+          'workspace',
+          [],
+          null,
+        )
+        if (other.kind !== 'ok') throw new Error('publish failed')
+        const foreign = await db
+          .selectFrom('versions')
+          .select('id')
+          .where('shareable_id', '=', other.id)
+          .executeTakeFirstOrThrow()
+        const unknown = await callTool(db, 'get_artifact', {
+          id: published.id,
+          version_id: 'unknown',
+        })
+        const missing = await callTool(db, 'get_artifact', {
+          id: published.id,
+          version_id: foreign.id,
+        })
+        expect(errorPayload(unknown).code).toBe('not-found')
+        expect(errorPayload(missing)).toEqual(errorPayload(unknown))
+        for (const status of ['uploading', 'failed'] as const) {
+          await db
+            .updateTable('versions')
+            .set({ status })
+            .where('id', '=', old.id)
+            .execute()
+          expect(
+            errorPayload(
+              await callTool(db, 'get_artifact', {
+                id: published.id,
+                version_id: old.id,
+              }),
+            ).code,
+          ).toBe('not-found')
+        }
+        await db
+          .updateTable('versions')
+          .set({ status: 'published', published_at: null })
+          .where('id', '=', old.id)
+          .execute()
+        expect(
+          errorPayload(
+            await callTool(db, 'get_artifact', {
+              id: published.id,
+              version_id: old.id,
+            }),
+          ).code,
+        ).toBe('not-found')
+        await db
+          .insertInto('version_retention_tombstones')
+          .values({
+            version_id: 'removed',
+            shareable_id: published.id,
+            version_number: 100,
+            removed_at: '2026-10-01',
+          })
+          .execute()
+        const removed = await callTool(db, 'get_artifact', {
+          id: published.id,
+          version_id: 'removed',
+        })
+        expect(removed.result).toMatchObject({ isError: true })
+        expect(errorPayload(removed)).toMatchObject({
+          code: 'version-removed',
+          hint: expect.stringContaining('Omit version_id'),
+        })
+      })
+    }
+  }
   test('get_artifact paginates a large source via offset and next_offset', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')

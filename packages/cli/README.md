@@ -49,7 +49,7 @@ runs add versions to the same file.
 Pass `--expected-version <version-id>` to reject an update when another version
 became current first. Project-scoped agent profiles must pass it to `update`
 and to repeat `share --key` updates; initial key creation does not require it.
-After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` instead returns the current version as `data.version_id`.
+After `login --preset agent`, updates require `--expected-version <version-id>` using `data.version.id` from the previous successful `share` or `update` output. If omitted, `expected_version_required` reports `recovery.kind: change_input`; retry with that value. `artifacts get` without `--version` returns the current version as `data.version_id`.
 
 Unknown options fail locally with `unknown_option` before authentication, requests,
 or writes. Correct `details.option`; the hint suggests a nearby option when one
@@ -529,3 +529,22 @@ Without tool filters, update/remove continue healthy targets after a conflict. P
 When a newer CLI installed the managed version, list/doctor report `update_available: false` and a `hint` containing "A newer CLI installed", with no update recommendation. Unforced skills install and skills update preserve the entire target, including temporary files and legacy rules. Explicit `--force` permits a downgrade, reported with both versions in `hint`; `--dry-run --force` reports the same intent without writing. Protected links and newer pending intents still refuse force.
 
 Writes prefer a private sibling `.artifactshare-staging-<uuid>` directory. If the parent is not writable or a commit crosses filesystems, the CLI stages inside the skill folder instead and still commits files by rename. Real install, update, ensure and automatic updates clean reserved staging directories and exact UUID-shaped `.artifactshare-<uuid>.tmp` regular files only when their modification times are more than ten minutes old before checking conflicts, including no-op selections except newer installed versions skipped by skills install or skills update. Diagnostics and dry runs never clean files. Unrelated names and symlink referents are never deleted. Failed writes roll back committed paths and remove staging; interrupted processes leave debris for the next mutation.
+
+## Read the source of an earlier version
+
+Use `artifacts get <target> --version <version-id> --json`, or MCP
+`get_artifact` with `version_id`, to read a published single-file version you
+can access. There is no age limit. Omitting the parameter reads current content.
+Only `artifacts get` accepts a value for `--version`; `-v` still prints the CLI
+package version, as do root `--version` and root `-v`.
+The returned `version_id` and `format` describe the source actually read.
+Repeat the same selection with `offset` / `--offset` set to `next_offset` until
+`truncated` is false. Static sites are unsupported; publisher credentials reject
+version selection.
+
+For an orphaned text comment, pass its non-null `anchor.version_id` to inspect
+what the commenter saw. A null anchor id cannot select the original source.
+Retention removal returns `version_removed` in CLI output or `version-removed`
+in MCP/API (HTTP 410); omit the selection to inspect current content. Unknown, foreign, or
+unpublished ids return not-found. Before updating, read again without a
+version selection and use that current id for `--expected-version`.

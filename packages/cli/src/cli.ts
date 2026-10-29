@@ -107,11 +107,16 @@ async function main(rawArgv: string[]): Promise<void> {
     )
   }
   const gunshiArgv =
-    command === undefined
-      ? argv.some((arg) => arg === '--version' || arg === '-v')
-        ? ['--version']
-        : ['--help']
-      : normalizeArgvForGunshi(argv, commandCandidate)
+    command === 'artifacts get' &&
+    argv
+      .slice(0, argv.indexOf('--') < 0 ? argv.length : argv.indexOf('--'))
+      .includes('-v')
+      ? ['--version']
+      : command === undefined
+        ? argv.some((arg) => arg === '--version' || arg === '-v')
+          ? ['--version']
+          : ['--help']
+        : normalizeArgvForGunshi(argv, commandCandidate)
   const usage = await runGunshi(gunshiArgv).catch((error) => {
     if (error instanceof AggregateError) {
       writeFailure(
@@ -135,7 +140,54 @@ async function main(rawArgv: string[]): Promise<void> {
 }
 
 async function runGunshi(argv: string[]): Promise<string | undefined> {
-  return cli(argv, entryCommand, await cliOptions())
+  const options = await cliOptions()
+  if (argv[0] === 'artifacts' && argv[1] === 'get') {
+    // Preserve the public help schema; rename only execution's long flag to
+    // avoid Gunshi's built-in package-version handler.
+    const metadata = optionMetadata(artifactsGetDefinition)
+    const normalized: string[] = []
+    let help = false
+    for (let i = 0; i < argv.length; i++) {
+      const token = argv[i]!
+      if (token === '--') {
+        normalized.push(...argv.slice(i))
+        break
+      }
+      const equal = token.indexOf('=')
+      const spelling = equal < 0 ? token : token.slice(0, equal)
+      const option = metadata.get(spelling)
+      if (spelling === '--help' || spelling === '-h') help = true
+      if (spelling === '--version') {
+        const value = equal < 0 ? argv[++i]! : token.slice(equal + 1)
+        normalized.push(`--artifact-version=${value}`)
+        continue
+      }
+      normalized.push(token)
+      if (option && !option.boolean && equal < 0) normalized.push(argv[++i]!)
+    }
+    if (help) return generateCliHelp(['artifacts', 'get'])
+    {
+      const { version, ...args } = artifactsGetDefinition.args!
+      const get = lazyCommand(
+        {
+          ...artifactsGetDefinition,
+          args: { ...args, artifactVersion: { ...version!, toKebab: true } },
+        },
+        artifactsGetRunner,
+      )
+      return cli(normalized, entryCommand, {
+        ...options,
+        subCommands: {
+          ...options.subCommands,
+          artifacts: {
+            ...artifactsDefinition,
+            subCommands: { ...artifactsDefinition.subCommands, get },
+          },
+        },
+      })
+    }
+  }
+  return cli(argv, entryCommand, options)
 }
 
 async function cliOptions(version = loadCliVersion()) {
@@ -789,6 +841,10 @@ const artifactsGetDefinition = define({
       description:
         'Artifact ID, /a/<id> share URL, artifactshare.link viewer URL, artifactshareusercontent.com execution URL, or legacy sandbox URL',
     },
+    version: {
+      type: 'string',
+      description: 'Published version id to read; omit for current source',
+    },
     offset: {
       type: 'string',
       toKebab: true,
@@ -806,14 +862,15 @@ const artifactsGetDefinition = define({
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get abc123def4 --offset 200000 --json
 
 Use resolve first when a user gives a title or project name, then pass the id here.
-Read the successful JSON from data.content (the source) and data.version_id (the current version).
-The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with --offset set to data.next_offset and concatenate data.content until data.truncated is false.
+Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
+The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with the same --version selection and --offset set to data.next_offset and concatenate data.content until data.truncated is false.
 
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before artifacts get
   target_not_found   Retry with an artifact ID, share URL, or sandbox URL
   unsupported_kind   Use download for static sites or other multi-file artifacts
-  validation_failed  Check --offset and --include values`,
+  version_removed    Omit --version to inspect current content
+  validation_failed  Check --version, --offset and --include values`,
 })
 
 const artifactsListDefinition = define({

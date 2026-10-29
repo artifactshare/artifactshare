@@ -75,3 +75,22 @@ refund. Edits, deletions, resolve/reopen and anchor reports consume nothing.
 Mutation readback contains only the affected thread window and changed message.
 `refresh_required: true` means the write committed but advisory readback failed:
 read that thread by ID; do not replay the write automatically.
+
+## Read the source of an earlier version
+
+Use `artifacts get <target> --version <version-id> --json`, or MCP
+`get_artifact` with `version_id`, to read a published single-file version you
+can access. There is no age limit. Omitting the parameter reads current content.
+Only `artifacts get` accepts a value for `--version`; `-v` still prints the CLI
+package version, as do root `--version` and root `-v`.
+The returned `version_id` and `format` describe the source actually read.
+Repeat the same selection with `offset` / `--offset` set to `next_offset` until
+`truncated` is false. Static sites are unsupported; publisher credentials reject
+version selection.
+
+For an orphaned text comment, pass its non-null `anchor.version_id` to inspect
+what the commenter saw. A null anchor id cannot select the original source.
+Retention removal returns `version_removed` in CLI output or `version-removed`
+in MCP/API (HTTP 410); omit the selection to inspect current content. Unknown, foreign, or
+unpublished ids return not-found. Before updating, read again without a
+version selection and use that current id for `--expected-version`.
