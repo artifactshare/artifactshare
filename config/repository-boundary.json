@@ -192,6 +192,7 @@
     "scripts/lib/skill-eval/plan.mjs",
     "scripts/lib/skill-eval/process.mjs",
     "scripts/lib/skill-eval/records.mjs",
+    "scripts/lib/skill-eval/scenarios.mjs",
     "scripts/lib/skill-eval/server.mjs",
     "scripts/fixtures/skill-eval/claude.jsonl",
     "scripts/fixtures/skill-eval/codex.jsonl",

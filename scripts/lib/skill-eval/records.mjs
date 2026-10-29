@@ -14,6 +14,7 @@ export function parseStream(agent, text, cwd = '.') {
   const record = {
     commands: [],
     reads: [],
+    skillInvocations: [],
     finalMessage: '',
     errors: [],
     complete: false,
@@ -90,6 +91,8 @@ export function parseStream(agent, text, cwd = '.') {
           if (item.name === 'Bash') command(item.id, item.input?.command)
           if (['Read', 'ReadFile'].includes(item.name))
             read(item.input?.file_path ?? item.input?.path, item.id)
+          if (item.name === 'Skill')
+            record.skillInvocations.push(item.input?.skill)
         }
         if (item.type === 'tool_result') {
           const output = event.tool_use_result?.stdout ?? item.content
@@ -221,6 +224,15 @@ export function parseStream(agent, text, cwd = '.') {
     )
   )
     record.complete = false
+  // Claude loads a skill through its Skill tool; other agents read the file.
+  record.skillLoaded =
+    record.skillInvocations.some(
+      (name) =>
+        typeof name === 'string' && name.split(':').pop() === 'artifactshare',
+    ) ||
+    record.reads.some((item) =>
+      /\/artifactshare\/SKILL\.md$|\/artifactshare\.mdc$/u.test(item.path),
+    )
   record.referencesRead = [
     ...new Set(
       record.reads
@@ -491,6 +503,38 @@ export function markdown(result) {
     'Pass counts use completed, inspected, uncontaminated runs only. Unknown and not-applicable outcomes are excluded from eligible denominators.',
     '',
   ]
+  // Overview: one row per scenario, one cell per combination, counting runs
+  // of every version together.
+  const tally = (runs, name) => {
+    const judged = runs.filter((run) =>
+      ['pass', 'fail'].includes(run.checks?.[name]?.status),
+    )
+    return judged.length
+      ? `${judged.filter((run) => run.checks[name].status === 'pass').length}/${judged.length}`
+      : '–'
+  }
+  const goal = (run) => run.checks?.task ?? run.checks?.content
+  lines.push(
+    '| Scenario | ' + result.combinations.join(' | ') + ' |',
+    '| --- | ' + result.combinations.map(() => '---').join(' | ') + ' |',
+  )
+  for (const scenario of result.scenarios)
+    lines.push(
+      `| ${scenario} | ${result.combinations
+        .map((combination) => {
+          const runs = result.runs.filter(
+            (run) =>
+              run.combination === combination && run.scenario === scenario,
+          )
+          const done = runs.map((run) => ({
+            ...run,
+            checks: { ...run.checks, goal: goal(run) },
+          }))
+          return `task ${tally(done, 'goal')} · skill ${tally(runs, 'skill')} · ref ${tally(runs, 'reference')}`
+        })
+        .join(' | ')} |`,
+    )
+  lines.push('')
   for (const combination of result.combinations)
     for (const scenario of result.scenarios) {
       lines.push(

@@ -2,6 +2,7 @@ import { realpath, readdir, readFile, lstat } from 'node:fs/promises'
 import { resolve, dirname, join, relative, basename, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
+import { scenarioIds, legacyScenarioIds } from './scenarios.mjs'
 
 export const repository = resolve(import.meta.dirname, '../../..')
 export const combinations = [
@@ -17,8 +18,7 @@ export const personas = [
   'team-owner',
   'team-member',
 ]
-export const usage =
-  'pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model[:effort]] [--scenario share|update|comments] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]'
+export const usage = `pnpm skill-eval -- [--dry-run] [--persona free-owner|plus-owner|team-owner|team-member] [--combination agent:model[:effort]] [--effort low|medium|high|xhigh|max] [--scenario all|${scenarioIds.join('|')}] [--skill-version directory] [--runs N] [--timeout-ms N] [--max-turns N] [--base-url origin] [--output-dir directory]`
 export const fingerprint = (bytes) =>
   createHash('sha256').update(bytes).digest('hex')
 export function localOrigin(value) {
@@ -177,6 +177,7 @@ export async function plan(argv) {
     scenarios: [],
     sources: [],
     persona: 'free-owner',
+    effort: null,
     runs: 1,
     timeoutMs: 300000,
     maxTurns: 20,
@@ -189,6 +190,7 @@ export async function plan(argv) {
     '--scenario': 'scenarios',
     '--skill-version': 'sources',
     '--persona': 'persona',
+    '--effort': 'effort',
     '--runs': 'runs',
     '--timeout-ms': 'timeoutMs',
     '--max-turns': 'maxTurns',
@@ -217,11 +219,24 @@ export async function plan(argv) {
   if (!personas.includes(options.persona))
     throw new Error(`Unsupported persona ${options.persona}\n${usage}`)
   if (!options.combinations.length) options.combinations = [...combinations]
-  if (!options.scenarios.length)
-    options.scenarios = ['share', 'update', 'comments']
+  // --effort applies one effort to every combination; Cursor encodes effort
+  // in the model name, so only its low and high variants exist.
+  if (options.effort !== null) {
+    if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(options.effort))
+      throw new Error(`Unsupported effort ${options.effort}\n${usage}`)
+    options.combinations = options.combinations.map((id) => {
+      const { agent, model } = parseCombination(id)
+      if (agent !== 'cursor') return `${agent}:${model}:${options.effort}`
+      if (!['low', 'high'].includes(options.effort))
+        throw new Error(`Cursor supports only low or high effort\n${usage}`)
+      return `cursor:${model.replace(/-(?:low|high)$/u, '')}-${options.effort}`
+    })
+  }
+  if (!options.scenarios.length) options.scenarios = [...legacyScenarioIds]
+  if (options.scenarios.includes('all')) options.scenarios = [...scenarioIds]
   for (const id of options.combinations) parseCombination(id)
   for (const id of options.scenarios)
-    if (!['share', 'update', 'comments'].includes(id))
+    if (!scenarioIds.includes(id))
       throw new Error(`Unsupported scenario ${id}\n${usage}`)
   options.combinations = [...new Set(options.combinations)]
   options.scenarios = [...new Set(options.scenarios)]

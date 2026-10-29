@@ -69,7 +69,10 @@ export function serverClient(baseUrl, token) {
       return artifacts
     },
     get: (id) =>
-      request(`/api/cli/artifacts/${encodeURIComponent(id)}?include=versions`),
+      request(
+        `/api/cli/artifacts/${encodeURIComponent(id)}?include=versions&include=comments`,
+      ),
+    whoami: () => request('/api/cli/whoami'),
     delete: (id) =>
       request(`/api/cli/artifacts/${encodeURIComponent(id)}`, 'DELETE'),
   }
