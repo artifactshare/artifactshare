@@ -463,7 +463,10 @@ export function score({
             )
           : unknown('Missing artifact inventory')
       : outcome('not-applicable', 'Existing artifact')
-  const urls = record.finalMessage.match(/https?:\/\/[^\s<>"`\])]+/gu) ?? []
+  // Share URLs are ASCII, so any non-ASCII character such as 」 or following
+  // Japanese text ends the match.
+  const urls =
+    record.finalMessage.match(/https?:\/\/[^\s<>"`\])\u0080-\uffff]+/gu) ?? []
   checks.finalUrl = after?.share_url
     ? decide(
         urls.some(

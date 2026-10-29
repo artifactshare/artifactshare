@@ -288,35 +288,52 @@ export async function executeCase(
   if (result.skills.contaminated) result.status = 'contaminated'
   else if (!result.skills.complete && result.status === 'completed')
     result.status = 'incomplete'
-  if (item.scenario === 'comments') {
-    const comments = (result.actions ?? []).filter(
-      (action) =>
-        action.argv?.filter((arg) => !arg.startsWith('--'))[0] === 'comments',
-    )
-    const succeeded = (action, command) => {
-      if (action.exitCode !== 0) return false
-      try {
-        const response = JSON.parse(action.stdout)
-        return response.ok === true && response.command === command
-          ? response
-          : false
-      } catch {
-        return false
-      }
-    }
-    result.comments = {
-      read: comments.some((action) => action.argv.includes('list')),
-      resolved: comments.some((action) =>
-        succeeded(action, 'comments resolve'),
-      ),
-      replied: comments.some(
-        (action) => succeeded(action, 'comments post')?.data?.reply === true,
-      ),
-      commands: comments.map((action) => action.argv),
-    }
-  }
+  if (item.scenario === 'comments')
+    result.comments = commentObservations(result.actions ?? [])
   result.checks = score(result)
   return result
+}
+// `artifacts get --include comments` reads feedback as well as `comments list`.
+export function commentObservations(actions) {
+  const positional = (action) =>
+    action.argv?.filter((arg) => !arg.startsWith('--')) ?? []
+  const includesComments = (argv) =>
+    argv.some(
+      (arg, index) =>
+        arg === '--include=comments' ||
+        (arg === '--include' && argv[index + 1] === 'comments'),
+    )
+  const comments = actions.filter((action) => {
+    const [command, subcommand] = positional(action)
+    return (
+      command === 'comments' ||
+      (command === 'artifacts' &&
+        subcommand === 'get' &&
+        includesComments(action.argv))
+    )
+  })
+  const succeeded = (action, command) => {
+    if (action.exitCode !== 0) return false
+    try {
+      const response = JSON.parse(action.stdout)
+      return response.ok === true && response.command === command
+        ? response
+        : false
+    } catch {
+      return false
+    }
+  }
+  return {
+    read: comments.some((action) => {
+      const [command, subcommand] = positional(action)
+      return command === 'artifacts' || subcommand === 'list'
+    }),
+    resolved: comments.some((action) => succeeded(action, 'comments resolve')),
+    replied: comments.some(
+      (action) => succeeded(action, 'comments post')?.data?.reply === true,
+    ),
+    commands: comments.map((action) => action.argv),
+  }
 }
 export async function main(argv = process.argv.slice(2)) {
   const options = await plan(argv)

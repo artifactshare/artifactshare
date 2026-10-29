@@ -540,6 +540,11 @@ test('final URL scoring accepts Markdown and sentence punctuation', () => {
     `[shared artifact](${url})`,
     `<${url}>`,
     `こちら：${url}。`,
+    `「${url}」`,
+    `『${url}』`,
+    `“${url}”`,
+    `‘${url}’`,
+    `${url}を更新しました。`,
     `（${url}）、`,
     `\`${url}\``,
     `_${url}_`,
@@ -1713,6 +1718,20 @@ test('inventory tolerates unrelated rename churn and installer staging while con
     ['work/.agents/skills/artifactshare/SKILL.md'],
   )
   assert.equal(snapshot.files[0].expected, true)
+  // An install in progress leaves its write-intent marker only until it
+  // finishes, so a live poll skips it but a settled snapshot reports it.
+  await writeFile(join(skillRoot, '.artifactshare-pending.json'), '{}')
+  const polled = await inventory(root, version.files, { live: true })
+  assert.deepEqual(
+    polled.files.map((file) => file.path),
+    ['work/.agents/skills/artifactshare/SKILL.md'],
+  )
+  const settled = await inventory(root, version.files)
+  const leftover = settled.files.find((file) =>
+    file.path.endsWith('.artifactshare-pending.json'),
+  )
+  assert.equal(leftover?.expected, false)
+  await rm(join(skillRoot, '.artifactshare-pending.json'))
   const denied = await inventory(root, version.files, {
     io: {
       ...io,
@@ -2282,4 +2301,27 @@ test('inventory compares ownership manifests independently of recursive bundle k
     ).expected,
     false,
   )
+})
+
+test('reading comments through artifacts get counts as a comments read', async () => {
+  const { commentObservations } = await import('./skill-eval.mjs')
+  const url = 'https://localhost:5173/a/sample'
+  const action = (argv) => ({ argv, exitCode: 0, stdout: '{}' })
+  for (const argv of [
+    ['artifacts', 'get', url, '--include', 'comments', '--json'],
+    ['artifacts', 'get', url, '--include=comments', '--json'],
+    ['comments', 'list', url, '--json'],
+  ])
+    assert.deepEqual(commentObservations([action(argv)]), {
+      read: true,
+      resolved: false,
+      replied: false,
+      commands: [argv],
+    })
+  for (const argv of [
+    ['artifacts', 'get', url, '--include', 'versions', '--json'],
+    ['update', url, 'report.html', '--json'],
+  ])
+    assert.equal(commentObservations([action(argv)]).read, false)
+  assert.equal(commentObservations([{ argv: null }]).read, false)
 })
