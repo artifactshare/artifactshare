@@ -493,9 +493,7 @@ describe('toMcpCommentThread', () => {
     expect(mapped.messages[0]).not.toHaveProperty('author_image')
   })
 
-  // Only kind / state / quotedText reach the MCP payload; the rest of a text
-  // subject (offsets, css path, context) is anchor-resolution detail the tool
-  // drops, so default it and let each test override just what it asserts.
+  // Stored context reaches agents; viewer offsets and CSS selectors stay internal.
   function textSubject(
     override: Partial<Extract<CommentThreadView['subject'], { kind: 'text' }>>,
   ): CommentThreadView['subject'] {
@@ -528,6 +526,9 @@ describe('toMcpCommentThread', () => {
       kind: 'text',
       quoted_text: 'the second paragraph',
       state: 'attached',
+      quote_before: '',
+      quote_after: '',
+      version_id: 'v1',
     })
   })
 
@@ -3565,6 +3566,53 @@ describe('headless publish wiring', () => {
     },
   )
 
+  test('list_comments serializes distinct stored context for repeated viewer quotes', async () => {
+    const { id, sessionUser } = await publishOwnerDoc(
+      'first word end; second word end',
+    )
+    const access = (await loadCommentAccess(db, sessionUser, id))!
+    const expected = []
+    for (const [index, before] of ['first ', 'second '].entries()) {
+      const created = await createCommentThread(
+        db,
+        access,
+        sessionUser,
+        'Check',
+        {
+          selectorFormat: 'normalized-v1',
+          versionId: access.currentVersionId!,
+          quotedText: 'word',
+          prefixText: before,
+          suffixText: index === 0 ? ' end;' : ' end',
+          textStart: index === 0 ? 6 : 23,
+          textEnd: index === 0 ? 10 : 27,
+          textHash: 'a'.repeat(64),
+          ambiguousAtCreation: index === 1,
+          cssPath: null,
+        },
+      )
+      if (created.kind !== 'ok') throw new Error('creation failed')
+      expected.push({
+        kind: 'text',
+        quoted_text: 'word',
+        state: 'orphaned',
+        position_state: 'unchecked',
+        quote_before: before,
+        quote_after: index === 0 ? ' end;' : ' end',
+        version_id: access.currentVersionId,
+        ambiguous_at_creation: index === 1,
+      })
+    }
+    const listed = await callTool(db, 'list_comments', { id })
+    const data = listed.result?.structuredContent as {
+      comments: Array<{ anchor: unknown }>
+    }
+    expect(data.comments.map((thread) => thread.anchor)).toEqual(
+      expect.arrayContaining(expected),
+    )
+    expect(data.comments).toHaveLength(2)
+  })
+
   test('post_comment preserves exact context and leaves unopened versions unchecked', async () => {
     const before = Array.from({ length: 40 }, (_, i) => `before${i}`).join(' ')
     const after = Array.from({ length: 40 }, (_, i) => `after${i}`).join(' ')
@@ -3590,6 +3638,13 @@ describe('headless publish wiring', () => {
       .select(['prefix_text', 'suffix_text', 'text_start'])
       .executeTakeFirstOrThrow()
     expect(anchor.text_start).toBe(0)
+    expect(postCommentContent(posted).thread?.anchor).toMatchObject({
+      quote_before: ' ' + before + ' ',
+      quote_after: ' ' + after + ' ',
+    })
+    expect(postCommentContent(posted).thread?.anchor).not.toHaveProperty(
+      'ambiguous_at_creation',
+    )
 
     // Move the intended occurrence far enough that offsets alone favor the decoy.
     const updatedSource = `${decoy}. ${'New material. '.repeat(200)}${intended}`

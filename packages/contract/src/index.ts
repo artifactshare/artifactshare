@@ -784,6 +784,10 @@ export const CommentAnchorSchema = z.union([
     quoted_text: z.string(),
     state: z.enum(['attached', 'orphaned']),
     position_state: z.enum(['attached', 'needs-check', 'unchecked']).optional(),
+    quote_before: z.string().optional(),
+    quote_after: z.string().optional(),
+    version_id: z.string().nullable().optional(),
+    ambiguous_at_creation: z.boolean().optional(),
   }),
 ])
 export type CommentAnchor = z.infer<typeof CommentAnchorSchema>

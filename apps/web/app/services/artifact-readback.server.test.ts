@@ -78,3 +78,54 @@ test('deletion serialization preserves refresh then surviving thread and omitted
   ).toBe('{"refresh_required":true}')
   expect(JSON.stringify(agentCommentDeletionFields({}))).toBe('{}')
 })
+
+for (const selectorFormat of ['normalized-v1', 'quote-v1', null] as const) {
+  for (const ambiguousAtCreation of [false, true]) {
+    for (const positionState of [
+      'attached',
+      'unchecked',
+      'needs-check',
+    ] as const) {
+      test(`stored metadata survives ${selectorFormat}/${ambiguousAtCreation}/${positionState}`, () => {
+        const textThread: CommentThreadView = {
+          ...thread,
+          subject: {
+            kind: 'text',
+            quotedText: 'word',
+            prefixText: ' a b ',
+            suffixText: '',
+            versionId: positionState === 'needs-check' ? null : 'v1',
+            selectorFormat,
+            ambiguousAtCreation,
+            positionState,
+            state: positionState === 'attached' ? 'attached' : 'orphaned',
+            targetPath: '/index.html',
+            textStart: 10,
+            textEnd: 14,
+            cssPath: 'p',
+          },
+        }
+        const expected = {
+          kind: 'text',
+          quoted_text: 'word',
+          quote_before: ' a b ',
+          quote_after: '',
+          version_id: positionState === 'needs-check' ? null : 'v1',
+          state: positionState === 'attached' ? 'attached' : 'orphaned',
+          position_state: positionState,
+          ...(selectorFormat === 'normalized-v1'
+            ? { ambiguous_at_creation: ambiguousAtCreation }
+            : {}),
+        }
+        for (const map of [
+          agentCommentMutationFields,
+          agentCommentDeletionFields,
+        ]) {
+          expect(map({ thread: textThread }).thread?.anchor).toStrictEqual(
+            expected,
+          )
+        }
+      })
+    }
+  }
+}

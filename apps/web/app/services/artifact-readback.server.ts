@@ -62,6 +62,12 @@ export function toAgentCommentThread(thread: CommentThreadView) {
             kind: 'text' as const,
             quoted_text: thread.subject.quotedText,
             state: thread.subject.state,
+            quote_before: thread.subject.prefixText,
+            quote_after: thread.subject.suffixText,
+            version_id: thread.subject.versionId,
+            ...(thread.subject.selectorFormat === 'normalized-v1'
+              ? { ambiguous_at_creation: thread.subject.ambiguousAtCreation }
+              : {}),
             ...(thread.subject.positionState
               ? { position_state: thread.subject.positionState }
               : {}),

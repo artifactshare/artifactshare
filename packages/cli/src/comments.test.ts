@@ -751,11 +751,15 @@ for (const action of ['post', 'edit']) {
 
 test('comments JSON preserves optional position_state for strict deferred resolution', async () => {
   const comments = ['attached', 'needs-check', 'unchecked'].map(
-    (position_state) => ({
+    (position_state, index) => ({
       ...THREAD,
       anchor: {
         kind: 'text',
         quoted_text: 'original quote',
+        quote_before: index === 0 ? '' : 'card two ',
+        quote_after: index === 0 ? ' card one' : '',
+        version_id: index === 2 ? null : 'v1',
+        ...(index < 2 ? { ambiguous_at_creation: index === 1 } : {}),
         state: position_state === 'attached' ? 'attached' : 'orphaned',
         position_state,
       },
@@ -1044,3 +1048,25 @@ for (const action of ['post', 'edit', 'resolve', 'reopen', 'delete']) {
     })
   }
 }
+
+test('comments list help explains optional stored metadata with wrapped prose', () => {
+  const result = run(['comments', 'list', '--help'])
+  assert.equal(result.status, 0)
+  for (const field of [
+    'quote_before',
+    'quote_after',
+    'version_id',
+    'ambiguous_at_creation',
+    'unchecked',
+    'needs-check',
+  ]) {
+    assert.ok(result.stdout.includes(field))
+  }
+  const paragraph = result.stdout.slice(
+    result.stdout.indexOf('Text anchor fields'),
+    result.stdout.indexOf('Common failures:'),
+  )
+  assert.ok(paragraph.includes('strip HTML tags'))
+  assert.ok(paragraph.includes('null if deleted'))
+  for (const line of paragraph.split('\n')) assert.ok(line.length <= 80, line)
+})
