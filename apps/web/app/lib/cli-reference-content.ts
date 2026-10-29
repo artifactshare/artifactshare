@@ -51,7 +51,7 @@ const roleByPath: Record<string, string> = {
   artifacts: 'Browse, read, and delete artifacts.',
   'artifacts delete': 'Alias of delete: permanently delete an artifact.',
   'artifacts get':
-    'Read current source or use --version <version-id> for earlier published source. Repeat the id on continuation calls; version_id and format describe the source read. Removed versions return version_removed.',
+    'Read current source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. Removed versions return version_removed.',
   'artifacts list':
     'List artifacts you can access, including project or home results.',
   changelog: 'Show CLI release notes.',
@@ -165,7 +165,7 @@ const jaRoleByPath: Record<string, string> = {
   artifacts: '成果物の一覧表示、読み取り、削除を行います。',
   'artifacts delete': 'delete の別名です。成果物を完全に削除します。',
   'artifacts get':
-    '現在の本文を読みます。過去の公開済みの版は --version <version-id> で指定し、続きの読み取りでも同じ ID を使います。version_id と format は読み取った版の値です。削除済みの版は version_removed を返します。',
+    '現在の本文を読みます。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。',
   'artifacts list':
     'project または home を含む、アクセスできる成果物を一覧表示します。',
   changelog: 'CLI のリリースノートを表示します。',
