@@ -331,10 +331,16 @@ jobs:
       - run: pnpm --filter @artifactshare/cli exec vitest run src/upload-boundary.test.ts src/upload-boundary-commands.test.ts
 
   browser-validation:
-    name: Public browser and local-state validation
+    name: Public browser and local-state validation (${{ matrix.project }})
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # One browser per runner, like the nightly flaky detector. Sharing one
+    # runner across all three browsers made timing-sensitive tests flaky.
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -348,11 +354,12 @@ jobs:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
-      - run: pnpm test:behavior-browser
+      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}
+      - run: pnpm test:behavior-browser --project=${{ matrix.project }}
         env:
           DEBUG: pw:browser
       - name: Verify scenario routes and in-app navigation
+        if: matrix.project == 'chromium'
         run: pnpm check:browser-local-state
 
   visual-validation:
