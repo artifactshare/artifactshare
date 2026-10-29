@@ -1144,9 +1144,10 @@ test('collectDirectoryFiles skips local metadata and dependency directories', as
   await writeFile(join(root, '.env'), 'SECRET=1')
   await writeFile(join(root, 'node_modules', 'pkg', 'ignored.js'), 'x')
 
-  const result = run(['share', root, '--home', '--json'], {
-    ARTIFACTSHARE_TOKEN: 'test-token',
-  })
+  const result = run(
+    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
+    { ARTIFACTSHARE_TOKEN: 'test-token' },
+  )
 
   assert.notEqual(result.status, 0)
   assert.doesNotMatch(result.stderr, /ignored\.js/)
@@ -1164,9 +1165,10 @@ test('collectDirectoryFiles keeps framework output directories', async () => {
   await writeFile(join(root, 'build', 'app.js'), 'console.log("ok")')
   await writeFile(join(root, 'dist', 'style.css'), 'body{}')
 
-  const result = run(['share', root, '--home', '--json'], {
-    ARTIFACTSHARE_TOKEN: 'test-token',
-  })
+  const result = run(
+    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
+    { ARTIFACTSHARE_TOKEN: 'test-token' },
+  )
 
   assert.equal(result.status, 1)
   assert.doesNotMatch(result.stderr, /build|dist/)
@@ -1180,9 +1182,10 @@ test('collectDirectoryFiles rejects symlinked directories', async () => {
   await writeFile(join(root, 'index.html'), '<html></html>')
   await symlink(target, join(root, 'linked'))
 
-  const result = run(['share', root, '--home', '--json'], {
-    ARTIFACTSHARE_TOKEN: 'test-token',
-  })
+  const result = run(
+    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
+    { ARTIFACTSHARE_TOKEN: 'test-token' },
+  )
 
   const payload = expectFailure(result, {
     command: 'share',
@@ -1198,9 +1201,10 @@ test('collectDirectoryFiles rejects symlinked files', async () => {
   await writeFile(join(root, 'index.html'), '<script src="/app.js"></script>')
   await symlink(target, join(root, 'app.js'))
 
-  const result = run(['share', root, '--home', '--json'], {
-    ARTIFACTSHARE_TOKEN: 'test-token',
-  })
+  const result = run(
+    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
+    { ARTIFACTSHARE_TOKEN: 'test-token' },
+  )
 
   const payload = expectFailure(result, {
     command: 'share',
