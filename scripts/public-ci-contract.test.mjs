@@ -464,7 +464,10 @@ test('browser lane shares one topology after behavior validation', () => {
   assert.doesNotMatch(runs, /pnpm check:dev-setup/u)
   assert.doesNotMatch(runs, /pnpm check:scenario-routes/u)
   assert.doesNotMatch(runs, /pnpm check:in-app-navigation/u)
-  assert.match(runs, /playwright install --with-deps chromium/u)
+  assert.match(
+    runs,
+    /playwright install --with-deps \$\{\{ matrix\.project \}\}/u,
+  )
   assert.doesNotMatch(
     JSON.stringify(parsedWorkflow.jobs['browser-validation']),
     /PLAYWRIGHT_CHANNEL/u,
@@ -656,11 +659,11 @@ test('qm bridge release is manual, protected, and publishes one verified tarball
 test('public CI installs Playwright from the web workspace', () => {
   assert.match(
     workflow,
-    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps chromium/,
+    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps /,
   )
   assert.doesNotMatch(
     workflow,
-    /run:\s*pnpm exec playwright install --with-deps chromium/,
+    /run:\s*pnpm exec playwright install --with-deps /,
   )
 })
 
@@ -791,13 +794,26 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
 
 test('browser installation precedes execution and retains browser stderr', () => {
   const browser = parsedWorkflow.jobs['browser-validation']
+  // One runner per browser, matching the nightly flaky-detector lanes.
+  assert.deepEqual(browser.strategy, {
+    'fail-fast': false,
+    matrix: { project: ['chromium', 'firefox', 'webkit'] },
+  })
   const index = browser.steps.findIndex(
     (step) =>
       step.run ===
-      'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
+      'pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}',
   )
   assert.ok(index > 0)
-  assert.equal(browser.steps[index + 1].run, 'pnpm test:behavior-browser')
+  assert.equal(
+    browser.steps[index + 1].run,
+    'pnpm test:behavior-browser --project=${{ matrix.project }}',
+  )
+  const localState = browser.steps.find(
+    (step) => step.run === 'pnpm check:browser-local-state',
+  )
+  // The local-state harness launches Chromium only, so it runs once.
+  assert.equal(localState.if, "matrix.project == 'chromium'")
   assert.deepEqual(browser.steps[index + 1].env, { DEBUG: 'pw:browser' })
   for (const step of browser.steps.slice(index, index + 2)) {
     assert.equal(step['continue-on-error'], undefined)
