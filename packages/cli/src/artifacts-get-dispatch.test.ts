@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { test, vi } from 'vitest'
-import { runCli } from '../dist/cli.js'
+import type * as Cli from './cli.js'
+
+// The built module is absent when typecheck runs before build.
+const builtCli = new URL('../dist/cli.js', import.meta.url).href
+const { runCli } = (await import(builtCli)) as typeof Cli
 
 // Exercise the shipped dispatcher without opening a local listener.
 for (const flags of [['--version', ' v1 '], ['--version=v1']]) {
