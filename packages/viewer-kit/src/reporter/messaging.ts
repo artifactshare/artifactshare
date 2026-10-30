@@ -86,6 +86,7 @@ export function createMessagePayload(
   const keys = primitives.objectKeys(message)
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
+    if (key === 'locus' && message[key] === undefined) continue
     payload[key] = message[key]
   }
   return payload

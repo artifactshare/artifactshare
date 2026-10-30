@@ -2,6 +2,7 @@ import { type TextSelectionMessage } from '~/lib/csp-reporter'
 
 export type PendingTextAnchor = Pick<
   TextSelectionMessage,
+  | 'locus'
   | 'quotedText'
   | 'prefixText'
   | 'suffixText'

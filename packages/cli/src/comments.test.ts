@@ -758,6 +758,14 @@ test('comments JSON preserves optional position_state for strict deferred resolu
         quoted_text: 'original quote',
         quote_before: index === 0 ? '' : 'card two ',
         quote_after: index === 0 ? ' card one' : '',
+        ...(index === 0
+          ? {
+              locus: {
+                headings: ['Teams', 'Training'],
+                block_text: 'original quote',
+              },
+            }
+          : {}),
         version_id: index === 2 ? null : 'v1',
         ...(index < 2 ? { ambiguous_at_creation: index === 1 } : {}),
         state: position_state === 'attached' ? 'attached' : 'orphaned',

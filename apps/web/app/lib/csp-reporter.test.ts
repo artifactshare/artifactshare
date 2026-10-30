@@ -11,6 +11,7 @@ import {
   canUseOsHandler,
   ensureSandboxChallenge,
   isSandboxMessage,
+  parseTextLocus,
 } from './csp-reporter'
 import { createReporterState } from '../../../../packages/viewer-kit/src/reporter/state.js'
 import {
@@ -702,3 +703,54 @@ describe('hash-changed contract', () => {
     expect(isSandboxMessage({ ...message, ...patch })).toBe(false)
   })
 })
+
+test('optional locus validates exact bounds and strips unknown keys', () => {
+  const locus = {
+    headings: Array(6).fill('h'.repeat(120)),
+    block_text: 'b'.repeat(600),
+  }
+  expect(parseTextLocus({ ...locus, extra: 'untrusted' })).toEqual(locus)
+  for (const value of [
+    null,
+    undefined,
+    1,
+    [],
+    {},
+    { ...locus, headings: Array(7).fill('h') },
+    { ...locus, headings: ['h'.repeat(121)] },
+    { ...locus, headings: [1] },
+    { ...locus, headings: Array(1) },
+    {
+      ...locus,
+      headings: Object.assign(Array(3), { 0: 'Teams', 2: 'Training' }),
+    },
+    { ...locus, block_text: 'b'.repeat(601) },
+  ]) {
+    expect(parseTextLocus(value)).toBeUndefined()
+  }
+})
+
+test.each([
+  undefined,
+  null,
+  { headings: 1, block_text: false },
+  { headings: [], block_text: 'x'.repeat(601) },
+])(
+  'invalid optional locus does not reject the selection protocol: %j',
+  (locus) => {
+    expect(
+      isSandboxMessage({
+        source: 'artifactshare',
+        kind: 'text-selection',
+        quotedText: 'quote',
+        prefixText: '',
+        suffixText: '',
+        textStart: 0,
+        textEnd: 5,
+        cssPath: null,
+        rect: { top: 0, left: 0, width: 10, height: 10 },
+        locus,
+      }),
+    ).toBe(true)
+  },
+)

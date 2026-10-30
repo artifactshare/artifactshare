@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Text comment readback optionally includes page-derived creation context in `anchor.locus`: heading labels and the surrounding text block. Older and agent-posted comments omit it.
+
 - Read earlier published source with `artifacts get --version <version-id>` or MCP `get_artifact` `version_id`, including the version recorded on a comment. Retention-removed versions return a distinct error. Publisher credentials reject version selection.
 
 - Return stored quote context, original version and viewer creation ambiguity in text comment readback.

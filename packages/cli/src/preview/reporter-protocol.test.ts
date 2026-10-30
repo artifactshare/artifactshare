@@ -93,3 +93,18 @@ test('accepts long element text while bounding the complete anchor text', () => 
     validPreviewObservation({ ...element, ownText: 'x'.repeat(1_000_001) }),
   ).toBe(false)
 })
+
+test('accepts selection observations with or without ignored optional locus', () => {
+  expect(validPreviewObservation(selection)).toBe(true)
+  for (const locus of [
+    { headings: ['Teams', 'Training'], block_text: 'Text' },
+    undefined,
+    null,
+    { headings: 1 },
+  ]) {
+    expect(validPreviewObservation({ ...selection, locus })).toBe(true)
+    expect(
+      validPreviewObservation({ ...selection, locus, unexpected: true }),
+    ).toBe(false)
+  }
+})

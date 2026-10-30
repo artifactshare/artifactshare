@@ -6,6 +6,7 @@ export type CommentThreadSubject =
   | { kind: 'artifact' }
   | {
       kind: 'text'
+      locus?: { headings: string[]; block_text: string }
       state: 'attached' | 'orphaned'
       checking?: boolean
       positionState?: 'attached' | 'needs-check' | 'unchecked'

@@ -657,6 +657,8 @@ interface CommentAnchorResultsTable {
 interface CommentAnchorsTable {
   selector_format: Generated<'normalized-v1' | 'quote-v1' | null>
   text_hash: Generated<string | null>
+  locus_headings: Generated<string | null>
+  locus_block_text: Generated<string | null>
   ambiguous_at_creation: Generated<number | null>
   id: string
   thread_id: string

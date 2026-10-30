@@ -19,6 +19,7 @@ export type CommentMutationPayload =
       intent: 'create-thread'
       body: string
       anchor?: {
+        locus?: { headings: string[]; block_text: string }
         selectorFormat?: 'normalized-v1'
         textHash?: string
         ambiguousAtCreation?: boolean

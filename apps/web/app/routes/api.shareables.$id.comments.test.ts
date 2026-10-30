@@ -143,6 +143,37 @@ test('accepts the pre-deploy text selection payload as a legacy selector', async
   )
 })
 
+test.each([
+  { headings: ['Teams', 'Training'], block_text: 'Alice Bob' },
+  { headings: [1], block_text: 'Alice Bob' },
+  null,
+])('forwards only valid optional creation locus: %j', async (locus) => {
+  mocks.create.mockResolvedValue({ kind: 'invalid-body' })
+  await post({
+    intent: 'create-thread',
+    body: 'Check',
+    anchor: {
+      quotedText: 'Alice Bob',
+      prefixText: '',
+      suffixText: '',
+      textStart: 0,
+      textEnd: 9,
+      cssPath: null,
+      locus,
+    },
+  })
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    'Check',
+    expect.objectContaining({
+      locus: locus && typeof locus.headings[0] === 'string' ? locus : undefined,
+    }),
+    expect.anything(),
+  )
+})
+
 test('browser posting returns durable retry timing and the capacity distinction', async () => {
   mocks.create.mockResolvedValue({
     kind: 'rate-limited',

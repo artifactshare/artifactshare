@@ -92,7 +92,35 @@ export interface CspViolationMessage {
   lineNumber: number | null
 }
 
+export interface TextLocus {
+  headings: string[]
+  block_text: string
+}
+
+/** Page-derived data, independently validated again at the storage boundary. */
+export function parseTextLocus(value: unknown): TextLocus | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { headings, block_text } = value as Record<string, unknown>
+  if (
+    !Array.isArray(headings) ||
+    headings.length > 6 ||
+    typeof block_text !== 'string' ||
+    block_text.length > 600
+  )
+    return undefined
+  for (let index = 0; index < headings.length; index++) {
+    if (
+      !Object.hasOwn(headings, index) ||
+      typeof headings[index] !== 'string' ||
+      headings[index].length > 120
+    )
+      return undefined
+  }
+  return { headings: [...headings], block_text }
+}
+
 export interface TextSelectionMessage {
+  locus?: TextLocus
   source: 'artifactshare'
   kind: 'text-selection'
   quotedText: string

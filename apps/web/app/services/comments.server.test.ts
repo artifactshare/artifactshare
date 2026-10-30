@@ -402,6 +402,105 @@ describe('comments server', () => {
     ).toEqual([])
   })
 
+  test.each([
+    undefined,
+    null,
+    1,
+    [],
+    {},
+    { headings: 'bad', block_text: '' },
+    { headings: [1], block_text: '' },
+    { headings: Array(7).fill('a'), block_text: '' },
+    { headings: ['a'.repeat(121)], block_text: '' },
+    { headings: [], block_text: 1 },
+    { headings: [], block_text: 'a'.repeat(601) },
+  ])(
+    'drops invalid optional locus without rejecting the comment: %j',
+    async (locus) => {
+      const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Check',
+        {
+          ...selector,
+          locus: locus as never,
+        },
+      )
+      expect(created.kind).toBe('ok')
+      const [thread] = await loadCommentThreads(fixture.db, access, viewerUser)
+      expect(thread.subject).not.toHaveProperty('locus')
+      expect(toAgentCommentThread(thread).anchor).not.toHaveProperty('locus')
+      const row = await fixture.db
+        .selectFrom('comment_anchors')
+        .selectAll()
+        .executeTakeFirstOrThrow()
+      expect(row.locus_headings).toBeNull()
+      expect(row.locus_block_text).toBeNull()
+    },
+  )
+
+  test('persists bounded creation locus and returns it through agent readback', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const locus = {
+      headings: Array(6).fill('a'.repeat(120)),
+      block_text: 'b'.repeat(600),
+    }
+    expect(
+      (
+        await createCommentThread(fixture.db, access, viewerUser, 'Check', {
+          ...selector,
+          locus,
+        })
+      ).kind,
+    ).toBe('ok')
+    const [thread] = await loadCommentThreads(fixture.db, access, viewerUser)
+    expect(thread.subject).toMatchObject({ locus })
+    expect(toAgentCommentThread(thread).anchor).toMatchObject({ locus })
+    const row = await fixture.db
+      .selectFrom('comment_anchors')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(JSON.parse(row.locus_headings!)).toEqual(locus.headings)
+    expect(row.locus_block_text).toBe(locus.block_text)
+    await fixture.db
+      .updateTable('comment_anchors')
+      .set({ locus_headings: 'invalid JSON' })
+      .execute()
+    const [invalidStored] = await loadCommentThreads(
+      fixture.db,
+      access,
+      viewerUser,
+    )
+    expect(toAgentCommentThread(invalidStored).anchor).not.toHaveProperty(
+      'locus',
+    )
+  })
+
+  test('agent quote creation never accepts caller-supplied locus', async () => {
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Check',
+      {
+        selectorFormat: 'quote-v1',
+        quotedText: 'word',
+        prefixText: '',
+        suffixText: '',
+        textStart: null,
+        textEnd: null,
+        cssPath: null,
+        locus: { headings: ['Untrusted'], block_text: 'word' },
+      },
+    )
+    expect(created.kind).toBe('ok')
+    const [thread] = await loadCommentThreads(fixture.db, access, viewerUser)
+    expect(toAgentCommentThread(thread).anchor).not.toHaveProperty('locus')
+  })
+
   test('old viewer payloads create legacy selectors whose offsets remain untrusted', async () => {
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
     const anchor = {
@@ -555,7 +654,13 @@ describe('comments server', () => {
       access,
       viewerUser,
       'Check',
-      selector,
+      {
+        ...selector,
+        locus: {
+          headings: ['Teams', 'Training'],
+          block_text: 'selected words',
+        },
+      },
     )
     if (created.kind !== 'ok') throw new Error('creation failed')
     const current = await addVersion('v2', 1)
@@ -564,6 +669,7 @@ describe('comments server', () => {
         (await loadCommentThreads(fixture.db, current, viewerUser))[0],
       ).anchor
     const metadata = {
+      locus: { headings: ['Teams', 'Training'], block_text: 'selected words' },
       quote_before: 'the ',
       quote_after: ' here',
       version_id: 'v1',

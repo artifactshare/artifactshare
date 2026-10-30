@@ -3731,6 +3731,7 @@ describe('headless publish wiring', () => {
           selectorFormat: 'normalized-v1',
           versionId: access.currentVersionId!,
           quotedText: 'word',
+          locus: { headings: ['Teams', 'Training'], block_text: 'word' },
           prefixText: before,
           suffixText: index === 0 ? ' end;' : ' end',
           textStart: index === 0 ? 6 : 23,
@@ -3744,6 +3745,7 @@ describe('headless publish wiring', () => {
       expected.push({
         kind: 'text',
         quoted_text: 'word',
+        locus: { headings: ['Teams', 'Training'], block_text: 'word' },
         state: 'orphaned',
         position_state: 'unchecked',
         quote_before: before,

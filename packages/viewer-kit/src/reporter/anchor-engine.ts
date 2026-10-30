@@ -1,3 +1,5 @@
+import type { capturePrimordials } from './primordials.js'
+
 // Keep owned strings local and expose narrow accessors so bundling cannot
 // duplicate literals by inlining exported constants into their consumers.
 const ANCHOR_IGNORE_ATTRIBUTE = 'data-anchor-ignore'
@@ -47,16 +49,46 @@ interface TextUnit {
 }
 export type TextAnchorEngine = ReturnType<typeof createTextAnchorEngine>
 
-export function createTextAnchorEngine(root: Element) {
+export function createTextAnchorEngine(
+  root: Element,
+  strings: Pick<
+    ReturnType<typeof capturePrimordials>,
+    | 'stringReplace'
+    | 'stringTrim'
+    | 'stringSlice'
+    | 'createRange'
+    | 'rangeSetStart'
+    | 'rangeSetEnd'
+    | 'rangeCollapse'
+    | 'rangeComparePoint'
+  > = {
+    stringReplace: (value, pattern, replacement) =>
+      value.replace(pattern, replacement),
+    stringTrim: (value) => value.trim(),
+    stringSlice: (value, start, end) => value.slice(start, end),
+    createRange: (document) => document.createRange(),
+    rangeSetStart: (range, node, offset) => range.setStart(node, offset),
+    rangeSetEnd: (range, node, offset) => range.setEnd(node, offset),
+    rangeCollapse: (range, toStart) => range.collapse(toStart),
+    rangeComparePoint: (range, node, offset) =>
+      range.comparePoint(node, offset),
+  },
+) {
   const document = root.ownerDocument
   const units: TextUnit[][] = []
   let text = ''
   let previousBlock: Element | null = null
-  const blockTags = new Set(
-    'p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'.split(
-      ' ',
-    ),
-  )
+  // Initialize without authored String.split or Array iterator hooks.
+  const blockTagNames =
+    'p div li ul ol dl dt dd h1 h2 h3 h4 h5 h6 pre blockquote table thead tbody tfoot tr td th caption section article aside header footer nav main figure figcaption details summary hr br address form fieldset'
+  const blockTags = new Set<string>()
+  let blockTag = ''
+  for (let i = 0; i <= blockTagNames.length; i++) {
+    if (i === blockTagNames.length || blockTagNames[i] === ' ') {
+      blockTags.add(blockTag)
+      blockTag = ''
+    } else blockTag += blockTagNames[i]
+  }
   const walker = document.createTreeWalker(root, 4 | 1)
   let node
   while ((node = walker.nextNode())) {
@@ -266,9 +298,9 @@ export function createTextAnchorEngine(root: Element) {
         else segments.push({ ...segment })
       }
     return segments.map((segment) => {
-      const range = document.createRange()
-      range.setStart(segment.node, segment.start)
-      range.setEnd(segment.node, segment.end)
+      const range = strings.createRange(document)
+      strings.rangeSetStart(range, segment.node, segment.start)
+      strings.rangeSetEnd(range, segment.node, segment.end)
       return range
     })
   }
@@ -307,15 +339,16 @@ export function createTextAnchorEngine(root: Element) {
       const direct =
         sourceIndexes.get(boundaryNode)?.[isEnd ? offset - 1 : offset]
       if (direct !== undefined) return direct + (isEnd ? 1 : 0)
-      const point = document.createRange()
-      point.setStart(boundaryNode, offset)
-      point.collapse(true)
+      const point = strings.createRange(document)
+      strings.rangeSetStart(point, boundaryNode, offset)
+      strings.rangeCollapse(point, true)
       let low = 0,
         high = sourceSegments.length
       while (low < high) {
         const mid = (low + high) >>> 1
         const entry = sourceSegments[mid]!
-        const comparison = point.comparePoint(
+        const comparison = strings.rangeComparePoint(
+          point,
           entry.segment.node,
           isEnd ? entry.segment.start : entry.segment.end,
         )
@@ -338,7 +371,83 @@ export function createTextAnchorEngine(root: Element) {
     return {
       textStart: start,
       textEnd: end,
-      quotedText: text.slice(start, end),
+      quotedText: strings.stringSlice(text, start, end),
+    }
+  }
+  // Creation-only context: never participates in resolution or painting.
+  function locus(range: Range) {
+    const mapped = mappedSlice(range)
+    if (!mapped) return undefined
+    const path: { rank: number; element: Element }[] = []
+    // A fresh range starts collapsed; moving its start also moves its end.
+    // Never clone the live selection through a page-replaceable method.
+    const startPoint = strings.createRange(document)
+    strings.rangeSetStart(startPoint, range.startContainer, range.startOffset)
+    const candidates = root.querySelectorAll('h1,h2,h3,h4,h5,h6')
+    for (let i = 0; i < candidates.length; i++) {
+      const heading = candidates[i]!
+      if (strings.rangeComparePoint(startPoint, heading, 0) > 0) break
+      if (
+        heading.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+        heading.closest(TEXT_ANCHOR_EXCLUDED_SELECTOR)
+      )
+        continue
+      const rank = Number(heading.localName[1])
+      while (path.length && path[path.length - 1]!.rank >= rank) path.length--
+      path[path.length] = { rank, element: heading }
+    }
+    // Read only the final (at most six) labels, even for nested heading DOM.
+    const headings: string[] = []
+    for (let i = 0; i < path.length; i++) {
+      headings[i] = strings.stringSlice(
+        strings.stringTrim(
+          strings.stringReplace(
+            path[i]!.element.textContent || '',
+            /\s+/g,
+            ' ',
+          ),
+        ),
+        0,
+        120,
+      )
+    }
+    let block =
+      range.commonAncestorContainer.nodeType === 1
+        ? (range.commonAncestorContainer as Element)
+        : range.commonAncestorContainer.parentElement
+    while (block && block !== root && !blockTags.has(block.localName))
+      block = block.parentElement
+    block = block || root
+    const nodes = document.createTreeWalker(block, 4)
+    let first: number | undefined
+    let last: number | undefined
+    let blockNode: Node | null
+    while ((blockNode = nodes.nextNode())) {
+      const offsets = sourceIndexes.get(blockNode)
+      if (!offsets) continue
+      // Sparse leading whitespace has no mapped index.
+      let start: number | undefined
+      for (let i = 0; i < offsets.length; i++) {
+        if (offsets[i] !== undefined) {
+          start = offsets[i]
+          break
+        }
+      }
+      if (start === undefined) continue
+      first ??= start
+      last = offsets[offsets.length - 1]! + 1
+    }
+    if (first === undefined || last === undefined) return undefined
+    const start = Math.max(
+      first,
+      Math.min(
+        Math.floor((mapped.textStart + mapped.textEnd) / 2) - 300,
+        last - 600,
+      ),
+    )
+    return {
+      headings,
+      block_text: strings.stringSlice(text, start, Math.min(last, start + 600)),
     }
   }
   function describe(range: Range) {
@@ -349,8 +458,8 @@ export function createTextAnchorEngine(root: Element) {
       suffix = '',
       ambiguous = true
     for (let size = 32; ; size = Math.min(400, size + 32)) {
-      prefix = text.slice(Math.max(0, start - size), start)
-      suffix = text.slice(end, end + size)
+      prefix = strings.stringSlice(text, Math.max(0, start - size), start)
+      suffix = strings.stringSlice(text, end, end + size)
       ambiguous = hits(text, prefix + quote + suffix).length !== 1
       if (!ambiguous || size === 400) break
     }
@@ -370,6 +479,7 @@ export function createTextAnchorEngine(root: Element) {
     hash,
     describe,
     mappedSlice,
+    locus,
     resolve,
     ranges,
     paintedText,

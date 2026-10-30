@@ -1497,6 +1497,7 @@ test('generated lifecycle retains native persisted state and otherwise performs 
       Function,
       Object,
       Array,
+      String,
       Map,
       WeakMap,
       Uint8Array,
@@ -1504,7 +1505,15 @@ test('generated lifecycle retains native persisted state and otherwise performs 
       EventTarget,
       Element,
       MouseEvent: class {},
-      Range: class {},
+      Document: class {
+        createRange() {}
+      },
+      Range: class {
+        setStart() {}
+        setEnd() {}
+        collapse() {}
+        comparePoint() {}
+      },
       PageTransitionEvent,
       calls,
       replaceListener: mode === 'captured-listener',
@@ -1743,3 +1752,76 @@ test('generated history wrappers preserve invocation and contain reporting failu
   })
   assert.equal(history.replaceState(null, '', '#quiet'), result)
 })
+
+for (const mode of ['missing', 'throwing', 'success']) {
+  test(`generated selection handles optional locus: ${mode}`, async () => {
+    const { body } = await renderReporter()
+    const sendSelection = new Function(
+      'return ' +
+        body.replace(
+          'installReporter(window);',
+          `
+      send = function(ctx, message) { ctx.message = message; };
+      createTextAnchorEngine = function() {
+        return {describe() {return {quotedText: 'selected words'};}, ${mode === 'missing' ? '' : mode === 'throwing' ? "locus() {throw new Error('unavailable');}" : "locus() {return {headings: ['Teams', 'Training'], block_text: 'selected words'};}"}};
+      };
+      return sendSelection;
+    `,
+        ),
+    )()
+    const root = { nodeType: 1 }
+    const range = {
+      commonAncestorContainer: root,
+      toString() {
+        throw new Error('page Range.toString called')
+      },
+      getBoundingClientRect() {
+        return { top: 1, left: 2, width: 3, height: 4 }
+      },
+    }
+    let text = 'selected words'
+    let reads = 0
+    const ctx = {
+      textAnchorsEnabled: true,
+      doc: {
+        body: root,
+        querySelector() {
+          return root
+        },
+      },
+      win: {
+        getSelection() {
+          return {
+            rangeCount: 1,
+            isCollapsed: false,
+            getRangeAt() {
+              return range
+            },
+          }
+        },
+      },
+      primordials: {
+        rangeToString(value) {
+          assert.equal(value, range)
+          reads++
+          return text
+        },
+      },
+    }
+    sendSelection(ctx)
+    assert.equal(ctx.message.kind, 'text-selection')
+    assert.equal(ctx.message.quotedText, 'selected words')
+    assert.deepEqual(
+      ctx.message.locus,
+      mode === 'success'
+        ? { headings: ['Teams', 'Training'], block_text: 'selected words' }
+        : undefined,
+    )
+    assert.equal(ctx.message.cssPath, 'body')
+    assert.deepEqual(ctx.message.rect, { top: 1, left: 2, width: 3, height: 4 })
+    text = ' \n\t'
+    sendSelection(ctx)
+    assert.deepEqual(ctx.message, { kind: 'text-selection-cleared' })
+    assert.equal(reads, 2)
+  })
+}
