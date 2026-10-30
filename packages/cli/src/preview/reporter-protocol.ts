@@ -76,6 +76,8 @@ export function validPreviewObservation(value: unknown): boolean {
           'selectorFormat',
           'textHash',
           'ambiguousAtCreation',
+          // Creation context is not used by local preview.
+          ...(Object.hasOwn(value, 'locus') ? ['locus'] : []),
           'versionId',
           'cssPath',
           'rect',

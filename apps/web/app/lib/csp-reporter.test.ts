@@ -719,6 +719,11 @@ test('optional locus validates exact bounds and strips unknown keys', () => {
     { ...locus, headings: Array(7).fill('h') },
     { ...locus, headings: ['h'.repeat(121)] },
     { ...locus, headings: [1] },
+    { ...locus, headings: Array(1) },
+    {
+      ...locus,
+      headings: Object.assign(Array(3), { 0: 'Teams', 2: 'Training' }),
+    },
     { ...locus, block_text: 'b'.repeat(601) },
   ]) {
     expect(parseTextLocus(value)).toBeUndefined()

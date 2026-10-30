@@ -365,8 +365,10 @@ export function createTextAnchorEngine(
     const mapped = mappedSlice(range)
     if (!mapped) return undefined
     const path: { rank: number; element: Element }[] = []
-    const startPoint = range.cloneRange()
-    startPoint.collapse(true)
+    // A fresh range starts collapsed; moving its start also moves its end.
+    // Never clone the live selection through a page-replaceable method.
+    const startPoint = document.createRange()
+    startPoint.setStart(range.startContainer, range.startOffset)
     const candidates = root.querySelectorAll('h1,h2,h3,h4,h5,h6')
     for (let i = 0; i < candidates.length; i++) {
       const heading = candidates[i]!

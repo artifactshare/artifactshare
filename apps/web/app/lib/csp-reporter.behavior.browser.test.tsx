@@ -561,13 +561,14 @@ describe('CSP reporter runtime behavior', () => {
     expect(attack.challenge).toBeNull()
   })
 
-  test('authored array iterators cannot read private messages or change their fields', async () => {
+  test('authored intrinsics cannot read private messages or change selection fields', async () => {
     const doc = await fixture(
       '<a href="https://example.com/report" id="safe">Protected link</a><h1>  Teams   overview  </h1><h2>Hiring</h2><h3>Details</h3><h2>  Training   plan  </h2><p id="words">Select these words</p>',
     )
     const before = messages.find((message) => message.kind === 'ready')!
     const authored = doc.createElement('script')
     authored.textContent = `
+      Range.prototype.cloneRange = function () { return this; };
       const originalIterator = Array.prototype[Symbol.iterator];
       const owns = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
       window.iteratorAttack = { messageReads: 0, locusReads: 0, token: null, challenge: null };
@@ -674,6 +675,7 @@ describe('CSP reporter runtime behavior', () => {
     const selection = doc.defaultView!.getSelection()!
     selection.removeAllRanges()
     selection.addRange(range)
+    const expectedRect = range.getBoundingClientRect()
     const selectionFrom = messages.length
     doc.dispatchEvent(new Event('keyup', { bubbles: true }))
     const selectionMessage = await waitForMessage(
@@ -700,6 +702,8 @@ describe('CSP reporter runtime behavior', () => {
         'locus',
       ].sort(),
     )
+    expect(selection.isCollapsed).toBe(false)
+    expect(selection.toString()).toBe('Select these words')
     expect(selectionMessage.token).toBe(before.token)
     expect(selectionMessage.quotedText).toBe('Select these words')
     expect(selectionMessage.locus).toEqual({
@@ -707,10 +711,10 @@ describe('CSP reporter runtime behavior', () => {
       block_text: 'Select these words',
     })
     expect(selectionMessage.rect).toEqual({
-      top: expect.any(Number),
-      left: expect.any(Number),
-      width: expect.any(Number),
-      height: expect.any(Number),
+      top: expectedRect.top,
+      left: expectedRect.left,
+      width: expectedRect.width,
+      height: expectedRect.height,
     })
 
     const violation = new Event('securitypolicyviolation')
