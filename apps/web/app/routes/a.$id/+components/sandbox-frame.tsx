@@ -1,3 +1,4 @@
+import { parseTextLocus } from '~/lib/csp-reporter'
 import {
   createViewerHashSync,
   VIEWER_FRAME_BOOTSTRAP_SCRIPT,
@@ -717,6 +718,7 @@ function useSandboxFrameController({
       onTextSelection({
         selectorFormat: message.selectorFormat,
         textHash: message.textHash,
+        locus: parseTextLocus(message.locus),
         ambiguousAtCreation: message.ambiguousAtCreation,
         versionId: message.versionId,
         quotedText: message.quotedText,

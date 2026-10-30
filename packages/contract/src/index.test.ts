@@ -1078,6 +1078,7 @@ describe('comment position compatibility', () => {
       for (const version_id of ['v1', null]) {
         const anchor = {
           ...old,
+          locus: { headings: ['Teams', 'Training'], block_text: 'text' },
           quote_before: ' lead ',
           quote_after: '',
           version_id,
@@ -1524,5 +1525,28 @@ it('read query preserves opaque historical ids and rejects empty selections', ()
     expect(schema.parse({}).version_id).toBeUndefined()
     for (const version_id of ['', '   '])
       expect(schema.safeParse({ version_id }).success).toBe(false)
+  }
+})
+
+it('bounds page-derived locus while preserving optional absence', () => {
+  const anchor = { kind: 'text', quoted_text: 'word', state: 'attached' }
+  const locus = {
+    headings: Array(6).fill('h'.repeat(120)),
+    block_text: 'b'.repeat(600),
+  }
+  expect(CommentAnchorSchema.parse({ ...anchor, locus })).toEqual({
+    ...anchor,
+    locus,
+  })
+  expect(CommentAnchorSchema.parse(anchor)).not.toHaveProperty('locus')
+  for (const invalid of [
+    null,
+    { ...locus, headings: Array(7).fill('h') },
+    { ...locus, headings: ['h'.repeat(121)] },
+    { ...locus, block_text: 'b'.repeat(601) },
+  ]) {
+    expect(
+      CommentAnchorSchema.safeParse({ ...anchor, locus: invalid }).success,
+    ).toBe(false)
   }
 })

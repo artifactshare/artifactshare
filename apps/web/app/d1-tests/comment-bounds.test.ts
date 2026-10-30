@@ -442,3 +442,32 @@ it('reads 50 initial windows in bounded batches on real D1', async () => {
     await db.destroy()
   }
 })
+
+it('round-trips optional anchor locus through D1 and service reload', async () => {
+  await seedThread('locus', 1)
+  await database
+    .prepare(`INSERT INTO comment_anchors
+    (id, thread_id, target_path, quoted_text, prefix_text, suffix_text, text_start, text_end, created_at)
+    VALUES ('locus-anchor', 'locus', '/index.html', 'Alice Bob', '', '', 0, 9, ?)`)
+    .bind(at)
+    .run()
+  const db = createDb(database)
+  const load = async () =>
+    (await loadCommentThreads(db, access, actor)).find(
+      (thread) => thread.id === 'locus',
+    )!
+  expect((await load()).subject).not.toHaveProperty('locus')
+  const locus = { headings: ['Teams', 'Training'], block_text: 'Alice Bob' }
+  await database
+    .prepare(
+      'UPDATE comment_anchors SET locus_headings = ?, locus_block_text = ? WHERE id = ?',
+    )
+    .bind(JSON.stringify(locus.headings), locus.block_text, 'locus-anchor')
+    .run()
+  expect((await load()).subject).toMatchObject({ locus })
+  await database
+    .prepare('UPDATE comment_anchors SET locus_headings = ? WHERE id = ?')
+    .bind('malformed JSON', 'locus-anchor')
+    .run()
+  expect((await load()).subject).not.toHaveProperty('locus')
+})

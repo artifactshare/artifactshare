@@ -563,14 +563,51 @@ describe('CSP reporter runtime behavior', () => {
 
   test('authored array iterators cannot read private messages or change their fields', async () => {
     const doc = await fixture(
-      '<a href="https://example.com/report" id="safe">Protected link</a><p id="words">Select these words</p>',
+      '<a href="https://example.com/report" id="safe">Protected link</a><h1>  Teams   overview  </h1><h2>Hiring</h2><h3>Details</h3><h2>  Training   plan  </h2><p id="words">Select these words</p>',
     )
     const before = messages.find((message) => message.kind === 'ready')!
     const authored = doc.createElement('script')
     authored.textContent = `
       const originalIterator = Array.prototype[Symbol.iterator];
       const owns = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
-      window.iteratorAttack = { messageReads: 0, token: null, challenge: null };
+      window.iteratorAttack = { messageReads: 0, locusReads: 0, token: null, challenge: null };
+      for (const name of ['push', 'pop', 'map', 'find']) {
+        const original = Array.prototype[name];
+        Array.prototype[name] = function (...args) {
+          const entry = name === 'push' ? args[0] : this[0];
+          if ((entry && typeof entry === 'object' && 'rank' in entry) || name === 'find') {
+            window.iteratorAttack.locusReads++;
+            throw new Error('authored locus array access');
+          }
+          return original.apply(this, args);
+        };
+      }
+      for (const name of ['replace', 'trim', 'slice']) {
+        const original = String.prototype[name];
+        String.prototype[name] = function (...args) {
+          if (this.includes('Teams') || this.includes('Training')) {
+            window.iteratorAttack.locusReads++;
+            return 'authored replacement';
+          }
+          return original.apply(this, args);
+        };
+      }
+      const originalSplit = String.prototype.split;
+      String.prototype.split = function (...args) {
+        if (this.startsWith('p div li ')) {
+          window.iteratorAttack.locusReads++;
+          return [];
+        }
+        return originalSplit.apply(this, args);
+      };
+      const originalNodeIterator = NodeList.prototype[Symbol.iterator];
+      NodeList.prototype[Symbol.iterator] = function () {
+        if (this[0]?.localName === 'h1') {
+          window.iteratorAttack.locusReads++;
+          throw new Error('authored heading iterator');
+        }
+        return originalNodeIterator.call(this);
+      };
       Object.defineProperty(Object.prototype, '__reporter_probe__', {
         configurable: true,
         get() {
@@ -583,9 +620,13 @@ describe('CSP reporter runtime behavior', () => {
         }
       });
       Array.prototype[Symbol.iterator] = function* () {
-        // Only key arrays are changed; ordinary anchor/layout arrays still work.
+        // Probe message keys and locus paths; other anchor/layout arrays still work.
         for (let index = 0; index < this.length; index++) {
           if (this[index] === 'kind') { yield '__reporter_probe__'; break; }
+          if (this[index] && typeof this[index] === 'object' && 'rank' in this[index]) {
+            window.iteratorAttack.locusReads++;
+            return;
+          }
         }
         const iterator = originalIterator.call(this);
         let step;
@@ -656,10 +697,15 @@ describe('CSP reporter runtime behavior', () => {
         'versionId',
         'cssPath',
         'rect',
+        'locus',
       ].sort(),
     )
     expect(selectionMessage.token).toBe(before.token)
     expect(selectionMessage.quotedText).toBe('Select these words')
+    expect(selectionMessage.locus).toEqual({
+      headings: ['Teams overview', 'Training plan'],
+      block_text: 'Select these words',
+    })
     expect(selectionMessage.rect).toEqual({
       top: expect.any(Number),
       left: expect.any(Number),
@@ -686,12 +732,13 @@ describe('CSP reporter runtime behavior', () => {
         doc.defaultView as unknown as {
           iteratorAttack: {
             messageReads: number
+            locusReads: number
             token: unknown
             challenge: unknown
           }
         }
       ).iteratorAttack,
-    ).toEqual({ messageReads: 0, token: null, challenge: null })
+    ).toEqual({ messageReads: 0, locusReads: 0, token: null, challenge: null })
   })
 
   test('waits for an in-flight probe reply without sending duplicate checks', async () => {

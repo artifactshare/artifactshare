@@ -44,15 +44,22 @@ export function sendSelection(ctx: ReporterState) {
     send(ctx, { kind: 'text-selection-cleared' })
     return
   }
-  let engine = createTextAnchorEngine(anchorRoot(ctx))
+  let engine = createTextAnchorEngine(anchorRoot(ctx), ctx.primordials)
   let selector = engine.describe(range)
   if (!selector) {
     send(ctx, { kind: 'text-selection-cleared' })
     return
   }
+  let locus
+  try {
+    locus = engine.locus(range)
+  } catch {
+    // Optional metadata must not prevent a valid selection from being sent.
+  }
   let rect = range.getBoundingClientRect()
   send(ctx, {
     kind: 'text-selection',
+    locus,
     token: ctx.documentToken,
     quotedText: selector.quotedText,
     prefixText: selector.prefixText,

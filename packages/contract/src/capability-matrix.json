@@ -510,6 +510,10 @@
             "mcp_description": [
               "List comment threads on an artifact you can view in your workspace. Returns at most 50 open-first threads,",
               "quote_before/quote_after",
+              "anchor.locus",
+              "page-derived",
+              "headings",
+              "block_text",
               "version_id",
               "ambiguous_at_creation"
             ],

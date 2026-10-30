@@ -2129,3 +2129,34 @@ test.each([
     }
   },
 )
+
+// Real iframe selection exercises the shipped bundle, including creation context.
+test.each([
+  '<h1>Teams</h1><h2>Hiring</h2><ul><li>Alice Bob</li></ul><h3>Details</h3><h2>Training</h2><ul><li id="target">Alice Bob</li></ul>',
+  '<section><h1>Teams</h1><section><h4>Skipped</h4><h3>Details</h3></section><h2>Training</h2><div data-anchor-ignore><h1>Ignored</h1></div><p id="target">Alice Bob</p></section>',
+])(
+  'captures heading hierarchy and smallest block in a real selection: %s',
+  async (pageHtml) => {
+    await fixture(pageHtml)
+    await commands.selectAnchorText('#target', 0, '#target', 9)
+    const message = await selection()
+    expect(message.quotedText).toBe('Alice Bob')
+    expect(message.locus).toEqual({
+      headings: ['Teams', 'Training'],
+      block_text: 'Alice Bob',
+    })
+  },
+)
+
+test('centers real selection context on a later duplicate in a long block', async () => {
+  const text =
+    'a'.repeat(100) + 'quote' + 'b'.repeat(1095) + 'quote' + 'c'.repeat(595)
+  await fixture(
+    `<p id="target" style="display:block;width:360px;font:10px/12px monospace;word-break:break-all">${text}</p>`,
+  )
+  await commands.selectAnchorText('#target', 1200, '#target', 1205)
+  expect((await selection()).locus).toEqual({
+    headings: [],
+    block_text: text.slice(902, 1502),
+  })
+})

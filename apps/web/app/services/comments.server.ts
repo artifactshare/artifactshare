@@ -1,3 +1,4 @@
+import { parseTextLocus, type TextLocus } from '~/lib/csp-reporter'
 import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import {
   loadMessageWindow,
@@ -84,6 +85,7 @@ export interface CommentMutationOptions {
 }
 
 export interface CommentAnchorInput {
+  locus?: TextLocus
   selectorFormat?: 'normalized-v1' | 'quote-v1'
   textHash?: string | null
   ambiguousAtCreation?: boolean
@@ -536,6 +538,8 @@ async function loadCommentThreadViews(
         'target_path',
         'quoted_text',
         'prefix_text',
+        'locus_headings',
+        'locus_block_text',
         'suffix_text',
         'text_start',
         'text_end',
@@ -628,6 +632,10 @@ export async function createCommentThread(
         target_path: anchor.targetPath,
         quoted_text: anchor.quotedText,
         prefix_text: anchor.prefixText,
+        locus_headings: anchor.locus
+          ? JSON.stringify(anchor.locus.headings)
+          : null,
+        locus_block_text: anchor.locus?.block_text ?? null,
         suffix_text: anchor.suffixText,
         text_start: anchor.textStart ?? 0,
         text_end: anchor.textEnd ?? 0,
@@ -1324,6 +1332,10 @@ function normalizeCommentAnchor(
     return null
   return {
     ...rawAnchor,
+    locus:
+      rawAnchor.selectorFormat === 'quote-v1'
+        ? undefined
+        : parseTextLocus(rawAnchor.locus),
     quotedText,
     targetPath: access.entrypointPath ?? '/index.html',
   }
@@ -1343,6 +1355,8 @@ function canUseTextAnchors(access: CommentAccess): boolean {
 }
 
 type AnchorRow = {
+  locus_headings: string | null
+  locus_block_text: string | null
   id: string
   thread_id: string
   version_id: string | null
@@ -1413,6 +1427,7 @@ async function resolveCommentSubjects(
       state: positionState === 'attached' ? 'attached' : 'orphaned',
       positionState,
       quotedText: anchor.quoted_text,
+      ...storedLocus(anchor),
       prefixText: anchor.prefix_text,
       suffixText: anchor.suffix_text,
       targetPath: anchor.target_path,
@@ -1773,5 +1788,17 @@ export async function postArtifactComment(
     changedMessage,
     ...(refreshRequired ? { refreshRequired } : {}),
     visibility: access.visibility,
+  }
+}
+
+function storedLocus(anchor: AnchorRow): { locus?: TextLocus } {
+  try {
+    const locus = parseTextLocus({
+      headings: JSON.parse(anchor.locus_headings ?? 'null'),
+      block_text: anchor.locus_block_text,
+    })
+    return locus ? { locus } : {}
+  } catch {
+    return {}
   }
 }

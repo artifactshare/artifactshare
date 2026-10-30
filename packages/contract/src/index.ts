@@ -788,6 +788,12 @@ export const CommentAnchorSchema = z.union([
     position_state: z.enum(['attached', 'needs-check', 'unchecked']).optional(),
     quote_before: z.string().optional(),
     quote_after: z.string().optional(),
+    locus: z
+      .object({
+        headings: z.array(z.string().max(120)).max(6),
+        block_text: z.string().max(600),
+      })
+      .optional(),
     version_id: z.string().nullable().optional(),
     ambiguous_at_creation: z.boolean().optional(),
   }),

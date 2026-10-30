@@ -954,6 +954,8 @@ CREATE TABLE comment_anchors (
   version_id    TEXT REFERENCES versions(id) ON DELETE SET NULL,
   target_path   TEXT NOT NULL,
   quoted_text   TEXT NOT NULL,
+  locus_headings TEXT,
+  locus_block_text TEXT,
   prefix_text   TEXT NOT NULL,
   suffix_text   TEXT NOT NULL,
   text_start    INTEGER NOT NULL,

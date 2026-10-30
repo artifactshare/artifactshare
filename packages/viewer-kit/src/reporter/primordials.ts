@@ -94,6 +94,15 @@ export function capturePrimordials(win: ReporterWindow) {
   )
   const rangeToString: (range: Range) => string =
     win.Function.prototype.call.bind(win.Range.prototype.toString)
+  const stringReplace: (
+    value: string,
+    pattern: RegExp,
+    replacement: string,
+  ) => string = win.Function.prototype.call.bind(win.String.prototype.replace)
+  const stringTrim: (value: string) => string =
+    win.Function.prototype.call.bind(win.String.prototype.trim)
+  const stringSlice: (value: string, start: number, end?: number) => string =
+    win.Function.prototype.call.bind(win.String.prototype.slice)
   const arrayMap: <T, R>(
     array: ArrayLike<T>,
     callback: (value: T, index: number, array: ArrayLike<T>) => R,
@@ -151,6 +160,9 @@ export function capturePrimordials(win: ReporterWindow) {
     addEventListener,
     rangeToString,
     arrayMap,
+    stringReplace,
+    stringTrim,
+    stringSlice,
     weakMapDelete,
     weakMapGet,
     weakMapSet,

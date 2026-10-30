@@ -1,3 +1,4 @@
+import { parseTextLocus } from '~/lib/csp-reporter'
 import { parseCommentPageQuery } from '~/services/comment-message-window.server'
 import { errorResponse, commentPostRefusalResponse } from '~/lib/api-errors'
 import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
@@ -345,6 +346,7 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
   return {
     selectorFormat: raw.selectorFormat as CommentAnchorInput['selectorFormat'],
     textHash: raw.textHash as string | undefined,
+    locus: parseTextLocus(raw.locus),
     ambiguousAtCreation: raw.ambiguousAtCreation as boolean | undefined,
     versionId: raw.versionId as string | undefined,
     quotedText: raw.quotedText,

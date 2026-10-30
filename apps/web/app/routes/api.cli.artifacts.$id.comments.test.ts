@@ -169,12 +169,13 @@ describe('/api/cli/artifacts/:id/comments', () => {
       subject: {
         kind: 'text',
         quotedText: 'word',
+        locus: { headings: ['Teams', 'Training'], block_text: 'word' },
         prefixText: 'lead ',
         suffixText: '',
         state: 'orphaned',
         positionState: 'unchecked',
         versionId: 'v1',
-        selectorFormat: 'quote-v1',
+        selectorFormat: 'normalized-v1',
         ambiguousAtCreation: false,
         targetPath: '/index.html',
         textStart: null,
@@ -185,6 +186,7 @@ describe('/api/cli/artifacts/:id/comments', () => {
     const anchor = {
       kind: 'text',
       quoted_text: 'word',
+      locus: { headings: ['Teams', 'Training'], block_text: 'word' },
       state: 'orphaned',
       position_state: 'unchecked',
       quote_before: 'lead ',

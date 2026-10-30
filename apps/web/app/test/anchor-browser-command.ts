@@ -56,6 +56,9 @@ export const selectAnchorText = defineBrowserCommand(
     const points = measured.points.map((point) =>
       browserFramePoint(box, measured.viewport, point),
     )
+    points[0].x = Math.ceil(points[0].x)
+    points[1].x = Math.floor(points[1].x)
+    for (const point of points) point.y = Math.round(point.y)
     if (backwards) points.reverse()
     await page.mouse.move(points[0].x, points[0].y)
     await page.mouse.down()
