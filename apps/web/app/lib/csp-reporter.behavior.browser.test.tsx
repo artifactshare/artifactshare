@@ -566,9 +566,18 @@ describe('CSP reporter runtime behavior', () => {
       '<a href="https://example.com/report" id="safe">Protected link</a><h1>  Teams   overview  </h1><h2>Hiring</h2><h3>Details</h3><h2>  Training   plan  </h2><p id="words">Select these words</p>',
     )
     const before = messages.find((message) => message.kind === 'ready')!
+    // Prepare an element-endpoint range before authored methods are replaced.
+    // This exercises mappedSlice's binary-search boundary fallback as well as locus.
+    const range = doc.createRange()
+    range.selectNodeContents(doc.querySelector('#words')!)
     const authored = doc.createElement('script')
     authored.textContent = `
       Range.prototype.cloneRange = function () { return this; };
+      Document.prototype.createRange = function () { throw new Error('authored createRange'); };
+      Range.prototype.setStart = function () { throw new Error('authored setStart'); };
+      Range.prototype.setEnd = function () { throw new Error('authored setEnd'); };
+      Range.prototype.collapse = function () { throw new Error('authored collapse'); };
+      Range.prototype.comparePoint = function () { return 1; };
       const originalIterator = Array.prototype[Symbol.iterator];
       const owns = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
       window.iteratorAttack = { messageReads: 0, locusReads: 0, token: null, challenge: null };
@@ -670,8 +679,6 @@ describe('CSP reporter runtime behavior', () => {
       token: before.token,
     })
 
-    const range = doc.createRange()
-    range.selectNodeContents(doc.querySelector('#words')!)
     const selection = doc.defaultView!.getSelection()!
     selection.removeAllRanges()
     selection.addRange(range)

@@ -1505,7 +1505,15 @@ test('generated lifecycle retains native persisted state and otherwise performs 
       EventTarget,
       Element,
       MouseEvent: class {},
-      Range: class {},
+      Document: class {
+        createRange() {}
+      },
+      Range: class {
+        setStart() {}
+        setEnd() {}
+        collapse() {}
+        comparePoint() {}
+      },
       PageTransitionEvent,
       calls,
       replaceListener: mode === 'captured-listener',

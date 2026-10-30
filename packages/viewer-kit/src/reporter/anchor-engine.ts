@@ -53,12 +53,25 @@ export function createTextAnchorEngine(
   root: Element,
   strings: Pick<
     ReturnType<typeof capturePrimordials>,
-    'stringReplace' | 'stringTrim' | 'stringSlice'
+    | 'stringReplace'
+    | 'stringTrim'
+    | 'stringSlice'
+    | 'createRange'
+    | 'rangeSetStart'
+    | 'rangeSetEnd'
+    | 'rangeCollapse'
+    | 'rangeComparePoint'
   > = {
     stringReplace: (value, pattern, replacement) =>
       value.replace(pattern, replacement),
     stringTrim: (value) => value.trim(),
     stringSlice: (value, start, end) => value.slice(start, end),
+    createRange: (document) => document.createRange(),
+    rangeSetStart: (range, node, offset) => range.setStart(node, offset),
+    rangeSetEnd: (range, node, offset) => range.setEnd(node, offset),
+    rangeCollapse: (range, toStart) => range.collapse(toStart),
+    rangeComparePoint: (range, node, offset) =>
+      range.comparePoint(node, offset),
   },
 ) {
   const document = root.ownerDocument
@@ -285,9 +298,9 @@ export function createTextAnchorEngine(
         else segments.push({ ...segment })
       }
     return segments.map((segment) => {
-      const range = document.createRange()
-      range.setStart(segment.node, segment.start)
-      range.setEnd(segment.node, segment.end)
+      const range = strings.createRange(document)
+      strings.rangeSetStart(range, segment.node, segment.start)
+      strings.rangeSetEnd(range, segment.node, segment.end)
       return range
     })
   }
@@ -326,15 +339,16 @@ export function createTextAnchorEngine(
       const direct =
         sourceIndexes.get(boundaryNode)?.[isEnd ? offset - 1 : offset]
       if (direct !== undefined) return direct + (isEnd ? 1 : 0)
-      const point = document.createRange()
-      point.setStart(boundaryNode, offset)
-      point.collapse(true)
+      const point = strings.createRange(document)
+      strings.rangeSetStart(point, boundaryNode, offset)
+      strings.rangeCollapse(point, true)
       let low = 0,
         high = sourceSegments.length
       while (low < high) {
         const mid = (low + high) >>> 1
         const entry = sourceSegments[mid]!
-        const comparison = point.comparePoint(
+        const comparison = strings.rangeComparePoint(
+          point,
           entry.segment.node,
           isEnd ? entry.segment.start : entry.segment.end,
         )
@@ -367,12 +381,12 @@ export function createTextAnchorEngine(
     const path: { rank: number; element: Element }[] = []
     // A fresh range starts collapsed; moving its start also moves its end.
     // Never clone the live selection through a page-replaceable method.
-    const startPoint = document.createRange()
-    startPoint.setStart(range.startContainer, range.startOffset)
+    const startPoint = strings.createRange(document)
+    strings.rangeSetStart(startPoint, range.startContainer, range.startOffset)
     const candidates = root.querySelectorAll('h1,h2,h3,h4,h5,h6')
     for (let i = 0; i < candidates.length; i++) {
       const heading = candidates[i]!
-      if (startPoint.comparePoint(heading, 0) > 0) break
+      if (strings.rangeComparePoint(startPoint, heading, 0) > 0) break
       if (
         heading.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
         heading.closest(TEXT_ANCHOR_EXCLUDED_SELECTOR)

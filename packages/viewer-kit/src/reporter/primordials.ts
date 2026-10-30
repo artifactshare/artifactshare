@@ -94,6 +94,21 @@ export function capturePrimordials(win: ReporterWindow) {
   )
   const rangeToString: (range: Range) => string =
     win.Function.prototype.call.bind(win.Range.prototype.toString)
+  const createRange: (document: Document) => Range =
+    win.Function.prototype.call.bind(win.Document.prototype.createRange)
+  const rangeSetStart: (range: Range, node: Node, offset: number) => void =
+    win.Function.prototype.call.bind(win.Range.prototype.setStart)
+  const rangeSetEnd: (range: Range, node: Node, offset: number) => void =
+    win.Function.prototype.call.bind(win.Range.prototype.setEnd)
+  const rangeCollapse: (range: Range, toStart: boolean) => void =
+    win.Function.prototype.call.bind(win.Range.prototype.collapse)
+  const rangeComparePoint: (
+    range: Range,
+    node: Node,
+    offset: number,
+  ) => number = win.Function.prototype.call.bind(
+    win.Range.prototype.comparePoint,
+  )
   const stringReplace: (
     value: string,
     pattern: RegExp,
@@ -159,6 +174,11 @@ export function capturePrimordials(win: ReporterWindow) {
     preventDefault,
     addEventListener,
     rangeToString,
+    createRange,
+    rangeSetStart,
+    rangeSetEnd,
+    rangeCollapse,
+    rangeComparePoint,
     arrayMap,
     stringReplace,
     stringTrim,
