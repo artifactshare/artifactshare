@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.22.0 - 2026-10-30
 
 - Text comment readback optionally includes page-derived creation context in `anchor.locus`: heading labels and the surrounding text block. Older and agent-posted comments omit it.
 
