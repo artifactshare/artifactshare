@@ -68,10 +68,17 @@ test('0120 restores the join time of memberships backfilled by 0060', () => {
       ['second', '2026-05-03T00:00:00.000Z', 'ws2'],
       ['rejoined', '2026-05-04T00:00:00.000Z', 'ws1'],
       ['late', '2026-09-01T00:00:00.000Z', 'ws1'],
+      // Removed from ws1 after the backfill and now homed in ws2.
+      ['leaver', '2026-05-05T00:00:00.000Z', 'ws2'],
     ])
     sqlite
       .prepare(
         "INSERT INTO workspace_members (workspace_id, user_id, role, status, created_at, updated_at) VALUES ('ws1', 'early', 'owner', 'active', ?, '2026-10-01T00:00:00.000Z')",
+      )
+      .run(BACKFILLED_AT)
+    sqlite
+      .prepare(
+        "INSERT INTO workspace_members (workspace_id, user_id, role, status, removed_at, created_at, updated_at) VALUES ('ws1', 'leaver', 'member', 'removed', '2026-08-20T00:00:00.000Z', ?, '2026-08-20T00:00:00.000Z')",
       )
       .run(BACKFILLED_AT)
     insertMembers(sqlite, [
@@ -101,6 +108,12 @@ test('0120 restores the join time of memberships backfilled by 0060', () => {
         user_id: 'late',
         created_at: '2026-09-01T00:00:00.000Z',
         updated_at: '2026-09-01T00:00:00.000Z',
+      },
+      {
+        workspace_id: 'ws1',
+        user_id: 'leaver',
+        created_at: BACKFILLED_AT,
+        updated_at: '2026-08-20T00:00:00.000Z',
       },
       {
         workspace_id: 'ws1',
