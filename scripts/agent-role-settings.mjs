@@ -33,7 +33,7 @@ const reviewFindingRepairs = Object.freeze({
 // review level, an owner-approved exception to the medium Claude default.
 const finalReviews = Object.freeze({
   codex: pair('gpt-6.1-sol', 'medium'),
-  claude: pair('claude-opus-5-5', 'high'),
+  claude: pair('claude-opus-5-5', 'medium'),
 })
 
 // Consulted when blockers remain after the implementation gate's round cap.
