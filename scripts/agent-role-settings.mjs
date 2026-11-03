@@ -8,7 +8,6 @@ function pair(model, effort) {
 
 const orchestration = Object.freeze({
   primary: pair('gpt-6.1-sol', 'medium'),
-  routine: pair('gpt-6-luna', 'max'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
@@ -43,7 +42,7 @@ const roundCapConsultation = Object.freeze({
 })
 
 const supportingExploration = Object.freeze({
-  luna: pair('gpt-6-luna', 'max'),
+  codex: pair('gpt-6.1-sol', 'medium'),
   claude: pair('claude-opus-5-5', 'medium'),
 })
 
