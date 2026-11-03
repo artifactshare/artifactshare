@@ -52,7 +52,6 @@ test('initial implementation uses one Astra profile', () => {
 test('orchestration and specification roles keep their approved pairs', () => {
   assert.deepEqual(orchestration, {
     primary: { model: 'gpt-6.1-sol', effort: 'medium' },
-    routine: { model: 'gpt-6-luna', effort: 'max' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.deepEqual(specificationAuthoring, {
@@ -82,9 +81,9 @@ test('UI aliases remain separate from the final implementation pair', () => {
   assert.notEqual(uiCritique.codex.model, finalReviews.codex.model)
 })
 
-test('supporting exploration keeps Luna and Claude profiles', () => {
+test('supporting exploration uses Sol and Claude at medium', () => {
   assert.deepEqual(supportingExploration, {
-    luna: { model: 'gpt-6-luna', effort: 'max' },
+    codex: { model: 'gpt-6.1-sol', effort: 'medium' },
     claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
 })
