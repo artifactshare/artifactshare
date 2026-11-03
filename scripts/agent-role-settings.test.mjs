@@ -33,10 +33,10 @@ test('role settings are deeply frozen data consumed by review launchers', () => 
   assert.equal(claudeEffort, finalReviews.claude.effort)
 })
 
-test('the Claude final review runs /code-review high and the cap consults Fable', () => {
+test('the Claude final review runs /code-review medium and the cap consults Fable', () => {
   assert.deepEqual(finalReviews, {
     codex: { model: 'gpt-6.1-sol', effort: 'medium' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
+    claude: { model: 'claude-opus-5-5', effort: 'medium' },
   })
   assert.deepEqual(roundCapConsultation, {
     claude: { model: 'claude-fable-5-1', effort: 'medium' },
