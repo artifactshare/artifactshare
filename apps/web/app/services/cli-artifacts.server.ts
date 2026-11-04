@@ -1,3 +1,4 @@
+import { loadArtifactVersionSummaries } from './artifact-version-summary.server'
 import { sql, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import { displayTitle } from '~/lib/display-title'
@@ -34,6 +35,9 @@ export type CliArtifactsListData = {
     updated_at: string
     project_id: string | null
     owner_email?: string
+    retain_versions: number | null
+    version_count: number
+    total_size_bytes: number
     artifact_kind: string
   }>
   limit: number
@@ -120,12 +124,17 @@ export async function listCliArtifacts(
       .execute()
     const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
     const shown = hasMore ? rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT) : rows
+    const summaries = await loadArtifactVersionSummaries(
+      db,
+      shown.map((item) => item.id),
+    )
     const last = shown.at(-1)
     return {
       kind: 'ok',
       data: {
         artifacts: shown.map((item) => ({
           id: item.id,
+          ...summaries.get(item.id)!,
           title: displayTitle({
             name: item.name,
             derivedTitle: item.derived_title,
@@ -163,11 +172,16 @@ export async function listCliArtifacts(
   })
   const hasMore = items.length > CLI_ARTIFACTS_LIST_LIMIT
   const shown = hasMore ? items.slice(0, CLI_ARTIFACTS_LIST_LIMIT) : items
+  const summaries = await loadArtifactVersionSummaries(
+    db,
+    shown.map((item) => item.id),
+  )
   return {
     kind: 'ok',
     data: {
       artifacts: shown.map((item) => ({
         id: item.id,
+        ...summaries.get(item.id)!,
         title: item.title,
         share_url: shareUrl(args.baseUrl, item.id, item.visibility),
         visibility: item.visibility,
@@ -295,12 +309,17 @@ export async function listAgentReadableArtifacts(
   )
   const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
   const shown = rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT)
+  const summaries = await loadArtifactVersionSummaries(
+    db,
+    shown.map((item) => item.id),
+  )
   const last = shown.at(-1)
   return {
     kind: 'ok',
     data: {
       artifacts: shown.map((item) => ({
         id: item.id,
+        ...summaries.get(item.id)!,
         title: displayTitle({
           name: item.name,
           derivedTitle: item.derived_title,

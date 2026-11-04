@@ -19,6 +19,7 @@ import {
   configUnsetRunner,
   artifactsGetRunner,
   artifactsListRunner,
+  artifactsVersionsRunner,
   commentsDeleteRunner,
   commentsEditRunner,
   commentsListRunner,
@@ -833,7 +834,8 @@ Common failures:
 
 const artifactsGetDefinition = define({
   name: 'get',
-  description: 'Read a single-file artifact source and metadata.',
+  description:
+    'Read file source or static-site metadata and retained-version totals.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -865,6 +867,8 @@ const artifactsGetDefinition = define({
 
 Use resolve first when a user gives a title or project name, then pass the id here.
 Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
+Static sites return metadata only, without content or format; --include, --version and --offset are unsupported for sites. Updated get explicitly requests metadata; released source-only clients retain unsupported-kind and open still suggests download.
+Get and list include retain_versions (null for unlimited), version_count and total_size_bytes for all surviving versions, independent of --version or history pagination. Managed artifacts can exceed their retention policy.
 The response includes data.title and data.visibility for the current artifact, even for historical or continuation reads.
 The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with the same --version selection and --offset set to data.next_offset and concatenate data.content until data.truncated is false.
 
@@ -874,6 +878,33 @@ Common failures:
   unsupported_kind   Use download for static sites or other multi-file artifacts
   version_removed    Omit --version to inspect current content
   validation_failed  Check --version, --offset and --include values`,
+})
+
+const artifactsVersionsDefinition = define({
+  name: 'versions',
+  description:
+    'List retained versions and logical byte totals for files and static sites.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    artifactIdOrUrl: {
+      type: 'positional',
+      toKebab: true,
+      description: 'Artifact ID or supported share/viewer/execution URL',
+    },
+    cursor: {
+      type: 'string',
+      toKebab: true,
+      description: 'Continue history with next_cursor from the previous page',
+    },
+  },
+  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --cursor <token> --json
+
+Returns versions with version_id, created_at, size_bytes and is_current, newest first, 50 per page.
+Use next_cursor while has_more is true. Restart without --cursor if invalid.
+retain_versions is null for unlimited retention. version_count and total_size_bytes cover all surviving database versions, including non-published versions. Static-site sizes sum all files, including inherited files. These are logical bytes, not physical storage or billing; reused files count in each version.
+Publisher-managed artifacts may exceed retain_versions because human and current versions are protected. Publisher credentials cannot read history. Unreadable artifacts return target_not_found.`,
 })
 
 const artifactsListDefinition = define({
@@ -909,6 +940,7 @@ const artifactsListDefinition = define({
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --home --query report --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --project-id <id> --cursor <token> --json
 
+Compare total_size_bytes across pages client-side to find the largest artifacts. Each row includes retain_versions, version_count and total_size_bytes (logical bytes across all surviving versions).
 Use an id from this list with update, edit, move, delete, artifacts get, or comments list.
 
 Common failures:
@@ -925,6 +957,7 @@ const artifactsDefinition = define({
   subCommands: {
     list: lazyCommand(artifactsListDefinition, artifactsListRunner),
     get: lazyCommand(artifactsGetDefinition, artifactsGetRunner),
+    versions: lazyCommand(artifactsVersionsDefinition, artifactsVersionsRunner),
     delete: lazyCommand(deleteDefinition, (ctx) =>
       deleteRunner(ctx, 'artifacts delete'),
     ),

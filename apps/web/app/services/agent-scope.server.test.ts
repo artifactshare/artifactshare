@@ -324,7 +324,7 @@ describe('agent artifact read scope', () => {
     ['authorized', undefined, 'ok'],
     ['empty', undefined, 'ok'],
   ] as const)(
-    'classifies %s viewer with %s cursor using one statement (%s)',
+    'classifies %s viewer with %s cursor using one viewer statement and at most one summary batch (%s)',
     async (state, cursorKind, expectedKind) => {
       if (state === 'mismatch') {
         sqlite
@@ -354,7 +354,9 @@ describe('agent artifact read scope', () => {
           },
         )
         expect(result.kind).toBe(expectedKind)
-        expect(prepare).toHaveBeenCalledTimes(1)
+        expect(prepare).toHaveBeenCalledTimes(
+          state === 'authorized' && expectedKind === 'ok' ? 2 : 1,
+        )
         if (result.kind === 'ok') {
           expect(result.data.has_more).toBe(false)
           expect(result.data.next_cursor).toBeNull()

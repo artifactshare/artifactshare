@@ -13,6 +13,7 @@
   "resolve": "npm exec --yes --package=@artifactshare/cli -- artifactshare resolve <value> --json",
   "whoami": "npm exec --yes --package=@artifactshare/cli -- artifactshare whoami --json",
   "artifacts list": "npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json",
+  "artifacts versions": "npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --json",
   "comments list": "npm exec --yes --package=@artifactshare/cli -- artifactshare comments list <artifact-id-or-url> --json",
   "comments post": "npm exec --yes --package=@artifactshare/cli -- artifactshare comments post <artifact-id-or-url> --body '<text>' --json",
   "comments edit": "npm exec --yes --package=@artifactshare/cli -- artifactshare comments edit <artifact-id-or-url> --message-id <id> --body '<text>' --json",

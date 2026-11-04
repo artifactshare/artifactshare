@@ -1,4 +1,8 @@
-import type { ArtifactReadResponse } from '@artifactshare/contract'
+import { CLI_STATIC_METADATA_HEADER } from '@artifactshare/contract'
+import type {
+  ArtifactGetResponse,
+  ArtifactReadResponse,
+} from '@artifactshare/contract'
 import type { CliError, OutputMode, ParsedArgs } from '../types.js'
 import { apiUrl, baseUrlOf, cliFetch, readJson, requestConfig } from '../api.js'
 import type { CredentialResolution } from '../credentials.js'
@@ -12,6 +16,7 @@ import {
 } from '../errors.js'
 import {
   artifactGetSuccessFields,
+  artifactSourceSuccessFields,
   artifactsListSuccessFields,
   writeFailure,
   writeSuccess,
@@ -86,7 +91,15 @@ export async function readArtifact(
     await resolveProjectConfig(),
   )
   if (!credential.ok) return { error: credential.error }
-  return await fetchArtifact(parsed, target.value, credential)
+  const result = await fetchArtifact(parsed, target.value, credential)
+  if (result.error) return result
+  if (!artifactSourceSuccessFields(result.data))
+    return {
+      error: serviceError(
+        'This artifact has no single source file. Use download for static sites.',
+      ),
+    }
+  return { data: result.data }
 }
 
 function parseArtifactReadTarget(
@@ -130,9 +143,7 @@ export async function fetchArtifact(
   parsed: ParsedArgs,
   target: ArtifactReadTarget,
   credential: Extract<CredentialResolution, { ok: true }>,
-): Promise<
-  { data: ArtifactReadResponse; error?: never } | { error: CliError }
-> {
+): Promise<{ data: ArtifactGetResponse; error?: never } | { error: CliError }> {
   const request = await requestConfig(parsed.options)
   if (request.error) return { error: request.error }
 
@@ -147,7 +158,12 @@ export async function fetchArtifact(
     url.searchParams.append('include', item)
   }
   const response = await cliFetch(url, {
-    headers: { Authorization: `Bearer ${credential.token}` },
+    headers: {
+      Authorization: `Bearer ${credential.token}`,
+      ...(parsed.command === 'artifacts get'
+        ? { [CLI_STATIC_METADATA_HEADER]: '1' }
+        : {}),
+    },
     ...request.init,
   })
   if ('networkError' in response) {

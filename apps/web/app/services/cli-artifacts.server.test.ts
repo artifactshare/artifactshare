@@ -1,3 +1,14 @@
+vi.mock('./artifact-version-summary.server', () => ({
+  loadArtifactVersionSummaries: vi.fn(
+    async (_db, ids: string[]) =>
+      new Map(
+        ids.map((id) => [
+          id,
+          { retain_versions: null, version_count: 2, total_size_bytes: 26 },
+        ]),
+      ),
+  ),
+}))
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -335,6 +346,9 @@ describe('listCliArtifacts', () => {
       artifacts: [
         {
           id: 'abc123def4',
+          retain_versions: null,
+          version_count: 2,
+          total_size_bytes: 26,
           title: 'Weekly report',
           share_url: 'https://artifactshare.test/a/abc123def4',
           visibility: 'private',

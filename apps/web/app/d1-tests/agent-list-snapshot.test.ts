@@ -1,3 +1,4 @@
+import { getArtifactVersions } from '~/services/artifact-versions.server'
 import { fileURLToPath } from 'node:url'
 import { Kysely } from 'kysely'
 import { D1Dialect } from 'kysely-d1'
@@ -52,6 +53,42 @@ it('runs the viewer snapshot and paginated outer join on D1', async () => {
         .bind(`a${String(i).padStart(2, '0')}`),
     ),
   ])
+  await binding.batch(
+    Array.from({ length: 51 }, (_, i) =>
+      binding
+        .prepare(
+          "INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) VALUES (?, 'a50', 'markdown_page', 'published', '/index.md', 'fixture', 10, 'hash', 'u1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(`v${String(i).padStart(2, '0')}`),
+    ),
+  )
+  await binding
+    .prepare(
+      "UPDATE shareables SET current_version_id = 'v50', retain_versions = 3 WHERE id = 'a50'",
+    )
+    .run()
+  const historyUser = {
+    id: 'u1',
+    workspaceId: 'ws1',
+    email: 'u1@example.com',
+    emailVerified: true,
+  } as SessionUser
+  const history = await getArtifactVersions(db, historyUser, { id: 'a50' })
+  if (history.kind !== 'ok') throw new Error('expected history')
+  expect(history.data).toMatchObject({
+    retain_versions: 3,
+    version_count: 51,
+    total_size_bytes: 510,
+    has_more: true,
+  })
+  expect(history.data.versions).toHaveLength(50)
+  const older = await getArtifactVersions(db, historyUser, {
+    id: 'a50',
+    cursor: history.data.next_cursor!,
+  })
+  if (older.kind !== 'ok') throw new Error('expected continuation')
+  expect(older.data.versions.map((row) => row.version_id)).toEqual(['v00'])
+  expect(older.data.has_more).toBe(false)
   const user = { id: 'u1' } as SessionUser
   const authority = {
     kind: 'agent' as const,
@@ -68,6 +105,9 @@ it('runs the viewer snapshot and paginated outer join on D1', async () => {
   expect(first.data.artifacts).toHaveLength(50)
   expect(first.data.artifacts[0]).toMatchObject({
     id: 'a50',
+    retain_versions: 3,
+    version_count: 51,
+    total_size_bytes: 510,
     owner_email: 'u1@example.com',
   })
   expect(first.data.has_more).toBe(true)
@@ -78,6 +118,11 @@ it('runs the viewer snapshot and paginated outer join on D1', async () => {
   expect(second.kind).toBe('ok')
   if (second.kind !== 'ok') return
   expect(second.data.artifacts.map(({ id }) => id)).toEqual(['a00'])
+  expect(second.data.artifacts[0]).toMatchObject({
+    retain_versions: null,
+    version_count: 0,
+    total_size_bytes: 0,
+  })
   expect(second.data.has_more).toBe(false)
   expect(second.data.next_cursor).toBeNull()
   expect(

@@ -252,6 +252,28 @@ const refreshCases: RefreshCase[] = [
     respond: () => jsonResponse(artifactListBody()),
   },
   {
+    name: 'artifacts versions',
+    args: (baseUrl) =>
+      withProfileArgs(baseUrl, [
+        'artifacts',
+        'versions',
+        ARTIFACT_ID,
+        '--cursor',
+        'next',
+      ]),
+    respond: () =>
+      jsonResponse({
+        id: ARTIFACT_ID,
+        retain_versions: null,
+        version_count: 0,
+        total_size_bytes: 0,
+        versions: [],
+        limit: 50,
+        has_more: false,
+        next_cursor: null,
+      }),
+  },
+  {
     name: 'artifacts get',
     args: (baseUrl) =>
       withProfileArgs(baseUrl, ['artifacts', 'get', ARTIFACT_ID]),

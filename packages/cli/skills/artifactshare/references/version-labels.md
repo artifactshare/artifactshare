@@ -28,3 +28,5 @@ version menu and full history show the label as plain text.
 `GET /api/shareables/:id/versions` remains a current-version lookup.
 Labels are update-only: initial uploads, `share --key`, `append`, preview,
 bridge publishing, and MCP update inputs do not accept them.
+
+For labels on both files and static sites, use `artifacts versions <target> --json`, or `GET /api/cli/artifacts/:id/versions`. Continue with the returned cursor to inspect more than 50 versions. Labels remain optional and creator emails remain redacted for external shared viewers. See [retained versions and logical storage](../SKILL.md#retained-versions-and-logical-storage) for summary fields and publisher history restrictions.

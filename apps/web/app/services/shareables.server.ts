@@ -4497,7 +4497,7 @@ export interface ArtifactVersionSummary {
   } | null
 }
 
-const OWNED_VERSION_LIST_LIMIT = 50
+export const OWNED_VERSION_LIST_LIMIT = 50
 
 export interface OwnedArtifactVersions {
   versions: ArtifactVersionSummary[]
@@ -4523,8 +4523,9 @@ export async function listArtifactVersions(
   db: Kysely<DB>,
   shareableId: string,
   currentVersionId: string | null,
+  before?: { created_at: string; id: string },
 ): Promise<OwnedArtifactVersions> {
-  const rows = await db
+  let query = db
     .selectFrom('versions')
     .leftJoin('users', 'users.id', 'versions.created_by_id')
     .select([
@@ -4539,6 +4540,11 @@ export async function listArtifactVersions(
       'users.email as creator_email',
     ])
     .where('shareable_id', '=', shareableId)
+  if (before)
+    query = query.where(
+      sql<boolean>`(versions.created_at < ${before.created_at} OR (versions.created_at = ${before.created_at} AND versions.id < ${before.id}))`,
+    )
+  const rows = await query
     .orderBy('versions.created_at', 'desc')
     // Tiebreaker: rapid updates can share a millisecond timestamp, so order by
     // id too to keep the list (and the has_more cut) deterministic across calls.

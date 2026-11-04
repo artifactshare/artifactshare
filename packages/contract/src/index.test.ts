@@ -1315,6 +1315,8 @@ it('publisher readback extends the legacy object without widening its shape', as
     project_id: null,
     link_expires_at: null,
     retain_versions: 2,
+    version_count: 2,
+    total_size_bytes: 100,
   }
   expect(
     c.PublisherArtifactReadResponseSchema.safeParse(metadata).success,
@@ -1570,4 +1572,50 @@ it('validates optional keyed visibility assertions', async () => {
   expect(
     ArtifactUploadQuerySchema.safeParse({ key_visibility: 'unknown' }).success,
   ).toBe(false)
+})
+
+it('validates complete version summaries and source-free static get', async () => {
+  const {
+    ArtifactVersionSummarySchema,
+    ArtifactVersionsResponseSchema,
+    ArtifactGetResponseSchema,
+  } = await import('./index.js')
+  const summary = {
+    retain_versions: null,
+    version_count: 0,
+    total_size_bytes: 0,
+  }
+  expect(ArtifactVersionSummarySchema.parse(summary)).toEqual(summary)
+  expect(
+    ArtifactVersionSummarySchema.safeParse({ ...summary, retain_versions: 0 })
+      .success,
+  ).toBe(false)
+  const page = {
+    ...summary,
+    id: 'abc123def4',
+    versions: [],
+    limit: 50,
+    has_more: false,
+    next_cursor: null,
+  }
+  expect(ArtifactVersionsResponseSchema.parse(page)).toEqual(page)
+  expect(
+    ArtifactVersionsResponseSchema.safeParse({
+      ...page,
+      version_count: undefined,
+    }).success,
+  ).toBe(false)
+  expect(
+    ArtifactGetResponseSchema.safeParse({
+      ...summary,
+      id: 'abc123def4',
+      title: 'Site',
+      share_url: shareUrl,
+      version_id: 'v1',
+      artifact_kind: 'static_site',
+      visibility: 'private',
+      project_id: null,
+      link_expires_at: null,
+    }).success,
+  ).toBe(true)
 })

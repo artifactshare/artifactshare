@@ -1,3 +1,14 @@
+vi.mock('./artifact-version-summary.server', () => ({
+  loadArtifactVersionSummaries: vi.fn(
+    async (_db, ids: string[]) =>
+      new Map(
+        ids.map((id) => [
+          id,
+          { retain_versions: null, version_count: 2, total_size_bytes: 26 },
+        ]),
+      ),
+  ),
+}))
 const publisherArtifact = vi.hoisted(() => vi.fn())
 vi.mock('./publisher-scope.server', () => ({
   loadPublisherArtifact: publisherArtifact,
@@ -322,7 +333,13 @@ test.each(['html_page', 'static_site'])(
     )
     expect(result).toMatchObject({
       kind: 'ok',
-      data: { title: 'Override', visibility: 'private' },
+      data: {
+        title: 'Override',
+        visibility: 'private',
+        retain_versions: artifactKind === 'static_site' ? 2 : null,
+        version_count: 2,
+        total_size_bytes: 26,
+      },
     })
   },
 )

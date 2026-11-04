@@ -113,9 +113,9 @@ describe('CLI reference content', () => {
     expect(surface.schema_version).toBe(2)
     expect(surface.package_version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(surface.generated_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-    expect(surface.commands).toHaveLength(52)
+    expect(surface.commands).toHaveLength(53)
     expect(CLI_REFERENCE_ENTRY_POINT.path).toBe('')
-    expect(CLI_REFERENCE_PUBLIC_COMMANDS).toHaveLength(51)
+    expect(CLI_REFERENCE_PUBLIC_COMMANDS).toHaveLength(52)
     const paths = CLI_REFERENCE_PUBLIC_COMMANDS.map((command) => command.path)
     expect(
       cliReferenceContent('en').commands.map((command) => command.path),
@@ -174,7 +174,7 @@ describe('CLI reference content', () => {
           ? 'empty labels and control characters are rejected before authentication'
           : '空の値や制御文字は認証前に拒否します',
       )
-      expect(content.commands).toHaveLength(51)
+      expect(content.commands).toHaveLength(52)
       expect(content.commands.every((command) => command.role.trim())).toBe(
         true,
       )
@@ -661,3 +661,22 @@ test.each(['en', 'ja'] as const)(
     expect(paragraphs[2]).toContain('--profile')
   },
 )
+
+for (const locale of ['en', 'ja'] as const)
+  test(`documents version pagination and logical bytes in ${locale}`, () => {
+    const command = cliReferenceContent(locale).commands.find(
+      (entry) => entry.path === 'artifacts versions',
+    )!
+    for (const field of [
+      'version_id',
+      'created_at',
+      'size_bytes',
+      'is_current',
+      'retain_versions',
+      'version_count',
+      'total_size_bytes',
+      '--cursor',
+      'publisher',
+    ])
+      expect(command.role.toLowerCase()).toContain(field)
+  })

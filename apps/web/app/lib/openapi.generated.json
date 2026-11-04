@@ -179,6 +179,132 @@
         }
       }
     },
+    "/api/cli/artifacts": {
+      "get": {
+        "summary": "List accessible artifacts",
+        "description": "Each row includes retain_versions (null for unlimited), version_count and total_size_bytes across all surviving database versions. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Project filter. An empty value selects home; omission lists owned artifacts for humans or accessible artifacts for agents."
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Case-insensitive title substring filter."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque next_cursor from the previous page with the same filters."
+          }
+        ],
+        "x-credential-presets": ["unrestricted", "agent", "browser-session"],
+        "responses": {
+          "200": {
+            "description": "Accessible artifact page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query, unavailable project (invalid-destination), or invalid/filter-mismatched cursor (validation_failed). Restart without cursor after changing filters."
+          },
+          "401": {
+            "description": "Authentication required or agent viewer missing."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          }
+        }
+      }
+    },
+    "/api/cli/artifacts/{id}/versions": {
+      "get": {
+        "summary": "List retained artifact versions",
+        "description": "Files and static sites. 50 entries per page, ordered created_at then ID descending. Sizes include every file, including inherited files. Summaries cover all surviving statuses, independent of pagination. Reused files count per version; logical bytes do not measure billing or physical storage. Protected human/current versions may exceed retention. Existing read permissions apply; inaccessible artifacts return 404, publisher credentials 403. Invalid or wrong-artifact cursor: 400 validation-failed; restart without cursor. No snapshot across concurrent publication or pruning.",
+        "security": [
+          {
+            "cliBearer": []
+          },
+          {
+            "browserSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque next_cursor from the previous page for this artifact."
+          }
+        ],
+        "x-credential-presets": ["unrestricted", "agent", "browser-session"],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactVersionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload or query."
+          },
+          "401": {
+            "description": "Authentication required."
+          },
+          "403": {
+            "description": "Credential scope denied."
+          },
+          "404": {
+            "description": "Missing or ineligible artifact/client (scope is not disclosed)."
+          },
+          "405": {
+            "description": "Method unavailable to this credential preset."
+          },
+          "409": {
+            "description": "Concurrent change or source unavailable."
+          }
+        }
+      }
+    },
     "/api/cli/artifacts/{id}/adopt": {
       "post": {
         "summary": "Assign an artifact to a publisher client",
@@ -251,7 +377,7 @@
     "/api/cli/artifacts/{id}": {
       "get": {
         "summary": "Read an artifact",
-        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.",
+        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Get includes retain_versions, version_count and total_size_bytes for all surviving versions.",
         "security": [
           {
             "cliBearer": []
@@ -269,6 +395,15 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          {
+            "name": "X-ArtifactShare-Static-Metadata",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "enum": ["1"]
+            },
+            "description": "Opt into metadata-only static-site reads. Sent by updated CLI artifacts get. Omit for legacy source-only behavior; publisher metadata behavior is unchanged."
           },
           {
             "name": "version_id",
@@ -568,6 +703,145 @@
   },
   "components": {
     "schemas": {
+      "ArtifactVersionsResponse": {
+        "type": "object",
+        "properties": {
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "version_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "created_at": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "is_current": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "version_id",
+                "created_at",
+                "size_bytes",
+                "is_current"
+              ]
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "retain_versions",
+          "version_count",
+          "total_size_bytes",
+          "id",
+          "versions",
+          "limit",
+          "has_more",
+          "next_cursor"
+        ]
+      },
+      "ArtifactsListResponse": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "retain_versions": {
+                  "type": ["integer", "null"],
+                  "minimum": 1
+                },
+                "version_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "total_size_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string"
+                },
+                "share_url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "visibility": {
+                  "type": "string",
+                  "enum": ["private", "workspace", "project", "link"]
+                },
+                "updated_at": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "project_id": {
+                  "type": ["string", "null"]
+                }
+              },
+              "required": [
+                "retain_versions",
+                "version_count",
+                "total_size_bytes",
+                "id",
+                "title",
+                "share_url",
+                "visibility",
+                "updated_at",
+                "project_id"
+              ]
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["artifacts", "limit", "has_more", "next_cursor"]
+      },
       "CommentThreadWindow": {
         "type": "object",
         "properties": {
@@ -737,6 +1011,18 @@
       "ArtifactReadResponse": {
         "type": "object",
         "properties": {
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "version_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
           "id": {
             "type": "string",
             "minLength": 1
@@ -799,6 +1085,9 @@
           }
         },
         "required": [
+          "retain_versions",
+          "version_count",
+          "total_size_bytes",
           "id",
           "share_url",
           "title",
@@ -831,6 +1120,18 @@
       "PublisherStaticSiteReadResponse": {
         "type": "object",
         "properties": {
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "version_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
           "id": {
             "type": "string",
             "minLength": 1
@@ -858,13 +1159,12 @@
           },
           "link_expires_at": {
             "type": ["string", "null"]
-          },
-          "retain_versions": {
-            "type": ["integer", "null"],
-            "minimum": 1
           }
         },
         "required": [
+          "retain_versions",
+          "version_count",
+          "total_size_bytes",
           "id",
           "title",
           "share_url",
@@ -872,8 +1172,7 @@
           "artifact_kind",
           "visibility",
           "project_id",
-          "link_expires_at",
-          "retain_versions"
+          "link_expires_at"
         ]
       },
       "PublisherArtifactReadResponse": {

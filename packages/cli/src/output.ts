@@ -7,6 +7,10 @@ import type {
   SkillAutoUpdateData,
 } from './types.js'
 import {
+  ArtifactGetResponseSchema,
+  ArtifactVersionsResponseSchema,
+  type ArtifactGetResponse,
+  type ArtifactVersionsResponse,
   ARTIFACT_DELETE_RESPONSE_SCHEMA,
   ARTIFACT_READ_RESPONSE_SCHEMA,
   ARTIFACTS_LIST_RESPONSE_SCHEMA,
@@ -387,6 +391,19 @@ export function resolveSuccessFields(data: unknown): data is ResolveResponse {
 }
 
 export function artifactGetSuccessFields(
+  data: unknown,
+): data is ArtifactGetResponse {
+  return (
+    isContract(ArtifactGetResponseSchema, data) ||
+    artifactSourceSuccessFields(data)
+  )
+}
+export function artifactVersionsSuccessFields(
+  data: unknown,
+): data is ArtifactVersionsResponse {
+  return isContract(ArtifactVersionsResponseSchema, data)
+}
+export function artifactSourceSuccessFields(
   data: unknown,
 ): data is ArtifactReadResponse {
   if (isContract(ARTIFACT_READ_RESPONSE_SCHEMA, data)) return true

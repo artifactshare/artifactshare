@@ -5,9 +5,11 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Add `artifacts versions <target> --json` with cursor pagination for files and static sites. Get/list now report `retain_versions`, `version_count`, and `total_size_bytes`. Static-site get opts into metadata without source; released source-only clients keep their existing unsupported-kind response and open download guidance. Publisher history restrictions and retention behavior are unchanged.
+
 - Reject keyed resends with a different effective explicit visibility before creating a version, with an edit command for recovery. Home treats project as private, matching creation.
 - Include current visibility and display title in artifacts get JSON output.
-- Update the bundled skill to version 54 with visibility change and readback guidance.
+- Update the bundled skill to version 55 with visibility, readback, retained-version pagination and logical storage guidance.
 
 ## 0.22.0 - 2026-10-30
 

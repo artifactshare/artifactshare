@@ -1135,3 +1135,51 @@ test('document collection checks examples in nested bundled references', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('OpenAPI documents logical version summaries and bounded history without publisher access', () => {
+  const spec = generateOpenApiSurface()
+  const history = spec.paths['/api/cli/artifacts/{id}/versions'].get
+  assert.deepEqual(history['x-credential-presets'], [
+    'unrestricted',
+    'agent',
+    'browser-session',
+  ])
+  assert.equal(history.parameters[1].name, 'cursor')
+  assert.match(history.description, /50 entries per page/)
+  for (const name of [
+    'ArtifactReadResponse',
+    'PublisherStaticSiteReadResponse',
+    'ArtifactVersionsResponse',
+  ]) {
+    const schema = spec.components.schemas[name]
+    for (const field of [
+      'retain_versions',
+      'version_count',
+      'total_size_bytes',
+    ])
+      assert.ok(schema.required.includes(field))
+  }
+  assert.ok(
+    spec.components.schemas.ArtifactsListResponse.properties.artifacts.items.required.includes(
+      'total_size_bytes',
+    ),
+  )
+})
+
+test('collection OpenAPI declares only actual filters and page responses', () => {
+  const operation = generateOpenApiSurface().paths['/api/cli/artifacts'].get
+  assert.deepEqual(
+    operation.parameters.map((parameter) => [parameter.name, parameter.in]),
+    [
+      ['project_id', 'query'],
+      ['query', 'query'],
+      ['cursor', 'query'],
+    ],
+  )
+  assert.deepEqual(Object.keys(operation.responses), [
+    '200',
+    '400',
+    '401',
+    '403',
+  ])
+})

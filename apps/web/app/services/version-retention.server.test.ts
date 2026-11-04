@@ -523,6 +523,13 @@ test.each(['created_by_publisher_client_id', 'assigned_publisher_client_id'])(
       retain_versions: 1,
       deleted_versions: 1,
     })
+    const { loadArtifactVersionSummaries } =
+      await import('./artifact-version-summary.server')
+    expect((await loadArtifactVersionSummaries(db, ['s1'])).get('s1')).toEqual({
+      retain_versions: 1,
+      version_count: 3,
+      total_size_bytes: 30,
+    })
     expect(sqlite.prepare('SELECT id FROM versions ORDER BY id').all()).toEqual(
       ['v1', 'v3', 'v4'].map((id) => ({ id })),
     )
@@ -795,3 +802,39 @@ test.each(['v4', 'v1'])(
     }
   },
 )
+
+for (const kind of ['html_page', 'static_site'])
+  test(`retention edit is reflected in ${kind} CLI totals and history`, async () => {
+    sqlite.prepare('UPDATE shareables SET artifact_kind = ?').run(kind)
+    sqlite.prepare('UPDATE versions SET artifact_kind = ?').run(kind)
+    expect(await saveRetention(db, 's1', 'u1', 3)).toEqual({
+      retain_versions: 3,
+      deleted_versions: 1,
+    })
+    const { loadArtifactVersionSummaries } =
+      await import('./artifact-version-summary.server')
+    const { getArtifactVersions } = await import('./artifact-versions.server')
+    const summary = (await loadArtifactVersionSummaries(db, ['s1'])).get('s1')
+    expect(summary).toEqual({
+      retain_versions: 3,
+      version_count: 3,
+      total_size_bytes: 30,
+    })
+    const result = await getArtifactVersions(
+      db,
+      { id: 'u1', workspaceId: 'ws1' } as never,
+      { id: 's1' },
+    )
+    if (result.kind !== 'ok') throw new Error('expected history')
+    expect(result.data.versions.map((v) => v.version_id)).toEqual([
+      'v4',
+      'v3',
+      'v2',
+    ])
+    expect(result.data.versions.map((v) => v.is_current)).toEqual([
+      true,
+      false,
+      false,
+    ])
+    expect(result.data.total_size_bytes).toBe(30)
+  })

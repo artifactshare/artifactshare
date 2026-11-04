@@ -74,3 +74,7 @@ move, projects, append and upsert remain denied. Existing presets' download and
 readback responses are unchanged. CLI publisher login/resume and publishing/download
 workflows remain unsupported; use the API. Credentials retain their client across
 rotation and can be revoked from Settings → CLI sessions.
+
+For retained history, request `GET /api/cli/artifacts/:id/versions`. Each page returns up to 50 entries; send `next_cursor` as the `cursor` query while `has_more` is true. Entries include `version_id`, `created_at`, `size_bytes`, and `is_current`. History, current readback, and collection rows include `retain_versions` (null means unlimited), `version_count`, and `total_size_bytes` for all surviving versions. Static-site bytes include inherited files per version, not deduplicated physical storage. Protected human/current versions can make managed histories exceed the retention policy. Publisher credentials cannot read history.
+
+Human and agent `GET /api/cli/artifacts/:id` requests must send `X-ArtifactShare-Static-Metadata: 1` to receive metadata-only static sites. Without it, static sites return the existing `unsupported-kind` response for source-only clients. Publisher readback keeps its existing metadata behavior. Static-site version selection, include, and offset remain unsupported.

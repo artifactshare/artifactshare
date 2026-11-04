@@ -47,7 +47,12 @@ async function read(versionId?: string, offset?: number) {
   const url = new URL('https://example.test/api/cli/artifacts/s1')
   if (versionId !== undefined) url.searchParams.set('version_id', versionId)
   if (offset !== undefined) url.searchParams.set('offset', String(offset))
-  return loader({ context: new Map(), params: { id: 's1' }, url } as never)
+  return loader({
+    context: new Map(),
+    params: { id: 's1' },
+    url,
+    request: new Request(url),
+  } as never)
 }
 function seed() {
   sqlite.exec(`
@@ -190,3 +195,35 @@ test.each([
     }
   },
 )
+
+for (const userId of ['u1', 'u2'])
+  test(`static readback preserves legacy source responses for ${userId}`, async () => {
+    state.userId = userId
+    sqlite.exec(
+      "UPDATE shareables SET artifact_kind = 'static_site'; UPDATE versions SET artifact_kind = 'static_site'",
+    )
+    const legacy = await read()
+    expect(legacy.status).toBe(400)
+    expect(await legacy.json()).toMatchObject({
+      error: { code: 'unsupported-kind' },
+    })
+    const url = new URL('https://example.test/api/cli/artifacts/s1')
+    const current = await loader({
+      context: new Map(),
+      params: { id: 's1' },
+      url,
+      request: new Request(url, {
+        headers: { 'X-ArtifactShare-Static-Metadata': '1' },
+      }),
+    } as never)
+    expect(current.status).toBe(200)
+    const data = await current.json()
+    expect(data).toMatchObject({
+      artifact_kind: 'static_site',
+      version_count: 55,
+      total_size_bytes: 550,
+      retain_versions: null,
+    })
+    expect(data).not.toHaveProperty('content')
+    expect(state.source).not.toHaveBeenCalled()
+  })

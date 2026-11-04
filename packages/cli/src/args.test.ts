@@ -211,3 +211,54 @@ test('only artifacts get gives the long version flag a value', () => {
     'validation_failed',
   )
 })
+
+test('versions resolves nested shared flags and keeps cursor values', () => {
+  for (const argv of [
+    [
+      '--profile',
+      'work',
+      'artifacts',
+      'versions',
+      'abc123def4',
+      '--cursor',
+      'next',
+    ],
+    [
+      'artifacts',
+      '--baseUrl=https://example.com',
+      'versions',
+      'abc123def4',
+      '--cursor=next',
+    ],
+    [
+      'artifacts',
+      'versions',
+      'abc123def4',
+      '--token',
+      'test-token',
+      '--cursor',
+      'next',
+    ],
+  ]) {
+    assert.equal(commandNameFromArgv(argv), 'artifacts versions')
+    assert.equal(parser.validateRawArgs(argv, 'artifacts versions'), null)
+    assert.match(
+      normalizeArgvForGunshi(argv, 'artifacts').join(' '),
+      /--cursor(?:=| )next/,
+    )
+  }
+  assert.equal(
+    parser.validateRawArgs(
+      ['artifacts', 'versions', '--cursor='],
+      'artifacts versions',
+    )?.code,
+    'validation_failed',
+  )
+  assert.equal(
+    parser.validateRawArgs(
+      ['artifacts', 'versions', '--offset', '0'],
+      'artifacts versions',
+    )?.code,
+    'unknown_option',
+  )
+})

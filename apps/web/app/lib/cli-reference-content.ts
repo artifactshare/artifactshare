@@ -51,9 +51,11 @@ const roleByPath: Record<string, string> = {
   artifacts: 'Browse, read, and delete artifacts.',
   'artifacts delete': 'Alias of delete: permanently delete an artifact.',
   'artifacts get':
-    'Read data.title and data.visibility for the current artifact along with source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. Removed versions return version_removed.',
+    'Read data.title and data.visibility for the current artifact along with source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. Removed versions return version_removed. Static sites return metadata only: no content or format; --include, --version and --offset are unsupported. Updated get explicitly requests metadata; released clients retain unsupported-kind and open still suggests download. Get includes retain_versions, version_count and total_size_bytes across all surviving versions.',
+  'artifacts versions':
+    'List retained file or static-site versions (version_id, created_at, size_bytes, is_current), newest first, 50 per page. Pass next_cursor as --cursor while has_more. retain_versions is null for unlimited; version_count and total_size_bytes cover all surviving statuses and all files per version, including inherited files. Logical bytes count reused files per version, not physical storage or billing. Managed histories can exceed the policy because human/current versions are protected. Publisher credentials cannot read history; inaccessible artifacts return target_not_found. Restart without --cursor if invalid.',
   'artifacts list':
-    'List artifacts you can access, including project or home results.',
+    'List artifacts you can access, including project or home results. Each row includes retain_versions, version_count and total_size_bytes. Compare total_size_bytes client-side across pages.',
   changelog: 'Show CLI release notes.',
   comments: 'Work with comments on an artifact.',
   'comments delete': 'Delete a comment message.',
@@ -165,9 +167,11 @@ const jaRoleByPath: Record<string, string> = {
   artifacts: '成果物の一覧表示、読み取り、削除を行います。',
   'artifacts delete': 'delete の別名です。成果物を完全に削除します。',
   'artifacts get':
-    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読みます。過去の版や続きの読み取りでもタイトルと共有範囲は現在の情報です。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。',
+    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読みます。過去の版や続きの読み取りでもタイトルと共有範囲は現在の情報です。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。静的サイトは本文なしのメタデータを返し、--include、--version、--offset は使えません。新しい get はメタデータ応答を明示的に要求します。旧 CLI には従来どおり unsupported-kind を返すため、open は引き続きダウンロードを案内します。get は全残存版の retain_versions、version_count、total_size_bytes も返します。',
+  'artifacts versions':
+    'ファイルと静的サイトの保存済みバージョンを新しい順に50件ずつ表示します。各行は version_id、created_at、size_bytes、is_current を含みます。has_more が true なら next_cursor を --cursor に渡します。retain_versions の null は無制限です。version_count と total_size_bytes は全状態の残存版を集計し、継承ファイルも各版に含めます。実際の保存容量や請求額ではありません。管理対象の成果物では人が作成した版と現在の版を保護するため、保持設定を超える場合があります。publisher 資格情報は履歴を読めません。閲覧不可は target_not_found、不正なカーソルは --cursor を外して再取得します。',
   'artifacts list':
-    'project または home を含む、アクセスできる成果物を一覧表示します。',
+    'project または home を含む、アクセスできる成果物を一覧表示します。各行の retain_versions、version_count、total_size_bytes で保持設定・版数・論理バイト数を確認できます。ページを取得して手元で total_size_bytes を比較します。',
   changelog: 'CLI のリリースノートを表示します。',
   comments: '成果物のコメントを扱います。',
   'comments delete': 'コメントメッセージを削除します。',
@@ -226,7 +230,12 @@ const jaRoleByPath: Record<string, string> = {
 
 const EN: CliReferenceContent = {
   locale: 'en',
-  optionHelp: {},
+  optionHelp: {
+    'artifacts versions': {
+      '--cursor':
+        'Continue with next_cursor from the previous history page; omit to restart.',
+    },
+  },
   title: 'Artifact Share CLI reference',
   intro:
     'A public, machine-friendly guide to sharing, updating, reading, and organizing artifacts from a terminal.',
@@ -302,6 +311,10 @@ const JA: CliReferenceContent = {
   ...EN,
   locale: 'ja',
   optionHelp: {
+    'artifacts versions': {
+      '--cursor':
+        '前の履歴ページの next_cursor を指定します。最初から取得する場合は省略します。',
+    },
     'artifacts get': {
       '--version':
         '読み取る公開済みバージョンの ID。省略すると現在の本文を返します。',

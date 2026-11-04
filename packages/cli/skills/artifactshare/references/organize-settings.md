@@ -109,3 +109,5 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> 
   all flags.
 
 Home without an explicit or configured audience defaults to workspace when the account supports it, otherwise private. Explicit or configured workspace still fails when unavailable; sharing never automatically switches to link. Choose --visibility link deliberately. Config inspection is offline: value workspace with source product_default is an unresolved policy placeholder. Share and preview resolve it against the account. Older servers without workspace.visibility_available retain workspace and its existing rejection.
+
+After a retention edit, check `retain_versions`, `version_count`, and `total_size_bytes` with `artifacts get <target> --json`. Null retention means unlimited. Combine `artifacts list --json` pages and compare `total_size_bytes` locally to find the largest histories. Totals count every surviving version; protected human/current versions can exceed the configured policy on managed artifacts. See [retained versions and logical storage](../SKILL.md#retained-versions-and-logical-storage) for units, pagination, and access limits.

@@ -1,9 +1,9 @@
 import { SOCIAL_EMBED_SCRIPT_CSP_SOURCES } from '@artifactshare/viewer-kit/script-policy-sources'
-import type { ArtifactType } from '../../app/lib/artifact-type'
+import type { ArtifactType } from '../../app/lib/artifact-type.js'
 import {
   EXTERNAL_SCRIPT_CSP_SOURCES,
   STATIC_SITE_SCRIPT_DIRECTIVES,
-} from './script-csp'
+} from './script-csp.js'
 
 export const CSP_HEADER = 'Content-Security-Policy'
 export const ROBOTS_HEADER = 'X-Robots-Tag'

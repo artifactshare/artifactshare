@@ -37,3 +37,7 @@ Static-site binary assets support HTTP byte ranges. To refresh data while keepin
 the same share URL, replace the data locally and update the folder as a new
 version; each version retains its own isolated origin. Single-file HTML and
 Markdown have different script policies; these permissions apply to folder shares.
+
+Use `artifacts versions <target> --json` (files and static sites) to inspect retained versions and labels; continue with `--cursor <next_cursor>` while `has_more`. `artifacts get` and `artifacts list` include `retain_versions` (null: unlimited), `version_count` and `total_size_bytes` across all surviving database rows. Site bytes include inherited files in each version, not deduplicated physical storage. Managed histories may exceed policy due to protected human/current versions. Publisher credentials cannot inspect history. Compare list totals client-side across pages.
+
+`artifacts get <target> --json` returns current static-site metadata without `content` or `format`; `--include`, `--version` and `--offset` are unsupported for sites. Updated get opts into this response; released clients keep unsupported-kind and open download guidance. Use `download` for site files.

@@ -104,6 +104,7 @@ const TARGET_COMMAND_LABELS = {
   update: 'Update',
   open: 'Open',
   'artifacts get': 'Artifacts get',
+  'artifacts versions': 'Artifacts versions',
   download: 'Download',
   'comments list': 'Comments list',
   'comments post': 'Comments post',
