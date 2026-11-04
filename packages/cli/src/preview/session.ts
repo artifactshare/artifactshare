@@ -1,6 +1,7 @@
+import { pathToFileURL } from 'node:url'
+import { validCapability } from './auth.js'
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
@@ -34,8 +35,11 @@ export interface PreviewSessionCredentials {
 }
 
 export interface PreviewSessionFile {
-  schema_version: 2
-  /** Runtime-only marker for a record written by a pre-notification CLI. */
+  schema_version: 3
+  /** Private bearer authority; never included in ready output. */
+  auth?: { control: string; shell: string }
+  launcher?: string
+  /** Runtime-only marker: restart required, including schema 1/2 records. */
   legacy?: true
   session_id: string
   realpath: string
@@ -53,8 +57,7 @@ export type PreviewRealpathResult =
 
 export type LiveSessionResult =
   | { state: 'live'; session: PreviewSessionFile }
-  /** A matching identity answered, but the process predates the notification
-   * contract. It may be stopped, but must not be reused for agent commands. */
+  /** A pre-authentication record must be restarted without HTTP fallback. */
   | { state: 'legacy'; session: PreviewSessionFile }
   /** The recorded session neither answered nor refused; it may still serve. */
   | { state: 'unverified'; session: PreviewSessionFile }
@@ -140,11 +143,9 @@ export function writeSessionFile(
   const dir = previewsDir(env)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const path = sessionFilePath(session.session_id, env)
-  const payload: PreviewSessionFile = { schema_version: 2, ...session }
+  const payload: PreviewSessionFile = { ...session, schema_version: 3 }
   const temp = join(dir, `.session-${randomUUID()}.tmp`)
-  writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
-  renameSync(temp, path)
-  chmodSync(path, 0o600)
+  privateWrite(path, JSON.stringify(payload, null, 2), temp)
   return path
 }
 
@@ -161,12 +162,23 @@ export function readSessionFile(
   if (typeof parsed !== 'object' || parsed === null) return null
   const record = parsed as Record<string, unknown>
   if (
-    (record.schema_version !== 1 && record.schema_version !== 2) ||
+    (record.schema_version !== 1 &&
+      record.schema_version !== 2 &&
+      record.schema_version !== 3) ||
     typeof record.session_id !== 'string' ||
+    record.session_id !== sessionId ||
     typeof record.realpath !== 'string' ||
     typeof record.port !== 'number' ||
+    !Number.isInteger(record.port) ||
+    record.port < 1 ||
+    record.port > 65535 ||
     typeof record.share_port !== 'number' ||
+    !Number.isInteger(record.share_port) ||
+    record.share_port < 1 ||
+    record.share_port > 65535 ||
     typeof record.pid !== 'number' ||
+    !Number.isInteger(record.pid) ||
+    record.pid < 1 ||
     typeof record.started_at !== 'string' ||
     !isSessionCredentials(record.credentials)
   ) {
@@ -174,7 +186,7 @@ export function readSessionFile(
   }
   if (record.schema_version === 1) {
     return {
-      schema_version: 2,
+      schema_version: 3,
       session_id: record.session_id,
       realpath: record.realpath,
       port: record.port,
@@ -195,6 +207,18 @@ export function readSessionFile(
   if (!isPreviewNotificationRegistration(record.agent_notification)) {
     return null
   }
+  const auth = record.auth as Record<string, unknown> | undefined
+  if (
+    record.schema_version !== 3 ||
+    !auth ||
+    !validCapability(auth.control) ||
+    !validCapability(auth.shell) ||
+    auth.control === auth.shell ||
+    typeof record.launcher !== 'string' ||
+    !/^launcher-[a-f0-9-]+\.html$/.test(record.launcher)
+  ) {
+    return { ...(parsed as PreviewSessionFile), legacy: true }
+  }
   return parsed as PreviewSessionFile
 }
 
@@ -207,6 +231,7 @@ export function updateSessionNotificationRegistration(
   if (!current || current.pid !== process.pid) return
   writeSessionFile(
     {
+      ...current,
       session_id: current.session_id,
       realpath: current.realpath,
       port: current.port,
@@ -266,6 +291,7 @@ export async function probeSession(
 ): Promise<LiveSessionResult> {
   const sessionId = session.session_id
 
+  if (session.legacy || !session.auth) return { state: 'legacy', session }
   let identity: unknown = null
   // A timeout means the probe was inconclusive, not that the session is dead:
   // a preview busy rendering a large file can miss the deadline while still
@@ -275,11 +301,16 @@ export async function probeSession(
   try {
     const response = await fetchImpl(
       `http://127.0.0.1:${session.port}${PREVIEW_SESSION_ENDPOINT}`,
-      { signal: AbortSignal.timeout(2000) },
+      {
+        signal: AbortSignal.timeout(2000),
+        headers: { authorization: `Bearer ${session.auth.control}` },
+      },
     )
     // Something answered on that port. Whether its body parses says nothing
     // about that, and letting a parse failure re-arm the timeout path would
     // leave a recycled port unverified forever.
+    if (response.status === 401 || response.status === 403)
+      return { state: 'unverified', session }
     answered = true
     if (response.ok) identity = await response.json().catch(() => null)
   } catch (error) {
@@ -293,18 +324,31 @@ export async function probeSession(
     identity.realpath === session.realpath &&
     identity.share_port === session.share_port
   ) {
-    // The process behind a schema-1 record does not implement the notification
-    // projection or exclusive long-poll reservation. Keep its record so a new
-    // server cannot share the store, but require that process to be restarted.
-    if (session.legacy) return { state: 'legacy', session }
     return { state: 'live', session }
   }
 
   if (!answered) return { state: 'unverified', session }
 
-  // Stale: reclaim the session file, keep the annotations file for later.
-  removeSessionFile(sessionId, env)
-  return { state: 'none', reclaimed: true }
+  // Serialize reclamation with publication. Another probe may have already
+  // reclaimed this record and started a replacement while ours was in flight.
+  const claim = claimSessionStart(sessionId, env)
+  if (!claim.ok) return { state: 'unverified', session }
+  try {
+    const current = readSessionFile(sessionId, env)
+    if (
+      current &&
+      (current.pid !== session.pid ||
+        current.auth?.control !== session.auth.control ||
+        current.started_at !== session.started_at)
+    ) {
+      return { state: 'unverified', session: current }
+    }
+    removeLauncher(session.launcher, env)
+    removeSessionFile(sessionId, env)
+    return { state: 'none', reclaimed: true }
+  } finally {
+    claim.release()
+  }
 }
 
 /** A refused connection proves nothing listens on the recorded port. */
@@ -361,4 +405,51 @@ export function releaseStaleClaim(
   if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) return false
   rmSync(lockPath, { force: true })
   return true
+}
+
+/** Publish without ever opening the final directory entry for writing. */
+export function privateWrite(
+  path: string,
+  contents: string,
+  temp = join(dirname(path), `.private-${randomUUID()}.tmp`),
+): void {
+  let owned = false
+  try {
+    const fd = openSync(temp, 'wx', 0o600)
+    owned = true
+    try {
+      writeFileSync(fd, contents)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(temp, path)
+  } finally {
+    if (owned) rmSync(temp, { force: true })
+  }
+}
+
+export function writeLauncher(
+  session: { port: number; auth?: { shell: string }; launcher?: string },
+  env: NodeJS.ProcessEnv = process.env,
+): { launcher: string; launcher_url: string } {
+  if (!session.auth || !validCapability(session.auth.shell))
+    throw new Error('Preview restart required')
+  const dir = previewsDir(env)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const launcher = session.launcher ?? `launcher-${randomUUID()}.html`
+  if (!/^launcher-[a-f0-9-]+\.html$/.test(launcher))
+    throw new Error('Invalid launcher')
+  const path = join(dir, launcher)
+  privateWrite(
+    path,
+    `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Open preview</title><form method="post" action="http://127.0.0.1:${session.port}/__preview/launch"><input type="hidden" name="capability" value="${session.auth.shell}"><button>Open preview</button></form><script>document.forms[0].submit()</script>`,
+  )
+  return { launcher, launcher_url: pathToFileURL(path).href }
+}
+export function removeLauncher(
+  launcher: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (launcher && /^launcher-[a-f0-9-]+\.html$/.test(launcher))
+    rmSync(join(previewsDir(env), launcher), { force: true })
 }

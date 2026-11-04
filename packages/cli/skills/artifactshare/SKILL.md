@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 58
+version: 59
 managed: true
 -->
 
@@ -215,9 +215,11 @@ Read [preview](references/preview.md) before starting: it explains process owner
 agent-specific notifications, manual pickup, recovery, and local isolation.
 
 Start `preview <file> --json` once using the environment's long-running task
-mechanism. Keep the process handle. Wait for the ready JSON line with `url` and
+mechanism. Keep the process handle. Wait for the ready JSON line with `launcher_url` and
 `session` before telling the user it opened; a running task alone is not readiness.
 Do not launch duplicates while startup is indeterminate.
+
+Local previews: open the private `data.launcher_url` returned by the ready result, including with `--no-open`. Keep the launcher and session files private; the secret-free `url` alone grants no access. Local capabilities are separate from account sign-in.
 
 When the user submits feedback, read the whole batch with `preview next --json`,
 fix it in one editing pass, save once, and report the batch with

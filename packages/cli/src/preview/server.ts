@@ -1,3 +1,11 @@
+import {
+  bearer,
+  capability,
+  createPreviewAuth,
+  authorizePreview,
+  sameCapability,
+  type PreviewAuth,
+} from './auth.js'
 import { createShareDialogHandler } from './share-dialog.js'
 import type { CliOptions } from '../types.js'
 import { createHash } from 'node:crypto'
@@ -17,6 +25,7 @@ import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
   PREVIEW_SESSION_ENDPOINT,
+  PREVIEW_AGENT_STATE_ENDPOINT,
   type PreviewAgentNotificationRegistration,
   type PreviewAgentNotificationProjection,
   type PreviewAnchor,
@@ -70,6 +79,7 @@ export interface PreviewServerOptions {
 }
 
 export interface PreviewServer {
+  auth: PreviewAuth
   port: number
   sharePort: number
   url: string
@@ -204,6 +214,8 @@ export async function startPreviewServer(
       ? { onRegistrationChange: options.onNotificationRegistrationChange }
       : {}),
   })
+  const auth = createPreviewAuth()
+  let popup: { capability: string; instance: string } | null = null
   const fileName = basename(filePath)
   const isMarkdown = filePath.toLowerCase().endsWith('.md')
 
@@ -437,10 +449,98 @@ export async function startPreviewServer(
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    if (!guard(request, response)) return
+    response.setHeader('Referrer-Policy', 'no-referrer')
+    response.setHeader('Cache-Control', 'no-store')
     const method = request.method ?? 'GET'
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     const path = url.pathname
+    if (
+      method === 'GET' &&
+      path === '/' &&
+      !request.headers.authorization &&
+      hostAllowed(request.headers.host)
+    ) {
+      return sendHtml(
+        response,
+        200,
+        `<!doctype html><meta name="referrer" content="no-referrer"><p>Preview unavailable. Reopen the private launcher.</p><script>
+      (() => { const key = sessionStorage.getItem('preview-shell'); if (!key) return;
+      fetch('/', { headers: { authorization: 'Bearer ' + key }, cache: 'no-store' }).then(async response => {
+        if (!response.ok) return; const html = await response.text(); document.open(); document.write(html); document.close();
+      }).catch(() => {}); })();</script>`,
+      )
+    }
+    // Only this bootstrap accepts a file-origin form navigation. WebKit replays
+    // the launch POST at / on reload after the shell replaces its history URL.
+    // Existing mutation routes retain their independent browser-origin guards.
+    if (
+      method === 'POST' &&
+      (path === '/__preview/launch' || path === '/') &&
+      hostAllowed(request.headers.host)
+    ) {
+      let body = ''
+      for await (const chunk of request) {
+        body += String(chunk)
+        if (body.length > 1024)
+          return sendJson(response, 403, { error: 'forbidden' })
+      }
+      if (
+        !sameCapability(new URLSearchParams(body).get('capability'), auth.shell)
+      )
+        return sendJson(response, 403, { error: 'forbidden' })
+      if (!shareOrigin)
+        return sendJson(response, 503, { error: 'preview_not_ready' })
+      return sendHtml(
+        response,
+        200,
+        renderPreviewShell({
+          fileName,
+          resumeCommand: previewResumeCommand(filePath),
+          shareOrigin,
+          messages: PREVIEW_MESSAGES,
+          shellCapability: auth.shell,
+          documentCapability: auth.document,
+        }),
+      )
+    }
+    const credential =
+      path === '/artifact' && method === 'GET'
+        ? (url.searchParams.get('capability') ??
+          bearer(request.headers.authorization))
+        : bearer(request.headers.authorization)
+    if (!authorizePreview(auth, credential, method, path))
+      return sendJson(response, 403, { error: 'forbidden' })
+    if (!guard(request, response)) return
+    if (method === 'POST' && path === '/api/popup') {
+      shareHandler?.revoke()
+      popup = { capability: capability(), instance: capability() }
+      return sendJson(response, 200, popup)
+    }
+    if (method === 'POST' && path === '/api/popup/finish') {
+      const read = await readBodyJson(request)
+      if (
+        !read.ok ||
+        !popup ||
+        (read.body as { instance?: string })?.instance !== popup.instance
+      )
+        return sendJson(response, 403, { error: 'forbidden' })
+      sendJson(response, 200, { stopped: true })
+      setImmediate(() => {
+        void close()
+      })
+      return
+    }
+    if (method === 'POST' && path === '/api/popup/revoke') {
+      const read = await readBodyJson(request)
+      if (
+        read.ok &&
+        (read.body as { instance?: string })?.instance === popup?.instance
+      ) {
+        popup = null
+        shareHandler?.revoke()
+      }
+      return sendJson(response, 200, { revoked: true })
+    }
 
     if (method === 'GET') {
       if (path === '/') {
@@ -454,6 +554,8 @@ export async function startPreviewServer(
           response,
           200,
           renderPreviewShell({
+            shellCapability: auth.shell,
+            documentCapability: auth.document,
             fileName,
             resumeCommand: previewResumeCommand(filePath),
             shareOrigin,
@@ -471,6 +573,8 @@ export async function startPreviewServer(
         }
         return sendJson(response, 200, identity)
       }
+      if (path === PREVIEW_AGENT_STATE_ENDPOINT)
+        return sendJson(response, 200, { agent: notification.projection() })
       if (path === '/events') return serveEvents(response)
       if (path === '/api/annotations') {
         return sendJson(response, 200, {
@@ -685,9 +789,7 @@ export async function startPreviewServer(
   // and the handler are late-bound because they need ports that are only known
   // once the servers start listening.
   let shareOrigin: string | null = null
-  let shareHandler:
-    | ((request: IncomingMessage, response: ServerResponse) => void)
-    | null = null
+  let shareHandler: ReturnType<typeof createShareDialogHandler> | null = null
   const shareServer: Server = createServer((request, response) => {
     if (shareHandler) {
       shareHandler(request, response)
@@ -725,6 +827,10 @@ export async function startPreviewServer(
   shareOrigin = `http://127.0.0.1:${sharePort}`
 
   shareHandler = createShareDialogHandler({
+    getGrant: () => popup,
+    revokeGrant: (instance) => {
+      if (popup?.instance === instance) popup = null
+    },
     filePath: options.filePath,
     fileName: basename(options.filePath),
     artifactOrigin: `http://127.0.0.1:${port}`,
@@ -735,6 +841,8 @@ export async function startPreviewServer(
   async function close(): Promise<void> {
     if (closing) return closed
     closing = true
+    popup = null
+    shareHandler?.revoke()
     events.emit('closing')
     broadcast('session-ended', {})
     if (debounceTimer) clearTimeout(debounceTimer)
@@ -753,6 +861,7 @@ export async function startPreviewServer(
   }
 
   return {
+    auth,
     port,
     sharePort,
     url: `http://127.0.0.1:${port}/`,

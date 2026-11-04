@@ -135,11 +135,22 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     start(root, concurrentFixture, log),
     /Cursor preview exited 1/,
   )
+  const firstSession = JSON.parse(
+    readFileSync(
+      join(root, 'config', 'previews', `${first.ready.session}.json`),
+      'utf8',
+    ),
+  )
+  assert.equal(
+    first.ready.launcher_url,
+    pathToFileURL(join(root, 'config', 'previews', firstSession.launcher)).href,
+  )
   const headers = {
+    authorization: `Bearer ${firstSession.auth.shell}`,
     'content-type': 'application/json',
     'x-artifactshare-preview': '1',
   }
-  await fetch(`${first.ready.url}api/annotations`, {
+  const created = await fetch(`${first.ready.url}api/annotations`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -147,6 +158,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
       comment: 'Only preview next may fetch this comment.',
     }),
   })
+  assert.equal(created.status, 200)
   const submitted = await fetch(`${first.ready.url}api/annotations/submit`, {
     method: 'POST',
     headers,
@@ -206,15 +218,27 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n'); if((
     FAKE_PROMPT_ERROR: '1',
     FAKE_UNRELATED_UPDATE: '1',
   })
-  await fetch(`${failed.ready.url}api/annotations`, {
+  const failedSession = JSON.parse(
+    readFileSync(
+      join(root, 'config', 'previews', `${failed.ready.session}.json`),
+      'utf8',
+    ),
+  )
+  const failedHeaders = {
+    ...headers,
+    authorization: `Bearer ${failedSession.auth.shell}`,
+  }
+  const failedCreated = await fetch(`${failed.ready.url}api/annotations`, {
     method: 'POST',
-    headers,
+    headers: failedHeaders,
     body: JSON.stringify({ anchor: { kind: 'artifact' }, comment: 'saved' }),
   })
+  assert.equal(failedCreated.status, 200)
   const failedSubmit = await fetch(
     `${failed.ready.url}api/annotations/submit`,
-    { method: 'POST', headers, body: '{}' },
+    { method: 'POST', headers: failedHeaders, body: '{}' },
   )
+  assert.equal(failedSubmit.status, 200)
   assert.equal((await failedSubmit.json()).agent.state, 'failed')
 
   failed.child.kill('SIGTERM')

@@ -81,7 +81,7 @@ const roleByPath: Record<string, string> = {
   move: 'Move an artifact to a project or home.',
   preview: 'Preview a local file with the product viewer look and annotate it.',
   'preview start':
-    'Serve a local .md or .html file for annotation. Invoked as preview <file>.',
+    'Open a local .md or .html annotation session through the private launcher_url. Invoked as preview <file>.',
   'preview next': 'Return every undelivered annotation batch to the agent.',
   'preview done':
     'Report batch outcomes from stdin JSON, idempotent per generation.',
@@ -198,7 +198,7 @@ const jaRoleByPath: Record<string, string> = {
   preview:
     'ローカルファイルを共有ページと同じ見た目で表示し、コメントできます。',
   'preview start':
-    'ローカルの .md / .html を配信します。preview <file> として起動します。',
+    'ローカルの .md / .html を、非公開ファイルの launcher_url から開いてレビューします。preview <file> として起動します。',
   'preview next': '未処理のコメントバッチをエージェントへ返します。',
   'preview done': '標準入力の JSON で結果を一括報告します（世代単位で冪等）。',
   'preview reply': 'スレッドへ返信を追記します。状態は変わりません。',

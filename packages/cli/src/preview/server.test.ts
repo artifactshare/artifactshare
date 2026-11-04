@@ -1,3 +1,4 @@
+import type { PreviewAuth } from './auth.js'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '@artifactshare/viewer-kit/csp-reporter'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
@@ -20,6 +21,23 @@ import {
 } from './server.js'
 import type { PreviewAgentAdapter } from './notification.js'
 import { createPreviewStore } from './store.js'
+
+const authorities = new Map<string, PreviewAuth>()
+function roleFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const url = new URL(input)
+  const auth = authorities.get(url.port)
+  if (!auth) return fetch(input, init)
+  const role =
+    url.pathname === '/artifact'
+      ? 'document'
+      : url.pathname.startsWith('/api/agent/')
+        ? 'control'
+        : 'shell'
+  return fetch(input, {
+    ...init,
+    headers: { authorization: `Bearer ${auth[role]}`, ...init.headers },
+  })
+}
 
 const MUTATION_HEADERS = {
   'content-type': 'application/json',
@@ -65,6 +83,7 @@ async function startContext(options?: {
       ? { notificationAdapter: options.notificationAdapter }
       : {}),
   })
+  authorities.set(String(server.port), server.auth)
   return { dir, filePath, server, store }
 }
 
@@ -72,7 +91,15 @@ function rawStatus(port: number, host: string): Promise<number> {
   // fetch() strips the forbidden Host header, so spoof it with node:http.
   return new Promise((resolve, reject) => {
     const req = httpRequest(
-      { host: '127.0.0.1', port, path: '/', headers: { host } },
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/',
+        headers: {
+          host,
+          authorization: `Bearer ${authorities.get(String(port))?.shell ?? ''}`,
+        },
+      },
       (response) => {
         response.resume()
         resolve(response.statusCode ?? 0)
@@ -93,7 +120,7 @@ async function post(
   body: unknown,
   headers: Record<string, string> = MUTATION_HEADERS,
 ): Promise<Response> {
-  return fetch(`${origin(context)}${path}`, {
+  return roleFetch(`${origin(context)}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body ?? {}),
@@ -113,7 +140,7 @@ describe('startPreviewServer', () => {
   })
 
   it('serves the session identity endpoint', async () => {
-    const response = await fetch(
+    const response = await roleFetch(
       `${origin(context)}${PREVIEW_SESSION_ENDPOINT}`,
     )
     expect(response.status).toBe(200)
@@ -156,7 +183,7 @@ describe('startPreviewServer', () => {
   })
 
   it('never sends CORS headers', async () => {
-    const response = await fetch(`${origin(context)}/api/annotations`, {
+    const response = await roleFetch(`${origin(context)}/api/annotations`, {
       headers: { origin: 'http://attacker.example' },
     })
     expect(response.status).toBe(200)
@@ -178,7 +205,8 @@ describe('startPreviewServer', () => {
       expect(response.status).toBe(403)
       expect(await response.json()).toEqual({ error: 'forbidden_origin' })
       expect(
-        (await fetch(`${origin(context)}${PREVIEW_SESSION_ENDPOINT}`)).status,
+        (await roleFetch(`${origin(context)}${PREVIEW_SESSION_ENDPOINT}`))
+          .status,
       ).toBe(200)
       const annotation = await post(
         context,
@@ -237,9 +265,9 @@ describe('startPreviewServer', () => {
       },
     })
     const list = await (
-      await fetch(`${origin(context)}/api/annotations`)
+      await roleFetch(`${origin(context)}/api/annotations`)
     ).text()
-    const shell = await (await fetch(`${origin(context)}/`)).text()
+    const shell = await (await roleFetch(`${origin(context)}/`)).text()
     expect(list).not.toContain('secret-provider-target')
     expect(shell).not.toContain('secret-provider-target')
   })
@@ -276,18 +304,22 @@ describe('startPreviewServer', () => {
   })
 
   it('closes the existing share popup and opens a fresh one on every click', async () => {
-    const shell = await (await fetch(`${origin(context)}/`)).text()
+    const shell = await (await roleFetch(`${origin(context)}/`)).text()
     const handler = shell.match(
-      /document\.getElementById\('shareBtn'\)\.addEventListener\('click', \(\) => \{([\s\S]*?)\n  \}\);/,
+      /document\.getElementById\('shareBtn'\)\.addEventListener\('click', async \(\) => \{([\s\S]*?)\n  \}\);/,
     )
     expect(handler).not.toBeNull()
     const popups: { closed: boolean; close: () => void }[] = []
     const scope = {
       sharePopup: null,
+      popupOpening: false,
+      sessionStorage: { removeItem() {}, setItem() {} },
+      popupGrant: null,
+      api: async () => ({ capability: 'test', instance: 'test' }),
       CONFIG: { shareOrigin: 'http://127.0.0.1:12345' },
       window: {
         open: (url: string, target: string, features: string) => {
-          expect(url).toBe('http://127.0.0.1:12345/')
+          expect(url).toBe('about:blank')
           expect(target).toBe('_blank')
           expect(features).toBe('width=440,height=560')
           expect(popups.every((popup) => popup.closed)).toBe(true)
@@ -303,28 +335,50 @@ describe('startPreviewServer', () => {
         },
       },
     }
-    const click = () => runInNewContext(`(() => {${handler![1]}})()`, scope)
-    click()
+    const click = () =>
+      runInNewContext(`(async () => {${handler![1]}})()`, scope)
+    await click()
     expect(popups).toHaveLength(1)
     expect(scope.sharePopup).toBe(popups[0])
-    click()
+    await click()
     expect(popups[0]!.closed).toBe(true)
     expect(popups).toHaveLength(2)
     expect(scope.sharePopup).toBe(popups[1])
     popups[1]!.closed = true
-    click()
+    await click()
     expect(popups).toHaveLength(3)
     expect(scope.sharePopup).toBe(popups[2])
   })
 
   it('serves the shell page and the artifact with the reporter injected', async () => {
-    const shell = await (await fetch(`${origin(context)}/`)).text()
+    const shell = await (await roleFetch(`${origin(context)}/`)).text()
     expect(shell).toContain('artifactFrame')
     expect(shell).toContain('/artifact')
     expect(shell).toContain('sandbox="allow-scripts"')
     expect(shell).not.toContain('allow-same-origin')
     expect(shell).toContain('preview.isolationNotice')
-    const artifactResponse = await fetch(`${origin(context)}/artifact`)
+    expect(shell).not.toContain(context.server.auth.control)
+    for (const path of ['/__preview/launch', '/']) {
+      const launched = await fetch(`${origin(context)}${path}`, {
+        method: 'POST',
+        body: new URLSearchParams({ capability: context.server.auth.shell }),
+      })
+      expect(launched.status).toBe(200)
+      expect(await launched.text()).toContain('artifactFrame')
+      for (const capability of [
+        '',
+        context.server.auth.control,
+        context.server.auth.document,
+      ]) {
+        const denied = await fetch(`${origin(context)}${path}`, {
+          method: 'POST',
+          body: new URLSearchParams({ capability }),
+        })
+        expect(denied.status).toBe(403)
+        expect(await denied.json()).toEqual({ error: 'forbidden' })
+      }
+    }
+    const artifactResponse = await roleFetch(`${origin(context)}/artifact`)
     expect(artifactResponse.headers.get('content-security-policy')).toBe(
       'sandbox allow-scripts',
     )
@@ -379,7 +433,7 @@ describe('startPreviewServer', () => {
     expect(doneBody.agent.state).toBe('completed')
 
     const list = await (
-      await fetch(`${origin(context)}/api/annotations`)
+      await roleFetch(`${origin(context)}/api/annotations`)
     ).json()
     expect(list.annotations).toHaveLength(1)
     expect(list.annotations[0].status).toBe('resolved')
@@ -425,7 +479,7 @@ describe('startPreviewServer', () => {
     await post(context, '/api/annotations/submit', {})
     await post(context, '/api/agent/next', { wait: 0 })
 
-    const events = await fetch(`${origin(context)}/events`)
+    const events = await roleFetch(`${origin(context)}/events`)
     const reader = events.body!.getReader()
     const seen: string[] = []
     const pump = (async () => {
@@ -560,7 +614,7 @@ describe('startPreviewServer', () => {
       comment: 'one',
     })
     const { annotation } = await create.json()
-    const del = await fetch(
+    const del = await roleFetch(
       `${origin(context)}/api/annotations/${annotation.thread}`,
       { method: 'DELETE', headers: MUTATION_HEADERS },
     )
@@ -619,8 +673,10 @@ describe('startPreviewServer', () => {
   })
 
   it('serves the share dialog on the share origin', async () => {
+    const grant = await (await post(context, '/api/popup', {})).json()
     const response = await fetch(
       `http://127.0.0.1:${context.server.sharePort}/`,
+      { headers: { authorization: `Bearer ${grant.capability}` } },
     )
     expect(response.status).toBe(200)
     const page = await response.text()
@@ -638,7 +694,7 @@ describe('markdown rendering', () => {
       content: '# Title\n\nSome **body** text.\n',
     })
     try {
-      const response = await fetch(`${origin(context)}/artifact`)
+      const response = await roleFetch(`${origin(context)}/artifact`)
       expect(response.status).toBe(200)
       expect(response.headers.get('content-type')).toContain('text/html')
       const html = await response.text()
@@ -671,7 +727,7 @@ describe('stripMetaCsp', () => {
         '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head><body>ok</body></html>',
     })
     try {
-      const html = await (await fetch(`${origin(context)}/artifact`)).text()
+      const html = await (await roleFetch(`${origin(context)}/artifact`)).text()
       expect(html.toLowerCase()).not.toContain(
         'content-security-policy" content',
       )
@@ -682,4 +738,159 @@ describe('stripMetaCsp', () => {
       rmSync(context.dir, { recursive: true, force: true })
     }
   })
+})
+
+it('rejects missing, fixed-only, cross-session and wrong-role authority before every protected route', async () => {
+  const first = await startContext()
+  const other = await startContext()
+  const routes: [string, string][] = [
+    ['GET', '/'],
+    ['GET', '/artifact'],
+    ['GET', PREVIEW_SESSION_ENDPOINT],
+    ['GET', '/api/agent/state'],
+    ['GET', '/events'],
+    ['GET', '/api/annotations'],
+    ['POST', '/api/annotations'],
+    ['DELETE', '/api/annotations/unknown'],
+    ['POST', '/api/annotations/discard-drafts'],
+    ['POST', '/api/annotations/submit'],
+    ['POST', '/api/annotations/unknown/reopen'],
+    ['POST', '/api/annotations/anchor-state'],
+    ['POST', '/api/annotations/orphan-discard'],
+    ['POST', '/api/agent/next'],
+    ['POST', '/api/agent/done'],
+    ['POST', '/api/agent/reply'],
+    ['POST', '/api/agent/stop'],
+    ['POST', '/api/popup'],
+    ['POST', '/api/popup/revoke'],
+    ['POST', '/api/popup/finish'],
+    ['POST', '/__preview/launch'],
+    ['POST', '/'],
+  ]
+  try {
+    for (const [method, path] of routes) {
+      const wrong =
+        path === '/artifact'
+          ? first.server.auth.control
+          : first.server.auth.document
+      for (const headers of [
+        {},
+        MUTATION_HEADERS,
+        {
+          ...MUTATION_HEADERS,
+          authorization: `Bearer ${other.server.auth.shell}`,
+        },
+        { ...MUTATION_HEADERS, authorization: `Bearer ${wrong}` },
+      ]) {
+        const response = await fetch(`${origin(first)}${path}`, {
+          method,
+          headers,
+          ...(method === 'GET'
+            ? {}
+            : {
+                body:
+                  path === '/' || path === '/__preview/launch'
+                    ? new URLSearchParams({
+                        capability:
+                          new Headers(headers)
+                            .get('authorization')
+                            ?.slice('Bearer '.length) ?? '',
+                      })
+                    : '{}',
+              }),
+        })
+        if (method === 'GET' && path === '/' && !('authorization' in headers)) {
+          expect(await response.text()).not.toContain(first.server.auth.shell)
+        } else {
+          expect(response.status, `${method} ${path}`).toBe(403)
+          expect(await response.json()).toEqual({ error: 'forbidden' })
+        }
+      }
+    }
+    expect(first.store.all()).toEqual([])
+    first.store.createDraft({ kind: 'artifact' }, 'private draft projection')
+    const projection = await roleFetch(`${origin(first)}/api/agent/state`)
+    expect(projection.status).toBe(200)
+    expect(await projection.text()).not.toContain('private draft projection')
+    expect((await post(first, '/api/agent/next', { wait: 0 })).status).toBe(200)
+    const grant = await (await post(first, '/api/popup', {})).json()
+    const shareRoutes: [string, string][] = [
+      ['GET', '/'],
+      ['GET', '/api/context'],
+      ['GET', '/api/auth-status'],
+      ['POST', '/api/snapshot'],
+      ['POST', '/api/snapshot/discard'],
+      ['POST', '/api/share'],
+      ['POST', '/api/close'],
+    ]
+    for (const [method, path] of shareRoutes) {
+      for (const credential of [
+        null,
+        'fixed',
+        other.server.auth.shell,
+        first.server.auth.control,
+        first.server.auth.shell,
+        first.server.auth.document,
+      ]) {
+        const response = await fetch(
+          `http://127.0.0.1:${first.server.sharePort}${path}`,
+          {
+            method,
+            headers: {
+              ...MUTATION_HEADERS,
+              ...(credential ? { authorization: `Bearer ${credential}` } : {}),
+            },
+            ...(method === 'GET' ? {} : { body: '{}' }),
+          },
+        )
+        if (method === 'GET' && path === '/' && credential === null) {
+          const html = await response.text()
+          expect(html).not.toContain(first.filePath)
+          expect(html).not.toContain(grant.capability)
+        } else expect(response.status, `${method} ${path}`).toBe(403)
+      }
+    }
+    const snapshot = await fetch(
+      `http://127.0.0.1:${first.server.sharePort}/api/snapshot`,
+      {
+        method: 'POST',
+        headers: {
+          ...MUTATION_HEADERS,
+          authorization: `Bearer ${grant.capability}`,
+        },
+        body: '{}',
+      },
+    )
+    expect(snapshot.status).toBe(200)
+    const id = (await snapshot.json()).snapshot_id
+    const nextGrant = await (await post(first, '/api/popup', {})).json()
+    expect(
+      (await post(first, '/api/popup/finish', { instance: grant.instance }))
+        .status,
+    ).toBe(403)
+    expect(
+      (
+        await fetch(`http://127.0.0.1:${first.server.sharePort}/api/context`, {
+          headers: { authorization: `Bearer ${grant.capability}` },
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await fetch(`http://127.0.0.1:${first.server.sharePort}/api/share`, {
+          method: 'POST',
+          headers: {
+            ...MUTATION_HEADERS,
+            authorization: `Bearer ${nextGrant.capability}`,
+          },
+          body: JSON.stringify({ snapshot_id: id }),
+        })
+      ).status,
+    ).toBe(404)
+  } finally {
+    await first.server.close()
+    await other.server.close()
+    rmSync(first.dir, { recursive: true, force: true })
+    rmSync(other.dir, { recursive: true, force: true })
+  }
 })

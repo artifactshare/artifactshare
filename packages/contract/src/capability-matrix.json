@@ -36,6 +36,16 @@
   ],
   "contracts": [
     {
+      "id": "preview-session-authentication",
+      "identifier": "authorizePreview",
+      "implementation_path": "packages/cli/src/preview/auth.ts"
+    },
+    {
+      "id": "preview-private-launcher",
+      "identifier": "launcher_url",
+      "implementation_path": "packages/cli/src/command-runners/preview.ts"
+    },
+    {
       "id": "workspace-visibility-capability",
       "identifier": "CliWorkspaceSchema",
       "implementation_path": "packages/contract/src/index.ts"
@@ -1603,7 +1613,10 @@
         "cli_json": ["cli_help"],
         "cli_auth": ["cli_help"]
       },
-      "contracts": [],
+      "contracts": [
+        "preview-session-authentication",
+        "preview-private-launcher"
+      ],
       "cli_options": {
         "preview start": [
           "--help",

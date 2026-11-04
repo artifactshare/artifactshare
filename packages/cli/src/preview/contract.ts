@@ -158,6 +158,9 @@ export const PREVIEW_MUTATION_HEADER_VALUE = '1'
 /** Identification endpoint used for stale-session detection and reuse. */
 export const PREVIEW_SESSION_ENDPOINT = '/__preview/session'
 
+/** Control-only projection, without browser draft annotation contents. */
+export const PREVIEW_AGENT_STATE_ENDPOINT = '/api/agent/state'
+
 export interface PreviewSessionIdentity {
   service: 'artifactshare-preview'
   session_id: string

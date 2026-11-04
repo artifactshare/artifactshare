@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { bearer, sameCapability } from './auth.js'
 // Share dialog HTTP handler for the local preview server. Serves the dialog
 // page on a dedicated origin and drives snapshot capture, upload, and the
 // device-authorization flow when no credential is available yet.
@@ -48,6 +50,8 @@ import {
 import { PREVIEW_MESSAGES } from './messages.generated.js'
 
 export interface ShareDialogHandlerOptions {
+  revokeGrant: (instance: string) => void
+  getGrant: () => { capability: string; instance: string } | null
   filePath: string
   fileName: string
   /** Origin of the artifact preview server, used as the postMessage target. */
@@ -59,6 +63,7 @@ export interface ShareDialogHandlerOptions {
 }
 
 type Snapshot = {
+  owner: string
   id: string
   bytes: Buffer
   hash: string
@@ -66,6 +71,7 @@ type Snapshot = {
 }
 
 type PendingAuth = {
+  owner: string
   id: string
   deviceCode: string
   /** Seconds the authorization server asked us to wait between exchanges. */
@@ -78,9 +84,21 @@ type PendingAuth = {
 
 const MAX_BODY_BYTES = 1024 * 1024
 
-export function createShareDialogHandler(
-  options: ShareDialogHandlerOptions,
-): (request: IncomingMessage, response: ServerResponse) => void {
+export function createShareDialogHandler(options: ShareDialogHandlerOptions): ((
+  request: IncomingMessage,
+  response: ServerResponse,
+) => void) & {
+  revoke(): void
+} {
+  const requestGrant = new AsyncLocalStorage<{
+    capability: string
+    instance: string
+  }>()
+  function activeGrant() {
+    const grant = requestGrant.getStore()
+    if (!grant || options.getGrant() !== grant) throw new Error('Revoked popup')
+    return grant
+  }
   const snapshots = new Map<string, Snapshot>()
   const pendingAuths = new Map<string, PendingAuth>()
   // Session token obtained through the dialog's device flow. Held in memory
@@ -98,15 +116,57 @@ export function createShareDialogHandler(
       return sendJson(response, 403, { error: 'forbidden_host' })
     }
     const url = new URL(request.url ?? '/', 'http://localhost')
+    response.setHeader('Referrer-Policy', 'no-referrer')
     const route = `${request.method ?? 'GET'} ${url.pathname}`
 
-    if (route === 'GET /') {
-      const html = renderPage(options)
+    if (route === 'GET /' && !request.headers.authorization) {
       response.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
       })
-      response.end(html)
+      response.end(`<!doctype html><meta name="referrer" content="no-referrer"><p>Open sharing from the preview.</p><script>
+      (() => {
+        const origin = ${JSON.stringify(options.artifactOrigin)};
+        const instance = location.hash.slice(1);
+        history.replaceState(null, '', '/');
+        let accepted = false;
+        addEventListener('message', async event => {
+          const data = event.data || {};
+          if (accepted || event.source !== opener || event.origin !== origin || data.source !== 'artifactshare-preview-shell' || data.kind !== 'grant' || data.instance !== instance) return;
+          accepted = true;
+          const response = await fetch('/', { headers: { authorization: 'Bearer ' + data.capability }, cache: 'no-store' });
+          if (!response.ok) return;
+          document.open(); document.write(await response.text()); document.close();
+        });
+        if (opener && instance) opener.postMessage({ source: 'artifactshare-preview-share', kind: 'ready', instance }, origin);
+      })();</script>`)
+      return
+    }
+    const grant = options.getGrant()
+    if (
+      !grant ||
+      !sameCapability(
+        bearer(request.headers.authorization),
+        grant.capability,
+      ) ||
+      ![
+        'GET /',
+        'GET /api/context',
+        'GET /api/auth-status',
+        'POST /api/snapshot',
+        'POST /api/snapshot/discard',
+        'POST /api/share',
+        'POST /api/close',
+      ].includes(route)
+    ) {
+      return sendJson(response, 403, { error: 'forbidden' })
+    }
+    if (route === 'GET /') {
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      response.end(renderPage(options, grant))
       return
     }
 
@@ -141,8 +201,15 @@ export function createShareDialogHandler(
       } catch {
         return sendJson(response, 400, { error: 'invalid_json' })
       }
+      activeGrant()
       const payload = isRecord(parsed) ? parsed : {}
 
+      if (url.pathname === '/api/close') {
+        options.revokeGrant(activeGrant().instance)
+        snapshots.clear()
+        pendingAuths.clear()
+        return sendJson(response, 200, { closed: true })
+      }
       if (url.pathname === '/api/snapshot') {
         const snapshot = takeSnapshot()
         return sendJson(response, 200, {
@@ -172,6 +239,7 @@ export function createShareDialogHandler(
     snapshots.clear()
     const bytes = options.readFileBytes()
     const snapshot: Snapshot = {
+      owner: activeGrant().instance,
       id: randomUUID(),
       bytes,
       hash: createHash('sha256').update(bytes).digest('hex'),
@@ -393,7 +461,7 @@ export function createShareDialogHandler(
     const snapshotId =
       typeof payload.snapshot_id === 'string' ? payload.snapshot_id : ''
     const snapshot = snapshots.get(snapshotId)
-    if (!snapshot) {
+    if (!snapshot || snapshot.owner !== activeGrant().instance) {
       return sendJson(response, 404, { error: 'unknown_snapshot' })
     }
     const cliOptions = options.cliOptions
@@ -460,6 +528,7 @@ export function createShareDialogHandler(
 
     const baseUrl = baseUrlOf(cliOptions)
     const uploadUrl = apiUrl('/api/shareables/uploads', baseUrl)
+    activeGrant()
     const result = await postShareUpload(
       {
         uploadUrl,
@@ -478,6 +547,7 @@ export function createShareDialogHandler(
         if (blocked) return sendCliError(response, blocked)
         return await startDeviceAuth(cliOptions, request.init, response)
       }
+      activeGrant()
       const retry = await postShareUpload(
         {
           uploadUrl,
@@ -528,11 +598,13 @@ export function createShareDialogHandler(
     init: FetchInit,
     response: ServerResponse,
   ): Promise<void> {
+    activeGrant()
     const code = await requestDeviceCode(cliOptions, init)
     if ('error' in code) {
       return sendCliError(response, code.error)
     }
     const pending: PendingAuth = {
+      owner: activeGrant().instance,
       id: randomUUID(),
       deviceCode: code.device_code,
       intervalSeconds: Math.max(1, code.interval || 5),
@@ -558,7 +630,7 @@ export function createShareDialogHandler(
   ): Promise<void> {
     const authId = url.searchParams.get('auth_id') ?? ''
     const pending = pendingAuths.get(authId)
-    if (!pending) {
+    if (!pending || pending.owner !== activeGrant().instance) {
       return sendJson(response, 404, { status: 'failed' })
     }
     if (Date.now() > pending.expiresAt) {
@@ -571,6 +643,7 @@ export function createShareDialogHandler(
       pendingAuths.delete(authId)
       return sendJson(response, 200, { status: 'failed' })
     }
+    activeGrant()
     const exchange = await exchangeDeviceTokenOnce(
       cliOptions,
       pending.deviceCode,
@@ -619,6 +692,7 @@ export function createShareDialogHandler(
       }
       // Persisting is best effort from here: the account is already confirmed,
       // and a machine without a token store can still complete this share.
+      activeGrant()
       await verifyAndStoreProfileToken(
         profile,
         exchange.token.access_token,
@@ -626,6 +700,7 @@ export function createShareDialogHandler(
         request.init,
         sessionExpiresAt,
       ).catch(() => null)
+      activeGrant()
       memoryToken = exchange.token.access_token
       tokenProvenance = {
         credentialSource: 'profile',
@@ -652,15 +727,26 @@ export function createShareDialogHandler(
     sendJson(response, 200, { status: 'failed' })
   }
 
-  return (request, response) => {
-    void handle(request, response).catch(() => {
-      if (!response.headersSent) {
-        sendJson(response, 500, { error: 'internal_error' })
-      } else {
-        response.end()
-      }
-    })
+  const handler = (request: IncomingMessage, response: ServerResponse) => {
+    const grant = options.getGrant()
+    void requestGrant
+      .run(grant ?? { capability: '', instance: '' }, () =>
+        handle(request, response),
+      )
+      .catch(() => {
+        if (!response.headersSent) {
+          sendJson(response, 500, { error: 'internal_error' })
+        } else {
+          response.end()
+        }
+      })
   }
+  return Object.assign(handler, {
+    revoke() {
+      snapshots.clear()
+      pendingAuths.clear()
+    },
+  })
 }
 
 function hostAllowed(request: IncomingMessage): boolean {
@@ -764,12 +850,16 @@ function escapeHtml(value: string): string {
     .replaceAll('"', '&quot;')
 }
 
-function renderPage(options: ShareDialogHandlerOptions): string {
+function renderPage(
+  options: ShareDialogHandlerOptions,
+  grant: { capability: string; instance: string },
+): string {
   const messages = {
     en: pickShareMessages('en'),
     ja: pickShareMessages('ja'),
   }
   const bootstrap = embedJson({
+    ...grant,
     messages,
     artifactOrigin: options.artifactOrigin,
     fileName: options.fileName,
@@ -911,6 +1001,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('finishBtn').textContent = t('finish');
 
   var headers = { 'content-type': 'application/json' };
+  headers.authorization = 'Bearer ' + bootstrap.capability;
   headers[bootstrap.mutationHeader] = bootstrap.mutationHeaderValue;
   function post(path, body) {
     return fetch(path, {
@@ -929,6 +1020,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   var context = { authenticated: false, projects: null, default_visibility: null };
   var pollTimer = null;
   var shareInFlight = false;
+  var finishing = false;
 
   function reportSnapshotFailure() {
     // Without a snapshot there is nothing to upload, and a Share button that
@@ -953,7 +1045,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     .catch(reportSnapshotFailure);
 
   function loadContext() {
-    return fetch('/api/context')
+    return fetch('/api/context', { headers: headers })
       .then(function (response) { return response.json(); })
       .then(function (body) {
         context = body;
@@ -1102,7 +1194,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // slow_down responses that never converge.
     var intervalMs = Math.max(1, auth.interval_seconds || 5) * 1000;
     var poll = function () {
-      fetch('/api/auth-status?auth_id=' + encodeURIComponent(auth.auth_id))
+      fetch('/api/auth-status?auth_id=' + encodeURIComponent(auth.auth_id), { headers: headers })
         .then(function (response) { return response.json(); })
         .then(function (body) {
           if (body.status === 'authenticated') {
@@ -1172,19 +1264,24 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   });
 
   el('finishBtn').addEventListener('click', function () {
+    finishing = true;
     if (window.opener) {
       window.opener.postMessage(
-        { source: 'artifactshare-preview-share', kind: 'share-finished' },
+        { source: 'artifactshare-preview-share', kind: 'share-finished', instance: bootstrap.instance },
         bootstrap.artifactOrigin
       );
     }
     window.close();
   });
+  window.addEventListener('pagehide', function () {
+    if (!finishing) fetch('/api/close', { method: 'POST', headers: headers, body: '{}', keepalive: true }).catch(function () {});
+    if (!finishing && window.opener) window.opener.postMessage({ source: 'artifactshare-preview-share', kind: 'share-closed', instance: bootstrap.instance }, bootstrap.artifactOrigin);
+  });
   el('continueBtn').addEventListener('click', function () {
-    window.close();
+    post('/api/close').then(function () { window.close(); });
   });
   el('cancelBtn').addEventListener('click', function () {
-    var finish = function () { window.close(); };
+    var finish = function () { post('/api/close').then(function () { window.close(); }); };
     if (snapshotId) {
       post('/api/snapshot/discard', { snapshot_id: snapshotId }).then(finish, finish);
     } else {

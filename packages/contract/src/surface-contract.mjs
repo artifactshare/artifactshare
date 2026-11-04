@@ -126,7 +126,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     '`preview <file>` (alias of `preview start`)',
-    'Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded',
+    'Serve a local Markdown or HTML file for browser annotation through a private launcher_url; role-specific session capabilities, no account sign-in or upload until sharing',
   ],
   [
     '`preview next` / `preview done` / `preview reply` / `preview stop`',

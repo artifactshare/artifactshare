@@ -5,11 +5,13 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Authenticate local preview control, shell, document, SSE and per-popup share operations with independent session capabilities. Ready output adds a private `launcher_url`, including on reuse and with `--no-open`; session and launcher files are published atomically with mode 0600. Older sessions require restart.
+
 - Add `artifacts versions <target> --json` with cursor pagination for files and static sites. Get/list now report `retain_versions`, `version_count`, and `total_size_bytes`. Static-site get opts into metadata without source; released source-only clients keep their existing unsupported-kind response and open download guidance. Publisher history restrictions and retention behavior are unchanged.
 
 - Reject keyed resends with a different effective explicit visibility before creating a version, with an edit command for recovery. Home treats project as private, matching creation.
 - Include current visibility and display title in artifacts get JSON output.
-- Update the bundled skill to version 55 with visibility, readback, retained-version pagination and logical storage guidance.
+- Update the bundled skill to version 59 with authenticated preview launchers, visibility, readback, retained-version pagination and logical storage guidance.
 
 ## 0.22.0 - 2026-10-30
 

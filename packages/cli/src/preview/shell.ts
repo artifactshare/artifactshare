@@ -8,6 +8,8 @@ import { validPreviewObservation } from './reporter-protocol.js'
 import type { PREVIEW_MESSAGES } from './messages.generated.js'
 
 export interface PreviewShellOptions {
+  shellCapability: string
+  documentCapability: string
   fileName: string
   /** The command that restarts this exact preview, shown when it ends. */
   resumeCommand: string
@@ -32,6 +34,8 @@ function scriptJson(value: unknown): string {
 export function renderPreviewShell(options: PreviewShellOptions): string {
   const { fileName, resumeCommand, shareOrigin, messages } = options
   const config = scriptJson({
+    shellCapability: options.shellCapability,
+    documentCapability: options.documentCapability,
     fileName,
     resumeCommand,
     shareOrigin,
@@ -215,7 +219,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 </header>
 <div class="layout">
   <div class="doc-wrap">
-    <iframe id="artifactFrame" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/artifact" title="${escapeHtml(fileName)}"></iframe>
+    <iframe id="artifactFrame" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/artifact?capability=${escapeHtml(options.documentCapability ?? '')}" title="${escapeHtml(fileName)}"></iframe>
   </div>
   <aside class="panel">
     <p data-msg="preview.isolationNotice" style="font-size:12px;color:var(--muted-foreground);margin:0"></p>
@@ -366,6 +370,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let sendSequence = 0;
   let receiveSequence = 0;
   let sharePopup = null;
+  let popupGrant = null;
+  let popupOpening = false;
+  sessionStorage.setItem('preview-shell', CONFIG.shellCapability);
+  history.replaceState(null, '', '/');
+  function shellFetch(path, init = {}) {
+    return fetch(path, { ...init, headers: { ...init.headers, authorization: 'Bearer ' + CONFIG.shellCapability } });
+  }
   function postToFrame(message) {
     try {
       frame.contentWindow.postMessage(
@@ -412,13 +423,18 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const data = event.data || {};
     if (data.source === 'artifactshare-preview-share') {
       if (!sharePopup || event.source !== sharePopup || event.origin !== CONFIG.shareOrigin) return;
-      // "Preview ended" has to be true for the agent too: without the stop,
+      if (data.kind === 'ready' && popupGrant && data.instance === popupGrant.instance) {
+        sharePopup.postMessage({ source: 'artifactshare-preview-shell', kind: 'grant', ...popupGrant }, CONFIG.shareOrigin);
+        return;
+      }
+      if (!popupGrant || data.instance !== popupGrant.instance) return;
+      // "Preview ended has to be true for the agent too: without the stop,
       // the process keeps serving and pending next polls never receive
       // session_ended.
       if (data.kind === 'share-finished') {
-        showEnded();
-        api('POST', '/api/agent/stop');
+        api('POST', '/api/popup/finish', { instance: popupGrant.instance }).then(result => { if (result && result.stopped) showEnded(); });
       }
+      if (data.kind === 'share-closed') api('POST', '/api/popup/revoke', { instance: popupGrant.instance });
       return;
     }
     // Only the artifact frame may drive the annotation UI. Without the source
@@ -498,7 +514,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const headers = { 'content-type': 'application/json' };
     headers[MUTATION_HEADER] = '1';
     try {
-      const response = await fetch(path, {
+      const response = await shellFetch(path, {
         method,
         headers,
         body: bodyValue === undefined ? '{}' : JSON.stringify(bodyValue),
@@ -651,7 +667,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       frame.removeEventListener('load', restore);
     };
     frame.addEventListener('load', restore);
-    frame.src = '/artifact?rev=' + encodeURIComponent(nextRevision || '');
+    frame.src = '/artifact?capability=' + encodeURIComponent(CONFIG.documentCapability) + '&rev=' + encodeURIComponent(nextRevision || '');
   }
 
   function checkOrphans() {
@@ -745,7 +761,41 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
 
   // --- SSE ----------------------------------------------------------------
-  const events = new EventSource('/events');
+  const events = new EventTarget();
+  const streamAbort = new AbortController();
+  events.close = () => streamAbort.abort();
+  window.addEventListener('pagehide', () => events.close());
+  async function streamEvents() {
+    while (!streamAbort.signal.aborted) {
+      try {
+        const response = await shellFetch('/events', { signal: streamAbort.signal, cache: 'no-store' });
+        if (!response.ok || !response.body) { showEnded(); return; }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!streamAbort.signal.aborted) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+          let boundary;
+          while ((boundary = buffer.indexOf('\\n\\n')) >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            let name = 'message';
+            const data = [];
+            for (const line of frame.split('\\n')) {
+              if (line.startsWith('event:')) name = line.slice(6).trim();
+              if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+            }
+            if (data.length) events.dispatchEvent(new MessageEvent(name, { data: data.join('\\n') }));
+          }
+        }
+      } catch (error) { if (streamAbort.signal.aborted) return; }
+      if (events.onerror) events.onerror();
+      if (!streamAbort.signal.aborted) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  queueMicrotask(streamEvents);
   events.addEventListener('annotations', (event) => {
     try {
       const data = JSON.parse(event.data);
@@ -780,7 +830,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   events.addEventListener('session-ended', () => { showEnded(); });
   events.onerror = () => {
     if (ended) return;
-    fetch('/__preview/session', { cache: 'no-store' })
+    shellFetch('/__preview/session', { cache: 'no-store' })
       .then((response) => { if (!response.ok) showEnded(); })
       .catch(() => showEnded());
   };
@@ -788,22 +838,39 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (ended) return;
     ended = true;
     previewCapability = '';
+    sessionStorage.removeItem('preview-shell');
     if (readyBurstTimer) clearInterval(readyBurstTimer);
     events.close();
     document.getElementById('endedScreen').classList.add('show');
   }
 
   // --- share --------------------------------------------------------------
-  document.getElementById('shareBtn').addEventListener('click', () => {
-    if (sharePopup && !sharePopup.closed) {
-      sharePopup.close();
-    }
-    sharePopup = window.open(CONFIG.shareOrigin + '/', '_blank', 'width=440,height=560');
+  document.getElementById('shareBtn').addEventListener('click', async () => {
+    if (popupOpening) return;
+    popupOpening = true;
+    if (sharePopup && !sharePopup.closed) sharePopup.close();
+    popupGrant = null;
+    // A new window copies its opener's sessionStorage. Never copy shell
+    // authority into a popup, even while it is still about:blank.
+    sessionStorage.removeItem('preview-shell');
+    try { sharePopup = window.open('about:blank', '_blank', 'width=440,height=560'); }
+    finally { sessionStorage.setItem('preview-shell', CONFIG.shellCapability); }
+    const opened = sharePopup;
+    try {
+      const grant = await api('POST', '/api/popup');
+      if (!grant || !grant.capability) return;
+      if (!opened || opened.closed) {
+        await api('POST', '/api/popup/revoke', { instance: grant.instance });
+        return;
+      }
+      popupGrant = grant;
+      opened.location = CONFIG.shareOrigin + '/#' + grant.instance;
+    } finally { popupOpening = false; }
   });
 
   // --- boot ---------------------------------------------------------------
   frame.addEventListener('load', () => { startReadyBurst(); });
-  fetch('/api/annotations', { cache: 'no-store' })
+  shellFetch('/api/annotations', { cache: 'no-store' })
     .then((response) => response.json())
     .then((data) => {
       annotations = (data && data.annotations) || [];

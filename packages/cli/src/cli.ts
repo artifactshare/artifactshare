@@ -1336,7 +1336,7 @@ Common failures:
 const previewStartDefinition = define({
   name: 'start',
   description:
-    'Serve a local .md or .html file with the product viewer look. Invoked as: preview <file>.',
+    'Serve a local .md or .html file through a private authenticated launcher. Invoked as: preview <file>.',
   toKebab: true,
   args: {
     ...commonArgs,
@@ -1355,8 +1355,10 @@ const previewStartDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html
 npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html --no-open
 
-Prints one ready JSON line ({url, session, share_origin, reused, agent}) and
-keeps serving until stopped. Re-running against a live session reuses it.
+Prints one ready JSON line ({url, launcher_url, session, share_origin, reused, agent}) and
+keeps serving until stopped. Open the private file launcher_url, including with
+--no-open. Keep launcher/session files private. url and share_origin grant no access.
+Local role capabilities are separate from account sign-in. Re-running reuses the session.
 
 Common failures:
   validation_failed            Pass a single local .md or .html file

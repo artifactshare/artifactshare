@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
@@ -48,59 +55,147 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     });
   </script>`
   writeFileSync(file, fixtureHtml('Initial document'))
+  const uploads: string[] = []
+  const service = createServer(async (request, response) => {
+    let bytes = ''
+    for await (const chunk of request) bytes += String(chunk)
+    response.setHeader('content-type', 'application/json')
+    const bodies: Record<string, unknown> = {
+      '/api/auth/device/code': {
+        device_code: 'fixture-device',
+        user_code: 'FIXTURE',
+        verification_uri: 'https://example.test/device',
+        expires_in: 600,
+        interval: 1,
+      },
+      '/api/auth/device/token': {
+        access_token: 'fixture-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      },
+      '/api/cli/whoami': {
+        user: {
+          id: 'fixture-user',
+          email: 'reviewer@example.test',
+          name: 'Reviewer',
+        },
+        workspace: { id: 'fixture-workspace', visibility_available: false },
+      },
+      '/api/cli/projects': { projects: [] },
+      '/api/shareables/uploads': {
+        id: 'artifact-1',
+        shareUrl: 'https://share.example/a/artifact-1',
+        versionId: 'version-1',
+        artifactKind: 'html_page',
+      },
+    }
+    if (request.url === '/api/shareables/uploads') uploads.push(bytes)
+    response.statusCode = bodies[request.url ?? ''] ? 200 : 400
+    response.end(
+      JSON.stringify(
+        bodies[request.url ?? ''] ?? { error: 'unsupported_fixture_request' },
+      ),
+    )
+  })
+  service.listen(0, '127.0.0.1')
+  await once(service, 'listening')
+  const address = service.address()
+  assert.ok(address && typeof address !== 'string')
+  const baseUrl = `http://127.0.0.1:${address.port}`
+  const cliEnv = {
+    PATH: process.env.PATH,
+    ARTIFACTSHARE_CONFIG_HOME: join(dir, 'config'),
+    ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+    ARTIFACTSHARE_TEST_BROWSER_OPENER: 'success',
+  } as unknown as NodeJS.ProcessEnv
   const child = spawn(
     process.execPath,
-    [cli, 'preview', file, '--no-open', '--json'],
+    [cli, 'preview', file, '--no-open', '--json', '--base-url', baseUrl],
     {
       cwd: dir,
-      env: {
-        PATH: process.env.PATH,
-        ARTIFACTSHARE_CONFIG_HOME: join(dir, 'config'),
-        ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
-      } as unknown as NodeJS.ProcessEnv,
+      env: cliEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
   const shell = await page.context().newPage()
   try {
-    const ready = await new Promise<{ url: string; share_origin: string }>(
-      (resolveReady, reject) => {
-        let output = ''
-        const timeout = setTimeout(
-          () => reject(new Error('Preview startup timed out')),
-          15000,
-        )
-        child.once('error', (error) => {
+    const ready = await new Promise<{
+      url: string
+      launcher_url: string
+      session: string
+      share_origin: string
+    }>((resolveReady, reject) => {
+      let output = ''
+      const timeout = setTimeout(
+        () => reject(new Error('Preview startup timed out')),
+        15000,
+      )
+      child.once('error', (error) => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+      child.once('exit', () => {
+        clearTimeout(timeout)
+        reject(new Error('Preview exited before ready'))
+      })
+      child.stdout.on('data', (chunk) => {
+        output += String(chunk)
+        try {
+          const result = JSON.parse(output)
           clearTimeout(timeout)
-          reject(error)
-        })
-        child.once('exit', () => {
-          clearTimeout(timeout)
-          reject(new Error('Preview exited before ready'))
-        })
-        child.stdout.on('data', (chunk) => {
-          output += String(chunk)
-          try {
-            const result = JSON.parse(output)
-            clearTimeout(timeout)
-            if (!result.ok) reject(new Error('Preview startup failed'))
-            else resolveReady(result.data)
-          } catch {
-            /* Wait for the complete single-line envelope. */
-          }
-        })
-      },
-    )
+          if (!result.ok) reject(new Error('Preview startup failed'))
+          else resolveReady(result.data)
+        } catch {
+          /* Wait for the complete single-line envelope. */
+        }
+      })
+    })
     // Keep every browser request local; the test never resolves account credentials.
     await shell.route('**/*', (route) => {
       const url = new URL(route.request().url())
-      return url.hostname === '127.0.0.1' ? route.continue() : route.abort()
+      return url.hostname === '127.0.0.1' || url.href === ready.launcher_url
+        ? route.continue()
+        : route.abort()
     })
-    await shell.goto(ready.url)
+    const record = JSON.parse(
+      readFileSync(
+        join(dir, 'config', 'previews', `${ready.session}.json`),
+        'utf8',
+      ),
+    )
+    const controlFetch = (url: string) =>
+      fetch(url, {
+        headers: {
+          authorization: `Bearer ${url.endsWith('/api/annotations') ? record.auth.shell : record.auth.control}`,
+        },
+      })
+    const eventRequests: string[] = []
+    await shell.route(`${ready.url}events`, async (route) => {
+      const request = route.request()
+      assert.equal(
+        request.headers().authorization,
+        `Bearer ${record.auth.shell}`,
+      )
+      eventRequests.push(request.url())
+      if (eventRequests.length === 1)
+        await route.fulfill({
+          contentType: 'text/event-stream',
+          body: ': reconnect\n\n',
+        })
+      else await route.continue()
+    })
+    const reconnected = shell.waitForRequest(
+      (request) =>
+        request.url() === `${ready.url}events` && eventRequests.length >= 1,
+    )
+    await shell.goto(ready.launcher_url)
+    await shell.locator('#artifactFrame').waitFor()
     assert.equal(
       await shell.locator('#artifactFrame').getAttribute('sandbox'),
       'allow-scripts',
     )
+    await reconnected
+    assert.ok(eventRequests.every((url) => url === `${ready.url}events`))
     await shell.getByText(/localStorage, IndexedDB/).waitFor()
     const frameElement = await shell.locator('#artifactFrame').elementHandle()
     const frame = await frameElement!.contentFrame()
@@ -155,7 +250,10 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     }
     // A rejected browser response alone does not prove the POST had no effect.
     // Check server liveness before interacting with the reporter.
-    assert.equal((await fetch(`${ready.url}__preview/session`)).status, 200)
+    assert.equal(
+      (await controlFetch(`${ready.url}__preview/session`)).status,
+      200,
+    )
     assert.equal(await shell.locator('#endedScreen.show').count(), 0)
     await frame.waitForFunction(() =>
       Boolean(
@@ -240,7 +338,7 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     assert.equal(await shell.locator('#popTarget b').count(), 0)
     assert.equal(
       (
-        (await (await fetch(`${ready.url}api/annotations`)).json()) as {
+        (await (await controlFetch(`${ready.url}api/annotations`)).json()) as {
           annotations: unknown[]
         }
       ).annotations.length,
@@ -305,7 +403,7 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     assert.equal(await shell.locator('#popover.show').count(), 0)
     assert.equal(
       (
-        (await (await fetch(`${ready.url}api/annotations`)).json()) as {
+        (await (await controlFetch(`${ready.url}api/annotations`)).json()) as {
           annotations: unknown[]
         }
       ).annotations.length,
@@ -314,6 +412,143 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
     await shell.reload()
     await shell.locator('.thread').waitFor()
     await shell.getByText(/localStorage, IndexedDB/).waitFor()
+    // Both automatic-open and no-open reuse preserve the private launcher.
+    for (const flags of [[], ['--no-open']]) {
+      const reused = JSON.parse(
+        execFileSync(
+          process.execPath,
+          [cli, 'preview', file, '--json', '--base-url', baseUrl, ...flags],
+          { cwd: dir, env: cliEnv, encoding: 'utf8' },
+        ),
+      ).data
+      assert.equal(reused.reused, true)
+      assert.equal(reused.launcher_url, ready.launcher_url)
+      await shell.goto(reused.launcher_url)
+      await shell.locator('.thread').waitFor()
+    }
+    const firstGrantResponse = shell.waitForResponse(`${ready.url}api/popup`)
+    const firstPopupPromise = shell.waitForEvent('popup')
+    const firstSnapshotResponse = page.context().waitForEvent('response', {
+      predicate: (response) =>
+        response.url() === `${ready.share_origin}/api/snapshot`,
+    })
+    await shell.locator('#shareBtn').click()
+    const firstPopup = await firstPopupPromise
+    const firstGrant = await (await firstGrantResponse).json()
+    const firstSnapshot = await (await firstSnapshotResponse).json()
+    await firstPopup.locator('#dialog').waitFor()
+
+    // Another same-origin window cannot complete the retained popup's handshake.
+    const unrelatedPromise = shell.waitForEvent('popup')
+    await shell.evaluate((url) => {
+      // Keep opener so this attacker window can send the forged finish message below.
+      // react-doctor-disable-next-line react-doctor/window-open-without-noopener
+      window.open(url, '_blank')
+    }, `${ready.share_origin}/#${firstGrant.instance}`)
+    const unrelated = await unrelatedPromise
+    await unrelated.locator('p').waitFor()
+    await unrelated.evaluate(
+      ({ origin, instance }) => {
+        window.opener.postMessage(
+          {
+            source: 'artifactshare-preview-share',
+            kind: 'share-finished',
+            instance,
+          },
+          origin,
+        )
+      },
+      { origin: new URL(ready.url).origin, instance: firstGrant.instance },
+    )
+    assert.equal(await unrelated.locator('#dialog').count(), 0)
+    assert.equal(
+      (await controlFetch(`${ready.url}__preview/session`)).status,
+      200,
+    )
+    await unrelated.close()
+    // Opening a share popup must not clone the shell credential into its storage.
+    await firstPopup.goto(ready.url)
+    await firstPopup
+      .getByText('Preview unavailable. Reopen the private launcher.')
+      .waitFor()
+    assert.equal(await firstPopup.locator('#artifactFrame').count(), 0)
+
+    const replacementGrantResponse = shell.waitForResponse(
+      `${ready.url}api/popup`,
+    )
+    const replacementPromise = shell.waitForEvent('popup')
+    await shell.locator('#shareBtn').click()
+    const replacement = await replacementPromise
+    const replacementGrant = await (await replacementGrantResponse).json()
+    await replacement.locator('#dialog').waitFor()
+    assert.equal(firstPopup.isClosed(), true)
+    assert.equal(
+      (
+        await fetch(`${ready.share_origin}/api/context`, {
+          headers: { authorization: `Bearer ${firstGrant.capability}` },
+        })
+      ).status,
+      403,
+    )
+    assert.equal(
+      (
+        await fetch(`${ready.share_origin}/api/share`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${replacementGrant.capability}`,
+            'content-type': 'application/json',
+            'x-artifactshare-preview': '1',
+          },
+          body: JSON.stringify({ snapshot_id: firstSnapshot.snapshot_id }),
+        })
+      ).status,
+      404,
+    )
+
+    const originalOpen = await shell.evaluateHandle(() => window.open)
+    await shell.evaluate(() => {
+      window.open = () => null
+    })
+    const revoked = shell.waitForResponse(`${ready.url}api/popup/revoke`)
+    await shell.locator('#shareBtn').click()
+    await revoked
+    await shell.evaluate((open) => {
+      window.open = open
+    }, originalOpen)
+    await originalOpen.dispose()
+    assert.equal(
+      (
+        await fetch(`${ready.share_origin}/api/context`, {
+          headers: { authorization: `Bearer ${replacementGrant.capability}` },
+        })
+      ).status,
+      403,
+    )
+
+    const finalPopupPromise = shell.waitForEvent('popup')
+    const captured = page.context().waitForEvent('response', {
+      predicate: (response) =>
+        response.url() === `${ready.share_origin}/api/snapshot`,
+    })
+    await shell.locator('#shareBtn').click()
+    const finalPopup = await finalPopupPromise
+    await captured
+    await finalPopup.locator('#shareBtn:enabled').waitFor()
+    writeFileSync(file, fixtureHtml('Changed after snapshot'))
+    await finalPopup.locator('#shareBtn').click()
+    await finalPopup.locator('#dialog.auth').waitFor()
+    await finalPopup
+      .locator('#dialog:not(.auth) #shareError')
+      .waitFor({ state: 'visible' })
+    await finalPopup.locator('#shareBtn').click()
+    await finalPopup.locator('#dialog.shared').waitFor()
+    assert.equal(uploads.length, 1)
+    assert.ok(!uploads[0]!.includes('Changed after snapshot'))
+    const exited = once(child, 'exit')
+    await finalPopup.locator('#finishBtn').click()
+    await shell.locator('#endedScreen.show').waitFor()
+    await exited
+    assert.equal(existsSync(new URL(ready.launcher_url)), false)
     return true
   } finally {
     await shell.close()
@@ -322,6 +557,9 @@ export const previewSecurity = defineBrowserCommand(async ({ page }) => {
       child.kill('SIGKILL')
       await exited
     }
+    await new Promise<void>((resolveClosed) =>
+      service.close(() => resolveClosed()),
+    )
     rmSync(dir, { recursive: true, force: true })
   }
 })

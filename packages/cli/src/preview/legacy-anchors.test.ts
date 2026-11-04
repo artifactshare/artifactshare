@@ -1,3 +1,4 @@
+import { createPreviewAuth } from './auth.js'
 // @vitest-environment happy-dom
 // @vitest-environment-options {"settings":{"enableJavaScriptEvaluation":true}}
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -40,16 +41,22 @@ test('an unchanged page keeps saved legacy annotations attached without offering
       close() {}
     },
   )
-  const fetcher = vi.fn(async () => Response.json({ annotations: store.all() }))
+  const fetcher = vi.fn(async (requestPath: string) =>
+    requestPath === '/events'
+      ? new Response(new ReadableStream())
+      : Response.json({ annotations: store.all() }),
+  )
   vi.stubGlobal('fetch', fetcher)
   try {
     const shell = new DOMParser().parseFromString(
       renderPreviewShell({
+        shellCapability: createPreviewAuth().shell,
+        documentCapability: createPreviewAuth().document,
         fileName: 'index.html',
         resumeCommand: 'artifactshare preview index.html',
         shareOrigin: 'https://example.com',
         messages: PREVIEW_MESSAGES,
-      }).replace('src="/artifact"', ''),
+      }).replace(/src="\/artifact[^"]*"/, ''),
       'text/html',
     )
     const script = shell.querySelector('script')!.textContent!

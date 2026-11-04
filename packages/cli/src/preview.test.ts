@@ -27,6 +27,7 @@ interface LiveServer {
   child: ChildProcess
   readyStdout: string
   ready: {
+    launcher_url: string
     url: string
     session: string
     share_origin: string
@@ -60,6 +61,7 @@ function previewEnv(): { env: Record<string, string>; dir: string } {
     env: {
       ARTIFACTSHARE_CONFIG_HOME: join(dir, 'config'),
       ARTIFACTSHARE_DISABLE_NATIVE_TOKEN_STORE: '1',
+      ARTIFACTSHARE_TEST_BROWSER_OPENER: 'success',
       CODEX_THREAD_ID: '',
       CODEX_SESSION_ID: '',
       CLAUDE_CODE_SESSION_ID: '',
@@ -75,10 +77,18 @@ async function startPreview(
   env: Record<string, string>,
   filePath: string,
   extraArgs: string[] = [],
+  autoOpen = false,
 ): Promise<LiveServer> {
   const child = spawn(
     process.execPath,
-    [cliPath, 'preview', filePath, '--no-open', '--json', ...extraArgs],
+    [
+      cliPath,
+      'preview',
+      filePath,
+      ...(autoOpen ? [] : ['--no-open']),
+      '--json',
+      ...extraArgs,
+    ],
     {
       // The credential context includes the working directory, so a reuse
       // check only compares like with like when both start from the same one.
@@ -123,6 +133,7 @@ async function browserApi(
   const response = await fetch(new URL(path, server.ready.url), {
     method,
     headers: {
+      authorization: `Bearer ${JSON.parse(readFileSync(join(server.env.ARTIFACTSHARE_CONFIG_HOME!, 'previews', `${server.ready.session}.json`), 'utf8')).auth[path.startsWith('/api/agent/') ? 'control' : 'shell']}`,
       'content-type': 'application/json',
       [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
     },
@@ -151,28 +162,40 @@ test('the ready envelope is a single line', async () => {
   JSON.parse(server.readyStdout)
 })
 
-test('preview serves ready JSON and reuses the live session', async () => {
-  const { env, dir } = previewEnv()
-  const filePath = writeLp(dir)
-  const server = await startPreview(env, filePath)
-  assert.equal(server.ready.reused, false)
-  assert.match(server.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/)
-  assert.match(server.ready.share_origin, /^http:\/\/127\.0\.0\.1:\d+$/)
-  assert.deepEqual(server.ready.agent, {
-    provider: 'generic',
-    transport: 'long_poll',
-    capability: 'wait',
-    state: 'manual_required',
-  })
+test.each([false, true])(
+  'preview serves a private launcher and reuses it (auto-open: %s)',
+  async (autoOpen) => {
+    const { env, dir } = previewEnv()
+    const filePath = writeLp(dir)
+    const server = await startPreview(env, filePath, [], autoOpen)
+    assert.match(server.ready.launcher_url, /^file:/)
+    const launcher = new URL(server.ready.launcher_url)
+    assert.ok(readFileSync(launcher, 'utf8').includes('/__preview/launch'))
+    assert.equal(server.ready.reused, false)
+    assert.match(server.ready.url, /^http:\/\/127\.0\.0\.1:\d+\/$/)
+    assert.match(server.ready.share_origin, /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.deepEqual(server.ready.agent, {
+      provider: 'generic',
+      transport: 'long_poll',
+      capability: 'wait',
+      state: 'manual_required',
+    })
 
-  const rerun = run(['preview', filePath, '--no-open', '--json'], env)
-  const payload = expectSuccess(rerun, 'preview')
-  assert.equal((payload.data as { reused: boolean }).reused, true)
-  assert.equal(
-    (payload.data as { session: string }).session,
-    server.ready.session,
-  )
-})
+    rmSync(launcher)
+    const rerun = run(['preview', filePath, '--no-open', '--json'], env)
+    const payload = expectSuccess(rerun, 'preview')
+    assert.equal((payload.data as { reused: boolean }).reused, true)
+    assert.equal(
+      (payload.data as { launcher_url: string }).launcher_url,
+      server.ready.launcher_url,
+    )
+    assert.equal(
+      (payload.data as { session: string }).session,
+      server.ready.session,
+    )
+    assert.ok(existsSync(launcher))
+  },
+)
 
 test('preview registers Codex and queues only the fixed batch-ready notice', async () => {
   const { env, dir } = previewEnv()
@@ -425,95 +448,114 @@ test('a competing preview wait returns retry guidance', async () => {
   }
 })
 
-test('the annotate-submit-next-done loop round-trips through the CLI', async () => {
-  const { env, dir } = previewEnv()
-  const filePath = writeLp(dir)
-  const server = await startPreview(env, filePath)
+test.each(['path', 'explicit', 'implicit'])(
+  'authenticated agent commands select by %s',
+  async (selector) => {
+    const { env, dir } = previewEnv()
+    const filePath = writeLp(dir)
+    const server = await startPreview(env, filePath)
+    const selection =
+      selector === 'path'
+        ? [filePath]
+        : selector === 'explicit'
+          ? ['--session', server.ready.session]
+          : []
 
-  await browserApi(server, 'POST', '/api/annotations', {
-    anchor: {
-      kind: 'element',
-      state: 'attached',
-      selector: 'body > h1',
-      label: 'h1 "Hello preview"',
-      contextText: 'Hello preview',
-    },
-    comment: 'Make it friendlier',
-  })
-  await browserApi(server, 'POST', '/api/annotations/submit')
+    await browserApi(server, 'POST', '/api/annotations', {
+      anchor: {
+        kind: 'element',
+        state: 'attached',
+        selector: 'body > h1',
+        label: 'h1 "Hello preview"',
+        contextText: 'Hello preview',
+      },
+      comment: 'Make it friendlier',
+    })
+    await browserApi(server, 'POST', '/api/annotations/submit')
 
-  const next = run(['preview', 'next', filePath, '--json'], env)
-  const nextPayload = expectSuccess(next, 'preview next')
-  const items = (nextPayload.data as { items: Record<string, unknown>[] }).items
-  assert.equal(items.length, 1)
-  const item = items[0]!
-  assert.equal(item.status, 'in_progress')
-  assert.equal(item.generation, 1)
-  assert.equal(
-    (nextPayload.data as { agent: { state: string } }).agent.state,
-    'processing',
-  )
+    const next = run(['preview', 'next', ...selection, '--json'], env)
+    const nextPayload = expectSuccess(next, 'preview next')
+    const items = (nextPayload.data as { items: Record<string, unknown>[] })
+      .items
+    assert.equal(items.length, 1)
+    const item = items[0]!
+    assert.equal(item.status, 'in_progress')
+    assert.equal(item.generation, 1)
+    assert.equal(
+      (nextPayload.data as { agent: { state: string } }).agent.state,
+      'processing',
+    )
 
-  const done = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
-    input: JSON.stringify({
-      items: [
-        {
-          thread: item.thread,
-          generation: 1,
-          outcome: 'fixed',
-          note: 'Warmed up the headline',
-        },
+    const done = run(
+      ['preview', 'done', ...selection, '--stdin', '--json'],
+      env,
+      {
+        input: JSON.stringify({
+          items: [
+            {
+              thread: item.thread,
+              generation: 1,
+              outcome: 'fixed',
+              note: 'Warmed up the headline',
+            },
+          ],
+        }),
+      },
+    )
+    const donePayload = expectSuccess(done, 'preview done')
+    const results = (donePayload.data as { results: { result: string }[] })
+      .results
+    assert.equal(results[0]!.result, 'accepted')
+    assert.equal(
+      (donePayload.data as { agent: { state: string } }).agent.state,
+      'completed',
+    )
+
+    const again = run(
+      ['preview', 'done', ...selection, '--stdin', '--json'],
+      env,
+      {
+        input: JSON.stringify({
+          items: [
+            { thread: item.thread, generation: 1, outcome: 'fixed', note: 'x' },
+          ],
+        }),
+      },
+    )
+    const againPayload = expectSuccess(again, 'preview done')
+    assert.equal(
+      (againPayload.data as { results: { result: string }[] }).results[0]!
+        .result,
+      'already_reported',
+    )
+
+    const reply = run(
+      [
+        'preview',
+        'reply',
+        ...selection,
+        '--thread',
+        String(item.thread),
+        '--body',
+        'Adjusted per your note',
+        '--json',
       ],
-    }),
-  })
-  const donePayload = expectSuccess(done, 'preview done')
-  const results = (donePayload.data as { results: { result: string }[] })
-    .results
-  assert.equal(results[0]!.result, 'accepted')
-  assert.equal(
-    (donePayload.data as { agent: { state: string } }).agent.state,
-    'completed',
-  )
+      env,
+    )
+    expectSuccess(reply, 'preview reply')
 
-  const again = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
-    input: JSON.stringify({
-      items: [
-        { thread: item.thread, generation: 1, outcome: 'fixed', note: 'x' },
-      ],
-    }),
-  })
-  const againPayload = expectSuccess(again, 'preview done')
-  assert.equal(
-    (againPayload.data as { results: { result: string }[] }).results[0]!.result,
-    'already_reported',
-  )
+    const stop = run(['preview', 'stop', ...selection, '--json'], env)
+    const stopPayload = expectSuccess(stop, 'preview stop')
+    assert.equal((stopPayload.data as { stopped: boolean }).stopped, true)
 
-  const reply = run(
-    [
-      'preview',
-      'reply',
-      filePath,
-      '--thread',
-      String(item.thread),
-      '--body',
-      'Adjusted per your note',
-      '--json',
-    ],
-    env,
-  )
-  expectSuccess(reply, 'preview reply')
-
-  const stop = run(['preview', 'stop', filePath, '--json'], env)
-  const stopPayload = expectSuccess(stop, 'preview stop')
-  assert.equal((stopPayload.data as { stopped: boolean }).stopped, true)
-
-  await new Promise((resolve) => server.child.once('exit', resolve))
-  const after = run(['preview', 'next', filePath, '--json'], env)
-  expectFailure(after, {
-    command: 'preview next',
-    code: 'preview_session_not_found',
-  })
-})
+    await new Promise((resolve) => server.child.once('exit', resolve))
+    const after = run(['preview', 'next', ...selection, '--json'], env)
+    expectFailure(after, {
+      command: 'preview next',
+      code: 'preview_session_not_found',
+    })
+  },
+)
 
 test('a second start for the same file is refused while one is in flight', async () => {
   const { env, dir } = previewEnv()
@@ -554,7 +596,7 @@ test('preview stop --force stops a reachable session normally', async () => {
   await new Promise((resolve) => server.child.once('exit', resolve))
 })
 
-test('only stop may reach a verified schema-1 preview session', async () => {
+test('pre-auth records cannot authorize even stop', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)
   const server = await startPreview(env, filePath)
@@ -585,9 +627,10 @@ test('only stop may reach a verified schema-1 preview session', async () => {
   })
 
   const stop = run(['preview', 'stop', filePath, '--json'], env)
-  const payload = expectSuccess(stop, 'preview stop')
-  assert.equal((payload.data as { stopped: boolean }).stopped, true)
-  await new Promise((resolve) => server.child.once('exit', resolve))
+  expectFailure(stop, {
+    command: 'preview stop',
+    code: 'preview_session_unverified',
+  })
 })
 
 test('preview stop --force clears a record whose server is gone', async () => {
@@ -652,4 +695,51 @@ test('a session id that is not 16 hex characters is refused', async () => {
   expectFailure(result, { command: 'preview stop' })
   const configHome = env.ARTIFACTSHARE_CONFIG_HOME ?? ''
   assert.equal(existsSync(join(dirname(configHome), 'config.json')), false)
+})
+
+test('restarting the same path invalidates all previous session authority', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const old = await startPreview(env, filePath)
+  const record = JSON.parse(
+    readFileSync(
+      join(
+        env.ARTIFACTSHARE_CONFIG_HOME!,
+        'previews',
+        `${old.ready.session}.json`,
+      ),
+      'utf8',
+    ),
+  )
+  const shell = await (
+    await fetch(old.ready.url, {
+      headers: { authorization: `Bearer ${record.auth.shell}` },
+    })
+  ).text()
+  const document = shell.match(
+    /src="\/artifact\?capability=([a-f0-9]{64})"/,
+  )![1]
+  const exited = new Promise((resolve) => old.child.once('exit', resolve))
+  expectSuccess(
+    run(['preview', 'stop', filePath, '--json'], env),
+    'preview stop',
+  )
+  await exited
+  assert.equal(existsSync(new URL(old.ready.launcher_url)), false)
+  const fresh = await startPreview(env, filePath)
+  for (const [path, credential] of [
+    ['__preview/session', record.auth.control],
+    ['', record.auth.shell],
+    ['artifact', document],
+  ]) {
+    assert.equal(
+      (
+        await fetch(new URL(path!, fresh.ready.url), {
+          headers: { authorization: `Bearer ${credential}` },
+        })
+      ).status,
+      403,
+    )
+  }
+  assert.notEqual(fresh.ready.launcher_url, old.ready.launcher_url)
 })

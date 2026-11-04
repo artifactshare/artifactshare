@@ -1,3 +1,4 @@
+import { capability } from './auth.js'
 import assert from 'node:assert/strict'
 import { request as httpRequest, createServer } from 'node:http'
 import type { Server } from 'node:http'
@@ -14,6 +15,8 @@ import {
 } from './contract.js'
 
 type RawResponse = { status: number; body: string }
+
+const grants = new Map<number, { capability: string; instance: string }>()
 
 const savedEnv: Record<string, string | undefined> = {}
 
@@ -68,7 +71,10 @@ function rawRequest(
         port,
         method: input.method ?? 'GET',
         path: input.path ?? '/',
-        headers: input.headers ?? {},
+        headers: {
+          authorization: `Bearer ${grants.get(port)!.capability}`,
+          ...input.headers,
+        },
       },
       (response) => {
         let body = ''
@@ -98,7 +104,10 @@ async function withDialogServer<T>(
   handlerOptions: Partial<Parameters<typeof createShareDialogHandler>[0]>,
   callback: (port: number) => Promise<T>,
 ): Promise<T> {
+  const grant = { capability: capability(), instance: capability() }
   const handler = createShareDialogHandler({
+    getGrant: () => grant,
+    revokeGrant: () => {},
     filePath: '/tmp/report.html',
     fileName: 'report.html',
     artifactOrigin: 'http://127.0.0.1:4100',
@@ -108,6 +117,7 @@ async function withDialogServer<T>(
   })
   const server = createServer(handler)
   const port = await listen(server)
+  grants.set(port, grant)
   try {
     return await callback(port)
   } finally {

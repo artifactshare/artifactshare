@@ -5,6 +5,7 @@ import { cliError, validationError } from '../errors.js'
 import { writeFailure, writeSuccess, writeSuccessLine } from '../output.js'
 import { openDeviceAuthorizationUrl } from '../process.js'
 import {
+  PREVIEW_AGENT_STATE_ENDPOINT,
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
   type PreviewAgentNotificationProjection,
@@ -30,6 +31,8 @@ import {
   tokenFingerprint,
   updateSessionNotificationRegistration,
   writeSessionFile,
+  writeLauncher,
+  removeLauncher,
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
 import { startPreviewServer } from '../preview/server.js'
@@ -104,6 +107,7 @@ function sessionNotFoundError(target: string | null): CliError {
 }
 
 interface ResolvedTarget {
+  control: string
   port: number
   sessionId: string
   realpath: string
@@ -111,7 +115,6 @@ interface ResolvedTarget {
 
 async function resolveTarget(
   parsed: ParsedArgs,
-  allowLegacy = false,
 ): Promise<{ target: ResolvedTarget } | { error: CliError }> {
   const explicitSession =
     typeof parsed.options.session === 'string' ? parsed.options.session : null
@@ -139,15 +142,6 @@ async function resolveTarget(
     if (!session) return { error: sessionNotFoundError(explicitSession) }
     const live = await probeSession(session)
     if (live.state === 'legacy') {
-      if (allowLegacy) {
-        return {
-          target: {
-            port: live.session.port,
-            sessionId: live.session.session_id,
-            realpath: live.session.realpath,
-          },
-        }
-      }
       return {
         error: sessionUnverifiedError(live.session.realpath, true),
       }
@@ -166,6 +160,7 @@ async function resolveTarget(
     return {
       target: {
         port: live.session.port,
+        control: live.session.auth!.control,
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       },
@@ -178,15 +173,6 @@ async function resolveTarget(
     const path = previewIdentityPath(positional)
     const live = await resolveLiveSession(path)
     if (live.state === 'legacy') {
-      if (allowLegacy) {
-        return {
-          target: {
-            port: live.session.port,
-            sessionId: live.session.session_id,
-            realpath: live.session.realpath,
-          },
-        }
-      }
       return { error: sessionUnverifiedError(path, true) }
     }
     if (live.state === 'unverified') {
@@ -199,6 +185,7 @@ async function resolveTarget(
     return {
       target: {
         port: live.session.port,
+        control: live.session.auth!.control,
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       },
@@ -219,9 +206,10 @@ async function resolveTarget(
     const session = readSessionFile(name.replace(/\.json$/, ''))
     if (!session) continue
     const live = await probeSession(session)
-    if (live.state === 'live' || (live.state === 'legacy' && allowLegacy)) {
+    if (live.state === 'live') {
       liveSessions.push({
         port: live.session.port,
+        control: live.session.auth!.control,
         sessionId: live.session.session_id,
         realpath: live.session.realpath,
       })
@@ -305,12 +293,17 @@ function sameCredentials(
 
 async function readAgentProjection(
   port: number,
+  control: string,
   fallback: PreviewAgentNotificationProjection,
 ): Promise<PreviewAgentNotificationProjection> {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/annotations`, {
-      signal: AbortSignal.timeout(2000),
-    })
+    const response = await fetch(
+      `http://127.0.0.1:${port}${PREVIEW_AGENT_STATE_ENDPOINT}`,
+      {
+        signal: AbortSignal.timeout(2000),
+        headers: { authorization: `Bearer ${control}` },
+      },
+    )
     const body = (await response.json()) as Record<string, unknown>
     const agent = body.agent as Record<string, unknown> | undefined
     if (
@@ -376,7 +369,7 @@ function sessionUnverifiedError(target: string, legacy = false): CliError {
     return cliError({
       code: 'preview_session_unverified',
       message: 'This preview session must be restarted.',
-      why: `The preview serving ${target} was started by a CLI without the current notification contract.`,
+      why: `The preview serving ${target} was started by a CLI without local session authentication.`,
       hint: 'Stop that preview process, then start the preview again with the current CLI.',
       agentRecoverable: false,
       requiresHuman: true,
@@ -431,6 +424,7 @@ async function agentApi(
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        authorization: `Bearer ${target.control}`,
         [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
       },
       body: JSON.stringify(payload ?? {}),
@@ -592,15 +586,21 @@ export async function runPreview(
       )
     }
     const reusedUrl = `http://127.0.0.1:${existing.session.port}/`
-    const reusedAgent = await readAgentProjection(existing.session.port, {
-      provider: existing.session.agent_notification.provider,
-      transport: existing.session.agent_notification.transport,
-      capability: existing.session.agent_notification.capability,
-      state: 'manual_required',
-    })
+    const reusedAgent = await readAgentProjection(
+      existing.session.port,
+      existing.session.auth!.control,
+      {
+        provider: existing.session.agent_notification.provider,
+        transport: existing.session.agent_notification.transport,
+        capability: existing.session.agent_notification.capability,
+        state: 'manual_required',
+      },
+    )
+    const launcher = writeLauncher(existing.session)
     writeSuccessLine(
       command,
       {
+        launcher_url: launcher.launcher_url,
         url: reusedUrl,
         session: existing.session.session_id,
         share_origin: `http://127.0.0.1:${existing.session.share_port}`,
@@ -612,7 +612,9 @@ export async function runPreview(
     // Reusing a session is still a request to look at it, so the browser opens
     // unless the caller suppressed it — the same rule as a fresh start.
     if (parsed.options.noOpen !== true) {
-      await openDeviceAuthorizationUrl(reusedUrl).catch(() => undefined)
+      await openDeviceAuthorizationUrl(launcher.launcher_url).catch(
+        () => undefined,
+      )
     }
     return
   }
@@ -623,8 +625,14 @@ export async function runPreview(
     // one annotation store and overwrite each other's saves.
     return writeFailure(command, startInProgressError(real.realpath), mode, 1)
   }
+  // A competing start may have published between our probe and this claim.
+  if (readSessionFile(sessionId)) {
+    claim.release()
+    return runPreview(parsed, mode)
+  }
   let server: Awaited<ReturnType<typeof startPreviewServer>>
   let store: ReturnType<typeof createPreviewStore>
+  let launcher: ReturnType<typeof writeLauncher> | undefined
   let started: Awaited<ReturnType<typeof startPreviewServer>> | null = null
   try {
     store = createPreviewStore(annotationsFilePath(sessionId))
@@ -645,7 +653,10 @@ export async function runPreview(
       cliOptions: parsed.options,
     })
     started = server
+    launcher = writeLauncher({ port: server.port, auth: server.auth })
     writeSessionFile({
+      auth: { control: server.auth.control, shell: server.auth.shell },
+      launcher: launcher.launcher,
       session_id: sessionId,
       realpath: real.realpath,
       port: server.port,
@@ -660,6 +671,7 @@ export async function runPreview(
     // preview would report a start in progress) nor a bound server nobody can
     // reach, because no session file records it.
     claim.release()
+    removeLauncher(launcher?.launcher)
     await started?.close().catch(() => undefined)
     throw error
   }
@@ -684,6 +696,7 @@ export async function runPreview(
     command,
     {
       url,
+      launcher_url: launcher!.launcher_url,
       session: sessionId,
       share_origin: `http://127.0.0.1:${server.sharePort}`,
       reused: false,
@@ -693,12 +706,15 @@ export async function runPreview(
     mode,
   )
   if (parsed.options.noOpen !== true) {
-    await openDeviceAuthorizationUrl(url).catch(() => undefined)
+    await openDeviceAuthorizationUrl(launcher!.launcher_url).catch(
+      () => undefined,
+    )
   }
   try {
     await server.closed
   } finally {
     for (const [signal, handler] of handlers) process.off(signal, handler)
+    removeLauncher(launcher?.launcher)
     if (readSessionFile(sessionId)?.pid === process.pid) {
       removeSessionFile(sessionId)
     }
@@ -834,7 +850,7 @@ export async function runPreviewStop(
   mode: OutputMode,
 ): Promise<void> {
   const command = 'preview stop'
-  const resolved = await resolveTarget(parsed, true)
+  const resolved = await resolveTarget(parsed)
   if ('error' in resolved) {
     // A session whose port neither answers nor refuses cannot be stopped over
     // HTTP, so --force clears the record instead of leaving the file wedged.
@@ -878,6 +894,7 @@ export async function runPreviewStop(
         // --force means "leave no record behind", so it succeeds whether or
         // not one was still there.
         const cleared = record !== null
+        removeLauncher(record?.launcher)
         removeSessionFile(sessionId)
         return writeSuccess(
           command,

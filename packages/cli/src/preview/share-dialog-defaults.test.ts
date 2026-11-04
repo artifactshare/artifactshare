@@ -1,3 +1,4 @@
+import { capability } from './auth.js'
 // @vitest-environment happy-dom
 // @vitest-environment-options {"settings":{"enableJavaScriptEvaluation":true}}
 import { Blob as NodeBlob, File as NodeFile } from 'node:buffer'
@@ -52,8 +53,11 @@ vi.mock('../command-runners/auto-login.js', () => ({
 }))
 vi.mock('../share-upload.js', () => ({ postShareUpload: vi.fn() }))
 
-function handler() {
+const grant = { capability: capability(), instance: capability() }
+function handler(getGrant: () => typeof grant | null = () => grant) {
   return createShareDialogHandler({
+    getGrant,
+    revokeGrant: () => {},
     filePath: '/tmp/report.html',
     fileName: 'report.html',
     artifactOrigin: 'http://localhost:4100',
@@ -65,6 +69,7 @@ function call(
   handle: ReturnType<typeof handler>,
   path: string,
   payload?: unknown,
+  credential: string | null = grant.capability,
 ): Promise<{ status: number; text: string; json: any }> {
   return new Promise((resolve) => {
     const request = Object.assign(new EventEmitter(), {
@@ -72,6 +77,9 @@ function call(
       url: path,
       headers: {
         host: 'localhost',
+        ...(credential === null
+          ? {}
+          : { authorization: `Bearer ${credential}` }),
         'content-type': 'application/json',
         [PREVIEW_MUTATION_HEADER]: PREVIEW_MUTATION_HEADER_VALUE,
       },
@@ -79,6 +87,7 @@ function call(
     let status = 200
     const response = {
       headersSent: false,
+      setHeader() {},
       writeHead(code: number) {
         status = code
       },
@@ -279,3 +288,103 @@ test.each([true, false])(
     }
   },
 )
+
+test('invalid popup credentials cannot read context, start device auth or upload', async () => {
+  const handle = handler()
+  const snapshot = await call(handle, '/api/snapshot', {})
+  vi.clearAllMocks()
+  for (const credential of [null, '1', capability(), capability()]) {
+    for (const [path, payload] of [
+      ['/api/context', undefined],
+      ['/api/auth-status?auth_id=unknown', undefined],
+      ['/api/close', {}],
+      ['/api/snapshot', {}],
+      ['/api/snapshot/discard', { snapshot_id: snapshot.json.snapshot_id }],
+      ['/api/share', { snapshot_id: snapshot.json.snapshot_id }],
+    ] as const) {
+      const response = await call(handle, path, payload, credential)
+      expect(response.status).toBe(403)
+      expect(response.json).toEqual({ error: 'forbidden' })
+    }
+  }
+  expect(resolveCredential).not.toHaveBeenCalled()
+  expect(fetchProjects).not.toHaveBeenCalled()
+  expect(requestDeviceCode).not.toHaveBeenCalled()
+  expect(exchangeDeviceTokenOnce).not.toHaveBeenCalled()
+  expect(postShareUpload).not.toHaveBeenCalled()
+})
+
+test('replacement clears private popup resources while retaining a completed account sign-in', async () => {
+  let current = grant
+  const handle = handler(() => current)
+  vi.mocked(resolveCredential).mockResolvedValue(null as never)
+  vi.mocked(requestDeviceCode).mockResolvedValue({
+    device_code: 'fixture-device',
+    user_code: 'FIXTURE',
+    verification_uri: 'https://example.test/device',
+    expires_in: 600,
+    interval: 1,
+  } as never)
+  const snapshot = await call(handle, '/api/snapshot', {})
+  const pending = await call(handle, '/api/share', {
+    snapshot_id: snapshot.json.snapshot_id,
+  })
+  expect(pending.json.auth_required).toBe(true)
+  handle.revoke()
+  current = { capability: capability(), instance: capability() }
+  expect((await call(handle, '/api/context')).status).toBe(403)
+  expect(
+    (
+      await call(
+        handle,
+        `/api/auth-status?auth_id=${pending.json.auth_id}`,
+        undefined,
+        current.capability,
+      )
+    ).status,
+  ).toBe(404)
+  expect(
+    (
+      await call(
+        handle,
+        '/api/share',
+        { snapshot_id: snapshot.json.snapshot_id },
+        current.capability,
+      )
+    ).status,
+  ).toBe(404)
+  expect(exchangeDeviceTokenOnce).not.toHaveBeenCalled()
+  expect(postShareUpload).not.toHaveBeenCalled()
+  const nextSnapshot = await call(
+    handle,
+    '/api/snapshot',
+    {},
+    current.capability,
+  )
+  const nextAuth = await call(
+    handle,
+    '/api/share',
+    { snapshot_id: nextSnapshot.json.snapshot_id },
+    current.capability,
+  )
+  vi.mocked(exchangeDeviceTokenOnce).mockResolvedValue({
+    status: 'success',
+    token: { access_token: 'fixture-token', token_type: 'Bearer' },
+  } as never)
+  expect(
+    (
+      await call(
+        handle,
+        `/api/auth-status?auth_id=${nextAuth.json.auth_id}`,
+        undefined,
+        current.capability,
+      )
+    ).json.status,
+  ).toBe('authenticated')
+  handle.revoke()
+  current = { capability: capability(), instance: capability() }
+  expect(
+    (await call(handle, '/api/context', undefined, current.capability)).json
+      .authenticated,
+  ).toBe(true)
+})
