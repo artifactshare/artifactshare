@@ -20,7 +20,12 @@ export function useFileLabels(data: FileRowData): FileLabels {
     commentsShort: tPlural('table.commentCount', data.commentCount),
     views: tPlural('card.viewCount', data.viewCount),
     activity: `${data.viewCount} · ${data.commentCount}`,
-    visibility: t(shortVisibilityLabelKey(data.visibility)),
+    visibility: t(
+      shortVisibilityLabelKey(
+        data.visibility,
+        data.isOwner && !data.lostAccess ? data.hasDirectGrants : undefined,
+      ),
+    ),
     modified: data.modifiedTime
       ? formatRelative(data.modifiedTime, locale)
       : null,

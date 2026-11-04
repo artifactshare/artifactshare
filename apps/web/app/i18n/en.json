@@ -122,6 +122,8 @@
   "table.commentCountOther": "{n}",
   "table.owner": "Owner",
   "table.project": "Project",
+  "table.visibilityOnlyMe": "Private",
+  "row.unopened": "Unopened",
   "table.visibilityPrivate": "Specific",
   "table.visibilityProject": "Project",
   "table.visibilityWorkspace": "Company",

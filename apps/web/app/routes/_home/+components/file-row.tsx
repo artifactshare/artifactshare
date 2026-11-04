@@ -178,8 +178,9 @@ export function FileRow({
     derivedTitle: data.derivedTitle,
     titleOverride: data.titleOverride,
   })
-  const rowLinkLabel =
-    unreadBadges && fileHasUnread(data)
+  const rowLinkLabel = data.isUnopened
+    ? `${title} · ${t('row.unopened')}`
+    : unreadBadges && fileHasUnread(data)
       ? `${title} · ${t('row.unread')}`
       : title
   const groupedRecency = recencyPresentation !== 'row'
@@ -519,6 +520,11 @@ const FileRowSurface = memo(function FileRowSurface({
             >
               {title}
             </span>
+            {data.isUnopened ? (
+              <span className="text-muted-foreground text-xs">
+                {t('row.unopened')}
+              </span>
+            ) : null}
             {data.projectName || motionSubline || inlineOwner ? (
               <span className={projectClassName} title={projectSublineTitle}>
                 {inlineOwner ? (

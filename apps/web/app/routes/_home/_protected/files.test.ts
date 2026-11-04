@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely'
+import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { userContext } from '~/middleware/context'
@@ -13,6 +14,13 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 import { loader } from './files'
 import { filesDateHeaderKey } from './files'
 import en from '~/i18n/en.json'
+import {
+  listUnopenedOwnedArtifactsLimited,
+  listMyArtifactsLimited,
+  listRecentArtifactsPage,
+} from '~/services/home.server'
+import { projectFileRowsQuery } from '~/routes/_protected/+lib/project-subpage.server'
+import { listGrants } from '~/services/shareables.server'
 
 const TS = '2026-06-14T00:00:00.000Z'
 const VIEWER = {
@@ -47,8 +55,9 @@ async function redirectTo(path: string) {
 
 describe('/files loader', () => {
   let db: Kysely<DB>
+  let sqlite: DatabaseSync
   beforeEach(async () => {
-    ;({ db } = createMigratedInMemoryDb())
+    ;({ db, sqlite } = createMigratedInMemoryDb())
     dbHolder.db = db
     await seed(db)
   })
@@ -57,12 +66,18 @@ describe('/files loader', () => {
   })
 
   test('returns only own files newest first and paginates by 20', async () => {
+    const queries = vi.spyOn(sqlite, 'prepare')
     const first = await load('/files')
+    const firstPageQueryCount = queries.mock.calls.length
+    queries.mockClear()
     expect(first.total).toBe(29)
     expect(first.files).toHaveLength(20)
     expect(first.files[0].id).toBe('own-00')
     expect(first.files.every((f) => f.ownerId === 'u-owner')).toBe(true)
     const second = await load('/files?page=2')
+    expect(queries.mock.calls).toHaveLength(firstPageQueryCount)
+    expect(firstPageQueryCount).toBe(2)
+    queries.mockRestore()
     expect(second.page).toBe(2)
     expect(second.files.map((f) => f.id)).toEqual([
       'own-16',
@@ -118,6 +133,147 @@ describe('/files loader', () => {
       latestPublishedAt: TS,
     })
     expect(Number.isNaN(Date.parse(result.now))).toBe(false)
+  })
+
+  test('marks unopened files across pages using personal history and creation provenance', async () => {
+    for (const [id, creator] of [
+      ['own-00', VIEWER.id],
+      ['own-01', 'u-other'],
+      ['own-24', VIEWER.id],
+    ]) {
+      await db
+        .insertInto('versions')
+        .values({
+          id: `v-${id}`,
+          shareable_id: id,
+          artifact_kind: 'html_page',
+          status: 'published',
+          entrypoint_path: '/index.html',
+          r2_key: `test/${id}`,
+          size_bytes: 1,
+          sha256: id,
+          created_by_id: creator,
+          created_at: TS,
+          published_at: TS,
+        })
+        .execute()
+      await db
+        .updateTable('shareables')
+        .set({ current_version_id: `v-${id}` })
+        .where('id', '=', id)
+        .execute()
+    }
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: 'own-24',
+        viewer_user_id: 'u-other',
+        first_viewed_at: TS,
+        last_viewed_at: TS,
+      })
+      .execute()
+    const first = await load('/files')
+    const second = await load('/files?page=2')
+    expect(first.files.find((f) => f.id === 'own-00')?.isUnopened).toBe(true)
+    expect(first.files.find((f) => f.id === 'own-01')?.isUnopened).toBe(false)
+    expect(first.files.find((f) => f.id === 'own-02')?.isUnopened).toBe(false)
+    expect(second.files.find((f) => f.id === 'own-24')?.isUnopened).toBe(true)
+    const home = await listUnopenedOwnedArtifactsLimited(
+      db,
+      VIEWER.id,
+      VIEWER.workspaceId,
+    )
+    expect(
+      [...first.files, ...second.files]
+        .filter((f) => f.isUnopened)
+        .map((f) => f.id),
+    ).toEqual(home.rows.map((f) => f.id))
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: 'own-24',
+        viewer_user_id: VIEWER.id,
+        first_viewed_at: TS,
+        last_viewed_at: TS,
+      })
+      .execute()
+    await db
+      .updateTable('shareables')
+      .set({ updated_at: '2026-06-16T00:00:00.000Z' })
+      .where('id', '=', 'own-24')
+      .execute()
+    expect(
+      (await load('/files?page=2')).files.find((f) => f.id === 'own-24')
+        ?.isUnopened,
+    ).toBe(false)
+  })
+
+  test('list surfaces match owner grant results and restore private after last recipient removal', async () => {
+    const cases = [
+      [],
+      ['OWNER@EXAMPLE.COM'],
+      ['reader@example.com'],
+      ['OWNER@EXAMPLE.COM', 'reader@example.com', 'second@example.com'],
+    ]
+    for (const [index, emails] of cases.entries()) {
+      const id = `own-0${index}`
+      for (const email of emails)
+        await db
+          .insertInto('shareable_grants')
+          .values({
+            shareable_id: id,
+            granted_email: email,
+            granted_at: TS,
+            granted_by: VIEWER.id,
+          })
+          .execute()
+      await db
+        .insertInto('shareable_viewer_recency')
+        .values({
+          shareable_id: id,
+          viewer_user_id: VIEWER.id,
+          first_viewed_at: TS,
+          last_viewed_at: TS,
+        })
+        .execute()
+    }
+    const files = await load('/files')
+    const home = await listMyArtifactsLimited(
+      db,
+      VIEWER.id,
+      VIEWER.workspaceId,
+      30,
+      VIEWER.email,
+    )
+    const recent = await listRecentArtifactsPage(db, VIEWER, 1)
+    const project = await projectFileRowsQuery(
+      db,
+      'c-owner',
+      VIEWER.email,
+    ).execute()
+    for (const index of cases.keys()) {
+      const id = `own-0${index}`
+      const result = await listGrants(db, VIEWER, id)
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') throw new Error('expected owner grant evidence')
+      const expected = result.grants.length > 0
+      expect(files.files.find((f) => f.id === id)?.hasDirectGrants).toBe(
+        expected,
+      )
+      for (const rows of [home, recent, project])
+        expect(Boolean(rows.find((f) => f.id === id)?.has_direct_grants)).toBe(
+          expected,
+        )
+    }
+    await db
+      .deleteFrom('shareable_grants')
+      .where('shareable_id', '=', 'own-03')
+      .where('granted_email', '!=', 'OWNER@EXAMPLE.COM')
+      .execute()
+    expect(
+      (await load('/files')).files.find((f) => f.id === 'own-03')
+        ?.hasDirectGrants,
+    ).toBe(false)
   })
 
   test('normalizes page in one redirect', async () => {

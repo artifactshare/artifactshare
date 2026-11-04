@@ -20,6 +20,7 @@ import {
 } from './projects.server'
 import { grantMatchEmail } from './access.server'
 import { workspaceAccessRevokedSql } from '~/modules/access'
+import { normalizeGrantEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
 import { commentThreadWindowExpression } from './comment-thread-window.server'
@@ -235,6 +236,7 @@ function artifactSelectQuery(
   db: Kysely<DB>,
   workspaceId: string,
   userId: string,
+  ownerEmail?: string | null,
 ) {
   return db
     .selectFrom('shareables')
@@ -266,6 +268,7 @@ function artifactSelectQuery(
       'containers.workspace_id as project_workspace_id',
       'workspaces.name as project_workspace_name',
       commentCountSelect(eb),
+      directGrantsSelect(ownerEmail),
     ])
     .where('shareables.workspace_id', '=', workspaceId)
     .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
@@ -277,8 +280,9 @@ export async function listMyArtifacts(
   db: Kysely<DB>,
   userId: string,
   workspaceId: string,
+  ownerEmail?: string | null,
 ): Promise<{ rows: ShareableFileRow[]; total: number }> {
-  const base = artifactSelectQuery(db, workspaceId, userId).where(
+  const base = artifactSelectQuery(db, workspaceId, userId, ownerEmail).where(
     'shareables.owner_user_id',
     '=',
     userId,
@@ -299,8 +303,9 @@ export function listMyArtifactsLimited(
   userId: string,
   workspaceId: string,
   limit = 5,
+  ownerEmail?: string | null,
 ) {
-  return artifactSelectQuery(db, workspaceId, userId)
+  return artifactSelectQuery(db, workspaceId, userId, ownerEmail)
     .where('shareables.owner_user_id', '=', userId)
     .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
@@ -308,44 +313,59 @@ export function listMyArtifactsLimited(
     .execute()
 }
 
+export function unopenedOwnedPredicate(userId: string) {
+  const eb = expressionBuilder<DB, 'shareables'>()
+  return eb.and([
+    eb('shareables.owner_user_id', '=', userId),
+    eb('shareables.current_version_id', 'is not', null),
+    eb(
+      eb
+        .selectFrom('versions as first_version')
+        .select('first_version.created_by_id')
+        .whereRef('first_version.shareable_id', '=', 'shareables.id')
+        .orderBy('first_version.created_at', 'asc')
+        .orderBy('first_version.id', 'asc')
+        .limit(1),
+      '=',
+      userId,
+    ),
+    eb('shareables.artifact_kind', 'in', [
+      'markdown_page',
+      'html_page',
+      'static_site',
+    ]),
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('shareable_viewer_recency as unopened_recency')
+          .select('unopened_recency.shareable_id')
+          .whereRef('unopened_recency.shareable_id', '=', 'shareables.id')
+          .where('unopened_recency.viewer_user_id', '=', userId),
+      ),
+    ),
+  ])
+}
+
+// Owner-only display evidence; callers keep their existing access predicates.
+export function directGrantsSelect(ownerEmail?: string | null) {
+  const email = normalizeGrantEmail(ownerEmail)
+  return sql<number>`EXISTS (
+    SELECT 1 FROM shareable_grants AS label_grants
+    WHERE label_grants.shareable_id = shareables.id
+      AND ${email ? sql`${lowerEmail('label_grants.granted_email')} != ${email}` : sql`1 = 1`}
+  )`.as('has_direct_grants')
+}
+
 export async function listUnopenedOwnedArtifactsLimited(
   db: Kysely<DB>,
   userId: string,
   workspaceId: string,
   limit = 5,
+  ownerEmail?: string | null,
 ): Promise<{ rows: ShareableFileRow[]; total: number; hasMore: boolean }> {
-  const filtered = artifactSelectQuery(db, workspaceId, userId)
+  const filtered = artifactSelectQuery(db, workspaceId, userId, ownerEmail)
     .where('shareables.owner_user_id', '=', userId)
-    .where('shareables.current_version_id', 'is not', null)
-    .where((eb) =>
-      eb(
-        eb
-          .selectFrom('versions as first_version')
-          .select('first_version.created_by_id')
-          .whereRef('first_version.shareable_id', '=', 'shareables.id')
-          .orderBy('first_version.created_at', 'asc')
-          .orderBy('first_version.id', 'asc')
-          .limit(1),
-        '=',
-        userId,
-      ),
-    )
-    .where('shareables.artifact_kind', 'in', [
-      'markdown_page',
-      'html_page',
-      'static_site',
-    ])
-    .where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('shareable_viewer_recency as unopened_recency')
-            .select('unopened_recency.shareable_id')
-            .whereRef('unopened_recency.shareable_id', '=', 'shareables.id')
-            .where('unopened_recency.viewer_user_id', '=', userId),
-        ),
-      ),
-    )
+    .where(unopenedOwnedPredicate(userId))
     .clearOrderBy()
     .orderBy('shareables.created_at', 'desc')
     .orderBy('shareables.id', 'asc')
@@ -400,6 +420,7 @@ function recentArtifactsQuery(
       'workspaces.name as project_workspace_name',
       commentCountSelect(eb),
       ...recentRowActivitySelects(eb, user.id, user),
+      directGrantsSelect(user.email),
     ])
     .where('recency.viewer_user_id', '=', user.id)
 }

@@ -372,10 +372,16 @@ export async function loader(
     recentCountResult,
     recentCardinalityResult,
   ] = await Promise.all([
-    listMyArtifactsLimited(db, user.id, user.workspaceId).catch(() => null),
-    listUnopenedOwnedArtifactsLimited(db, user.id, user.workspaceId).catch(
+    listMyArtifactsLimited(db, user.id, user.workspaceId, 5, user.email).catch(
       () => null,
     ),
+    listUnopenedOwnedArtifactsLimited(
+      db,
+      user.id,
+      user.workspaceId,
+      5,
+      user.email,
+    ).catch(() => null),
     listRecentArtifactsLimited(db, user, 20, { relation, unread }).catch(
       () => null,
     ),

@@ -122,6 +122,8 @@
   "table.commentCountOther": "{n} 件",
   "table.owner": "所有者",
   "table.project": "プロジェクト",
+  "table.visibilityOnlyMe": "非公開",
+  "row.unopened": "未確認",
   "table.visibilityPrivate": "個別共有",
   "table.visibilityProject": "プロジェクト",
   "table.visibilityWorkspace": "社内全員",

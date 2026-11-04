@@ -47,7 +47,7 @@ vi.mock('~/modules/access', async (original) => ({
 }))
 vi.mock('~/services/shareables.server', () => ({
   canUpdateShareableVersion: () => Promise.resolve(false),
-  listGrants: () => Promise.resolve({ kind: 'ok', grants: [] }),
+  listGrants: vi.fn(() => Promise.resolve({ kind: 'ok', grants: [] })),
 }))
 vi.mock('~/services/comments.server', () => ({
   commentAccessFromVerifiedShareable: () =>

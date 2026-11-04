@@ -1,6 +1,7 @@
 import type { ProjectBaseVisibility, Visibility } from './shareable-types'
 
 type ShortVisibilityLabelKey =
+  | 'table.visibilityOnlyMe'
   | 'table.visibilityPrivate'
   | 'table.visibilityProject'
   | 'table.visibilityWorkspace'
@@ -16,7 +17,10 @@ const SHORT_VISIBILITY_LABEL_KEYS: Record<Visibility, ShortVisibilityLabelKey> =
 
 export function shortVisibilityLabelKey(
   visibility: Visibility,
+  hasDirectGrants?: boolean,
 ): ShortVisibilityLabelKey {
+  if (visibility === 'private' && hasDirectGrants === false)
+    return 'table.visibilityOnlyMe'
   return SHORT_VISIBILITY_LABEL_KEYS[visibility]
 }
 

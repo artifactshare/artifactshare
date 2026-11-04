@@ -191,6 +191,52 @@ describe('ViewerChrome', () => {
     mockLocationState = null
   })
 
+  test('both visibility chips use owner evidence and keep redacted or unknown grants specific', () => {
+    for (const dictionary of [en, ja]) {
+      mockDictionary = dictionary
+      try {
+        for (const owner of [true, false])
+          for (const evidence of [false, true, undefined]) {
+            const html = renderChrome({
+              artifact: {
+                ...artifact,
+                visibility: 'private',
+                hasDirectGrants: evidence,
+                grants: [],
+                canChangeVisibility: owner,
+              },
+              user: {
+                id: owner ? artifact.ownerId : 'another-user',
+                email: 'owner@example.com',
+                name: 'Owner',
+                image: null,
+                initial: 'O',
+              },
+              renderType: 'html',
+            })
+            const expected =
+              dictionary[
+                owner && evidence === false
+                  ? 'table.visibilityOnlyMe'
+                  : 'table.visibilityPrivate'
+              ]
+            const doc = new DOMParser().parseFromString(html, 'text/html')
+            for (const responsive of ['mobile-only', 'desktop-only']) {
+              const chip = doc.querySelector(
+                `[data-regression-responsive="${responsive}"]`,
+              )
+              expect(chip?.textContent).toBe(expected)
+              expect(chip?.getAttribute('title')).toBe(expected)
+              if (owner)
+                expect(chip?.getAttribute('aria-label')).toContain(expected)
+            }
+          }
+      } finally {
+        mockDictionary = null
+      }
+    }
+  })
+
   test('builds link-domain sign-in URLs on the app origin', () => {
     expect(
       anonymousViewerSignInUrl('https://artifactshare.com', 'abc123def4'),

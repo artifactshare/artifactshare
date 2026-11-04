@@ -35,6 +35,8 @@ import { useT } from '~/hooks/use-t'
 import { groupByDay } from '~/lib/datetime'
 import { requireUser } from '~/middleware/context'
 import {
+  directGrantsSelect,
+  unopenedOwnedPredicate,
   versionCountSelect,
   latestPublishedAtSelect,
   latestHumanVersionNumberSelect,
@@ -135,6 +137,8 @@ export async function loader({
   if (requestedPage > lastPage) throw redirect(filesUrl({ page: lastPage }))
   const rows = await filtered
     .select((eb) => [
+      directGrantsSelect(user.email),
+      unopenedOwnedPredicate(user.id).as('is_unopened'),
       versionCountSelect(eb),
       latestPublishedAtSelect(eb),
       latestHumanVersionNumberSelect(eb),

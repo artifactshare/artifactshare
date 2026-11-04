@@ -116,7 +116,7 @@ export async function loader({
   const ctx = await loadProjectSubpageContext(db, user, projectId)
   const visible = projectSubpageVisibleFilter(ctx, user)
   const cursor = parseCursor(new URL(request.url).searchParams.get('cursor'))
-  let query = projectFileRowsQuery(db, ctx.projectId).where(visible)
+  let query = projectFileRowsQuery(db, ctx.projectId, user.email).where(visible)
   if (cursor) {
     query = query.where((eb) =>
       eb.or([

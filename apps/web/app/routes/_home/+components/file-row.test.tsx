@@ -563,3 +563,17 @@ describe('My files recent version facts', () => {
     },
   )
 })
+
+test('unopened marker appears visibly and in the file link name only with evidence', () => {
+  for (const isUnopened of [true, false, undefined]) {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <FileRow data={{ ...data, isUnopened }} />
+      </MemoryRouter>,
+    )
+    if (isUnopened) {
+      expect(html).toMatch(/aria-label="[^"]*row.unopened/)
+      expect(html).toContain('>row.unopened</span>')
+    } else expect(html).not.toContain('row.unopened')
+  }
+})

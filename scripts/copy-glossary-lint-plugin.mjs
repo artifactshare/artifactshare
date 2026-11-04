@@ -206,6 +206,8 @@ export function extractTypeScriptCopy(source, locale) {
 
 export const COPY_GLOSSARY_ALLOW = {
   json: {
+    // Private visibility is distinct from the action of publishing.
+    'ja.table.visibilityOnlyMe': ['公開'],
     // Owner-specified publisher consent sentence uses the API resource name.
     'en.device.publisher.capability': ['artifacts'],
     'ja.footer.connect': ['ツール'],

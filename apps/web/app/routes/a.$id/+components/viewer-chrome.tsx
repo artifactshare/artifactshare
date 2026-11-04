@@ -150,6 +150,7 @@ interface ViewerChromeProps {
     workspaceMsTenantId?: string | null
     availableVisibilities?: ReadonlyArray<EditableVisibility>
     projectBaseVisibility?: ProjectBaseVisibility | null
+    hasDirectGrants?: boolean
     grants?: ReadonlyArray<GrantEntry>
     defaultReturnTo?: string
     projectId?: string | null
@@ -219,12 +220,14 @@ function useViewerAccessRequest(location: ReturnType<typeof useLocation>) {
 
 function ViewerVisibilityChip({
   visibility,
+  hasDirectGrants,
   linkSuspended,
   onClick,
   className,
   responsive,
 }: {
   visibility: Visibility
+  hasDirectGrants?: boolean
   linkSuspended?: boolean
   onClick?: () => void
   className: string
@@ -233,7 +236,9 @@ function ViewerVisibilityChip({
   const { t } = useT()
   const paused = visibility === 'link' && linkSuspended === true
   const label = t(
-    paused ? 'vw.linkSharingPaused' : shortVisibilityLabelKey(visibility),
+    paused
+      ? 'vw.linkSharingPaused'
+      : shortVisibilityLabelKey(visibility, hasDirectGrants),
   )
   const ariaLabel = onClick
     ? `${label} · ${t('vw.changeVisibility')}`
@@ -291,6 +296,12 @@ export function ViewerChrome({
   const currentVisibility = isVisibility(artifact.visibility)
     ? artifact.visibility
     : null
+  const visibilityState = {
+    current: currentVisibility,
+    hasDirectGrants:
+      user?.id === artifact.ownerId ? artifact.hasDirectGrants : undefined,
+    linkSuspended: artifact.linkSuspended === true,
+  }
   const commentsAvailable =
     artifactSupportsComments(renderType) && onCommentsOpen !== undefined
   const canChangeVisibility =
@@ -445,12 +456,11 @@ export function ViewerChrome({
           artifactId={artifact.id}
           accessRequestId={accessRequestId}
           artifactCanViewHistory={artifact.canViewHistory}
-          linkSuspended={artifact.linkSuspended === true}
+          visibility={visibilityState}
           canChangeVisibility={canChangeVisibility}
           commentCount={commentCount}
           commentsAvailable={commentsAvailable}
           commentsButtonRef={commentsButtonRef}
-          currentVisibility={currentVisibility}
           historyLabel={historyLabel}
           moreButtonRef={moreButtonRef}
           presence={presence}
@@ -478,6 +488,7 @@ export function ViewerChrome({
           <div className="max-phone:col-span-2 max-phone:col-start-2 max-phone:row-start-3 max-phone:flex max-phone:items-center max-phone:pt-0.5 hidden min-w-0">
             <ViewerVisibilityChip
               visibility={currentVisibility}
+              hasDirectGrants={visibilityState.hasDirectGrants}
               linkSuspended={artifact.linkSuspended}
               className="max-w-full"
               responsive="mobile-only"
@@ -1106,13 +1117,16 @@ interface ViewerActionsProps {
   artifactId: string
   accessRequestId: string | null
   artifactCanViewHistory: boolean | undefined
-  linkSuspended: boolean
+  visibility: {
+    current: Visibility | null
+    hasDirectGrants?: boolean
+    linkSuspended: boolean
+  }
   canChangeVisibility: boolean
   canMove: boolean
   commentCount: number
   commentsAvailable: boolean
   commentsButtonRef: RefObject<HTMLButtonElement | null>
-  currentVisibility: Visibility | null
   historyLabel: string
   moreButtonRef: RefObject<HTMLButtonElement | null>
   onCommentsOpen?: (returnFocusTo?: HTMLElement | null) => void
@@ -1142,7 +1156,7 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
-  linkSuspended,
+  visibility: { current: currentVisibility, hasDirectGrants, linkSuspended },
   appOrigin,
   analyticsMode,
   artifactId,
@@ -1153,7 +1167,6 @@ function ViewerActions({
   commentCount,
   commentsAvailable,
   commentsButtonRef,
-  currentVisibility,
   historyLabel,
   moreButtonRef,
   onCommentsOpen,
@@ -1223,6 +1236,7 @@ function ViewerActions({
       {user && currentVisibility ? (
         <ViewerVisibilityChip
           visibility={currentVisibility}
+          hasDirectGrants={hasDirectGrants}
           linkSuspended={linkSuspended}
           className="max-phone:hidden"
           responsive="desktop-only"
