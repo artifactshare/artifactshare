@@ -4525,6 +4525,7 @@ export async function listArtifactVersions(
   currentVersionId: string | null,
   before?: { created_at: string; id: string },
   staticHistory = false,
+  options: { includeUnpublished?: boolean; maySeeEmail?: boolean } = {},
 ): Promise<OwnedArtifactVersions> {
   let query = db
     .selectFrom('versions')
@@ -4542,7 +4543,7 @@ export async function listArtifactVersions(
       'users.email as creator_email',
     ])
     .where('shareable_id', '=', shareableId)
-  if (staticHistory)
+  if (staticHistory && !options.includeUnpublished)
     query = query
       .where('versions.status', '=', 'published')
       .where('versions.published_at', 'is not', null)
@@ -4582,7 +4583,12 @@ export async function listArtifactVersions(
             : row.creator_name || row.creator_email
               ? {
                   kind: 'human' as const,
-                  name: row.creator_name ?? row.creator_email ?? 'User',
+                  name:
+                    row.creator_name ??
+                    (options.maySeeEmail !== false
+                      ? row.creator_email
+                      : null) ??
+                    'User',
                   email: row.creator_email ?? null,
                   agentProfileId: null,
                 }

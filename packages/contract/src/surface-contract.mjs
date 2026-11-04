@@ -526,7 +526,7 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'List accessible artifacts',
-        'Each row includes retain_versions (null for unlimited), version_count and total_size_bytes across all surviving database versions. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.',
+        'Each row includes retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list. Static-site owners see all surviving versions, including unpublished statuses; non-owners see only published versions with a publication timestamp. Publisher credentials cannot list artifacts. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.',
         restRef('ArtifactsListResponse'),
         null,
         ['unrestricted', 'agent', 'browser-session'],
@@ -575,7 +575,7 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'List retained artifact versions',
-        'Files and static sites. 50 entries per page, ordered created_at then ID descending. Sizes include every file, including inherited files. Summaries cover all surviving statuses, independent of pagination. Reused files count per version; logical bytes do not measure billing or physical storage. Protected human/current versions may exceed retention. Existing read permissions apply; inaccessible artifacts return 404, publisher credentials 403. Invalid or wrong-artifact cursor: 400 validation-failed; restart without cursor. No snapshot across concurrent publication or pruning.',
+        'Files and static sites. 50 entries per page, ordered created_at then ID descending. Sizes include every file, including inherited files. Summaries cover versions the caller can list, independent of pagination. Static-site owners see all surviving versions, including unpublished statuses; non-owners see only published versions with a publication timestamp. Publisher-created static-site versions may have a null creator. Reused files count per version; logical bytes do not measure billing or physical storage. Protected human/current versions may exceed retention. Existing read permissions apply; inaccessible artifacts return 404, publisher credentials 403. Invalid or wrong-artifact cursor: 400 validation-failed; restart without cursor. No snapshot across concurrent publication or pruning.',
         restRef('ArtifactVersionsResponse'),
         null,
         ['unrestricted', 'agent', 'browser-session'],
@@ -606,7 +606,7 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'Read an artifact',
-        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Human and agent get includes retain_versions, version_count and total_size_bytes for all surviving versions. Publisher responses omit version counts and total sizes; static-site publisher metadata includes retain_versions.',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Human and agent get includes retain_versions, version_count and total_size_bytes for versions the caller can list. Static-site owners see all surviving versions, including unpublished statuses; non-owners see only published versions with a publication timestamp. Publisher responses omit version counts and total sizes; static-site publisher metadata includes retain_versions.',
         {
           anyOf: [
             restRef('ArtifactReadResponse'),

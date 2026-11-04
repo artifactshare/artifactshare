@@ -96,6 +96,45 @@ describe('listCliArtifacts project scope', () => {
     expect(ids).not.toContain('art-own')
   })
 
+  test('static-site project summaries exclude unpublished history for non-owners', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'static_site' })
+      .where('id', '=', 'art-other-ws-vis')
+      .execute()
+    await db
+      .updateTable('versions')
+      .set({ published_at: null })
+      .where('shareable_id', '=', 'art-other-ws-vis')
+      .execute()
+    const owner = await listCliArtifacts(
+      db,
+      { ...MEMBER, id: 'u2', email: 'other@example.com' },
+      {
+        ...BASE,
+        projectId: 'project-a',
+      },
+    )
+    if (owner.kind !== 'ok') throw new Error('expected owner list')
+    expect(
+      owner.data.artifacts.find((row) => row.id === 'art-other-ws-vis'),
+    ).toMatchObject({
+      version_count: 2,
+      total_size_bytes: 18,
+    })
+    const viewer = await listCliArtifacts(db, MEMBER, {
+      ...BASE,
+      projectId: 'project-a',
+    })
+    if (viewer.kind !== 'ok') throw new Error('expected viewer list')
+    expect(
+      viewer.data.artifacts.find((row) => row.id === 'art-other-ws-vis'),
+    ).toMatchObject({
+      version_count: 0,
+      total_size_bytes: 0,
+    })
+  })
+
   test('unknown or inaccessible project id is invalid-project', async () => {
     const unknown = await listCliArtifacts(db, MEMBER, {
       ...BASE,

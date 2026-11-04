@@ -61,12 +61,11 @@ afterEach(async () => {
 })
 
 test('summaries count all surviving statuses, unlimited policies and empty histories', async () => {
-  const summary = await loadArtifactVersionSummaries(fixture.db, [
-    'html',
-    'md',
-    'site',
-    'empty',
-  ])
+  const summary = await loadArtifactVersionSummaries(
+    fixture.db,
+    ['html', 'md', 'site', 'empty'],
+    user.id,
+  )
   for (const id of ['html', 'md', 'site'])
     expect(summary.get(id)).toEqual({
       retain_versions: id === 'site' ? 3 : null,
@@ -102,7 +101,7 @@ for (const id of ['html', 'md', 'site'])
       cursor: first.data.next_cursor!,
     })
     if (second.kind !== 'ok') throw new Error('expected second page')
-    expect(second.data.versions).toHaveLength(id === 'site' ? 2 : 3)
+    expect(second.data.versions).toHaveLength(3)
     expect(second.data.has_more).toBe(false)
     expect(
       new Set(
@@ -110,7 +109,7 @@ for (const id of ['html', 'md', 'site'])
           (v) => v.version_id,
         ),
       ).size,
-    ).toBe(id === 'site' ? 52 : 53)
+    ).toBe(53)
     expect(second.data.versions.every((v) => !v.is_current)).toBe(true)
     expect(
       await getArtifactVersions(fixture.db, user, {
@@ -228,6 +227,7 @@ test('shared viewers can read history with creator emails redacted', async () =>
     VALUES ('pub1','u1','ws1','Publisher','2026-01-01');
     UPDATE versions SET created_by_publisher_client_id = 'pub1' WHERE id = 'site-52';
     UPDATE versions SET published_at = NULL WHERE id = 'site-01';
+    UPDATE users SET name = NULL WHERE id = 'u1';
   `)
   const result = await getArtifactVersions(
     fixture.db,
@@ -235,6 +235,26 @@ test('shared viewers can read history with creator emails redacted', async () =>
     { id: 'site' },
   )
   if (result.kind !== 'ok') throw new Error('expected shared history')
+  expect(result.data).toMatchObject({
+    version_count: 51,
+    total_size_bytes: 1428,
+  })
+  const readback = await getCliArtifactReadback(
+    fixture.db,
+    { ...user, id: 'u2', workspaceId: 'ws2', email: 'u2@example.com' },
+    { id: 'site', baseUrl: 'https://example.com', allowStaticMetadata: true },
+  )
+  expect(readback).toMatchObject({
+    kind: 'ok',
+    data: { version_count: 51, total_size_bytes: 1428 },
+  })
+  const owner = await getArtifactVersions(fixture.db, user, { id: 'site' })
+  if (owner.kind !== 'ok') throw new Error('expected owner history')
+  expect(owner.data).toMatchObject({
+    version_count: 53,
+    total_size_bytes: 1431,
+  })
+  expect(owner.data.versions[1]?.creator?.name).toBe('u1@example.com')
   expect(result.data.versions[0]?.creator).toBeNull()
   const next = await getArtifactVersions(
     fixture.db,

@@ -4666,7 +4666,9 @@ describe('StaticSiteBundleVersionUploadSession', () => {
     const { loadArtifactVersionSummaries } =
       await import('./artifact-version-summary.server')
     expect(
-      (await loadArtifactVersionSummaries(db, ['bundle1'])).get('bundle1'),
+      (await loadArtifactVersionSummaries(db, ['bundle1'], OWNER.id)).get(
+        'bundle1',
+      ),
     ).toMatchObject({
       version_count: 2,
       total_size_bytes: 217,

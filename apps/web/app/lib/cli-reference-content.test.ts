@@ -680,3 +680,30 @@ for (const locale of ['en', 'ja'] as const)
     ])
       expect(command.role.toLowerCase()).toContain(field)
   })
+
+for (const locale of ['en', 'ja'] as const)
+  test(`documents caller-visible version totals and publisher limits in ${locale}`, () => {
+    for (const path of [
+      'artifacts get',
+      'artifacts versions',
+      'artifacts list',
+    ]) {
+      const role = cliReferenceContent(locale).commands.find(
+        (entry) => entry.path === path,
+      )!.role
+      expect(role).toContain(
+        locale === 'en'
+          ? 'non-owners see only published versions with a publication timestamp'
+          : '所有者以外には公開日時のある公開済みの版だけ',
+      )
+      expect(role.toLowerCase()).toContain(
+        locale === 'en' ? 'publisher credentials' : 'publisher の資格情報',
+      )
+      if (path === 'artifacts get')
+        expect(role).toContain(
+          locale === 'en'
+            ? 'do not receive version_count or total_size_bytes'
+            : 'version_count と total_size_bytes を返しません',
+        )
+    }
+  })

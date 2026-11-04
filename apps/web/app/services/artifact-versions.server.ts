@@ -57,6 +57,9 @@ export async function getArtifactVersions(
   const cursor =
     args.cursor === undefined ? undefined : decodeCursor(args.cursor, args.id)
   if (cursor === null) return { kind: 'invalid-cursor' }
+  const maySeeEmail =
+    access.workspaceId ===
+    (args.agentReadAuthorization?.viewerWorkspaceId ?? user.workspaceId)
   const [history, summaries] = await Promise.all([
     listArtifactVersions(
       db,
@@ -64,12 +67,10 @@ export async function getArtifactVersions(
       access.currentVersionId,
       cursor,
       access.artifactKind === 'static_site',
+      { includeUnpublished: access.ownerUserId === user.id, maySeeEmail },
     ),
-    loadArtifactVersionSummaries(db, [args.id]),
+    loadArtifactVersionSummaries(db, [args.id], user.id),
   ])
-  const maySeeEmail =
-    access.workspaceId ===
-    (args.agentReadAuthorization?.viewerWorkspaceId ?? user.workspaceId)
   const last = history.versions.at(-1)
   return {
     kind: 'ok',

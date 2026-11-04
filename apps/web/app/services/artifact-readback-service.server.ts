@@ -267,7 +267,7 @@ export async function getCliArtifactReadback(
   if (access.artifactKind !== 'static_site') {
     const result = await readArtifactWithAccess(db, user, args, access)
     if (result.kind !== 'ok') return result
-    const summaries = await loadArtifactVersionSummaries(db, [args.id])
+    const summaries = await loadArtifactVersionSummaries(db, [args.id], user.id)
     return { kind: 'ok', data: { ...result.data, ...summaries.get(args.id)! } }
   }
   if (
@@ -278,7 +278,7 @@ export async function getCliArtifactReadback(
     return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
   if (args.offset !== undefined) return { kind: 'invalid-offset' }
   if (!access.currentVersionId) return { kind: 'source-unavailable' }
-  const summaries = await loadArtifactVersionSummaries(db, [args.id])
+  const summaries = await loadArtifactVersionSummaries(db, [args.id], user.id)
   return {
     kind: 'ok',
     data: {
