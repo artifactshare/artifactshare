@@ -103,6 +103,12 @@ test('the invocation runs /code-review read-only on the fixed range', () => {
   assert.equal(args[args.indexOf('--setting-sources') + 1], 'project,local')
   assert.ok(args.includes('--strict-mcp-config'))
   assert.match(args[args.indexOf('--disallowedTools') + 1], /^Bash,Edit,Write/u)
+  const allowed = args[args.indexOf('--allowedTools') + 1].split(',')
+  const denied = args[args.indexOf('--disallowedTools') + 1].split(',')
+  assert.deepEqual(
+    allowed.filter((tool) => denied.includes(tool)),
+    [],
+  )
   assert.equal(args[args.indexOf('--add-dir') + 1], '/tmp/evidence')
   assert.equal(args.includes('--safe-mode'), false)
 })

@@ -2,7 +2,7 @@
 
 - Product-development constraints: see [`docs/reference/development-constraints.md`](docs/reference/development-constraints.md).
 
-- Work only with files and context available in this repository. Do not use production operations, secrets, customer context, private paths, or private URLs.
+- Work only with files and context available in this repository, plus public web sources a review needs, such as dependency releases and advisories. Do not use production operations, secrets, customer context, private paths, or private URLs.
 - Install dependencies with `pnpm install --frozen-lockfile`. Before declaring a change complete, run the local validation selected by `docs/development-workflow.md`; the merge queue remains the source of truth for full validation. Product UI changes must keep React Doctor at zero warnings and errors.
 - Use the repository [Controlled Review skill](.agents/skills/controlled-review/SKILL.md) for orchestrated reviews, including when a personal skill with the same name is installed. The implementation gate's Claude side runs Claude Code's `/code-review` instead, as `docs/development-workflow.md` describes. The calling orchestrator owns conditions, role assignments, and finding dispositions.
 - Review implementation, user-visible behavior, tests, security boundaries, and maintainability. Keep pull-request descriptions to the implementation, its generalized visible effect, validation results, and any workflow usage included.

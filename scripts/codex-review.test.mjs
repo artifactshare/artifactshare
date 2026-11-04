@@ -76,6 +76,11 @@ test('ordinary request disables both Codex multi-agent features', () => {
     '/tmp/output',
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
+  assert.equal(request.args.includes('--sandbox'), false)
+  assert.ok(
+    request.args.includes('permissions.review.filesystem={":root"="read"}'),
+  )
+  assert.ok(request.args.includes('permissions.review.network.enabled=true'))
   assert.match(request.args.join(' '), /--disable multi_agent/u)
   assert.match(request.args.join(' '), /--disable multi_agent_v2/u)
   assert.equal(request.args.includes('review'), false)
