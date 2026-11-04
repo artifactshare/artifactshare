@@ -90,13 +90,25 @@ test('the invocation runs /code-review read-only on the fixed range', () => {
     args[1],
     `/code-review high ${'b'.repeat(40)}...${'h'.repeat(40)}`,
   )
-  assert.equal(args[args.indexOf('--tools') + 1], 'Read,Grep,Glob,Agent')
-  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Grep,Glob,Agent')
+  assert.equal(
+    args[args.indexOf('--tools') + 1],
+    'Read,Grep,Glob,WebFetch,WebSearch,Agent',
+  )
+  assert.equal(
+    args[args.indexOf('--allowedTools') + 1],
+    'Read,Grep,Glob,WebFetch,WebSearch,Agent',
+  )
   assert.equal(args[args.indexOf('--effort') + 1], 'high')
   assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk')
   assert.equal(args[args.indexOf('--setting-sources') + 1], 'project,local')
   assert.ok(args.includes('--strict-mcp-config'))
   assert.match(args[args.indexOf('--disallowedTools') + 1], /^Bash,Edit,Write/u)
+  const allowed = args[args.indexOf('--allowedTools') + 1].split(',')
+  const denied = args[args.indexOf('--disallowedTools') + 1].split(',')
+  assert.deepEqual(
+    allowed.filter((tool) => denied.includes(tool)),
+    [],
+  )
   assert.equal(args[args.indexOf('--add-dir') + 1], '/tmp/evidence')
   assert.equal(args.includes('--safe-mode'), false)
 })

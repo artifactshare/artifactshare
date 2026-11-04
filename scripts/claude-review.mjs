@@ -196,7 +196,7 @@ function resolveBaseSha(base, execute = run) {
   return resolved
 }
 
-const allowedTools = ['Read', 'Grep', 'Glob']
+const allowedTools = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']
 const reportStringProperties = Object.freeze({
   angle: { type: 'string' },
   severity: { type: 'string' },
@@ -341,7 +341,7 @@ function invocation(options, _head, { prompt = '', role = 'finder' } = {}) {
       '--effort',
       options.effort,
       '--tools',
-      'Read,Grep,Glob',
+      allowedTools.join(','),
       '--allowedTools',
       ...allowedTools,
       '--session-id',
