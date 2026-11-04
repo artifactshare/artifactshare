@@ -36,7 +36,6 @@ import {
   createSandboxChallenge,
   ensureSandboxChallenge,
   type LinkClickedMessage,
-  type MermaidRenderRequestMessage,
   type TextSelectionMessage,
 } from '~/lib/csp-reporter'
 import { t as translate, tPlural as translatePlural } from '~/lib/i18n'
@@ -67,7 +66,7 @@ import {
   sandboxExternalLinkPolicyMessage,
   sandboxMessageFromFrame,
 } from '~/lib/sandbox-frame-message'
-import { renderMermaidSvg } from '~/lib/mermaid-render.client'
+import { renderMermaidRequest } from './mermaid-render-request'
 import {
   classifyViewerLinkNavigation,
   continueExternalNavigation,
@@ -104,25 +103,6 @@ function addFrameOffset(
     width: rect.width,
     height: rect.height,
   }
-}
-
-async function renderMermaidRequest(message: MermaidRenderRequestMessage) {
-  return await message.diagrams.reduce<
-    Promise<Array<{ id: string; svg: string }>>
-  >(async (pending, diagram) => {
-    // Mermaid diagram renderers share temporary DOM state, so keep the batch sequential.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    const results = await pending
-    try {
-      results.push({
-        id: diagram.id,
-        svg: await renderMermaidSvg(diagram.source),
-      })
-    } catch {
-      // The source code block remains visible when a diagram cannot render.
-    }
-    return results
-  }, Promise.resolve([]))
 }
 
 type SandboxFrameProps = {

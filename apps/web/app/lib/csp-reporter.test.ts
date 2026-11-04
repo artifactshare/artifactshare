@@ -31,7 +31,13 @@ import {
 } from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
 import { installMermaidResults } from '../../../../packages/viewer-kit/src/reporter/mermaid.js'
 
+import { VIOLATION_REPORTER_SCRIPT_BODY } from '../../../../packages/viewer-kit/src/reporter.generated.js'
+
 import { installCspViolations } from '../../../../packages/viewer-kit/src/reporter/csp-violations.js'
+
+test('generated reporter body is ASCII so CSP hashes do not depend on document encoding', () => {
+  expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toMatch(/[\u0080-\uffff]/)
+})
 
 function state() {
   return createReporterState(window)
@@ -514,7 +520,11 @@ test('Mermaid results tolerate a detached block and render subsequent diagrams',
     { id: 'attached', svg },
   ])
   expect(document.querySelectorAll('.mermaid-diagram')).toHaveLength(1)
-  expect(attached.previousElementSibling?.textContent).toBe('Diagram')
+  const diagram = attached.previousElementSibling as HTMLElement
+  expect(diagram.tabIndex).toBe(0)
+  expect(diagram.getAttribute('role')).toBe('region')
+  expect(diagram.getAttribute('aria-label')).toBe('Mermaid diagram')
+  expect(diagram.textContent).toBe('Diagram')
   expect(attached.hidden).toBe(true)
   expect(ctx.mermaidBlocks).toEqual({})
 })
@@ -754,3 +764,33 @@ test.each([
     ).toBe(true)
   },
 )
+
+test('Mermaid failures retain source and allow successful neighbors only for matching pending ids', () => {
+  const ctx = state()
+  ctx.readyChallenge = 'synthetic-challenge'
+  const failed = document.createElement('pre')
+  failed.textContent = 'invalid source'
+  const valid = document.createElement('pre')
+  document.body.appendChild(failed)
+  document.body.appendChild(valid)
+  ctx.mermaidBlocks = { failed, valid }
+  installMermaidResults(ctx, 'stale', [{ id: 'failed', svg: '' }])
+  installMermaidResults(ctx, ctx.readyChallenge, [{ id: 'unknown', svg: '' }])
+  expect(failed.className).toBe('')
+  expect(valid.className).toBe('')
+  expect(Object.keys(ctx.mermaidBlocks)).toEqual(['failed', 'valid'])
+  installMermaidResults(ctx, ctx.readyChallenge, [
+    { id: 'failed', svg: '' },
+    {
+      id: 'valid',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>A</text></svg>',
+    },
+  ])
+  expect(failed.classList.contains('mermaid-error')).toBe(true)
+  expect(failed.hidden).toBe(false)
+  expect(failed.textContent).toBe('invalid source')
+  expect(failed.dataset.mermaidRendered).toBeUndefined()
+  expect(valid.hidden).toBe(true)
+  expect(valid.previousElementSibling?.className).toBe('mermaid-diagram')
+  expect(ctx.mermaidBlocks).toEqual({})
+})

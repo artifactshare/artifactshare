@@ -23,7 +23,9 @@ vi.mock('dompurify', () => ({
 import { renderMermaidInDocument } from './mermaid-render.client'
 
 describe('renderMermaidInDocument', () => {
-  beforeEach(() => render.mockClear())
+  beforeEach(() => {
+    render.mockClear()
+  })
 
   test('renders TanStack blocks while preserving hidden source for comments', async () => {
     const doc = new DOMParser().parseFromString(
@@ -37,6 +39,10 @@ describe('renderMermaidInDocument', () => {
       expect.stringMatching(/^artifactshare-mermaid-/),
       'flowchart LR\nA --> B',
     )
+    const diagram = doc.querySelector<HTMLElement>('.mermaid-diagram')!
+    expect(diagram.tabIndex).toBe(0)
+    expect(diagram.getAttribute('role')).toBe('region')
+    expect(diagram.getAttribute('aria-label')).toBe('Mermaid diagram')
     expect(doc.querySelector('.mermaid-diagram svg')).not.toBeNull()
     expect(doc.querySelector('.mermaid-diagram script')).toBeNull()
     expect(
@@ -88,4 +94,30 @@ describe('renderMermaidInDocument', () => {
     expect(render).not.toHaveBeenCalled()
     expect(doc.querySelector('.mermaid-diagram')).toBeNull()
   })
+})
+
+test('keeps failed source visible while rendering its neighbor with intrinsic sizing', async () => {
+  render.mockRejectedValueOnce(new Error('Invalid syntax'))
+  const doc = new DOMParser().parseFromString(
+    '<body data-artifact-markdown><pre><code class="language-mermaid">invalid</code></pre><pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre></body>',
+    'text/html',
+  )
+  await renderMermaidInDocument(doc, true)
+  const blocks = doc.querySelectorAll('pre')
+  expect(blocks[0].classList.contains('mermaid-error')).toBe(true)
+  expect(blocks[0].hidden).toBe(false)
+  expect(blocks[0].textContent).toBe('invalid')
+  expect(blocks[1].hidden).toBe(true)
+  expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(1)
+  const { default: mermaid } = await import('mermaid')
+  expect(mermaid.initialize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      theme: 'default',
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      htmlLabels: false,
+      flowchart: { useMaxWidth: false },
+      sequence: { useMaxWidth: false },
+    }),
+  )
 })

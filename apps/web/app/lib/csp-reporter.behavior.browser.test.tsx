@@ -9,7 +9,14 @@ import {
   VIOLATION_REPORTER_SHA256,
   canUseOsHandler,
 } from './csp-reporter'
-import { renderMermaidSvg, sanitizeMermaidSvg } from './mermaid-render.client'
+import { renderMarkdownDocument } from './markdown-render'
+import { renderMermaidRequest } from '../routes/a.$id/+components/mermaid-render-request'
+import type { MermaidRenderRequestMessage } from './csp-reporter'
+import {
+  renderMermaidInDocument,
+  renderMermaidSvg,
+  sanitizeMermaidSvg,
+} from './mermaid-render.client'
 import { resolveExportHtml } from '../routes/a.$id/+components/export-actions'
 
 type ReporterMessage = { kind?: string; [key: string]: unknown }
@@ -75,6 +82,7 @@ async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
   handshake = true,
   documentNavigation = false,
+  markdown?: { width: number; theme: 'light' | 'dark' },
 ) {
   messages = []
   readyEvents = []
@@ -82,7 +90,16 @@ async function fixture(
   frame?.remove()
   frame = document.createElement('iframe')
   frame.style.cssText = 'width:800px;height:600px;border:0'
-  const html = `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  if (markdown) {
+    await server.commands.setMermaidColorScheme(markdown.theme)
+    frame.style.cssText = `width:${markdown.width}px;height:600px;border:0`
+  }
+  const html = markdown
+    ? body.replace(
+        '</body>',
+        `<script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`,
+      )
+    : `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
   const objectUrl = documentNavigation
     ? URL.createObjectURL(new Blob([html], { type: 'text/html' }))
     : null
@@ -2014,3 +2031,220 @@ test.each(
     expect(win.location.hash).toBe('#patched')
   },
 )
+
+describe('Mermaid document presentation', () => {
+  afterEach(async () => {
+    await server.commands.setMermaidColorScheme(null)
+  })
+
+  const diagrams = [
+    [
+      'flowchart',
+      'flowchart LR\nA[First readable node] -->|Readable edge| B[Second readable node] --> C[Third readable node] --> D[Last readable node]',
+    ],
+    [
+      'sequence',
+      'sequenceDiagram\nparticipant A as First participant\nparticipant B as Second participant\nparticipant C as Last participant\nA->>C: Readable message across the entire diagram\nC->>B: Reply',
+    ],
+  ] as const
+  for (const path of ['sandbox', 'client'] as const) {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const width of [390, 1000]) {
+        test.each(diagrams)(
+          `${path} %s has a readable surface and intrinsic size at ${width}px in ${theme}`,
+          async (_kind, source) => {
+            const html = renderMarkdownDocument(
+              '```mermaid\n' +
+                source +
+                '\n```\n```mermaid\n' +
+                (_kind === 'flowchart'
+                  ? 'flowchart LR\nA --> B'
+                  : 'sequenceDiagram\nA->>B: Hello') +
+                '\n```',
+              { logTiming: false },
+            )
+            const doc = await fixture(html, false, false, { width, theme })
+            expect(
+              doc.defaultView!.matchMedia('(prefers-color-scheme: dark)')
+                .matches,
+            ).toBe(theme === 'dark')
+            if (path === 'client') {
+              await renderMermaidInDocument(doc, true)
+            } else {
+              await probeReporter()
+              const request = (await waitForMessage(
+                'mermaid-render-request',
+              )) as unknown as MermaidRenderRequestMessage
+              const results = await renderMermaidRequest(request)
+              frame!.contentWindow!.postMessage(
+                {
+                  source: 'artifactshare-parent',
+                  kind: 'mermaid-rendered',
+                  renderToken: request.renderToken,
+                  results,
+                },
+                '*',
+              )
+              await vi.waitFor(() =>
+                expect(
+                  doc.querySelector('.mermaid-diagram svg'),
+                ).not.toBeNull(),
+              )
+            }
+            const container =
+              doc.querySelector<HTMLElement>('.mermaid-diagram')!
+            const svg = container.querySelector('svg')!
+            const style = doc.defaultView!.getComputedStyle(container)
+            expect(style.backgroundColor).toBe('rgb(255, 255, 255)')
+            expect(parseFloat(style.paddingLeft)).toBeGreaterThan(0)
+            expect(style.marginBottom).toBe('0px')
+            if (width === 1000) {
+              const small = doc.querySelectorAll<SVGSVGElement>(
+                '.mermaid-diagram svg',
+              )[1]
+              expect(small.getBoundingClientRect().width).toBeLessThan(
+                container.clientWidth,
+              )
+            }
+            const texts = [...svg.querySelectorAll('text')].filter((text) =>
+              text.textContent?.trim(),
+            )
+            expect(texts.length).toBeGreaterThan(0)
+            for (const text of texts) {
+              const matrix = text.getScreenCTM()!
+              const textStyle = doc.defaultView!.getComputedStyle(text)
+              expect(
+                parseFloat(textStyle.fontSize) * Math.hypot(matrix.c, matrix.d),
+              ).toBeGreaterThanOrEqual(14)
+            }
+            const luminance = (color: string) => {
+              const channels = color
+                .match(/[\d.]+/g)!
+                .slice(0, 3)
+                .map(Number)
+              return channels
+                .map((value) => {
+                  const channel = value / 255
+                  return channel <= 0.04045
+                    ? channel / 12.92
+                    : ((channel + 0.055) / 1.055) ** 2.4
+                })
+                .reduce(
+                  (sum, value, index) =>
+                    sum + value * [0.2126, 0.7152, 0.0722][index],
+                  0,
+                )
+            }
+            // Test against the darkest actual opaque label surface, including node fills.
+            const surfaces = [
+              style.backgroundColor,
+              ...[
+                ...svg.querySelectorAll(
+                  '.node rect, rect.actor, .edgeLabel rect',
+                ),
+              ].map((node) => doc.defaultView!.getComputedStyle(node).fill),
+            ].filter((fill) => fill.startsWith('rgb('))
+            const background = Math.min(...surfaces.map(luminance))
+            for (const text of texts) {
+              const label = text.querySelector('tspan') ?? text
+              expect(
+                (background + 0.05) /
+                  (luminance(doc.defaultView!.getComputedStyle(label).fill) +
+                    0.05),
+              ).toBeGreaterThanOrEqual(4.5)
+            }
+            const arrows = svg.querySelectorAll('marker path, .arrowheadPath')
+            expect(arrows.length).toBeGreaterThan(0)
+            for (const arrow of arrows) {
+              const arrowStyle = doc.defaultView!.getComputedStyle(arrow)
+              const color =
+                arrowStyle.fill === 'none' ? arrowStyle.stroke : arrowStyle.fill
+              expect(
+                (background + 0.05) / (luminance(color) + 0.05),
+              ).toBeGreaterThanOrEqual(3)
+            }
+            expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(width)
+            if (width === 390) {
+              expect(container.scrollWidth).toBeGreaterThan(
+                container.clientWidth,
+              )
+              expect(svg.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+                container.getBoundingClientRect().left,
+              )
+              container.scrollLeft = container.scrollWidth
+              expect(container.scrollLeft).toBeGreaterThan(0)
+              expect(
+                Math.abs(
+                  container.scrollLeft +
+                    container.clientWidth -
+                    container.scrollWidth,
+                ),
+              ).toBeLessThanOrEqual(1)
+              expect(svg.getBoundingClientRect().right).toBeLessThanOrEqual(
+                container.getBoundingClientRect().right,
+              )
+              container.scrollLeft = 0
+              expect(container.scrollLeft).toBe(0)
+            }
+            expect(doc.querySelector('pre')!.hidden).toBe(true)
+            expect(svg.getBoundingClientRect().width).toBeCloseTo(
+              svg.viewBox.baseVal.width,
+              0,
+            )
+          },
+          15000,
+        )
+      }
+    }
+    test.each([false, true])(
+      `${path} retains invalid source and its border (valid neighbor: %s)`,
+      async (mixed) => {
+        const source = 'flowchart LR\nA -->'
+        const html = renderMarkdownDocument(
+          '```mermaid\n' +
+            source +
+            '\n```' +
+            (mixed ? '\n```mermaid\nflowchart LR\nA --> B\n```' : ''),
+          { logTiming: false },
+        )
+        const doc = await fixture(html, false, false, {
+          width: 390,
+          theme: 'light',
+        })
+        const original = doc.querySelector('pre')!.textContent
+        if (path === 'client') {
+          await renderMermaidInDocument(doc, true)
+        } else {
+          await probeReporter()
+          const request = (await waitForMessage(
+            'mermaid-render-request',
+          )) as unknown as MermaidRenderRequestMessage
+          const results = await renderMermaidRequest(request)
+          expect(results[0].svg).toBe('')
+          frame!.contentWindow!.postMessage(
+            {
+              source: 'artifactshare-parent',
+              kind: 'mermaid-rendered',
+              renderToken: request.renderToken,
+              results,
+            },
+            '*',
+          )
+        }
+        await vi.waitFor(() =>
+          expect(doc.querySelector('.mermaid-error')).not.toBeNull(),
+        )
+        const pre = doc.querySelector<HTMLElement>('.mermaid-error')!
+        expect(pre.hidden).toBe(false)
+        expect(pre.textContent).toBe(original)
+        expect(
+          parseFloat(doc.defaultView!.getComputedStyle(pre).borderTopWidth),
+        ).toBeGreaterThan(0)
+        expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(
+          mixed ? 1 : 0,
+        )
+      },
+      15000,
+    )
+  }
+})

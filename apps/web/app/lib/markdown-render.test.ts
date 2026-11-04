@@ -270,6 +270,9 @@ describe('renderMarkdownDocument', () => {
 
     expect(out).toContain('class="md-code-label">`Flow`.mmd</span>')
     expect(out).toContain('<code class="language-mermaid">')
+    expect(out).toContain(
+      '.mermaid-diagram:focus-visible { outline: 2px solid #333; outline-offset: -2px; }',
+    )
     expect(out).not.toContain('class="tm-code-frame"')
   })
 })

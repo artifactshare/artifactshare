@@ -38,12 +38,13 @@ export function installMermaidResults(
     let result = results[index] || {}
     let pre =
       typeof result.id === 'string' ? ctx.mermaidBlocks[result.id] : null
-    if (
-      !pre ||
-      typeof result.svg !== 'string' ||
-      !result.svg.startsWith('<svg')
-    )
+    if (!pre || typeof result.svg !== 'string') continue
+    if (result.svg === '') {
+      pre.classList.add('mermaid-error')
+      delete ctx.mermaidBlocks[result.id]
       continue
+    }
+    if (!result.svg.startsWith('<svg')) continue
     let svgDocument = new ctx.win.DOMParser().parseFromString(
       result.svg,
       'image/svg+xml',
@@ -57,6 +58,9 @@ export function installMermaidResults(
       continue
     let container = ctx.doc.createElement('div')
     container.className = 'mermaid-diagram'
+    container.tabIndex = 0
+    container.setAttribute('role', 'region')
+    container.setAttribute('aria-label', 'Mermaid diagram')
     container.appendChild(ctx.doc.importNode(svg, true))
     pre.dataset.mermaidRendered = 'true'
     pre.hidden = true
