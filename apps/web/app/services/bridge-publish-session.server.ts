@@ -876,7 +876,14 @@ async function commitBridgeVersion(
 ): Promise<boolean> {
   const operationId = nanoid()
   const versionInsert = guardedVersionInsert(db, input)
-  const scope = bridgeTargetScopeSql(input)
+  const scope = sql<boolean>`${bridgeTargetScopeSql(input)} AND ${projectPlacementSql(
+    {
+      id: input.binding.authority.botUserId,
+      workspaceId: input.authority.workspaceId,
+    },
+    sql.ref('shareables.container_id'),
+    true,
+  )}`
   const visibility = bridgeTargetVisibilitySql(input)
   const visibilityPredicate = visibilityChangePredicate(
     sql<boolean>`id = ${input.target.id}`,
@@ -1036,7 +1043,17 @@ function guardedVersionInsert(
             input.context.requester.verifiedEmail,
           ),
         )
-        .where(bridgeTargetScopeSql(input, 'artifact')),
+        .where(bridgeTargetScopeSql(input, 'artifact'))
+        .where(
+          projectPlacementSql(
+            {
+              id: input.binding.authority.botUserId,
+              workspaceId: input.authority.workspaceId,
+            },
+            sql.ref('artifact.container_id'),
+            true,
+          ),
+        ),
     )
 }
 

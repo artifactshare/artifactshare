@@ -231,130 +231,168 @@ afterEach(async () => {
 })
 
 describe.each([
-  ['mapped', 'file'],
-  ['fallback', 'file'],
-  ['mapped', 'static_site'],
-  ['fallback', 'static_site'],
-] as const)('%s %s bridge placement', (destination, contentKind) => {
-  test.each([
-    'workspace',
-    'contributor',
-    'manager',
-    'removed',
-    'viewer',
-    'revoked',
-    'unverified',
-    'workspace-unverified',
-  ] as const)(
-    '%s uses the live restricted-agent policy',
-    async (permission) => {
-      const projectId = destination === 'mapped' ? 'project-1' : 'fallback-1'
-      const workspaceVisible = permission.startsWith('workspace')
-      if (destination === 'mapped') {
-        seedProject(
-          projectId,
-          'Placement',
-          workspaceVisible ? 'workspace' : 'private',
-        )
-        seedMapping('mapping-1', projectId, 'channel-1')
-      } else {
-        sqlite
-          .prepare(
-            'UPDATE artifact_containers SET base_visibility = ? WHERE id = ?',
+  ['mapped', 'file', 'publish'],
+  ['mapped', 'file', 'update'],
+  ['mapped', 'file', 'append'],
+  ['fallback', 'file', 'publish'],
+  ['fallback', 'file', 'update'],
+  ['fallback', 'file', 'append'],
+  ['mapped', 'static_site', 'publish'],
+  ['mapped', 'static_site', 'update'],
+  ['fallback', 'static_site', 'publish'],
+  ['fallback', 'static_site', 'update'],
+] as const)(
+  '%s %s %s bridge placement',
+  (destination, contentKind, operation) => {
+    test.each([
+      'workspace',
+      'contributor',
+      'manager',
+      'removed',
+      'viewer',
+      'revoked',
+      'unverified',
+      'workspace-unverified',
+    ] as const)(
+      '%s uses the live restricted-agent policy',
+      async (permission) => {
+        const projectId = destination === 'mapped' ? 'project-1' : 'fallback-1'
+        const workspaceVisible = permission.startsWith('workspace')
+        if (destination === 'mapped') {
+          seedProject(
+            projectId,
+            'Placement',
+            workspaceVisible ? 'workspace' : 'private',
           )
-          .run(workspaceVisible ? 'workspace' : 'private', projectId)
-      }
-      if (!workspaceVisible) {
-        sqlite
-          .prepare(`INSERT INTO project_share_defaults
+          seedMapping('mapping-1', projectId, 'channel-1')
+        } else {
+          sqlite
+            .prepare(
+              'UPDATE artifact_containers SET base_visibility = ? WHERE id = ?',
+            )
+            .run(workspaceVisible ? 'workspace' : 'private', projectId)
+        }
+        if (!workspaceVisible) {
+          sqlite
+            .prepare(`INSERT INTO project_share_defaults
           (id, project_container_id, email, role, created_at, updated_at)
           VALUES ('placement-grant', ?, 'bot@bots.artifactshare.invalid', ?, '2026-01-01', '2026-01-01')`)
-          .run(projectId, permission === 'manager' ? 'manager' : 'contributor')
-      }
-      const { executeBridgeRequest } =
-        await import('./bridge-publishing.server')
-      const body = new TextEncoder().encode(
-        contentKind === 'file' ? '# Placement' : '<h1>Placement</h1>',
-      )
-      const metadata = await fileMetadata({
-        requestId: 'placement-control',
-        body,
-        path: contentKind === 'file' ? 'note.md' : 'index.html',
-        mediaType: contentKind === 'file' ? 'text/markdown' : 'text/html',
-        conversationKind: destination === 'mapped' ? 'public_channel' : 'dm',
-      })
-      metadata.content.kind = contentKind
-      const publish = (requestId: string) =>
-        executeBridgeRequest(
-          db,
-          authority,
-          bridgeUser(),
-          { ...metadata, request_id: requestId },
-          [
-            new File([body], metadata.content.files[0].path, {
-              type: metadata.content.files[0].media_type,
-            }),
-          ],
-          'https://artifactshare.com',
+            .run(
+              projectId,
+              permission === 'manager' ? 'manager' : 'contributor',
+            )
+        }
+        const { executeBridgeRequest } =
+          await import('./bridge-publishing.server')
+        const body = new TextEncoder().encode(
+          contentKind === 'file' ? '# Placement' : '<h1>Placement</h1>',
         )
-      expect((await publish('placement-control')).kind).toBe('ok')
-      const storedObjects = [...bucketState.keys()]
-      const used = sqlite
-        .prepare('SELECT storage_used_bytes FROM workspaces')
-        .get()
-      if (permission === 'removed')
-        sqlite.prepare('DELETE FROM project_share_defaults').run()
-      if (permission === 'viewer')
-        sqlite
-          .prepare("UPDATE project_share_defaults SET role = 'viewer'")
-          .run()
-      if (permission === 'revoked')
-        sqlite
-          .prepare(
-            "UPDATE workspace_members SET status = 'removed' WHERE user_id = 'bot1'",
+        const metadata = await fileMetadata({
+          requestId: 'placement-control',
+          body,
+          path: contentKind === 'file' ? 'note.md' : 'index.html',
+          mediaType: contentKind === 'file' ? 'text/markdown' : 'text/html',
+          conversationKind: destination === 'mapped' ? 'public_channel' : 'dm',
+        })
+        metadata.content.kind = contentKind
+        const publish = (requestId: string, targetArtifactId?: string) =>
+          executeBridgeRequest(
+            db,
+            authority,
+            bridgeUser(),
+            {
+              ...metadata,
+              request_id: requestId,
+              ...(targetArtifactId
+                ? { operation, target_artifact_id: targetArtifactId }
+                : {}),
+            },
+            [
+              new File([body], metadata.content.files[0].path, {
+                type: metadata.content.files[0].media_type,
+              }),
+            ],
+            'https://artifactshare.com',
           )
-          .run()
-      if (permission.endsWith('unverified'))
-        sqlite
-          .prepare("UPDATE users SET email_verified = 0 WHERE id = 'bot1'")
-          .run()
-      const allowed =
-        workspaceVisible ||
-        permission === 'contributor' ||
-        permission === 'manager'
-      const policy = await db
-        .selectNoFrom(
-          sql<number>`CASE WHEN ${projectPlacementSql(bridgeUser(), projectId, true)} THEN 1 ELSE 0 END`.as(
-            'allowed',
-          ),
+        const control = await publish('placement-control')
+        expect(control.kind).toBe('ok')
+        if (control.kind !== 'ok') return
+        const originalArtifact = sqlite
+          .prepare('SELECT * FROM shareables')
+          .get()
+        const originalVersion = sqlite.prepare('SELECT * FROM versions').get()
+        const storedObjects = [...bucketState.keys()]
+        const used = sqlite
+          .prepare('SELECT storage_used_bytes FROM workspaces')
+          .get()
+        if (permission === 'removed')
+          sqlite.prepare('DELETE FROM project_share_defaults').run()
+        if (permission === 'viewer')
+          sqlite
+            .prepare("UPDATE project_share_defaults SET role = 'viewer'")
+            .run()
+        if (permission === 'revoked')
+          sqlite
+            .prepare(
+              "UPDATE workspace_members SET status = 'removed' WHERE user_id = 'bot1'",
+            )
+            .run()
+        if (permission.endsWith('unverified'))
+          sqlite
+            .prepare("UPDATE users SET email_verified = 0 WHERE id = 'bot1'")
+            .run()
+        const allowed =
+          workspaceVisible ||
+          permission === 'contributor' ||
+          permission === 'manager'
+        const policy = await db
+          .selectNoFrom(
+            sql<number>`CASE WHEN ${projectPlacementSql(bridgeUser(), projectId, true)} THEN 1 ELSE 0 END`.as(
+              'allowed',
+            ),
+          )
+          .executeTakeFirstOrThrow()
+        expect(policy.allowed).toBe(allowed ? 1 : 0)
+        const result = await publish(
+          'placement-next',
+          operation === 'publish' ? undefined : control.result.artifact.id,
         )
-        .executeTakeFirstOrThrow()
-      expect(policy.allowed).toBe(allowed ? 1 : 0)
-      const result = await publish('placement-next')
-      if (allowed) expect(result.kind).toBe('ok')
-      else {
-        expect(result).toEqual({ kind: 'upload-failed' })
-        expect([...bucketState.keys()]).toEqual(storedObjects)
-        expect(
-          sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
-        ).toEqual(used)
-      }
-      for (const table of ['shareables', 'versions', 'bridge_operations']) {
-        expect(
-          sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(),
-        ).toEqual({ count: allowed ? 2 : 1 })
-      }
-      if (destination === 'mapped')
-        expect(
-          sqlite.prepare('SELECT project_id FROM bridge_conversations').get(),
-        ).toEqual({ project_id: projectId })
-      if (permission === 'revoked' || permission === 'unverified')
-        expect(
-          sqlite.prepare('SELECT role FROM project_share_defaults').get(),
-        ).toEqual({ role: 'contributor' })
-    },
-  )
-})
+        if (allowed) expect(result.kind).toBe('ok')
+        else {
+          expect(result).toEqual({ kind: 'upload-failed' })
+          expect([...bucketState.keys()]).toEqual(storedObjects)
+          expect(sqlite.prepare('SELECT * FROM shareables').get()).toEqual(
+            originalArtifact,
+          )
+          expect(sqlite.prepare('SELECT * FROM versions').get()).toEqual(
+            originalVersion,
+          )
+          expect(
+            sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+          ).toEqual(used)
+        }
+        for (const table of ['shareables', 'versions', 'bridge_operations']) {
+          expect(
+            sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(),
+          ).toEqual({
+            count:
+              allowed && (table !== 'shareables' || operation === 'publish')
+                ? 2
+                : 1,
+          })
+        }
+        if (destination === 'mapped')
+          expect(
+            sqlite.prepare('SELECT project_id FROM bridge_conversations').get(),
+          ).toEqual({ project_id: projectId })
+        if (permission === 'revoked' || permission === 'unverified')
+          expect(
+            sqlite.prepare('SELECT role FROM project_share_defaults').get(),
+          ).toEqual({ role: 'contributor' })
+      },
+    )
+  },
+)
 
 describe('trusted bridge conversation binding', () => {
   test('truncates generated project names at a Unicode boundary', () => {
@@ -418,6 +456,11 @@ describe('trusted bridge conversation binding', () => {
       )
       .get()
     expect(project).toEqual({ base_visibility: 'private' })
+    expect(
+      sqlite.prepare('SELECT email, role FROM project_share_defaults').all(),
+    ).toEqual([
+      { email: 'bot@bots.artifactshare.invalid', role: 'contributor' },
+    ])
   })
 
   test('does not create private routing state if the bot stops at commit', async () => {
@@ -573,12 +616,6 @@ describe('trusted bridge conversation binding', () => {
         'https://artifactshare.com',
       ),
     ).resolves.toEqual({ kind: 'invalid-context' })
-    sqlite
-      .prepare(`INSERT INTO project_share_defaults
-      (id, project_container_id, email, role, created_at, updated_at)
-      SELECT 'bot-placement', project_id, 'bot@bots.artifactshare.invalid',
-        'contributor', '2026-01-01', '2026-01-01' FROM bridge_conversations`)
-      .run()
 
     await expect(
       executeBridgeRequest(
@@ -672,6 +709,52 @@ describe('trusted bridge conversation binding', () => {
       to: 'private',
     })
   })
+
+  test.each([null, 'viewer', 'manager'] as const)(
+    'narrowing grants the bot access while preserving existing %s grants',
+    async (role) => {
+      seedProject('project-1', 'Design')
+      seedMapping('mapping-1', 'project-1', 'channel-1')
+      if (role) {
+        sqlite
+          .prepare(`
+          INSERT INTO project_share_defaults
+            (id, project_container_id, email, role, created_at, updated_at)
+          VALUES ('existing', 'project-1', 'BOT@bots.artifactshare.invalid', ?,
+            '2026-01-01', '2026-01-01')
+        `)
+          .run(role)
+      }
+      const privateContext = context({
+        conversation: { ...context().conversation, kind: 'private_channel' },
+      })
+      expect(
+        await bindTrustedBridgeRequest(db, authority, privateContext),
+      ).toMatchObject({ kind: 'ok' })
+      expect(
+        sqlite
+          .prepare(
+            "SELECT role FROM project_share_defaults WHERE project_container_id = 'project-1'",
+          )
+          .all(),
+      ).toEqual([{ role: role ?? 'contributor' }])
+
+      sqlite
+        .prepare(
+          "DELETE FROM project_share_defaults WHERE project_container_id = 'project-1'",
+        )
+        .run()
+      expect(
+        await bindTrustedBridgeRequest(db, authority, {
+          ...privateContext,
+          requestId: 'after-revocation',
+        }),
+      ).toMatchObject({ kind: 'ok' })
+      expect(
+        sqlite.prepare('SELECT id FROM project_share_defaults').all(),
+      ).toEqual([])
+    },
+  )
 
   test('does not narrow a mapping after the bridge bot is stopped', async () => {
     seedProject('project-1', 'Design')

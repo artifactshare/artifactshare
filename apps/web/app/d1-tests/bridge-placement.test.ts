@@ -1,15 +1,39 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createTestHarness } from 'wrangler'
 import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 import { createDb } from '../services/db.server'
 import { executeBridgeRequest } from '../services/bridge-publishing.server'
 
+const objects = vi.hoisted(() => new Map<string, Blob>())
+
 vi.mock('cloudflare:workers', () => ({
   env: {
     BUCKET: {
-      put: vi.fn(),
-      delete: vi.fn(),
-      list: async () => ({ objects: [], truncated: false }),
+      put: vi.fn(async (key: string, body: BlobPart) => {
+        objects.set(key, new Blob([body]))
+      }),
+      get: vi.fn(async (key: string) => {
+        const body = objects.get(key)
+        return body
+          ? {
+              body: body.stream(),
+              text: () => body.text(),
+              size: body.size,
+              uploaded: new Date(),
+            }
+          : null
+      }),
+      delete: vi.fn(async (keys: string | string[]) => {
+        for (const key of Array.isArray(keys) ? keys : [keys])
+          objects.delete(key)
+      }),
+      list: async ({ prefix }: { prefix: string }) => ({
+        objects: [...objects.keys()]
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => ({ key })),
+        truncated: false,
+      }),
     },
     ARTIFACT_LIVE: { getByName: () => ({ notifyVersionChanged: vi.fn() }) },
   },
@@ -31,10 +55,19 @@ afterAll(async () => {
 })
 
 // Each race has an otherwise identical successful control on the same binding.
-test.each(['mapped', 'fallback'] as const)(
-  '%s revocation immediately before the final D1 batch wins',
-  async (destination) => {
-    const prefix = destination
+test.each([
+  ['mapped', 'publish', 'file'],
+  ['fallback', 'publish', 'file'],
+  ['mapped', 'update', 'file'],
+  ['fallback', 'update', 'file'],
+  ['mapped', 'append', 'file'],
+  ['fallback', 'append', 'file'],
+  ['mapped', 'update', 'static_site'],
+  ['fallback', 'update', 'static_site'],
+] as const)(
+  '%s %s %s revocation immediately before the final D1 batch wins',
+  async (destination, operation, contentKind) => {
+    const prefix = [destination, operation, contentKind].join('-')
     const ws = `${prefix}-ws`
     const bot = `${prefix}-bot`
     const project = `${prefix}-project`
@@ -191,12 +224,12 @@ test.each(['mapped', 'fallback'] as const)(
         verified_email: 'person@example.com',
       },
       content: {
-        kind: 'file',
+        kind: contentKind,
         files: [
           {
             index: 0,
-            path: 'note.md',
-            media_type: 'text/markdown',
+            path: contentKind === 'file' ? 'note.md' : 'index.html',
+            media_type: contentKind === 'file' ? 'text/markdown' : 'text/html',
             size: body.byteLength,
             sha256: [...new Uint8Array(digest)]
               .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -205,7 +238,11 @@ test.each(['mapped', 'fallback'] as const)(
         ],
       },
     }
-    const files = [new File([body], 'note.md', { type: 'text/markdown' })]
+    const files = [
+      new File([body], metadata.content.files[0].path, {
+        type: metadata.content.files[0].media_type,
+      }),
+    ]
     const control = await executeBridgeRequest(
       db,
       authority,
@@ -215,6 +252,31 @@ test.each(['mapped', 'fallback'] as const)(
       'https://artifactshare.com',
     )
     expect(control.kind).toBe('ok')
+    if (control.kind !== 'ok') return
+    const mutationMetadata = {
+      ...metadata,
+      operation,
+      ...(operation === 'publish'
+        ? {}
+        : { target_artifact_id: control.result.artifact.id }),
+    }
+    if (operation !== 'publish') {
+      const allowed = await executeBridgeRequest(
+        db,
+        authority,
+        user,
+        { ...mutationMetadata, request_id: 'version-control' },
+        files,
+        'https://artifactshare.com',
+      )
+      expect(allowed.kind).toBe('ok')
+    }
+    const storedObjects = [...objects.keys()]
+    const originalArtifact = await db
+      .selectFrom('shareables')
+      .selectAll()
+      .where('id', '=', control.result.artifact.id)
+      .executeTakeFirstOrThrow()
     let fired = false
     const inserts = new WeakSet<D1PreparedStatement>()
     const guardedDatabase = new Proxy(database, {
@@ -222,7 +284,14 @@ test.each(['mapped', 'fallback'] as const)(
         if (property === 'prepare')
           return (query: string) => {
             const statement = target.prepare(query)
-            if (!query.startsWith('insert into "shareables"')) return statement
+            if (
+              !query.startsWith(
+                operation === 'publish'
+                  ? 'insert into "shareables"'
+                  : 'insert into "versions"',
+              )
+            )
+              return statement
             // Track the bound statement actually passed to batch, not earlier binding batches.
             return new Proxy(statement, {
               get(prepared, key) {
@@ -262,12 +331,20 @@ test.each(['mapped', 'fallback'] as const)(
       racedDb,
       authority,
       user,
-      { ...metadata, request_id: 'revoked' },
+      { ...mutationMetadata, request_id: 'revoked' },
       files,
       'https://artifactshare.com',
     )
     expect(fired).toBe(true)
     expect(rejected).toEqual({ kind: 'upload-failed' })
+    expect([...objects.keys()]).toEqual(storedObjects)
+    expect(
+      await db
+        .selectFrom('shareables')
+        .selectAll()
+        .where('id', '=', control.result.artifact.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(originalArtifact)
     expect(
       await db
         .selectFrom('project_share_defaults')
@@ -288,14 +365,19 @@ test.each(['mapped', 'fallback'] as const)(
         .select('id')
         .where('created_by_id', '=', bot)
         .execute(),
-    ).toHaveLength(1)
+    ).toHaveLength(operation === 'publish' ? 1 : 2)
     expect(
       await db
         .selectFrom('bridge_operations')
         .select('request_id')
         .where('bridge_authority_id', '=', bridge)
+        .orderBy('request_id')
         .execute(),
-    ).toEqual([{ request_id: 'control' }])
+    ).toEqual(
+      operation === 'publish'
+        ? [{ request_id: 'control' }]
+        : [{ request_id: 'control' }, { request_id: 'version-control' }],
+    )
     expect(
       await db
         .selectFrom('bridge_requests')
@@ -316,3 +398,111 @@ test.each(['mapped', 'fallback'] as const)(
     await db.destroy()
   },
 )
+
+test('backfills private mapping grants idempotently and preserves existing roles', async () => {
+  const at = '2026-01-01T00:00:00.000Z'
+  await database.batch([
+    database
+      .prepare(
+        "INSERT INTO workspaces (id, name, plan, created_at) VALUES ('migration-ws', 'Migration', 'team', ?)",
+      )
+      .bind(at),
+    database
+      .prepare(`
+      INSERT INTO users (id, google_sub, email, email_verified, name, workspace_id, kind, created_at, updated_at)
+      VALUES ('migration-bot', 'migration-sub', 'Migration@bots.artifactshare.invalid', 1,
+        'Bot', 'migration-ws', 'bot', ?, ?)
+    `)
+      .bind(at, at),
+    ...['fallback', 'missing', 'viewer', 'manager', 'workspace'].map((name) =>
+      database
+        .prepare(`
+        INSERT INTO artifact_containers (id, workspace_id, kind, created_by_id, name, base_visibility, created_at, updated_at)
+        VALUES (?, 'migration-ws', 'project', 'migration-bot', ?, ?, ?, ?)
+      `)
+        .bind(
+          'migration-' + name,
+          name,
+          ['fallback', 'workspace'].includes(name) ? 'workspace' : 'private',
+          at,
+          at,
+        ),
+    ),
+    database
+      .prepare(`
+      INSERT INTO agent_profiles (id, user_id, workspace_id, created_at)
+      VALUES ('migration-profile', 'migration-bot', 'migration-ws', ?)
+    `)
+      .bind(at),
+    database
+      .prepare(`
+      INSERT INTO bridge_authorities (id, workspace_id, bot_user_id, agent_profile_id,
+        source_kind, source_installation_id, external_workspace_id, fallback_project_id, created_at, updated_at)
+      VALUES ('migration-bridge', 'migration-ws', 'migration-bot', 'migration-profile',
+        'qm', 'migration-install', 'migration-external', 'migration-fallback', ?, ?)
+    `)
+      .bind(at, at),
+    ...['missing', 'viewer', 'manager', 'workspace'].map((name) =>
+      database
+        .prepare(`
+        INSERT INTO bridge_conversations (id, bridge_authority_id, project_id,
+          conversation_kind, privacy_ceiling, privacy_epoch, created_at, updated_at)
+        VALUES (?, 'migration-bridge', ?, 'private_channel', 'private', 1, ?, ?)
+      `)
+        .bind('migration-map-' + name, 'migration-' + name, at, at),
+    ),
+    ...['viewer', 'manager'].map((role) =>
+      database
+        .prepare(`
+        INSERT INTO project_share_defaults (id, project_container_id, email, role, created_at, updated_at)
+        VALUES (?, ?, 'MIGRATION@bots.artifactshare.invalid', ?, ?, ?)
+      `)
+        .bind('migration-grant-' + role, 'migration-' + role, role, at, at),
+    ),
+  ])
+  const migration = readFileSync(
+    new URL(
+      '../../db/migrations/0121_bridge_bot_project_grants.sql',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  await database.prepare(migration).run()
+  const first = await database
+    .prepare(`
+    SELECT id, project_container_id, email, role FROM project_share_defaults
+    WHERE project_container_id LIKE 'migration-%' ORDER BY project_container_id
+  `)
+    .all()
+  expect(first.results).toEqual([
+    {
+      id: 'migration-grant-manager',
+      project_container_id: 'migration-manager',
+      email: 'MIGRATION@bots.artifactshare.invalid',
+      role: 'manager',
+    },
+    {
+      id: expect.any(String),
+      project_container_id: 'migration-missing',
+      email: 'migration@bots.artifactshare.invalid',
+      role: 'contributor',
+    },
+    {
+      id: 'migration-grant-viewer',
+      project_container_id: 'migration-viewer',
+      email: 'MIGRATION@bots.artifactshare.invalid',
+      role: 'viewer',
+    },
+  ])
+  await database.prepare(migration).run()
+  expect(
+    (
+      await database
+        .prepare(`
+    SELECT id, project_container_id, email, role FROM project_share_defaults
+    WHERE project_container_id LIKE 'migration-%' ORDER BY project_container_id
+  `)
+        .all()
+    ).results,
+  ).toEqual(first.results)
+})
