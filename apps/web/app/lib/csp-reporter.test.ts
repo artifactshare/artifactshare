@@ -31,7 +31,13 @@ import {
 } from '../../../../packages/viewer-kit/src/reporter/svg-overlay.js'
 import { installMermaidResults } from '../../../../packages/viewer-kit/src/reporter/mermaid.js'
 
+import { VIOLATION_REPORTER_SCRIPT_BODY } from '../../../../packages/viewer-kit/src/reporter.generated.js'
+
 import { installCspViolations } from '../../../../packages/viewer-kit/src/reporter/csp-violations.js'
+
+test('generated reporter body is ASCII so CSP hashes do not depend on document encoding', () => {
+  expect(VIOLATION_REPORTER_SCRIPT_BODY).not.toMatch(/[\u0080-\uffff]/)
+})
 
 function state() {
   return createReporterState(window)
