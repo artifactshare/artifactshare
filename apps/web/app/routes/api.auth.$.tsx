@@ -72,10 +72,10 @@ export async function action({ context, request, url }: Route.ActionArgs) {
     return handleDeviceApprove(request, payload)
   }
   const handled = authHandlerWithHangDetection(request)
-  // Better Auth verifies the code under a lock kept on the cached auth
-  // instance. A client abort must not strand it, or the next attempt for this
-  // address waits for a release that never comes.
-  if (path.endsWith('/sign-in/email-otp'))
+  // Better Auth verifies a code under a lock kept on the cached auth instance,
+  // and removes the row while it compares. A client abort must not strand
+  // either, or the next attempt for this address hangs or loses a valid code.
+  if (path.includes('email-otp'))
     context.get(ctxContext).waitUntil(handled.catch(() => undefined))
   return maybeClearSiteData(url, await handled)
 }
