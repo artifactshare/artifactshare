@@ -77,6 +77,8 @@ test('ordinary request disables both Codex multi-agent features', () => {
   )
   assert.deepEqual(request.args.slice(0, 3), ['exec', '-m', 'm'])
   assert.equal(request.args.includes('--sandbox'), false)
+  assert.ok(request.args.includes('default_permissions="review"'))
+  assert.ok(request.args.includes('web_search="live"'))
   assert.ok(
     request.args.includes('permissions.review.filesystem={":root"="read"}'),
   )

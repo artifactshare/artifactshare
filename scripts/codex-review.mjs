@@ -158,8 +158,9 @@ function reviewRequest(options, prompt, lastMessageFile) {
       'multi_agent',
       '--disable',
       'multi_agent_v2',
-      // `--sandbox read-only` has no network, so this profile states the same
-      // read-only filesystem with network reads and live search added.
+      // `--sandbox read-only` has no network. This profile keeps the local
+      // filesystem read-only and opens the network without limits, so a
+      // reviewer can fetch package versions and advisories.
       '-c',
       'default_permissions="review"',
       '-c',
