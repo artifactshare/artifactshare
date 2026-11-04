@@ -42,3 +42,45 @@ test.each([
     expect(authHandlerWithHangDetection).not.toHaveBeenCalled()
   },
 )
+
+test.each([
+  '/api/auth/sign-in/email-otp',
+  '/api/auth/email-otp/check-verification-otp',
+])('%s keeps running past a client abort', async (path) => {
+  let finish = (_response: Response) => {}
+  vi.mocked(authHandlerWithHangDetection).mockReturnValue(
+    new Promise((resolve) => (finish = resolve)),
+  )
+  const anchored: Promise<unknown>[] = []
+  const url = new URL(`https://example.test${path}`)
+  const pending = action({
+    url,
+    request: new Request(url, { method: 'POST' }),
+    context: {
+      get: () => ({
+        waitUntil: (promise: Promise<unknown>) => anchored.push(promise),
+      }),
+    },
+  } as never)
+  expect(anchored).toHaveLength(1)
+  let settled = false
+  void anchored[0].then(() => (settled = true))
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  finish(new Response('ok'))
+  await pending
+  await anchored[0]
+  expect(settled).toBe(true)
+})
+
+test('other auth posts are not anchored', async () => {
+  vi.mocked(authHandlerWithHangDetection).mockResolvedValue(new Response('ok'))
+  const waitUntil = vi.fn()
+  const url = new URL('https://example.test/api/auth/sign-in/social')
+  await action({
+    url,
+    request: new Request(url, { method: 'POST' }),
+    context: { get: () => ({ waitUntil }) },
+  } as never)
+  expect(waitUntil).not.toHaveBeenCalled()
+})

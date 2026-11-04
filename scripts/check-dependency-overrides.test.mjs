@@ -176,6 +176,15 @@ test('real exceptions and scoped sharp override match resolved package identitie
     .map((doc) => doc.toJS())
     .find((doc) => doc.importers?.['apps/web'])
   const retained = [
+    'better-auth@1.7.16',
+    '@better-auth/core@1.7.16',
+    '@better-auth/oauth-provider@1.7.16',
+    '@better-auth/drizzle-adapter@1.7.16',
+    '@better-auth/kysely-adapter@1.7.16',
+    '@better-auth/memory-adapter@1.7.16',
+    '@better-auth/mongo-adapter@1.7.16',
+    '@better-auth/prisma-adapter@1.7.16',
+    '@better-auth/telemetry@1.7.16',
     'miniflare@5.20260911.0-alpha',
     'wrangler@4.131.1',
     '@cloudflare/vite-plugin@1.54.8',
@@ -183,6 +192,7 @@ test('real exceptions and scoped sharp override match resolved package identitie
     '@tanstack/markdown@0.0.14',
     'happy-dom@20.14.5',
     'yaml@2.9.1',
+    'better-call@1.4.5',
   ]
   assert.deepEqual(workspace.minimumReleaseAgeExclude, retained)
   const removed = [
