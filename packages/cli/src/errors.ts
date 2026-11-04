@@ -70,16 +70,28 @@ export function mapApiError(
       requested.success &&
       current.success
     ) {
-      const command = `${CLI_INVOCATION} edit ${details.artifact_id} --visibility ${requested.data} --json`
+      const expiry = options.linkExpiresAt
+      const expiryOption =
+        expiry !== undefined
+          ? ` --link-expires-at ${/^[A-Za-z0-9:.-]+$/.test(expiry) ? expiry : "'" + expiry.replaceAll("'", "'\\''") + "'"}`
+          : options.noLinkExpiry === true
+            ? ' --no-link-expiry'
+            : ''
+      const command = `${CLI_INVOCATION} edit ${details.artifact_id} --visibility ${requested.data}${expiryOption} --json`
+      const requiresHuman = details.requires_human === true
       return cliError({
         code: 'key_visibility_mismatch',
         message:
           'Resending does not change visibility. No version was created.',
         why: `The artifact visibility is ${current.data}; --visibility requested ${requested.data}.`,
-        hint: `To change visibility intentionally, run ${command}`,
-        agentRecoverable: true,
-        requiresHuman: false,
-        recovery: { kind: 'run_command', command },
+        hint: requiresHuman
+          ? `Ask a person with a human credential to run ${command}`
+          : `To change visibility intentionally, run ${command}`,
+        agentRecoverable: !requiresHuman,
+        requiresHuman,
+        recovery: requiresHuman
+          ? { kind: 'ask_human' }
+          : { kind: 'run_command', command },
         details,
       })
     }

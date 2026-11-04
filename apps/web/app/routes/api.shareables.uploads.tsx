@@ -1,5 +1,8 @@
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
-import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import {
+  allowsHumanCliMutation,
+  cliReadAuthority,
+} from '~/lib/cli-authority-policy'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -294,6 +297,7 @@ export async function action({ request, context }: Route.ActionArgs) {
               artifact_id: resolution.shareableId,
               current_visibility: resolution.visibility,
               requested_visibility: requestedVisibility,
+              requires_human: !allowsHumanCliMutation(authority, true),
             },
           },
         )
@@ -754,6 +758,7 @@ async function uploadStaticSiteWithSession(
               artifact_id: resolution.shareableId,
               current_visibility: resolution.visibility,
               requested_visibility: requestedVisibility,
+              requires_human: !allowsHumanCliMutation(authority, true),
             },
           },
         )

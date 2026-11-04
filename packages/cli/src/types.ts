@@ -266,6 +266,8 @@ export type RequestConfig =
   | { error: CliError }
 
 export type ApiErrorOptions = {
+  linkExpiresAt?: string | undefined
+  noLinkExpiry?: boolean | undefined
   botProfile?: boolean | undefined
   operation?: 'append' | 'update' | 'share'
   authenticated?: boolean

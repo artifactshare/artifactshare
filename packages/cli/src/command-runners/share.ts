@@ -276,7 +276,12 @@ export async function runShare(
       errorOptions: {
         authenticated: true,
         ...(shareKey !== null
-          ? { artifactTarget: true, operation: 'share' as const }
+          ? {
+              artifactTarget: true,
+              operation: 'share' as const,
+              linkExpiresAt: parsed.options.linkExpiresAt,
+              noLinkExpiry: parsed.options.noLinkExpiry,
+            }
           : {}),
         baseUrl,
         credentialSource: credential.source,

@@ -1910,9 +1910,19 @@ describe('/api/shareables/uploads', () => {
     },
   )
 
-  test.each(['single_file', 'static_site'] as const)(
+  test.each([
+    ['single_file', false],
+    ['static_site', false],
+    ['single_file', true],
+    ['static_site', true],
+  ] as const)(
     '%s keyed visibility mismatch refuses before publishing',
-    async (kind) => {
+    async (kind, requiresHuman) => {
+      if (requiresHuman)
+        getCliAuthorityMock.mockReturnValue({
+          kind: 'agent',
+          agentProfileId: 'agent-1',
+        })
       for (const [current, requested, effective, containerKind] of [
         ['private', 'workspace', 'workspace', 'inbox'],
         ['link', 'private', 'private', 'inbox'],
@@ -1939,10 +1949,10 @@ describe('/api/shareables/uploads', () => {
           'file',
           new File(['<p>x</p>'], 'x.html', { type: 'text/html' }),
         )
-        form.append('visibility', 'private')
+        form.append('visibility', requiresHuman ? 'workspace' : 'private')
         const response = await action(
           actionArgsFor(
-            `https://artifactshare.test/api/shareables/uploads?publish_key=report&key_visibility=${requested}${kind === 'static_site' ? '&artifact_kind=static_site' : ''}`,
+            `https://artifactshare.test/api/shareables/uploads?publish_key=report&expected_version=v1&key_visibility=${requested}${kind === 'static_site' ? '&artifact_kind=static_site' : ''}`,
             form,
           ),
         )
@@ -1954,6 +1964,7 @@ describe('/api/shareables/uploads', () => {
               artifact_id: 'abc123def4',
               current_visibility: current,
               requested_visibility: effective,
+              requires_human: requiresHuman,
             },
           },
         })

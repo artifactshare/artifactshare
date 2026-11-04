@@ -2053,9 +2053,20 @@ test('share keeps the workspace default when the capability read fails', async (
   assert.equal(uploads, 1)
 })
 
-test.each([true, false])(
-  'key visibility mismatch gives concrete edit recovery (json=%s)',
-  async (json) => {
+test.each([
+  { json: true, requiresHuman: false, expiryArgs: [] },
+  { json: false, requiresHuman: false, expiryArgs: [] },
+  { json: true, requiresHuman: true, expiryArgs: [] },
+  { json: false, requiresHuman: true, expiryArgs: [] },
+  {
+    json: true,
+    requiresHuman: false,
+    expiryArgs: ['--link-expires-at', '2099-01-02T00:00:00Z'],
+  },
+  { json: true, requiresHuman: false, expiryArgs: ['--no-link-expiry'] },
+])(
+  'key visibility mismatch gives concrete edit recovery (%j)',
+  async ({ json, requiresHuman, expiryArgs }) => {
     const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
     const target = join(root, 'report.html')
     await writeFile(target, '<html></html>')
@@ -2063,7 +2074,7 @@ test.each([true, false])(
     await withServer(
       async (request, response) => {
         uploads++
-        assert.match(request.url ?? '', /key_visibility=workspace/)
+        assert.match(request.url ?? '', /key_visibility=link/)
         await collectBody(request)
         writeJson(
           response,
@@ -2073,7 +2084,8 @@ test.each([true, false])(
               details: {
                 artifact_id: 'abc123def4',
                 current_visibility: 'private',
-                requested_visibility: 'workspace',
+                requested_visibility: 'link',
+                requires_human: requiresHuman,
               },
             },
           },
@@ -2089,7 +2101,8 @@ test.each([true, false])(
             '--key',
             'report',
             '--visibility',
-            'workspace',
+            'link',
+            ...expiryArgs,
             '--base-url',
             baseUrl,
             ...(json ? ['--json'] : []),
@@ -2102,17 +2115,23 @@ test.each([true, false])(
             command: 'share',
             code: 'key_visibility_mismatch',
           })
-          assert.equal(payload.error.recovery.kind, 'run_command')
-          assert.match(
-            payload.error.recovery.command,
-            / edit abc123def4 --visibility workspace --json$/,
+          assert.equal(payload.error.agent_recoverable, !requiresHuman)
+          assert.equal(payload.error.requires_human, requiresHuman)
+          assert.equal(
+            payload.error.recovery.kind,
+            requiresHuman ? 'ask_human' : 'run_command',
           )
+          const command = `edit abc123def4 --visibility link${expiryArgs.length ? ' ' + expiryArgs.join(' ') : ''} --json`
+          assert.ok(payload.error.hint.includes(command))
+          if (!requiresHuman)
+            assert.ok(payload.error.recovery.command.endsWith(command))
         } else {
           assert.match(
             result.stderr,
-            /edit abc123def4 --visibility workspace --json/,
+            /edit abc123def4 --visibility link --json/,
           )
           assert.match(result.stderr, /No version was created/)
+          if (requiresHuman) assert.match(result.stderr, /Ask a person/)
         }
       },
     )
