@@ -875,7 +875,7 @@ The response also includes data.truncated and data.next_offset. If data.truncate
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before artifacts get
   target_not_found   Retry with an artifact ID, share URL, or sandbox URL
-  unsupported_kind   Use download for static sites or other multi-file artifacts
+  unsupported_kind   Static sites do not support --include or --version
   version_removed    Omit --version to inspect current content
   validation_failed  Check --version, --offset and --include values`,
 })

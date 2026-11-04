@@ -203,9 +203,7 @@ export async function getPublisherArtifactReadback(
   const row = await loadPublisherArtifact(db, user.id, authority, args.id)
   if (!row) return { kind: 'not-found' }
   if (!row.current_version_id) return { kind: 'source-unavailable' }
-  const summaries = await loadArtifactVersionSummaries(db, [args.id])
   const metadata = {
-    ...summaries.get(args.id)!,
     id: row.id,
     title: displayTitle({
       name: row.name,

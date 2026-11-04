@@ -35,9 +35,9 @@ export type CliArtifactsListData = {
     updated_at: string
     project_id: string | null
     owner_email?: string
-    retain_versions: number | null
-    version_count: number
-    total_size_bytes: number
+    retain_versions?: number | null
+    version_count?: number
+    total_size_bytes?: number
     artifact_kind: string
   }>
   limit: number
@@ -53,6 +53,7 @@ export async function listCliArtifacts(
     projectId?: string
     query?: string
     cursor?: string
+    includeVersionSummaries?: boolean
   },
 ): Promise<CliArtifactsListResult> {
   const fingerprint = JSON.stringify({
@@ -124,10 +125,12 @@ export async function listCliArtifacts(
       .execute()
     const hasMore = rows.length > CLI_ARTIFACTS_LIST_LIMIT
     const shown = hasMore ? rows.slice(0, CLI_ARTIFACTS_LIST_LIMIT) : rows
-    const summaries = await loadArtifactVersionSummaries(
-      db,
-      shown.map((item) => item.id),
-    )
+    const summaries = args.includeVersionSummaries
+      ? await loadArtifactVersionSummaries(
+          db,
+          shown.map((item) => item.id),
+        )
+      : new Map()
     const last = shown.at(-1)
     return {
       kind: 'ok',
@@ -172,10 +175,12 @@ export async function listCliArtifacts(
   })
   const hasMore = items.length > CLI_ARTIFACTS_LIST_LIMIT
   const shown = hasMore ? items.slice(0, CLI_ARTIFACTS_LIST_LIMIT) : items
-  const summaries = await loadArtifactVersionSummaries(
-    db,
-    shown.map((item) => item.id),
-  )
+  const summaries = args.includeVersionSummaries
+    ? await loadArtifactVersionSummaries(
+        db,
+        shown.map((item) => item.id),
+      )
+    : new Map()
   return {
     kind: 'ok',
     data: {

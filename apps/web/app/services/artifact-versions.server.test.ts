@@ -102,7 +102,7 @@ for (const id of ['html', 'md', 'site'])
       cursor: first.data.next_cursor!,
     })
     if (second.kind !== 'ok') throw new Error('expected second page')
-    expect(second.data.versions).toHaveLength(3)
+    expect(second.data.versions).toHaveLength(id === 'site' ? 2 : 3)
     expect(second.data.has_more).toBe(false)
     expect(
       new Set(
@@ -110,7 +110,7 @@ for (const id of ['html', 'md', 'site'])
           (v) => v.version_id,
         ),
       ).size,
-    ).toBe(53)
+    ).toBe(id === 'site' ? 52 : 53)
     expect(second.data.versions.every((v) => !v.is_current)).toBe(true)
     expect(
       await getArtifactVersions(fixture.db, user, {
@@ -203,6 +203,7 @@ test('unauthorized and missing history are concealed before cursor validation', 
 
 test('list includes batched summaries including zero-history rows', async () => {
   const result = await listCliArtifacts(fixture.db, user, {
+    includeVersionSummaries: true,
     baseUrl: 'https://example.com',
   })
   if (result.kind !== 'ok') throw new Error('expected list')
@@ -222,19 +223,56 @@ test('shared viewers can read history with creator emails redacted', async () =>
     .exec(`INSERT INTO workspaces (id,name,created_at) VALUES ('ws2','Two','2026-01-01');
     INSERT INTO users (id,email,email_verified,name,workspace_id,created_at,updated_at) VALUES ('u2','u2@example.com',1,'Reader','ws2','2026-01-01','2026-01-01');
     INSERT INTO shareable_grants (shareable_id,granted_email,granted_at,granted_by) VALUES ('site','u2@example.com','2026-01-01','u1');`)
+  fixture.sqlite.exec(`
+    INSERT INTO publisher_clients (id,user_id,workspace_id,name,created_at)
+    VALUES ('pub1','u1','ws1','Publisher','2026-01-01');
+    UPDATE versions SET created_by_publisher_client_id = 'pub1' WHERE id = 'site-52';
+    UPDATE versions SET published_at = NULL WHERE id = 'site-01';
+  `)
   const result = await getArtifactVersions(
     fixture.db,
     { ...user, id: 'u2', workspaceId: 'ws2', email: 'u2@example.com' },
     { id: 'site' },
   )
   if (result.kind !== 'ok') throw new Error('expected shared history')
-  expect(result.data.versions[0]?.creator).toEqual({
+  expect(result.data.versions[0]?.creator).toBeNull()
+  const next = await getArtifactVersions(
+    fixture.db,
+    { ...user, id: 'u2', workspaceId: 'ws2', email: 'u2@example.com' },
+    { id: 'site', cursor: result.data.next_cursor! },
+  )
+  if (next.kind !== 'ok') throw new Error('expected next page')
+  expect(next.data.versions.map((v) => v.version_id)).toEqual(['site-02'])
+  expect(next.data.has_more).toBe(false)
+
+  expect(result.data.versions[1]?.creator).toEqual({
     kind: 'human',
     name: 'User',
     email: null,
     agent_profile_id: null,
   })
   expect(source).not.toHaveBeenCalled()
+})
+
+test('MCP list defaults omit summaries and their query', async () => {
+  const prepare = vi.spyOn(fixture.sqlite, 'prepare')
+  try {
+    const result = await listCliArtifacts(fixture.db, user, {
+      baseUrl: 'https://example.com',
+    })
+    if (result.kind !== 'ok') throw new Error('expected list')
+    expect(result.data.artifacts.length).toBeGreaterThan(0)
+    for (const row of result.data.artifacts) {
+      expect(row).not.toHaveProperty('retain_versions')
+      expect(row).not.toHaveProperty('version_count')
+      expect(row).not.toHaveProperty('total_size_bytes')
+    }
+    expect(
+      prepare.mock.calls.filter(([sql]) => sql.includes('sum(v.size_bytes)')),
+    ).toHaveLength(0)
+  } finally {
+    prepare.mockRestore()
+  }
 })
 
 test('list summaries add one bounded query for both one and fifty rows', async () => {
@@ -250,6 +288,7 @@ test('list summaries add one bounded query for both one and fifty rows', async (
   const prepare = vi.spyOn(fixture.sqlite, 'prepare')
   try {
     const one = await listCliArtifacts(fixture.db, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://example.com',
       query: 'Only one',
     })
@@ -260,6 +299,7 @@ test('list summaries add one bounded query for both one and fifty rows', async (
     ).toHaveLength(1)
     prepare.mockClear()
     const fifty = await listCliArtifacts(fixture.db, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://example.com',
     })
     expect(fifty.kind === 'ok' && fifty.data.artifacts.length).toBe(50)

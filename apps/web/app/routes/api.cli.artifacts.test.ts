@@ -110,6 +110,7 @@ describe('/api/cli/artifacts', () => {
       },
       {
         baseUrl: 'https://example.test',
+        includeVersionSummaries: true,
         projectId: '',
         query: 'report',
       },

@@ -336,6 +336,7 @@ describe('listCliArtifacts', () => {
     ])
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       query: 'report',
     })
@@ -384,6 +385,7 @@ describe('listCliArtifacts', () => {
     )
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
     })
 
@@ -399,6 +401,7 @@ describe('listCliArtifacts', () => {
     findSharedProjectForViewerMock.mockResolvedValue(null)
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       projectId: 'missing',
     })
@@ -417,6 +420,7 @@ describe('listCliArtifacts', () => {
     listOwnedShareablesMock.mockResolvedValue([])
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       projectId: '',
     })

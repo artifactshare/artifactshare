@@ -377,7 +377,7 @@
     "/api/cli/artifacts/{id}": {
       "get": {
         "summary": "Read an artifact",
-        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Get includes retain_versions, version_count and total_size_bytes for all surviving versions.",
+        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Human and agent get includes retain_versions, version_count and total_size_bytes for all surviving versions. Publisher responses omit version counts and total sizes; static-site publisher metadata includes retain_versions.",
         "security": [
           {
             "cliBearer": []
@@ -448,6 +448,9 @@
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/ArtifactReadResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ArtifactStaticSiteReadResponse"
                     },
                     {
                       "$ref": "#/components/schemas/PublisherArtifactReadResponse"
@@ -1101,37 +1104,94 @@
         ]
       },
       "PublisherSingleFileReadResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["private", "workspace", "project", "link"]
+          },
+          "share_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "enum": ["html", "markdown"]
+          },
+          "content": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "next_offset": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "link_expires_at": {
+            "type": ["string", "null"]
+          },
+          "project_id": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "visibility",
+          "share_url",
+          "version_id",
+          "format",
+          "content",
+          "size_bytes",
+          "truncated",
+          "next_offset",
+          "link_expires_at",
+          "project_id"
+        ]
+      },
+      "ArtifactStaticSiteReadResponse": {
         "allOf": [
           {
-            "$ref": "#/components/schemas/ArtifactReadResponse"
+            "$ref": "#/components/schemas/PublisherStaticSiteReadResponse"
           },
           {
             "type": "object",
             "properties": {
-              "visibility": {
-                "type": "string",
-                "enum": ["private", "workspace", "project", "link"]
+              "retain_versions": {
+                "type": ["integer", "null"],
+                "minimum": 1
+              },
+              "version_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "total_size_bytes": {
+                "type": "integer",
+                "minimum": 0
               }
             },
-            "required": ["visibility"]
+            "required": ["retain_versions", "version_count", "total_size_bytes"]
           }
         ]
       },
       "PublisherStaticSiteReadResponse": {
         "type": "object",
         "properties": {
-          "retain_versions": {
-            "type": ["integer", "null"],
-            "minimum": 1
-          },
-          "version_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "total_size_bytes": {
-            "type": "integer",
-            "minimum": 0
-          },
           "id": {
             "type": "string",
             "minLength": 1
@@ -1159,12 +1219,13 @@
           },
           "link_expires_at": {
             "type": ["string", "null"]
+          },
+          "retain_versions": {
+            "type": ["integer", "null"],
+            "minimum": 1
           }
         },
         "required": [
-          "retain_versions",
-          "version_count",
-          "total_size_bytes",
           "id",
           "title",
           "share_url",
@@ -1172,7 +1233,8 @@
           "artifact_kind",
           "visibility",
           "project_id",
-          "link_expires_at"
+          "link_expires_at",
+          "retain_versions"
         ]
       },
       "PublisherArtifactReadResponse": {

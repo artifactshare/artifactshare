@@ -58,7 +58,13 @@ export async function getArtifactVersions(
     args.cursor === undefined ? undefined : decodeCursor(args.cursor, args.id)
   if (cursor === null) return { kind: 'invalid-cursor' }
   const [history, summaries] = await Promise.all([
-    listArtifactVersions(db, args.id, access.currentVersionId, cursor),
+    listArtifactVersions(
+      db,
+      args.id,
+      access.currentVersionId,
+      cursor,
+      access.artifactKind === 'static_site',
+    ),
     loadArtifactVersionSummaries(db, [args.id]),
   ])
   const maySeeEmail =

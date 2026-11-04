@@ -1146,11 +1146,7 @@ test('OpenAPI documents logical version summaries and bounded history without pu
   ])
   assert.equal(history.parameters[1].name, 'cursor')
   assert.match(history.description, /50 entries per page/)
-  for (const name of [
-    'ArtifactReadResponse',
-    'PublisherStaticSiteReadResponse',
-    'ArtifactVersionsResponse',
-  ]) {
+  for (const name of ['ArtifactReadResponse', 'ArtifactVersionsResponse']) {
     const schema = spec.components.schemas[name]
     for (const field of [
       'retain_versions',
@@ -1159,6 +1155,26 @@ test('OpenAPI documents logical version summaries and bounded history without pu
     ])
       assert.ok(schema.required.includes(field))
   }
+  for (const name of [
+    'PublisherSingleFileReadResponse',
+    'PublisherStaticSiteReadResponse',
+  ]) {
+    const schema = spec.components.schemas[name]
+    for (const field of ['version_count', 'total_size_bytes']) {
+      assert.equal(Object.hasOwn(schema.properties, field), false)
+      assert.equal(schema.required.includes(field), false)
+    }
+  }
+  assert.ok(
+    spec.components.schemas.PublisherStaticSiteReadResponse.required.includes(
+      'retain_versions',
+    ),
+  )
+  assert.ok(
+    spec.components.schemas.ArtifactStaticSiteReadResponse.allOf[1].required.includes(
+      'total_size_bytes',
+    ),
+  )
   assert.ok(
     spec.components.schemas.ArtifactsListResponse.properties.artifacts.items.required.includes(
       'total_size_bytes',

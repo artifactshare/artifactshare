@@ -7,7 +7,10 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { listCliArtifacts } from './cli-artifacts.server'
 
-const BASE = { baseUrl: 'https://artifactshare.test' }
+const BASE = {
+  baseUrl: 'https://artifactshare.test',
+  includeVersionSummaries: true,
+}
 
 const MEMBER = {
   id: 'u1',

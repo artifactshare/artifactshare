@@ -4524,6 +4524,7 @@ export async function listArtifactVersions(
   shareableId: string,
   currentVersionId: string | null,
   before?: { created_at: string; id: string },
+  staticHistory = false,
 ): Promise<OwnedArtifactVersions> {
   let query = db
     .selectFrom('versions')
@@ -4536,10 +4537,15 @@ export async function listArtifactVersions(
       'versions.created_at',
       'versions.published_at',
       'versions.created_by_agent_profile_id',
+      'versions.created_by_publisher_client_id',
       'users.name as creator_name',
       'users.email as creator_email',
     ])
     .where('shareable_id', '=', shareableId)
+  if (staticHistory)
+    query = query
+      .where('versions.status', '=', 'published')
+      .where('versions.published_at', 'is not', null)
   if (before)
     query = query.where(
       sql<boolean>`(versions.created_at < ${before.created_at} OR (versions.created_at = ${before.created_at} AND versions.id < ${before.id}))`,
@@ -4563,21 +4569,24 @@ export async function listArtifactVersions(
       createdAt: row.created_at,
       publishedAt: row.published_at ?? null,
       isCurrent: row.id === currentVersionId,
-      creator: row.created_by_agent_profile_id
-        ? {
-            kind: 'agent' as const,
-            name: 'Agent',
-            email: null,
-            agentProfileId: row.created_by_agent_profile_id,
-          }
-        : row.creator_name || row.creator_email
-          ? {
-              kind: 'human' as const,
-              name: row.creator_name ?? row.creator_email ?? 'User',
-              email: row.creator_email ?? null,
-              agentProfileId: null,
-            }
-          : null,
+      creator:
+        staticHistory && row.created_by_publisher_client_id != null
+          ? null
+          : row.created_by_agent_profile_id
+            ? {
+                kind: 'agent' as const,
+                name: 'Agent',
+                email: null,
+                agentProfileId: row.created_by_agent_profile_id,
+              }
+            : row.creator_name || row.creator_email
+              ? {
+                  kind: 'human' as const,
+                  name: row.creator_name ?? row.creator_email ?? 'User',
+                  email: row.creator_email ?? null,
+                  agentProfileId: null,
+                }
+              : null,
     })),
   }
 }

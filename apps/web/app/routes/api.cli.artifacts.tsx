@@ -59,6 +59,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       return Response.json(ArtifactsListResponseSchema.parse(result.data))
     }
     const result = await listCliArtifacts(db, user, {
+      includeVersionSummaries: true,
       baseUrl: url.origin,
       projectId,
       query,

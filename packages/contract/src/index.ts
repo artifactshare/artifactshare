@@ -700,11 +700,13 @@ export const ArtifactReadResponseSchema = z.object({
 export type ArtifactReadResponse = z.infer<typeof ArtifactReadResponseSchema>
 
 export const PublisherSingleFileReadResponseSchema =
-  ArtifactReadResponseSchema.extend({
+  ArtifactReadResponseSchema.omit({
+    version_count: true,
+    total_size_bytes: true,
+  }).extend({
     visibility: VisibilitySchema,
   })
 export const PublisherStaticSiteReadResponseSchema = z.object({
-  ...ArtifactVersionSummarySchema.shape,
   id: stringId,
   title: z.string(),
   share_url: url,
@@ -717,7 +719,10 @@ export const PublisherStaticSiteReadResponseSchema = z.object({
 })
 export const ArtifactGetResponseSchema = z.union([
   ArtifactReadResponseSchema,
-  PublisherStaticSiteReadResponseSchema,
+  PublisherStaticSiteReadResponseSchema.extend(
+    ArtifactVersionSummarySchema.omit({ retain_versions: true }).partial()
+      .shape,
+  ),
 ])
 export type ArtifactGetResponse = z.infer<typeof ArtifactGetResponseSchema>
 export const PublisherArtifactReadResponseSchema = z.union([

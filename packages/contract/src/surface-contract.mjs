@@ -358,11 +358,27 @@ export const REST_SCHEMAS = {
       'next_offset',
     ],
   ),
-  PublisherSingleFileReadResponse: {
-    allOf: [restRef('ArtifactReadResponse'), objectSchema({ visibility })],
+  PublisherSingleFileReadResponse: objectSchema({
+    id: restString,
+    title: { type: 'string' },
+    visibility,
+    share_url: { type: 'string', format: 'uri' },
+    version_id: restString,
+    format: { enum: ['html', 'markdown'] },
+    content: { type: 'string' },
+    size_bytes: { type: 'number', minimum: 0 },
+    truncated: { type: 'boolean' },
+    next_offset: { type: ['integer', 'null'], minimum: 0 },
+    link_expires_at: nullableString,
+    project_id: nullableString,
+  }),
+  ArtifactStaticSiteReadResponse: {
+    allOf: [
+      restRef('PublisherStaticSiteReadResponse'),
+      objectSchema(versionSummary),
+    ],
   },
   PublisherStaticSiteReadResponse: objectSchema({
-    ...versionSummary,
     id: restString,
     title: { type: 'string' },
     share_url: { type: 'string', format: 'uri' },
@@ -590,10 +606,11 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'Read an artifact',
-        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Get includes retain_versions, version_count and total_size_bytes for all surviving versions.',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Human and agent get includes retain_versions, version_count and total_size_bytes for all surviving versions. Publisher responses omit version counts and total sizes; static-site publisher metadata includes retain_versions.',
         {
           anyOf: [
             restRef('ArtifactReadResponse'),
+            restRef('ArtifactStaticSiteReadResponse'),
             restRef('PublisherArtifactReadResponse'),
           ],
         },
