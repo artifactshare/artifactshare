@@ -1126,7 +1126,7 @@ function MemberSummaryStrip({
   fileUpdated: string | null
   createdAt: string
 }) {
-  const { t, locale } = useT()
+  const { tPlural, t, locale } = useT()
   return (
     <div className={projectSummaryStripClassName}>
       <>
@@ -1137,7 +1137,7 @@ function MemberSummaryStrip({
           />
         </span>
         <span className={projectSummaryItemClassName}>
-          {t('project.fileCount', { count: fileCount })}
+          {tPlural('project.fileCount', fileCount)}
           {' · '}
           {fileUpdated
             ? t('project.fileUpdated', { time: fileUpdated })
@@ -1176,7 +1176,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
   const [openDialog, setOpenDialog] = useState<
     'upload' | 'shareDefaults' | null
   >(null)
-  const { t, locale } = useT()
+  const { tPlural, t, locale } = useT()
   const { project, files, canPost, canManage, shareDefaults } = loaderData
   const title = project.name
   const shareDefaultsActionLabel =
@@ -1301,7 +1301,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
               </span>
             </span>
             <span className={projectSummaryItemClassName}>
-              {t('project.fileCount', { count: files.length })}
+              {tPlural('project.fileCount', files.length)}
               {' · '}
               {fileUpdated
                 ? t('project.fileUpdated', { time: fileUpdated })

@@ -1,3 +1,4 @@
+import { bindI18n } from '~/lib/i18n'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -12,12 +13,9 @@ vi.mock('~/services/link-sharing.server', () => ({
   loadWorkspaceLinkPolicy: async () => null,
 }))
 vi.mock('~/hooks/use-hydrated', () => ({ useHydrated: () => hydration.value }))
+let locale: 'en' | 'ja' = 'en'
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: 'en',
-    t: (key: string, vars?: Record<string, string | number>) =>
-      vars ? `${key}:${Object.values(vars).join(',')}` : key,
-  }),
+  useT: () => bindI18n(locale),
 }))
 vi.mock('~/components/app/page-breadcrumb', () => ({
   PageBreadcrumb: ({ children }: { children: ReactNode }) => (
@@ -88,6 +86,14 @@ vi.mock('react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router')>()
   return {
     ...actual,
+    useActionData: () => undefined,
+    useRevalidator: () => ({ revalidate: vi.fn() }),
+    useNavigate: () => vi.fn(),
+    useNavigation: () => ({ state: 'idle' }),
+    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    useViewTransitionState: () => false,
+    Form: ({ children }: { children: ReactNode }) => <form>{children}</form>,
+
     Link: ({ children, to }: { children: ReactNode; to: string }) => (
       <a href={to}>{children}</a>
     ),
@@ -100,6 +106,7 @@ vi.mock('react-router', async (importOriginal) => {
   }
 })
 
+import ProjectDetail from './projects.$id'
 import ProjectFiles from './projects.$id.files'
 import { ProjectRedesignBody } from './+components/project-redesign-body'
 import { fileTableListClassName } from '../_home/+components/file-list-styles'
@@ -179,6 +186,7 @@ function renderProjectBody() {
 
 beforeEach(() => {
   hydration.value = false
+  locale = 'en'
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -248,6 +256,85 @@ describe('project file date-group hydration rendering', () => {
         ),
     ],
   ])('zero files keeps the existing empty state (%s)', (_, render) => {
-    expect(render()).toContain('project.noFilesTitle')
+    expect(render()).toContain(bindI18n('en').t('project.noFilesTitle'))
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'project files count uses singular and plural forms (%s)',
+  (language) => {
+    locale = language
+    for (const count of [0, 1, 2]) {
+      const html = renderToStaticMarkup(
+        createElement(ProjectFiles, {
+          loaderData: {
+            ctx,
+            files: files.slice(0, count),
+            total: count,
+            nextCursor: null,
+            now: '2026-07-29T00:00:00Z',
+          },
+        } as never),
+      )
+      const label =
+        language === 'ja'
+          ? `${count} ファイル`
+          : count === 1
+            ? '1 file'
+            : `${count} files`
+      expect(html).toContain(`>${label} · `)
+    }
+  },
+)
+
+test.each([
+  ['member', 'en'],
+  ['shared', 'en'],
+  ['member', 'ja'],
+  ['shared', 'ja'],
+] as const)(
+  'project detail counts use singular and plural forms (%s, %s)',
+  (access, language) => {
+    locale = language
+    for (const count of [0, 1, 2]) {
+      const html = renderToStaticMarkup(
+        createElement(ProjectDetail, {
+          loaderData: {
+            access,
+            project: {
+              id: 'proj1',
+              name: 'Project',
+              baseVisibility: 'private',
+              createdAt: '2026-01-01T00:00:00Z',
+              archivedAt: null,
+            },
+            files: files.slice(0, count),
+            user: { id: 'u1', name: 'User', email: 'u1@example.com' },
+            workspaceName: 'Workspace',
+            joinedNav: [],
+            shareDefaults: [],
+            canUpload: false,
+            canPost: false,
+            canManage: false,
+            canEditProject: false,
+            projectActivity: {
+              participants: { total: 0, top: [] },
+              joined: false,
+              pins: [],
+              feed: [],
+              ranking: [],
+              now: '2026-07-29T00:00:00Z',
+            },
+          },
+        } as never),
+      )
+      const label =
+        language === 'ja'
+          ? `${count} ファイル`
+          : count === 1
+            ? '1 file'
+            : `${count} files`
+      expect(html).toContain(`>${label} · `)
+    }
+  },
+)

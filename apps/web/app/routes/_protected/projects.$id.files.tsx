@@ -164,7 +164,7 @@ export async function loader({
 const EMPTY_PAGES: LoaderData[] = []
 
 export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
-  const { t, locale } = useT()
+  const { tPlural, t, locale } = useT()
   const { hydrated, timeZone, now } = useViewerCalendar()
   const fetcher = useFetcher<LoaderData>()
   const rowActions = useFileRowActions()
@@ -261,7 +261,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
               </AppPageHeaderTitle>
             </AppPageHeaderTitleRow>
             <AppPageHeaderMeta>
-              {t('project.fileCount', { count: loaderData.total })} ·{' '}
+              {tPlural('project.fileCount', loaderData.total)} ·{' '}
               {t('project.createdOrder')}
             </AppPageHeaderMeta>
           </AppPageHeaderMain>

@@ -121,7 +121,7 @@ export async function loader({
 }
 
 export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
-  const { t, locale } = useT()
+  const { tPlural, t, locale } = useT()
   const revalidator = useRevalidator()
   const { projects, userId, isAdmin, workspaceId, workspaceName } = loaderData
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
@@ -205,7 +205,7 @@ export default function ArchivedProjects({ loaderData }: Route.ComponentProps) {
                       {project.name}
                     </strong>
                     <small className="text-muted-foreground block truncate text-xs">
-                      {t('project.fileCount', { count: project.fileCount })}
+                      {tPlural('project.fileCount', project.fileCount)}
                       {project.archivedAt
                         ? ` · ${t('projectArchive.archivedAt', {
                             time: formatRelative(project.archivedAt, locale),

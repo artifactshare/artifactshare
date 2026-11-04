@@ -33,6 +33,66 @@ describe('authorized destination responses', () => {
   })
 
   test.each(['en', 'ja'] as const)(
+    'move pluralizes destination file counts (%s)',
+    async (locale) => {
+      language.locale = locale
+      let respond!: (value: Response) => void
+      const response = new Promise<Response>((resolve) => {
+        respond = resolve
+      })
+      router = createMemoryRouter([
+        {
+          path: '/',
+          element: (
+            <MoveShareableDialog
+              open
+              onOpenChange={() => {}}
+              shareableId="artifact"
+              shareableTitle="Example"
+              homeOwnerName="Owner"
+              isProjectAudience={false}
+            />
+          ),
+        },
+        { path: '/api/shareables/artifact/move', loader: () => response },
+      ])
+      await act(async () => root.render(<RouterProvider router={router} />))
+      await act(async () => {
+        respond(
+          Response.json({
+            kind: 'ok',
+            shareable: { id: 'artifact', title: 'Example' },
+            inbox: { isCurrent: true },
+            projects: [0, 1, 2].map((fileCount) => ({
+              containerId: `project-${fileCount}`,
+              name: `Destination ${fileCount}`,
+              fileCount,
+              isCurrent: false,
+              baseVisibility: 'private',
+              externalCount: 0,
+            })),
+          }),
+        )
+      })
+      await vi.waitFor(() => {
+        for (const n of [0, 1, 2]) {
+          const option = [...document.querySelectorAll('[role="radio"]')].find(
+            (node) => node.textContent?.includes(`Destination ${n}`),
+          )
+          expect(option?.textContent).toContain(
+            locale === 'ja'
+              ? `ファイル ${n} 件`
+              : n === 1
+                ? '1 file'
+                : `${n} files`,
+          )
+          expect(option?.textContent).not.toContain('1 files')
+        }
+      })
+    },
+  )
+
+  test.each(['en', 'ja'] as const)(
     'move offers the retained destination and its audience warning (%s)',
     async (locale) => {
       language.locale = locale
