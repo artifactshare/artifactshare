@@ -234,6 +234,33 @@ describe('/api/bridge/v1/requests', () => {
     consoleError.mockRestore()
   })
 
+  test('keeps placement refusals non-disclosing with the existing retry envelope', async () => {
+    executeBridgeRequestMock.mockResolvedValue({ kind: 'upload-failed' })
+    const form = new FormData()
+    form.set('metadata', JSON.stringify({ schema_version: 1 }))
+    const response = await action({
+      context: new Map(),
+      request: new Request(
+        'https://artifactshare.test/api/bridge/v1/requests',
+        {
+          method: 'POST',
+          body: form,
+        },
+      ),
+    } as never)
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      schema_version: 1,
+      ok: false,
+      error: {
+        code: 'upload-failed',
+        message: 'The bridge operation failed.',
+        retryable: true,
+        retry_after_ms: 1_000,
+      },
+    })
+  })
+
   test('preserves retry metadata for an in-progress idempotency lease', async () => {
     executeBridgeRequestMock.mockResolvedValue({
       kind: 'idempotency-in-progress',

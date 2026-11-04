@@ -1,3 +1,4 @@
+import { projectPlacementSql } from './projects.server'
 import { pruneVersionsAfterPublish } from './version-retention.server'
 import { sql, type Compilable, type Kysely, type RawBuilder } from 'kysely'
 import { env } from 'cloudflare:workers'
@@ -1896,7 +1897,17 @@ function guardedShareableInsert(
           .where('bot.bot_stopped_at', 'is', null)
           .where('fallback.workspace_id', '=', input.authority.workspaceId)
           .where('fallback.kind', '=', 'project')
-          .where('fallback.archived_at', 'is', null),
+          .where('fallback.archived_at', 'is', null)
+          .where(
+            projectPlacementSql(
+              {
+                id: input.binding.authority.botUserId,
+                workspaceId: input.authority.workspaceId,
+              },
+              input.projectId,
+              true,
+            ),
+          ),
       )
   }
   return db
@@ -1950,7 +1961,17 @@ function guardedShareableInsert(
         .where('bot.bot_stopped_at', 'is', null)
         .where('project.workspace_id', '=', input.authority.workspaceId)
         .where('project.kind', '=', 'project')
-        .where('project.archived_at', 'is', null),
+        .where('project.archived_at', 'is', null)
+        .where(
+          projectPlacementSql(
+            {
+              id: input.binding.authority.botUserId,
+              workspaceId: input.authority.workspaceId,
+            },
+            input.projectId,
+            true,
+          ),
+        ),
     )
 }
 
