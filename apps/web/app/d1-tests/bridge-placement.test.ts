@@ -399,7 +399,7 @@ test.each([
   },
 )
 
-test('backfills private mapping grants idempotently and preserves existing roles', async () => {
+test('backfills private mapping grants idempotently, preserves roles, and skips stopped bots', async () => {
   const at = '2026-01-01T00:00:00.000Z'
   await database.batch([
     database
@@ -505,4 +505,26 @@ test('backfills private mapping grants idempotently and preserves existing roles
         .all()
     ).results,
   ).toEqual(first.results)
+
+  // Stopping a bot removes its grants but retains its authority and mappings.
+  await database.batch([
+    database
+      .prepare("UPDATE users SET bot_stopped_at = ? WHERE id = 'migration-bot'")
+      .bind(at),
+    database.prepare(`
+      DELETE FROM project_share_defaults
+      WHERE lower(email) = 'migration@bots.artifactshare.invalid'
+    `),
+  ])
+  await database.prepare(migration).run()
+  expect(
+    (
+      await database
+        .prepare(`
+          SELECT id FROM project_share_defaults
+          WHERE project_container_id LIKE 'migration-%'
+        `)
+        .all()
+    ).results,
+  ).toEqual([])
 })

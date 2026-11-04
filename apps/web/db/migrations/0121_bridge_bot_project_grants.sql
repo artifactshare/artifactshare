@@ -11,6 +11,7 @@ JOIN bridge_authorities AS authority ON authority.id = mapping.bridge_authority_
 JOIN users AS bot ON bot.id = authority.bot_user_id
 WHERE mapping.privacy_ceiling = 'private'
   AND project.base_visibility = 'private'
+  AND bot.bot_stopped_at IS NULL
   AND NOT EXISTS (
     SELECT 1 FROM project_share_defaults AS existing
     WHERE existing.project_container_id = project.id
