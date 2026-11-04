@@ -13,7 +13,10 @@ import type {
   PendingDeviceAuth,
   ProfileCredentialSource,
 } from './types.js'
-import { ApiErrorResponseSchema } from '@artifactshare/contract'
+import {
+  ApiErrorResponseSchema,
+  VisibilitySchema,
+} from '@artifactshare/contract'
 import { isProfileCredentialSource } from './types.js'
 import { isContract, isRecord } from './validators.js'
 
@@ -50,6 +53,51 @@ export function mapApiError(
   options: ApiErrorOptions = {},
 ): CliError {
   const { code: apiCode, message: apiMessage } = apiError(body)
+  if (
+    status === 409 &&
+    apiCode === 'key-visibility-mismatch' &&
+    options.artifactTarget &&
+    options.operation === 'share'
+  ) {
+    const raw = isRecord(body) && isRecord(body.error) ? body.error : undefined
+    const details = raw && isRecord(raw.details) ? raw.details : undefined
+    const requested = VisibilitySchema.safeParse(details?.requested_visibility)
+    const current = VisibilitySchema.safeParse(details?.current_visibility)
+    if (
+      details &&
+      typeof details.artifact_id === 'string' &&
+      /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(details.artifact_id) &&
+      requested.success &&
+      current.success
+    ) {
+      const expiry = options.linkExpiresAt
+      const expiryOption =
+        requested.data !== 'link'
+          ? ''
+          : expiry !== undefined
+            ? ` --link-expires-at ${/^[A-Za-z0-9:.-]+$/.test(expiry) ? expiry : "'" + expiry.replaceAll("'", "'\\''") + "'"}`
+            : options.noLinkExpiry === true
+              ? ' --no-link-expiry'
+              : ''
+      const command = `${CLI_INVOCATION} edit ${details.artifact_id} --visibility ${requested.data}${expiryOption} --json`
+      const requiresHuman = details.requires_human === true
+      return cliError({
+        code: 'key_visibility_mismatch',
+        message:
+          'Resending does not change visibility. No version was created.',
+        why: `The artifact visibility is ${current.data}; --visibility requested ${requested.data}.`,
+        hint: requiresHuman
+          ? `Ask a person with a human credential to run ${command}`
+          : `To change visibility intentionally, run ${command}`,
+        agentRecoverable: !requiresHuman,
+        requiresHuman,
+        recovery: requiresHuman
+          ? { kind: 'ask_human' }
+          : { kind: 'run_command', command },
+        details,
+      })
+    }
+  }
   if (apiCode === 'rate-limited' || apiCode === 'thread-capacity') {
     const raw = isRecord(body) && isRecord(body.error) ? body.error : undefined
     const details = raw && isRecord(raw.details) ? raw.details : undefined

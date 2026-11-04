@@ -41,6 +41,8 @@ test('artifacts get --help explains read back before update', () => {
 
   assert.equal(result.status, 0)
   assert.match(result.stdout, /artifacts get abc123def4/)
+  assert.match(result.stdout, /data\.title/)
+  assert.match(result.stdout, /data\.visibility/)
   assert.match(result.stdout, /data\.content/)
   assert.match(result.stdout, /data\.version_id/)
   assert.match(result.stdout, /data\.truncated/)
@@ -566,3 +568,34 @@ test('removed version has actionable CLI recovery', async () => {
     },
   )
 })
+
+test.each(['abc123def4', 'https://artifactshare.test/a/abc123def4'])(
+  'artifacts get forwards current metadata for %s',
+  async (target) => {
+    await withServer(
+      async (_request, response) => {
+        writeJson(response, {
+          id: 'abc123def4',
+          share_url: 'https://artifactshare.test/a/abc123def4',
+          version_id: 'v1',
+          format: 'html',
+          content: '<p>Report</p>',
+          size_bytes: 13,
+          truncated: false,
+          next_offset: null,
+          title: 'Display title',
+          visibility: 'private',
+        })
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          ['artifacts', 'get', target, '--base-url', baseUrl, '--json'],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        const payload = expectSuccess(result, 'artifacts get')
+        assert.equal(payload.data.title, 'Display title')
+        assert.equal(payload.data.visibility, 'private')
+      },
+    )
+  },
+)

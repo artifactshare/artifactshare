@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { writeFailure } from './output.js'
 import {
   mapApiError,
   profileReauthRequiredError,
@@ -175,3 +176,87 @@ test('comment capacity explains stored messages rather than a temporary posting 
   assert.match(rate.why, /minute/)
   assert.equal(rate.recovery.kind, 'retry_later')
 })
+
+test('keyed share visibility mismatch names an intentional edit command', () => {
+  const error = mapApiError(
+    409,
+    {
+      error: {
+        code: 'key-visibility-mismatch',
+        details: {
+          artifact_id: 'abc123def4',
+          current_visibility: 'link',
+          requested_visibility: 'private',
+        },
+      },
+    },
+    { artifactTarget: true, operation: 'share' },
+  )
+  assert.equal(error.code, 'key_visibility_mismatch')
+  assert.equal(error.recovery.kind, 'run_command')
+  assert.match(error.hint, /edit abc123def4 --visibility private --json/)
+  assert.match(error.message, /No version was created/)
+  const stderr = vi
+    .spyOn(process.stderr, 'write')
+    .mockImplementation(() => true)
+  const previousExitCode = process.exitCode
+  try {
+    writeFailure('share', error, { json: false }, 1)
+    assert.equal(process.exitCode, 1)
+    assert.match(
+      stderr.mock.calls.join(''),
+      /edit abc123def4 --visibility private --json/,
+    )
+  } finally {
+    stderr.mockRestore()
+    process.exitCode = previousExitCode
+  }
+})
+
+test.each([
+  {},
+  {
+    artifact_id: 'id; echo bad',
+    current_visibility: 'private',
+    requested_visibility: 'link',
+  },
+  {
+    artifact_id: 'abc123def4',
+    current_visibility: 'private',
+    requested_visibility: 'invalid',
+  },
+])('malformed mismatch details do not invent recovery: %j', (details) => {
+  const error = mapApiError(
+    409,
+    { error: { code: 'key-visibility-mismatch', details } },
+    { artifactTarget: true, operation: 'share' },
+  )
+  assert.notEqual(error.code, 'key_visibility_mismatch')
+  assert.notEqual(error.recovery.kind, 'run_command')
+})
+
+test.each([{ linkExpiresAt: '2099-01-02T00:00:00Z' }, { noLinkExpiry: true }])(
+  'non-link visibility recovery omits expiry options: %j',
+  (expiryOptions) => {
+    const error = mapApiError(
+      409,
+      {
+        error: {
+          code: 'key-visibility-mismatch',
+          details: {
+            artifact_id: 'abc123def4',
+            current_visibility: 'link',
+            requested_visibility: 'private',
+          },
+        },
+      },
+      { artifactTarget: true, operation: 'share', ...expiryOptions },
+    )
+    assert.equal(error.recovery.kind, 'run_command')
+    assert.match(error.hint, /edit abc123def4 --visibility private --json/)
+    assert.doesNotMatch(
+      JSON.stringify(error.recovery),
+      /--link-expires-at|--no-link-expiry/,
+    )
+  },
+)

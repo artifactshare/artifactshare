@@ -691,7 +691,8 @@
         "--expected-version"
       ],
       "option_help": [
-        "--expected-version <expected-version> Require this current version id when --key updates an existing artifact; use data.version.id, not a number (artifacts get returns data.version_id)"
+        "--expected-version <expected-version> Require this current version id when --key updates an existing artifact; use data.version.id, not a number (artifacts get returns data.version_id)",
+        "--visibility <visibility> private, workspace, project, or link (default: project for a project destination, otherwise resolved from config); keyed resends reject a different effective value before creating a version (Home project means private). Change with edit --visibility"
       ]
     },
     {
@@ -832,5 +833,5 @@
       ]
     }
   ],
-  "generated_date": "2026-10-30"
+  "generated_date": "2026-11-04"
 }

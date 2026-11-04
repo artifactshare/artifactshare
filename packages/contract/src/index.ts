@@ -417,6 +417,8 @@ export type CliDoctorResponse = z.infer<typeof CliDoctorResponseSchema>
 /** Query parameters used by the multipart upload endpoint. */
 export const ArtifactUploadQuerySchema = z.object({
   publish_key: z.string().optional(),
+  // Explicit visibility assertion for keyed resends; never changes audience.
+  key_visibility: VisibilitySchema.optional(),
   expected_version: z.string().optional(),
   artifact_kind: z.literal('static_site').optional(),
   container_id: z.string().optional(),
@@ -654,6 +656,8 @@ export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>
 
 export const ArtifactReadResponseSchema = z.object({
   id: stringId,
+  title: z.string(),
+  visibility: VisibilitySchema,
   share_url: url,
   version_id: stringId,
   format: z.enum(['html', 'markdown']),
@@ -676,6 +680,7 @@ export const PublisherSingleFileReadResponseSchema =
   })
 export const PublisherStaticSiteReadResponseSchema = z.object({
   id: stringId,
+  title: z.string(),
   share_url: url,
   version_id: stringId,
   artifact_kind: z.literal('static_site'),

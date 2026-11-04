@@ -52,7 +52,7 @@ export const CLI_QUICK_REFERENCE = [
   ],
   ['Replace with same URL', 'update <target> <path> --json'],
   ['Append to same URL', 'append <target> <path> --json'],
-  ['Read back source', 'artifacts get <target> --json'],
+  ['Read back source, title and visibility', 'artifacts get <target> --json'],
   ['Download a site bundle', 'download <target> --output ./out --json'],
   [
     'Download a whole project',
@@ -184,7 +184,7 @@ export const MCP_OPENAPI_METADATA = {
 // Option explanations displayed alongside the generated command reference.
 export const CLI_REFERENCE_OPTION_HELP = {
   'artifacts get': ['--version'],
-  share: ['--expected-version'],
+  share: ['--expected-version', '--visibility'],
   update: ['--expected-version'],
   download: ['--force'],
   'skills install': ['--force'],
@@ -277,6 +277,8 @@ export const REST_SCHEMAS = {
   ArtifactReadResponse: objectSchema(
     {
       id: restString,
+      title: { type: 'string' },
+      visibility,
       share_url: { type: 'string', format: 'uri' },
       version_id: restString,
       format: { enum: ['html', 'markdown'] },
@@ -294,6 +296,8 @@ export const REST_SCHEMAS = {
     [
       'id',
       'share_url',
+      'title',
+      'visibility',
       'version_id',
       'format',
       'content',
@@ -307,6 +311,7 @@ export const REST_SCHEMAS = {
   },
   PublisherStaticSiteReadResponse: objectSchema({
     id: restString,
+    title: { type: 'string' },
     share_url: { type: 'string', format: 'uri' },
     version_id: restString,
     artifact_kind: { const: 'static_site' },
@@ -462,7 +467,7 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'Read an artifact',
-        'Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.',
         {
           anyOf: [
             restRef('ArtifactReadResponse'),

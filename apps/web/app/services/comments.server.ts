@@ -1,3 +1,4 @@
+import { displayTitle } from '~/lib/display-title'
 import { parseTextLocus, type TextLocus } from '~/lib/csp-reporter'
 import { COMMENT_THREAD_MESSAGE_LIMIT } from '~/lib/comment-limits'
 import {
@@ -236,6 +237,7 @@ export async function loadCommentAccessForThread(
 // display access is verified. Callers that need feature-specific access shapes
 // (comments, viewer list) derive them from this.
 export interface ShareableViewAccess {
+  title: string
   id: string
   workspaceId: string
   ownerUserId: string
@@ -271,6 +273,8 @@ export async function loadShareableViewAccess(
       'shareables.workspace_id',
       'shareables.owner_user_id',
       'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
       'shareables.visibility',
       'shareables.link_expires_at',
       'shareables.artifact_kind',
@@ -327,6 +331,11 @@ export async function loadShareableViewAccess(
   return {
     id: shareable.id,
     workspaceId: shareable.workspace_id,
+    title: displayTitle({
+      name: shareable.name,
+      derivedTitle: shareable.derived_title,
+      titleOverride: shareable.title_override,
+    }),
     ownerUserId: shareable.owner_user_id,
     visibility: shareable.visibility,
     linkExpiresAt: shareable.link_expires_at,
@@ -344,7 +353,7 @@ export async function loadCommentAccess(
   user: SessionUser,
   shareableId: string,
   agentReadAuthorization?: AgentReadAuthorization,
-): Promise<CommentAccess | null> {
+): Promise<(CommentAccess & { title: string }) | null> {
   const shareable = await loadShareableViewAccess(
     db,
     user,
@@ -373,6 +382,7 @@ export async function loadCommentAccess(
   )
   return {
     ...access,
+    title: shareable.title,
     projectId:
       shareable.projectContainerKind === 'project'
         ? shareable.containerId

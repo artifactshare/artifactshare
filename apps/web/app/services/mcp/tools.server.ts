@@ -305,6 +305,8 @@ const GET_ARTIFACT_OUTPUT_SCHEMA = {
     z.string(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.share_url,
   ),
+  title: ARTIFACT_READ_RESPONSE_SCHEMA.shape.title,
+  visibility: ARTIFACT_READ_RESPONSE_SCHEMA.shape.visibility,
   version_id: mcpOutputField(
     z.string(),
     ARTIFACT_READ_RESPONSE_SCHEMA.shape.version_id,

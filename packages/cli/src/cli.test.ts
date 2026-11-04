@@ -548,3 +548,12 @@ test('import-token rejects token options with standard-input guidance', () => {
     assert.equal(error.recovery.kind, 'change_input')
   }
 })
+
+test('share help explains human recovery for agent visibility mismatches', () => {
+  const result = run(['share', '--help'])
+  assert.equal(result.status, 0)
+  assert.match(
+    result.stdout,
+    /agent credentials require a person to run edit using a human credential/,
+  )
+})

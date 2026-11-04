@@ -184,6 +184,8 @@
             "mcp_output": [
               "id",
               "share_url",
+              "title",
+              "visibility",
               "version_id",
               "format",
               "content",
@@ -2216,7 +2218,7 @@
         "bundled_skill": {
           "kind": "reference",
           "path": "packages/cli/skills/artifactshare/SKILL.md",
-          "identifier": "share"
+          "identifiers": ["share", "key_visibility_mismatch"]
         },
         "generated_snapshot": {
           "kind": "generated",

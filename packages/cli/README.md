@@ -548,3 +548,7 @@ Retention removal returns `version_removed` in CLI output or `version-removed`
 in MCP/API (HTTP 410); omit the selection to inspect current content. Unknown, foreign, or
 unpublished ids return not-found. Before updating, read again without a
 version selection and use that current id for `--expected-version`.
+
+Keyed `share` resends preserve visibility. A different explicit `--visibility` fails before a version is created, with an `edit <id> --visibility <value> --json` recovery command. The same value or no flag resends normally. Home normalizes `project` to `private` for comparison, matching creation.
+
+Use `artifacts get <id> --json` to check `data.visibility` and `data.title` for HTML/Markdown artifacts. These describe the current artifact even when reading historical source.

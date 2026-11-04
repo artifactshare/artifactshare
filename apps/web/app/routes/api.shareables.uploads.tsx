@@ -1,5 +1,8 @@
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
-import { cliReadAuthority } from '~/lib/cli-authority-policy'
+import {
+  allowsHumanCliMutation,
+  cliReadAuthority,
+} from '~/lib/cli-authority-policy'
 import {
   FormDataParseError,
   MaxFilesExceededError,
@@ -29,7 +32,7 @@ import { createVersionFailureResponse } from '~/lib/create-version-response.serv
 import { nowIso } from '~/lib/datetime'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
-import type { Visibility } from '~/lib/shareable-types'
+import { visibilityForContainer, type Visibility } from '~/lib/shareable-types'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
@@ -106,6 +109,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const rawKindHint = searchParams.get('artifact_kind')
   const parsedQuery = ArtifactUploadQuerySchema.safeParse({
     publish_key: rawPublishKey ?? undefined,
+    key_visibility: searchParams.get('key_visibility') ?? undefined,
     expected_version: rawExpectedVersion ?? undefined,
     // Unknown hints historically fell through to the single-file path. Keep
     // that compatibility while asserting all recognized query fields through
@@ -147,6 +151,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       authority,
       expectedCurrentVersionId,
       parsedQuery.data.container_id,
+      parsedQuery.data.key_visibility,
     )
   }
 
@@ -270,6 +275,31 @@ export async function action({ request, context }: Route.ActionArgs) {
           'expected-version-required',
           'Agent updates require the current version id.',
           400,
+        )
+      }
+      const requestedVisibility =
+        parsedQuery.data.key_visibility === undefined
+          ? undefined
+          : visibilityForContainer(
+              parsedQuery.data.key_visibility,
+              authorized.destination.containerKind,
+            )
+      if (
+        requestedVisibility !== undefined &&
+        requestedVisibility !== resolution.visibility
+      ) {
+        return errorResponse(
+          'key-visibility-mismatch',
+          'Resending does not change visibility. No version was created.',
+          409,
+          {
+            details: {
+              artifact_id: resolution.shareableId,
+              current_visibility: resolution.visibility,
+              requested_visibility: requestedVisibility,
+              requires_human: !allowsHumanCliMutation(authority, true),
+            },
+          },
         )
       }
       const actor = publishPrincipal(user, authority)
@@ -644,6 +674,7 @@ async function uploadStaticSiteWithSession(
   authority?: CliAuthority | null,
   expectedCurrentVersionId?: string | null,
   queryContainerId?: string,
+  keyVisibility?: Visibility,
 ): Promise<Response> {
   const agentAuthority =
     authority?.kind === 'publisher' ? null : cliReadAuthority(authority)
@@ -705,6 +736,31 @@ async function uploadStaticSiteWithSession(
           'expected-version-required',
           'Agent updates require the current version id.',
           400,
+        )
+      }
+      const requestedVisibility =
+        keyVisibility === undefined
+          ? undefined
+          : visibilityForContainer(
+              keyVisibility,
+              authorized.destination.containerKind,
+            )
+      if (
+        requestedVisibility !== undefined &&
+        requestedVisibility !== resolution.visibility
+      ) {
+        return errorResponse(
+          'key-visibility-mismatch',
+          'Resending does not change visibility. No version was created.',
+          409,
+          {
+            details: {
+              artifact_id: resolution.shareableId,
+              current_visibility: resolution.visibility,
+              requested_visibility: requestedVisibility,
+              requires_human: !allowsHumanCliMutation(authority, true),
+            },
+          },
         )
       }
       target = {

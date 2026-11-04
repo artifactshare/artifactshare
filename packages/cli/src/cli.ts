@@ -404,7 +404,7 @@ const shareDefinition = define({
       type: 'string',
       toKebab: true,
       description:
-        'private, workspace, project, or link (default: project for a project destination, otherwise resolved from config)',
+        'private, workspace, project, or link (default: project for a project destination, otherwise resolved from config); keyed resends reject a different effective value before creating a version (Home project means private). Change with edit --visibility',
     },
     linkExpiresAt: {
       type: 'string',
@@ -461,6 +461,7 @@ To keep an existing share URL, use update:
   npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json
 
 For repeat jobs, use --key: first share creates the artifact, later runs add versions.
+Resending never changes visibility. An explicit --visibility whose effective value differs from the stored value fails before creating a version. Home treats project as private, as on creation. Use edit <id> --visibility <value> --json to change it intentionally.
 
 Common failures:
   auth_required          Set ARTIFACTSHARE_TOKEN before share
@@ -475,6 +476,7 @@ Common failures:
     not_found            Check the path and retry
     invalid_type         Select a regular file or directory
     unsupported_guarantee Select a filesystem with stable dev/ino and no-follow support
+  key_visibility_mismatch Run edit <id> --visibility <value> --json to change the audience; agent credentials require a person to run edit using a human credential
   key_target_moved       The artifact for --key moved; update it by ID or use a new key
   key_kind_mismatch      The artifact for --key is a different kind; use a new key`,
 })
@@ -863,6 +865,7 @@ const artifactsGetDefinition = define({
 
 Use resolve first when a user gives a title or project name, then pass the id here.
 Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
+The response includes data.title and data.visibility for the current artifact, even for historical or continuation reads.
 The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with the same --version selection and --offset set to data.next_offset and concatenate data.content until data.truncated is false.
 
 Common failures:

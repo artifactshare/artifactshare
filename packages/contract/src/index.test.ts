@@ -214,6 +214,8 @@ describe('@artifactshare/contract', () => {
       id: 'abc123def4',
       share_url: shareUrl,
       version_id: 'ver123',
+      title: 'Report',
+      visibility: 'private',
       format: 'markdown',
       content: '# Report',
       size_bytes: 8,
@@ -318,6 +320,8 @@ describe('@artifactshare/contract', () => {
       id: 'abc123def4',
       share_url: shareUrl,
       version_id: 'ver123',
+      title: 'Report',
+      visibility: 'private',
       format: 'markdown',
       content: '# Report',
       size_bytes: 8,
@@ -1306,6 +1310,7 @@ it('publisher readback extends the legacy object without widening its shape', as
     share_url: 'https://example.test/s/abc123def4',
     version_id: 'version1',
     artifact_kind: 'static_site',
+    title: 'Report',
     visibility: 'private',
     project_id: null,
     link_expires_at: null,
@@ -1549,4 +1554,20 @@ it('bounds page-derived locus while preserving optional absence', () => {
       CommentAnchorSchema.safeParse({ ...anchor, locus: invalid }).success,
     ).toBe(false)
   }
+})
+
+it('validates optional keyed visibility assertions', async () => {
+  const { ArtifactUploadQuerySchema } = await import('./index.js')
+  expect(
+    ArtifactUploadQuerySchema.parse({
+      publish_key: 'report',
+      key_visibility: 'private',
+    }),
+  ).toEqual({ publish_key: 'report', key_visibility: 'private' })
+  expect(
+    ArtifactUploadQuerySchema.parse({ publish_key: 'report' }),
+  ).not.toHaveProperty('key_visibility')
+  expect(
+    ArtifactUploadQuerySchema.safeParse({ key_visibility: 'unknown' }).success,
+  ).toBe(false)
 })
