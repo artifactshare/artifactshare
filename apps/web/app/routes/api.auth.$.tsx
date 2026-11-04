@@ -1,4 +1,5 @@
 import { PublisherClientNameSchema } from '@artifactshare/contract'
+import { ctxContext } from '~/middleware/context'
 import { authHandlerWithHangDetection } from '~/services/auth.server'
 import { getSessionUser } from '~/services/auth.server'
 import {
@@ -60,7 +61,7 @@ export async function loader({ request, url }: Route.LoaderArgs) {
   return maybeClearSiteData(url, response)
 }
 
-export async function action({ request, url }: Route.ActionArgs) {
+export async function action({ context, request, url }: Route.ActionArgs) {
   const path = url.pathname
   if (/\/device\/(code|token|approve)$/.test(path)) {
     const payload = await readDeviceRequestBody(request)
@@ -70,7 +71,13 @@ export async function action({ request, url }: Route.ActionArgs) {
       return handleDeviceToken(request, payload)
     return handleDeviceApprove(request, payload)
   }
-  return maybeClearSiteData(url, await authHandlerWithHangDetection(request))
+  const handled = authHandlerWithHangDetection(request)
+  // Better Auth verifies the code under a lock kept on the cached auth
+  // instance. A client abort must not strand it, or the next attempt for this
+  // address waits for a release that never comes.
+  if (path.endsWith('/sign-in/email-otp'))
+    context.get(ctxContext).waitUntil(handled.catch(() => undefined))
+  return maybeClearSiteData(url, await handled)
 }
 
 async function readDeviceRequestBody(

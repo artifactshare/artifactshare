@@ -65,7 +65,7 @@ test('email OTP sign-in counts wrong codes and accepts a code once on D1', async
     database
       .prepare('SELECT value FROM verifications WHERE identifier = ?1')
       .bind(identifier)
-      .first<{ value: string }>('value')
+      .first<string>('value')
 
   await seed()
   expect((await attempt('000000')).status).toBe(400)
@@ -73,5 +73,12 @@ test('email OTP sign-in counts wrong codes and accepts a code once on D1', async
 
   const accepted = await Promise.all([attempt('123456'), attempt('123456')])
   expect(accepted.map((response) => response.status).sort()).toEqual([200, 400])
+  expect(await storedValue()).toBeNull()
+
+  await seed()
+  for (let attempts = 1; attempts <= 5; attempts += 1)
+    expect((await attempt('000000')).status).toBe(400)
+  expect(await storedValue()).toBe('123456:5')
+  expect((await attempt('123456')).status).toBe(403)
   expect(await storedValue()).toBeNull()
 })

@@ -42,3 +42,18 @@ test.each([
     expect(authHandlerWithHangDetection).not.toHaveBeenCalled()
   },
 )
+
+test.each([
+  ['/api/auth/sign-in/email-otp', 1],
+  ['/api/auth/sign-in/social', 0],
+])('%s keeps running past a client abort: %i', async (path, anchored) => {
+  vi.mocked(authHandlerWithHangDetection).mockResolvedValue(new Response('ok'))
+  const waitUntil = vi.fn()
+  const url = new URL(`https://example.test${path}`)
+  await action({
+    url,
+    request: new Request(url, { method: 'POST' }),
+    context: { get: () => ({ waitUntil }) },
+  } as never)
+  expect(waitUntil).toHaveBeenCalledTimes(anchored)
+})
