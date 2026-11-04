@@ -1146,6 +1146,16 @@ test('OpenAPI documents logical version summaries and bounded history without pu
   ])
   assert.equal(history.parameters[1].name, 'cursor')
   assert.match(history.description, /50 entries per page/)
+  for (const path of [
+    '/api/cli/artifacts',
+    '/api/cli/artifacts/{id}',
+    '/api/cli/artifacts/{id}/versions',
+  ]) {
+    assert.match(
+      spec.paths[path].get.description,
+      /Static-site history and totals include only published versions with a publication timestamp for every caller, including owners/,
+    )
+  }
   for (const name of ['ArtifactReadResponse', 'ArtifactVersionsResponse']) {
     const schema = spec.components.schemas[name]
     for (const field of [

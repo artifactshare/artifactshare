@@ -60,17 +60,18 @@ afterEach(async () => {
   await fixture.db.destroy()
 })
 
-test('summaries count all surviving statuses, unlimited policies and empty histories', async () => {
-  const summary = await loadArtifactVersionSummaries(
-    fixture.db,
-    ['html', 'md', 'site', 'empty'],
-    user.id,
-  )
+test('summaries filter static publication status and preserve unlimited policies and empty histories', async () => {
+  const summary = await loadArtifactVersionSummaries(fixture.db, [
+    'html',
+    'md',
+    'site',
+    'empty',
+  ])
   for (const id of ['html', 'md', 'site'])
     expect(summary.get(id)).toEqual({
       retain_versions: id === 'site' ? 3 : null,
-      version_count: 53,
-      total_size_bytes: 1431,
+      version_count: id === 'site' ? 52 : 53,
+      total_size_bytes: id === 'site' ? 1430 : 1431,
     })
   expect(summary.get('empty')).toEqual({
     retain_versions: null,
@@ -92,8 +93,8 @@ for (const id of ['html', 'md', 'site'])
       is_current: true,
     })
     expect(first.data).toMatchObject({
-      version_count: 53,
-      total_size_bytes: 1431,
+      version_count: id === 'site' ? 52 : 53,
+      total_size_bytes: id === 'site' ? 1430 : 1431,
       has_more: true,
     })
     const second = await getArtifactVersions(fixture.db, user, {
@@ -101,7 +102,7 @@ for (const id of ['html', 'md', 'site'])
       cursor: first.data.next_cursor!,
     })
     if (second.kind !== 'ok') throw new Error('expected second page')
-    expect(second.data.versions).toHaveLength(3)
+    expect(second.data.versions).toHaveLength(id === 'site' ? 2 : 3)
     expect(second.data.has_more).toBe(false)
     expect(
       new Set(
@@ -109,7 +110,7 @@ for (const id of ['html', 'md', 'site'])
           (v) => v.version_id,
         ),
       ).size,
-    ).toBe(53)
+    ).toBe(id === 'site' ? 52 : 53)
     expect(second.data.versions.every((v) => !v.is_current)).toBe(true)
     expect(
       await getArtifactVersions(fixture.db, user, {
@@ -147,8 +148,8 @@ test('static get is metadata-only and rejects source selections and includes', a
     data: {
       artifact_kind: 'static_site',
       retain_versions: 3,
-      version_count: 53,
-      total_size_bytes: 1431,
+      version_count: 52,
+      total_size_bytes: 1430,
     },
   })
   if (result.kind === 'ok') expect(result.data).not.toHaveProperty('content')
@@ -208,8 +209,8 @@ test('list includes batched summaries including zero-history rows', async () => 
   if (result.kind !== 'ok') throw new Error('expected list')
   expect(result.data.artifacts.find((row) => row.id === 'site')).toMatchObject({
     retain_versions: 3,
-    version_count: 53,
-    total_size_bytes: 1431,
+    version_count: 52,
+    total_size_bytes: 1430,
   })
   expect(result.data.artifacts.find((row) => row.id === 'empty')).toMatchObject(
     { retain_versions: null, version_count: 0, total_size_bytes: 0 },
@@ -251,8 +252,8 @@ test('shared viewers can read history with creator emails redacted', async () =>
   const owner = await getArtifactVersions(fixture.db, user, { id: 'site' })
   if (owner.kind !== 'ok') throw new Error('expected owner history')
   expect(owner.data).toMatchObject({
-    version_count: 53,
-    total_size_bytes: 1431,
+    version_count: 51,
+    total_size_bytes: 1428,
   })
   expect(owner.data.versions[1]?.creator?.name).toBe('u1@example.com')
   expect(result.data.versions[0]?.creator).toBeNull()
@@ -329,5 +330,57 @@ test('list summaries add one bounded query for both one and fifty rows', async (
     ).toHaveLength(1)
   } finally {
     prepare.mockRestore()
+  }
+})
+
+test('former owners with link access see only published static history and totals', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO workspaces (id,name,created_at) VALUES ('ws2','Two','2026-01-01');
+    UPDATE users SET workspace_id = 'ws2' WHERE id = 'u1';
+    UPDATE shareables SET visibility = 'link' WHERE id = 'site';
+    UPDATE versions SET published_at = NULL WHERE id = 'site-01';
+  `)
+  const formerOwner = { ...user, workspaceId: 'ws2' }
+  const first = await getArtifactVersions(fixture.db, formerOwner, {
+    id: 'site',
+  })
+  if (first.kind !== 'ok') throw new Error('expected link history')
+  const next = await getArtifactVersions(fixture.db, formerOwner, {
+    id: 'site',
+    cursor: first.data.next_cursor!,
+  })
+  if (next.kind !== 'ok') throw new Error('expected next page')
+  expect(first.data).toMatchObject({
+    version_count: 51,
+    total_size_bytes: 1428,
+  })
+  expect(next.data.versions.map((v) => v.version_id)).toEqual(['site-02'])
+  expect(next.data.has_more).toBe(false)
+  expect(source).not.toHaveBeenCalled()
+})
+
+test('shared single-file readback redacts creator email fallback names', async () => {
+  fixture.sqlite.exec(`
+    INSERT INTO workspaces (id,name,created_at) VALUES ('ws2','Two','2026-01-01');
+    INSERT INTO users (id,email,email_verified,name,workspace_id,created_at,updated_at) VALUES ('u2','u2@example.com',1,'Reader','ws2','2026-01-01','2026-01-01');
+    INSERT INTO shareable_grants (shareable_id,granted_email,granted_at,granted_by) VALUES ('html','u2@example.com','2026-01-01','u1');
+    UPDATE users SET name = NULL WHERE id = 'u1';
+  `)
+  const result = await getCliArtifactReadback(
+    fixture.db,
+    { ...user, id: 'u2', workspaceId: 'ws2', email: 'u2@example.com' },
+    {
+      id: 'html',
+      baseUrl: 'https://example.com',
+      include: ['versions'],
+      includeSharedVersions: true,
+    },
+  )
+  expect(result.kind).toBe('ok')
+  if (result.kind !== 'ok' || !('versions' in result.data))
+    throw new Error('expected history readback')
+  expect(result.data.versions).toHaveLength(50)
+  for (const version of result.data.versions!) {
+    expect(version.creator).toMatchObject({ name: 'User', email: null })
   }
 })

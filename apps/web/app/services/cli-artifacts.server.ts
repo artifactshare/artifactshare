@@ -129,7 +129,6 @@ export async function listCliArtifacts(
       ? await loadArtifactVersionSummaries(
           db,
           shown.map((item) => item.id),
-          user.id,
         )
       : new Map()
     const last = shown.at(-1)
@@ -180,7 +179,6 @@ export async function listCliArtifacts(
     ? await loadArtifactVersionSummaries(
         db,
         shown.map((item) => item.id),
-        user.id,
       )
     : new Map()
   return {
@@ -319,7 +317,6 @@ export async function listAgentReadableArtifacts(
   const summaries = await loadArtifactVersionSummaries(
     db,
     shown.map((item) => item.id),
-    user.id,
   )
   const last = shown.at(-1)
   return {

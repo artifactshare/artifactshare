@@ -67,9 +67,9 @@ export async function getArtifactVersions(
       access.currentVersionId,
       cursor,
       access.artifactKind === 'static_site',
-      { includeUnpublished: access.ownerUserId === user.id, maySeeEmail },
+      { maySeeEmail },
     ),
-    loadArtifactVersionSummaries(db, [args.id], user.id),
+    loadArtifactVersionSummaries(db, [args.id]),
   ])
   const last = history.versions.at(-1)
   return {

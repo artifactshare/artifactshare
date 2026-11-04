@@ -868,7 +868,7 @@ const artifactsGetDefinition = define({
 Use resolve first when a user gives a title or project name, then pass the id here.
 Read the successful JSON from data.content (the source) and data.version_id (the version actually read). Use --version <version-id> to read an earlier published version. Publisher credentials do not support --version.
 Static sites return metadata only, without content or format; --include, --version and --offset are unsupported for sites. Updated get explicitly requests metadata; released source-only clients retain unsupported-kind and open still suggests download.
-For human and agent credentials, get and list include retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list, independent of --version or history pagination. Static-site non-owners see only published versions; owners see all surviving versions. Publisher credentials do not receive version_count or total_size_bytes. Managed artifacts can exceed their retention policy.
+For human and agent credentials, get and list include retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list, independent of --version or history pagination. For static sites, only published versions that have a publication timestamp appear in history and totals. This applies to owners too. Publisher credentials do not receive version_count or total_size_bytes. Managed artifacts can exceed their retention policy.
 The response includes data.title and data.visibility for the current artifact, even for historical or continuation reads.
 The response also includes data.truncated and data.next_offset. If data.truncated is true, call again with the same --version selection and --offset set to data.next_offset and concatenate data.content until data.truncated is false.
 
@@ -903,7 +903,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions 
 
 Returns versions with version_id, created_at, size_bytes and is_current, newest first, 50 per page.
 Use next_cursor while has_more is true. Restart without --cursor if invalid.
-retain_versions is null for unlimited retention. version_count and total_size_bytes cover versions the caller can list. Static-site non-owners see only published versions; owners see all surviving versions, including non-published versions. A publisher-created static-site version may have a null creator. Static-site sizes sum all files, including inherited files. These are logical bytes, not physical storage or billing; reused files count in each version.
+retain_versions is null for unlimited retention. version_count and total_size_bytes cover versions the caller can list. For static sites, only published versions that have a publication timestamp appear in history and totals. This applies to owners too. A publisher-created static-site version may have a null creator. Static-site sizes sum all files, including inherited files. These are logical bytes, not physical storage or billing; reused files count in each version.
 Publisher-managed artifacts may exceed retain_versions because human and current versions are protected. Publisher credentials cannot read history. Unreadable artifacts return target_not_found.`,
 })
 
@@ -940,7 +940,7 @@ const artifactsListDefinition = define({
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --home --query report --json
   npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --project-id <id> --cursor <token> --json
 
-Compare total_size_bytes across pages client-side to find the largest artifacts. Each row includes retain_versions, version_count and total_size_bytes (logical bytes across versions the caller can list; static-site non-owners see only published versions).
+Compare total_size_bytes across pages client-side to find the largest artifacts. Each row includes retain_versions, version_count and total_size_bytes (logical bytes across versions the caller can list; for static sites, only published versions that have a publication timestamp count, even for owners).
 Use an id from this list with update, edit, move, delete, artifacts get, or comments list.
 
 Common failures:

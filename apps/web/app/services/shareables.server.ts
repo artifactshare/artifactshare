@@ -4525,7 +4525,7 @@ export async function listArtifactVersions(
   currentVersionId: string | null,
   before?: { created_at: string; id: string },
   staticHistory = false,
-  options: { includeUnpublished?: boolean; maySeeEmail?: boolean } = {},
+  options: { maySeeEmail?: boolean } = {},
 ): Promise<OwnedArtifactVersions> {
   let query = db
     .selectFrom('versions')
@@ -4543,7 +4543,7 @@ export async function listArtifactVersions(
       'users.email as creator_email',
     ])
     .where('shareable_id', '=', shareableId)
-  if (staticHistory && !options.includeUnpublished)
+  if (staticHistory)
     query = query
       .where('versions.status', '=', 'published')
       .where('versions.published_at', 'is not', null)

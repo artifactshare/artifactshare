@@ -96,7 +96,7 @@ describe('listCliArtifacts project scope', () => {
     expect(ids).not.toContain('art-own')
   })
 
-  test('static-site project summaries exclude unpublished history for non-owners', async () => {
+  test('static-site project summaries exclude unpublished history for every caller', async () => {
     await db
       .updateTable('shareables')
       .set({ artifact_kind: 'static_site' })
@@ -119,8 +119,8 @@ describe('listCliArtifacts project scope', () => {
     expect(
       owner.data.artifacts.find((row) => row.id === 'art-other-ws-vis'),
     ).toMatchObject({
-      version_count: 2,
-      total_size_bytes: 18,
+      version_count: 0,
+      total_size_bytes: 0,
     })
     const viewer = await listCliArtifacts(db, MEMBER, {
       ...BASE,

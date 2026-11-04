@@ -153,12 +153,19 @@ async function readArtifactWithAccess(
     (async () => {
       if (!include.has('versions') || (!isOwner && !args.includeSharedVersions))
         return
-      const history = isOwner
-        ? await listOwnedArtifactVersions(db, user, args.id)
-        : await listArtifactVersions(db, args.id, access.currentVersionId)
       const viewerWorkspaceId =
         args.agentReadAuthorization?.viewerWorkspaceId ?? user.workspaceId
       const maySeeEmail = access.workspaceId === viewerWorkspaceId
+      const history = isOwner
+        ? await listOwnedArtifactVersions(db, user, args.id)
+        : await listArtifactVersions(
+            db,
+            args.id,
+            access.currentVersionId,
+            undefined,
+            false,
+            { maySeeEmail },
+          )
       data.versions = (history?.versions ?? []).map((version) => ({
         version_id: version.versionId,
         ...(version.label != null ? { label: version.label } : {}),
@@ -267,7 +274,7 @@ export async function getCliArtifactReadback(
   if (access.artifactKind !== 'static_site') {
     const result = await readArtifactWithAccess(db, user, args, access)
     if (result.kind !== 'ok') return result
-    const summaries = await loadArtifactVersionSummaries(db, [args.id], user.id)
+    const summaries = await loadArtifactVersionSummaries(db, [args.id])
     return { kind: 'ok', data: { ...result.data, ...summaries.get(args.id)! } }
   }
   if (
@@ -278,7 +285,7 @@ export async function getCliArtifactReadback(
     return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
   if (args.offset !== undefined) return { kind: 'invalid-offset' }
   if (!access.currentVersionId) return { kind: 'source-unavailable' }
-  const summaries = await loadArtifactVersionSummaries(db, [args.id], user.id)
+  const summaries = await loadArtifactVersionSummaries(db, [args.id])
   return {
     kind: 'ok',
     data: {

@@ -693,8 +693,8 @@ for (const locale of ['en', 'ja'] as const)
       )!.role
       expect(role).toContain(
         locale === 'en'
-          ? 'non-owners see only published versions with a publication timestamp'
-          : '所有者以外には公開日時のある公開済みの版だけ',
+          ? 'Static-site history and totals include only published versions with a publication timestamp for every caller, including owners'
+          : '所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけ',
       )
       expect(role.toLowerCase()).toContain(
         locale === 'en' ? 'publisher credentials' : 'publisher の資格情報',

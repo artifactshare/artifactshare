@@ -525,9 +525,7 @@ test.each(['created_by_publisher_client_id', 'assigned_publisher_client_id'])(
     })
     const { loadArtifactVersionSummaries } =
       await import('./artifact-version-summary.server')
-    expect(
-      (await loadArtifactVersionSummaries(db, ['s1'], 'u1')).get('s1'),
-    ).toEqual({
+    expect((await loadArtifactVersionSummaries(db, ['s1'])).get('s1')).toEqual({
       retain_versions: 1,
       version_count: 3,
       total_size_bytes: 30,
@@ -816,9 +814,7 @@ for (const kind of ['html_page', 'static_site'])
     const { loadArtifactVersionSummaries } =
       await import('./artifact-version-summary.server')
     const { getArtifactVersions } = await import('./artifact-versions.server')
-    const summary = (await loadArtifactVersionSummaries(db, ['s1'], 'u1')).get(
-      's1',
-    )
+    const summary = (await loadArtifactVersionSummaries(db, ['s1'])).get('s1')
     expect(summary).toEqual({
       retain_versions: 3,
       version_count: 3,

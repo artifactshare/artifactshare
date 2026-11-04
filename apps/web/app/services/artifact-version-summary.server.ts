@@ -7,7 +7,6 @@ import type { DB } from '~/types/db'
 export async function loadArtifactVersionSummaries(
   db: Kysely<DB>,
   ids: string[],
-  viewerUserId: string,
 ) {
   if (ids.length === 0) return new Map<string, ArtifactVersionSummary>()
   const rows = await db
@@ -16,7 +15,7 @@ export async function loadArtifactVersionSummaries(
       join
         .onRef('v.shareable_id', '=', 's.id')
         .on(
-          sql<boolean>`(s.artifact_kind != 'static_site' OR s.owner_user_id = ${viewerUserId} OR (v.status = 'published' AND v.published_at IS NOT NULL))`,
+          sql<boolean>`(s.artifact_kind != 'static_site' OR (v.status = 'published' AND v.published_at IS NOT NULL))`,
         ),
     )
     .select([
