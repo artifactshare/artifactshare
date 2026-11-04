@@ -754,3 +754,33 @@ test.each([
     ).toBe(true)
   },
 )
+
+test('Mermaid failures retain source and allow successful neighbors only for matching pending ids', () => {
+  const ctx = state()
+  ctx.readyChallenge = 'synthetic-challenge'
+  const failed = document.createElement('pre')
+  failed.textContent = 'invalid source'
+  const valid = document.createElement('pre')
+  document.body.appendChild(failed)
+  document.body.appendChild(valid)
+  ctx.mermaidBlocks = { failed, valid }
+  installMermaidResults(ctx, 'stale', [{ id: 'failed', svg: '' }])
+  installMermaidResults(ctx, ctx.readyChallenge, [{ id: 'unknown', svg: '' }])
+  expect(failed.className).toBe('')
+  expect(valid.className).toBe('')
+  expect(Object.keys(ctx.mermaidBlocks)).toEqual(['failed', 'valid'])
+  installMermaidResults(ctx, ctx.readyChallenge, [
+    { id: 'failed', svg: '' },
+    {
+      id: 'valid',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>A</text></svg>',
+    },
+  ])
+  expect(failed.classList.contains('mermaid-error')).toBe(true)
+  expect(failed.hidden).toBe(false)
+  expect(failed.textContent).toBe('invalid source')
+  expect(failed.dataset.mermaidRendered).toBeUndefined()
+  expect(valid.hidden).toBe(true)
+  expect(valid.previousElementSibling?.className).toBe('mermaid-diagram')
+  expect(ctx.mermaidBlocks).toEqual({})
+})

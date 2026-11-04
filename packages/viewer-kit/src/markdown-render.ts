@@ -431,8 +431,8 @@ body {
 }
 .md-video { position: relative; aspect-ratio: 16 / 9; margin: 0 0 16px; }
 .md-video iframe { width: 100%; height: 100%; border: 0; }
-.mermaid-diagram { margin: 0 0 16px; overflow: auto; text-align: center; }
-.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-diagram { margin: 0 0 16px; padding: 16px; overflow: auto; background: #fff; color: #333; text-align: center; }
+.mermaid-diagram svg { display: block; max-width: none; height: auto; margin: 0 auto; }
 .mermaid-error { border: 1px solid #cf222e; }
 .md hr {
   height: 0.25em;

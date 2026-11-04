@@ -15,6 +15,8 @@ async function getMermaid() {
       securityLevel: 'strict',
       suppressErrorRendering: true,
       htmlLabels: false,
+      flowchart: { useMaxWidth: false },
+      sequence: { useMaxWidth: false },
     })
     return mermaid
   })
