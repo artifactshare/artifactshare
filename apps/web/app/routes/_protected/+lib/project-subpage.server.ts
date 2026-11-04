@@ -29,13 +29,13 @@ import {
 export function projectFileRowsQuery(
   db: Kysely<DB>,
   containerId: string,
-  ownerEmail?: string | null,
+  user?: { id: string; email?: string | null },
 ) {
   return db
     .selectFrom('shareables')
     .innerJoin('users', 'users.id', 'shareables.owner_user_id')
     .select((eb) => [
-      directGrantsSelect(ownerEmail),
+      directGrantsSelect(user?.id ?? '', user?.email),
       'shareables.id',
       'shareables.name',
       'shareables.derived_title',

@@ -398,7 +398,7 @@ export async function loader({
       .select(['name', 'hd'])
       .where('id', '=', user.workspaceId)
       .executeTakeFirst(),
-    projectFileRowsQuery(db, project.id, user.email)
+    projectFileRowsQuery(db, project.id, user)
       .where('shareables.workspace_id', '=', user.workspaceId)
       .where('shareables.visibility', 'in', [
         'private',
@@ -480,7 +480,7 @@ async function loadSharedProject(
         .select(['name', 'hd'])
         .where('id', '=', user.workspaceId)
         .executeTakeFirst(),
-      projectFileRowsQuery(db, project.id, user.email)
+      projectFileRowsQuery(db, project.id, user)
         .where((eb) => visibleSharedProjectShareableToViewer(eb, user))
         .orderBy('shareables.activity_at', 'desc')
         .execute(),

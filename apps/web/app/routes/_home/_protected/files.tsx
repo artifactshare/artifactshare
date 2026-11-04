@@ -81,6 +81,12 @@ export const screen = {
         query: '?page=2',
       },
     },
+    {
+      id: 'unopened-and-sharing',
+      description:
+        'Unopened files, an updated unopened file, and private sharing labels',
+      setup: { scenario: 'files/unopened-and-sharing' },
+    },
   ],
 } satisfies ScreenSpec
 
@@ -137,7 +143,7 @@ export async function loader({
   if (requestedPage > lastPage) throw redirect(filesUrl({ page: lastPage }))
   const rows = await filtered
     .select((eb) => [
-      directGrantsSelect(user.email),
+      directGrantsSelect(user.id, user.email),
       unopenedOwnedPredicate(user.id).as('is_unopened'),
       versionCountSelect(eb),
       latestPublishedAtSelect(eb),

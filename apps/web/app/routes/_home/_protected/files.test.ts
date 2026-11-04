@@ -18,6 +18,7 @@ import {
   listUnopenedOwnedArtifactsLimited,
   listMyArtifactsLimited,
   listRecentArtifactsPage,
+  listRecentArtifactsLimited,
 } from '~/services/home.server'
 import { projectFileRowsQuery } from '~/routes/_protected/+lib/project-subpage.server'
 import { listGrants } from '~/services/shareables.server'
@@ -246,11 +247,7 @@ describe('/files loader', () => {
       VIEWER.email,
     )
     const recent = await listRecentArtifactsPage(db, VIEWER, 1)
-    const project = await projectFileRowsQuery(
-      db,
-      'c-owner',
-      VIEWER.email,
-    ).execute()
+    const project = await projectFileRowsQuery(db, 'c-owner', VIEWER).execute()
     for (const index of cases.keys()) {
       const id = `own-0${index}`
       const result = await listGrants(db, VIEWER, id)
@@ -274,6 +271,72 @@ describe('/files loader', () => {
       (await load('/files')).files.find((f) => f.id === 'own-03')
         ?.hasDirectGrants,
     ).toBe(false)
+  })
+
+  test('withholds grant evidence from removed owners who retain direct access', async () => {
+    await db
+      .insertInto('shareables')
+      .values({
+        id: 'former-owner',
+        workspace_id: 'ws-a',
+        owner_user_id: VIEWER.id,
+        name: 'Private file',
+        artifact_kind: 'html_page',
+        visibility: 'private',
+        container_id: 'c-owner',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .execute()
+    await db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: 'former-owner',
+        granted_email: VIEWER.email,
+        granted_at: TS,
+        granted_by: VIEWER.id,
+      })
+      .execute()
+    await db
+      .insertInto('shareable_viewer_recency')
+      .values({
+        shareable_id: 'former-owner',
+        viewer_user_id: VIEWER.id,
+        first_viewed_at: TS,
+        last_viewed_at: TS,
+      })
+      .execute()
+    expect(
+      (await listRecentArtifactsPage(db, VIEWER, 1))[0]?.has_direct_grants,
+    ).toBe(0)
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: VIEWER.id,
+        role: 'member',
+        status: 'removed',
+        created_at: TS,
+        updated_at: TS,
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(['workspace_id', 'user_id'])
+          .doUpdateSet({ status: 'removed' }),
+      )
+      .execute()
+    expect(await listGrants(db, VIEWER, 'former-owner')).toEqual({
+      kind: 'not-found',
+    })
+    for (const rows of [
+      await listRecentArtifactsPage(db, VIEWER, 1),
+      await listRecentArtifactsLimited(db, VIEWER),
+      await projectFileRowsQuery(db, 'c-owner', VIEWER).execute(),
+    ]) {
+      expect(rows.find((row) => row.id === 'former-owner')).toMatchObject({
+        has_direct_grants: null,
+      })
+    }
   })
 
   test('normalizes page in one redirect', async () => {

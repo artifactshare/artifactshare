@@ -268,7 +268,7 @@ function artifactSelectQuery(
       'containers.workspace_id as project_workspace_id',
       'workspaces.name as project_workspace_name',
       commentCountSelect(eb),
-      directGrantsSelect(ownerEmail),
+      directGrantsSelect(userId, ownerEmail),
     ])
     .where('shareables.workspace_id', '=', workspaceId)
     .where(sql<boolean>`NOT ${workspaceAccessRevokedSql(workspaceId, userId)}`)
@@ -347,13 +347,15 @@ export function unopenedOwnedPredicate(userId: string) {
 }
 
 // Owner-only display evidence; callers keep their existing access predicates.
-export function directGrantsSelect(ownerEmail?: string | null) {
+export function directGrantsSelect(userId: string, ownerEmail?: string | null) {
   const email = normalizeGrantEmail(ownerEmail)
-  return sql<number>`EXISTS (
+  return sql<number | null>`CASE WHEN shareables.owner_user_id = ${userId}
+    AND NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), userId)}
+    THEN EXISTS (
     SELECT 1 FROM shareable_grants AS label_grants
     WHERE label_grants.shareable_id = shareables.id
       AND ${email ? sql`${lowerEmail('label_grants.granted_email')} != ${email}` : sql`1 = 1`}
-  )`.as('has_direct_grants')
+  ) ELSE NULL END`.as('has_direct_grants')
 }
 
 export async function listUnopenedOwnedArtifactsLimited(
@@ -420,7 +422,7 @@ function recentArtifactsQuery(
       'workspaces.name as project_workspace_name',
       commentCountSelect(eb),
       ...recentRowActivitySelects(eb, user.id, user),
-      directGrantsSelect(user.email),
+      directGrantsSelect(user.id, user.email),
     ])
     .where('recency.viewer_user_id', '=', user.id)
 }

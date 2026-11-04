@@ -18,6 +18,7 @@ export type TaskLedgerScreenReference =
   | 'device/with-code'
   | 'files/content-rich'
   | 'files/default'
+  | 'files/unopened-and-sharing'
   | 'guides-cli/default'
   | 'guides-link-sharing/default'
   | 'guides-private-mobile-design-handoff/default'
