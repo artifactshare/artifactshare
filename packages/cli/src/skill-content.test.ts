@@ -60,6 +60,10 @@ test('bundled entrypoint is short, valid, managed and links every reference', as
   assert.deepEqual(managedState(entry), { kind: 'managed', version: 54 })
   assert.equal(bundle.version, 54)
   assert.match(entry, /key_visibility_mismatch/)
+  assert.match(
+    entry,
+    /with an agent credential, ask a person with a human credential to run the edit/,
+  )
   assert.match(entry, /data\.visibility/)
   assert.match(entry, /data\.title/)
 })

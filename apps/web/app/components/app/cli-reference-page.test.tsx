@@ -237,8 +237,8 @@ test.each(['en', 'ja'] as const)(
     )![1]
     expect(shareRole.replace(/<[^>]+>/g, '')).toBe(
       locale === 'en'
-        ? 'Share a local file, folder, or static site. A share --key resend preserves visibility; a different effective --visibility (Home project means private) fails before creating a version with key_visibility_mismatch. Use edit &lt;id&gt; --visibility &lt;value&gt; --json to change it, and artifacts get &lt;id&gt; --json to check it. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).'
-        : 'ローカルのファイル、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit &lt;id&gt; --visibility &lt;value&gt; --json、確認には artifacts get &lt;id&gt; --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+        ? 'Share a local file, folder, or static site. A share --key resend preserves visibility. If --visibility differs after normalization (at home, project compares as private), the command fails with key_visibility_mismatch before creating a version. Use edit &lt;id&gt; --visibility &lt;value&gt; --json to change it, and artifacts get &lt;id&gt; --json to check it for HTML and Markdown artifacts. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).'
+        : 'ローカルのファイル、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit &lt;id&gt; --visibility &lt;value&gt; --json、HTML・Markdown の共有範囲の確認には artifacts get &lt;id&gt; --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
     )
     expect(html.replace(/<[^>]+>/g, '')).toContain(
       locale === 'en'

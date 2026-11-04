@@ -234,3 +234,29 @@ test.each([
   assert.notEqual(error.code, 'key_visibility_mismatch')
   assert.notEqual(error.recovery.kind, 'run_command')
 })
+
+test.each([{ linkExpiresAt: '2099-01-02T00:00:00Z' }, { noLinkExpiry: true }])(
+  'non-link visibility recovery omits expiry options: %j',
+  (expiryOptions) => {
+    const error = mapApiError(
+      409,
+      {
+        error: {
+          code: 'key-visibility-mismatch',
+          details: {
+            artifact_id: 'abc123def4',
+            current_visibility: 'link',
+            requested_visibility: 'private',
+          },
+        },
+      },
+      { artifactTarget: true, operation: 'share', ...expiryOptions },
+    )
+    assert.equal(error.recovery.kind, 'run_command')
+    assert.match(error.hint, /edit abc123def4 --visibility private --json/)
+    assert.doesNotMatch(
+      JSON.stringify(error.recovery),
+      /--link-expires-at|--no-link-expiry/,
+    )
+  },
+)

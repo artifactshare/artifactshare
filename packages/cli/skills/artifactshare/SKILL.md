@@ -228,7 +228,8 @@ Saving reloads the preview. Sharing happens only when the user opens its share d
 
 `update` and `share --key` resends do not change visibility. A keyed resend
 with an explicit, different `--visibility` fails with `key_visibility_mismatch`
-before creating a version. The error provides an `edit` recovery command.
+before creating a version. The error provides an `edit` recovery command;
+with an agent credential, ask a person with a human credential to run the edit.
 The same value, or no flag, adds a version with the existing audience.
 Home treats `project` as `private` for this comparison, just as on creation.
 

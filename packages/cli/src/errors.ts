@@ -72,11 +72,13 @@ export function mapApiError(
     ) {
       const expiry = options.linkExpiresAt
       const expiryOption =
-        expiry !== undefined
-          ? ` --link-expires-at ${/^[A-Za-z0-9:.-]+$/.test(expiry) ? expiry : "'" + expiry.replaceAll("'", "'\\''") + "'"}`
-          : options.noLinkExpiry === true
-            ? ' --no-link-expiry'
-            : ''
+        requested.data !== 'link'
+          ? ''
+          : expiry !== undefined
+            ? ` --link-expires-at ${/^[A-Za-z0-9:.-]+$/.test(expiry) ? expiry : "'" + expiry.replaceAll("'", "'\\''") + "'"}`
+            : options.noLinkExpiry === true
+              ? ' --no-link-expiry'
+              : ''
       const command = `${CLI_INVOCATION} edit ${details.artifact_id} --visibility ${requested.data}${expiryOption} --json`
       const requiresHuman = details.requires_human === true
       return cliError({

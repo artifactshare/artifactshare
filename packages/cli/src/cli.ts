@@ -476,7 +476,7 @@ Common failures:
     not_found            Check the path and retry
     invalid_type         Select a regular file or directory
     unsupported_guarantee Select a filesystem with stable dev/ino and no-follow support
-  key_visibility_mismatch Run edit <id> --visibility <value> --json to change the audience
+  key_visibility_mismatch Run edit <id> --visibility <value> --json to change the audience; agent credentials require a person to run edit using a human credential
   key_target_moved       The artifact for --key moved; update it by ID or use a new key
   key_kind_mismatch      The artifact for --key is a different kind; use a new key`,
 })

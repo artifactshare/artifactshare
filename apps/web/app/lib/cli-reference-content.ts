@@ -99,7 +99,7 @@ const roleByPath: Record<string, string> = {
   'projects list': 'List active projects you can post into.',
   resolve: 'Resolve a URL, ID, or other Artifact Share value.',
   share:
-    'Share a local file, folder, or static site. A share --key resend preserves visibility; a different effective --visibility (Home project means private) fails before creating a version with key_visibility_mismatch. Use edit <id> --visibility <value> --json to change it, and artifacts get <id> --json to check it. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).',
+    'Share a local file, folder, or static site. A share --key resend preserves visibility. If --visibility differs after normalization (at home, project compares as private), the command fails with key_visibility_mismatch before creating a version. Use edit <id> --visibility <value> --json to change it, and artifacts get <id> --json to check it for HTML and Markdown artifacts. Profiles logged in with login --preset agent must also pass --expected-version when republishing with --key (see Failures and recovery).',
   skills: 'Manage the installed Artifact Share agent skill.',
   'skills ensure': 'Ensure the skill is installed for a detected tool.',
   'skills install': 'Install the skill for a selected tool.',
@@ -212,7 +212,7 @@ const jaRoleByPath: Record<string, string> = {
   'projects list': '現在投稿できる有効なプロジェクトを一覧表示します。',
   resolve: 'URL、ID、その他の Artifact Share の値を解決します。',
   share:
-    'ローカルのファイル、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit <id> --visibility <value> --json、確認には artifacts get <id> --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
+    'ローカルのファイル、フォルダ、静的サイトを共有します。share --key は共有範囲を変更しません。Home の project は private として比較します。正規化後の --visibility が現在の値と異なると、新しい版を作らず key_visibility_mismatch で失敗します。変更には edit <id> --visibility <value> --json、HTML・Markdown の共有範囲の確認には artifacts get <id> --json を使います。login --preset agent でログインしたプロファイルでは、--key で再公開する際に --expected-version の指定も必要です（「失敗と復旧」を参照）。',
   skills: 'インストール済みの Artifact Share agent skill を管理します。',
   'skills ensure': '検出した tool に skill があることを確認します。',
   'skills install': '選択した tool に skill をインストールします。',
