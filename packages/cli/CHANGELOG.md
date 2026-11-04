@@ -3,6 +3,12 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
+## Unreleased
+
+- Reject keyed resends with a different effective explicit visibility before creating a version, with an edit command for recovery. Home treats project as private, matching creation.
+- Include current visibility and display title in artifacts get JSON output.
+- Update the bundled skill to version 54 with visibility change and readback guidance.
+
 ## 0.22.0 - 2026-10-30
 
 - Text comment readback optionally includes page-derived creation context in `anchor.locus`: heading labels and the surrounding text block. Older and agent-posted comments omit it.

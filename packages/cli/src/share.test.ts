@@ -927,56 +927,66 @@ test('share --key over 128 characters fails with validation_failed', () => {
   expectFailure(result, { command: 'share', code: 'validation_failed' })
 })
 
-test('share --key sends publish_key and reports created and key', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
-  const target = join(root, 'report.html')
-  await writeFile(target, '<html></html>')
-  const urls: string[] = []
+test.each([undefined, 'private'] as const)(
+  'share --key sends only explicit visibility assertions: %s',
+  async (visibility) => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
+    const target = join(root, 'report.html')
+    await writeFile(target, '<html></html>')
+    const urls: string[] = []
 
-  await withServer(
-    async (request, response) => {
-      if (request.url === '/api/cli/whoami')
-        return writeJson(response, {
-          workspace: { visibility_available: true },
-        })
-      urls.push(request.url ?? '')
-      await collectBody(request)
-      response.setHeader('content-type', 'application/json')
-      response.end(
-        JSON.stringify({
-          id: 'abc123def4',
-          versionId: 'v2',
-          artifactKind: 'html_page',
-          visibility: 'workspace',
-          shareUrl: 'https://example.com/a/abc123def4',
-          created: false,
-        }),
-      )
-    },
-    async (baseUrl) => {
-      const result = await runAsync(
-        [
-          'share',
-          target,
-          '--home',
-          '--key',
-          ' pr-482 ',
-          '--base-url',
-          baseUrl,
-          '--json',
-        ],
-        { ARTIFACTSHARE_TOKEN: 'test-token' },
-      )
+    await withServer(
+      async (request, response) => {
+        if (request.url === '/api/cli/whoami')
+          return writeJson(response, {
+            workspace: { visibility_available: true },
+          })
+        urls.push(request.url ?? '')
+        await collectBody(request)
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            id: 'abc123def4',
+            versionId: 'v2',
+            artifactKind: 'html_page',
+            visibility: 'private',
+            shareUrl: 'https://example.com/a/abc123def4',
+            created: false,
+          }),
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'share',
+            target,
+            '--home',
+            ...(visibility ? ['--visibility', visibility] : []),
+            '--key',
+            ' pr-482 ',
+            '--base-url',
+            baseUrl,
+            '--json',
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
 
-      const payload = expectSuccess(result, 'share')
-      assert.equal(payload.data.result.created, false)
-      assert.equal(payload.data.key, 'pr-482')
-      assert.equal(payload.data.version.id, 'v2')
-    },
-  )
+        const payload = expectSuccess(result, 'share')
+        assert.equal(payload.data.result.created, false)
+        assert.equal(payload.data.key, 'pr-482')
+        assert.equal(payload.data.version.id, 'v2')
+      },
+    )
 
-  assert.match(urls[0] ?? '', /publish_key=pr-482/)
-})
+    assert.match(urls[0] ?? '', /publish_key=pr-482/)
+    assert.equal(
+      new URL(urls[0]!, 'https://artifactshare.test').searchParams.get(
+        'key_visibility',
+      ),
+      visibility ?? null,
+    )
+  },
+)
 
 test('share --key preserves version conflicts as recoverable input changes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
@@ -2042,3 +2052,70 @@ test('share keeps the workspace default when the capability read fails', async (
   )
   assert.equal(uploads, 1)
 })
+
+test.each([true, false])(
+  'key visibility mismatch gives concrete edit recovery (json=%s)',
+  async (json) => {
+    const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
+    const target = join(root, 'report.html')
+    await writeFile(target, '<html></html>')
+    let uploads = 0
+    await withServer(
+      async (request, response) => {
+        uploads++
+        assert.match(request.url ?? '', /key_visibility=workspace/)
+        await collectBody(request)
+        writeJson(
+          response,
+          {
+            error: {
+              code: 'key-visibility-mismatch',
+              details: {
+                artifact_id: 'abc123def4',
+                current_visibility: 'private',
+                requested_visibility: 'workspace',
+              },
+            },
+          },
+          409,
+        )
+      },
+      async (baseUrl) => {
+        const result = await runAsync(
+          [
+            'share',
+            target,
+            '--home',
+            '--key',
+            'report',
+            '--visibility',
+            'workspace',
+            '--base-url',
+            baseUrl,
+            ...(json ? ['--json'] : []),
+          ],
+          { ARTIFACTSHARE_TOKEN: 'test-token' },
+        )
+        assert.equal(result.status, 1)
+        if (json) {
+          const payload = expectFailure(result, {
+            command: 'share',
+            code: 'key_visibility_mismatch',
+          })
+          assert.equal(payload.error.recovery.kind, 'run_command')
+          assert.match(
+            payload.error.recovery.command,
+            / edit abc123def4 --visibility workspace --json$/,
+          )
+        } else {
+          assert.match(
+            result.stderr,
+            /edit abc123def4 --visibility workspace --json/,
+          )
+          assert.match(result.stderr, /No version was created/)
+        }
+      },
+    )
+    assert.equal(uploads, 1)
+  },
+)

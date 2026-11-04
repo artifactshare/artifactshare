@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 53
+version: 54
 managed: true
 -->
 
@@ -224,6 +224,24 @@ fix it in one editing pass, save once, and report the batch with
 `preview done --stdin --json`. Skip orphaned anchors with an explanatory note.
 Saving reloads the preview. Sharing happens only when the user opens its share dialog.
 
+## Changing and checking visibility
+
+`update` and `share --key` resends do not change visibility. A keyed resend
+with an explicit, different `--visibility` fails with `key_visibility_mismatch`
+before creating a version. The error provides an `edit` recovery command.
+The same value, or no flag, adds a version with the existing audience.
+Home treats `project` as `private` for this comparison, just as on creation.
+
+Change the audience intentionally, then check it:
+
+```sh
+npm exec --yes --package=@artifactshare/cli -- artifactshare edit <id> --visibility private --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <id> --json
+```
+
+For HTML/Markdown artifacts, `data.visibility` is the current stored audience
+and `data.title` is the display title, including historical and continuation reads.
+
 ## Audience and visibility settings
 
 Project posts use the project's audience; without a destination, share posts to home.
@@ -253,25 +271,25 @@ CLI workflows; do not invent flags for them.
 
 ## Quick reference
 
-| Task                     | Command                                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| Share a file or folder   | `share <path> --json`                                                               |
-| Share a link with expiry | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json`           |
-| Replace with same URL    | `update <target> <path> --json`                                                     |
-| Append to same URL       | `append <target> <path> --json`                                                     |
-| Read back source         | `artifacts get <target> --json`                                                     |
-| Download a site bundle   | `download <target> --output ./out --json`                                           |
-| Download a whole project | `download --project-id <id> --output ./out --json`                                  |
-| List your artifacts      | `artifacts list --json`                                                             |
-| Post a comment           | `comments post <target> --body '<text>' --json`                                     |
-| Read comments            | `comments list <target> --json`                                                     |
-| Read older replies       | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
-| Change title or sharing  | `edit <target> --title 'New' --json`                                                |
-| Move to a project        | `edit <target> --project-id <id> --json`                                            |
-| Create a project         | `projects create 'Name' --json`                                                     |
-| Find an ID from a title  | `resolve <value> --json`                                                            |
-| Open a share URL         | `open <url> --json`                                                                 |
-| Preview a local file     | `preview <file> --json` (local, no sign-in)                                         |
-| Log out                  | `logout --profile <name> --json`                                                    |
+| Task                                   | Command                                                                             |
+| -------------------------------------- | ----------------------------------------------------------------------------------- |
+| Share a file or folder                 | `share <path> --json`                                                               |
+| Share a link with expiry               | `share <path> --visibility link --link-expires-at '<RFC3339 UTC>' --json`           |
+| Replace with same URL                  | `update <target> <path> --json`                                                     |
+| Append to same URL                     | `append <target> <path> --json`                                                     |
+| Read back source, title and visibility | `artifacts get <target> --json`                                                     |
+| Download a site bundle                 | `download <target> --output ./out --json`                                           |
+| Download a whole project               | `download --project-id <id> --output ./out --json`                                  |
+| List your artifacts                    | `artifacts list --json`                                                             |
+| Post a comment                         | `comments post <target> --body '<text>' --json`                                     |
+| Read comments                          | `comments list <target> --json`                                                     |
+| Read older replies                     | `comments list <target> --thread-id <id> --before <older_cursor> --limit 50 --json` |
+| Change title or sharing                | `edit <target> --title 'New' --json`                                                |
+| Move to a project                      | `edit <target> --project-id <id> --json`                                            |
+| Create a project                       | `projects create 'Name' --json`                                                     |
+| Find an ID from a title                | `resolve <value> --json`                                                            |
+| Open a share URL                       | `open <url> --json`                                                                 |
+| Preview a local file                   | `preview <file> --json` (local, no sign-in)                                         |
+| Log out                                | `logout --profile <name> --json`                                                    |
 
 For an orphaned comment, read its original source with `artifacts get <target> --version <anchor.version_id> --json` or MCP `get_artifact` `version_id`. See [comments](references/comments.md) for null anchors, removed versions and continuation. Historical ids are not the current id required for safe updates.

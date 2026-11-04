@@ -5,6 +5,8 @@ import {
   type PublisherAuthority,
 } from './publisher-scope.server'
 import type { Kysely } from 'kysely'
+import { displayTitle } from '~/lib/display-title'
+import type { Visibility } from '~/lib/shareable-types'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import {
@@ -37,6 +39,8 @@ export type ArtifactReadbackResult =
   | { kind: 'source-unavailable' }
 
 export type ArtifactReadbackData = {
+  title: string
+  visibility: Visibility
   id: string
   share_url: string
   version_id: string
@@ -119,6 +123,8 @@ export async function getArtifactReadback(
   )
   const data: ArtifactReadbackData = {
     id: args.id,
+    title: access.title,
+    visibility: access.visibility,
     share_url: shareUrl(args.baseUrl, args.id, access.visibility),
     version_id: versionId,
     format,
@@ -188,6 +194,11 @@ export async function getPublisherArtifactReadback(
   if (!row.current_version_id) return { kind: 'source-unavailable' }
   const metadata = {
     id: row.id,
+    title: displayTitle({
+      name: row.name,
+      derivedTitle: row.derived_title,
+      titleOverride: row.title_override,
+    }),
     share_url: shareUrl(args.baseUrl, row.id, row.visibility),
     version_id: row.current_version_id,
     visibility: row.visibility,

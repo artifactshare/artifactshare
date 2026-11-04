@@ -251,7 +251,7 @@
     "/api/cli/artifacts/{id}": {
       "get": {
         "summary": "Read an artifact",
-        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.",
+        "description": "Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.",
         "security": [
           {
             "cliBearer": []
@@ -741,6 +741,13 @@
             "type": "string",
             "minLength": 1
           },
+          "title": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["private", "workspace", "project", "link"]
+          },
           "share_url": {
             "type": "string",
             "format": "uri"
@@ -794,6 +801,8 @@
         "required": [
           "id",
           "share_url",
+          "title",
+          "visibility",
           "version_id",
           "format",
           "content",
@@ -826,6 +835,9 @@
             "type": "string",
             "minLength": 1
           },
+          "title": {
+            "type": "string"
+          },
           "share_url": {
             "type": "string",
             "format": "uri"
@@ -854,6 +866,7 @@
         },
         "required": [
           "id",
+          "title",
           "share_url",
           "version_id",
           "artifact_kind",

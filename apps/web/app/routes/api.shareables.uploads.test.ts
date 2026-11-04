@@ -1824,7 +1824,7 @@ describe('/api/shareables/uploads', () => {
 
     const response = await action(
       actionArgsFor(
-        'https://artifactshare.test/api/shareables/uploads?publish_key=pr-482',
+        'https://artifactshare.test/api/shareables/uploads?publish_key=pr-482&key_visibility=private',
         form,
       ),
     )
@@ -1844,53 +1844,128 @@ describe('/api/shareables/uploads', () => {
     expect(uploadShareableMock.mock.calls[0]?.[6]).toBe('pr-482')
   })
 
-  test('publish_key update path adds a version and reports created: false', async () => {
-    resolveArtifactKeyMock.mockResolvedValue({
-      kind: 'update',
-      keyId: 'key-1',
-      shareableId: 'abc123def4',
-      artifactKind: 'html_page',
-      visibility: 'project',
-    })
-    createVersionMock.mockResolvedValue({
-      kind: 'ok',
-      versionId: 'ver2',
-      artifactKind: 'html_page',
-    })
-    const form = new FormData()
-    form.append('file', new File(['<p>x</p>'], 'x.html', { type: 'text/html' }))
-    form.append('visibility', 'private')
-
-    const response = await action(
-      actionArgsFor(
-        'https://artifactshare.test/api/shareables/uploads?publish_key=pr-482',
-        form,
-      ),
-    )
-
-    expect(response.status).toBe(200)
-    await expect(json(response)).resolves.toEqual({
-      id: 'abc123def4',
-      versionId: 'ver2',
-      artifactKind: 'html_page',
-      visibility: 'project',
-      containerId: null,
-      shareUrl: 'https://artifactshare.test/a/abc123def4',
-      created: false,
-    })
-    expect(createVersionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
+  test.each([
+    ['project', 'project', ''],
+    ['project', 'project', '&key_visibility=project'],
+    ['inbox', 'private', '&key_visibility=project'],
+  ] as const)(
+    'publish_key update path adds a version and reports created: false %s %s %s',
+    async (containerKind, visibility, assertion) => {
+      resolveUploadContainerMock.mockResolvedValue({
+        kind: 'ok',
+        containerId: 'destination-1',
+        containerKind,
+        workspaceId: 'ws1',
+        isExternalPosting: false,
+      })
+      resolveArtifactKeyMock.mockResolvedValue({
+        kind: 'update',
+        keyId: 'key-1',
         shareableId: 'abc123def4',
-        touchArtifactKeyId: 'key-1',
-        waitUntil: expect.any(Function),
-      }),
-    )
-    const waitUntil = createVersionMock.mock.calls[0]?.[0].waitUntil
-    const promise = Promise.resolve()
-    waitUntil(promise)
-    expect(waitUntilMock).toHaveBeenCalledWith(promise)
-    expect(uploadShareableMock).not.toHaveBeenCalled()
-  })
+        artifactKind: 'html_page',
+        visibility,
+      })
+      createVersionMock.mockResolvedValue({
+        kind: 'ok',
+        versionId: 'ver2',
+        artifactKind: 'html_page',
+      })
+      const form = new FormData()
+      form.append(
+        'file',
+        new File(['<p>x</p>'], 'x.html', { type: 'text/html' }),
+      )
+      form.append('visibility', assertion ? 'project' : 'private')
+
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/uploads?publish_key=pr-482${assertion}`,
+          form,
+        ),
+      )
+
+      expect(response.status).toBe(200)
+      await expect(json(response)).resolves.toEqual({
+        id: 'abc123def4',
+        versionId: 'ver2',
+        artifactKind: 'html_page',
+        visibility,
+        containerId: null,
+        shareUrl: 'https://artifactshare.test/a/abc123def4',
+        created: false,
+      })
+      expect(createVersionMock).toHaveBeenCalledTimes(1)
+      expect(createVersionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shareableId: 'abc123def4',
+          touchArtifactKeyId: 'key-1',
+          waitUntil: expect.any(Function),
+        }),
+      )
+      const waitUntil = createVersionMock.mock.calls[0]?.[0].waitUntil
+      const promise = Promise.resolve()
+      waitUntil(promise)
+      expect(waitUntilMock).toHaveBeenCalledWith(promise)
+      expect(uploadShareableMock).not.toHaveBeenCalled()
+    },
+  )
+
+  test.each(['single_file', 'static_site'] as const)(
+    '%s keyed visibility mismatch refuses before publishing',
+    async (kind) => {
+      for (const [current, requested, effective, containerKind] of [
+        ['private', 'workspace', 'workspace', 'inbox'],
+        ['link', 'private', 'private', 'inbox'],
+        ['private', 'project', 'project', 'project'],
+        ['workspace', 'link', 'link', 'project'],
+        ['link', 'project', 'private', 'inbox'],
+      ] as const) {
+        resolveUploadContainerMock.mockResolvedValue({
+          kind: 'ok',
+          containerId: 'destination-1',
+          containerKind,
+          workspaceId: 'ws1',
+          isExternalPosting: false,
+        })
+        resolveArtifactKeyMock.mockResolvedValue({
+          kind: 'update',
+          keyId: 'key-1',
+          shareableId: 'abc123def4',
+          artifactKind: kind === 'static_site' ? 'static_site' : 'html_page',
+          visibility: current,
+        })
+        const form = new FormData()
+        form.append(
+          'file',
+          new File(['<p>x</p>'], 'x.html', { type: 'text/html' }),
+        )
+        form.append('visibility', 'private')
+        const response = await action(
+          actionArgsFor(
+            `https://artifactshare.test/api/shareables/uploads?publish_key=report&key_visibility=${requested}${kind === 'static_site' ? '&artifact_kind=static_site' : ''}`,
+            form,
+          ),
+        )
+        expect(response.status).toBe(409)
+        expect(await json(response)).toMatchObject({
+          error: {
+            code: 'key-visibility-mismatch',
+            details: {
+              artifact_id: 'abc123def4',
+              current_visibility: current,
+              requested_visibility: effective,
+            },
+          },
+        })
+      }
+      expect(createVersionMock).not.toHaveBeenCalled()
+      expect(uploadShareableMock).not.toHaveBeenCalled()
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).not.toHaveBeenCalled()
+      expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('publish_key resolution failures map to key error responses', async () => {
     for (const [kind, code, status] of [
@@ -1921,77 +1996,92 @@ describe('/api/shareables/uploads', () => {
     expect(uploadShareableMock).not.toHaveBeenCalled()
   })
 
-  test('publish_key static-site update path delegates to the version upload flow', async () => {
-    resolveArtifactKeyMock.mockResolvedValue({
-      kind: 'update',
-      keyId: 'key-1',
-      shareableId: 'abc123def4',
-      artifactKind: 'static_site',
-      visibility: 'project',
-    })
-    const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
-    const commitVersion = vi.fn().mockResolvedValue({
-      kind: 'ok',
-      id: 'abc123def4',
-      versionId: 'ver2',
-    })
-    const abort = vi.fn()
-    beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
-      kind: 'ok',
-      session: {
-        addFile,
-        commitVersion,
-        abort,
-        fileCount: 1,
-      },
-    })
-    const executeTakeFirstOrThrow = vi
-      .fn()
-      .mockResolvedValue({ visibility: 'project' })
-    const db = {
-      selectFrom: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({ executeTakeFirstOrThrow }),
+  test.each([
+    ['project', 'project', ''],
+    ['project', 'project', '&key_visibility=project'],
+    ['inbox', 'private', '&key_visibility=project'],
+  ] as const)(
+    'publish_key static-site update path delegates to the version upload flow %s %s %s',
+    async (containerKind, visibility, assertion) => {
+      resolveUploadContainerMock.mockResolvedValue({
+        kind: 'ok',
+        containerId: 'destination-1',
+        containerKind,
+        workspaceId: 'ws1',
+        isExternalPosting: false,
+      })
+      resolveArtifactKeyMock.mockResolvedValue({
+        kind: 'update',
+        keyId: 'key-1',
+        shareableId: 'abc123def4',
+        artifactKind: 'static_site',
+        visibility,
+      })
+      const addFile = vi.fn().mockResolvedValue({ kind: 'ok' })
+      const commitVersion = vi.fn().mockResolvedValue({
+        kind: 'ok',
+        id: 'abc123def4',
+        versionId: 'ver2',
+      })
+      const abort = vi.fn()
+      beginStaticSiteBundleVersionUploadSessionMock.mockResolvedValue({
+        kind: 'ok',
+        session: {
+          addFile,
+          commitVersion,
+          abort,
+          fileCount: 1,
+        },
+      })
+      const executeTakeFirstOrThrow = vi.fn().mockResolvedValue({ visibility })
+      const db = {
+        selectFrom: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({ executeTakeFirstOrThrow }),
+          }),
         }),
-      }),
-    }
-    createDbMock.mockReturnValueOnce(db)
-    const form = new FormData()
-    form.append('visibility', 'project')
+      }
+      createDbMock.mockReturnValueOnce(db)
+      const form = new FormData()
+      form.append('visibility', 'project')
 
-    const response = await action(
-      actionArgsFor(
-        'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site&publish_key=site-key',
-        form,
-      ),
-    )
+      const response = await action(
+        actionArgsFor(
+          `https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site&publish_key=site-key${assertion}`,
+          form,
+        ),
+      )
 
-    expect(response.status).toBe(200)
-    expect(resolveArtifactKeyMock).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({ id: 'u1' }),
-      null,
-      'site-key',
-      'static_site',
-    )
-    expect(beginStaticSiteBundleVersionUploadSessionMock).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({ id: 'u1' }),
-      'abc123def4',
-      'key-1',
-      {
-        waitUntil: expect.any(Function),
-      },
-    )
-    const waitUntil =
-      beginStaticSiteBundleVersionUploadSessionMock.mock.calls[0]?.[4].waitUntil
-    const promise = Promise.resolve()
-    waitUntil(promise)
-    expect(waitUntilMock).toHaveBeenCalledWith(promise)
-    expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
-    expect(commitVersion).toHaveBeenCalledTimes(1)
-    expect(abort).not.toHaveBeenCalled()
-  })
+      expect(response.status).toBe(200)
+      expect(resolveArtifactKeyMock).toHaveBeenCalledWith(
+        db,
+        expect.objectContaining({ id: 'u1' }),
+        null,
+        'site-key',
+        'static_site',
+      )
+      expect(
+        beginStaticSiteBundleVersionUploadSessionMock,
+      ).toHaveBeenCalledWith(
+        db,
+        expect.objectContaining({ id: 'u1' }),
+        'abc123def4',
+        'key-1',
+        {
+          waitUntil: expect.any(Function),
+        },
+      )
+      const waitUntil =
+        beginStaticSiteBundleVersionUploadSessionMock.mock.calls[0]?.[4]
+          .waitUntil
+      const promise = Promise.resolve()
+      waitUntil(promise)
+      expect(waitUntilMock).toHaveBeenCalledWith(promise)
+      expect(beginStaticSiteBundleUploadSessionMock).not.toHaveBeenCalled()
+      expect(commitVersion).toHaveBeenCalledTimes(1)
+      expect(abort).not.toHaveBeenCalled()
+    },
+  )
 
   test('publish_key static-site create path passes the key to the create session', async () => {
     resolveArtifactKeyMock.mockResolvedValue({
@@ -2025,7 +2115,7 @@ describe('/api/shareables/uploads', () => {
 
     const response = await action(
       actionArgsFor(
-        'https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site&publish_key=site-key',
+        `https://artifactshare.test/api/shareables/uploads?artifact_kind=static_site&publish_key=site-key&key_visibility=private`,
         form,
       ),
     )

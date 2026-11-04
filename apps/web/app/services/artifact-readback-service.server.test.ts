@@ -1,3 +1,7 @@
+const publisherArtifact = vi.hoisted(() => vi.fn())
+vi.mock('./publisher-scope.server', () => ({
+  loadPublisherArtifact: publisherArtifact,
+}))
 const selectVersion = vi.hoisted(() => vi.fn())
 vi.mock('./artifact-version-selection.server', () => ({
   selectArtifactVersion: selectVersion,
@@ -23,11 +27,15 @@ vi.mock('~/services/shareables.server', () => ({
   listOwnedArtifactVersions: history,
 }))
 import { loadCommentThreads } from './comments.server'
-import { getArtifactReadback } from './artifact-readback-service.server'
+import {
+  getArtifactReadback,
+  getPublisherArtifactReadback,
+} from './artifact-readback-service.server'
 
 beforeEach(() => {
   selectVersion.mockReset()
   access.mockReset().mockResolvedValue({
+    title: 'Report',
     artifactKind: 'html_page',
     currentVersionId: 'v1',
     r2Key: 'artifacts/s1/v1/index.html',
@@ -158,6 +166,7 @@ for (const isOwner of [true, false]) {
   ]) {
     test(`historical source uses selected format for owner=${isOwner} ${format}`, async () => {
       access.mockResolvedValue({
+        title: 'Current title',
         artifactKind: current,
         currentVersionId: 'v2',
         r2Key: 'current',
@@ -186,7 +195,13 @@ for (const isOwner of [true, false]) {
       )
       expect(result).toMatchObject({
         kind: 'ok',
-        data: { version_id: 'v1', format, content: 'old source' },
+        data: {
+          version_id: 'v1',
+          format,
+          content: 'old source',
+          title: 'Current title',
+          visibility: 'workspace',
+        },
       })
       expect(fetchSource).toHaveBeenCalledWith('old')
       if (!isOwner && result.kind === 'ok')
@@ -282,3 +297,32 @@ for (const selectedStatic of [true, false]) {
     expect(fetchSource).not.toHaveBeenCalled()
   })
 }
+
+test.each(['html_page', 'static_site'])(
+  'publisher readback includes current title for %s',
+  async (artifactKind) => {
+    publisherArtifact.mockResolvedValue({
+      id: 's1',
+      name: 'report.html',
+      derived_title: 'Derived',
+      title_override: 'Override',
+      visibility: 'private',
+      current_version_id: 'v1',
+      container_id: null,
+      link_expires_at: null,
+      retain_versions: 2,
+      artifact_kind: artifactKind,
+      r2_key: 'source',
+    })
+    const result = await getPublisherArtifactReadback(
+      {} as never,
+      {} as never,
+      {} as never,
+      { id: 's1', baseUrl: 'https://artifactshare.test' },
+    )
+    expect(result).toMatchObject({
+      kind: 'ok',
+      data: { title: 'Override', visibility: 'private' },
+    })
+  },
+)

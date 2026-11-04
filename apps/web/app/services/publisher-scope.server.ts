@@ -64,6 +64,9 @@ export function loadPublisherArtifact(
     .leftJoin('artifact_containers as c', 'c.id', 'shareables.container_id')
     .select([
       'shareables.id',
+      'shareables.name',
+      'shareables.derived_title',
+      'shareables.title_override',
       'shareables.artifact_kind',
       'shareables.visibility',
       'shareables.current_version_id',

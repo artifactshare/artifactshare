@@ -4,6 +4,7 @@ import {
 } from '../home-visibility.js'
 import {
   ARTIFACT_KEY_MAX_LENGTH,
+  VisibilitySchema,
   type ArtifactUploadQuery,
 } from '@artifactshare/contract'
 import type { CliError, CliOptions, OutputMode, ParsedArgs } from '../types.js'
@@ -234,6 +235,23 @@ export async function runShare(
   const uploadQuery: ArtifactUploadQuery = {}
   if (shareKey !== null) {
     uploadQuery.publish_key = shareKey
+    if (parsed.options.visibility !== undefined) {
+      const explicitVisibility = VisibilitySchema.safeParse(
+        parsed.options.visibility,
+      )
+      if (!explicitVisibility.success) {
+        return writeFailure(
+          command,
+          validationError(
+            'Invalid visibility.',
+            'Use private, workspace, project, or link.',
+          ),
+          mode,
+          1,
+        )
+      }
+      uploadQuery.key_visibility = explicitVisibility.data
+    }
   }
   if (parsed.options.expectedVersion) {
     uploadQuery.expected_version = parsed.options.expectedVersion

@@ -109,6 +109,8 @@ test('generateSurface discovers nested commands from help', async () => {
 
 test('generateSurface caches raw help for downstream capability checks', async () => {
   const helpCache = new Map()
+  const visibilityHelp =
+    '--visibility <visibility> private, workspace, project, or link'
   const expectedVersionHelp =
     '--expected-version <expected-version> Require the current version id, not a version number'
   let runs = 0
@@ -117,7 +119,7 @@ test('generateSurface caches raw help for downstream capability checks', async (
     run: (args) => {
       runs += 1
       return args.length
-        ? `USAGE:\n  artifactshare share <OPTIONS>\n\nOPTIONS:\n  --json x\n  ${expectedVersionHelp}\n`
+        ? `USAGE:\n  artifactshare share <OPTIONS>\n\nOPTIONS:\n  --json x\n  ${expectedVersionHelp}\n  ${visibilityHelp}\n`
         : 'USAGE:\n  artifactshare <OPTIONS>\n\nCOMMANDS:\n  share <OPTIONS>\n'
     },
   })
@@ -128,7 +130,7 @@ test('generateSurface caches raw help for downstream capability checks', async (
   assert.ok(helpCache.get('share').includes(expectedVersionHelp))
   assert.deepEqual(
     surface.commands.find(({ path }) => path === 'share').option_help,
-    [expectedVersionHelp],
+    [expectedVersionHelp, visibilityHelp],
   )
 
   const cachedSurface = await generateSurface({

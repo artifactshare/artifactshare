@@ -132,6 +132,13 @@ test('HTTP retention error is 410, and access denial still hides it', async () =
   sqlite.exec("UPDATE shareables SET visibility = 'private'")
   expect((await read('removed')).status).toBe((await read()).status)
   expect((await read('removed')).status).toBe(404)
+  for (const version of [undefined, 'v1']) {
+    const denied = await read(version)
+    expect(denied.status).toBe(404)
+    expect(await denied.json()).toEqual({
+      error: { code: 'not-found', message: 'Artifact not found.' },
+    })
+  }
   expect(state.source).not.toHaveBeenCalled()
 })
 
@@ -158,3 +165,28 @@ test('HTTP historical chunks reconstruct source across a surrogate boundary', as
   expect(first.content.length).toBe(199999)
   expect(second.truncated).toBe(false)
 })
+
+test.each([
+  ['Override', 'Derived', 'Override'],
+  [null, 'Derived', 'Derived'],
+  [null, null, 'Report'],
+])(
+  'readback exposes current metadata with title override %s and derived %s',
+  async (override, derived, title) => {
+    sqlite
+      .prepare('UPDATE shareables SET title_override = ?, derived_title = ?')
+      .run(override, derived)
+    for (const [version, offset] of [
+      [undefined, undefined],
+      ['v1', undefined],
+      ['v1', 4],
+    ] as const) {
+      const response = await read(version, offset)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        title,
+        visibility: 'workspace',
+      })
+    }
+  },
+)
