@@ -208,7 +208,7 @@ test('ordinary Claude invocation has only narrow read tools and no built-in revi
   )
   const joined = request.args.join(' ')
   assert.doesNotMatch(joined, /\/code-review|Agent|ReportFindings|Bash/u)
-  assert.match(joined, /Read Grep Glob/u)
+  assert.match(joined, /Read Grep Glob WebFetch WebSearch/u)
   assert.equal(
     request.args[request.args.indexOf('-p') + 1],
     'direct role prompt',

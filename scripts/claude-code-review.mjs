@@ -24,9 +24,17 @@ import {
 } from './controlled-review-runner.mjs'
 
 // `/code-review` hands the review to a subagent, so Agent is the one tool
-// beyond read access. Everything else is removed from the session or
-// denied, and user settings, hooks, plugins, and MCP servers stay unloaded.
-const codeReviewTools = Object.freeze(['Read', 'Grep', 'Glob', 'Agent'])
+// beyond read access, which includes public web sources such as a dependency's
+// release notes. Everything else is removed from the session or denied, and
+// user settings, hooks, plugins, and MCP servers stay unloaded.
+const codeReviewTools = Object.freeze([
+  'Read',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'Agent',
+])
 const deniedTools = Object.freeze([
   'Bash',
   'Edit',
