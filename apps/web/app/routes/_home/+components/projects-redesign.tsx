@@ -39,10 +39,10 @@ function RedesignProjectRow({
   sharedFrom?: string | null
   trailing?: React.ReactNode
 }) {
-  const { t, locale } = useT()
+  const { tPlural, t, locale } = useT()
   const meta = [
     row.description,
-    t('project.fileCount', { count: row.fileCount }),
+    tPlural('project.fileCount', row.fileCount),
     row.updatedAt
       ? t('project.fileUpdated', {
           time: formatRelative(row.updatedAt, locale),

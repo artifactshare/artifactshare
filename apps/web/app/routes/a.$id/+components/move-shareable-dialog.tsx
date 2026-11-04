@@ -68,7 +68,7 @@ export function MoveShareableDialog({
   onReviewVisibility,
   onMoved,
 }: MoveShareableDialogProps) {
-  const { t } = useT()
+  const { tPlural, t } = useT()
   const navigate = useNavigate()
   const destinationsFetcher = useFetcher()
   const fetcherLoad = destinationsFetcher.load
@@ -301,7 +301,7 @@ export function MoveShareableDialog({
                   key={p.containerId}
                   icon={<Layers size={16} aria-hidden="true" />}
                   name={p.name}
-                  hint={t('move.fileCount', { count: p.fileCount })}
+                  hint={tPlural('move.fileCount', p.fileCount)}
                   isCurrent={p.isCurrent}
                   isSelected={selected === p.containerId}
                   onSelect={() =>

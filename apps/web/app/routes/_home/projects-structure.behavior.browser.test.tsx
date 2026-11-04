@@ -1,3 +1,4 @@
+import { bindI18n } from '~/lib/i18n'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ReactNode } from 'react'
@@ -30,13 +31,13 @@ vi.mock('~/hooks/use-t', () => ({
         'project.emptyBody': 'Create your first project.',
         'project.createTitle': 'Create project',
         'project.createDescription': `Create a project in ${vars?.workspaceName}.`,
-        'project.fileCount': `${vars?.count} files`,
         'project.newBadge': `${vars?.count} new`,
         'project.join': 'Join',
         'project.joinedLabel': 'Joined',
       }
       return labels[key] ?? key
     },
+    tPlural: bindI18n('en').tPlural,
     locale: 'en',
   }),
 }))
@@ -151,6 +152,21 @@ async function mount(
 }
 
 describe('projects structure', () => {
+  test.each([0, 1, 2])(
+    'renders the file count for %i files',
+    async (fileCount) => {
+      const host = await mount({
+        sharedProjects: [],
+        rows: [row({ fileCount })],
+      })
+      const project = host.querySelector('[data-slot="project-row"]')
+      expect(project?.textContent).toContain(
+        fileCount === 1 ? '1 file' : `${fileCount} files`,
+      )
+      expect(project?.textContent).not.toContain('1 files')
+    },
+  )
+
   test('exposes the current page structure', async () => {
     const host = await mount({
       sharedProjects: [shared],

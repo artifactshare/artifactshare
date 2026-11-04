@@ -77,3 +77,16 @@ test('paused viewer chip has complete labels in both locales', () => {
   expect(en['vw.linkSharingPaused']).toBe('Link sharing · Paused')
   expect(ja['vw.linkSharingPaused']).toBe('リンク共有 · 一時停止中')
 })
+
+test('only explicit zero-recipient evidence changes private labels', () => {
+  expect(en[shortVisibilityLabelKey('private', false)]).toBe('Private')
+  expect(ja[shortVisibilityLabelKey('private', false)]).toBe('非公開')
+  for (const evidence of [true, undefined])
+    expect(shortVisibilityLabelKey('private', evidence)).toBe(
+      'table.visibilityPrivate',
+    )
+  for (const visibility of ['link', 'workspace', 'project'] as const)
+    expect(shortVisibilityLabelKey(visibility, false)).toBe(
+      shortVisibilityLabelKey(visibility),
+    )
+})

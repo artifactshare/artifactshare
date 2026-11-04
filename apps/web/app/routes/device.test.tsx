@@ -1,3 +1,4 @@
+import { bindI18n, type Locale } from '~/lib/i18n'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
 import { devPublisherUserCode } from '~/lib/dev-device-user-code'
@@ -11,7 +12,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import Device, { screen, verifyStateFrom } from './device'
 
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({ locale: 'en', t: (key: string) => key }),
+  useT: () =>
+    copyLocale
+      ? bindI18n(copyLocale)
+      : { locale: 'en', t: (key: string) => key },
 }))
 vi.mock('~/services/cli-device-authority.server', () => ({
   loadAgentApprovalContext: vi.fn(),
@@ -21,6 +25,7 @@ vi.mock('react-router', async (importOriginal) => ({
   useSearchParams: () => [deviceParams],
 }))
 
+let copyLocale: Locale | undefined
 let deviceParams = new URLSearchParams()
 vi.mock('~/components/app/public-footer', () => ({
   PublicFooter: ({ variant }: { variant?: string }) => (
@@ -79,6 +84,7 @@ describe('/device', () => {
   let deviceVerifyMock: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
+    copyLocale = undefined
     deviceParams = new URLSearchParams()
     const authClient = await import('~/lib/auth-client')
     deviceVerifyMock = vi.mocked(authClient.deviceVerify)
@@ -337,6 +343,33 @@ describe('/device', () => {
   ])('maps verify response %s to a fail-closed state', (response, expected) => {
     expect(verifyStateFrom(response, 'AB12CD34')).toEqual(expected)
   })
+
+  test.each(['en', 'ja'] as const)(
+    'pre-auth explains publishing and viewer sign-in separately (%s)',
+    (locale) => {
+      copyLocale = locale
+      const html = renderToStaticMarkup(
+        <Device
+          {...({ loaderData: { signedIn: false } } as Parameters<
+            typeof Device
+          >[0])}
+        />,
+      )
+      const expected =
+        locale === 'en'
+          ? [
+              'Check that the code matches your terminal.',
+              'To publish with the CLI, sign in with Google or Microsoft.',
+              'Email-code sign-in is for viewing and commenting on shared files.',
+            ]
+          : [
+              '端末に表示されたコードと一致することを確認してください。',
+              'CLI で投稿するには Google または Microsoft でログインしてください。',
+              'メールコードでのログインは、共有ファイルの閲覧とコメント用です。',
+            ]
+      for (const sentence of expected) expect(html).toContain(sentence)
+    },
+  )
 
   test('unauthenticated branch renders the minimal public footer', () => {
     const html = renderToStaticMarkup(

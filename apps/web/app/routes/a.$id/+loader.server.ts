@@ -114,6 +114,7 @@ interface ArtifactSummary {
   retainVersions?: number | null
   publisherManaged?: boolean
   versions: ReadonlyArray<VersionRow>
+  hasDirectGrants?: boolean
   grants: ReadonlyArray<GrantEntry>
   comments: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
@@ -235,6 +236,7 @@ export type LoaderData =
         retainVersions?: number | null
         publisherManaged?: boolean
         versions: ReadonlyArray<VersionRow>
+        hasDirectGrants?: boolean
         grants: ReadonlyArray<GrantEntry>
         comments: ReadonlyArray<CommentThreadView>
         defaultReturnTo: string
@@ -595,9 +597,12 @@ export async function loader({
   const displayedVersionOrdinal = displayedHistoryVersion.ordinal
   // creator なら visibility に関わらず grants を pre-load する。
   // private / workspace の切り替え時に、既存の個別許可を最初から見せる。
-  const grants = isOwner
-    ? await loadOwnerGrants(db, user, shareable.id)
-    : ([] as ReadonlyArray<GrantEntry>)
+  const grantResult = isOwner
+    ? await listGrants(db, user, shareable.id)
+    : undefined
+  const grants = grantResult?.kind === 'ok' ? grantResult.grants : []
+  const hasDirectGrants =
+    grantResult?.kind === 'ok' ? grants.length > 0 : undefined
   const commentAccess = await commentAccessFromVerifiedShareable(db, user, {
     id: shareable.id,
     workspaceId: shareable.workspace_id,
@@ -801,6 +806,7 @@ export async function loader({
           shareable.assigned_publisher_client_id != null,
         versions,
         grants,
+        hasDirectGrants,
         comments,
         revisitContext,
         showViewerListMetaEntry,
@@ -838,6 +844,7 @@ export async function loader({
           shareable.assigned_publisher_client_id != null,
         versions,
         grants,
+        hasDirectGrants,
         comments,
         ownerEmail: ownerEmail ?? shareable.owner_email,
         availableVisibilities,
@@ -904,6 +911,7 @@ export async function loader({
         shareable.assigned_publisher_client_id != null,
       versions,
       grants,
+      hasDirectGrants,
       comments,
       revisitContext,
       showViewerListMetaEntry,
@@ -1447,15 +1455,6 @@ function viewFollowUps({
     recencyWrite,
     followUps,
   }
-}
-
-async function loadOwnerGrants(
-  db: ReturnType<typeof createDb>,
-  user: SessionUser,
-  shareableId: string,
-): Promise<ReadonlyArray<GrantEntry>> {
-  const result = await listGrants(db, user, shareableId)
-  return result.kind === 'ok' ? result.grants : []
 }
 
 async function loadHistoryVersions(

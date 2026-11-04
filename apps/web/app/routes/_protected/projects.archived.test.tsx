@@ -1,3 +1,4 @@
+import { bindI18n } from '~/lib/i18n'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
@@ -31,8 +32,9 @@ vi.mock('../_home/+components/topbar', () => ({
 vi.mock('../_home/+components/bottom-tab-bar', () => ({
   BottomTabBar: () => <div data-bottom-tab-bar />,
 }))
+let locale: 'en' | 'ja' = 'en'
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({ locale: 'en', t: (key: string) => key }),
+  useT: () => bindI18n(locale),
 }))
 vi.mock('~/components/app/page-breadcrumb', () => ({
   PageBreadcrumb: ({ children }: { children: ReactNode }) => (
@@ -86,3 +88,34 @@ describe('archived projects primary navigation', () => {
     expect(html).toContain('data-bottom-tab-bar')
   })
 })
+
+test.each(['en', 'ja'] as const)(
+  'archived project counts use singular and plural forms (%s)',
+  (language) => {
+    locale = language
+    for (const count of [0, 1, 2]) {
+      const html = renderToStaticMarkup(
+        createElement(ArchivedProjects, {
+          loaderData: {
+            ...loaderData,
+            projects: [
+              {
+                id: 'project-1',
+                name: 'Archived project',
+                fileCount: count,
+                archivedAt: null,
+              },
+            ],
+          },
+        } as never),
+      )
+      const label =
+        language === 'ja'
+          ? `${count} ファイル`
+          : count === 1
+            ? '1 file'
+            : `${count} files`
+      expect(html).toContain(`>${label}</small>`)
+    }
+  },
+)

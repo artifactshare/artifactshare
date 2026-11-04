@@ -1,4 +1,5 @@
 import {
+  directGrantsSelect,
   latestPublishedAtSelect,
   latestHumanVersionNumberSelect,
 } from '~/services/home.server'
@@ -25,11 +26,16 @@ import {
 
 // プロジェクト詳細とサブページ (ファイル全件 / 動きの履歴) で共有する行クエリ。
 // 絞り込み (where) だけ呼び出し側で変える。
-export function projectFileRowsQuery(db: Kysely<DB>, containerId: string) {
+export function projectFileRowsQuery(
+  db: Kysely<DB>,
+  containerId: string,
+  user?: { id: string; email?: string | null },
+) {
   return db
     .selectFrom('shareables')
     .innerJoin('users', 'users.id', 'shareables.owner_user_id')
     .select((eb) => [
+      directGrantsSelect(user?.id ?? '', user?.email),
       'shareables.id',
       'shareables.name',
       'shareables.derived_title',

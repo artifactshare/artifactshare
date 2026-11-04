@@ -29,6 +29,24 @@ describe('toFileRowData recent contract', () => {
       recent_attribute: 'joined-project',
     }
 
+    for (const evidence of [true, false, undefined]) {
+      const annotated = {
+        ...row,
+        has_direct_grants: evidence,
+        is_unopened: evidence,
+      }
+      expect(toFileRowData(annotated, 'owner')).toMatchObject({
+        hasDirectGrants: evidence,
+        isUnopened: evidence,
+      })
+      expect(toFileRowData(annotated, 'viewer')).not.toHaveProperty(
+        'hasDirectGrants',
+      )
+      expect(toFileRowData(annotated, 'viewer')).not.toHaveProperty(
+        'isUnopened',
+      )
+    }
+
     expect(toFileRowData(row, 'viewer')).toMatchObject({
       unreadCommentCount: 3,
       unreadCommentRemainingCount: 2,

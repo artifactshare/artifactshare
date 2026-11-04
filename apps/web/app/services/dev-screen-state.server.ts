@@ -737,6 +737,7 @@ export async function seedDevScreenState(
   }
 
   if (
+    scenario === 'files/unopened-and-sharing' ||
     scenario === 'home/content-rich' ||
     scenario === 'home/updates-menu-open' ||
     scenario === 'home/unopened-file' ||
@@ -750,28 +751,35 @@ export async function seedDevScreenState(
     hasProjectPins
   ) {
     const representativeNames =
-      scenario === 'viewer/csp-diagnostics'
-        ? ['Script diagnostic.html', 'Environment diagnostic.html']
-        : scenario === 'home/first-file'
-          ? ['First file.html']
-          : scenario === 'viewer/bridge-attribution'
-            ? ['Market research.html']
-            : scenario === 'viewer/access-requests'
-              ? ['FY2027 product strategy.html']
-              : scenario === 'home/unopened-file'
-                ? [
-                    'Quarterly report.html',
-                    'Design handoff.html',
-                    'Launch notes.md',
-                    'Hiring plan.html',
-                    'KPI review.md',
-                    'Release checklist.html',
-                  ]
-                : [
-                    'Quarterly report.html',
-                    'Design handoff.html',
-                    'Launch notes.md',
-                  ]
+      scenario === 'files/unopened-and-sharing'
+        ? [
+            'Unopened report.html',
+            'Updated unopened report.html',
+            'Shared with a recipient.html',
+            'Private notes.html',
+          ]
+        : scenario === 'viewer/csp-diagnostics'
+          ? ['Script diagnostic.html', 'Environment diagnostic.html']
+          : scenario === 'home/first-file'
+            ? ['First file.html']
+            : scenario === 'viewer/bridge-attribution'
+              ? ['Market research.html']
+              : scenario === 'viewer/access-requests'
+                ? ['FY2027 product strategy.html']
+                : scenario === 'home/unopened-file'
+                  ? [
+                      'Quarterly report.html',
+                      'Design handoff.html',
+                      'Launch notes.md',
+                      'Hiring plan.html',
+                      'KPI review.md',
+                      'Release checklist.html',
+                    ]
+                  : [
+                      'Quarterly report.html',
+                      'Design handoff.html',
+                      'Launch notes.md',
+                    ]
     const names =
       scenario === 'recent/content-rich'
         ? [
@@ -882,23 +890,30 @@ export async function seedDevScreenState(
           scenario === 'viewer/link-suspended' ||
           scenario === 'viewer/bridge-attribution' ||
           scenario === 'viewer/csp-diagnostics' ||
-          scenario === 'home/unopened-file'
+          scenario === 'home/unopened-file' ||
+          scenario === 'files/unopened-and-sharing'
         ) {
           const versionNames =
-            scenario === 'home/unopened-file'
-              ? (['v1'] as const)
-              : scenario === 'viewer/bridge-attribution' ||
-                  scenario === 'viewer/csp-diagnostics'
+            scenario === 'files/unopened-and-sharing'
+              ? index === 1
+                ? (['v1', 'v2'] as const)
+                : (['v1'] as const)
+              : scenario === 'home/unopened-file'
                 ? (['v1'] as const)
-                : index === 20
-                  ? (['v1', 'v2'] as const)
-                  : index === 0 || index === 19 || index === 21
-                    ? (['v1'] as const)
-                    : []
+                : scenario === 'viewer/bridge-attribution' ||
+                    scenario === 'viewer/csp-diagnostics'
+                  ? (['v1'] as const)
+                  : index === 20
+                    ? (['v1', 'v2'] as const)
+                    : index === 0 || index === 19 || index === 21
+                      ? (['v1'] as const)
+                      : []
           if (versionNames.length > 0) {
             for (const versionName of versionNames) {
               const versionId = `${shareableId}-${versionName}`
-              const isUpdatedVersion = index === 20 && versionName === 'v2'
+              const isUpdatedVersion =
+                versionName === 'v2' &&
+                (index === 20 || scenario === 'files/unopened-and-sharing')
               const versionTimestamp = isUpdatedVersion
                 ? new Date(Date.parse(now) - 30 * 60_000).toISOString()
                 : timestamp
@@ -976,7 +991,7 @@ export async function seedDevScreenState(
               }),
             )
             .execute()
-          if (index === 0) {
+          if (index === 0 && scenario !== 'files/unopened-and-sharing') {
             const commenterId = `${workspaceId}-commenter`
             const threadId = `${shareableId}-thread`
             const latestThreadId = `${shareableId}-thread-latest`
@@ -1353,6 +1368,23 @@ export async function seedDevScreenState(
         }
       }),
     )
+    if (scenario === 'files/unopened-and-sharing') {
+      await db
+        .deleteFrom('shareable_viewer_recency')
+        .where('viewer_user_id', '=', userId)
+        .where('shareable_id', 'in', shareableIds.slice(0, 2))
+        .execute()
+      await db
+        .insertInto('shareable_grants')
+        .values({
+          shareable_id: shareableIds[2]!,
+          granted_email: 'reader@example.com',
+          granted_at: now,
+          granted_by: userId,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    }
     if (scenario === 'home/unopened-file') {
       await db
         .deleteFrom('shareable_viewer_recency')

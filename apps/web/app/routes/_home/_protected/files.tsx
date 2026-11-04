@@ -35,6 +35,8 @@ import { useT } from '~/hooks/use-t'
 import { groupByDay } from '~/lib/datetime'
 import { requireUser } from '~/middleware/context'
 import {
+  directGrantsSelect,
+  unopenedOwnedPredicate,
   versionCountSelect,
   latestPublishedAtSelect,
   latestHumanVersionNumberSelect,
@@ -78,6 +80,12 @@ export const screen = {
         scenario: 'recent/content-rich',
         query: '?page=2',
       },
+    },
+    {
+      id: 'unopened-and-sharing',
+      description:
+        'Unopened files, an updated unopened file, and private sharing labels',
+      setup: { scenario: 'files/unopened-and-sharing' },
     },
   ],
 } satisfies ScreenSpec
@@ -135,6 +143,8 @@ export async function loader({
   if (requestedPage > lastPage) throw redirect(filesUrl({ page: lastPage }))
   const rows = await filtered
     .select((eb) => [
+      directGrantsSelect(user.id, user.email),
+      unopenedOwnedPredicate(user.id).as('is_unopened'),
       versionCountSelect(eb),
       latestPublishedAtSelect(eb),
       latestHumanVersionNumberSelect(eb),

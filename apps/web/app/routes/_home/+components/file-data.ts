@@ -47,6 +47,8 @@ export interface FileRowData {
   isOwner?: boolean
   /** Recent-item placeholder for a shareable the viewer can no longer access. */
   lostAccess?: boolean
+  isUnopened?: boolean
+  hasDirectGrants?: boolean
   visibility: Visibility
   viewCount: number
   commentCount: number
@@ -65,6 +67,8 @@ export interface ShareableFileRow {
   owner_email: string
   owner_name: string | null
   owner_image: string | null
+  is_unopened?: number | boolean | null
+  has_direct_grants?: number | boolean | null
   visibility: Visibility
   view_count: number | null
   comment_count: number | string | bigint | null
@@ -175,6 +179,16 @@ export function toFileRowData(
     recentAttribute: row.recent_attribute ?? null,
     registeredByMe: row.owner_user_id === currentUserId,
     isOwner: row.owner_user_id === currentUserId,
+    ...(row.owner_user_id === currentUserId
+      ? {
+          isUnopened:
+            row.is_unopened == null ? undefined : Boolean(row.is_unopened),
+          hasDirectGrants:
+            row.has_direct_grants == null
+              ? undefined
+              : Boolean(row.has_direct_grants),
+        }
+      : {}),
     visibility: row.visibility,
     viewCount: Number(row.view_count ?? 0),
     commentCount: Number(row.comment_count ?? 0),

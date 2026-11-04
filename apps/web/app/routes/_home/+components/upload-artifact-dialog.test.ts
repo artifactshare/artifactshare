@@ -1,6 +1,7 @@
-import { createElement } from 'react'
+import { bindI18n } from '~/lib/i18n'
+import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   ACCEPTED_FILE_UPLOAD_TYPES,
   ACCEPTED_SITE_UPLOAD_TYPES,
@@ -18,9 +19,30 @@ import {
 } from './upload-artifact-dialog-state'
 import { UploadInitialGrants } from './upload-initial-grants'
 import {
+  UploadArtifactDialog,
   appendSlackNotificationPreference,
   shouldShowSlackNotification,
 } from './upload-artifact-dialog'
+
+let copyLocale: 'en' | 'ja' = 'en'
+vi.mock('~/hooks/use-t', () => ({
+  useT: () => bindI18n(copyLocale),
+}))
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useNavigate: () => () => {},
+  useLocation: () => ({ pathname: '/', search: '' }),
+  useRevalidator: () => ({ revalidate: () => {} }),
+}))
+vi.mock('~/components/ui/dialog', () => ({
+  Dialog: ({ children }: { children: ReactNode }) => children,
+  DialogContent: ({ children }: { children: ReactNode }) => children,
+  DialogHeader: ({ children }: { children: ReactNode }) => children,
+  DialogTitle: ({ children }: { children: ReactNode }) =>
+    createElement('h2', null, children),
+  DialogDescription: ({ children }: { children: ReactNode }) =>
+    createElement('p', null, children),
+}))
 
 const t = (key: string, vars?: Record<string, string | number>) => {
   if (key === 'visibilityDialog.grants.header.count.private') {
@@ -56,6 +78,38 @@ describe('UploadInitialGrants', () => {
 })
 
 describe('UploadArtifactDialog upload validation', () => {
+  test.each(['en', 'ja'] as const)(
+    'explains viewer methods and upload requirements (%s)',
+    (locale) => {
+      copyLocale = locale
+      const subtitle = renderToStaticMarkup(
+        createElement(UploadArtifactDialog, {
+          open: true,
+          onOpenChange: () => {},
+          defaultVisibility: 'private',
+          availableVisibilities: ['private'],
+          user: {
+            id: 'u-owner',
+            email: 'owner@example.com',
+            name: 'Owner',
+            image: null,
+            initial: 'O',
+          },
+        }),
+      )
+      expect(subtitle).toContain(
+        locale === 'en'
+          ? 'Viewers can sign in with Google, Microsoft, or an email code.'
+          : '閲覧時は Google、Microsoft、メールコードでログインできます。',
+      )
+      expect(subtitle).toContain(
+        locale === 'en'
+          ? 'Uploading requires Google or Microsoft.'
+          : 'アップロードには Google または Microsoft が必要です。',
+      )
+    },
+  )
+
   test.each([
     [true, 'workspace', false, true],
     [false, 'workspace', false, false],

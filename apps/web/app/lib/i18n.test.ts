@@ -88,6 +88,14 @@ describe('t', () => {
 })
 
 describe('tPlural', () => {
+  test.each([0, 1, 2])('pluralizes project and move counts at %i', (n) => {
+    for (const stem of ['project.fileCount', 'move.fileCount']) {
+      expect(tPlural('en', stem, n)).toBe(n === 1 ? '1 file' : `${n} files`)
+    }
+    expect(tPlural('ja', 'project.fileCount', n)).toBe(`${n} ファイル`)
+    expect(tPlural('ja', 'move.fileCount', n)).toBe(`ファイル ${n} 件`)
+  })
+
   test.each([1, 2])(
     'renders revised Japanese plural copy for %i items',
     (n) => {

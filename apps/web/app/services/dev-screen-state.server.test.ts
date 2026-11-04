@@ -30,6 +30,8 @@ import {
   listRecentArtifactsLimited,
   listUnopenedOwnedArtifactsLimited,
   versionCountSelect,
+  directGrantsSelect,
+  unopenedOwnedPredicate,
   latestPublishedAtSelect,
 } from './home.server'
 import { listWorkspaceBots } from './bot-members.server'
@@ -591,6 +593,77 @@ describe('recent content-rich dev screen state', () => {
       `dev-screen/${devShareableId('workspace-viewer-file-1')}-v1`,
       `dev-screen/${devShareableId('workspace-viewer-file-6')}-v1`,
     ])
+  })
+
+  test('seeds unopened and private sharing labels for the files capture', async () => {
+    ;({ db } = createMigratedInMemoryDb())
+    const now = '2026-07-31T12:00:00.000Z'
+    const scenario = 'files/unopened-and-sharing'
+    expect(isScreenScenario(scenario)).toBe(true)
+    const { workspaceId } = await ensureDevScreenState(
+      db,
+      scenario,
+      now,
+      'free',
+    )
+    const userId = `${workspaceId}-user`
+    await db
+      .insertInto('users')
+      .values({
+        id: userId,
+        email: 'owner@example.com',
+        email_verified: 1,
+        name: 'Owner',
+        created_at: now,
+        updated_at: now,
+        workspace_id: workspaceId,
+      })
+      .execute()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await seedDevScreenState(db, scenario, workspaceId, userId, now)
+      const rows = await db
+        .selectFrom('shareables')
+        .select((eb) => [
+          'shareables.name',
+          'shareables.visibility',
+          unopenedOwnedPredicate(userId).as('unopened'),
+          versionCountSelect(eb),
+          directGrantsSelect(userId, 'owner@example.com'),
+        ])
+        .where('owner_user_id', '=', userId)
+        .orderBy('name')
+        .execute()
+      expect(rows).toEqual([
+        {
+          name: 'Private notes.html',
+          visibility: 'private',
+          unopened: 0,
+          version_count: 1,
+          has_direct_grants: 0,
+        },
+        {
+          name: 'Shared with a recipient.html',
+          visibility: 'private',
+          unopened: 0,
+          version_count: 1,
+          has_direct_grants: 1,
+        },
+        {
+          name: 'Unopened report.html',
+          visibility: 'private',
+          unopened: 1,
+          version_count: 1,
+          has_direct_grants: 0,
+        },
+        {
+          name: 'Updated unopened report.html',
+          visibility: 'private',
+          unopened: 1,
+          version_count: 2,
+          has_direct_grants: 0,
+        },
+      ])
+    }
   })
 
   test('leaves six unopened files with the failure artifact outside the five visible rows', async () => {
