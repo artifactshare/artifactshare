@@ -39,6 +39,10 @@ describe('renderMermaidInDocument', () => {
       expect.stringMatching(/^artifactshare-mermaid-/),
       'flowchart LR\nA --> B',
     )
+    const diagram = doc.querySelector<HTMLElement>('.mermaid-diagram')!
+    expect(diagram.tabIndex).toBe(0)
+    expect(diagram.getAttribute('role')).toBe('region')
+    expect(diagram.getAttribute('aria-label')).toBe('Mermaid diagram')
     expect(doc.querySelector('.mermaid-diagram svg')).not.toBeNull()
     expect(doc.querySelector('.mermaid-diagram script')).toBeNull()
     expect(

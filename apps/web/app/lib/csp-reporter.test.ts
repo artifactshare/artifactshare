@@ -514,7 +514,11 @@ test('Mermaid results tolerate a detached block and render subsequent diagrams',
     { id: 'attached', svg },
   ])
   expect(document.querySelectorAll('.mermaid-diagram')).toHaveLength(1)
-  expect(attached.previousElementSibling?.textContent).toBe('Diagram')
+  const diagram = attached.previousElementSibling as HTMLElement
+  expect(diagram.tabIndex).toBe(0)
+  expect(diagram.getAttribute('role')).toBe('region')
+  expect(diagram.getAttribute('aria-label')).toBe('Mermaid diagram')
+  expect(diagram.textContent).toBe('Diagram')
   expect(attached.hidden).toBe(true)
   expect(ctx.mermaidBlocks).toEqual({})
 })

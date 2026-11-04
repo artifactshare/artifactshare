@@ -93,6 +93,9 @@ export async function renderMermaidInDocument(
     try {
       const container = doc.createElement('div')
       container.className = 'mermaid-diagram'
+      container.tabIndex = 0
+      container.setAttribute('role', 'region')
+      container.setAttribute('aria-label', 'Mermaid diagram')
       appendMermaidSvg(doc, container, result.svg)
       result.pre.dataset.mermaidRendered = 'true'
       result.pre.hidden = true

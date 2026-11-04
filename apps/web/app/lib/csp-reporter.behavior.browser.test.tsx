@@ -2097,6 +2097,7 @@ describe('Mermaid document presentation', () => {
             const style = doc.defaultView!.getComputedStyle(container)
             expect(style.backgroundColor).toBe('rgb(255, 255, 255)')
             expect(parseFloat(style.paddingLeft)).toBeGreaterThan(0)
+            expect(style.marginBottom).toBe('0px')
             if (width === 1000) {
               const small = doc.querySelectorAll<SVGSVGElement>(
                 '.mermaid-diagram svg',
