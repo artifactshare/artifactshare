@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 54
+version: 58
 managed: true
 -->
 
@@ -281,6 +281,7 @@ CLI workflows; do not invent flags for them.
 | Read back source, title and visibility | `artifacts get <target> --json`                                                     |
 | Download a site bundle                 | `download <target> --output ./out --json`                                           |
 | Download a whole project               | `download --project-id <id> --output ./out --json`                                  |
+| Inspect retained versions and bytes    | `artifacts versions <target> --json`                                                |
 | List your artifacts                    | `artifacts list --json`                                                             |
 | Post a comment                         | `comments post <target> --body '<text>' --json`                                     |
 | Read comments                          | `comments list <target> --json`                                                     |
@@ -294,3 +295,11 @@ CLI workflows; do not invent flags for them.
 | Log out                                | `logout --profile <name> --json`                                                    |
 
 For an orphaned comment, read its original source with `artifacts get <target> --version <anchor.version_id> --json` or MCP `get_artifact` `version_id`. See [comments](references/comments.md) for null anchors, removed versions and continuation. Historical ids are not the current id required for safe updates.
+
+## Retained versions and logical storage
+
+Run `artifacts versions <target> --json` for HTML, Markdown, or static sites. Each entry includes `version_id`, `created_at`, `size_bytes`, and `is_current`, plus available labels and creator metadata. Pages contain up to 50 entries, newest first. While `has_more` is true, pass `next_cursor` as `--cursor`; an invalid or wrong-artifact cursor requires restarting without it. Publication or pruning between pages is not a snapshot.
+
+For human and agent credentials, updated servers return `retain_versions` (null means unlimited), `version_count`, and `total_size_bytes` in `artifacts get` and every `artifacts list` row, and on history pages. Counts and byte totals cover versions the caller can list, independently of the history page or source `--version`. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials do not receive `version_count` or `total_size_bytes` and cannot list artifacts or read history. Publisher-created static-site versions may have a null `creator`. Static-site bytes sum all files in each version, including inherited files. Reused files count in each version. These are logical bytes, not physical storage, billing, or proof of object cleanup. Publisher-managed histories may exceed the policy because human-created and current versions are protected. Combine list pages and compare `total_size_bytes` client-side to find the largest artifacts.
+
+Static-site `artifacts get` now succeeds with metadata only, without `content` or `format`; `--include`, `--version`, and `--offset` remain unsupported for sites. Updated CLI get explicitly requests metadata. Released source-only clients retain unsupported-kind, so open still suggests download. Publisher credentials can read their scoped current metadata and, for sites, retain_versions, without version counts or total sizes but cannot list history or use `get --include versions`. Existing human/agent access rules apply; unreadable artifacts return `target_not_found` (API 404), with failure JSON on stderr, empty stdout, and exit 1. Shared viewers retain history access with creator email redaction. All shared flags and supported target URL forms work with `artifacts versions`.

@@ -4,12 +4,13 @@ import {
 } from '~/lib/cli-authority-policy'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import {
+  CLI_STATIC_METADATA_HEADER,
   ArtifactDeleteResponseSchema,
   ArtifactIdParamsSchema,
   ArtifactIncludeSchema,
   ArtifactReadQueryParamsSchema,
   ArtifactReadQuerySchema,
-  ArtifactReadResponseSchema,
+  ArtifactGetResponseSchema,
   PublisherArtifactReadResponseSchema,
 } from '@artifactshare/contract'
 import { cliArtifactErrorResponse, errorResponse } from '~/lib/api-errors'
@@ -21,7 +22,7 @@ import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { authorizeAgentArtifactRead } from '~/services/agent-scope.server'
 import {
-  getArtifactReadback,
+  getCliArtifactReadback,
   getPublisherArtifactReadback,
   type ArtifactReadbackInclude,
 } from '~/services/artifact-readback-service.server'
@@ -31,7 +32,12 @@ import type { Route } from './+types/api.cli.artifacts.$id'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
 
-export async function loader({ context, params, url }: Route.LoaderArgs) {
+export async function loader({
+  context,
+  params,
+  url,
+  request,
+}: Route.LoaderArgs) {
   const user = requireUser(context)
   const parsedParams = ArtifactIdParamsSchema.safeParse(params)
   if (!parsedParams.success) {
@@ -125,10 +131,13 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
     if (agentRead?.kind === 'denied') {
       return errorResponse('not-found', 'Artifact not found.', 404)
     }
-    const result = await getArtifactReadback(db, user, {
+    const result = await getCliArtifactReadback(db, user, {
+      ...(request.headers.get(CLI_STATIC_METADATA_HEADER) === '1'
+        ? { allowStaticMetadata: true }
+        : {}),
       id,
       baseUrl: url.origin,
-      offset,
+      ...(url.searchParams.has('offset') ? { offset } : {}),
       include,
       version_id,
       includeSharedVersions: true,
@@ -137,8 +146,14 @@ export async function loader({ context, params, url }: Route.LoaderArgs) {
         : {}),
     })
     if (result.kind === 'ok') {
-      return Response.json(ArtifactReadResponseSchema.parse(result.data))
+      return Response.json(ArtifactGetResponseSchema.parse(result.data))
     }
+    if (result.kind === 'invalid-offset')
+      return errorResponse(
+        'invalid-offset',
+        'Static-site readback has no source offset.',
+        400,
+      )
     return cliArtifactErrorResponse(
       result,
       'This artifact cannot be read as a single source file.',

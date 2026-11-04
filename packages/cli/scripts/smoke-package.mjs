@@ -61,6 +61,19 @@ try {
     "Object.defineProperty(process.versions, 'node', { value: '20.19.0' })",
   )
   for (const bin of ['cli', 'artifactshare']) {
+    const versionsHelp = execFileSync(
+      process.execPath,
+      [
+        join(temporary, 'node_modules/.bin', bin),
+        'artifacts',
+        'versions',
+        '--help',
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.match(versionsHelp, /--cursor/)
+    assert.match(versionsHelp, /total_size_bytes/)
+
     const result = spawnSync(
       process.execPath,
       [

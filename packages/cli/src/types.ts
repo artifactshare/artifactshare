@@ -91,6 +91,7 @@ export type CliCommand =
   | 'artifacts'
   | 'artifacts list'
   | 'artifacts delete'
+  | 'artifacts versions'
   | 'artifacts get'
   | 'comments'
   | 'comments list'

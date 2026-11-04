@@ -30,6 +30,16 @@ describe('agent operation declaration', () => {
   test('allows the bounded read, publish, append and comment surface', () => {
     expect(allowsCliOperation(agent, 'GET', '/api/cli/artifacts')).toBe(true)
     expect(
+      allowsCliOperation(agent, 'GET', '/api/cli/artifacts/a1/versions'),
+    ).toBe(true)
+    expect(
+      allowsCliOperation(
+        { kind: 'publisher' } as CliAuthority,
+        'GET',
+        '/api/cli/artifacts/a1/versions',
+      ),
+    ).toBe(false)
+    expect(
       allowsCliOperation(agent, 'POST', '/api/cli/artifacts/a1/comments'),
     ).toBe(true)
     expect(allowsCliOperation(agent, 'POST', '/api/shareables/uploads')).toBe(

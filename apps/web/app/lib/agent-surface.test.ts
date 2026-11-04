@@ -146,6 +146,8 @@ describe('agentSurface', () => {
           'npm exec --yes --package=@artifactshare/cli -- artifactshare resolve <value> --json',
         whoami:
           'npm exec --yes --package=@artifactshare/cli -- artifactshare whoami --json',
+        'artifacts versions':
+          'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts versions <artifact-id-or-url> --json',
         'artifacts list':
           'npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts list --json',
         'comments list':

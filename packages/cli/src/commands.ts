@@ -1,3 +1,4 @@
+import { runArtifactsVersions } from './command-runners/artifacts-versions.js'
 import type { CommandContext } from 'gunshi'
 import type { CliCommand } from './types.js'
 import { parsedArgsFromContext } from './args.js'
@@ -167,6 +168,15 @@ export async function moveRunner(ctx: Readonly<CommandContext>): Promise<void> {
   const parsed = parsedArgsFromContext('move', ctx)
   return await runWithSkillAutoUpdate(parsed, () =>
     runMove(parsed, outputMode(parsed.options)),
+  )
+}
+
+export async function artifactsVersionsRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('artifacts versions', ctx)
+  return await runWithSkillAutoUpdate(parsed, () =>
+    runArtifactsVersions(parsed, outputMode(parsed.options)),
   )
 }
 

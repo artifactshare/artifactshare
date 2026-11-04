@@ -1,3 +1,14 @@
+vi.mock('./artifact-version-summary.server', () => ({
+  loadArtifactVersionSummaries: vi.fn(
+    async (_db, ids: string[]) =>
+      new Map(
+        ids.map((id) => [
+          id,
+          { retain_versions: null, version_count: 2, total_size_bytes: 26 },
+        ]),
+      ),
+  ),
+}))
 const publisherArtifact = vi.hoisted(() => vi.fn())
 vi.mock('./publisher-scope.server', () => ({
   loadPublisherArtifact: publisherArtifact,
@@ -26,6 +37,17 @@ vi.mock('~/services/shareables.server', () => ({
   listArtifactVersions: history,
   listOwnedArtifactVersions: history,
 }))
+vi.mock('~/middleware/auth', () => ({
+  requireUserApiWithBearerMiddleware: vi.fn(),
+}))
+vi.mock('~/middleware/context', () => ({
+  requireUser: () => ({ id: 'u1', workspaceId: 'ws1' }),
+  getCliAuthority: () => null,
+}))
+vi.mock('~/services/db.server', () => ({
+  withDb: (fn: (db: unknown) => unknown) => fn({}),
+}))
+import { loader as readArtifact } from '~/routes/api.cli.artifacts.$id'
 import { loadCommentThreads } from './comments.server'
 import {
   getArtifactReadback,
@@ -299,7 +321,7 @@ for (const selectedStatic of [true, false]) {
 }
 
 test.each(['html_page', 'static_site'])(
-  'publisher readback includes current title for %s',
+  'authorized %s readback includes summaries while publisher readback hides history totals',
   async (artifactKind) => {
     publisherArtifact.mockResolvedValue({
       id: 's1',
@@ -314,6 +336,35 @@ test.each(['html_page', 'static_site'])(
       artifact_kind: artifactKind,
       r2_key: 'source',
     })
+    access.mockResolvedValue({
+      title: 'Override',
+      artifactKind,
+      currentVersionId: 'v1',
+      r2Key: 'source',
+      visibility: 'private',
+      linkExpiresAt: null,
+      isOwner: true,
+      workspaceId: 'ws1',
+    })
+    // Exercise the existing HTTP entry point so older implementations fail on
+    // response behavior, rather than on an unavailable service export.
+    const url = new URL('https://artifactshare.test/api/cli/artifacts/s1')
+    const response = await readArtifact({
+      context: {},
+      params: { id: 's1' },
+      url,
+      request: new Request(url, {
+        headers: { 'X-ArtifactShare-Static-Metadata': '1' },
+      }),
+    } as never)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      id: 's1',
+      version_id: 'v1',
+      retain_versions: null,
+      version_count: 2,
+      total_size_bytes: 26,
+    })
     const result = await getPublisherArtifactReadback(
       {} as never,
       {} as never,
@@ -322,7 +373,15 @@ test.each(['html_page', 'static_site'])(
     )
     expect(result).toMatchObject({
       kind: 'ok',
-      data: { title: 'Override', visibility: 'private' },
+      data: {
+        title: 'Override',
+        visibility: 'private',
+        ...(artifactKind === 'static_site' ? { retain_versions: 2 } : {}),
+      },
     })
+    if (result.kind === 'ok') {
+      expect(result.data).not.toHaveProperty('version_count')
+      expect(result.data).not.toHaveProperty('total_size_bytes')
+    }
   },
 )

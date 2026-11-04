@@ -20,6 +20,7 @@ export const CLI_AGENT_COMMANDS = {
   resolve: 'resolve <value> --json',
   whoami: 'whoami --json',
   'artifacts list': 'artifacts list --json',
+  'artifacts versions': 'artifacts versions <artifact-id-or-url> --json',
   'comments list': 'comments list <artifact-id-or-url> --json',
   'comments post': "comments post <artifact-id-or-url> --body '<text>' --json",
   'comments edit':
@@ -58,6 +59,7 @@ export const CLI_QUICK_REFERENCE = [
     'Download a whole project',
     'download --project-id <id> --output ./out --json',
   ],
+  ['Inspect retained versions and bytes', 'artifacts versions <target> --json'],
   ['List your artifacts', 'artifacts list --json'],
   ['Post a comment', "comments post <target> --body '<text>' --json"],
   ['Read comments', 'comments list <target> --json'],
@@ -101,7 +103,14 @@ export const CLI_README_COMMANDS = [
     'Alias of delete; permanently delete a file you shared',
   ],
   ['resolve <value>', 'Find files by URL, ID, title, or project name'],
-  ['artifacts get <target>', "Read a file's content and metadata back"],
+  [
+    'artifacts get <target>',
+    'Read file source or static-site metadata and version totals',
+  ],
+  [
+    'artifacts versions <target>',
+    'List retained versions and logical byte totals; continue with --cursor',
+  ],
   ['download <target>', 'Save a file or a whole static site locally'],
   [
     'comments list / post / edit / resolve / reopen / delete <target>',
@@ -184,6 +193,7 @@ export const MCP_OPENAPI_METADATA = {
 // Option explanations displayed alongside the generated command reference.
 export const CLI_REFERENCE_OPTION_HELP = {
   'artifacts get': ['--version'],
+  'artifacts versions': ['--cursor'],
   share: ['--expected-version', '--visibility'],
   update: ['--expected-version'],
   download: ['--force'],
@@ -215,7 +225,45 @@ const objectSchema = (
   required,
   ...(strict ? { additionalProperties: false } : {}),
 })
+const versionSummary = {
+  retain_versions: retention,
+  version_count: { type: 'integer', minimum: 0 },
+  total_size_bytes: { type: 'integer', minimum: 0 },
+}
 export const REST_SCHEMAS = {
+  ArtifactVersionsResponse: objectSchema({
+    ...versionSummary,
+    id: restString,
+    versions: {
+      type: 'array',
+      items: objectSchema({
+        version_id: restString,
+        created_at: restString,
+        size_bytes: { type: 'integer', minimum: 0 },
+        is_current: { type: 'boolean' },
+      }),
+    },
+    limit: { type: 'integer', minimum: 1 },
+    has_more: { type: 'boolean' },
+    next_cursor: nullableString,
+  }),
+  ArtifactsListResponse: objectSchema({
+    artifacts: {
+      type: 'array',
+      items: objectSchema({
+        ...versionSummary,
+        id: restString,
+        title: { type: 'string' },
+        share_url: { type: 'string', format: 'uri' },
+        visibility,
+        updated_at: restString,
+        project_id: nullableString,
+      }),
+    },
+    limit: { type: 'integer', minimum: 0 },
+    has_more: { type: 'boolean' },
+    next_cursor: nullableString,
+  }),
   CommentThreadWindow: objectSchema({
     id: restString,
     status: { enum: ['open', 'resolved'] },
@@ -276,6 +324,7 @@ export const REST_SCHEMAS = {
   }),
   ArtifactReadResponse: objectSchema(
     {
+      ...versionSummary,
       id: restString,
       title: { type: 'string' },
       visibility,
@@ -294,6 +343,9 @@ export const REST_SCHEMAS = {
       comments_has_more: { type: 'boolean' },
     },
     [
+      'retain_versions',
+      'version_count',
+      'total_size_bytes',
       'id',
       'share_url',
       'title',
@@ -306,8 +358,25 @@ export const REST_SCHEMAS = {
       'next_offset',
     ],
   ),
-  PublisherSingleFileReadResponse: {
-    allOf: [restRef('ArtifactReadResponse'), objectSchema({ visibility })],
+  PublisherSingleFileReadResponse: objectSchema({
+    id: restString,
+    title: { type: 'string' },
+    visibility,
+    share_url: { type: 'string', format: 'uri' },
+    version_id: restString,
+    format: { enum: ['html', 'markdown'] },
+    content: { type: 'string' },
+    size_bytes: { type: 'number', minimum: 0 },
+    truncated: { type: 'boolean' },
+    next_offset: { type: ['integer', 'null'], minimum: 0 },
+    link_expires_at: nullableString,
+    project_id: nullableString,
+  }),
+  ArtifactStaticSiteReadResponse: {
+    allOf: [
+      restRef('PublisherStaticSiteReadResponse'),
+      objectSchema(versionSummary),
+    ],
   },
   PublisherStaticSiteReadResponse: objectSchema({
     id: restString,
@@ -453,6 +522,76 @@ export const REST_OPERATIONS = {
       },
     ),
   },
+  '/api/cli/artifacts': {
+    get: {
+      ...restOperation(
+        'List accessible artifacts',
+        'Each row includes retain_versions (null for unlimited), version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials cannot list artifacts. Follow next_cursor while has_more to compare logical byte totals client-side. Managed histories may exceed retention. These are not physical storage or billing totals.',
+        restRef('ArtifactsListResponse'),
+        null,
+        ['unrestricted', 'agent', 'browser-session'],
+      ),
+      parameters: [
+        {
+          name: 'project_id',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'Project filter. An empty value selects home; omission lists owned artifacts for humans or accessible artifacts for agents.',
+        },
+        {
+          name: 'query',
+          in: 'query',
+          schema: { type: 'string' },
+          description: 'Case-insensitive title substring filter.',
+        },
+        {
+          name: 'cursor',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'Opaque next_cursor from the previous page with the same filters.',
+        },
+      ],
+      responses: {
+        200: {
+          description: 'Accessible artifact page.',
+          content: {
+            'application/json': { schema: restRef('ArtifactsListResponse') },
+          },
+        },
+        400: {
+          description:
+            'Invalid query, unavailable project (invalid-destination), or invalid/filter-mismatched cursor (validation_failed). Restart without cursor after changing filters.',
+        },
+        401: {
+          description: 'Authentication required or agent viewer missing.',
+        },
+        403: { description: 'Credential scope denied.' },
+      },
+    },
+  },
+  '/api/cli/artifacts/{id}/versions': {
+    get: {
+      ...restOperation(
+        'List retained artifact versions',
+        'Files and static sites. 50 entries per page, ordered created_at then ID descending. Sizes include every file, including inherited files. Summaries cover versions the caller can list, independent of pagination. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher-created static-site versions may have a null creator. Reused files count per version; logical bytes do not measure billing or physical storage. Protected human/current versions may exceed retention. Existing read permissions apply; inaccessible artifacts return 404, publisher credentials 403. Invalid or wrong-artifact cursor: 400 validation-failed; restart without cursor. No snapshot across concurrent publication or pruning.',
+        restRef('ArtifactVersionsResponse'),
+        null,
+        ['unrestricted', 'agent', 'browser-session'],
+      ),
+      parameters: [
+        pathId,
+        {
+          name: 'cursor',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'Opaque next_cursor from the previous page for this artifact.',
+        },
+      ],
+    },
+  },
   '/api/cli/artifacts/{id}/adopt': {
     post: restOperation(
       'Assign an artifact to a publisher client',
@@ -467,10 +606,11 @@ export const REST_OPERATIONS = {
     get: {
       ...restOperation(
         'Read an artifact',
-        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Other presets retain single-file readback.',
+        'Publisher: only created or assigned artifacts still owned by the approver. Includes current title and visibility; static sites return metadata only. All version_id and include requests and static-site offset are denied. Human and agent reads return static-site metadata only when X-ArtifactShare-Static-Metadata: 1 is sent; otherwise they retain unsupported-kind so released CLI open commands still suggest download; static-site version selection and include remain unsupported. Human and agent get includes retain_versions, version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher responses omit version counts and total sizes; static-site publisher metadata includes retain_versions.',
         {
           anyOf: [
             restRef('ArtifactReadResponse'),
+            restRef('ArtifactStaticSiteReadResponse'),
             restRef('PublisherArtifactReadResponse'),
           ],
         },
@@ -485,6 +625,13 @@ export const REST_OPERATIONS = {
       ),
       parameters: [
         pathId,
+        {
+          name: 'X-ArtifactShare-Static-Metadata',
+          in: 'header',
+          schema: { type: 'string', enum: ['1'] },
+          description:
+            'Opt into metadata-only static-site reads. Sent by updated CLI artifacts get. Omit for legacy source-only behavior; publisher metadata behavior is unchanged.',
+        },
         {
           name: 'version_id',
           in: 'query',

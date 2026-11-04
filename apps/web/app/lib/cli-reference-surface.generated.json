@@ -96,6 +96,24 @@
       ]
     },
     {
+      "path": "artifacts versions",
+      "usage": "artifactshare artifacts versions <OPTIONS> <artifactIdOrUrl>",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--cursor"
+      ],
+      "option_help": [
+        "--cursor <cursor> Continue history with next_cursor from the previous page"
+      ]
+    },
+    {
       "path": "changelog",
       "usage": "artifactshare changelog <OPTIONS>",
       "options": ["--help", "--version", "--json"]

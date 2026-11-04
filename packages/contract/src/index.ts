@@ -635,6 +635,17 @@ export type ArtifactReadQueryParams = z.infer<
   typeof ArtifactReadQueryParamsSchema
 >
 
+export const CLI_STATIC_METADATA_HEADER = 'X-ArtifactShare-Static-Metadata'
+
+export const ArtifactVersionSummarySchema = z.object({
+  retain_versions: z.number().int().positive().nullable(),
+  version_count: z.number().int().nonnegative(),
+  total_size_bytes: z.number().int().nonnegative(),
+})
+export type ArtifactVersionSummary = z.infer<
+  typeof ArtifactVersionSummarySchema
+>
+
 export const ArtifactVersionSchema = z.object({
   label: VersionLabelSchema.optional(),
   version_id: stringId,
@@ -654,7 +665,21 @@ export const ArtifactVersionSchema = z.object({
 })
 export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>
 
+export const ArtifactVersionsResponseSchema =
+  ArtifactVersionSummarySchema.extend({
+    id: stringId,
+    versions: z.array(ArtifactVersionSchema),
+    limit: z.number().int().positive(),
+    has_more: z.boolean(),
+    next_cursor: z.string().nullable(),
+  })
+export type ArtifactVersionsResponse = z.infer<
+  typeof ArtifactVersionsResponseSchema
+>
+
 export const ArtifactReadResponseSchema = z.object({
+  // Compatibility with released source responses; updated CLI reads attach all three.
+  ...ArtifactVersionSummarySchema.partial().shape,
   id: stringId,
   title: z.string(),
   visibility: VisibilitySchema,
@@ -675,7 +700,10 @@ export const ArtifactReadResponseSchema = z.object({
 export type ArtifactReadResponse = z.infer<typeof ArtifactReadResponseSchema>
 
 export const PublisherSingleFileReadResponseSchema =
-  ArtifactReadResponseSchema.extend({
+  ArtifactReadResponseSchema.omit({
+    version_count: true,
+    total_size_bytes: true,
+  }).extend({
     visibility: VisibilitySchema,
   })
 export const PublisherStaticSiteReadResponseSchema = z.object({
@@ -689,6 +717,14 @@ export const PublisherStaticSiteReadResponseSchema = z.object({
   link_expires_at: nullableTimestamp,
   retain_versions: z.number().int().min(1).nullable(),
 })
+export const ArtifactGetResponseSchema = z.union([
+  ArtifactReadResponseSchema,
+  PublisherStaticSiteReadResponseSchema.extend(
+    ArtifactVersionSummarySchema.omit({ retain_versions: true }).partial()
+      .shape,
+  ),
+])
+export type ArtifactGetResponse = z.infer<typeof ArtifactGetResponseSchema>
 export const PublisherArtifactReadResponseSchema = z.union([
   PublisherSingleFileReadResponseSchema,
   PublisherStaticSiteReadResponseSchema,
@@ -758,6 +794,8 @@ export type DownloadManifestResponse = z.infer<
 >
 
 export const ArtifactsListEntrySchema = z.object({
+  // Accept older servers without inventing summaries; new list pages always emit them.
+  ...ArtifactVersionSummarySchema.partial().shape,
   id: ArtifactIdSchema,
   title: z.string(),
   share_url: url,
@@ -1219,6 +1257,13 @@ export const CLI_API_ENDPOINTS = {
     auth: 'bearer_or_session' as const,
     successStatus: 200,
     errorStatuses: [400, 401, 403] as const,
+  },
+  artifactVersions: {
+    path: '/api/cli/artifacts/:id/versions',
+    method: 'GET',
+    auth: 'bearer_or_session' as const,
+    successStatus: 200,
+    errorStatuses: [400, 401, 403, 404] as const,
   },
   artifactRead: {
     path: '/api/cli/artifacts/:id',

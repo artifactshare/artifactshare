@@ -51,9 +51,11 @@ const roleByPath: Record<string, string> = {
   artifacts: 'Browse, read, and delete artifacts.',
   'artifacts delete': 'Alias of delete: permanently delete an artifact.',
   'artifacts get':
-    'Read data.title and data.visibility for the current artifact along with source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. Removed versions return version_removed.',
+    'Read data.title and data.visibility for the current artifact along with source, or pass --version <version-id> to read an earlier published version. When a read is truncated, pass the same --version with --offset <next_offset> to continue. version_id and format describe the returned source. data.title and data.visibility stay current on historical and continuation reads. Removed versions return version_removed. Static sites return metadata only: no content or format; --include, --version and --offset are unsupported. Updated get explicitly requests metadata. Older CLI releases still receive unsupported-kind for static sites, so open suggests download. For human and agent credentials, get includes retain_versions, version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials do not receive version_count or total_size_bytes.',
+  'artifacts versions':
+    'List retained file or static-site versions (version_id, created_at, size_bytes, is_current), newest first, 50 per page. Pass next_cursor as --cursor while has_more. retain_versions is null for unlimited; version_count and total_size_bytes cover versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Static-site bytes include all files per version, including inherited files. Publisher-created static-site versions may have a null creator. Logical bytes count reused files per version, not physical storage or billing. Managed histories can exceed the policy because human/current versions are protected. Publisher credentials do not receive version_count or total_size_bytes and cannot read history; inaccessible artifacts return target_not_found. Restart without --cursor if invalid.',
   'artifacts list':
-    'List artifacts you can access, including project or home results.',
+    'List artifacts you can access, including project or home results. Each row includes retain_versions, version_count and total_size_bytes for versions the caller can list. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials cannot list artifacts. Compare total_size_bytes client-side across pages.',
   changelog: 'Show CLI release notes.',
   comments: 'Work with comments on an artifact.',
   'comments delete': 'Delete a comment message.',
@@ -165,9 +167,11 @@ const jaRoleByPath: Record<string, string> = {
   artifacts: '成果物の一覧表示、読み取り、削除を行います。',
   'artifacts delete': 'delete の別名です。成果物を完全に削除します。',
   'artifacts get':
-    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読みます。過去の版や続きの読み取りでもタイトルと共有範囲は現在の情報です。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。',
+    '現在の表示タイトル（data.title）、共有範囲（data.visibility）、本文を読みます。過去の版や続きの読み取りでもタイトルと共有範囲は現在の情報です。過去の公開済みの版を読むときは --version <version-id> を指定します。読み取りが途中で切れたときは、同じ --version と --offset <next_offset> を指定して続きを読みます。version_id と format は返した本文の値です。削除済みの版は version_removed を返します。静的サイトは本文なしのメタデータを返し、--include、--version、--offset は使えません。新しい get はメタデータ応答を明示的に要求します。旧 CLI には従来どおり unsupported-kind を返すため、open は引き続きダウンロードを案内します。人または agent の資格情報での get は retain_versions、version_count、total_size_bytes も返します。版数と合計サイズの対象は、呼び出し元が履歴で閲覧できる版です。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。publisher の資格情報には version_count と total_size_bytes を返しません。',
+  'artifacts versions':
+    'ファイルと静的サイトの保存済みバージョンを新しい順に50件ずつ表示します。各行は version_id、created_at、size_bytes、is_current を含みます。has_more が true なら next_cursor を --cursor に渡します。retain_versions の null は無制限です。version_count と total_size_bytes は、呼び出し元が履歴で閲覧できる版を集計します。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。各版のサイズには継承ファイルも含めます。再利用ファイルは版ごとに数える論理バイト数で、実際の保存容量や請求額ではありません。publisher が作成した静的サイトの版では creator が null の場合があります。管理対象の成果物では人が作成した版と現在の版を保護するため、保持設定を超える場合があります。publisher の資格情報では履歴を読めず、version_count と total_size_bytes も取得できません。閲覧不可は target_not_found、不正なカーソルは --cursor を外して再取得します。',
   'artifacts list':
-    'project または home を含む、アクセスできる成果物を一覧表示します。',
+    'project または home を含む、アクセスできる成果物を一覧表示します。各行の retain_versions、version_count、total_size_bytes で保持設定・版数・論理バイト数を確認できます。版数と合計サイズの対象は、呼び出し元が履歴で閲覧できる版です。静的サイトでは所有者を含むすべての呼び出し元に対し、公開日時のある公開済みの版だけを履歴表示・集計の対象にします。publisher の資格情報では一覧を取得できません。ページを取得して手元で total_size_bytes を比較します。',
   changelog: 'CLI のリリースノートを表示します。',
   comments: '成果物のコメントを扱います。',
   'comments delete': 'コメントメッセージを削除します。',
@@ -226,7 +230,12 @@ const jaRoleByPath: Record<string, string> = {
 
 const EN: CliReferenceContent = {
   locale: 'en',
-  optionHelp: {},
+  optionHelp: {
+    'artifacts versions': {
+      '--cursor':
+        'Continue with next_cursor from the previous history page; omit to restart.',
+    },
+  },
   title: 'Artifact Share CLI reference',
   intro:
     'A public, machine-friendly guide to sharing, updating, reading, and organizing artifacts from a terminal.',
@@ -302,6 +311,10 @@ const JA: CliReferenceContent = {
   ...EN,
   locale: 'ja',
   optionHelp: {
+    'artifacts versions': {
+      '--cursor':
+        '前の履歴ページの next_cursor を指定します。最初から取得する場合は省略します。',
+    },
     'artifacts get': {
       '--version':
         '読み取る公開済みバージョンの ID。省略すると現在の本文を返します。',
@@ -350,7 +363,7 @@ const JA: CliReferenceContent = {
     },
     destinations: {
       title: 'project、home、audience、設定',
-      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus の管理者権限、閲覧権限、成果物への個別共有だけでは投稿できません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。edit は --visibility private|workspace|project|link を指定できます。project の共有範囲には、編集後の保存先がプロジェクトであることが必要です。必要なら同じコマンドに --project-id <id> を指定します。home での明示的な --visibility project（--home との併用を含む）は変更せずに拒否します。プロジェクトの成果物を home に移す場合、project を明示指定していなければ private になります。 project への投稿はその project の audience に届きます。投稿先を指定しない share は home に投稿します。home_audience は目的別に使い分けます。個人の安全な既定値には user、一緒に使う全員が合意した方針には repository、一回限りの指定には明示 --visibility を使い、config get home_audience --scope effective --json で実効値を確認します。正本の設定は home_audience で、private は自分だけ、workspace は社内全員です。repository 設定は .artifactshare/config.json、user 設定は user config directory に保存します。home の解決順は repository の home_audience、repository の default_artifact_visibility、user の home_audience、user の default_artifact_visibility、アカウントに応じた製品既定値です。home_audience を設定していないときは、組織の共有範囲を使えるアカウントなら workspace、それ以外のアカウントなら private になります。明示指定や設定による workspace は利用できなければ従来どおりエラーになり、link へ自動変更しません。リンク共有には --visibility link を明示します。config は通信せず、source が product_default の workspace は未確定の方針を表します。share とプレビューでアカウントを確認して確定します。whoami と doctor は workspace.visibility_available を返します。この項目を返さない旧サーバーでは workspace と従来のエラー動作を維持します。private への変更時は共有結果に visibility_source: product_default_private と visibility_hint が含まれます。default_artifact_visibility は、互換性のために残している別名です。default_project_visibility は projects create 用の独立した既定値です。--grant-email は project の個別共有先を追加するだけで、project の visibility を暗黙に変更しません。',
+      body: '投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus の管理者権限、閲覧権限、成果物への個別共有だけでは投稿できません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。edit は --visibility private|workspace|project|link を指定できます。project の共有範囲には、編集後の保存先がプロジェクトであることが必要です。必要なら同じコマンドに --project-id <id> を指定します。home での明示的な --visibility project（--home との併用を含む）は変更せずに拒否します。プロジェクトの成果物を home に移す場合、project を明示指定していなければ private になります。project への投稿はその project の audience に届きます。投稿先を指定しない share は home に投稿します。home_audience は目的別に使い分けます。個人の安全な既定値には user、一緒に使う全員が合意した方針には repository、一回限りの指定には明示 --visibility を使い、config get home_audience --scope effective --json で実効値を確認します。正本の設定は home_audience で、private は自分だけ、workspace は社内全員です。repository 設定は .artifactshare/config.json、user 設定は user config directory に保存します。home の解決順は repository の home_audience、repository の default_artifact_visibility、user の home_audience、user の default_artifact_visibility、アカウントに応じた製品既定値です。home_audience を設定していないときは、組織の共有範囲を使えるアカウントなら workspace、それ以外のアカウントなら private になります。明示指定や設定による workspace は利用できなければ従来どおりエラーになり、link へ自動変更しません。リンク共有には --visibility link を明示します。config は通信せず、source が product_default の workspace は未確定の方針を表します。share とプレビューでアカウントを確認して確定します。whoami と doctor は workspace.visibility_available を返します。この項目を返さない旧サーバーでは workspace と従来のエラー動作を維持します。private への変更時は共有結果に visibility_source: product_default_private と visibility_hint が含まれます。default_artifact_visibility は、互換性のために残している別名です。default_project_visibility は projects create 用の独立した既定値です。--grant-email は project の個別共有先を追加するだけで、project の visibility を暗黙に変更しません。',
     },
     recovery: {
       title: '失敗と復旧',

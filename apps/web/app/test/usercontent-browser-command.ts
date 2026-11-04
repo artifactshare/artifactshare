@@ -29,7 +29,7 @@ import { http, HttpResponse } from 'msw'
 import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
-} from '../lib/sandbox-block-report'
+} from '../lib/sandbox-block-report.js'
 
 const run = promisify(execFile)
 const webRoot = new URL('../..', import.meta.url).pathname

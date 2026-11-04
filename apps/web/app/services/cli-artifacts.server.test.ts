@@ -1,3 +1,14 @@
+vi.mock('./artifact-version-summary.server', () => ({
+  loadArtifactVersionSummaries: vi.fn(
+    async (_db, ids: string[]) =>
+      new Map(
+        ids.map((id) => [
+          id,
+          { retain_versions: null, version_count: 2, total_size_bytes: 26 },
+        ]),
+      ),
+  ),
+}))
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({
@@ -325,6 +336,7 @@ describe('listCliArtifacts', () => {
     ])
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       query: 'report',
     })
@@ -335,6 +347,9 @@ describe('listCliArtifacts', () => {
       artifacts: [
         {
           id: 'abc123def4',
+          retain_versions: null,
+          version_count: 2,
+          total_size_bytes: 26,
           title: 'Weekly report',
           share_url: 'https://artifactshare.test/a/abc123def4',
           visibility: 'private',
@@ -370,6 +385,7 @@ describe('listCliArtifacts', () => {
     )
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
     })
 
@@ -385,6 +401,7 @@ describe('listCliArtifacts', () => {
     findSharedProjectForViewerMock.mockResolvedValue(null)
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       projectId: 'missing',
     })
@@ -403,6 +420,7 @@ describe('listCliArtifacts', () => {
     listOwnedShareablesMock.mockResolvedValue([])
 
     const result = await listCliArtifacts({} as never, user, {
+      includeVersionSummaries: true,
       baseUrl: 'https://artifactshare.test',
       projectId: '',
     })

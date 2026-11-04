@@ -7,7 +7,10 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 
 import { listCliArtifacts } from './cli-artifacts.server'
 
-const BASE = { baseUrl: 'https://artifactshare.test' }
+const BASE = {
+  baseUrl: 'https://artifactshare.test',
+  includeVersionSummaries: true,
+}
 
 const MEMBER = {
   id: 'u1',
@@ -64,6 +67,9 @@ describe('listCliArtifacts project scope', () => {
     expect(item).toMatchObject({
       owner_email: 'other@example.com',
       project_id: 'project-a',
+      retain_versions: 3,
+      version_count: 2,
+      total_size_bytes: 18,
     })
   })
 
@@ -78,10 +84,55 @@ describe('listCliArtifacts project scope', () => {
     const ids = result.data.artifacts.map((a) => a.id)
     expect(ids).toContain('art-other-project-vis')
     expect(ids).toContain('art-granted-to-ext')
+    for (const row of result.data.artifacts)
+      expect(row).toMatchObject({
+        retain_versions: 3,
+        version_count: 2,
+        total_size_bytes: 18,
+      })
     // Negative controls: the other workspace's internal artifacts stay hidden.
     expect(ids).not.toContain('art-other-ws-vis')
     expect(ids).not.toContain('art-other-private')
     expect(ids).not.toContain('art-own')
+  })
+
+  test('static-site project summaries exclude unpublished history for every caller', async () => {
+    await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'static_site' })
+      .where('id', '=', 'art-other-ws-vis')
+      .execute()
+    await db
+      .updateTable('versions')
+      .set({ published_at: null })
+      .where('shareable_id', '=', 'art-other-ws-vis')
+      .execute()
+    const owner = await listCliArtifacts(
+      db,
+      { ...MEMBER, id: 'u2', email: 'other@example.com' },
+      {
+        ...BASE,
+        projectId: 'project-a',
+      },
+    )
+    if (owner.kind !== 'ok') throw new Error('expected owner list')
+    expect(
+      owner.data.artifacts.find((row) => row.id === 'art-other-ws-vis'),
+    ).toMatchObject({
+      version_count: 0,
+      total_size_bytes: 0,
+    })
+    const viewer = await listCliArtifacts(db, MEMBER, {
+      ...BASE,
+      projectId: 'project-a',
+    })
+    if (viewer.kind !== 'ok') throw new Error('expected viewer list')
+    expect(
+      viewer.data.artifacts.find((row) => row.id === 'art-other-ws-vis'),
+    ).toMatchObject({
+      version_count: 0,
+      total_size_bytes: 0,
+    })
   })
 
   test('unknown or inaccessible project id is invalid-project', async () => {
@@ -117,35 +168,55 @@ describe('listCliArtifacts project scope', () => {
     }
   })
 
-  test('cursor pages through 51+ artifacts with a shared updated_at without gaps', async () => {
-    await seedMany(db, 55)
+  test.each([MEMBER, EXTERNAL])(
+    'cursor pages preserve project summaries for $id without gaps',
+    async (viewer) => {
+      await seedMany(db, 55)
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'project' })
+        .where('id', 'like', 'bulk-%')
+        .execute()
 
-    const seen: string[] = []
-    let cursor: string | undefined
-    let pages = 0
-    for (;;) {
-      const result = await listCliArtifacts(db, MEMBER, {
-        ...BASE,
-        projectId: 'project-a',
-        cursor,
-      })
-      expect(result.kind).toBe('ok')
-      if (result.kind !== 'ok') return
-      seen.push(...result.data.artifacts.map((a) => a.id))
-      pages += 1
-      if (!result.data.has_more) {
-        expect(result.data.next_cursor).toBeNull()
-        break
+      const seen: string[] = []
+      let cursor: string | undefined
+      let pages = 0
+      for (;;) {
+        const result = await listCliArtifacts(db, viewer, {
+          ...BASE,
+          projectId: 'project-a',
+          cursor,
+        })
+        expect(result.kind).toBe('ok')
+        if (result.kind !== 'ok') return
+        for (const row of result.data.artifacts) {
+          const hasVersions = [
+            'art-other-ws-vis',
+            'art-other-project-vis',
+            'art-granted-to-ext',
+          ].includes(row.id)
+          expect(row).toMatchObject({
+            retain_versions: hasVersions ? 3 : null,
+            version_count: hasVersions ? 2 : 0,
+            total_size_bytes: hasVersions ? 18 : 0,
+          })
+        }
+        seen.push(...result.data.artifacts.map((a) => a.id))
+        pages += 1
+        if (!result.data.has_more) {
+          expect(result.data.next_cursor).toBeNull()
+          break
+        }
+        expect(result.data.next_cursor).toBeTruthy()
+        cursor = result.data.next_cursor ?? undefined
       }
-      expect(result.data.next_cursor).toBeTruthy()
-      cursor = result.data.next_cursor ?? undefined
-    }
 
-    expect(pages).toBeGreaterThan(1)
-    expect(new Set(seen).size).toBe(seen.length)
-    const bulkIds = seen.filter((id) => id.startsWith('bulk-'))
-    expect(bulkIds).toHaveLength(55)
-  })
+      expect(pages).toBeGreaterThan(1)
+      expect(new Set(seen).size).toBe(seen.length)
+      const bulkIds = seen.filter((id) => id.startsWith('bulk-'))
+      expect(bulkIds).toHaveLength(55)
+    },
+  )
 
   test('corrupt cursors and filter-mismatched cursors are invalid-cursor', async () => {
     const corrupt = await listCliArtifacts(db, MEMBER, {
@@ -328,6 +399,34 @@ async function seed(db: Kysely<DB>) {
       .insertInto('shareables')
       .values(shareables.slice(index, index + 4))
       .execute()
+  }
+  for (const id of [
+    'art-other-ws-vis',
+    'art-other-project-vis',
+    'art-granted-to-ext',
+  ]) {
+    await db
+      .updateTable('shareables')
+      .set({ retain_versions: 3 })
+      .where('id', '=', id)
+      .execute()
+    for (const [index, size] of [11, 7].entries())
+      await db
+        .insertInto('versions')
+        .values({
+          id: `${id}-v${index}`,
+          shareable_id: id,
+          artifact_kind: 'markdown_page',
+          status: 'published',
+          entrypoint_path: '/index.md',
+          r2_key: 'fixture',
+          size_bytes: size,
+          sha256: 'hash',
+          created_by_id: 'u2',
+          created_at: T0,
+          published_at: T0,
+        })
+        .execute()
   }
   await db
     .insertInto('shareable_grants')

@@ -1,3 +1,5 @@
+import { loadArtifactVersionSummaries } from './artifact-version-summary.server'
+import type { ArtifactGetResponse } from '@artifactshare/contract'
 import { selectArtifactVersion } from './artifact-version-selection.server'
 import type { PublisherArtifactReadResponse } from '@artifactshare/contract'
 import {
@@ -92,6 +94,15 @@ export async function getArtifactReadback(
   )
   if (!access) return { kind: 'not-found' }
 
+  return readArtifactWithAccess(db, user, args, access)
+}
+
+async function readArtifactWithAccess(
+  db: Kysely<DB>,
+  user: SessionUser,
+  args: Parameters<typeof getArtifactReadback>[2],
+  access: NonNullable<Awaited<ReturnType<typeof loadCommentAccess>>>,
+): Promise<ArtifactReadbackResult> {
   let format = singleFileFormat(access.artifactKind as ArtifactKind)
   if (!format) {
     return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
@@ -142,12 +153,19 @@ export async function getArtifactReadback(
     (async () => {
       if (!include.has('versions') || (!isOwner && !args.includeSharedVersions))
         return
-      const history = isOwner
-        ? await listOwnedArtifactVersions(db, user, args.id)
-        : await listArtifactVersions(db, args.id, access.currentVersionId)
       const viewerWorkspaceId =
         args.agentReadAuthorization?.viewerWorkspaceId ?? user.workspaceId
       const maySeeEmail = access.workspaceId === viewerWorkspaceId
+      const history = isOwner
+        ? await listOwnedArtifactVersions(db, user, args.id)
+        : await listArtifactVersions(
+            db,
+            args.id,
+            access.currentVersionId,
+            undefined,
+            false,
+            { maySeeEmail },
+          )
       data.versions = (history?.versions ?? []).map((version) => ({
         version_id: version.versionId,
         ...(version.label != null ? { label: version.label } : {}),
@@ -230,6 +248,56 @@ export async function getPublisherArtifactReadback(
       truncated: capped.truncated,
       next_offset: capped.nextOffset,
       size_bytes: source.sizeBytes,
+    },
+  }
+}
+
+// CLI get also supports metadata-only sites; source-only consumers keep their contract.
+export async function getCliArtifactReadback(
+  db: Kysely<DB>,
+  user: SessionUser,
+  args: Parameters<typeof getArtifactReadback>[2] & {
+    allowStaticMetadata?: boolean
+  },
+): Promise<
+  | Exclude<ArtifactReadbackResult, { kind: 'ok' }>
+  | { kind: 'invalid-offset' }
+  | { kind: 'ok'; data: ArtifactGetResponse }
+> {
+  const access = await loadCommentAccess(
+    db,
+    user,
+    args.id,
+    args.agentReadAuthorization,
+  )
+  if (!access) return { kind: 'not-found' }
+  if (access.artifactKind !== 'static_site') {
+    const result = await readArtifactWithAccess(db, user, args, access)
+    if (result.kind !== 'ok') return result
+    const summaries = await loadArtifactVersionSummaries(db, [args.id])
+    return { kind: 'ok', data: { ...result.data, ...summaries.get(args.id)! } }
+  }
+  if (
+    !args.allowStaticMetadata ||
+    args.version_id !== undefined ||
+    args.include?.length
+  )
+    return { kind: 'unsupported-kind', artifactKind: access.artifactKind }
+  if (args.offset !== undefined) return { kind: 'invalid-offset' }
+  if (!access.currentVersionId) return { kind: 'source-unavailable' }
+  const summaries = await loadArtifactVersionSummaries(db, [args.id])
+  return {
+    kind: 'ok',
+    data: {
+      ...summaries.get(args.id)!,
+      id: args.id,
+      title: access.title,
+      visibility: access.visibility,
+      artifact_kind: 'static_site',
+      share_url: shareUrl(args.baseUrl, args.id, access.visibility),
+      version_id: access.currentVersionId,
+      project_id: access.projectId ?? null,
+      link_expires_at: access.linkExpiresAt,
     },
   }
 }

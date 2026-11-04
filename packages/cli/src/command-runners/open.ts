@@ -86,6 +86,19 @@ export async function runOpen(
     return writeFailure(command, result.error, mode, 1)
   }
 
+  if (!('content' in result.data))
+    return writeSuccess(
+      command,
+      {
+        skills,
+        open: {
+          kind: 'download_required',
+          next_command: agentDownloadCommand(target.artifactId),
+        },
+      },
+      mode,
+    )
+
   const data: OpenData = {
     skills,
     open: {

@@ -120,7 +120,11 @@ test('open returns a download next_command for multi-file artifacts', async () =
   await mkdir(join(workDir, '.claude'))
 
   await withServer(
-    (_request, response) => {
+    (request, response) => {
+      assert.equal(
+        request.headers['x-artifactshare-static-metadata'],
+        undefined,
+      )
       response.statusCode = 400
       response.setHeader('content-type', 'application/json')
       response.end(
@@ -129,6 +133,52 @@ test('open returns a download next_command for multi-file artifacts', async () =
             code: 'unsupported-kind',
             message: 'This artifact cannot be read as a single source file.',
           },
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        [
+          'open',
+          'https://artifactshare.com/a/abc123def4',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        { ...isolation(), ARTIFACTSHARE_TOKEN: 'test-token' },
+        { cwd: workDir },
+      )
+
+      const payload = expectSuccess(result, 'open')
+      assert.equal(payload.data.open.kind, 'download_required')
+      assert.equal(
+        payload.data.open.next_command,
+        'npm exec --yes --package=@artifactshare/cli -- artifactshare download abc123def4 --output ./artifact --json',
+      )
+    },
+  )
+})
+
+test('open metadata-only response returns a download next_command for multi-file artifacts', async () => {
+  await mkdir(join(workDir, '.claude'))
+
+  await withServer(
+    (_request, response) => {
+      response.statusCode = 200
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          id: 'abc123def4',
+          share_url: 'https://example.com/a/abc123def4',
+          version_id: 'v1',
+          artifact_kind: 'static_site',
+          title: 'Site',
+          visibility: 'private',
+          project_id: null,
+          link_expires_at: null,
+          retain_versions: 3,
+          version_count: 2,
+          total_size_bytes: 100,
         }),
       )
     },

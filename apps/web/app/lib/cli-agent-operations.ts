@@ -9,6 +9,7 @@ const BOOTSTRAP_RULES: Rule[] = [
 ]
 
 const AGENT_RULES: Rule[] = [
+  { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+\/versions$/ },
   ...BOOTSTRAP_RULES,
   { method: 'GET', pattern: /^\/api\/cli\/artifacts$/ },
   { method: 'GET', pattern: /^\/api\/cli\/artifacts\/[^/]+$/ },

@@ -21,7 +21,7 @@ vi.mock('~/services/db.server', () => ({
   withDb: (fn: (db: unknown) => unknown) => fn(createDbMock()),
 }))
 vi.mock('~/services/artifact-readback-service.server', () => ({
-  getArtifactReadback: getArtifactReadbackMock,
+  getCliArtifactReadback: getArtifactReadbackMock,
 }))
 vi.mock('~/services/shareables.server', () => ({
   deleteShareable: deleteShareableMock,
@@ -56,10 +56,59 @@ describe('/api/cli/artifacts/:id', () => {
     })
   })
 
+  test.each(['human', 'agent'])(
+    '%s static metadata requires explicit negotiation',
+    async (kind) => {
+      if (kind === 'agent') {
+        getCliAuthorityMock.mockReturnValue({ kind: 'agent' })
+        authorizeAgentArtifactReadMock.mockResolvedValue({
+          kind: 'authorized',
+          authorization: { viewerWorkspaceId: 'ws1' },
+        })
+      }
+      const data = {
+        id: 'abc123def4',
+        title: 'Site',
+        share_url: 'https://example.com/a/abc123def4',
+        version_id: 'v1',
+        artifact_kind: 'static_site',
+        visibility: 'private',
+        project_id: null,
+        link_expires_at: null,
+        retain_versions: 3,
+        version_count: 2,
+        total_size_bytes: 18,
+      }
+      getArtifactReadbackMock.mockImplementation(async (_db, _user, args) =>
+        args.allowStaticMetadata
+          ? { kind: 'ok', data }
+          : { kind: 'unsupported-kind', artifactKind: 'static_site' },
+      )
+      for (const optIn of [false, true]) {
+        const url = new URL('https://example.com/api/cli/artifacts/abc123def4')
+        const response = await loader({
+          context: new Map(),
+          params: { id: 'abc123def4' },
+          url,
+          request: new Request(url, {
+            headers: optIn ? { 'X-ArtifactShare-Static-Metadata': '1' } : {},
+          }),
+        } as never)
+        expect(response.status).toBe(optIn ? 200 : 400)
+        expect(await response.json()).toMatchObject(
+          optIn ? data : { error: { code: 'unsupported-kind' } },
+        )
+      }
+    },
+  )
+
   for (const version of ['', 'v1']) {
     test(`publisher rejects presence of version_id=${version} before validation or source lookup`, async () => {
       getCliAuthorityMock.mockReturnValue({ kind: 'publisher' })
       const response = await loader({
+        request: new Request(
+          'https://example.com/api/cli/artifacts/abc123def4',
+        ),
         context: new Map(),
         params: { id: 'abc123def4' },
         url: new URL(
@@ -76,6 +125,7 @@ describe('/api/cli/artifacts/:id', () => {
   test('read adapter forwards version selection and maps removed versions to 410', async () => {
     getArtifactReadbackMock.mockResolvedValue({ kind: 'version-removed' })
     const response = await loader({
+      request: new Request('https://example.com/api/cli/artifacts/abc123def4'),
       context: new Map(),
       params: { id: 'abc123def4' },
       url: new URL(
@@ -94,6 +144,7 @@ describe('/api/cli/artifacts/:id', () => {
   })
   test('blank historical selection is invalid, never a current read', async () => {
     const response = await loader({
+      request: new Request('https://example.com/api/cli/artifacts/abc123def4'),
       context: new Map(),
       params: { id: 'abc123def4' },
       url: new URL(
