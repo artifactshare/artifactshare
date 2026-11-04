@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { Compilable, Kysely } from 'kysely'
+import { sql, type Compilable, type Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -9,7 +9,7 @@ import {
   conversationProjectName,
 } from './bridge-conversation-binding.server'
 import type { TrustedBridgeContext } from './bridge-request-validation.server'
-import { deleteProjectContainer } from './projects.server'
+import { deleteProjectContainer, projectPlacementSql } from './projects.server'
 
 const bucketState = vi.hoisted(() => new Map<string, Uint8Array>())
 const notifyVersionChanged = vi.hoisted(() => vi.fn())
@@ -48,7 +48,12 @@ const bucket = vi.hoisted(() => ({
       bucketState.delete(key)
     }
   }),
-  list: vi.fn(async () => ({ objects: [], truncated: false })),
+  list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+    objects: [...bucketState.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => ({ key })),
+    truncated: false,
+  })),
 }))
 
 vi.mock('cloudflare:workers', () => ({
@@ -225,6 +230,170 @@ afterEach(async () => {
   await db.destroy()
 })
 
+describe.each([
+  ['mapped', 'file', 'publish'],
+  ['mapped', 'file', 'update'],
+  ['mapped', 'file', 'append'],
+  ['fallback', 'file', 'publish'],
+  ['fallback', 'file', 'update'],
+  ['fallback', 'file', 'append'],
+  ['mapped', 'static_site', 'publish'],
+  ['mapped', 'static_site', 'update'],
+  ['fallback', 'static_site', 'publish'],
+  ['fallback', 'static_site', 'update'],
+] as const)(
+  '%s %s %s bridge placement',
+  (destination, contentKind, operation) => {
+    test.each([
+      'workspace',
+      'contributor',
+      'manager',
+      'removed',
+      'viewer',
+      'revoked',
+      'unverified',
+      'workspace-unverified',
+    ] as const)(
+      '%s uses the live restricted-agent policy',
+      async (permission) => {
+        const projectId = destination === 'mapped' ? 'project-1' : 'fallback-1'
+        const workspaceVisible = permission.startsWith('workspace')
+        if (destination === 'mapped') {
+          seedProject(
+            projectId,
+            'Placement',
+            workspaceVisible ? 'workspace' : 'private',
+          )
+          seedMapping('mapping-1', projectId, 'channel-1')
+        } else {
+          sqlite
+            .prepare(
+              'UPDATE artifact_containers SET base_visibility = ? WHERE id = ?',
+            )
+            .run(workspaceVisible ? 'workspace' : 'private', projectId)
+        }
+        if (!workspaceVisible) {
+          sqlite
+            .prepare(`INSERT INTO project_share_defaults
+          (id, project_container_id, email, role, created_at, updated_at)
+          VALUES ('placement-grant', ?, 'bot@bots.artifactshare.invalid', ?, '2026-01-01', '2026-01-01')`)
+            .run(
+              projectId,
+              permission === 'manager' ? 'manager' : 'contributor',
+            )
+        }
+        const { executeBridgeRequest } =
+          await import('./bridge-publishing.server')
+        const body = new TextEncoder().encode(
+          contentKind === 'file' ? '# Placement' : '<h1>Placement</h1>',
+        )
+        const metadata = await fileMetadata({
+          requestId: 'placement-control',
+          body,
+          path: contentKind === 'file' ? 'note.md' : 'index.html',
+          mediaType: contentKind === 'file' ? 'text/markdown' : 'text/html',
+          conversationKind: destination === 'mapped' ? 'public_channel' : 'dm',
+        })
+        metadata.content.kind = contentKind
+        const publish = (requestId: string, targetArtifactId?: string) =>
+          executeBridgeRequest(
+            db,
+            authority,
+            bridgeUser(),
+            {
+              ...metadata,
+              request_id: requestId,
+              ...(targetArtifactId
+                ? { operation, target_artifact_id: targetArtifactId }
+                : {}),
+            },
+            [
+              new File([body], metadata.content.files[0].path, {
+                type: metadata.content.files[0].media_type,
+              }),
+            ],
+            'https://artifactshare.com',
+          )
+        const control = await publish('placement-control')
+        expect(control.kind).toBe('ok')
+        if (control.kind !== 'ok') return
+        const originalArtifact = sqlite
+          .prepare('SELECT * FROM shareables')
+          .get()
+        const originalVersion = sqlite.prepare('SELECT * FROM versions').get()
+        const storedObjects = [...bucketState.keys()]
+        const used = sqlite
+          .prepare('SELECT storage_used_bytes FROM workspaces')
+          .get()
+        if (permission === 'removed')
+          sqlite.prepare('DELETE FROM project_share_defaults').run()
+        if (permission === 'viewer')
+          sqlite
+            .prepare("UPDATE project_share_defaults SET role = 'viewer'")
+            .run()
+        if (permission === 'revoked')
+          sqlite
+            .prepare(
+              "UPDATE workspace_members SET status = 'removed' WHERE user_id = 'bot1'",
+            )
+            .run()
+        if (permission.endsWith('unverified'))
+          sqlite
+            .prepare("UPDATE users SET email_verified = 0 WHERE id = 'bot1'")
+            .run()
+        const allowed =
+          workspaceVisible ||
+          permission === 'contributor' ||
+          permission === 'manager'
+        const policy = await db
+          .selectNoFrom(
+            sql<number>`CASE WHEN ${projectPlacementSql(bridgeUser(), projectId, true)} THEN 1 ELSE 0 END`.as(
+              'allowed',
+            ),
+          )
+          .executeTakeFirstOrThrow()
+        expect(policy.allowed).toBe(allowed ? 1 : 0)
+        const result = await publish(
+          'placement-next',
+          operation === 'publish' ? undefined : control.result.artifact.id,
+        )
+        if (allowed) expect(result.kind).toBe('ok')
+        else {
+          expect(result).toEqual({ kind: 'upload-failed' })
+          expect([...bucketState.keys()]).toEqual(storedObjects)
+          expect(sqlite.prepare('SELECT * FROM shareables').get()).toEqual(
+            originalArtifact,
+          )
+          expect(sqlite.prepare('SELECT * FROM versions').get()).toEqual(
+            originalVersion,
+          )
+          expect(
+            sqlite.prepare('SELECT storage_used_bytes FROM workspaces').get(),
+          ).toEqual(used)
+        }
+        for (const table of ['shareables', 'versions', 'bridge_operations']) {
+          expect(
+            sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(),
+          ).toEqual({
+            count:
+              allowed && (table !== 'shareables' || operation === 'publish')
+                ? 2
+                : 1,
+          })
+        }
+        if (destination === 'mapped')
+          expect(
+            sqlite.prepare('SELECT project_id FROM bridge_conversations').get(),
+          ).toEqual({ project_id: projectId })
+        if (permission === 'revoked' || permission === 'unverified')
+          expect(
+            sqlite.prepare('SELECT role FROM project_share_defaults').get(),
+          ).toEqual({ role: 'contributor' })
+      },
+    )
+  },
+)
+
 describe('trusted bridge conversation binding', () => {
   test('truncates generated project names at a Unicode boundary', () => {
     const name = `${'a'.repeat(110)}😀tail`
@@ -287,6 +456,11 @@ describe('trusted bridge conversation binding', () => {
       )
       .get()
     expect(project).toEqual({ base_visibility: 'private' })
+    expect(
+      sqlite.prepare('SELECT email, role FROM project_share_defaults').all(),
+    ).toEqual([
+      { email: 'bot@bots.artifactshare.invalid', role: 'contributor' },
+    ])
   })
 
   test('does not create private routing state if the bot stops at commit', async () => {
@@ -536,6 +710,52 @@ describe('trusted bridge conversation binding', () => {
     })
   })
 
+  test.each([null, 'viewer', 'manager'] as const)(
+    'narrowing grants the bot access while preserving existing %s grants',
+    async (role) => {
+      seedProject('project-1', 'Design')
+      seedMapping('mapping-1', 'project-1', 'channel-1')
+      if (role) {
+        sqlite
+          .prepare(`
+          INSERT INTO project_share_defaults
+            (id, project_container_id, email, role, created_at, updated_at)
+          VALUES ('existing', 'project-1', 'BOT@bots.artifactshare.invalid', ?,
+            '2026-01-01', '2026-01-01')
+        `)
+          .run(role)
+      }
+      const privateContext = context({
+        conversation: { ...context().conversation, kind: 'private_channel' },
+      })
+      expect(
+        await bindTrustedBridgeRequest(db, authority, privateContext),
+      ).toMatchObject({ kind: 'ok' })
+      expect(
+        sqlite
+          .prepare(
+            "SELECT role FROM project_share_defaults WHERE project_container_id = 'project-1'",
+          )
+          .all(),
+      ).toEqual([{ role: role ?? 'contributor' }])
+
+      sqlite
+        .prepare(
+          "DELETE FROM project_share_defaults WHERE project_container_id = 'project-1'",
+        )
+        .run()
+      expect(
+        await bindTrustedBridgeRequest(db, authority, {
+          ...privateContext,
+          requestId: 'after-revocation',
+        }),
+      ).toMatchObject({ kind: 'ok' })
+      expect(
+        sqlite.prepare('SELECT id FROM project_share_defaults').all(),
+      ).toEqual([])
+    },
+  )
+
   test('does not narrow a mapping after the bridge bot is stopped', async () => {
     seedProject('project-1', 'Design')
     seedMapping('mapping-1', 'project-1', 'channel-1')
@@ -691,6 +911,12 @@ describe('trusted bridge conversation binding', () => {
 describe('bridge file publishing', () => {
   test('routes publish, update, append, and visibility through the bridge publish intent', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const base = new TextEncoder().encode('# Base')
@@ -807,6 +1033,12 @@ describe('bridge file publishing', () => {
 
   test('reports an over-quota publish as a retryable upload failure', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     sqlite
       .prepare(`UPDATE workspaces SET storage_quota_bytes = 1 WHERE id = 'ws1'`)
@@ -833,6 +1065,12 @@ describe('bridge file publishing', () => {
 
   test('skips an active publication id from another workspace before staging a file', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     shareableIdQueue.push('blocked001', 'allowed001')
     sqlite
@@ -893,6 +1131,12 @@ describe('bridge file publishing', () => {
 
   test('publishes once and replays the same completed request', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const body = new TextEncoder().encode('# Hello')
     const sha256 = await sha256Hex(body)
@@ -1023,6 +1267,12 @@ describe('bridge file publishing', () => {
 
   test('does not restore replay access after an artifact leaves bridge scope', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedProject('project-2', 'Other private project', 'private')
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const body = new TextEncoder().encode('# Scoped')
@@ -1071,6 +1321,12 @@ describe('bridge file publishing', () => {
 
   test('does not delete an existing artifact when its generated id races', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     d1BatchHook.callback = (sqlStatements) => {
       if (
@@ -1279,6 +1535,12 @@ describe('bridge file publishing', () => {
       result: { visibility: 'private', replayed: true },
     })
 
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', ?, 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run(result.result.project.id)
     const renamed = structuredClone(value)
     renamed.request_id = 'request-public-renamed'
     renamed.conversation.current_id = 'channel-public-new'
@@ -1377,6 +1639,12 @@ describe('bridge file publishing', () => {
 
   test('bounds a filename fallback title to the bridge response contract', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const body = new TextEncoder().encode('\n')
     const fileName = `${'a'.repeat(217)}.md`
@@ -1474,6 +1742,12 @@ describe('bridge file publishing', () => {
 
   test('cleans its staged file when another lease generation completes first', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     sqlite
       .prepare(
@@ -1562,6 +1836,12 @@ describe('bridge file publishing', () => {
 
   test('cleans staged storage when destination revalidation throws', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const before = sqlite
       .prepare(`SELECT storage_used_bytes FROM workspaces WHERE id = 'ws1'`)
@@ -1599,6 +1879,12 @@ describe('bridge file publishing', () => {
 
   test('preserves bridge success and notification when the post-commit pruning read fails', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -1662,6 +1948,12 @@ describe('bridge file publishing', () => {
 
   test('preserves the committed version and notification when the result read fails after commit', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -1732,6 +2024,12 @@ describe('bridge file publishing', () => {
     'updates a bridge-created artifact with retention %s (pruning failure: %s) without changing its URL',
     async (retain, failPruning) => {
       seedProject('project-1', 'Private design', 'private')
+      sqlite
+        .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+        .run()
       seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
       const { executeBridgeRequest } =
         await import('./bridge-publishing.server')
@@ -1839,6 +2137,12 @@ describe('bridge file publishing', () => {
 
   test('does not commit a channel update after the bridge bot is stopped', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -1903,6 +2207,12 @@ describe('bridge file publishing', () => {
 
   test('does not commit a channel update after fallback archival', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -1961,6 +2271,12 @@ describe('bridge file publishing', () => {
 
   test('keeps the committed version intact when the requester grant limit is reached', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -2016,6 +2332,12 @@ describe('bridge file publishing', () => {
 
   test('recognizes a legacy mixed-case requester grant at the viewer limit', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new TextEncoder().encode('# First')
@@ -2076,6 +2398,12 @@ describe('bridge file publishing', () => {
 
   test('appends after multibyte HTML content without corrupting UTF-8', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const firstBody = new Uint8Array([
@@ -2138,6 +2466,12 @@ describe('bridge file publishing', () => {
 
   test('rejects an oversized append before loading the stored body', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const { executeBridgeRequest } = await import('./bridge-publishing.server')
     const body = new TextEncoder().encode('# Base')
@@ -2386,6 +2720,12 @@ describe('bridge file publishing', () => {
 
   test('skips an active publication id before staging a static site', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     shareableIdQueue.push('blocked001', 'allowed001')
     sqlite
@@ -2440,6 +2780,12 @@ describe('bridge file publishing', () => {
 
   test('publishes a static-site bundle with one immutable bridge operation', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const html = new TextEncoder().encode('<title>Site</title><h1>Hello</h1>')
     const bundle = [
@@ -2534,6 +2880,12 @@ describe('bridge file publishing', () => {
 
   test('waits for every static-site write before cleaning up a failed stage', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     const html = new TextEncoder().encode('<h1>Hello</h1>')
     const css = new TextEncoder().encode('body { color: red }')
@@ -2601,6 +2953,12 @@ describe('bridge file publishing', () => {
 
   test('uses the narrowed mapping at final commit instead of stale public context', async () => {
     seedProject('project-1', 'Design')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1')
     const body = new TextEncoder().encode('# Race')
     const checkedAt = new Date().toISOString()
@@ -2651,6 +3009,12 @@ describe('bridge file publishing', () => {
 
   test('denies a manually created artifact and releases the failed lease', async () => {
     seedProject('project-1', 'Private design', 'private')
+    sqlite
+      .prepare(`INSERT INTO project_share_defaults
+      (id, project_container_id, email, role, created_at, updated_at)
+      VALUES ('bot-placement', 'project-1', 'bot@bots.artifactshare.invalid',
+        'contributor', '2026-01-01', '2026-01-01')`)
+      .run()
     seedMapping('mapping-1', 'project-1', 'channel-1', 'private')
     sqlite
       .prepare(

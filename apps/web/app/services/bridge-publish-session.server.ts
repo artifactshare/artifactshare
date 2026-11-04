@@ -1,3 +1,4 @@
+import { projectPlacementSql } from './projects.server'
 import { pruneVersionsAfterPublish } from './version-retention.server'
 import { sql, type Compilable, type Kysely, type RawBuilder } from 'kysely'
 import { env } from 'cloudflare:workers'
@@ -875,7 +876,14 @@ async function commitBridgeVersion(
 ): Promise<boolean> {
   const operationId = nanoid()
   const versionInsert = guardedVersionInsert(db, input)
-  const scope = bridgeTargetScopeSql(input)
+  const scope = sql<boolean>`${bridgeTargetScopeSql(input)} AND ${projectPlacementSql(
+    {
+      id: input.binding.authority.botUserId,
+      workspaceId: input.authority.workspaceId,
+    },
+    sql.ref('shareables.container_id'),
+    true,
+  )}`
   const visibility = bridgeTargetVisibilitySql(input)
   const visibilityPredicate = visibilityChangePredicate(
     sql<boolean>`id = ${input.target.id}`,
@@ -1035,7 +1043,17 @@ function guardedVersionInsert(
             input.context.requester.verifiedEmail,
           ),
         )
-        .where(bridgeTargetScopeSql(input, 'artifact')),
+        .where(bridgeTargetScopeSql(input, 'artifact'))
+        .where(
+          projectPlacementSql(
+            {
+              id: input.binding.authority.botUserId,
+              workspaceId: input.authority.workspaceId,
+            },
+            sql.ref('artifact.container_id'),
+            true,
+          ),
+        ),
     )
 }
 
@@ -1896,7 +1914,17 @@ function guardedShareableInsert(
           .where('bot.bot_stopped_at', 'is', null)
           .where('fallback.workspace_id', '=', input.authority.workspaceId)
           .where('fallback.kind', '=', 'project')
-          .where('fallback.archived_at', 'is', null),
+          .where('fallback.archived_at', 'is', null)
+          .where(
+            projectPlacementSql(
+              {
+                id: input.binding.authority.botUserId,
+                workspaceId: input.authority.workspaceId,
+              },
+              input.projectId,
+              true,
+            ),
+          ),
       )
   }
   return db
@@ -1950,7 +1978,17 @@ function guardedShareableInsert(
         .where('bot.bot_stopped_at', 'is', null)
         .where('project.workspace_id', '=', input.authority.workspaceId)
         .where('project.kind', '=', 'project')
-        .where('project.archived_at', 'is', null),
+        .where('project.archived_at', 'is', null)
+        .where(
+          projectPlacementSql(
+            {
+              id: input.binding.authority.botUserId,
+              workspaceId: input.authority.workspaceId,
+            },
+            input.projectId,
+            true,
+          ),
+        ),
     )
 }
 

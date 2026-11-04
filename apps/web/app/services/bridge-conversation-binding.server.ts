@@ -2,6 +2,7 @@ import { sql, type Compilable, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import { projectLimitForPlan } from '~/lib/billing-plan.server'
 import { runD1Batch } from '~/lib/d1-batch.server'
+import { lowerEmail } from '~/lib/grant-emails.server'
 import { nowIso } from '~/lib/datetime'
 import type { DB } from '~/types/db'
 import {
@@ -305,7 +306,13 @@ async function createPrivateConversationBarrier(
       })),
     )
     try {
-      await runD1Batch(db, projectInsert, mappingInsert, identityInsert)
+      await runD1Batch(
+        db,
+        projectInsert,
+        mappingInsert,
+        identityInsert,
+        botProjectGrant(db, authority, projectId, now),
+      )
       return {
         kind: 'ok',
         mapping: {
@@ -372,6 +379,9 @@ async function narrowConversationBarrier(
   try {
     await runD1Batch(
       db,
+      // Only the transition to private grants access. Later binding requests
+      // must not restore a grant that has been removed.
+      botProjectGrant(db, authority, mapping.projectId, now, true),
       db
         .updateTable('bridge_conversations')
         .set({
@@ -411,6 +421,56 @@ async function narrowConversationBarrier(
     return { kind: 'internal-error' }
   }
   return { kind: 'ok', mapping: resolved.mapping }
+}
+
+function botProjectGrant(
+  db: Kysely<DB>,
+  authority: LiveAuthority,
+  projectId: string,
+  now: string,
+  narrowing = false,
+) {
+  return db
+    .insertInto('project_share_defaults')
+    .columns([
+      'id',
+      'project_container_id',
+      'email',
+      'role',
+      'created_by_id',
+      'created_at',
+      'updated_at',
+    ])
+    .expression((eb) => {
+      let query = eb
+        .selectFrom('users as bot')
+        .innerJoin('artifact_containers as project', (join) =>
+          join.on('project.id', '=', projectId),
+        )
+        .select([
+          eb.val(nanoid()).as('id'),
+          eb.val(projectId).as('project_container_id'),
+          lowerEmail('bot.email').as('email'),
+          eb.val('contributor' as const).as('role'),
+          eb.val(authority.botUserId).as('created_by_id'),
+          eb.val(now).as('created_at'),
+          eb.val(now).as('updated_at'),
+        ])
+        .where('bot.id', '=', authority.botUserId)
+        .where('project.workspace_id', '=', authority.workspaceId)
+        .where('project.kind', '=', 'project')
+        .where('project.archived_at', 'is', null)
+        .where(liveAuthorityExistsSql(authority))
+        .where(sql<boolean>`NOT EXISTS (
+          SELECT 1 FROM project_share_defaults existing
+          WHERE existing.project_container_id = ${projectId}
+            AND ${lowerEmail('existing.email')} = ${lowerEmail('bot.email')}
+        )`)
+      if (narrowing)
+        query = query.where('project.base_visibility', '!=', 'private')
+      return query
+    })
+    .onConflict((conflict) => conflict.doNothing())
 }
 
 function liveAuthorityExistsSql(authority: LiveAuthority) {
