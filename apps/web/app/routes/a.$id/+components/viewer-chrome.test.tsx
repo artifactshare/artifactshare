@@ -1058,3 +1058,27 @@ test('access-request dismissal through ViewerChrome preserves the live fragment'
     window.history.replaceState(null, '', previousUrl)
   }
 })
+
+test.each([en, ja])(
+  'body link is accessible outside the signed-in menu in both languages',
+  (dictionary) => {
+    mockDictionary = dictionary
+    try {
+      const html = renderChrome({
+        artifact,
+        user: null,
+        bodyHref: '/a/abc123def4/body?version=older',
+        renderType: 'html',
+      })
+      expect(html).toContain('href="/a/abc123def4/body?version=older"')
+      expect(html).toContain('target="_blank"')
+      expect(html).toContain('rel="noopener"')
+      expect(html).toContain(dictionary['vw.openBody'])
+      expect(
+        renderChrome({ artifact, user: null, renderType: 'html' }),
+      ).not.toContain('/body?version=')
+    } finally {
+      mockDictionary = null
+    }
+  },
+)

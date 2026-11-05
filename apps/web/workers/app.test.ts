@@ -272,6 +272,33 @@ describe('app worker link-domain routing', () => {
     },
   )
 
+  test.each([
+    ['abc123def4', 'GET', 200],
+    ['abc123def4', 'HEAD', 200],
+    ['abc123def4', 'POST', 404],
+    ['other12345', 'GET', 404],
+    ['%61bc123def4', 'GET', 404],
+  ])('body path %s %s stays artifact-bound', async (id, method, status) => {
+    const response = await app.fetch(
+      workerRequest(
+        `https://abc123def4.artifactshare.link/a/${id}/body?version=v1`,
+        {
+          method,
+          headers: { Cookie: 'session=secret', Authorization: 'Bearer secret' },
+        },
+      ),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(response.status).toBe(status)
+    if (status === 200) {
+      const forwarded = requestHandlerMock.mock.calls.at(-1)![0]!
+      expect(new URL(forwarded.url).searchParams.get('version')).toBe('v1')
+      expect(forwarded.headers.has('cookie')).toBe(false)
+      expect(forwarded.headers.has('authorization')).toBe(false)
+    } else expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+
   test('forwards the viewer-only data paths the anonymous page needs', async () => {
     for (const path of [
       '/api/shareables/abc123def4/versions?version=1',

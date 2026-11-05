@@ -1,164 +1,27 @@
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import { artifactDeliveryEnabled } from '~/lib/hosts'
-import { renderTypeFromKind } from '~/lib/artifact-type'
 import { signSandboxUrl } from '~/lib/sandbox-token'
-import { linkDomainContext, userContext } from '~/middleware/context'
-import {
-  viewerAccessAllowed,
-  type ArtifactSnapshot,
-} from '~/services/access.server'
-import * as access from '~/modules/access'
-import { checkAnonymousLinkAccess } from '~/services/link-sharing.server'
-import { createDb } from '~/services/db.server'
+import { authorizeSandboxDelivery } from '~/services/sandbox-delivery.server'
 import type { Route } from './+types/api.shareables.$id.sandbox-token'
 
 const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' } as const
 
-export async function loader({ context, params, request }: Route.LoaderArgs) {
-  if (!artifactDeliveryEnabled(env))
+export async function loader(args: Route.LoaderArgs) {
+  const authorized = await authorizeSandboxDelivery(args, 'refresh')
+  if (!authorized.ok)
     return Response.json(
-      { error: 'delivery-unavailable' },
-      { status: 503, headers: NO_STORE_HEADERS },
+      { error: authorized.error },
+      { status: authorized.status, headers: NO_STORE_HEADERS },
     )
-  const linkDomain = context.get(linkDomainContext)
-  if (linkDomain && params.id !== linkDomain.shareableId) {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 404, headers: NO_STORE_HEADERS },
-    )
-  }
-  const user = linkDomain ? null : context.get(userContext)
-  const db = createDb()
-  const shareable = await db
-    .selectFrom('shareables')
-    .leftJoin('versions', 'versions.id', 'shareables.current_version_id')
-    .leftJoin(
-      'artifact_containers as project_container',
-      'project_container.id',
-      'shareables.container_id',
-    )
-    .select([
-      'shareables.id',
-      'shareables.workspace_id',
-      'shareables.owner_user_id',
-      'shareables.name',
-      'shareables.visibility',
-      'shareables.container_id',
-      'shareables.current_version_id',
-      'shareables.artifact_kind',
-      'project_container.kind as project_container_kind',
-      'project_container.base_visibility as project_container_base_visibility',
-      'versions.r2_key',
-      'versions.entrypoint_path',
-      'versions.artifact_kind as version_artifact_kind',
-    ])
-    .where('shareables.id', '=', params.id)
-    .executeTakeFirst()
-  const artifactKind = shareable?.version_artifact_kind
-  const renderType =
-    artifactKind === 'static_site'
-      ? 'static_site'
-      : artifactKind === 'html_page'
-        ? renderTypeFromKind(artifactKind)
-        : artifactKind === 'markdown_page'
-          ? renderTypeFromKind(artifactKind)
-          : null
-  if (!shareable?.r2_key || !shareable.current_version_id || !renderType) {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 404, headers: NO_STORE_HEADERS },
-    )
-  }
-
-  if ((!user || linkDomain) && shareable.visibility !== 'link') {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 401, headers: NO_STORE_HEADERS },
-    )
-  }
-
-  const snapshot: ArtifactSnapshot = {
-    id: shareable.r2_key,
-    name: shareable.name,
-    mimeType: 'text/html',
-    modifiedTime: null,
-    ownerEmail: null,
-  }
-  const check = user
-    ? await (async () => {
-        const accessFacts = await access.facts(db, {
-          shareableId: shareable.id,
-          viewerUserId: user.id,
-          now: new Date().toISOString(),
-        })
-        return accessFacts &&
-          accessFacts.viewerUserId === user.id &&
-          accessFacts.artifactWorkspaceId === shareable.workspace_id &&
-          viewerAccessAllowed(accessFacts)
-          ? ({ kind: 'access-granted', meta: snapshot } as const)
-          : ({ kind: 'access-denied' } as const)
-      })()
-    : (await checkAnonymousLinkAccess(db, shareable.id)).kind === 'allowed'
-      ? ({ kind: 'access-granted', meta: snapshot } as const)
-      : ({ kind: 'access-denied' } as const)
-  if (check.kind !== 'access-granted') {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 404, headers: NO_STORE_HEADERS },
-    )
-  }
-
-  const requestedVersionId = linkDomain
-    ? undefined
-    : new URL(request.url).searchParams.get('version')?.trim()
-  if (
-    !user &&
-    requestedVersionId &&
-    requestedVersionId !== shareable.current_version_id
-  ) {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 404, headers: NO_STORE_HEADERS },
-    )
-  }
-  const version = requestedVersionId
-    ? await db
-        .selectFrom('versions')
-        .select(['id', 'r2_key', 'entrypoint_path', 'artifact_kind'])
-        .where('shareable_id', '=', shareable.id)
-        .where('id', '=', requestedVersionId)
-        .where('status', '=', 'published')
-        .where('published_at', 'is not', null)
-        .executeTakeFirst()
-    : {
-        id: shareable.current_version_id,
-        r2_key: shareable.r2_key,
-        entrypoint_path: shareable.entrypoint_path,
-        artifact_kind: shareable.version_artifact_kind,
-      }
-  const versionRenderType =
-    version?.artifact_kind === 'static_site'
-      ? 'static_site'
-      : version?.artifact_kind === 'html_page' ||
-          version?.artifact_kind === 'markdown_page'
-        ? renderTypeFromKind(version.artifact_kind)
-        : null
-  if (!version || !versionRenderType) {
-    return Response.json(
-      { error: 'not-found' },
-      { status: 404, headers: NO_STORE_HEADERS },
-    )
-  }
-
+  const { shareable, version, renderType: versionRenderType } = authorized
   const sandboxUrl = await signSandboxUrl(
     {
-      uid: user?.id ?? null,
+      uid: authorized.uid,
       wid: shareable.workspace_id,
       aid: shareable.id,
       vid: version.id,
       fid: version.r2_key,
-      mt: check.meta.modifiedTime,
+      mt: authorized.modifiedTime,
       t: versionRenderType,
       jti: nanoid(),
     },

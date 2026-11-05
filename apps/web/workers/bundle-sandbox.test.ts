@@ -1065,6 +1065,128 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockReset()
   })
 
+  test.each([null, 'viewer-1'])(
+    'standalone uid=%s is single use and recovers only at top level',
+    async (uid) => {
+      const db = dbRef.current!
+      await seedSingleFile(db, {
+        id: 'body123abc',
+        versionId: 'body-v1',
+        artifactKind: 'html_page',
+        entrypointPath: '/index.html',
+        r2Key: 'body-key',
+      })
+      if (uid === null)
+        await db
+          .updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', 'body123abc')
+          .execute()
+      if (uid !== null)
+        await db
+          .insertInto('shareable_grants')
+          .values({
+            shareable_id: 'body123abc',
+            granted_email: 'viewer@example.com',
+            granted_by: 'owner-1',
+            granted_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      storageMock.getArtifact.mockImplementation(async () =>
+        storedArtifact('<h1>Body content</h1>', 'text/html'),
+      )
+      const payload = {
+        uid,
+        wid: 'ws-a',
+        aid: 'body123abc',
+        vid: 'body-v1',
+        fid: 'body-key',
+        mt: null,
+        t: 'html' as const,
+        jti: 'body-jti',
+        standalone: true as const,
+      }
+      const token = await signSandboxToken(payload, 'test-secret')
+      const origin = `https://${sandboxVersionLabel(payload.aid, payload.vid, uid === null ? 'link' : 'sandbox')}.usercontent.localhost:5174`
+      const request = (value: string, dest = 'document') =>
+        new Request(`${origin}/?__as_token=${value}`, {
+          headers: { 'Sec-Fetch-Dest': dest },
+        })
+      const response = await handleArtifactSandboxRequest(request(token))
+      expect(response.status).toBe(200)
+      expect(response.headers.has('Set-Cookie')).toBe(false)
+      consumeJtiMock.mockResolvedValue(false)
+      const replay = await handleArtifactSandboxRequest(request(token))
+      expect(replay.status).toBe(401)
+      const recovery = await replay.text()
+      expect(recovery).toContain('expired or has already been used')
+      expect(recovery).toContain(
+        uid === null
+          ? 'https://body123abc.localhost:5173/'
+          : 'https://localhost:5173/a/body123abc?version=body-v1',
+      )
+      expect(recovery).not.toContain('Body content')
+      const iframe = await handleArtifactSandboxRequest(
+        request(token, 'iframe'),
+      )
+      expect(await iframe.text()).toBe('Invalid token')
+      for (const [key, value] of iframe.headers) {
+        if (key !== 'content-type') expect(replay.headers.get(key)).toBe(value)
+      }
+      const expired = await signSandboxToken(payload, 'test-secret', -1)
+      expect(
+        await (await handleArtifactSandboxRequest(request(expired))).text(),
+      ).toContain('Return to the viewer')
+      consumeJtiMock.mockResolvedValue(true)
+      const fresh = await signSandboxToken(
+        { ...payload, jti: 'fresh-jti' },
+        'test-secret',
+      )
+      expect((await handleArtifactSandboxRequest(request(fresh))).status).toBe(
+        200,
+      )
+      await db
+        .updateTable('shareables')
+        .set({ visibility: 'private' })
+        .where('id', '=', payload.aid)
+        .execute()
+      if (uid !== null)
+        await db
+          .deleteFrom('shareable_grants')
+          .where('shareable_id', '=', payload.aid)
+          .execute()
+      const revoked = await handleArtifactSandboxRequest(request(fresh))
+      expect(revoked.status).toBe(401)
+      expect(await revoked.text()).toContain(
+        'unavailable or you no longer have access',
+      )
+      if (uid !== null)
+        await db
+          .insertInto('shareable_grants')
+          .values({
+            shareable_id: payload.aid,
+            granted_email: 'viewer@example.com',
+            granted_by: 'owner-1',
+            granted_at: '2026-05-22T00:00:00.000Z',
+          })
+          .execute()
+      else
+        await db
+          .updateTable('shareables')
+          .set({ visibility: 'link' })
+          .where('id', '=', payload.aid)
+          .execute()
+      await db
+        .updateTable('versions')
+        .set({ published_at: null })
+        .where('id', '=', payload.vid)
+        .execute()
+      expect((await handleArtifactSandboxRequest(request(fresh))).status).toBe(
+        401,
+      )
+    },
+  )
+
   test.each(['authenticated', 'link'] as const)(
     'renewal removes expired tokens from %s redirect targets',
     async (kind) => {

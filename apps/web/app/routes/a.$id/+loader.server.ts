@@ -4,22 +4,17 @@ import {
 } from '~/services/artifact-version-selection.server'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import { sql } from 'kysely'
 import { data } from 'react-router'
 import { type VersionRow } from './+components/history-panel'
 import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
 import { detectArtifactType } from '~/lib/artifact-type'
 import * as access from '~/modules/access'
-import { normalizePlan } from '~/lib/billing-plan.server'
 import { type CommentThreadView } from '~/lib/comments'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { isProduction, linkViewerUrl } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
-import {
-  isLowTrustLinkWorkspace,
-  linkTrustThresholdsFromEnv,
-} from '~/lib/link-trust-policy'
+import { anonymousLinkLowTrust } from '~/services/link-trust.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
 import { signSandboxUrl } from '~/lib/sandbox-token'
 import { normalizeEmailDomain } from '~/lib/workspace-domains'
@@ -1025,47 +1020,7 @@ async function buildLinkAnonymousResponse(
     })
   }
 
-  const thresholds = linkTrustThresholdsFromEnv(env)
-  let linkPublishCount = 0
-  if (normalizePlan(shareable.artifact_workspace_plan) === 'free') {
-    const boundedVisibilityEvents = db
-      .selectFrom('events')
-      .select(sql<number>`1`.as('present'))
-      .where('workspace_id', '=', shareable.workspace_id)
-      .where('type', '=', 'visibility_changed')
-      .where(sql<boolean>`json_extract(payload, '$.to') = 'link'`)
-      .groupBy('shareable_id')
-      .limit(thresholds.linkPublishCount)
-      .as('bounded_visibility_events')
-    const boundedLinkShareables = db
-      .selectFrom('shareables')
-      .select(sql<number>`1`.as('present'))
-      .where('workspace_id', '=', shareable.workspace_id)
-      .where('visibility', '=', 'link')
-      .limit(thresholds.linkPublishCount)
-      .as('bounded_link_shareables')
-    const [visibilityEventCount, currentLinkCount] = await Promise.all([
-      db
-        .selectFrom(boundedVisibilityEvents)
-        .select(({ fn }) => fn.countAll<number>().as('count'))
-        .executeTakeFirst(),
-      db
-        .selectFrom(boundedLinkShareables)
-        .select(({ fn }) => fn.countAll<number>().as('count'))
-        .executeTakeFirst(),
-    ])
-    linkPublishCount = Math.max(
-      Number(visibilityEventCount?.count ?? 0),
-      Number(currentLinkCount?.count ?? 0),
-    )
-  }
-  const lowTrust = isLowTrustLinkWorkspace({
-    plan: shareable.artifact_workspace_plan,
-    ownerCreatedAt: shareable.owner_created_at,
-    now: new Date().toISOString(),
-    linkPublishCount,
-    thresholds,
-  })
+  const lowTrust = await anonymousLinkLowTrust(db, shareable)
 
   const { modifiedTime, name: fileName } = displayCheck.meta
   const isStaticSite = shareable.version_artifact_kind === 'static_site'

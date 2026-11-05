@@ -4,6 +4,7 @@ import {
   IconChevronUp,
   IconChartBar,
   IconCopy,
+  IconExternalLink,
   IconDots as Ellipsis,
   IconHome,
   IconMessage,
@@ -125,6 +126,7 @@ const compactActionClassName =
   'max-phone:h-touch-target max-phone:w-compact-action-width max-phone:p-0'
 
 interface ViewerChromeProps {
+  bodyHref?: string
   artifact: {
     id: string
     storageKey: string
@@ -259,6 +261,7 @@ function ViewerVisibilityChip({
 }
 
 export function ViewerChrome({
+  bodyHref,
   artifact,
   user,
   linkOrigin = null,
@@ -451,6 +454,7 @@ export function ViewerChrome({
         <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
+          bodyHref={bodyHref}
           appOrigin={appOrigin}
           analyticsMode={analyticsMode}
           artifactId={artifact.id}
@@ -1112,6 +1116,7 @@ function ViewerVisibilityDialog({
 }
 
 interface ViewerActionsProps {
+  bodyHref?: string
   appOrigin?: string
   analyticsMode: 'enabled' | 'disabled'
   artifactId: string
@@ -1156,6 +1161,7 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
+  bodyHref,
   visibility: { current: currentVisibility, hasDirectGrants, linkSuspended },
   appOrigin,
   analyticsMode,
@@ -1197,6 +1203,28 @@ function ViewerActions({
 
   return (
     <div className={actionsClassName}>
+      {bodyHref ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className={cn('h-7 w-8 shrink-0 p-0', compactActionClassName)}
+            >
+              <a
+                href={bodyHref}
+                target="_blank"
+                rel="noopener"
+                aria-label={t('vw.openBody')}
+              >
+                <IconExternalLink size={16} aria-hidden="true" />
+              </a>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('vw.openBody')}</TooltipContent>
+        </Tooltip>
+      ) : null}
       {presence.length > 0 ? (
         <Tooltip>
           <TooltipTrigger asChild>

@@ -589,6 +589,7 @@
   "card.viewCountOther": "閲覧 {n} 回",
   "card.commentCountOne": "コメント 1 件",
   "card.commentCountOther": "コメント {n} 件",
+  "vw.openBody": "本文だけを新しいタブで開く",
   "vw.copyUrl": "共有リンクをコピー",
   "vw.bridgeAttributionOpen": "{requester} の共有詳細を表示",
   "vw.bridgeAttributionDetails": "共有の詳細",

@@ -30,6 +30,11 @@ const MECHANICAL_EXCLUDES = [
 // 機械的な除外 (api./dev./og-image 等) はこの checker が持つ。
 export const excludedRoutes = [
   {
+    file: 'a.$id.body.tsx',
+    reason:
+      'Loader-only resource returning an authorized redirect or recovery response, not an app screen',
+  },
+  {
     file: '_home/_protected/activity.tsx',
     reason: '廃止したグローバル activity URL からホームへの無条件 redirect',
   },

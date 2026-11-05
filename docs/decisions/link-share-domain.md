@@ -202,3 +202,37 @@ View spikes also occur for legitimate viral artifacts, and model judgments can b
 - No LLM call without one of the three triggers.
 - No automatic suspension, hiding, or throttling.
 - No storage of referrer URLs, query values, IP addresses, or user agents.
+
+## Open the displayed body alone
+
+Eligible HTML and Markdown viewers have “Open body alone in a new tab”
+(「本文だけを新しいタブで開く」) in the header, including anonymous viewers.
+The ordinary link opens the exact displayed published version without app
+chrome or comments, leaving the viewer and its frame intact. The body route and
+sandbox-token refresh share `authorizeSandboxDelivery`; the body route rechecks
+access at click time and signs a new 60-second, single-use standalone token.
+Delivery rechecks publication and access. Anonymous openings require the current
+version; a stale pin asks the reader to reload the viewer. HEAD returns 405 and
+never mints credentials. Public API, CLI and MCP interfaces are unchanged.
+
+Static sites are excluded because top-level cookie behavior has not been
+confirmed. Low-trust anonymous links are also excluded on both entry hosts:
+the standalone reporter does not run the embedded external-link warning.
+The viewer and click-time route share `anonymousLinkLowTrust`, which collects
+trust inputs and calls `isLowTrustLinkWorkspace` with the environment thresholds.
+This is an explicit limitation of standalone access, not a change to link access.
+
+Spent, expired or invalid top-level credentials show a non-cacheable recovery
+document linking back to a trusted viewer destination. The reader can authorize
+a fresh opening there. Iframe errors retain their previous plain-text behavior.
+CSP, origin separation, and native authored link targets are unchanged.
+
+At top level the injected reporter exits before installing observers, navigation
+interception, messaging or retry timers. Markdown already renders visible text
+and default styles without a parent theme message. Native fragment navigation
+uses the heading IDs emitted by the Markdown renderer. Mermaid remains visible
+source code; no parent-rendered diagram appears. The Markdown Copy button remains
+visible but inert, with no Copied feedback; source is selectable for manual
+copying. TOC active tracking, app theme synchronization, comments, text anchors,
+selection/hash synchronization and CSP-to-parent reporting are inactive.
+Chrome translation verification remains the owner's post-merge check.

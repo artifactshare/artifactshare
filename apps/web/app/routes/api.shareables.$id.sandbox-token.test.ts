@@ -73,6 +73,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
         r2_key: 'key1',
         current_version_id: 'v1',
         artifact_kind: 'static_site',
+        version_status: 'published',
+        version_published_at: '2026-01-01',
         version_artifact_kind: 'static_site',
       }),
     )
@@ -97,6 +99,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
         r2_key: 'ws1/abc123def4/v1/index.html',
         entrypoint_path: '/index.html',
         artifact_kind: 'static_site',
+        version_status: 'published',
+        version_published_at: '2026-01-01',
         version_artifact_kind: 'static_site',
       }),
     )
@@ -148,6 +152,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
           r2_key: `ws1/html123abc/v1/${name}`,
           entrypoint_path: entrypointPath,
           artifact_kind: artifactKind,
+          version_status: 'published',
+          version_published_at: '2026-01-01',
           version_artifact_kind: artifactKind,
         }),
       )
@@ -182,6 +188,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
               r2_key: 'ws1/html123abc/v2/demo.html',
               entrypoint_path: '/demo.html',
               artifact_kind: 'html_page',
+              version_status: 'published',
+              version_published_at: '2026-01-01',
               version_artifact_kind: 'html_page',
             }
           : {
@@ -213,6 +221,30 @@ describe('/api/shareables/:id/sandbox-token', () => {
     })
   })
 
+  test.each([
+    ['pending', '2026-01-01'],
+    ['published', null],
+  ])(
+    'refuses an implicit current version without publication (%s, %s)',
+    async (status, publishedAt) => {
+      dbMock.selectFrom.mockReturnValue(
+        shareableQuery({
+          id: 'abc123def4',
+          workspace_id: 'ws1',
+          visibility: 'private',
+          r2_key: 'key1',
+          current_version_id: 'v1',
+          version_artifact_kind: 'html_page',
+          version_status: status,
+          version_published_at: publishedAt,
+        }),
+      )
+      const response = await loader(loaderArgs())
+      expect(response.status).toBe(404)
+      expect(await response.json()).toEqual({ error: 'not-found' })
+    },
+  )
+
   test('does not return a token when access is denied', async () => {
     dbMock.selectFrom.mockReturnValue(
       shareableQuery({
@@ -228,6 +260,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
         r2_key: 'ws1/abc123def4/v1/index.html',
         entrypoint_path: '/index.html',
         artifact_kind: 'static_site',
+        version_status: 'published',
+        version_published_at: '2026-01-01',
         version_artifact_kind: 'static_site',
       }),
     )
@@ -254,6 +288,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
         r2_key: 'ws1/abc123def4/v1/index.html',
         entrypoint_path: '/index.html',
         artifact_kind: 'static_site',
+        version_status: 'published',
+        version_published_at: '2026-01-01',
         version_artifact_kind: 'static_site',
       }),
     )
@@ -291,6 +327,8 @@ describe('/api/shareables/:id/sandbox-token', () => {
         r2_key: 'ws1/abc123def4/v1/index.html',
         entrypoint_path: '/index.html',
         artifact_kind: 'static_site',
+        version_status: 'published',
+        version_published_at: '2026-01-01',
         version_artifact_kind: 'static_site',
       }),
     )
