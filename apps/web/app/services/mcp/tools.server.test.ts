@@ -871,57 +871,41 @@ describe('headless publish wiring', () => {
   test('tools list advertises accurate tool annotations', async () => {
     const body = await callMcp(db, 'tools/list')
     const tools = body.result?.tools as Array<{
-      name?: string
-      annotations?: {
-        readOnlyHint?: boolean
-        destructiveHint?: boolean
-        openWorldHint?: boolean
-      }
+      name: string
+      annotations: Record<string, boolean>
     }>
-    const byName = new Map(tools.map((tool) => [tool.name, tool.annotations]))
-
-    for (const name of [
-      'share_artifact',
-      'update_artifact',
-      'append_artifact',
-      'edit_artifact',
-    ]) {
-      expect(byName.get(name)).toMatchObject({
-        openWorldHint: true,
-        readOnlyHint: false,
-      })
+    // Values are read-only, destructive, idempotent, and open-world, in order.
+    const expected: Record<string, boolean[]> = {
+      whoami: [true, false, true, false],
+      list_artifacts: [true, false, true, false],
+      get_artifact: [true, false, true, false],
+      preview_artifact: [true, false, true, false],
+      list_comments: [true, false, true, false],
+      list_projects: [true, false, true, false],
+      share_artifact: [false, true, false, true],
+      update_artifact: [false, true, false, true],
+      append_artifact: [false, true, false, true],
+      edit_artifact: [false, true, true, true],
+      delete_artifact: [false, true, false, true],
+      post_comment: [false, false, false, true],
+      update_comment: [false, true, true, true],
+      resolve_comment: [false, false, true, false],
+      reopen_comment: [false, false, true, false],
+      delete_comment: [false, true, false, false],
+      create_project: [false, false, false, false],
+      edit_project: [false, true, true, true],
     }
-    for (const name of ['post_comment', 'create_project', 'edit_project']) {
-      expect(byName.get(name)?.openWorldHint).toBe(false)
-    }
-    for (const name of ['delete_comment', 'update_comment', 'edit_project']) {
-      expect(byName.get(name)).toMatchObject({
-        destructiveHint: true,
-        openWorldHint: false,
-      })
-    }
-    for (const name of [
-      'share_artifact',
-      'update_artifact',
-      'edit_artifact',
-      'delete_artifact',
-    ]) {
-      expect(byName.get(name)).toMatchObject({
-        destructiveHint: true,
-        openWorldHint: true,
-      })
-    }
-    for (const name of [
-      'whoami',
-      'list_artifacts',
-      'get_artifact',
-      'preview_artifact',
-      'list_comments',
-      'list_projects',
-    ]) {
-      expect(byName.get(name)).toMatchObject({
-        destructiveHint: false,
-        readOnlyHint: true,
+    expect(tools.map(({ name }) => name).sort()).toEqual(
+      Object.keys(expected).sort(),
+    )
+    for (const { name, annotations } of tools) {
+      const [readOnlyHint, destructiveHint, idempotentHint, openWorldHint] =
+        expected[name]!
+      expect(annotations).toEqual({
+        readOnlyHint,
+        destructiveHint,
+        idempotentHint,
+        openWorldHint,
       })
     }
   })
@@ -3971,6 +3955,43 @@ describe('headless publish wiring', () => {
     }
     expect(r2.structuredContent?.thread?.status).toBe('open')
   })
+
+  test.each([
+    ['resolve_comment', false],
+    ['reopen_comment', true],
+    ['reopen_comment', false],
+  ] as const)(
+    '%s repeats without changes (initially resolved: %s)',
+    async (name, initiallyResolved) => {
+      const { threadId } = await seedThread()
+      if (initiallyResolved) {
+        await callTool(db, 'resolve_comment', { thread_id: threadId })
+      }
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'))
+        const first = await callTool(db, name, { thread_id: threadId })
+        const before = await db
+          .selectFrom('comment_threads')
+          .selectAll()
+          .where('id', '=', threadId)
+          .executeTakeFirstOrThrow()
+        vi.setSystemTime(new Date('2026-06-02T00:00:00.000Z'))
+        const repeated = await callTool(db, name, { thread_id: threadId })
+        expect(repeated.result).toEqual(first.result)
+        expect(repeated.result).not.toHaveProperty('isError', true)
+        expect(
+          await db
+            .selectFrom('comment_threads')
+            .selectAll()
+            .where('id', '=', threadId)
+            .executeTakeFirstOrThrow(),
+        ).toEqual(before)
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
 
   test('update_comment edits your own comment body', async () => {
     const { threadId, messageId } = await seedThread()
