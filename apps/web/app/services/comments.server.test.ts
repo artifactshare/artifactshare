@@ -1110,6 +1110,177 @@ describe('comments server', () => {
     ).toBe('open')
   })
 
+  test.each([true, false])(
+    'status %s repeats preserve storage and notifications after authorization',
+    async (resolved) => {
+      const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
+      const created = await createCommentThread(
+        fixture.db,
+        access!,
+        viewerUser,
+        'Please check this.',
+      )
+      if (created.kind !== 'ok') throw new Error('seed failed')
+      const threadId = created.threadId
+      if (!resolved) {
+        await setCommentThreadResolved(
+          fixture.db,
+          access!,
+          viewerUser,
+          threadId,
+          true,
+        )
+      }
+      sqliteRef.liveNotifications = []
+      vi.setSystemTime(new Date('2026-05-29T01:00:00.000Z'))
+      const transitioned = await setCommentThreadResolved(
+        fixture.db,
+        access!,
+        ownerUser,
+        threadId,
+        resolved,
+      )
+      expect(transitioned.kind).toBe('ok')
+      expect(sqliteRef.liveNotifications).toHaveLength(1)
+      const before = await fixture.db
+        .selectFrom('comment_threads')
+        .selectAll()
+        .execute()
+      const messages = await fixture.db
+        .selectFrom('comment_messages')
+        .selectAll()
+        .execute()
+      expect(before[0]).toMatchObject({
+        status: resolved ? 'resolved' : 'open',
+        resolved_by_id: resolved ? ownerUser.id : null,
+        resolved_at: resolved ? '2026-05-29T01:00:00.000Z' : null,
+        updated_at: '2026-05-29T01:00:00.000Z',
+      })
+      sqliteRef.liveNotifications = []
+      const update = vi.spyOn(fixture.db, 'updateTable')
+      const insert = vi.spyOn(fixture.db, 'insertInto')
+      const remove = vi.spyOn(fixture.db, 'deleteFrom')
+      vi.setSystemTime(new Date('2026-05-29T02:00:00.000Z'))
+      const repeated = await setCommentThreadResolved(
+        fixture.db,
+        access!,
+        viewerUser,
+        threadId,
+        resolved,
+      )
+      expect(repeated.kind).toBe('ok')
+      expect(repeated.kind === 'ok' ? repeated.threads[0] : null).toMatchObject(
+        {
+          id: threadId,
+          status: resolved ? 'resolved' : 'open',
+          updatedAt: before[0]!.updated_at,
+          resolvedAt: before[0]!.resolved_at,
+        },
+      )
+      expect(
+        await fixture.db.selectFrom('comment_threads').selectAll().execute(),
+      ).toEqual(before)
+      expect(
+        await fixture.db.selectFrom('comment_messages').selectAll().execute(),
+      ).toEqual(messages)
+      expect(update).not.toHaveBeenCalled()
+      expect(insert).not.toHaveBeenCalled()
+      expect(remove).not.toHaveBeenCalled()
+      expect(sqliteRef.liveNotifications).toEqual([])
+      const otherAccess = await loadCommentAccess(
+        fixture.db,
+        otherViewerUser,
+        's1',
+      )
+      expect(
+        await setCommentThreadResolved(
+          fixture.db,
+          otherAccess!,
+          otherViewerUser,
+          threadId,
+          resolved,
+        ),
+      ).toEqual({ kind: 'forbidden' })
+      expect(
+        await setCommentThreadResolved(
+          fixture.db,
+          access!,
+          viewerUser,
+          'missing-thread',
+          resolved,
+        ),
+      ).toEqual({ kind: 'invalid-thread' })
+      vi.restoreAllMocks()
+    },
+  )
+
+  test.each([true, false])(
+    'changeComment status %s no-op preserves the bounded viewer window',
+    async (resolved) => {
+      const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
+      for (let i = 0; i <= COMMENT_THREAD_LIST_LIMIT; i++) {
+        await seedHistory(1, `window-${String(i).padStart(3, '0')}`)
+      }
+      if (resolved) {
+        await fixture.db
+          .updateTable('comment_threads')
+          .set({
+            status: 'resolved',
+            resolved_by_id: viewerUser.id,
+            resolved_at: '2026-05-28T00:00:00.000Z',
+          })
+          .execute()
+      }
+      const before = await fixture.db
+        .selectFrom('comment_threads')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      const messages = await fixture.db
+        .selectFrom('comment_messages')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      const window = await loadCommentThreads(fixture.db, access!, viewerUser)
+      expect(window).toHaveLength(COMMENT_THREAD_LIST_LIMIT)
+      const threadId = before.at(-1)!.id
+      expect(window.map((thread) => thread.id)).not.toContain(threadId)
+      sqliteRef.liveNotifications = []
+      const update = vi.spyOn(fixture.db, 'updateTable')
+      const insert = vi.spyOn(fixture.db, 'insertInto')
+      const remove = vi.spyOn(fixture.db, 'deleteFrom')
+      vi.setSystemTime(new Date('2026-05-29T02:00:00.000Z'))
+      const result = await changeComment(fixture.db, access!, viewerUser, {
+        kind: 'update',
+        threadId,
+        resolved,
+      })
+      expect(result.kind).toBe('ok')
+      expect(await loadCommentThreads(fixture.db, access!, viewerUser)).toEqual(
+        window,
+      )
+      expect(
+        await fixture.db
+          .selectFrom('comment_threads')
+          .selectAll()
+          .orderBy('id')
+          .execute(),
+      ).toEqual(before)
+      expect(
+        await fixture.db
+          .selectFrom('comment_messages')
+          .selectAll()
+          .orderBy('id')
+          .execute(),
+      ).toEqual(messages)
+      expect(update).not.toHaveBeenCalled()
+      expect(insert).not.toHaveBeenCalled()
+      expect(remove).not.toHaveBeenCalled()
+      expect(sqliteRef.liveNotifications).toEqual([])
+      vi.restoreAllMocks()
+    },
+  )
+
   test('allows workspace admin to resolve', async () => {
     await fixture.db
       .updateTable('workspaces')

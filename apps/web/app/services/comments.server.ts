@@ -854,6 +854,10 @@ async function mutateLoadedCommentThreadResolved(
     return { kind: 'forbidden' }
   }
 
+  if (thread.status === (resolved ? 'resolved' : 'open')) {
+    return { kind: 'ok' }
+  }
+
   const now = nowIso()
   await db
     .updateTable('comment_threads')

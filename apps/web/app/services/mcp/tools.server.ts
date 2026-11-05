@@ -516,10 +516,11 @@ const WHOAMI_OUTPUT_SCHEMA = {
 }
 
 // Write tools that can create or change link-visible content are open-world;
-// other writes and comment tools only affect the closed, authenticated system.
+// Comment content and access edits can also reach viewers outside the workspace.
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
+  idempotentHint: true,
   openWorldHint: false,
 } as const
 
@@ -547,6 +548,16 @@ const DESTRUCTIVE_ANNOTATIONS = {
 const PUBLIC_DESTRUCTIVE_ANNOTATIONS = {
   ...DESTRUCTIVE_ANNOTATIONS,
   openWorldHint: true,
+} as const
+
+const IDEMPOTENT_WRITE_ANNOTATIONS = {
+  ...WRITE_ANNOTATIONS,
+  idempotentHint: true,
+} as const
+
+const PUBLIC_IDEMPOTENT_DESTRUCTIVE_ANNOTATIONS = {
+  ...PUBLIC_DESTRUCTIVE_ANNOTATIONS,
+  idempotentHint: true,
 } as const
 
 function toolDescription(description: string): string {
@@ -919,7 +930,7 @@ export function registerArtifactTools(
 
       // Record the revision for the audit trail (which client revised what). The
       // content hash identifies this version's payload; updates aren't deduped,
-      // so a resend lands a new version (retained, non-destructive).
+      // so a resend creates a new version and retention may prune old versions.
       try {
         await recordArtifactPost(ctx.db, {
           shareableId: args.id,
@@ -971,10 +982,10 @@ export function registerArtifactTools(
     {
       title: 'Append to artifact',
       description: toolDescription(
-        'Append content exactly as provided to an existing single-file artifact and create a version at the same share link. No newline or separator is inserted. Markdown content is added at the end; HTML content is inserted immediately before a closing body tag, or at the end when no closing body tag exists. Static sites are not supported. After a transport error, read the artifact with get_artifact before retrying because the append may already have succeeded.',
+        'Append content exactly as provided to an existing single-file artifact and create a version at the same share link. Version retention may prune older versions. No newline or separator is inserted. Markdown content is added at the end; HTML content is inserted immediately before a closing body tag, or at the end when no closing body tag exists. Static sites are not supported. After a transport error, read the artifact with get_artifact before retrying because the append may already have succeeded.',
       ),
       outputSchema: UPDATE_OUTPUT_SCHEMA,
-      annotations: PUBLIC_WRITE_ANNOTATIONS,
+      annotations: PUBLIC_DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
         id: ArtifactIdParamsSchema.shape.id.describe(
           'The artifact id from share_artifact or list_artifacts.',
@@ -1337,7 +1348,7 @@ export function registerArtifactTools(
         'Post a comment on an artifact you can view in your workspace, as the connected user. Start a new thread, reply to one, or anchor a comment to a quoted span of the text. Pass reply_to (a thread id from list_comments) to reply. To anchor the comment to a span, pass quote with the exact text to highlight (copy it from get_artifact); add quote_before / quote_after if the same text appears more than once (up to 400 characters per side, preserving boundary spaces). The viewer attaches only a unique exact complete context. Until a viewer opens the version, anchor.position_state is unchecked; ambiguous or missing positions become needs-check. Omit reply_to and quote to comment on the whole artifact. Everyone who can view the artifact will see it.',
       ),
       outputSchema: POST_COMMENT_OUTPUT_SCHEMA,
-      annotations: WRITE_ANNOTATIONS,
+      annotations: PUBLIC_WRITE_ANNOTATIONS,
       inputSchema: {
         id: ArtifactIdParamsSchema.shape.id.describe(
           'The artifact id from list_artifacts or share_artifact.',
@@ -1422,7 +1433,7 @@ export function registerArtifactTools(
         'Edit a comment you wrote. Identify the thread with thread_id and the message with message_id (both from list_comments). Pass body with the new text — you can only edit your own comments.',
       ),
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
-      annotations: DESTRUCTIVE_ANNOTATIONS,
+      annotations: PUBLIC_IDEMPOTENT_DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
         thread_id: z
           .string()
@@ -1474,10 +1485,10 @@ export function registerArtifactTools(
     {
       title: 'Resolve comment',
       description: toolDescription(
-        'Mark a comment thread as resolved. Pass thread_id from list_comments. The thread author, the artifact owner, or a workspace admin can resolve it.',
+        'Mark a comment thread as resolved. Pass thread_id from list_comments. The thread author, the artifact owner, or a workspace admin can resolve it. Resolving an already resolved thread succeeds without changes.',
       ),
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
-      annotations: WRITE_ANNOTATIONS,
+      annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
       inputSchema: {
         thread_id: z
           .string()
@@ -1524,10 +1535,10 @@ export function registerArtifactTools(
     {
       title: 'Reopen comment',
       description: toolDescription(
-        'Reopen a resolved comment thread. Pass thread_id from list_comments. The thread author, the artifact owner, or a workspace admin can reopen it.',
+        'Reopen a resolved comment thread. Pass thread_id from list_comments. The thread author, the artifact owner, or a workspace admin can reopen it. Reopening an already open thread succeeds without changes.',
       ),
       outputSchema: UPDATE_COMMENT_OUTPUT_SCHEMA,
-      annotations: WRITE_ANNOTATIONS,
+      annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
       inputSchema: {
         thread_id: z
           .string()
@@ -1751,7 +1762,7 @@ export function registerArtifactTools(
         "Change a project's settings in one call: rename it, edit its description, change its sharing scope, add or remove people from its audience, and archive or unarchive it. Pass only the fields you want to change; omitted fields are left as-is. The audience (add_emails / remove_emails) is who can view the project's private-scoped artifacts, including people outside the workspace. Set archived to true to hide the project from the active list, or false to bring it back. Only the project's creator or a workspace admin can edit it. Editing a project's name, description, scope, or audience requires it to be active — pass archived: false in the same call to unarchive and edit it together.",
       ),
       outputSchema: EDIT_PROJECT_OUTPUT_SCHEMA,
-      annotations: DESTRUCTIVE_ANNOTATIONS,
+      annotations: PUBLIC_IDEMPOTENT_DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
         id: ProjectIdParamsSchema.shape.id.describe(
           'The project id from list_projects or create_project.',
@@ -1836,7 +1847,7 @@ export function registerArtifactTools(
         'Change an artifact\'s settings in one call: rename it, change who can view it, set or clear a link expiry, add or remove specific viewers, and file it under a project or back to the unfiled inbox. Pass only the fields you want to change; omitted fields are left as-is. The share link and version history stay the same — use update_artifact instead to replace the content. visibility "workspace" = everyone in the company, "private" = only the people you share with, and "link" = anyone with the URL. For an existing link, omitted link_expires_at preserves its current expiry; null requests unlimited expiry when allowed. To change the location, set project_id to a project id (from list_projects), or to "" (empty string) to return it to the unfiled inbox; omit project_id to leave the location unchanged. Moving never widens who can view it.',
       ),
       outputSchema: EDIT_OUTPUT_SCHEMA,
-      annotations: PUBLIC_DESTRUCTIVE_ANNOTATIONS,
+      annotations: PUBLIC_IDEMPOTENT_DESTRUCTIVE_ANNOTATIONS,
       inputSchema: {
         id: ArtifactIdParamsSchema.shape.id.describe(
           'The artifact id from list_artifacts or share_artifact.',
