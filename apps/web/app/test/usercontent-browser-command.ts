@@ -732,7 +732,8 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             const previousViewport = viewer.viewportSize()
             if (kind === 'link')
               await viewer.setViewportSize({ width: 390, height: 844 })
-            const bodyAction = viewer.getByRole('link', {
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const bodyAction = viewer.getByRole('menuitem', {
               name: 'Open body alone in a new tab',
             })
             assert.equal(
@@ -814,6 +815,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             )
             await bodyPage.close()
             const reopened: Promise<Page> = context.waitForEvent('page')
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
             await bodyAction.click()
             const freshBody = await reopened
             await freshBody.waitForLoadState()
@@ -975,11 +977,19 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             assert.ok(path)
             assert.equal(await readFile(path, 'utf8'), 'Local download')
           } else {
-            // Anonymous Markdown has no export action in the existing product.
-            assert.equal(
-              await viewer.locator('[data-viewer-more-menu-trigger]').count(),
-              0,
+            // Anonymous Markdown offers the body action, but no export actions.
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const bodyAction = viewer.getByRole('menuitem', {
+              name: 'Open body alone in a new tab',
+              exact: true,
+            })
+            await bodyAction.waitFor()
+            assert.deepEqual(
+              await viewer.getByRole('menuitem').allTextContents(),
+              ['Open body alone in a new tab'],
             )
+            await bodyAction.press('Escape')
+            await bodyAction.waitFor({ state: 'hidden' })
           }
           stage = `${engine}: ${kind}:${format} revocation`
           // Obtain unused authority, then revoke before it reaches the Worker.

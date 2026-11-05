@@ -206,7 +206,8 @@ View spikes also occur for legitimate viral artifacts, and model judgments can b
 ## Open the displayed body alone
 
 Eligible HTML and Markdown viewers have “Open body alone in a new tab”
-(「本文だけを新しいタブで開く」) in the header, including anonymous viewers.
+(「本文だけを新しいタブで開く」) in the More menu, including anonymous viewers. Anonymous viewers see the
+More trigger only when this action is available; their menu contains only this action.
 The ordinary link opens the exact displayed published version without app
 chrome or comments, leaving the viewer and its frame intact. The body route and
 sandbox-token refresh share `authorizeSandboxDelivery`; the body route rechecks

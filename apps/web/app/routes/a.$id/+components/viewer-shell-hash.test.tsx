@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createViewerHashSync } from '~/lib/viewer-hash'
@@ -35,14 +35,24 @@ vi.mock('./viewer-chrome', () => ({
   }: {
     bodyHref?: string
     onAccessRequestsOpenChange: (open: boolean) => void
-  }) => (
-    <>
-      <button onClick={() => onAccessRequestsOpenChange(false)}>
-        Close access requests
-      </button>
-      {bodyHref ? <a href={bodyHref}>Open body</a> : null}
-    </>
-  ),
+  }) => {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button onClick={() => onAccessRequestsOpenChange(false)}>
+          Close access requests
+        </button>
+        {bodyHref ? (
+          <>
+            <button data-more onClick={() => setOpen(!open)}>
+              More
+            </button>
+            {open ? <a href={bodyHref}>Open body</a> : null}
+          </>
+        ) : null}
+      </>
+    )
+  },
 }))
 const artifact: ViewerShellArtifact = {
   id: 'abc123def4',
@@ -179,6 +189,10 @@ test.each([
           />,
         ),
       )
+      expect(host.querySelector('a')).toBeNull()
+      const more = host.querySelector<HTMLButtonElement>('[data-more]')
+      expect(Boolean(more)).toBe(eligible)
+      if (more) await act(async () => more.click())
       expect(host.querySelector('a')?.getAttribute('href')).toBe(
         eligible ? '/a/abc123def4/body?version=older' : undefined,
       )
