@@ -429,6 +429,8 @@ function linkDomainRequest(
     url.pathname === `/a/${encodedId}` ||
     url.pathname === `/a/${encodedId}.data` ||
     url.pathname === `/a/${encodedId}/og-image` ||
+    ((request.method === 'GET' || request.method === 'HEAD') &&
+      url.pathname === `/a/${encodedId}/body`) ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-token` ||
     url.pathname === `/api/shareables/${encodedId}/sandbox-block-report` ||
     (request.method === 'POST' &&

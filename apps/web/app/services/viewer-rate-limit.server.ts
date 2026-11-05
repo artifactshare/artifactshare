@@ -49,6 +49,13 @@ export function isViewerRateLimitedPath(request: Request): boolean {
     routeSegments[3]?.toLowerCase() === 'current-version'
   )
     return true
+  if (
+    routeSegments.length === 3 &&
+    routeSegments[0]?.toLowerCase() === 'a' &&
+    routeSegments[1] &&
+    routeSegments[2]?.toLowerCase() === 'body'
+  )
+    return true
   if (decodeSegment(segments.at(-1))?.toLowerCase() === '_.data') {
     segments.pop()
     while (segments.at(-1) === '') segments.pop()

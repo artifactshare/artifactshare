@@ -133,22 +133,26 @@ vi.mock('~/components/ui/dropdown-menu', () => ({
   DropdownMenuItem: ({
     children,
     onSelect,
+    asChild,
     className,
     ...props
   }: {
     children: ReactNode
     onSelect?: (event: Event) => void
     className?: string
-  } & Record<string, unknown>) => (
-    <button
-      type="button"
-      className={className}
-      {...props}
-      onClick={() => onSelect?.(new Event('select'))}
-    >
-      {children}
-    </button>
-  ),
+  } & Record<string, unknown>) =>
+    asChild ? (
+      <>{children}</>
+    ) : (
+      <button
+        type="button"
+        className={className}
+        {...props}
+        onClick={() => onSelect?.(new Event('select'))}
+      >
+        {children}
+      </button>
+    ),
   DropdownMenuLabel: ({ children }: { children: ReactNode }) => (
     <span>{children}</span>
   ),
@@ -1058,3 +1062,56 @@ test('access-request dismissal through ViewerChrome preserves the live fragment'
     window.history.replaceState(null, '', previousUrl)
   }
 })
+
+test.each([en, ja])(
+  'body action is inside More for both viewer types in both languages',
+  (dictionary) => {
+    mockDictionary = dictionary
+    try {
+      for (const signedIn of [false, true]) {
+        const host = document.createElement('div')
+        host.innerHTML = renderChrome({
+          artifact,
+          user: signedIn
+            ? {
+                id: 'u1',
+                email: 'owner@example.com',
+                name: 'Owner',
+                image: null,
+                initial: 'O',
+              }
+            : null,
+          bodyHref: '/a/abc123def4/body?version=older',
+          renderType: 'html',
+          onCopyMarkdown: vi.fn(),
+          onDownloadHtml: vi.fn(),
+        })
+        expect(
+          host.querySelector('[data-viewer-more-menu-trigger]'),
+        ).not.toBeNull()
+        const menu = host.querySelector('.dropdown-menu-content')!
+        const link = menu.querySelector('a')!
+        expect(link.getAttribute('href')).toBe(
+          '/a/abc123def4/body?version=older',
+        )
+        expect(link.target).toBe('_blank')
+        expect(link.rel).toBe('noopener')
+        expect(link.textContent).toBe(dictionary['vw.openBody'])
+        expect(host.querySelectorAll('a[href*="/body?"]')).toHaveLength(1)
+        if (!signedIn) {
+          expect(menu.textContent).toBe(dictionary['vw.openBody'])
+          expect(menu.querySelectorAll('button, hr')).toHaveLength(0)
+        }
+      }
+      const withoutBody = renderChrome({
+        artifact,
+        user: null,
+        renderType: 'html',
+      })
+      expect(withoutBody).not.toContain('data-viewer-more-menu-trigger')
+      expect(withoutBody).not.toContain('/body?version=')
+    } finally {
+      mockDictionary = null
+    }
+  },
+)

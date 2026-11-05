@@ -1,3 +1,4 @@
+import { DELIVERY_UNAVAILABLE_PATH } from '~/lib/hosts'
 import { createCommentRefreshScope } from './comment-refresh-scope'
 import { commentPageUrl } from '~/lib/comment-page'
 import { advanceCommentEpoch } from './use-comment-mutations'
@@ -2729,7 +2730,19 @@ function useViewerShellController({
     revalidator.revalidate()
   }
 
+  const displayedBodyVersion =
+    artifact.displayedVersionId ?? artifact.currentVersionId
+  const bodyHref =
+    sandboxUrl &&
+    new URL(sandboxUrl).pathname !== DELIVERY_UNAVAILABLE_PATH &&
+    (renderType === 'html' || renderType === 'md') &&
+    !linkSafety?.lowTrust &&
+    displayedBodyVersion
+      ? `/a/${encodeURIComponent(artifact.id)}/body?version=${encodeURIComponent(displayedBodyVersion)}`
+      : undefined
+
   return {
+    bodyHref,
     artifact: artifactForChrome,
     viewerRef,
     showLatestVersion,
@@ -2798,6 +2811,7 @@ export function mergeLiveViewCount(
 }
 
 function ViewerShellView({
+  bodyHref,
   artifact,
   viewerRef,
   showLatestVersion,
@@ -2850,6 +2864,7 @@ function ViewerShellView({
       className="bg-surface-warm fixed inset-x-0 top-0 bottom-[var(--consent-banner-height)] flex flex-col overflow-hidden overscroll-none"
     >
       <ViewerChrome
+        bodyHref={bodyHref}
         artifact={artifact}
         user={user}
         linkOrigin={linkSafety ? { shareableId: artifact.id } : null}

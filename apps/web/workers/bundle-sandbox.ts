@@ -1,3 +1,4 @@
+import { bodyRecoveryHtml } from '../app/lib/body-recovery'
 import { withoutSearchParameters } from '../app/lib/sandbox-delivery-query'
 import { env } from 'cloudflare:workers'
 import {
@@ -21,6 +22,7 @@ import {
   isProduction,
   MCP_EMBED_FRAME_ANCESTORS,
   linkViewerOrigin,
+  linkViewerUrl,
   requestHostname,
   sandboxVersionIdentityFromHostname,
   WWW_HOST,
@@ -58,6 +60,7 @@ const COOKIE_CHECK_PARAM = '__as_cookie_check'
 const COOKIE_TTL_SECONDS = 10 * 60
 const ENCODER = new TextEncoder()
 const DECODER = new TextDecoder()
+const retryableOpeningDenials = new WeakSet<Response>()
 
 interface BundleCookiePayload {
   typ: 'bnd'
@@ -76,6 +79,39 @@ type SandboxIdentity = NonNullable<
 type SandboxResponseDomain = Pick<SandboxIdentity, 'shareableId' | 'domain'>
 
 export async function handleArtifactSandboxRequest(
+  request: Request,
+  ctx?: ExecutionContext,
+): Promise<Response> {
+  const response = await handleSandboxRequest(request, ctx)
+  if (
+    response.status !== 401 ||
+    request.headers.get('Sec-Fetch-Dest') !== 'document'
+  )
+    return response
+  const identity = sandboxVersionIdentityFromHostname(
+    requestHostname(request, env),
+    env,
+  )
+  const appOrigin = isProduction(env)
+    ? `https://${APEX_HOST}`
+    : `https://localhost:${APP_DEV_PORT}`
+  const viewerUrl = identity
+    ? identity.domain === 'link'
+      ? linkViewerUrl(isProduction(env), identity.shareableId)
+      : `${appOrigin}/a/${encodeURIComponent(identity.shareableId)}?version=${encodeURIComponent(identity.versionId)}`
+    : appOrigin
+  const headers = new Headers(response.headers)
+  headers.set('Content-Type', 'text/html; charset=utf-8')
+  return new Response(
+    bodyRecoveryHtml(viewerUrl, retryableOpeningDenials.has(response)),
+    {
+      status: response.status,
+      headers,
+    },
+  )
+}
+
+async function handleSandboxRequest(
   request: Request,
   _ctx?: ExecutionContext,
 ): Promise<Response> {
@@ -256,6 +292,7 @@ async function handleEntrypointRequest(
     // path still rechecks current access and the immutable version manifest.
     if (
       verified.failure === 'expired' &&
+      !verified.payload.standalone &&
       existingCookie !== null &&
       authorityMatches(verified.payload, identity, hostname) &&
       sameBundle(existingCookie, verified.payload)
@@ -326,6 +363,22 @@ async function handleEntrypointRequest(
   }
   if (payload.uid === null) {
     const db = createDb()
+    if (
+      payload.standalone &&
+      !(await consumeJti(
+        db,
+        payload.jti,
+        new Date(payload.exp * 1000).toISOString(),
+      ))
+    ) {
+      return deniedResponse(
+        'jti_replayed',
+        'Invalid token',
+        401,
+        { aid: payload.aid },
+        identity,
+      )
+    }
     const linkAccess = await checkAnonymousLinkAccess(db, payload.aid)
     if (linkAccess.kind !== 'allowed') {
       return deniedResponse(
@@ -381,7 +434,10 @@ async function handleEntrypointRequest(
       payload.jti,
       new Date(payload.exp * 1000).toISOString(),
     )
-    if (!consumed && !sameBundle(existingCookie, payload)) {
+    if (
+      !consumed &&
+      (payload.standalone || !sameBundle(existingCookie, payload))
+    ) {
       return deniedResponse('jti_replayed', 'Invalid token', 401, {
         aid: payload.aid,
         vid: payload.vid,
@@ -519,6 +575,7 @@ async function publishedEntrypoint(
     .innerJoin('versions', 'versions.shareable_id', 'shareables.id')
     .select([
       'versions.artifact_kind',
+      'versions.published_at',
       'versions.entrypoint_path',
       'versions.r2_key',
       'shareables.current_version_id',
@@ -530,6 +587,7 @@ async function publishedEntrypoint(
     .where('versions.artifact_kind', '=', expectedKind)
     .executeTakeFirst()
   if (!version || version.entrypoint_path !== path) return null
+  if (payload.standalone && version.published_at === null) return null
   if (requireCurrent && version.current_version_id !== payload.vid) return null
 
   if (payload.t !== 'static_site') {
@@ -1023,7 +1081,11 @@ function deniedResponse(
   responseDomain?: SandboxResponseDomain,
 ): Response {
   console.warn('sandbox_denied', { reason, status, ...detail })
-  return errorResponse(message, status, responseDomain)
+  const response = errorResponse(message, status, responseDomain)
+  if (reason === 'token_expired' || reason === 'jti_replayed') {
+    retryableOpeningDenials.add(response)
+  }
+  return response
 }
 
 function errorResponse(

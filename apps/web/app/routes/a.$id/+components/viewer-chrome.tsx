@@ -4,6 +4,7 @@ import {
   IconChevronUp,
   IconChartBar,
   IconCopy,
+  IconExternalLink,
   IconDots as Ellipsis,
   IconHome,
   IconMessage,
@@ -125,6 +126,7 @@ const compactActionClassName =
   'max-phone:h-touch-target max-phone:w-compact-action-width max-phone:p-0'
 
 interface ViewerChromeProps {
+  bodyHref?: string
   artifact: {
     id: string
     storageKey: string
@@ -259,6 +261,7 @@ function ViewerVisibilityChip({
 }
 
 export function ViewerChrome({
+  bodyHref,
   artifact,
   user,
   linkOrigin = null,
@@ -451,6 +454,7 @@ export function ViewerChrome({
         <BridgeAttribution {...bridgeAttributionProps} variant="phone" />
         <div className="max-viewer:hidden flex-1" />
         <ViewerActions
+          bodyHref={bodyHref}
           appOrigin={appOrigin}
           analyticsMode={analyticsMode}
           artifactId={artifact.id}
@@ -1112,6 +1116,7 @@ function ViewerVisibilityDialog({
 }
 
 interface ViewerActionsProps {
+  bodyHref?: string
   appOrigin?: string
   analyticsMode: 'enabled' | 'disabled'
   artifactId: string
@@ -1156,6 +1161,7 @@ interface ViewerActionsProps {
 }
 
 function ViewerActions({
+  bodyHref,
   visibility: { current: currentVisibility, hasDirectGrants, linkSuspended },
   appOrigin,
   analyticsMode,
@@ -1310,109 +1316,121 @@ function ViewerActions({
         </TooltipTrigger>
         <TooltipContent>{t('vw.copyUrl')}</TooltipContent>
       </Tooltip>
-      {user ? (
-        <>
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <IconButton
-                    ref={moreButtonRef}
-                    type="button"
-                    icon={Ellipsis}
-                    size="md"
-                    className={compactActionClassName}
-                    data-viewer-more-menu-trigger
-                    aria-label={t('vw.more')}
-                  />
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent sideOffset={24}>{t('vw.more')}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent
-              align="end"
-              className="w-60"
-              onCloseAutoFocus={(event) => {
-                if (!historyOpeningRef.current) return
-                historyOpeningRef.current = false
-                event.preventDefault()
-              }}
-            >
-              {onCopyMarkdown || onDownloadHtml || onDownloadMarkdown ? (
-                <>
-                  <DropdownMenuLabel>{t('vw.exportGroup')}</DropdownMenuLabel>
-                  {onCopyMarkdown ? (
-                    <DropdownMenuItem onSelect={() => onCopyMarkdown()}>
-                      {t('vw.copyMarkdown')}
-                    </DropdownMenuItem>
-                  ) : null}
-                  {onDownloadHtml ? (
-                    <DropdownMenuItem onSelect={() => onDownloadHtml()}>
-                      {t('vw.downloadHtml')}
-                    </DropdownMenuItem>
-                  ) : null}
-                  {onDownloadMarkdown ? (
-                    <DropdownMenuItem onSelect={() => onDownloadMarkdown()}>
-                      {t('vw.downloadMarkdown')}
-                    </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuSeparator />
-                </>
-              ) : null}
-              {canChangeVisibility ? (
-                <DropdownMenuItem onSelect={() => onVisibilityOpen()}>
-                  {t('vw.changeVisibility')}
-                </DropdownMenuItem>
-              ) : null}
-              {artifactCanViewHistory ? (
-                <DropdownMenuItem
-                  data-viewer-history-menu-item
-                  onSelect={() => {
-                    historyOpeningRef.current = true
-                    onHistoryOpenChange?.(true, {
-                      returnFocusTo: moreButtonRef.current,
-                    })
-                  }}
-                >
-                  {historyLabel}
-                </DropdownMenuItem>
-              ) : null}
-              {showViewerListMenuItem ? (
-                <DropdownMenuItem
-                  data-viewer-list-menu-item
-                  onSelect={() =>
-                    onViewerListEntrySelect?.('menu', moreButtonRef.current)
-                  }
-                >
-                  {t('vw.viewerListMenuItem')}
-                </DropdownMenuItem>
-              ) : null}
-              {canMove ? (
-                <DropdownMenuItem onSelect={() => onMoveOpen()}>
-                  {t('vw.move')}
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={() => onRemoveOpen()}
-                className="text-destructive focus:text-destructive"
-              >
-                {t('menu.remove')}
+      {user || bodyHref ? (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <IconButton
+                  ref={moreButtonRef}
+                  type="button"
+                  icon={Ellipsis}
+                  size="md"
+                  className={compactActionClassName}
+                  data-viewer-more-menu-trigger
+                  aria-label={t('vw.more')}
+                />
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent sideOffset={24}>{t('vw.more')}</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent
+            align="end"
+            className="w-60"
+            onCloseAutoFocus={(event) => {
+              if (!historyOpeningRef.current) return
+              historyOpeningRef.current = false
+              event.preventDefault()
+            }}
+          >
+            {bodyHref ? (
+              <DropdownMenuItem asChild>
+                <a href={bodyHref} target="_blank" rel="noopener">
+                  <IconExternalLink size={16} aria-hidden="true" />
+                  {t('vw.openBody')}
+                </a>
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <AvatarMenu
-            key={accessRequestId ?? 'account'}
-            user={user}
-            variant="viewer"
-            topbarCollapsed={topbarCollapsed}
-            initialAccessRequestId={accessRequestId}
-            accessRequestsOpen={accessRequestsOpen}
-            onAccessRequestsOpenChange={onAccessRequestsOpenChange}
-            onAccessRequestsOpen={onAccessRequestsOpen}
-            onAccessRequestDismiss={onAccessRequestDismiss}
-          />
-        </>
+            ) : null}
+            {user ? (
+              <>
+                {onCopyMarkdown || onDownloadHtml || onDownloadMarkdown ? (
+                  <>
+                    <DropdownMenuLabel>{t('vw.exportGroup')}</DropdownMenuLabel>
+                    {onCopyMarkdown ? (
+                      <DropdownMenuItem onSelect={() => onCopyMarkdown()}>
+                        {t('vw.copyMarkdown')}
+                      </DropdownMenuItem>
+                    ) : null}
+                    {onDownloadHtml ? (
+                      <DropdownMenuItem onSelect={() => onDownloadHtml()}>
+                        {t('vw.downloadHtml')}
+                      </DropdownMenuItem>
+                    ) : null}
+                    {onDownloadMarkdown ? (
+                      <DropdownMenuItem onSelect={() => onDownloadMarkdown()}>
+                        {t('vw.downloadMarkdown')}
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
+                {canChangeVisibility ? (
+                  <DropdownMenuItem onSelect={() => onVisibilityOpen()}>
+                    {t('vw.changeVisibility')}
+                  </DropdownMenuItem>
+                ) : null}
+                {artifactCanViewHistory ? (
+                  <DropdownMenuItem
+                    data-viewer-history-menu-item
+                    onSelect={() => {
+                      historyOpeningRef.current = true
+                      onHistoryOpenChange?.(true, {
+                        returnFocusTo: moreButtonRef.current,
+                      })
+                    }}
+                  >
+                    {historyLabel}
+                  </DropdownMenuItem>
+                ) : null}
+                {showViewerListMenuItem ? (
+                  <DropdownMenuItem
+                    data-viewer-list-menu-item
+                    onSelect={() =>
+                      onViewerListEntrySelect?.('menu', moreButtonRef.current)
+                    }
+                  >
+                    {t('vw.viewerListMenuItem')}
+                  </DropdownMenuItem>
+                ) : null}
+                {canMove ? (
+                  <DropdownMenuItem onSelect={() => onMoveOpen()}>
+                    {t('vw.move')}
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => onRemoveOpen()}
+                  className="text-destructive focus:text-destructive"
+                >
+                  {t('menu.remove')}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+      {user ? (
+        <AvatarMenu
+          key={accessRequestId ?? 'account'}
+          user={user}
+          variant="viewer"
+          topbarCollapsed={topbarCollapsed}
+          initialAccessRequestId={accessRequestId}
+          accessRequestsOpen={accessRequestsOpen}
+          onAccessRequestsOpenChange={onAccessRequestsOpenChange}
+          onAccessRequestsOpen={onAccessRequestsOpen}
+          onAccessRequestDismiss={onAccessRequestDismiss}
+        />
       ) : (
         <>
           <IconButton

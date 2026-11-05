@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import type { Cookie } from 'playwright'
+import type { Cookie, Page } from 'playwright'
 import { execFile } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -435,6 +435,26 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           ? route.continue()
           : route.abort(),
       )
+      await context.addInitScript(() => {
+        if (
+          window.parent !== window ||
+          !location.hostname.endsWith('.usercontent.example')
+        )
+          return
+        const scheduled = { count: 0 }
+        Object.defineProperty(window, '__bodyTimers', { value: scheduled })
+        for (const name of ['setTimeout', 'setInterval'] as const) {
+          const original = window[name]
+          Object.defineProperty(window, name, {
+            value: new Proxy(original, {
+              apply(target, receiver, args) {
+                scheduled.count++
+                return Reflect.apply(target, receiver, args)
+              },
+            }),
+          })
+        }
+      })
       const viewer = await context.newPage()
       await viewer.addInitScript(collectUsercontentReports)
       console.info('usercontent browser under test', {
@@ -532,7 +552,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             kind === 'link' ? 'link' : 'https://app.example',
           )
           const boundaryProbe = `<script>document.cookie='__Secure-better-auth.session_token=${sessionCookie('session-author')}; Domain=app.example; Secure; Path=/; SameSite=None';document.cookie='isolation_probe=changed; Domain=app.example; Secure; Path=/';document.cookie='__Host-as_bnd=invalid; Domain=usercontent.example; Secure; Path=/; SameSite=None; Partitioned';document.cookie='as_bnd=sibling; Domain=usercontent.example; Secure; Path=/; SameSite=None; Partitioned';document.body.dataset.cookieAttack='attempted';</script>`
-          const html = `<h1 id="section">Local delivery</h1>${boundaryProbe}${fixtureScript}<a download="fixture.txt" href="data:text/plain,Local%20download">Download fixture</a>`
+          const html = `<h1 id="section">Local delivery</h1><a href="#body-section">Body section</a><h2 id="body-section">Body section target</h2><a href="https://app.example/">Return home</a>${boundaryProbe}${fixtureScript}<a download="fixture.txt" href="data:text/plain,Local%20download">Download fixture</a>`
           if (format === 'static_site') {
             form.append(
               'file',
@@ -570,7 +590,11 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             form.append(
               'file',
               new File(
-                [format === 'md' ? '# Local delivery\n\n## Section' : html],
+                [
+                  format === 'md'
+                    ? '# Local delivery\n\n## Section\n\n[Body section](#body-section)\n\n## Body section\n\n[Return home](https://app.example/)\n\n```mermaid\ngraph TD; A-->B\n```'
+                    : html,
+                ],
                 format === 'md' ? 'index.md' : 'index.html',
                 { type: format === 'md' ? 'text/markdown' : 'text/html' },
               ),
@@ -702,6 +726,120 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           )
           stage = `${engine}: ${kind}:${format} hash report`
           await viewer.waitForURL((url) => url.hash === '#changed')
+
+          if (format !== 'static_site') {
+            stage = `${engine}: ${kind}:${format} standalone body`
+            const previousViewport = viewer.viewportSize()
+            if (kind === 'link')
+              await viewer.setViewportSize({ width: 390, height: 844 })
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const bodyAction = viewer.getByRole('menuitem', {
+              name: 'Open body alone in a new tab',
+            })
+            assert.equal(
+              await bodyAction.getAttribute('href'),
+              `/a/${artifact.id}/body?version=${artifact.versionId}`,
+            )
+            const frameUrl = await viewer
+              .locator('iframe[data-src]')
+              .first()
+              .getAttribute('data-src')
+            const actionBounds = await bodyAction.boundingBox()
+            assert.ok(
+              actionBounds &&
+                actionBounds.x >= 0 &&
+                actionBounds.x + actionBounds.width <=
+                  viewer.viewportSize()!.width,
+            )
+            await bodyAction.focus()
+            const opened: Promise<Page> = context.waitForEvent('page')
+            await bodyAction.press('Enter')
+            const bodyPage = await opened
+            const bodyErrors: string[] = []
+            bodyPage.on('pageerror', (error) => bodyErrors.push(error.message))
+            await bodyPage.waitForLoadState()
+            assert.equal(await bodyPage.evaluate(() => window.opener), null)
+            assert.equal(
+              await bodyPage.locator('h1').textContent(),
+              'Local delivery',
+            )
+            assert.equal(
+              await bodyPage.locator('[data-slot="tooltip-trigger"]').count(),
+              0,
+            )
+            await bodyPage
+              .getByRole('link', { name: 'Body section', exact: true })
+              .last()
+              .click()
+            assert.equal(new URL(bodyPage.url()).hash, '#body-section')
+            if (format === 'md') {
+              const source = bodyPage.locator('code.language-mermaid')
+              assert.equal(await source.isVisible(), true)
+              assert.match((await source.textContent()) ?? '', /graph TD/)
+              const copy = bodyPage.getByRole('button', { name: 'Copy code' })
+              await copy.click()
+              assert.equal(await copy.textContent(), 'Copy')
+              assert.equal(
+                await source.evaluate((element) => {
+                  const selection = window.getSelection()!
+                  const range = document.createRange()
+                  range.selectNodeContents(element)
+                  selection.removeAllRanges()
+                  selection.addRange(range)
+                  return selection.toString().trim()
+                }),
+                'graph TD; A-->B',
+              )
+            }
+            assert.equal(
+              await bodyPage.evaluate(
+                () => Reflect.get(window, '__bodyTimers').count,
+              ),
+              0,
+            )
+            await bodyPage.reload()
+            await bodyPage
+              .getByRole('link', { name: 'Return to the viewer' })
+              .waitFor()
+            assert.match(
+              (await bodyPage.locator('main').textContent()) ?? '',
+              /expired or has already been used/,
+            )
+            await bodyPage
+              .getByRole('link', { name: 'Return to the viewer' })
+              .click()
+            await bodyPage.waitForURL(
+              (url) =>
+                url.hostname === new URL(publicUrl).hostname &&
+                url.pathname === new URL(publicUrl).pathname,
+            )
+            await bodyPage.close()
+            const reopened: Promise<Page> = context.waitForEvent('page')
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            await bodyAction.click()
+            const freshBody = await reopened
+            await freshBody.waitForLoadState()
+            await freshBody
+              .getByRole('link', { name: 'Return home', exact: true })
+              .click()
+            await freshBody.waitForURL('https://app.example/')
+            await freshBody.close()
+            if (previousViewport) await viewer.setViewportSize(previousViewport)
+            assert.deepEqual(bodyErrors, [])
+            assert.equal(
+              await viewer
+                .locator('iframe[data-src]')
+                .first()
+                .getAttribute('data-src'),
+              frameUrl,
+            )
+            await commandUsercontentFixture(
+              viewer,
+              executionOrigin,
+              frame,
+              'hash',
+            )
+          }
           const probe = await viewer.evaluate(
             async ({ origin, path }) => {
               const response = await fetch(origin + path, {
@@ -839,11 +977,19 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             assert.ok(path)
             assert.equal(await readFile(path, 'utf8'), 'Local download')
           } else {
-            // Anonymous Markdown has no export action in the existing product.
-            assert.equal(
-              await viewer.locator('[data-viewer-more-menu-trigger]').count(),
-              0,
+            // Anonymous Markdown offers the body action, but no export actions.
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const bodyAction = viewer.getByRole('menuitem', {
+              name: 'Open body alone in a new tab',
+              exact: true,
+            })
+            await bodyAction.waitFor()
+            assert.deepEqual(
+              await viewer.getByRole('menuitem').allTextContents(),
+              ['Open body alone in a new tab'],
             )
+            await bodyAction.press('Escape')
+            await bodyAction.waitFor({ state: 'hidden' })
           }
           stage = `${engine}: ${kind}:${format} revocation`
           // Obtain unused authority, then revoke before it reaches the Worker.

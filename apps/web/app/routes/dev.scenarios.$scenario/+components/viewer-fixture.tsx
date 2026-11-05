@@ -58,6 +58,7 @@ export function ViewerFixture({
   return (
     <div className="bg-surface-warm fixed inset-0 flex flex-col overflow-hidden overscroll-none">
       <ViewerChrome
+        bodyHref="/a/abc123def4/body?version=v1"
         artifact={artifact}
         user={tooltipOpen || movable ? VIEWER_USER : null}
         renderType="md"

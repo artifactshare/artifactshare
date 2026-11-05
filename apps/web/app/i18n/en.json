@@ -589,6 +589,7 @@
   "card.viewCountOther": "{n} views",
   "card.commentCountOne": "1 comment",
   "card.commentCountOther": "{n} comments",
+  "vw.openBody": "Open body alone in a new tab",
   "vw.copyUrl": "Copy link",
   "vw.bridgeAttributionOpen": "Show share details for {requester}",
   "vw.bridgeAttributionDetails": "Share details",

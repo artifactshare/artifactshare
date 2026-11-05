@@ -36,6 +36,8 @@ export interface SandboxPayload {
    * normal viewer path.
    */
   emb?: boolean
+  /** Single-use HTML/Markdown body opening without the viewer frame. */
+  standalone?: true
   /** Unix seconds. */
   exp: number
 }
@@ -159,6 +161,10 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
       payload.t === 'static_site') &&
     typeof payload.jti === 'string' &&
     (payload.emb === undefined || typeof payload.emb === 'boolean') &&
+    (payload.standalone === undefined ||
+      (payload.standalone === true &&
+        !payload.emb &&
+        (payload.t === 'html' || payload.t === 'md'))) &&
     typeof payload.exp === 'number' &&
     Number.isFinite(payload.exp)
   )

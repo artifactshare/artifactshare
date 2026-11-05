@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createViewerHashSync } from '~/lib/viewer-hash'
@@ -17,6 +17,7 @@ const navigation = vi.hoisted(() => ({
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
   useLocation: () => navigation.location,
+  useViewTransitionState: () => false,
   useNavigate: () => navigation.navigate,
   useRevalidator: () => ({ revalidate: vi.fn() }),
 }))
@@ -24,16 +25,34 @@ vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
   return { useT: () => bindI18n('en') }
 })
+vi.mock('./sandbox-frame', () => ({
+  SandboxFrame: ({ url }: { url: string }) => <div data-frame-url={url} />,
+}))
 vi.mock('./viewer-chrome', () => ({
   ViewerChrome: ({
     onAccessRequestsOpenChange,
+    bodyHref,
   }: {
+    bodyHref?: string
     onAccessRequestsOpenChange: (open: boolean) => void
-  }) => (
-    <button onClick={() => onAccessRequestsOpenChange(false)}>
-      Close access requests
-    </button>
-  ),
+  }) => {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button onClick={() => onAccessRequestsOpenChange(false)}>
+          Close access requests
+        </button>
+        {bodyHref ? (
+          <>
+            <button data-more onClick={() => setOpen(!open)}>
+              More
+            </button>
+            {open ? <a href={bodyHref}>Open body</a> : null}
+          </>
+        ) : null}
+      </>
+    )
+  },
 }))
 const artifact: ViewerShellArtifact = {
   id: 'abc123def4',
@@ -122,6 +141,62 @@ test.each([
       )
     } finally {
       hashSync.clear()
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  },
+)
+
+test.each([
+  ['html', false, true, false],
+  ['html', false, false, true],
+  ['md', false, true, false],
+  ['html', true, false, false],
+  ['md', true, false, false],
+  ['static_site', false, false, false],
+  [null, false, false, false],
+] as const)(
+  'body action for %s, low trust %s follows the displayed version',
+  async (renderType, lowTrust, eligible, deliveryUnavailable) => {
+    navigation.location.search = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      await act(async () =>
+        root.render(
+          <ViewerShell
+            artifact={{
+              ...artifact,
+              currentVersionId: 'current',
+              displayedVersionId: 'older',
+            }}
+            user={null}
+            renderType={renderType}
+            sandboxUrl={
+              renderType
+                ? deliveryUnavailable
+                  ? 'https://usercontent.example/.well-known/artifactshare-delivery-unavailable'
+                  : 'https://usercontent.example/?__as_token=frame-only'
+                : null
+            }
+            linkSafety={{ lowTrust }}
+            bundlePaths={[]}
+          />,
+        ),
+      )
+      expect(host.querySelector('a')).toBeNull()
+      const more = host.querySelector<HTMLButtonElement>('[data-more]')
+      expect(Boolean(more)).toBe(eligible)
+      if (more) await act(async () => more.click())
+      expect(host.querySelector('a')?.getAttribute('href')).toBe(
+        eligible ? '/a/abc123def4/body?version=older' : undefined,
+      )
+    } finally {
       await act(async () => root.unmount())
       host.remove()
     }
