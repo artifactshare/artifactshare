@@ -35,8 +35,9 @@ export interface SandboxPayload {
    * `frame-ancestors` to the host's sandbox origin. Absent / false on the
    * normal viewer path.
    */
-  standalone?: true
   emb?: boolean
+  /** Single-use HTML/Markdown body opening without the viewer frame. */
+  standalone?: true
   /** Unix seconds. */
   exp: number
 }

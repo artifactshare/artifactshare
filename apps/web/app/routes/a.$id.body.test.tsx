@@ -166,6 +166,11 @@ test.each([false, true])(
       expect(response.headers.has('Location')).toBe(false)
       const body = await response.text()
       expect(body).toContain('Return to the viewer')
+      expect(body).toContain('<section lang="ja">')
+      expect(body).toContain(
+        '本文を表示できないか、閲覧権限がなくなっています。',
+      )
+      expect(body).toContain('ビューアーに戻る</a>')
       expect(body).not.toMatch(/body-key|Protected title|__as_token/)
     }
   },

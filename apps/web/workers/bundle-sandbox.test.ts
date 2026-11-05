@@ -1120,6 +1120,11 @@ describe('handleArtifactSandboxRequest', () => {
       expect(replay.status).toBe(401)
       const recovery = await replay.text()
       expect(recovery).toContain('expired or has already been used')
+      expect(recovery).toContain('<section lang="ja">')
+      expect(recovery).toContain(
+        'このリンクは有効期限が切れているか、すでに使用されています。',
+      )
+      expect(recovery).toContain('ビューアーに戻る</a>')
       expect(recovery).toContain(
         uid === null
           ? 'https://body123abc.localhost:5173/'
