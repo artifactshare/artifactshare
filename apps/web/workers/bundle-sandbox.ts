@@ -84,7 +84,8 @@ export async function handleArtifactSandboxRequest(
 ): Promise<Response> {
   const response = await handleSandboxRequest(request, ctx)
   if (
-    response.status < 400 ||
+    response.status !== 401 ||
+    !new URL(request.url).searchParams.has('__as_token') ||
     request.headers.get('Sec-Fetch-Dest') !== 'document'
   )
     return response

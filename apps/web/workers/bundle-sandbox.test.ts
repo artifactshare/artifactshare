@@ -1527,7 +1527,9 @@ describe('handleArtifactSandboxRequest', () => {
     const target = new URL(entry.headers.get('Location')!, sandboxOrigin())
     expect(target.pathname).toBe('/index.html')
     expect(target.searchParams.has('__as_token')).toBe(false)
-    const blocked = await handleArtifactSandboxRequest(new Request(target))
+    const blocked = await handleArtifactSandboxRequest(
+      new Request(target, { headers: { 'Sec-Fetch-Dest': 'document' } }),
+    )
     expect(blocked.status).toBe(403)
     const message = await blocked.text()
     expect(message).toContain('blocks or does not support the cookies')
@@ -3336,7 +3338,7 @@ describe('handleArtifactSandboxRequest', () => {
 
     const response = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin()}/projects/alpha`, {
-        headers: { Cookie: cookie ?? '' },
+        headers: { Cookie: cookie ?? '', 'Sec-Fetch-Dest': 'document' },
       }),
     )
 
