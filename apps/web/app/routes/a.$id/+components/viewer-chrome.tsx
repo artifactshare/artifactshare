@@ -1203,28 +1203,6 @@ function ViewerActions({
 
   return (
     <div className={actionsClassName}>
-      {bodyHref ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className={cn('h-7 w-8 shrink-0 p-0', compactActionClassName)}
-            >
-              <a
-                href={bodyHref}
-                target="_blank"
-                rel="noopener"
-                aria-label={t('vw.openBody')}
-              >
-                <IconExternalLink size={16} aria-hidden="true" />
-              </a>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('vw.openBody')}</TooltipContent>
-        </Tooltip>
-      ) : null}
       {presence.length > 0 ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -1298,6 +1276,28 @@ function ViewerActions({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{t('comments.entry')}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      {bodyHref ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className={cn('h-7 w-8 shrink-0 p-0', compactActionClassName)}
+            >
+              <a
+                href={bodyHref}
+                target="_blank"
+                rel="noopener"
+                aria-label={t('vw.openBody')}
+              >
+                <IconExternalLink size={16} aria-hidden="true" />
+              </a>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('vw.openBody')}</TooltipContent>
         </Tooltip>
       ) : null}
       <Tooltip>

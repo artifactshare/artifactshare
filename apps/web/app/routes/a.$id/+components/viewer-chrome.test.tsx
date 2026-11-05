@@ -1082,3 +1082,29 @@ test.each([en, ja])(
     }
   },
 )
+
+test.each([false, true])(
+  'body link sits directly before Copy link (signed in: %s)',
+  (signedIn) => {
+    const host = document.createElement('div')
+    host.innerHTML = renderChrome({
+      artifact,
+      user: signedIn
+        ? {
+            id: 'u1',
+            email: 'owner@example.com',
+            name: 'Owner',
+            image: null,
+            initial: 'O',
+          }
+        : null,
+      bodyHref: '/a/s1/body?version=older',
+      renderType: 'html',
+    })
+    const bodyLink = host.querySelector('a[href="/a/s1/body?version=older"]')
+    const copyLink = host.querySelector('button[aria-label="Copy URL"]')
+    expect(bodyLink).not.toBeNull()
+    expect(copyLink).not.toBeNull()
+    expect(bodyLink!.nextElementSibling).toBe(copyLink)
+  },
+)
