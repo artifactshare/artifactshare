@@ -123,6 +123,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
     })
     const app = harness.getWorker(sourceConfig.name)
     const sandbox = harness.getWorker('artifactshare-sandbox-public-preview')
+    let omitStandaloneCookies = false
     const network = setupServer(
       http.get(
         'https://tail.developers.workers.dev/:id',
@@ -285,6 +286,11 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                   ),
                 )
             }
+            const omitDocumentCookie =
+              omitStandaloneCookies &&
+              incoming.hostname.endsWith('.usercontent.example') &&
+              request.headers['sec-fetch-dest'] === 'document'
+            if (omitDocumentCookie) headers.delete('Cookie')
             const target = mapText(incoming.href, false)
             if (
               request.headers.cookie
@@ -324,7 +330,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 response.setHeader(name, mapText(value, true))
             }
             const cookies = result.headers.getSetCookie()
-            if (cookies.length)
+            if (cookies.length && !omitDocumentCookie)
               response.setHeader(
                 'Set-Cookie',
                 cookies.map((cookie) => mapText(cookie, true)),
@@ -546,6 +552,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
       let assetPreflights = 0
       for (const kind of ['authenticated', 'link'] as const) {
         for (const format of ['html', 'md', 'static_site'] as const) {
+          let standaloneSite: Page | undefined
           stage = `${engine}: ${kind}:${format} upload`
           const form = new FormData()
           const fixtureScript = usercontentFixtureScript(
@@ -906,6 +913,160 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               { heading: 'Next page', pathname: '/next.html' },
               frame.nonce,
             )
+            stage = `${engine}: ${kind}:static_site standalone from subpage`
+            const embeddedUrl = await viewer
+              .locator('iframe[data-src]')
+              .first()
+              .getAttribute('data-src')
+            const embeddedCookies = (await context.cookies()).filter(
+              (cookie) =>
+                cookie.name === '__Host-as_bnd' &&
+                cookie.domain === new URL(executionOrigin).hostname,
+            )
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const action = viewer.getByRole('menuitem', {
+              name: 'Open body alone in a new tab',
+            })
+            await action.focus()
+            const opened: Promise<Page> = context.waitForEvent('page')
+            await action.press('Enter')
+            const site = await opened
+            await site.waitForLoadState()
+            assert.equal(await site.evaluate(() => window.opener), null)
+            await site
+              .getByRole('heading', { name: 'Local delivery' })
+              .waitFor()
+            assert.equal(new URL(site.url()).search, '')
+            assert.equal(
+              await site.locator('body').getAttribute('data-asset'),
+              'loaded',
+            )
+            assert.equal(
+              await site
+                .locator('body')
+                .evaluate((element) =>
+                  getComputedStyle(element).getPropertyValue(
+                    '--delivery-asset',
+                  ),
+                ),
+              'loaded',
+            )
+            await site.reload()
+            await site.getByRole('link', { name: 'Next', exact: true }).click()
+            await site.getByRole('heading', { name: 'Next page' }).waitFor()
+            await site.getByRole('link', { name: 'Back', exact: true }).click()
+            await site
+              .getByRole('heading', { name: 'Local delivery' })
+              .waitFor()
+            assert.equal(
+              await viewer
+                .locator('iframe[data-src]')
+                .first()
+                .getAttribute('data-src'),
+              embeddedUrl,
+            )
+            const afterCookies = await context.cookies()
+            for (const cookie of embeddedCookies)
+              assert.ok(
+                afterCookies.some(
+                  (after) =>
+                    after.name === cookie.name &&
+                    after.domain === cookie.domain &&
+                    after.partitionKey === cookie.partitionKey &&
+                    after.value === cookie.value,
+                ),
+              )
+            await waitForUsercontentState(
+              viewer,
+              executionOrigin,
+              { heading: 'Next page', pathname: '/next.html' },
+              frame.nonce,
+            )
+            // Model the browser dropping expired top-level authority, without
+            // changing the original frame's cookie partition.
+            omitStandaloneCookies = true
+            await site.reload()
+            if (kind === 'authenticated') {
+              await site
+                .getByRole('link', { name: 'Return to the viewer' })
+                .waitFor()
+              assert.match(
+                (await site.locator('main').textContent()) ?? '',
+                /expired or has already been used/,
+              )
+            } else {
+              await site
+                .getByRole('heading', { name: 'Local delivery' })
+                .waitFor()
+            }
+            await site.close()
+            // Refuse the exchange cookie as well: the new tab must terminate
+            // at guidance, even on the otherwise cookie-free link host.
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const blockedOpening: Promise<Page> = context.waitForEvent('page')
+            await action.click()
+            const blockedSite = await blockedOpening
+            await blockedSite
+              .getByRole('heading', {
+                name:
+                  kind === 'link'
+                    ? 'Static-site preview unavailable'
+                    : 'Private static-site preview unavailable',
+                exact: true,
+              })
+              .waitFor()
+            assert.equal(
+              await blockedSite.locator('body').getAttribute('data-asset'),
+              null,
+            )
+            await blockedSite.close()
+            omitStandaloneCookies = false
+            if (kind === 'authenticated') {
+              // The displayed version becomes history before the next click.
+              const currentVersion = `current-${artifact.versionId}`
+              await env.DB.prepare(
+                'INSERT INTO versions (id, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at) SELECT ?, shareable_id, artifact_kind, status, entrypoint_path, r2_key, size_bytes, sha256, created_by_id, created_at, published_at FROM versions WHERE id=?',
+              )
+                .bind(currentVersion, artifact.versionId)
+                .run()
+              await env.DB.prepare(
+                'UPDATE shareables SET current_version_id=? WHERE id=?',
+              )
+                .bind(currentVersion, artifact.id)
+                .run()
+            } else {
+              // An anonymous app-host body route must reach the same link
+              // execution host, without borrowing the browser's app session.
+              const appOpening = await app.fetch(
+                `https://artifactshare.com/a/${artifact.id}/body?version=${artifact.versionId}`,
+                { redirect: 'manual' },
+              )
+              assert.equal(appOpening.status, 302)
+              const appBody = await context.newPage()
+              await appBody.goto(
+                mapText(appOpening.headers.get('Location')!, true),
+              )
+              await appBody
+                .getByRole('heading', { name: 'Local delivery' })
+                .waitFor()
+              assert.equal(new URL(appBody.url()).origin, executionOrigin)
+              await appBody.close()
+            }
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const reopening: Promise<Page> = context.waitForEvent('page')
+            await action.click()
+            const freshSite = await reopening
+            await freshSite
+              .getByRole('heading', { name: 'Local delivery' })
+              .waitFor()
+            standaloneSite = freshSite
+            await freshSite.close()
+            if (kind === 'authenticated')
+              await env.DB.prepare(
+                'UPDATE shareables SET current_version_id=? WHERE id=?',
+              )
+                .bind(artifact.versionId, artifact.id)
+                .run()
           }
           stage = `${engine}: ${kind}:${format} public reload`
           await navigateUsercontentViewer(viewer, () => viewer.reload())
@@ -962,6 +1123,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             const path = await download.path()
             assert.ok(path)
             assert.ok((await readFile(path)).byteLength > 0)
+            await viewer
+              .getByRole('menuitem')
+              .first()
+              .waitFor({ state: 'detached' })
           } else if (format !== 'md') {
             // This stage measures a programmatic fixture download. Authenticated
             // downloads above retain a trusted user click on the viewer menu.
@@ -992,6 +1157,17 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             await bodyAction.waitFor({ state: 'hidden' })
           }
           stage = `${engine}: ${kind}:${format} revocation`
+          if (standaloneSite) {
+            await viewer.locator('[data-viewer-more-menu-trigger]').click()
+            const openedSite: Promise<Page> = context.waitForEvent('page')
+            await viewer
+              .getByRole('menuitem', { name: 'Open body alone in a new tab' })
+              .click()
+            standaloneSite = await openedSite
+            await standaloneSite
+              .getByRole('heading', { name: 'Local delivery' })
+              .waitFor()
+          }
           // Obtain unused authority, then revoke before it reaches the Worker.
           const renewed = (await viewer.evaluate(
             async (id) =>
@@ -1018,6 +1194,21 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 }, renewed.sandboxUrl),
           )
           assert.equal(revoked.status, 401)
+          if (standaloneSite) {
+            // The already-open tab also loses access, including tokenless
+            // anonymous delivery after the browser drops its cookie.
+            omitStandaloneCookies = kind === 'link'
+            await standaloneSite.reload()
+            await standaloneSite
+              .getByRole('link', { name: 'Return to the viewer' })
+              .waitFor()
+            assert.match(
+              (await standaloneSite.locator('main').textContent()) ?? '',
+              /unavailable or you no longer have access/,
+            )
+            await standaloneSite.close()
+            omitStandaloneCookies = false
+          }
           assert.equal(
             (await context.cookies('https://app.example')).find(
               (cookie) => cookie.name === 'isolation_probe',

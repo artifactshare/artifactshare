@@ -152,7 +152,22 @@ async function handleSandboxRequest(
   )
   const token = url.searchParams.get('__as_token')
   if (
-    (cookieResult.kind !== 'valid' && rawCookie !== null && token === null) ||
+    cookieResult.kind === 'expired' &&
+    token === null &&
+    authorityMatches(cookieResult.payload, identity, hostname) &&
+    identity.domain !== 'link'
+  ) {
+    return deniedResponse('bundle_expired', 'Invalid token', 401, {}, identity)
+  }
+  if (
+    (cookieResult.kind !== 'valid' &&
+      rawCookie !== null &&
+      token === null &&
+      !(
+        cookieResult.kind === 'expired' &&
+        identity.domain === 'link' &&
+        authorityMatches(cookieResult.payload, identity, hostname)
+      )) ||
     (cookieResult.kind === 'valid' &&
       !authorityMatches(cookieResult.payload, identity, hostname))
   ) {
@@ -196,11 +211,16 @@ async function handleSandboxRequest(
     }
     return await serveBundleAsset(cookieResult.payload, path, request, identity)
   }
-  if (identity.domain !== 'link') {
+  if (
+    identity.domain !== 'link' ||
+    url.searchParams.get(COOKIE_CHECK_PARAM) === '1'
+  ) {
     if (url.searchParams.get(COOKIE_CHECK_PARAM) === '1') {
       return contentResponse(
         injectReadyReporter(
-          '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Private static-site preview unavailable</title><body><h1>Private static-site preview unavailable</h1><p>This browser blocks or does not support the cookies needed to show private static sites. Update your browser (Safari 26.2 or later) or allow cross-site cookies. If your session expired, reload the viewer.</p><p>Single-file HTML, Markdown, and shared-link previews remain available.</p><section lang="ja"><h2>非公開の静的サイトを表示できません</h2><p>このブラウザーは表示に必要な Cookie をブロックしているか、対応していません。ブラウザーを更新する（Safari は 26.2 以降）か、サイト間 Cookie を許可してください。セッションの有効期限が切れた場合は、ビューアーを再読み込みしてください。</p><p>単一ファイルの HTML、Markdown、共有リンクからの表示は引き続き利用できます。</p></section></body></html>',
+          identity.domain === 'link'
+            ? '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Static-site preview unavailable</title><body><h1>Static-site preview unavailable</h1><p>This browser blocks or does not support the cookies needed to open static sites in this tab. Update your browser (Safari 26.2 or later) or allow cross-site cookies. If your session expired, reload the viewer.</p><p>Return to the viewer to read the site there.</p><section lang="ja"><h2>静的サイトを表示できません</h2><p>このブラウザーは表示に必要な Cookie をブロックしているか、対応していません。ブラウザーを更新する（Safari は 26.2 以降）か、サイト間 Cookie を許可してください。セッションの有効期限が切れた場合は、ビューアーを再読み込みしてください。</p><p>ビューアーに戻ると、そこでサイトを閲覧できます。</p></section></body></html>'
+            : '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Private static-site preview unavailable</title><body><h1>Private static-site preview unavailable</h1><p>This browser blocks or does not support the cookies needed to show private static sites. Update your browser (Safari 26.2 or later) or allow cross-site cookies. If your session expired, reload the viewer.</p><p>Single-file HTML, Markdown, and shared-link previews remain available.</p><section lang="ja"><h2>非公開の静的サイトを表示できません</h2><p>このブラウザーは表示に必要な Cookie をブロックしているか、対応していません。ブラウザーを更新する（Safari は 26.2 以降）か、サイト間 Cookie を許可してください。セッションの有効期限が切れた場合は、ビューアーを再読み込みしてください。</p><p>単一ファイルの HTML、Markdown、共有リンクからの表示は引き続き利用できます。</p></section></body></html>',
         ),
         'text/html; charset=utf-8',
         artifactCsp('static_site', false, identity),
@@ -407,11 +427,19 @@ async function handleEntrypointRequest(
           ? cleanEntrypointTarget(url, path)
           : null)
       if (redirectTarget) {
+        const target = new URL(redirectTarget, url.origin)
+        if (payload.standalone && destination === 'document')
+          target.searchParams.set(COOKIE_CHECK_PARAM, '1')
         const response = contentResponse(
           null,
           'text/plain; charset=utf-8',
           artifactCsp('static_site', false, identity),
-          { status: 302, headers: new Headers({ Location: redirectTarget }) },
+          {
+            status: 302,
+            headers: new Headers({
+              Location: `${target.pathname}${target.search}${target.hash}`,
+            }),
+          },
         )
         response.headers.append('Set-Cookie', await bundleCookieFor(payload))
         return response
@@ -717,6 +745,7 @@ async function serveBundleAsset(
     .where('shareables.workspace_id', '=', bundle.wid)
     .where('versions.id', '=', bundle.vid)
     .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
     .where('versions.artifact_kind', '=', 'static_site')
     .execute()
   if (files[0] && !bundle.uid && files[0].current_version_id !== bundle.vid) {
@@ -810,6 +839,7 @@ async function serveAnonymousLinkBundleAsset(
     .where('shareables.id', '=', identity.shareableId)
     .where('versions.id', '=', identity.versionId)
     .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
     .where('shareables.visibility', '=', 'link')
     .where('versions.artifact_kind', '=', 'static_site')
     .executeTakeFirst()
@@ -1082,7 +1112,12 @@ function deniedResponse(
 ): Response {
   console.warn('sandbox_denied', { reason, status, ...detail })
   const response = errorResponse(message, status, responseDomain)
-  if (reason === 'token_expired' || reason === 'jti_replayed') {
+  if (
+    reason === 'token_expired' ||
+    reason === 'jti_replayed' ||
+    reason === 'bundle_expired' ||
+    reason === 'missing_authority'
+  ) {
     retryableOpeningDenials.add(response)
   }
   return response
@@ -1132,7 +1167,7 @@ async function verifyBundleCookie(
   value: string | null,
   secret: string,
 ): Promise<
-  | { kind: 'valid'; payload: BundleCookiePayload }
+  | { kind: 'valid' | 'expired'; payload: BundleCookiePayload }
   | { kind: 'absent-or-invalid' }
 > {
   if (!value) return { kind: 'absent-or-invalid' }
@@ -1161,12 +1196,14 @@ async function verifyBundleCookie(
     typeof payload.aid !== 'string' ||
     typeof payload.vid !== 'string' ||
     typeof payload.exp !== 'number' ||
-    !Number.isFinite(payload.exp) ||
-    payload.exp <= Math.floor(Date.now() / 1000)
+    !Number.isFinite(payload.exp)
   ) {
     return { kind: 'absent-or-invalid' }
   }
-  return { kind: 'valid', payload }
+  return {
+    kind: payload.exp <= Math.floor(Date.now() / 1000) ? 'expired' : 'valid',
+    payload,
+  }
 }
 
 const keyCache = new Map<string, Promise<CryptoKey>>()

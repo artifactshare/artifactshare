@@ -1065,6 +1065,205 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockReset()
   })
 
+  test.each(['owner-1', null])(
+    'standalone site uid=%s exchanges once, probes cookies and reloads cleanly',
+    async (uid) => {
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'link' })
+        .execute()
+      storageMock.getArtifact.mockImplementation(async () =>
+        storedArtifact(
+          '<h1>Site</h1><a href="next.html">Next</a>',
+          'text/html',
+        ),
+      )
+      const token = await signSandboxToken(
+        {
+          uid,
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: 'standalone-site',
+          standalone: true,
+        },
+        'test-secret',
+      )
+      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', uid === null ? 'link' : 'sandbox')}.usercontent.localhost:5174`
+      const entryUrl = `${origin}/index.html?__as_token=${token}#section`
+      const entry = await handleArtifactSandboxRequest(
+        new Request(entryUrl, { headers: { 'Sec-Fetch-Dest': 'document' } }),
+      )
+      expect(entry.status).toBe(302)
+      const checkUrl = new URL(entry.headers.get('Location')!, origin)
+      expect(checkUrl.hash).toBe('#section')
+      expect(checkUrl.searchParams.has('__as_token')).toBe(false)
+      expect(checkUrl.searchParams.get('__as_cookie_check')).toBe('1')
+      const blocked = await handleArtifactSandboxRequest(
+        new Request(checkUrl, { headers: { 'Sec-Fetch-Dest': 'document' } }),
+      )
+      expect(blocked.status).toBe(403)
+      expect(blocked.headers.has('Location')).toBe(false)
+      expect(await blocked.text()).toContain(
+        uid === null
+          ? 'Return to the viewer to read the site there.'
+          : 'Private static-site preview unavailable',
+      )
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const checked = await handleArtifactSandboxRequest(
+        new Request(checkUrl, { headers: { Cookie: cookie } }),
+      )
+      const cleanUrl = new URL(checked.headers.get('Location')!, origin)
+      expect(cleanUrl.search).toBe('')
+      expect(cleanUrl.hash).toBe('#section')
+      for (let i = 0; i < 2; i++) {
+        const page = await handleArtifactSandboxRequest(
+          new Request(cleanUrl, {
+            headers: { Cookie: cookie, 'Sec-Fetch-Dest': 'document' },
+          }),
+        )
+        expect(page.status).toBe(200)
+        expect(await page.text()).toContain('href="next.html"')
+      }
+      consumeJtiMock.mockResolvedValue(false)
+      for (const headers of [new Headers(), new Headers({ Cookie: cookie })]) {
+        const replay = await handleArtifactSandboxRequest(
+          new Request(entryUrl, { headers }),
+        )
+        expect(replay.status).toBe(401)
+      }
+    },
+  )
+
+  test.each(['owner-1', null])(
+    'site uid=%s checks publication after cookie issuance',
+    async (uid) => {
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'link' })
+        .execute()
+      const token = await signSandboxToken(
+        {
+          uid,
+          wid: 'ws-a',
+          aid: 'abc123def4',
+          vid: 'v-bundle',
+          fid: 'ws-a/abc123def4/v-bundle/index.html',
+          mt: null,
+          t: 'static_site',
+          jti: 'publication-site',
+          standalone: true,
+        },
+        'test-secret',
+      )
+      const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', uid === null ? 'link' : 'sandbox')}.usercontent.localhost:5174`
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${origin}/index.html?__as_token=${token}`, {
+          headers: { 'Sec-Fetch-Dest': 'document' },
+        }),
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      await dbRef
+        .current!.updateTable('versions')
+        .set({ published_at: null })
+        .where('id', '=', 'v-bundle')
+        .execute()
+      storageMock.getArtifact.mockClear()
+      for (const headers of [new Headers({ Cookie: cookie }), new Headers()]) {
+        const response = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html`, { headers }),
+        )
+        expect(response.status).toBeGreaterThanOrEqual(400)
+        expect(response.headers.has('Location')).toBe(false)
+      }
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    },
+  )
+
+  test.each([false, true])(
+    'expired private authority (cookie removed=%s) instructs reopening',
+    async (removed) => {
+      const token = await entrypointToken()
+      const entry = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`, {
+          headers: { 'Sec-Fetch-Dest': 'document' },
+        }),
+      )
+      const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 601_000)
+      try {
+        const response = await handleArtifactSandboxRequest(
+          new Request(`${sandboxOrigin()}/index.html`, {
+            headers: {
+              'Sec-Fetch-Dest': 'document',
+              ...(removed ? {} : { Cookie: cookie }),
+            },
+          }),
+        )
+        expect(response.status).toBe(401)
+        expect(response.headers.get('Cache-Control')).toContain('no-store')
+        const body = await response.text()
+        expect(body).toContain('expired or has already been used')
+        expect(body).toContain(
+          'このリンクは有効期限が切れているか、すでに使用されています。',
+        )
+        expect(body).toContain('Return to the viewer')
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
+  test('anonymous top-level delivery survives cookie expiry but stops on revocation', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .execute()
+    storageMock.getArtifact.mockImplementation(async () =>
+      storedArtifact('<a href="next.html">Next</a>', 'text/html'),
+    )
+    const token = await anonymousEntrypointToken()
+    const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', 'link')}.usercontent.localhost:5174`
+    const entry = await handleArtifactSandboxRequest(
+      new Request(`${origin}/index.html?__as_token=${token}`, {
+        headers: { 'Sec-Fetch-Dest': 'document' },
+      }),
+    )
+    const cookie = entry.headers.get('Set-Cookie')!.split(';')[0]
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 601_000)
+    try {
+      for (const headers of [new Headers({ Cookie: cookie }), new Headers()]) {
+        const response = await handleArtifactSandboxRequest(
+          new Request(`${origin}/index.html`, {
+            headers: new Headers([...headers, ['Sec-Fetch-Dest', 'document']]),
+          }),
+        )
+        expect(response.status).toBe(200)
+        expect(await response.text()).toContain('href="next.html"')
+      }
+      await dbRef
+        .current!.updateTable('shareables')
+        .set({ visibility: 'private' })
+        .execute()
+      const denied = await handleArtifactSandboxRequest(
+        new Request(`${origin}/index.html`, {
+          headers: { 'Sec-Fetch-Dest': 'document' },
+        }),
+      )
+      expect(denied.status).toBe(401)
+      expect(await denied.text()).toContain(
+        'unavailable or you no longer have access',
+      )
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   test('token-less top-level navigation gets a recovery page', async () => {
     const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', 'sandbox')}.usercontent.localhost:5174`
     const request = (dest: string) =>
@@ -1077,7 +1276,7 @@ describe('handleArtifactSandboxRequest', () => {
       'text/html; charset=utf-8',
     )
     const recovery = await response.text()
-    expect(recovery).toContain('unavailable or you no longer have access')
+    expect(recovery).toContain('expired or has already been used')
     expect(recovery).toContain('Return to the viewer')
     expect(recovery).toContain(
       'https://localhost:5173/a/abc123def4?version=v-bundle',

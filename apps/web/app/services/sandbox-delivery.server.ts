@@ -154,11 +154,7 @@ export async function authorizeSandboxDelivery(
           version?.artifact_kind === 'markdown_page'
         ? renderTypeFromKind(version.artifact_kind)
         : null
-  if (
-    !version ||
-    !versionRenderType ||
-    (policy === 'body' && versionRenderType === 'static_site')
-  ) {
+  if (!version || !versionRenderType) {
     return { ok: false, error: 'not-found', status: 404 } as const
   }
 
