@@ -1065,6 +1065,31 @@ describe('handleArtifactSandboxRequest', () => {
     storageMock.headArtifact.mockReset()
   })
 
+  test('token-less top-level navigation gets a recovery page', async () => {
+    const origin = `https://${sandboxVersionLabel('abc123def4', 'v-bundle', 'sandbox')}.usercontent.localhost:5174`
+    const request = (dest: string) =>
+      new Request(`${origin}/relative.html`, {
+        headers: { 'Sec-Fetch-Dest': dest },
+      })
+    const response = await handleArtifactSandboxRequest(request('document'))
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Content-Type')).toBe(
+      'text/html; charset=utf-8',
+    )
+    const recovery = await response.text()
+    expect(recovery).toContain('unavailable or you no longer have access')
+    expect(recovery).toContain('Return to the viewer')
+    expect(recovery).toContain(
+      'https://localhost:5173/a/abc123def4?version=v-bundle',
+    )
+    const iframe = await handleArtifactSandboxRequest(request('iframe'))
+    expect(iframe.status).toBe(401)
+    expect(await iframe.text()).toBe('Invalid token')
+    for (const [key, value] of iframe.headers) {
+      if (key !== 'content-type') expect(response.headers.get(key)).toBe(value)
+    }
+  })
+
   test.each([null, 'viewer-1'])(
     'standalone uid=%s is single use and recovers only at top level',
     async (uid) => {
