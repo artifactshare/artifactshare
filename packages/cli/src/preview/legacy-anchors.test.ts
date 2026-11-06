@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { isSandboxMessage } from '@artifactshare/viewer-kit/csp-reporter'
+import { validPreviewObservation } from './reporter-protocol.js'
 import { renderPreviewShell } from './shell.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
 import { createPreviewStore } from './store.js'
@@ -245,6 +246,15 @@ test.each(['http', 'network'])(
       frame.dispatchEvent(new Event('load'))
       await vi.waitFor(() => expect(post.mock.calls.length).toBeGreaterThan(0))
       const handshake = post.mock.calls[0]![0]
+      const popover = document.querySelector<HTMLElement>('#popover')!
+      vi.spyOn(popover, 'getBoundingClientRect').mockImplementation(
+        () =>
+          ({
+            height: document.querySelector('#popError')!.textContent
+              ? 240
+              : 140,
+          }) as DOMRect,
+      )
       const anchor = {
         kind: 'element',
         state: 'attached',
@@ -269,7 +279,12 @@ test.each(['http', 'network'])(
             contextText: anchor.contextText,
             ownText: anchor.ownText,
             tagName: anchor.tagName,
-            rect: { top: 0, left: 0, width: 10, height: 10 },
+            rect: {
+              top: window.innerHeight - 80,
+              left: 0,
+              width: 10,
+              height: 10,
+            },
           },
         }),
       )
@@ -295,6 +310,54 @@ test.each(['http', 'network'])(
       expect(document.querySelector('#popError')!.textContent).toBe(
         PREVIEW_MESSAGES.en['preview.annotationSaveFailed'],
       )
+      expect(parseFloat(popover.style.top) + 240).toBeLessThanOrEqual(
+        window.innerHeight - 8,
+      )
+      for (const [index, pick] of [
+        {
+          kind: 'element-annotate',
+          selector: 'h1',
+          label: 'Other',
+          contextText: 'Other',
+          ownText: 'Other',
+          tagName: 'H1',
+        },
+        {
+          kind: 'text-selection',
+          token: 'b'.repeat(64),
+          versionId: null,
+          quotedText: 'Other',
+          prefixText: '',
+          suffixText: '',
+          textStart: 0,
+          textEnd: 5,
+          cssPath: 'h1',
+          selectorFormat: 'normalized-v1',
+          textHash: 'a'.repeat(64),
+          ambiguousAtCreation: false,
+        },
+      ].entries()) {
+        const data = {
+          source: 'artifactshare',
+          previewCapability: handshake.previewCapability,
+          documentGeneration: handshake.documentGeneration,
+          sequence: index + 2,
+          ...pick,
+          rect: { top: 0, left: 0, width: 10, height: 10 },
+        }
+        expect(validPreviewObservation(data)).toBe(true)
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            source: frame.contentWindow,
+            origin: 'null',
+            data,
+          }),
+        )
+        expect(input.value).toBe('  keep this exact draft\nplease  ')
+        expect(document.querySelector('#popTarget')!.textContent).toBe(
+          anchor.label,
+        )
+      }
       add.click()
       await vi.waitFor(() =>
         expect(

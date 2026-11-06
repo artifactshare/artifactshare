@@ -6,6 +6,11 @@ import { test, vi } from 'vitest'
 import { createPreviewStore } from './store.js'
 import type { PreviewAnchor } from './contract.js'
 
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  return { ...fs, writeFileSync: vi.fn(fs.writeFileSync) }
+})
+
 const anchor: PreviewAnchor = {
   kind: 'text',
   state: 'attached',
@@ -545,3 +550,22 @@ test.each([1, 2])(
     )
   },
 )
+
+test('a failed draft write rolls back before a successful retry', () => {
+  const path = storePath()
+  const store = createPreviewStore(path)
+  const write = vi.mocked(writeFileSync).mockImplementationOnce(() => {
+    throw new Error('write failed')
+  })
+  try {
+    assert.throws(() => store.createDraft(anchor, 'Retry me'), /write failed/)
+    assert.equal(store.all().length, 0)
+    const saved = store.createDraft(anchor, 'Retry me')
+    assert.deepEqual(store.all(), [saved])
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).annotations, [
+      saved,
+    ])
+  } finally {
+    write.mockRestore()
+  }
+})

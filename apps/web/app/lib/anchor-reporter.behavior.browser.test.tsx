@@ -1,3 +1,6 @@
+import { findElement } from '../../../../packages/viewer-kit/src/reporter/annotate'
+import { textHash } from '../../../../packages/viewer-kit/src/reporter/text-hash'
+import type { ReporterState } from '../../../../packages/viewer-kit/src/reporter/state'
 import { afterEach, expect, test, vi } from 'vitest'
 import { commands } from 'vitest/browser'
 import {
@@ -2359,4 +2362,33 @@ test('oversized duplicate elements use context and never the reader excerpt to m
     (m) => (m as unknown as { verificationId: number }).verificationId === 62,
   ) as unknown as { verdicts: { attached: boolean }[] }
   expect(second.verdicts[0].attached).toBe(false)
+})
+
+test('oversized anchors hash only peers above the normalized UTF-16 boundary', () => {
+  const doc = new DOMParser().parseFromString(
+    '<p id="short"></p><p id="long"></p>',
+    'text/html',
+  )
+  doc.querySelector('#short')!.textContent = '  ' + '😀'.repeat(8000) + '  '
+  const long = doc.querySelector('#long')!
+  long.textContent = '😀'.repeat(8000) + 'x'
+  const digest = textHash(long.textContent)
+  const hash = vi.spyOn(TextEncoder.prototype, 'encode')
+  try {
+    expect(
+      findElement({ doc } as ReporterState, {
+        kind: 'element',
+        thread: '1',
+        selector: '#long',
+        tagName: 'P',
+        ownTextHash: digest,
+        ownTextExcerpt: long.textContent.slice(0, 16000),
+        contextText: '',
+      }),
+    ).toBe(long)
+    expect(hash).toHaveBeenCalledTimes(1)
+    expect(hash).toHaveBeenCalledWith(long.textContent)
+  } finally {
+    hash.mockRestore()
+  }
 })

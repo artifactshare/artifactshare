@@ -142,7 +142,7 @@ export function findElement(
     const text = ownText(ctx, peers[i])
     if (
       anchor.ownTextHash !== undefined
-        ? textHash(text) === anchor.ownTextHash
+        ? text.length > 16_000 && textHash(text) === anchor.ownTextHash
         : text === anchor.ownText
     )
       matches.push(peers[i])

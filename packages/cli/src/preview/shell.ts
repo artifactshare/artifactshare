@@ -133,6 +133,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     border-radius: var(--r-md); font: inherit; font-size: 13px; padding: 7px 9px;
     resize: none; background: var(--background); color: var(--foreground); }
   .popover textarea:focus { outline: 2px solid var(--link); outline-offset: -1px; }
+  #popError { color: var(--foreground); font-size: 13px; line-height: 1.4; }
+  #popError:not(:empty) { margin-top: 8px; }
   .popover .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
   .panel { width: 300px; border-left: 1px solid var(--border); background: var(--background);
     padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
@@ -466,8 +468,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   // --- popover ------------------------------------------------------------
   let savePending = false;
+  let saveFailed = false;
+  let popoverTop = 52;
+  function positionPopover() {
+    popover.style.top = Math.max(52, Math.min(popoverTop,
+      window.innerHeight - popover.getBoundingClientRect().height - 8)) + 'px';
+  }
   function openPopover(anchor, label, rect) {
-    if (savePending) return;
+    if (savePending || saveFailed) return;
     document.getElementById('popError').textContent = '';
     pendingAnchor = anchor;
     popTarget.textContent = label;
@@ -475,18 +483,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const left = Math.max(8, Math.min(
       frameRect.left + (rect ? rect.left : 40) + 20,
       window.innerWidth - 320));
-    const top = Math.max(52, Math.min(
-      frameRect.top + (rect ? rect.top + rect.height : 60) + 8,
-      window.innerHeight - 140));
+    popoverTop = frameRect.top + (rect ? rect.top + rect.height : 60) + 8;
     popover.style.left = left + 'px';
-    popover.style.top = top + 'px';
     popover.classList.add('show');
+    positionPopover();
     popText.value = '';
     popText.focus();
   }
   function hidePopover() {
     if (savePending) return;
     popover.classList.remove('show');
+    saveFailed = false;
     pendingAnchor = null;
     if (pendingReload !== null) {
       const target = pendingReload;
@@ -509,7 +516,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     savePending = false;
     document.getElementById('popAdd').disabled = false;
     if (!result || !result.annotation || typeof result.annotation.thread !== 'string' || !result.annotation.thread) {
+      saveFailed = true;
       document.getElementById('popError').textContent = t('preview.annotationSaveFailed');
+      positionPopover();
       return;
     }
     document.getElementById('popError').textContent = '';

@@ -126,10 +126,41 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     expect(snapshots).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(5000)
     expect(document.querySelector('#dialog')!.className).toBe('dialog')
+    const error = document.querySelector<HTMLElement>('#shareError')!
+    const guidance = error.textContent
+    expect(guidance).not.toBe('')
+    expect(error.style.display).toBe('block')
+    refresh()
+    expect(error.textContent).toBe(guidance)
+    expect(error.style.display).toBe('block')
+    finishSnapshot(
+      Response.json({
+        snapshot_id: 'third',
+        taken_at: new Date().toISOString(),
+      }),
+    )
+    await vi.waitFor(() => expect(share.disabled).toBe(false))
+    expect(error.style.display).toBe('block')
+    share.click()
+    finishShare(Response.json({ error: 'upload_failed' }, { status: 500 }))
+    await vi.waitFor(() => expect(share.disabled).toBe(false))
+    const failure = error.textContent
+    expect(failure).not.toBe(guidance)
+    refresh()
+    expect(error.textContent).toBe(failure)
+    expect(error.style.display).toBe('block')
+    finishSnapshot(
+      Response.json({
+        snapshot_id: 'fourth',
+        taken_at: new Date().toISOString(),
+      }),
+    )
+    await vi.waitFor(() => expect(share.disabled).toBe(false))
+    expect(error.style.display).toBe('block')
     share.click()
     refresh()
-    expect(uploads).toHaveLength(2)
-    expect(uploads[1]).toMatchObject({ snapshot_id: 'second' })
+    expect(uploads).toHaveLength(3)
+    expect(uploads[2]).toMatchObject({ snapshot_id: 'fourth' })
     finishShare(
       Response.json({
         url: 'https://example.com/shared',
@@ -149,8 +180,8 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     expect(document.querySelector('#shareNotes')!.textContent).toContain(
       'Saved note',
     )
-    expect(snapshots).toHaveLength(2)
-    expect(uploads).toHaveLength(2)
+    expect(snapshots).toHaveLength(4)
+    expect(uploads).toHaveLength(3)
   } finally {
     for (const [type, listener] of listeners.mock.calls)
       window.removeEventListener(type, listener)

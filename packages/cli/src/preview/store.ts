@@ -442,7 +442,12 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         summary: null,
       }
       annotations.push(annotation)
-      save()
+      try {
+        save()
+      } catch (error) {
+        annotations.pop()
+        throw error
+      }
       return annotation
     },
 

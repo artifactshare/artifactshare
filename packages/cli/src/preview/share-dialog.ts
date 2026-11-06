@@ -948,7 +948,10 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     snapshotPending = true;
     snapshotFailed = false;
     snapshotId = null;
-    el('shareError').style.display = 'none';
+    if (el('shareError').textContent === t('snapshotFailed') ||
+        el('shareError').textContent === t('visibilityUnknown')) {
+      el('shareError').style.display = 'none';
+    }
     syncVisibility();
     post('/api/snapshot')
     .then(function (result) {
