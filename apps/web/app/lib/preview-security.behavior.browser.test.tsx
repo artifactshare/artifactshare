@@ -10,13 +10,26 @@ test('preview primary buttons and document canvases remain readable in both them
   expect(measurements.tokens).toHaveLength(4)
   for (const { colorScheme, value } of measurements.tokens)
     expect(value).toBe(colorScheme === 'dark' ? '#111315' : '#ffffff')
-  expect(measurements.buttons).toHaveLength(24)
+  expect(measurements.buttons).toHaveLength(32)
   for (const button of measurements.buttons) {
+    if (button.state === 'disabled-hover') {
+      const defaultButton = measurements.buttons.find(
+        (candidate) =>
+          candidate.colorScheme === button.colorScheme &&
+          candidate.surface === button.surface &&
+          candidate.selector === button.selector &&
+          candidate.state === 'default',
+      )
+      expect(button.background, JSON.stringify(button)).toBe(
+        defaultButton?.background,
+      )
+    }
     expect(button.contrast, JSON.stringify(button)).toBeGreaterThanOrEqual(4.5)
     if (button.colorScheme === 'light') {
       expect(button.foreground).toBe('rgb(255, 255, 255)')
     }
   }
+  expect(measurements.frameSchemes).toEqual(['light', 'light'])
   expect(measurements.canvases).toEqual([
     'rgb(255, 255, 255)',
     'rgb(255, 255, 255)',
@@ -66,5 +79,12 @@ test('phone failed drafts keep Add and Cancel above the panel', async () => {
     { short: false, selector: '#popCancel', hit: true },
     { short: true, selector: '#popAdd', hit: true },
     { short: true, selector: '#popCancel', hit: true },
+  ])
+}, 60000)
+
+test('Markdown preview keeps its existing frame color scheme and white background', async () => {
+  expect(await server.commands.previewSecurity('markdown-frame')).toEqual([
+    { scheme: 'normal', background: 'rgb(255, 255, 255)' },
+    { scheme: 'normal', background: 'rgb(255, 255, 255)' },
   ])
 }, 60000)

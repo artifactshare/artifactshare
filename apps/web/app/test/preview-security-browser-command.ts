@@ -28,7 +28,7 @@ async function postFromDocument(
   await script.dispose()
 }
 
-type View = 'theme' | 'header' | 'oversized' | 'popover'
+type View = 'theme' | 'header' | 'oversized' | 'popover' | 'markdown-frame'
 type PopoverMeasurements = {
   short: boolean
   selector: string
@@ -54,6 +54,7 @@ type ThemeMeasurements = {
     contrast: number
   }[]
   tokens: { colorScheme: string; surface: string; value: string }[]
+  frameSchemes: string[]
   canvases: string[]
   transparent: string
   authored: string
@@ -84,7 +85,10 @@ export const previewSecurity = defineBrowserCommand(
       'Build @artifactshare/cli before running preview browser tests',
     )
     const dir = mkdtempSync(join(tmpdir(), 'preview-security-'))
-    const file = join(dir, 'sample.html')
+    const file = join(
+      dir,
+      view === 'markdown-frame' ? 'sample.md' : 'sample.html',
+    )
     const fixtureHtml = (
       label: string,
     ) => `<!doctype html><h1>${label}</h1><p id="sample">Select this text</p><script>
@@ -249,10 +253,24 @@ export const previewSecurity = defineBrowserCommand(
         }
         return measurements
       }
+      if (view === 'markdown-frame') {
+        const frames = []
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await shell.emulateMedia({ colorScheme })
+          frames.push(
+            await shell.locator('#artifactFrame').evaluate((el) => ({
+              scheme: getComputedStyle(el).colorScheme,
+              background: getComputedStyle(el).backgroundColor,
+            })),
+          )
+        }
+        return frames
+      }
       if (view === 'theme') {
         const measurements: ThemeMeasurements = {
           buttons: [],
           tokens: [],
+          frameSchemes: [],
           canvases: [],
           transparent: '',
           authored: '',
@@ -297,10 +315,19 @@ export const previewSecurity = defineBrowserCommand(
                 await button.evaluate((el) => {
                   ;(el as HTMLButtonElement).disabled = false
                 })
-                for (const state of ['default', 'hover', 'focus']) {
+                for (const state of [
+                  'default',
+                  'hover',
+                  'focus',
+                  'disabled-hover',
+                ]) {
                   await surface.mouse.move(0, 0)
                   await button.evaluate((el) => (el as HTMLElement).blur())
-                  if (state === 'hover') await button.hover()
+                  await button.evaluate((el, disabled) => {
+                    ;(el as HTMLButtonElement).disabled = disabled
+                  }, state === 'disabled-hover')
+                  if (state === 'hover' || state === 'disabled-hover')
+                    await button.hover()
                   if (state === 'focus') await button.focus()
                   const colors = await button.evaluate((el) => {
                     const style = getComputedStyle(el)
@@ -336,6 +363,11 @@ export const previewSecurity = defineBrowserCommand(
                 }
               }
             }
+            measurements.frameSchemes.push(
+              await shell
+                .locator('#artifactFrame')
+                .evaluate((el) => getComputedStyle(el).colorScheme),
+            )
             measurements.canvases.push(
               await shell
                 .locator('#artifactFrame')
@@ -657,6 +689,9 @@ declare module 'vitest/browser' {
       (): Promise<boolean>
       (scenario: 'popover'): Promise<PopoverMeasurements>
       (scenario: 'theme'): Promise<ThemeMeasurements>
+      (
+        scenario: 'markdown-frame',
+      ): Promise<{ scheme: string; background: string }[]>
       (scenario: 'header'): Promise<HeaderMeasurements>
       (scenario: 'oversized'): Promise<OversizedMeasurements>
     }

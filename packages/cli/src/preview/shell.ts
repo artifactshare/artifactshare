@@ -34,6 +34,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   const extensionAt = fileName.lastIndexOf('.')
   const stem = extensionAt > 0 ? fileName.slice(0, extensionAt) : fileName
   const extension = extensionAt > 0 ? fileName.slice(extensionAt) : ''
+  const isMarkdown = /\.(md|markdown)$/i.test(fileName)
   const config = scriptJson({
     fileName,
     resumeCommand,
@@ -107,7 +108,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .btn-primary:disabled:hover { background: var(--primary); }
   .layout { display: flex; height: calc(100vh - 46px); }
   .doc-wrap { flex: 1; display: flex; position: relative; }
-  #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: #ffffff; }
+  #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: #ffffff;${isMarkdown ? '' : ' color-scheme: light;'} }
   .mode-toggle { font: inherit; color: inherit; border: 0; position: fixed; right: 320px; bottom: 20px; z-index: 60;
     display: flex; align-items: center; gap: 8px; background: var(--card);
     border-radius: var(--r-full); box-shadow: var(--shadow-lg);

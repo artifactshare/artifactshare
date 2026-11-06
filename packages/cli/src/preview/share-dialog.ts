@@ -824,6 +824,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   .btn:hover { background: var(--accent); }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--badge-on-link); }
   .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
+  .btn-primary:disabled:hover { background: var(--primary); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .url-box { display: flex; gap: 8px; margin-bottom: 12px; }
   .url-box input { flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;
