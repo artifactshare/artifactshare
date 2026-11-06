@@ -60,7 +60,7 @@ vi.mock('~/services/db.server', () => ({
                   status: state.versionStatus,
                   published_at: state.publishedAt,
                   r2_key: 'body-key',
-                  entrypoint_path: '/index.html',
+                  entrypoint_path: '/start.html',
                   artifact_kind: state.kind,
                 }))
                 .find((row) => predicates.every((predicate) => predicate(row)))
@@ -71,6 +71,7 @@ vi.mock('~/services/db.server', () => ({
                 visibility: 'link',
                 current_version_id: state.current,
                 r2_key: 'body-key',
+                entrypoint_path: '/start.html',
                 version_artifact_kind: state.kind,
               },
       }
@@ -110,7 +111,7 @@ beforeEach(() =>
   }),
 )
 
-test.each(['html_page', 'markdown_page'])(
+test.each(['html_page', 'markdown_page', 'static_site'])(
   'opens pinned %s history with independent 60-second tokens',
   async (kind) => {
     state.kind = kind
@@ -120,6 +121,9 @@ test.each(['html_page', 'markdown_page'])(
       const response = await loader(args())
       expect(response.status).toBe(302)
       expect(response.headers.get('Cache-Control')).toContain('no-store')
+      expect(new URL(response.headers.get('Location')!).pathname).toBe(
+        '/start.html',
+      )
       const token = new URL(response.headers.get('Location')!).searchParams.get(
         '__as_token',
       )!
@@ -143,9 +147,14 @@ test.each(['html_page', 'markdown_page'])(
   },
 )
 
-test.each([false, true])(
-  'anonymous host=%s requires current pin and non-low-trust authority',
-  async (linkHost) => {
+test.each(
+  [false, true].flatMap((linkHost) =>
+    ['html_page', 'static_site'].map((kind) => [linkHost, kind] as const),
+  ),
+)(
+  'anonymous host=%s kind=%s requires current pin and non-low-trust authority',
+  async (linkHost, kind) => {
+    state.kind = kind
     state.user = null
     state.linkHost = linkHost
     expect((await loader(args())).status).toBe(302)
@@ -206,7 +215,6 @@ test.each([
 test.each([
   ['access removed', { access: false }, 'v1', 'GET', 404],
   ['nonexistent', {}, 'missing', 'GET', 404],
-  ['static site', { kind: 'static_site' }, 'v1', 'GET', 404],
   ['unsupported', { kind: 'pdf' }, 'v1', 'GET', 404],
   ['unavailable', { stage: 'disabled' }, 'v1', 'GET', 503],
   ['missing pin', {}, '', 'GET', 400],
@@ -228,4 +236,23 @@ test.each([
 test('link host cannot address another artifact', async () => {
   state.linkHost = true
   expect((await loader(args('v1', 'GET', 'other12345'))).status).toBe(404)
+})
+
+test('a signed-in browser on the link host has only anonymous current-version authority', async () => {
+  state.kind = 'static_site'
+  state.linkHost = true
+  const response = await loader(args())
+  expect(response.status).toBe(302)
+  const url = new URL(response.headers.get('Location')!)
+  expect(
+    await verifySandboxTokenDetailed(
+      url.searchParams.get('__as_token')!,
+      'test',
+    ),
+  ).toMatchObject({
+    ok: true,
+    payload: { uid: null, kind: 'link', vid: 'v1', standalone: true },
+  })
+  state.current = 'v2'
+  expect((await loader(args())).headers.has('Location')).toBe(false)
 })

@@ -205,7 +205,7 @@ View spikes also occur for legitimate viral artifacts, and model judgments can b
 
 ## Open the displayed body alone
 
-Eligible HTML and Markdown viewers have “Open body alone in a new tab”
+Eligible HTML, Markdown and static-site viewers have “Open body alone in a new tab”
 (「本文だけを新しいタブで開く」) in the More menu, including anonymous viewers. Anonymous viewers see the
 More trigger only when this action is available; their menu contains only this action.
 The ordinary link opens the exact displayed published version without app
@@ -216,12 +216,30 @@ Delivery rechecks publication and access. Anonymous openings require the current
 version; a stale pin asks the reader to reload the viewer. HEAD returns 405 and
 never mints credentials. Public API, CLI and MCP interfaces are unchanged.
 
-Static sites are excluded because top-level cookie behavior has not been
-confirmed. Low-trust anonymous links are also excluded on both entry hosts:
+Static sites open the displayed version's entry page, regardless of the frame's
+current subpage, from both the app viewer and the link viewer. The link viewer
+uses anonymous authority even in a signed-in browser. Low-trust anonymous links
+are excluded on both entry hosts:
 the standalone reporter does not run the embedded external-link warning.
 The viewer and click-time route share `anonymousLinkLowTrust`, which collects
 trust inputs and calls `isLowTrustLinkWorkspace` with the environment thresholds.
 This is an explicit limitation of standalone access, not a change to link access.
+
+Static-site standalone openings exchange their single-use token for the existing
+host-only, partitioned bundle cookie. Both authority kinds check cookie acceptance
+before serving site code; blocked cookies end at cookie-support guidance without
+a redirect loop. Opening a tab does not renew or replace the embedded frame's
+partitioned authority.
+
+On the authenticated execution host, the cookie lasts ten minutes without renewal.
+After expiry, including browser removal of the cookie, the next top-level request
+instructs the reader to return to the viewer and open the body again. A first visit
+or pasted execution URL without a cookie receives the same reopening guidance.
+Invalid or mismatched cookies and actual access denial retain unavailable wording.
+On the link execution host, tokenless anonymous requests, including top-level
+documents, retain cookie-free delivery after cookie expiry. Each request checks
+current link access, current version and publication; revocation stops delivery.
+Authored iframes may remain untranslated.
 
 Spent, expired or invalid top-level credentials show a non-cacheable recovery
 document linking back to a trusted viewer destination. The reader can authorize

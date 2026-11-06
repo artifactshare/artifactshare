@@ -218,7 +218,6 @@ test.each(['production', 'development'])(
 
 test.each([
   { standalone: true, emb: true },
-  { standalone: true, t: 'static_site' },
   { standalone: false },
   { standalone: 'true' },
 ])('rejects invalid standalone claim %j', async (overrides) => {
@@ -233,3 +232,17 @@ test.each([
     failure: 'bad_payload',
   })
 })
+
+test.each(['u1', null])(
+  'accepts static-site standalone authority for %s',
+  async (uid) => {
+    const token = await signSandboxToken(
+      { ...VALID_PAYLOAD, uid, t: 'static_site', standalone: true },
+      SECRET,
+    )
+    expect(await verifySandboxTokenDetailed(token, SECRET)).toMatchObject({
+      ok: true,
+      payload: { uid, t: 'static_site', standalone: true },
+    })
+  },
+)

@@ -153,7 +153,9 @@ test.each([
   ['md', false, true, false],
   ['html', true, false, false],
   ['md', true, false, false],
-  ['static_site', false, false, false],
+  ['static_site', false, true, false],
+  ['static_site', true, false, false],
+  ['static_site', false, false, true],
   [null, false, false, false],
 ] as const)(
   'body action for %s, low trust %s follows the displayed version',
@@ -181,7 +183,7 @@ test.each([
               renderType
                 ? deliveryUnavailable
                   ? 'https://usercontent.example/.well-known/artifactshare-delivery-unavailable'
-                  : 'https://usercontent.example/?__as_token=frame-only'
+                  : 'https://usercontent.example/next.html?__as_token=frame-only'
                 : null
             }
             linkSafety={{ lowTrust }}

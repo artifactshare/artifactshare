@@ -2735,7 +2735,9 @@ function useViewerShellController({
   const bodyHref =
     sandboxUrl &&
     new URL(sandboxUrl).pathname !== DELIVERY_UNAVAILABLE_PATH &&
-    (renderType === 'html' || renderType === 'md') &&
+    (renderType === 'html' ||
+      renderType === 'md' ||
+      renderType === 'static_site') &&
     !linkSafety?.lowTrust &&
     displayedBodyVersion
       ? `/a/${encodeURIComponent(artifact.id)}/body?version=${encodeURIComponent(displayedBodyVersion)}`
