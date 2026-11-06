@@ -57,8 +57,8 @@ test('bundled entrypoint is short, valid, managed and links every reference', as
   assert.equal(metadata.name, 'artifactshare')
   assert.equal(typeof metadata.description, 'string')
   assert.ok(metadata.description.length > 0)
-  assert.deepEqual(managedState(entry), { kind: 'managed', version: 58 })
-  assert.equal(bundle.version, 58)
+  assert.deepEqual(managedState(entry), { kind: 'managed', version: 59 })
+  assert.equal(bundle.version, 59)
   assert.match(entry, /key_visibility_mismatch/)
   assert.match(
     entry,

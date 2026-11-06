@@ -52,14 +52,20 @@ export function validPreviewObservation(value: unknown): boolean {
           'selector',
           'label',
           'contextText',
-          'ownText',
+          ...(Object.hasOwn(value, 'ownTextHash')
+            ? ['ownTextHash', 'ownTextExcerpt']
+            : ['ownText']),
           'tagName',
           'rect',
         ]) &&
         str(value.selector, 4096) &&
         str(value.label, 1024) &&
         str(value.contextText, 4096) &&
-        str(value.ownText, 1_000_000) &&
+        (Object.hasOwn(value, 'ownTextHash')
+          ? typeof value.ownTextHash === 'string' &&
+            /^[a-f0-9]{64}$/.test(value.ownTextHash) &&
+            str(value.ownTextExcerpt, 16_000)
+          : str(value.ownText, 1_000_000)) &&
         str(value.tagName, 128) &&
         rect(value.rect)
       )

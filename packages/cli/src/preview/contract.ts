@@ -30,6 +30,8 @@ export type PreviewAnchor =
       /** The element's own text and tag, which identify it after an edit far
        * more reliably than its positional selector. */
       ownText?: string
+      ownTextHash?: string
+      ownTextExcerpt?: string
       tagName?: string
     }
 
@@ -249,7 +251,14 @@ export function isPreviewAnchor(
     record[name] === undefined || typeof record[name] === 'string'
   if (record.kind === 'element') {
     return (
-      optionalString('ownText') &&
+      (Object.hasOwn(record, 'ownTextHash') ||
+      Object.hasOwn(record, 'ownTextExcerpt')
+        ? !Object.hasOwn(record, 'ownText') &&
+          typeof record.ownTextHash === 'string' &&
+          /^[a-f0-9]{64}$/.test(record.ownTextHash) &&
+          typeof record.ownTextExcerpt === 'string' &&
+          record.ownTextExcerpt.length <= 16_000
+        : optionalString('ownText')) &&
       optionalString('tagName') &&
       typeof record.selector === 'string' &&
       typeof record.label === 'string' &&

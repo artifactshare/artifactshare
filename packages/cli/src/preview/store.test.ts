@@ -6,6 +6,11 @@ import { test, vi } from 'vitest'
 import { createPreviewStore } from './store.js'
 import type { PreviewAnchor } from './contract.js'
 
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  return { ...fs, writeFileSync: vi.fn(fs.writeFileSync) }
+})
+
 const anchor: PreviewAnchor = {
   kind: 'text',
   state: 'attached',
@@ -506,5 +511,61 @@ test('skipped annotations survive repeated load and save cycles unchanged', () =
     }
   } finally {
     warn.mockRestore()
+  }
+})
+
+test.each([1, 2])(
+  'schema %i preserves raw, textless and fingerprint element anchors without migration',
+  (schema) => {
+    const path = storePath()
+    const store = createPreviewStore(path)
+    const base = {
+      kind: 'element' as const,
+      state: 'attached' as const,
+      selector: 'p',
+      label: 'p',
+      contextText: '',
+      tagName: 'P',
+    }
+    const anchors: PreviewAnchor[] = [
+      base,
+      { ...base, ownText: '' },
+      { ...base, ownText: 'a'.repeat(64) },
+      { ...base, ownText: 'x'.repeat(1_100_000) },
+      {
+        ...base,
+        ownTextHash: 'b'.repeat(64),
+        ownTextExcerpt: 'x'.repeat(16000),
+      },
+    ]
+    for (const value of anchors) store.createDraft(value, 'Review')
+    const saved = JSON.parse(readFileSync(path, 'utf8'))
+    saved.schema_version = schema
+    writeFileSync(path, JSON.stringify(saved))
+    const reopened = createPreviewStore(path)
+    assert.equal(reopened.quarantinedPath, null)
+    assert.deepEqual(
+      reopened.all().map((annotation) => annotation.anchor),
+      anchors,
+    )
+  },
+)
+
+test('a failed draft write rolls back before a successful retry', () => {
+  const path = storePath()
+  const store = createPreviewStore(path)
+  const write = vi.mocked(writeFileSync).mockImplementationOnce(() => {
+    throw new Error('write failed')
+  })
+  try {
+    assert.throws(() => store.createDraft(anchor, 'Retry me'), /write failed/)
+    assert.equal(store.all().length, 0)
+    const saved = store.createDraft(anchor, 'Retry me')
+    assert.deepEqual(store.all(), [saved])
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).annotations, [
+      saved,
+    ])
+  } finally {
+    write.mockRestore()
   }
 })

@@ -14,6 +14,8 @@ export type VerificationAnchor =
       thread: string
       selector: string
       ownText?: string
+      ownTextHash?: string
+      ownTextExcerpt?: string
       tagName?: string
       contextText?: string
     }

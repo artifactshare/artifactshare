@@ -1,3 +1,4 @@
+import { textHash } from './text-hash.js'
 import { anchorIgnoreAttribute } from './anchor-engine.js'
 import type { TextAnchorEngine } from './anchor-engine.js'
 import type { VerificationAnchor, ReporterState } from './state.js'
@@ -45,7 +46,8 @@ export function elementLabel(ctx: ReporterState, el: Element) {
   let ariaLabel = el.getAttribute && el.getAttribute('aria-label')
   if (ariaLabel) return tag + ' ' + quote(ariaLabel.trim())
   let text = (el.textContent || '').replace(/\s+/g, ' ').trim()
-  if (text) return tag + ' ' + quote(text.slice(0, 25))
+  if (text)
+    return tag + ' ' + quote(text.slice(0, 25) + (text.length > 25 ? '…' : ''))
   if (tag === 'img') {
     let alt = el.getAttribute('alt')
     if (alt) return 'img ' + quote(alt.trim())
@@ -124,7 +126,7 @@ export function findElement(
   ctx: ReporterState,
   anchor: Extract<VerificationAnchor, { kind: 'element' }>,
 ) {
-  if (!anchor.ownText) {
+  if (anchor.ownTextHash === undefined && !anchor.ownText) {
     // Nothing to search for, so the selector is all there is.
     try {
       return ctx.doc.querySelector(anchor.selector)
@@ -137,7 +139,13 @@ export function findElement(
     : anchorRoot(ctx).getElementsByTagName('*')
   let matches = []
   for (let i = 0; i < peers.length; i++) {
-    if (ownText(ctx, peers[i]) === anchor.ownText) matches.push(peers[i])
+    const text = ownText(ctx, peers[i])
+    if (
+      anchor.ownTextHash !== undefined
+        ? text.length > 16_000 && textHash(text) === anchor.ownTextHash
+        : text === anchor.ownText
+    )
+      matches.push(peers[i])
   }
   if (matches.length === 0) return null
   if (matches.length === 1) return matches[0]
@@ -230,7 +238,7 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
     selector: cssPath(ctx, target),
     label: elementLabel(ctx, target),
     contextText: annotateContextText(ctx, target),
-    ownText: ownText(ctx, target),
+    ...elementTextIdentity(ownText(ctx, target)),
     tagName: target.tagName,
     rect: {
       top: rect.top,
@@ -239,4 +247,11 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
       height: rect.height,
     },
   })
+}
+
+/** Keep normal captures byte-compatible; only oversized text needs hashing. */
+function elementTextIdentity(text: string) {
+  return text.length <= 16_000
+    ? { ownText: text }
+    : { ownTextHash: textHash(text), ownTextExcerpt: text.slice(0, 16_000) }
 }

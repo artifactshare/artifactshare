@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '@artifactshare/viewer-kit/csp-reporter'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   PREVIEW_MUTATION_HEADER,
@@ -111,6 +111,45 @@ describe('startPreviewServer', () => {
     await context.server.close()
     rmSync(context.dir, { recursive: true, force: true })
   })
+
+  it.each([16000, 16001, 1_100_000])(
+    'saves and reopens bounded element anchors of %i code units through next',
+    async (length) => {
+      const text = '😀'.repeat(Math.floor(length / 2)) + (length % 2 ? 'x' : '')
+      const identity =
+        length <= 16000
+          ? { ownText: text }
+          : {
+              ownTextHash: createHash('sha256').update(text).digest('hex'),
+              ownTextExcerpt: text.slice(0, 16000),
+            }
+      const anchor = {
+        kind: 'element',
+        state: 'attached',
+        selector: 'p',
+        label: 'p "excerpt…"',
+        contextText: 'context',
+        ...identity,
+        tagName: 'P',
+      }
+      const response = await post(context, '/api/annotations', {
+        anchor,
+        comment: 'Review this',
+      })
+      expect(response.status).toBe(200)
+      const reopened = createPreviewStore(
+        join(context.dir, 'config', 'annotations.json'),
+      )
+      expect(JSON.stringify(reopened.all()[0]!.anchor)).toBe(
+        JSON.stringify(anchor),
+      )
+      await post(context, '/api/annotations/submit', {})
+      const next = await (
+        await post(context, '/api/agent/next', { wait: 0 })
+      ).json()
+      expect(JSON.stringify(next.items[0].anchor)).toBe(JSON.stringify(anchor))
+    },
+  )
 
   it('serves the session identity endpoint', async () => {
     const response = await fetch(
@@ -273,48 +312,6 @@ describe('startPreviewServer', () => {
     expect(body.agent.state).toBe('queued')
     expect(JSON.stringify(payloads)).not.toContain('private comment body')
     expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
-  })
-
-  it('closes the existing share popup and opens a fresh one on every click', async () => {
-    const shell = await (await fetch(`${origin(context)}/`)).text()
-    const handler = shell.match(
-      /document\.getElementById\('shareBtn'\)\.addEventListener\('click', \(\) => \{([\s\S]*?)\n  \}\);/,
-    )
-    expect(handler).not.toBeNull()
-    const popups: { closed: boolean; close: () => void }[] = []
-    const scope = {
-      sharePopup: null,
-      CONFIG: { shareOrigin: 'http://127.0.0.1:12345' },
-      window: {
-        open: (url: string, target: string, features: string) => {
-          expect(url).toBe('http://127.0.0.1:12345/')
-          expect(target).toBe('_blank')
-          expect(features).toBe('width=440,height=560')
-          expect(popups.every((popup) => popup.closed)).toBe(true)
-          const popup = {
-            closed: false,
-            close: () => {
-              expect(popup.closed).toBe(false)
-              popup.closed = true
-            },
-          }
-          popups.push(popup)
-          return popup
-        },
-      },
-    }
-    const click = () => runInNewContext(`(() => {${handler![1]}})()`, scope)
-    click()
-    expect(popups).toHaveLength(1)
-    expect(scope.sharePopup).toBe(popups[0])
-    click()
-    expect(popups[0]!.closed).toBe(true)
-    expect(popups).toHaveLength(2)
-    expect(scope.sharePopup).toBe(popups[1])
-    popups[1]!.closed = true
-    click()
-    expect(popups).toHaveLength(3)
-    expect(scope.sharePopup).toBe(popups[2])
   })
 
   it('serves the shell page and the artifact with the reporter injected', async () => {

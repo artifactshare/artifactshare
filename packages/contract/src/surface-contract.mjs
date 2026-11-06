@@ -130,7 +130,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     '`preview next` / `preview done` / `preview reply` / `preview stop`',
-    'Agent loop for a live preview: poll submitted annotation batches, report fixed/skipped outcomes from stdin, reply into a thread, and stop the session',
+    'Agent loop for a live preview: poll submitted annotation batches (oversized element text uses ownTextHash and a reader-only ownTextExcerpt above 16,000 UTF-16 code units), report fixed/skipped outcomes from stdin, reply into a thread, and stop the session',
   ],
   [
     '`login` / `logout` / `whoami`',

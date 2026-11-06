@@ -788,7 +788,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     --muted-foreground: rgba(55,53,47,0.86); --faint: rgba(55,53,47,0.45);
     --border: rgba(55,53,47,0.1); --border-strong: rgba(55,53,47,0.22);
     --accent: rgba(55,53,47,0.04); --link: #116bb1; --primary: #1766ad;
-    --card: #ffffff; --r-md: 6px; --r-lg: 8px;
+    --badge-on-link: #ffffff; --card: #ffffff; --r-md: 6px; --r-lg: 8px;
     --shadow-lg: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.1) 0 8px 24px;
   }
   @media (prefers-color-scheme: dark) {
@@ -797,7 +797,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       --muted-foreground: rgba(231,226,216,0.77); --faint: rgba(231,226,216,0.4);
       --border: rgba(231,226,216,0.13); --border-strong: rgba(231,226,216,0.28);
       --accent: rgba(231,226,216,0.07); --link: #7db7ff; --primary: #7db7ff;
-      --card: #191c1f;
+      --badge-on-link: #111315; --card: #191c1f;
       --shadow-lg: rgba(0,0,0,0.4) 0 0 0 1px, rgba(0,0,0,0.5) 0 8px 24px;
     }
   }
@@ -822,7 +822,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
-  .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--badge-on-link); }
+  .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
+  .btn-primary:disabled:hover { background: var(--primary); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .url-box { display: flex; gap: 8px; margin-bottom: 12px; }
   .url-box input { flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;
@@ -939,9 +941,20 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     el('shareBtn').disabled = true;
   }
 
-  post('/api/snapshot')
+  var snapshotPending = false;
+  function refreshSnapshot() {
+    if (snapshotPending || shareInFlight || el('dialog').className !== 'dialog') return;
+    snapshotPending = true;
+    snapshotFailed = false;
+    snapshotId = null;
+    if (el('shareError').textContent === t('snapshotFailed') ||
+        el('shareError').textContent === t('visibilityUnknown')) {
+      el('shareError').style.display = 'none';
+    }
+    syncVisibility();
+    post('/api/snapshot')
     .then(function (result) {
-      if (!result.ok) {
+      if (!result.ok || typeof result.body.snapshot_id !== 'string') {
         reportSnapshotFailure();
         return;
       }
@@ -950,7 +963,16 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       el('snapshotNote').textContent =
         t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
     })
-    .catch(reportSnapshotFailure);
+    .catch(reportSnapshotFailure)
+    .finally(function () { snapshotPending = false; syncVisibility(); });
+  }
+  window.addEventListener('message', function (event) {
+    if (event.source !== window.opener || event.origin !== bootstrap.artifactOrigin) return;
+    var data = event.data;
+    if (!data || Object.keys(data).length !== 2 || data.source !== 'artifactshare-preview' || data.kind !== 'refresh-snapshot') return;
+    refreshSnapshot();
+  });
+  refreshSnapshot();
 
   function loadContext() {
     return fetch('/api/context')
@@ -993,7 +1015,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // A project destination carries its own audience, so an unresolved home
     // default only blocks home shares.
     var audienceUnknown = !projectSelected && !context.default_visibility;
-    el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed;
+    el('shareBtn').disabled = audienceUnknown || shareInFlight || snapshotFailed || snapshotPending || !snapshotId;
     if (snapshotFailed) {
       // Nothing about the destination can make an unreadable file shareable.
       el('shareError').textContent = t('snapshotFailed');
@@ -1025,7 +1047,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('visibility').addEventListener('change', syncVisibility);
 
   function share() {
-    if (!snapshotId || shareInFlight) return;
+    if (!snapshotId || shareInFlight || snapshotPending || el('dialog').className !== 'dialog') return;
     shareInFlight = true;
     el('shareBtn').disabled = true;
     el('shareError').style.display = 'none';

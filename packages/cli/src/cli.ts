@@ -1224,6 +1224,9 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --sess
 Returns {items: []} with timed_out: true when the wait expires, and
 session_ended: true when the preview shuts down while waiting. Successful
 results include the sanitized agent notification projection.
+Element text up to 16,000 normalized UTF-16 code units keeps raw ownText.
+Larger captures return ownTextHash (full-text SHA-256) and ownTextExcerpt
+(first 16,000 code units, reader context only). Legacy anchors are unchanged.
 
 Common failures:
   preview_session_not_found  Start a session with: preview <file>

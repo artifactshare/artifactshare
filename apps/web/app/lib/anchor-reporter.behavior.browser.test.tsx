@@ -1,3 +1,6 @@
+import { findElement } from '../../../../packages/viewer-kit/src/reporter/annotate'
+import { textHash } from '../../../../packages/viewer-kit/src/reporter/text-hash'
+import type { ReporterState } from '../../../../packages/viewer-kit/src/reporter/state'
 import { afterEach, expect, test, vi } from 'vitest'
 import { commands } from 'vitest/browser'
 import {
@@ -2159,4 +2162,239 @@ test('centers real selection context on a later duplicate in a long block', asyn
     headings: [],
     block_text: text.slice(902, 1502),
   })
+})
+
+test.each([24, 25, 26, 16000, 16001, 1_100_001])(
+  'element captures preserve raw boundaries and reattach full-text fingerprints: %i',
+  async (length) => {
+    const text =
+      length < 30
+        ? 'x'.repeat(length)
+        : '😀'.repeat(Math.floor(length / 2)) + (length % 2 ? 'z' : '')
+    const doc = await fixture(`<p id="picked">${text}</p>`)
+    send('annotate-mode', { enabled: true })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const encoder = vi.spyOn(
+      (frame.contentWindow as unknown as { TextEncoder: typeof TextEncoder })
+        .TextEncoder.prototype,
+      'encode',
+    )
+    doc.querySelector<HTMLElement>('#picked')!.click()
+    // Hashing 1.1M characters can outlast waitFor's 1s default on CI WebKit.
+    const hashing = { timeout: 15000 }
+    await vi.waitFor(
+      () =>
+        expect(
+          messages.some(
+            (m) => (m as { kind: string }).kind === 'element-annotate',
+          ),
+        ).toBe(true),
+      hashing,
+    )
+    const observation = messages.find(
+      (m) => (m as { kind: string }).kind === 'element-annotate',
+    ) as unknown as {
+      label: string
+      ownText?: string
+      ownTextHash?: string
+      ownTextExcerpt?: string
+      selector: string
+      tagName: string
+      contextText: string
+    }
+    expect(observation.label).toBe(
+      `p "${text.slice(0, 25)}${length > 25 ? '…' : ''}"`,
+    )
+    if (length <= 16000) {
+      expect(observation.ownText).toBe(text)
+      expect(observation).not.toHaveProperty('ownTextHash')
+      expect(observation).not.toHaveProperty('ownTextExcerpt')
+      expect(encoder).not.toHaveBeenCalled()
+    } else {
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(text),
+      )
+      const hex = Array.from(new Uint8Array(digest), (x) =>
+        x.toString(16).padStart(2, '0'),
+      ).join('')
+      expect(observation).not.toHaveProperty('ownText')
+      expect(observation.ownTextHash).toBe(hex)
+      expect(observation.ownTextExcerpt).toBe(text.slice(0, 16000))
+    }
+    encoder.mockRestore()
+    const verify = async (id: number, attached: boolean) => {
+      send('verify-anchors', {
+        verificationId: id,
+        anchors: [{ ...observation, kind: 'element', thread: 'picked' }],
+      })
+      await vi.waitFor(
+        () =>
+          expect(
+            messages.some((m) => {
+              const v = m as unknown as {
+                kind: string
+                verificationId: number
+                verdicts: { attached: boolean }[]
+              }
+              return (
+                v.kind === 'anchor-verdicts' &&
+                v.verificationId === id &&
+                v.verdicts[0].attached === attached
+              )
+            }),
+          ).toBe(true),
+        hashing,
+      )
+    }
+    await verify(1, true)
+    doc.querySelector('#picked')!.textContent =
+      text.slice(0, Math.floor(length / 2)) +
+      'changed' +
+      text.slice(Math.floor(length / 2))
+    await verify(2, false)
+  },
+  30000,
+)
+
+test('legacy element text preserves identity while textless peers remain selector-only', async () => {
+  const digestLooking = 'a'.repeat(64)
+  const doc = await fixture(
+    `<p id="raw">${digestLooking}</p><p id="empty"></p><p></p><p id="normalized"> spaced   words </p><div>before</div><p id="duplicate">same</p><div>after</div><p>same</p>`,
+  )
+  send('annotate-mode', { enabled: true })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  doc.querySelector<HTMLElement>('#empty')!.click()
+  await vi.waitFor(() =>
+    expect(
+      messages.some((m) => (m as { kind: string }).kind === 'element-annotate'),
+    ).toBe(true),
+  )
+  const captured = messages.find(
+    (m) => (m as { kind: string }).kind === 'element-annotate',
+  ) as unknown as Record<string, unknown>
+  expect(captured).toMatchObject({
+    ownText: '',
+    label: 'p',
+    tagName: 'P',
+    kind: 'element-annotate',
+  })
+  expect(captured).not.toHaveProperty('ownTextHash')
+  expect(captured).not.toHaveProperty('ownTextExcerpt')
+  doc.querySelector('#empty')!.textContent = 'replacement'
+  const anchors = [
+    { thread: 'raw', selector: '#raw', ownText: digestLooking },
+    { thread: 'normalized', selector: '#normalized', ownText: 'spaced words' },
+    {
+      thread: 'duplicate',
+      selector: '#duplicate',
+      ownText: 'same',
+      contextText: 'same [before: before] [after: after]',
+    },
+    { thread: 'empty', selector: '#empty', ownText: '' },
+    { thread: 'absent', selector: '#empty' },
+    { thread: 'missing', selector: '#missing' },
+    { thread: 'mismatch', selector: '#raw', ownText: 'changed' },
+  ].map((a) => ({ ...a, kind: 'element', tagName: 'P' }))
+  send('verify-anchors', { verificationId: 50, anchors })
+  await vi.waitFor(() =>
+    expect(
+      messages.some(
+        (m) =>
+          (m as unknown as { verificationId: number }).verificationId === 50,
+      ),
+    ).toBe(true),
+  )
+  const result = messages.find(
+    (m) => (m as unknown as { verificationId: number }).verificationId === 50,
+  ) as unknown as { verdicts: { thread: string; attached: boolean }[] }
+  expect(result.verdicts.map((v) => [v.thread, v.attached])).toEqual([
+    ['raw', true],
+    ['normalized', true],
+    ['duplicate', true],
+    ['empty', true],
+    ['absent', true],
+    ['missing', false],
+    ['mismatch', false],
+  ])
+})
+
+test('oversized duplicate elements use context and never the reader excerpt to match', async () => {
+  const text = 'x'.repeat(16001)
+  const doc = await fixture(
+    `<div>before</div><p id="picked">${text}</p><div>after</div><p>${text}</p>`,
+  )
+  send('annotate-mode', { enabled: true })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  doc.querySelector<HTMLElement>('#picked')!.click()
+  await vi.waitFor(() =>
+    expect(
+      messages.some((m) => (m as { kind: string }).kind === 'element-annotate'),
+    ).toBe(true),
+  )
+  const captured = messages.find(
+    (m) => (m as { kind: string }).kind === 'element-annotate',
+  ) as unknown as Record<string, unknown>
+  const anchor = {
+    ...captured,
+    ownTextExcerpt: 'unrelated reader context',
+    kind: 'element',
+    thread: 'duplicate',
+  }
+  send('verify-anchors', { verificationId: 61, anchors: [anchor] })
+  await vi.waitFor(() =>
+    expect(
+      messages.some(
+        (m) =>
+          (m as unknown as { verificationId: number }).verificationId === 61,
+      ),
+    ).toBe(true),
+  )
+  const first = messages.find(
+    (m) => (m as unknown as { verificationId: number }).verificationId === 61,
+  ) as unknown as { verdicts: { attached: boolean }[] }
+  expect(first.verdicts[0].attached).toBe(true)
+  doc.querySelector('div')!.textContent = 'different surroundings'
+  send('verify-anchors', { verificationId: 62, anchors: [anchor] })
+  await vi.waitFor(() =>
+    expect(
+      messages.some(
+        (m) =>
+          (m as unknown as { verificationId: number }).verificationId === 62,
+      ),
+    ).toBe(true),
+  )
+  const second = messages.find(
+    (m) => (m as unknown as { verificationId: number }).verificationId === 62,
+  ) as unknown as { verdicts: { attached: boolean }[] }
+  expect(second.verdicts[0].attached).toBe(false)
+})
+
+test('oversized anchors hash only peers above the normalized UTF-16 boundary', () => {
+  const doc = new DOMParser().parseFromString(
+    '<p id="short"></p><p id="long"></p>',
+    'text/html',
+  )
+  doc.querySelector('#short')!.textContent = '  ' + '😀'.repeat(8000) + '  '
+  const long = doc.querySelector('#long')!
+  long.textContent = '😀'.repeat(8000) + 'x'
+  const digest = textHash(long.textContent)
+  const hash = vi.spyOn(TextEncoder.prototype, 'encode')
+  try {
+    expect(
+      findElement({ doc } as ReporterState, {
+        kind: 'element',
+        thread: '1',
+        selector: '#long',
+        tagName: 'P',
+        ownTextHash: digest,
+        ownTextExcerpt: long.textContent.slice(0, 16000),
+        contextText: '',
+      }),
+    ).toBe(long)
+    expect(hash).toHaveBeenCalledTimes(1)
+    expect(hash).toHaveBeenCalledWith(long.textContent)
+  } finally {
+    hash.mockRestore()
+  }
 })

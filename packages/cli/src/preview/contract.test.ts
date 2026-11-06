@@ -55,3 +55,31 @@ test.each([
     )
   },
 )
+
+test('element fingerprints require a complete pair without raw text; legacy text remains valid', () => {
+  const base = {
+    kind: 'element',
+    state: 'attached',
+    selector: 'p',
+    label: 'p',
+    contextText: '',
+  }
+  const hash = {
+    ownTextHash: 'b'.repeat(64),
+    ownTextExcerpt: 'x'.repeat(16000),
+  }
+  expect(isPreviewAnchor({ ...base, ...hash })).toBe(true)
+  for (const patch of [
+    { ownText: '' },
+    { ownTextHash: 'bad' },
+    { ownTextHash: undefined },
+    { ownTextExcerpt: undefined },
+    { ownTextExcerpt: 'x'.repeat(16001) },
+  ]) {
+    expect(isPreviewAnchor({ ...base, ...hash, ...patch })).toBe(false)
+  }
+  for (const ownText of ['', 'a'.repeat(64), 'x'.repeat(1_100_000)]) {
+    expect(isPreviewAnchor({ ...base, ownText }, { stored: true })).toBe(true)
+  }
+  expect(isPreviewAnchor(base, { stored: true })).toBe(true)
+})

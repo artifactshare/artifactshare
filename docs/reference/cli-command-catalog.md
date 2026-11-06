@@ -451,6 +451,18 @@ same-identity, same-size in-place edit. See the CLI README for the full guarante
 
 アップロードの別表記は保存済みの名前から種類・ファイル名・content type を決める。列挙後に消えたファイルは `changed` として再試行を案内し、通常ファイルを中間要素に含む相対パスは `not_found` として修正を案内する。`share --help` と `append --help` は `upload_read_failed` と七つの `validation_failed` 理由を示す。
 
+### Local preview annotations
+
+Element anchors keep raw `ownText` for normalized text of at most 16,000 UTF-16
+code units, including empty text. Larger captures omit `ownText` and return
+`ownTextHash` (the full normalized text's SHA-256, 64 lowercase hex characters)
+and `ownTextExcerpt` (its first 16,000 code units). `preview next` preserves these
+fields. The excerpt is reader context only and is never used for matching.
+Normal and legacy anchors remain unchanged; existing stored raw text is not
+migrated. Failed annotation saves retain the draft and show a retry message.
+Repeated Share focuses the existing dialog: editable snapshots refresh in place,
+while sign-in, uploads and completed results keep their state.
+
 ### Local preview isolation
 
 Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.

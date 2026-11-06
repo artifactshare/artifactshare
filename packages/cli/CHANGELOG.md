@@ -5,6 +5,9 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Fix local preview dark-mode contrast, document backgrounds, truncated labels and narrow headers. Preserve failed annotation drafts with a retry message and keep Share sign-in, upload and result state when reopened. Oversized element anchors use bounded hash/excerpt fields while normal and legacy anchors remain compatible.
+- Update the bundled skill to version 59 with oversized preview anchor and retry guidance.
+
 - Add `artifacts versions <target> --json` with cursor pagination for files and static sites. Get/list now report `retain_versions`, `version_count`, and `total_size_bytes`. Static-site get opts into metadata without source; released source-only clients keep their existing unsupported-kind response and open download guidance. Publisher history restrictions and retention behavior are unchanged.
 
 - Reject keyed resends with a different effective explicit visibility before creating a version, with an edit command for recovery. Home treats project as private, matching creation.
