@@ -2180,12 +2180,16 @@ test.each([24, 25, 26, 16000, 16001, 1_100_001])(
       'encode',
     )
     doc.querySelector<HTMLElement>('#picked')!.click()
-    await vi.waitFor(() =>
-      expect(
-        messages.some(
-          (m) => (m as { kind: string }).kind === 'element-annotate',
-        ),
-      ).toBe(true),
+    // Hashing 1.1M characters can outlast waitFor's 1s default on CI WebKit.
+    const hashing = { timeout: 15000 }
+    await vi.waitFor(
+      () =>
+        expect(
+          messages.some(
+            (m) => (m as { kind: string }).kind === 'element-annotate',
+          ),
+        ).toBe(true),
+      hashing,
     )
     const observation = messages.find(
       (m) => (m as { kind: string }).kind === 'element-annotate',
@@ -2224,21 +2228,23 @@ test.each([24, 25, 26, 16000, 16001, 1_100_001])(
         verificationId: id,
         anchors: [{ ...observation, kind: 'element', thread: 'picked' }],
       })
-      await vi.waitFor(() =>
-        expect(
-          messages.some((m) => {
-            const v = m as unknown as {
-              kind: string
-              verificationId: number
-              verdicts: { attached: boolean }[]
-            }
-            return (
-              v.kind === 'anchor-verdicts' &&
-              v.verificationId === id &&
-              v.verdicts[0].attached === attached
-            )
-          }),
-        ).toBe(true),
+      await vi.waitFor(
+        () =>
+          expect(
+            messages.some((m) => {
+              const v = m as unknown as {
+                kind: string
+                verificationId: number
+                verdicts: { attached: boolean }[]
+              }
+              return (
+                v.kind === 'anchor-verdicts' &&
+                v.verificationId === id &&
+                v.verdicts[0].attached === attached
+              )
+            }),
+          ).toBe(true),
+        hashing,
       )
     }
     await verify(1, true)
