@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import type { Cookie, Page } from 'playwright'
+import type { Cookie, Download, Page } from 'playwright'
 import { execFile } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -77,6 +77,14 @@ function sessionCookie(token: string): string {
 
 const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
   const directory = await mkdtemp(join(tmpdir(), 'usercontent-browser-'))
+  let downloadCount = 0
+  // saveAs also works when the browser runs on a Playwright server.
+  const savedDownload = async (download: Download) => {
+    downloadCount += 1
+    const path = join(directory, `download-${downloadCount}`)
+    await download.saveAs(path)
+    return path
+  }
   let build: Awaited<ReturnType<typeof acquireUsercontentBuild>> | undefined
   try {
     build = await acquireUsercontentBuild()
@@ -1120,8 +1128,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               })
               .click()
             const download = await downloadReady
-            const path = await download.path()
-            assert.ok(path)
+            const path = await savedDownload(download)
             assert.ok((await readFile(path)).byteLength > 0)
             await viewer
               .getByRole('menuitem')
@@ -1138,8 +1145,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               'download',
             )
             const download = await downloadReady
-            const path = await download.path()
-            assert.ok(path)
+            const path = await savedDownload(download)
             assert.equal(await readFile(path, 'utf8'), 'Local download')
           } else {
             // Anonymous Markdown offers the body action, but no export actions.

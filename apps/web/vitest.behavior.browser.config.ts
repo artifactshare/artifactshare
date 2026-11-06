@@ -67,7 +67,19 @@ export default defineConfig({
       },
       headless: true,
       instances: [
-        { browser: 'chromium' },
+        {
+          browser: 'chromium',
+          // A sandboxed agent cannot start Chromium, so it can reach one that
+          // runs outside the sandbox.
+          ...(process.env.PLAYWRIGHT_WS
+            ? {
+                provider: playwright({
+                  connectOptions: { wsEndpoint: process.env.PLAYWRIGHT_WS },
+                  contextOptions: { locale: 'en-US' },
+                }),
+              }
+            : {}),
+        },
         {
           browser: 'firefox',
           provider: playwright({
