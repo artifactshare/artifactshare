@@ -102,9 +102,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--badge-on-link); }
-  @media (prefers-color-scheme: dark) {
-    .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
-  }
+  .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
   .btn:disabled { cursor: default; opacity: 0.5; }
   .btn-primary:disabled:hover { background: var(--primary); }
   .layout { display: flex; height: calc(100vh - 46px); }
@@ -471,11 +469,18 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let saveFailed = false;
   let popoverTop = 52;
   function positionPopover() {
+    const height = popover.getBoundingClientRect().height;
+    const bottom = window.innerWidth <= 860
+      ? document.querySelector('.panel').getBoundingClientRect().top
+      : window.innerHeight;
+    const fitsAbovePanel = bottom - height - 8 >= 52;
+    // On phones the floating mode toggle (60) also overlaps the action row.
+    popover.style.zIndex = window.innerWidth <= 860 ? '61' : '';
     popover.style.top = Math.max(52, Math.min(popoverTop,
-      window.innerHeight - popover.getBoundingClientRect().height - 8)) + 'px';
+      (fitsAbovePanel ? bottom : window.innerHeight) - height - 8)) + 'px';
   }
   function openPopover(anchor, label, rect) {
-    if (savePending || saveFailed) return;
+    if (savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
     document.getElementById('popError').textContent = '';
     pendingAnchor = anchor;
     popTarget.textContent = label;
@@ -522,6 +527,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       return;
     }
     document.getElementById('popError').textContent = '';
+    popText.value = '';
     hidePopover();
   }
 
@@ -667,7 +673,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     body.classList.toggle('annotate', annotateMode);
     modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
-    hidePopover();
+    if (!popText.value.trim()) hidePopover();
   });
 
   // --- reload + orphan handling ------------------------------------------

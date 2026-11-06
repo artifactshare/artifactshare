@@ -291,6 +291,29 @@ test.each(['http', 'network'])(
       const input = document.querySelector<HTMLTextAreaElement>('#popText')!
       const add = document.querySelector<HTMLButtonElement>('#popAdd')!
       input.value = '  keep this exact draft\nplease  '
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame.contentWindow,
+          origin: 'null',
+          data: {
+            source: 'artifactshare',
+            kind: 'element-annotate',
+            previewCapability: handshake.previewCapability,
+            documentGeneration: handshake.documentGeneration,
+            sequence: 2,
+            selector: 'h1',
+            label: 'Other',
+            contextText: 'Other',
+            ownText: 'Other',
+            tagName: 'H1',
+            rect: { top: 0, left: 0, width: 10, height: 10 },
+          },
+        }),
+      )
+      expect(input.value).toBe('  keep this exact draft\nplease  ')
+      expect(document.querySelector('#popTarget')!.textContent).toBe(
+        anchor.label,
+      )
       add.click()
       add.click()
       input.dispatchEvent(
@@ -312,6 +335,12 @@ test.each(['http', 'network'])(
       )
       expect(parseFloat(popover.style.top) + 240).toBeLessThanOrEqual(
         window.innerHeight - 8,
+      )
+      document.querySelector<HTMLButtonElement>('#modeToggle')!.click()
+      expect(popover.classList.contains('show')).toBe(true)
+      expect(input.value).toBe('  keep this exact draft\nplease  ')
+      expect(document.querySelector('#popTarget')!.textContent).toBe(
+        anchor.label,
       )
       for (const [index, pick] of [
         {
@@ -341,7 +370,7 @@ test.each(['http', 'network'])(
           source: 'artifactshare',
           previewCapability: handshake.previewCapability,
           documentGeneration: handshake.documentGeneration,
-          sequence: index + 2,
+          sequence: index + 3,
           ...pick,
           rect: { top: 0, left: 0, width: 10, height: 10 },
         }
@@ -365,9 +394,36 @@ test.each(['http', 'network'])(
         ).toBe(false),
       )
       expect(writes).toEqual([
-        { anchor, comment: input.value.trim() },
-        { anchor, comment: input.value.trim() },
+        { anchor, comment: 'keep this exact draft\nplease' },
+        { anchor, comment: 'keep this exact draft\nplease' },
       ])
+      expect(input.value).toBe('')
+      document.querySelector<HTMLButtonElement>('#modeToggle')!.click()
+      const currentHandshake = post.mock.calls
+        .map(([message]) => message)
+        .findLast((message) => message.kind === 'ready-check')
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame.contentWindow,
+          origin: 'null',
+          data: {
+            source: 'artifactshare',
+            kind: 'element-annotate',
+            previewCapability: currentHandshake.previewCapability,
+            documentGeneration: currentHandshake.documentGeneration,
+            sequence: 5,
+            selector: 'h1',
+            label: 'Other',
+            contextText: 'Other',
+            ownText: 'Other',
+            tagName: 'H1',
+            rect: { top: 0, left: 0, width: 10, height: 10 },
+          },
+        }),
+      )
+      expect(popover.classList.contains('show')).toBe(true)
+      expect(document.querySelector('#popTarget')!.textContent).toBe('Other')
+      expect(input.value).toBe('')
       const share = document.querySelector<HTMLButtonElement>('#shareBtn')!
       share.click()
       share.click()

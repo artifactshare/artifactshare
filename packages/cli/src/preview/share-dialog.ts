@@ -823,9 +823,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--badge-on-link); }
-  @media (prefers-color-scheme: dark) {
-    .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
-  }
+  .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .url-box { display: flex; gap: 8px; margin-bottom: 12px; }
   .url-box input { flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;

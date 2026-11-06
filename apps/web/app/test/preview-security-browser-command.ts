@@ -28,7 +28,12 @@ async function postFromDocument(
   await script.dispose()
 }
 
-type View = 'theme' | 'header' | 'oversized'
+type View = 'theme' | 'header' | 'oversized' | 'popover'
+type PopoverMeasurements = {
+  short: boolean
+  selector: string
+  hit: boolean
+}[]
 type HeaderMeasurements = {
   width: number
   header: number
@@ -141,6 +146,75 @@ export const previewSecurity = defineBrowserCommand(
         Object.defineProperty(navigator, 'language', { value: 'en' }),
       )
       await shell.goto(ready.url)
+      if (view === 'popover') {
+        const measurements: PopoverMeasurements = []
+        await shell.setViewportSize({ width: 390, height: 844 })
+        await shell.route('**/api/annotations', (route) =>
+          route.request().method() === 'POST'
+            ? route.fulfill({ status: 500, json: {} })
+            : route.continue(),
+        )
+        const frame = await (await shell
+          .locator('#artifactFrame')
+          .elementHandle())!.contentFrame()
+        assert.ok(frame)
+        await frame.waitForFunction(() =>
+          Boolean(
+            (window as unknown as { previewHandshake: unknown })
+              .previewHandshake,
+          ),
+        )
+        await frame.locator('#sample').evaluate((element) => {
+          element.style.position = 'absolute'
+          element.style.top = '350px'
+        })
+        await frame.locator('#sample').click()
+        await shell.locator('#popover.show').waitFor()
+        await shell.locator('#popText').fill('Keep this draft')
+        await shell.locator('#popAdd').click()
+        await shell
+          .locator('#popError')
+          .filter({ hasText: 'Could not save' })
+          .waitFor()
+        for (const short of [false, true]) {
+          if (short)
+            await shell.locator('#popover').evaluate((element) => {
+              element.style.minHeight = '480px'
+            })
+          if (short) {
+            const failed = shell.waitForResponse(
+              (response) =>
+                response.url().endsWith('/api/annotations') &&
+                response.status() === 500,
+            )
+            await shell.locator('#popAdd').click()
+            await failed
+            await shell.waitForFunction(
+              () =>
+                !(document.querySelector('#popAdd') as HTMLButtonElement)
+                  .disabled,
+            )
+          }
+          for (const selector of ['#popAdd', '#popCancel']) {
+            measurements.push({
+              short,
+              selector,
+              hit: await shell.locator(selector).evaluate((element) => {
+                const rect = element.getBoundingClientRect()
+                return (
+                  document.elementFromPoint(
+                    rect.x + rect.width / 2,
+                    rect.y + rect.height / 2,
+                  ) === element
+                )
+              }),
+            })
+          }
+        }
+        await shell.locator('#popCancel').click()
+        assert.equal(await shell.locator('#popover.show').count(), 0)
+        return measurements
+      }
       if (view === 'header') {
         const measurements: HeaderMeasurements = []
         await shell.locator('.file-stem').evaluate((el) => {
@@ -581,6 +655,7 @@ declare module 'vitest/browser' {
   interface BrowserCommands {
     previewSecurity: {
       (): Promise<boolean>
+      (scenario: 'popover'): Promise<PopoverMeasurements>
       (scenario: 'theme'): Promise<ThemeMeasurements>
       (scenario: 'header'): Promise<HeaderMeasurements>
       (scenario: 'oversized'): Promise<OversizedMeasurements>

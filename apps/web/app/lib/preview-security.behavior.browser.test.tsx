@@ -12,14 +12,9 @@ test('preview primary buttons and document canvases remain readable in both them
     expect(value).toBe(colorScheme === 'dark' ? '#111315' : '#ffffff')
   expect(measurements.buttons).toHaveLength(24)
   for (const button of measurements.buttons) {
-    if (button.colorScheme === 'dark')
-      expect(button.contrast, JSON.stringify(button)).toBeGreaterThanOrEqual(
-        4.5,
-      )
-    else {
+    expect(button.contrast, JSON.stringify(button)).toBeGreaterThanOrEqual(4.5)
+    if (button.colorScheme === 'light') {
       expect(button.foreground).toBe('rgb(255, 255, 255)')
-      if (button.state === 'hover')
-        expect(button.background).toBe('rgba(55, 53, 47, 0.04)')
     }
   }
   expect(measurements.canvases).toEqual([
@@ -62,4 +57,14 @@ test('oversized reporter captures survive shell save, store reopen and preview n
     })
   }
   expect(result.next).toEqual(result.stored)
+}, 60000)
+
+test('phone failed drafts keep Add and Cancel above the panel', async () => {
+  const measurements = await server.commands.previewSecurity('popover')
+  expect(measurements).toEqual([
+    { short: false, selector: '#popAdd', hit: true },
+    { short: false, selector: '#popCancel', hit: true },
+    { short: true, selector: '#popAdd', hit: true },
+    { short: true, selector: '#popCancel', hit: true },
+  ])
 }, 60000)
