@@ -31,6 +31,9 @@ function scriptJson(value: unknown): string {
 
 export function renderPreviewShell(options: PreviewShellOptions): string {
   const { fileName, resumeCommand, shareOrigin, messages } = options
+  const extensionAt = fileName.lastIndexOf('.')
+  const stem = extensionAt > 0 ? fileName.slice(0, extensionAt) : fileName
+  const extension = extensionAt > 0 ? fileName.slice(extensionAt) : ''
   const config = scriptJson({
     fileName,
     resumeCommand,
@@ -82,8 +85,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     position: sticky; top: 0; z-index: 40; }
   .brand { width: 20px; height: 20px; border-radius: 5px; background: var(--coral);
     color: #fff; font-weight: 700; font-size: 11px; display: grid; place-items: center; }
-  .file-name { font-weight: 600; font-size: 13px; min-width: 0;
+  .topbar > :not(.file-name):not(.spacer) { flex-shrink: 0; white-space: nowrap; }
+  .file-name { display: flex; font-weight: 600; font-size: 13px; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-stem { overflow: hidden; text-overflow: ellipsis; }
+  .file-extension { flex-shrink: 0; }
   .local-badge { font-size: 11px; color: var(--muted-foreground);
     border: 1px solid var(--border); border-radius: var(--r-full);
     padding: 1px 8px; background: var(--accent); }
@@ -95,12 +101,15 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
     padding: 5px 12px; }
   .btn:hover { background: var(--accent); }
-  .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--badge-on-link); }
+  @media (prefers-color-scheme: dark) {
+    .btn-primary:not(:disabled):hover, .btn-primary:not(:disabled):focus { background: var(--primary); }
+  }
   .btn:disabled { cursor: default; opacity: 0.5; }
   .btn-primary:disabled:hover { background: var(--primary); }
   .layout { display: flex; height: calc(100vh - 46px); }
   .doc-wrap { flex: 1; display: flex; position: relative; }
-  #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: var(--background); }
+  #artifactFrame { flex: 1; width: 100%; height: 100%; border: 0; background: #ffffff; }
   .mode-toggle { font: inherit; color: inherit; border: 0; position: fixed; right: 320px; bottom: 20px; z-index: 60;
     display: flex; align-items: center; gap: 8px; background: var(--card);
     border-radius: var(--r-full); box-shadow: var(--shadow-lg);
@@ -198,7 +207,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       height: min(42vh, 340px); overflow-y: auto;
       border-left: none; border-top: 1px solid var(--border);
       box-shadow: var(--shadow-lg); z-index: 55; border-radius: 12px 12px 0 0; }
-    .local-badge { display: none; }
+    .local-badge, .watch-label { display: none; }
     .mode-toggle { right: 20px; bottom: calc(min(42vh, 340px) + 14px); }
     .toast { bottom: calc(min(42vh, 340px) + 60px); }
   }
@@ -207,7 +216,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <body class="annotate">
 <header class="topbar">
   <div class="brand">as</div>
-  <span class="file-name">${escapeHtml(fileName)}</span>
+  <span class="file-name"><span class="file-stem">${escapeHtml(stem)}</span><span class="file-extension">${escapeHtml(extension)}</span></span>
   <span class="local-badge" data-msg="preview.localBadge" aria-hidden="true"></span>
   <span id="watchStatus" role="status" style="font-size:12px;color:var(--muted-foreground)"><span class="watch-dot" aria-hidden="true"></span><span class="watch-label" data-msg="preview.watching"></span></span>
   <div class="spacer"></div>
@@ -240,6 +249,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
   <textarea id="popText" rows="2"></textarea>
+  <div id="popError" role="alert"></div>
   <div class="row">
     <button class="btn" id="popCancel" data-msg="preview.cancel"></button>
     <button class="btn btn-primary" id="popAdd" data-msg="preview.add"></button>
@@ -434,7 +444,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       openPopover({
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
-        ownText: data.ownText, tagName: data.tagName,
+        ...(data.ownTextHash ? { ownTextHash: data.ownTextHash, ownTextExcerpt: data.ownTextExcerpt } : { ownText: data.ownText }), tagName: data.tagName,
       }, data.label, data.rect);
     } else if (data.kind === 'anchor-verdicts') {
       if (data.verificationId !== verificationId || !Number.isSafeInteger(data.generation) || data.generation <= verificationGeneration) return;
@@ -455,7 +465,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   });
 
   // --- popover ------------------------------------------------------------
+  let savePending = false;
   function openPopover(anchor, label, rect) {
+    if (savePending) return;
+    document.getElementById('popError').textContent = '';
     pendingAnchor = anchor;
     popTarget.textContent = label;
     const frameRect = frame.getBoundingClientRect();
@@ -472,6 +485,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     popText.focus();
   }
   function hidePopover() {
+    if (savePending) return;
     popover.classList.remove('show');
     pendingAnchor = null;
     if (pendingReload !== null) {
@@ -488,8 +502,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   document.getElementById('popAdd').addEventListener('click', addAnnotation);
   async function addAnnotation() {
     const comment = popText.value.trim();
-    if (!comment || !pendingAnchor) return;
-    await api('POST', '/api/annotations', { anchor: pendingAnchor, comment });
+    if (!comment || !pendingAnchor || savePending) return;
+    savePending = true;
+    document.getElementById('popAdd').disabled = true;
+    const result = await api('POST', '/api/annotations', { anchor: pendingAnchor, comment });
+    savePending = false;
+    document.getElementById('popAdd').disabled = false;
+    if (!result || !result.annotation || typeof result.annotation.thread !== 'string' || !result.annotation.thread) {
+      document.getElementById('popError').textContent = t('preview.annotationSaveFailed');
+      return;
+    }
+    document.getElementById('popError').textContent = '';
     hidePopover();
   }
 
@@ -503,6 +526,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         headers,
         body: bodyValue === undefined ? '{}' : JSON.stringify(bodyValue),
       });
+      if (!response.ok) return null;
       return await response.json().catch(() => null);
     } catch (error) {
       return null;
@@ -796,7 +820,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // --- share --------------------------------------------------------------
   document.getElementById('shareBtn').addEventListener('click', () => {
     if (sharePopup && !sharePopup.closed) {
-      sharePopup.close();
+      sharePopup.focus();
+      sharePopup.postMessage({ source: 'artifactshare-preview', kind: 'refresh-snapshot' }, CONFIG.shareOrigin);
+      return;
     }
     sharePopup = window.open(CONFIG.shareOrigin + '/', '_blank', 'width=440,height=560');
   });

@@ -1492,6 +1492,7 @@
   "upgradeRequest.copyFailed": "テキストを選択して手動でコピーしてください。",
   "upgradeRequest.billing": "請求設定を開く",
   "upgradeRequest.support": "サポートに問い合わせる",
+  "preview.annotationSaveFailed": "コメントを保存できませんでした。入力内容は残っています。もう一度お試しください。",
   "preview.isolationNotice": "プレビューのスクリプトは隔離されたフレームで実行されます。localStorage、IndexedDB など、同一オリジンを必要とする機能は使えません。この隔離は解除できません。",
   "preview.localBadge": "ローカルプレビュー",
   "preview.watching": "変更を監視中",

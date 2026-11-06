@@ -148,6 +148,16 @@ Sharing is user-driven: the page's share button opens a separate-origin
 dialog that publishes the snapshot bytes; local annotations are never
 carried into the shared copy.
 
+Element anchors keep raw `ownText` for normalized text of at most 16,000 UTF-16
+code units, including empty text. Larger captures omit `ownText` and return
+`ownTextHash` (the full normalized text's SHA-256, 64 lowercase hex characters)
+and `ownTextExcerpt` (its first 16,000 code units). `preview next` preserves these
+fields. The excerpt is reader context only and is never used for matching.
+Normal and legacy anchors remain unchanged; existing stored raw text is not
+migrated. Failed annotation saves retain the draft and show a retry message.
+Repeated Share focuses the existing dialog: editable snapshots refresh in place,
+while sign-in, uploads and completed results keep their state.
+
 ### Local preview isolation
 
 Local HTML and Markdown previews run scripts inside a frame with `sandbox="allow-scripts"`. Preview isolation cannot be disabled. `localStorage`, IndexedDB, and other same-origin features are unavailable; the review shell always shows this restriction. Reporter observations are bounded, document-scoped display data. Saving or submitting feedback requires an explicit action in the review shell.

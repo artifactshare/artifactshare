@@ -508,3 +508,40 @@ test('skipped annotations survive repeated load and save cycles unchanged', () =
     warn.mockRestore()
   }
 })
+
+test.each([1, 2])(
+  'schema %i preserves raw, textless and fingerprint element anchors without migration',
+  (schema) => {
+    const path = storePath()
+    const store = createPreviewStore(path)
+    const base = {
+      kind: 'element' as const,
+      state: 'attached' as const,
+      selector: 'p',
+      label: 'p',
+      contextText: '',
+      tagName: 'P',
+    }
+    const anchors: PreviewAnchor[] = [
+      base,
+      { ...base, ownText: '' },
+      { ...base, ownText: 'a'.repeat(64) },
+      { ...base, ownText: 'x'.repeat(1_100_000) },
+      {
+        ...base,
+        ownTextHash: 'b'.repeat(64),
+        ownTextExcerpt: 'x'.repeat(16000),
+      },
+    ]
+    for (const value of anchors) store.createDraft(value, 'Review')
+    const saved = JSON.parse(readFileSync(path, 'utf8'))
+    saved.schema_version = schema
+    writeFileSync(path, JSON.stringify(saved))
+    const reopened = createPreviewStore(path)
+    assert.equal(reopened.quarantinedPath, null)
+    assert.deepEqual(
+      reopened.all().map((annotation) => annotation.anchor),
+      anchors,
+    )
+  },
+)

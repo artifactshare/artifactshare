@@ -108,3 +108,23 @@ test('accepts selection observations with or without ignored optional locus', ()
     ).toBe(false)
   }
 })
+
+test('oversized observations require exactly a valid hash and bounded excerpt', () => {
+  const { ownText: _raw, ...base } = element
+  const large = {
+    ...base,
+    ownTextHash: 'a'.repeat(64),
+    ownTextExcerpt: '😀'.repeat(8000),
+  }
+  expect(validPreviewObservation(large)).toBe(true)
+  for (const patch of [
+    { ownText: '' },
+    { ownTextHash: undefined },
+    { ownTextExcerpt: undefined },
+    { ownTextHash: 'A'.repeat(64) },
+    { ownTextExcerpt: 'x'.repeat(16001) },
+    { unexpected: true },
+  ])
+    expect(validPreviewObservation({ ...large, ...patch })).toBe(false)
+  expect(validPreviewObservation({ ...element, ownText: '' })).toBe(true)
+})

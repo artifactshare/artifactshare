@@ -183,3 +183,148 @@ test('an unchanged page keeps saved legacy annotations attached without offering
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test.each(['http', 'network'])(
+  'failed %s saves preserve input and anchor, allow one retry, and reuse the share popup',
+  async (failure) => {
+    const listeners = vi.spyOn(window, 'addEventListener')
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'EventSource',
+      class extends EventTarget {
+        close() {}
+      },
+    )
+    let finish: (value: Response) => void = () => {}
+    let reject: (reason: Error) => void = () => {}
+    const writes: { anchor: unknown; comment: string }[] = []
+    const fetcher = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/annotations' && init?.method === 'POST') {
+        writes.push(JSON.parse(init.body as string))
+        if (writes.length === 1)
+          return new Promise<Response>((resolve, rejectPromise) => {
+            finish = resolve
+            reject = rejectPromise
+          })
+        return Promise.resolve(
+          Response.json({ annotation: { thread: 'saved' } }),
+        )
+      }
+      return Promise.resolve(Response.json({ annotations: [] }))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const popup = {
+      closed: false,
+      focus: vi.fn(),
+      postMessage: vi.fn(),
+      close: vi.fn(),
+    }
+    const open = vi
+      .spyOn(window, 'open')
+      .mockReturnValue(popup as unknown as Window)
+    try {
+      const shell = new DOMParser().parseFromString(
+        renderPreviewShell({
+          fileName: 'sample.html',
+          resumeCommand: '',
+          shareOrigin: 'https://example.com',
+          messages: PREVIEW_MESSAGES,
+        }).replace('src="/artifact"', ''),
+        'text/html',
+      )
+      const script = shell.querySelector('script')!.textContent!
+      shell.querySelector('script')!.remove()
+      document.body.innerHTML = shell.body.innerHTML
+      const frame = document.querySelector('iframe')!
+      const post = vi
+        .spyOn(frame.contentWindow!, 'postMessage')
+        .mockImplementation(() => {})
+      const executable = document.createElement('script')
+      executable.textContent = script
+      document.body.appendChild(executable)
+      frame.dispatchEvent(new Event('load'))
+      await vi.waitFor(() => expect(post.mock.calls.length).toBeGreaterThan(0))
+      const handshake = post.mock.calls[0]![0]
+      const anchor = {
+        kind: 'element',
+        state: 'attached',
+        selector: 'p',
+        label: 'p "Text"',
+        contextText: 'Text',
+        ownText: 'Text',
+        tagName: 'P',
+      }
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame.contentWindow,
+          origin: 'null',
+          data: {
+            source: 'artifactshare',
+            kind: 'element-annotate',
+            previewCapability: handshake.previewCapability,
+            documentGeneration: handshake.documentGeneration,
+            sequence: 1,
+            selector: anchor.selector,
+            label: anchor.label,
+            contextText: anchor.contextText,
+            ownText: anchor.ownText,
+            tagName: anchor.tagName,
+            rect: { top: 0, left: 0, width: 10, height: 10 },
+          },
+        }),
+      )
+      const input = document.querySelector<HTMLTextAreaElement>('#popText')!
+      const add = document.querySelector<HTMLButtonElement>('#popAdd')!
+      input.value = '  keep this exact draft\nplease  '
+      add.click()
+      add.click()
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
+      )
+      expect(writes).toHaveLength(1)
+      if (failure === 'http')
+        finish(
+          Response.json({ annotation: { thread: 'invalid' } }, { status: 500 }),
+        )
+      else reject(new Error('network unavailable'))
+      await vi.waitFor(() => expect(add.disabled).toBe(false))
+      expect(
+        document.querySelector('#popover')!.classList.contains('show'),
+      ).toBe(true)
+      expect(input.value).toBe('  keep this exact draft\nplease  ')
+      expect(document.querySelector('#popError')!.textContent).toBe(
+        PREVIEW_MESSAGES.en['preview.annotationSaveFailed'],
+      )
+      add.click()
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector('#popover')!.classList.contains('show'),
+        ).toBe(false),
+      )
+      expect(writes).toEqual([
+        { anchor, comment: input.value.trim() },
+        { anchor, comment: input.value.trim() },
+      ])
+      const share = document.querySelector<HTMLButtonElement>('#shareBtn')!
+      share.click()
+      share.click()
+      expect(open).toHaveBeenCalledTimes(1)
+      expect(popup.close).not.toHaveBeenCalled()
+      expect(popup.postMessage).toHaveBeenCalledWith(
+        { source: 'artifactshare-preview', kind: 'refresh-snapshot' },
+        'https://example.com',
+      )
+      popup.closed = true
+      share.click()
+      expect(open).toHaveBeenCalledTimes(2)
+    } finally {
+      for (const [type, listener] of listeners.mock.calls)
+        window.removeEventListener(type, listener)
+      vi.clearAllTimers()
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+      document.body.innerHTML = ''
+    }
+  },
+)
