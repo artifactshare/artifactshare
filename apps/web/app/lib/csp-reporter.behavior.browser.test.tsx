@@ -2637,7 +2637,11 @@ describe('Markdown outline viewer', () => {
       expect(doc.activeElement).toBe(
         dialog.querySelector('[data-md-outline-close]'),
       )
-      expect(dialog.getBoundingClientRect().width).toBe(width)
+      // Full width of the visible area; classic scrollbars (Linux, Windows)
+      // take their width out of the frame.
+      expect(dialog.getBoundingClientRect().width).toBe(
+        doc.documentElement.clientWidth,
+      )
       // The current entry is revealed inside the independently scrolling list.
       const active = list.querySelector('[aria-current]')!
       expect(active.getAttribute('href')).toBe(reading)
