@@ -594,6 +594,24 @@ export const pdfViewerScenario = defineBrowserCommand(
           ) === 0,
         fetchedOriginal: originalFetches() > fetchesBeforeDownload,
       }
+      // A page kept for back/forward navigation keeps its document.
+      await frame.evaluate(() =>
+        dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })),
+      )
+      const [savedAfterHide] = await Promise.all([
+        artifact.waitForEvent('download'),
+        frame.click('#download'),
+      ])
+      const afterBackForward = {
+        renderedPages: await frame.evaluate(
+          () => document.querySelectorAll('.page canvas').length,
+        ),
+        sameBytes:
+          Buffer.compare(
+            await readFile((await savedAfterHide.path())!),
+            Buffer.from(scenarioPdf(scenario)),
+          ) === 0,
+      }
       const beforeResize = await pageNumber(frame)
       await artifact.setViewportSize({
         width: Math.round(width * 0.8),
@@ -618,6 +636,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         beforeResize,
         afterResize,
         download,
+        afterBackForward,
       }
     } finally {
       await context?.close()
@@ -684,6 +703,7 @@ declare module 'vitest/browser' {
       beforeResize?: number
       afterResize?: Layout & { pageNumber: number }
       download?: { name: string; sameBytes: boolean; fetchedOriginal: boolean }
+      afterBackForward?: { renderedPages: number; sameBytes: boolean }
     }>
   }
 }

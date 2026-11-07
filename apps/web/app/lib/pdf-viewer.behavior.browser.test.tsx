@@ -48,6 +48,9 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       sameBytes: true,
       fetchedOriginal: false,
     })
+    // Back/forward caching keeps the rendered document and its download.
+    expect(result.afterBackForward!.renderedPages).toBeGreaterThan(0)
+    expect(result.afterBackForward!.sameBytes).toBe(true)
     expect(result.afterResize!.page.height).toBeLessThanOrEqual(
       result.afterResize!.container.height,
     )

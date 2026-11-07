@@ -401,8 +401,7 @@ function failureState(error) {
 }
 
 let pdfjs
-let loadedPdf = null
-let fullyLoaded = false
+let downloadable = null
 let viewerModule
 try {
   pdfjs = await import(PDFJS + 'pdf.min.mjs')
@@ -582,22 +581,27 @@ if (viewerModule) {
     // Only once the whole file is in memory: until then the link itself
     // still works, and waiting for the rest could expire the click.
     download.addEventListener('click', async (event) => {
-      if (!loadedPdf || !fullyLoaded) return
+      if (!downloadable) return
       event.preventDefault()
+      const name = download.getAttribute('download') || 'document.pdf'
+      const save = (href) => {
+        const link = document.createElement('a')
+        link.href = href
+        link.download = name
+        document.body.append(link)
+        link.click()
+        link.remove()
+      }
       let bytes
       try {
-        bytes = await loadedPdf.getData()
+        bytes = await downloadable.getData()
       } catch {
-        location.assign(download.href)
+        // Like the link itself: a download, never a navigation of the viewer.
+        save(download.href)
         return
       }
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = download.getAttribute('download') || 'document.pdf'
-      document.body.append(link)
-      link.click()
-      link.remove()
+      save(url)
       setTimeout(() => URL.revokeObjectURL(url), 60000)
     })
     const pdf = await pdfjs.getDocument({
@@ -609,9 +613,9 @@ if (viewerModule) {
       wasmUrl: PDFJS + 'wasm/',
       iccUrl: PDFJS + 'iccs/',
     }).promise
-    loadedPdf = pdf
+    // Saved from memory only once pdf.js holds the whole file.
     pdf.getDownloadInfo().then(() => {
-      fullyLoaded = true
+      downloadable = pdf
     }, () => {})
     const first = await pdf.getPage(1)
     const viewport = first.getViewport({ scale: 1 })
@@ -620,7 +624,11 @@ if (viewerModule) {
     document.body.dataset.mode = slides ? 'page' : 'scroll'
     viewer.setDocument(pdf)
     linkService.setDocument(pdf)
-    addEventListener('pagehide', () => {
+    // A page kept for back/forward navigation keeps its document, so it
+    // shows the PDF again when restored; only a real unload releases it.
+    addEventListener('pagehide', (event) => {
+      if (event.persisted) return
+      downloadable = null
       viewer.setDocument(null)
       void pdf.destroy()
     })
