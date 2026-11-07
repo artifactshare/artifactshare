@@ -2703,6 +2703,8 @@ describe('Markdown outline viewer', () => {
   }
 
   test('places the marker without travel and animates only section changes', async () => {
+    // Some engines (WebKitGTK on Linux) default to reduced motion.
+    await server.commands.setReducedMotion('no-preference')
     const doc = await outlineFixture(longDocument())
     await frames(doc)
     const marker = doc.querySelector<SVGPathElement>(
