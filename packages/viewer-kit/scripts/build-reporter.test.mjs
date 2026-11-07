@@ -1518,6 +1518,8 @@ test('generated lifecycle retains native persisted state and otherwise performs 
       calls,
       replaceListener: mode === 'captured-listener',
       document: {
+        // The outline sets a provisional root mark and drops it on failed start.
+        documentElement: { setAttribute() {}, removeAttribute() {} },
         addEventListener() {},
         querySelectorAll() {
           return [

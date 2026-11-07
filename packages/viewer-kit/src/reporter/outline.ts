@@ -23,7 +23,15 @@ interface OutlineIndicator {
   spans: Map<string, { start: number; length: number }>
 }
 
+const READY_MARK = 'data-md-outline-ready'
+
 export function installMarkdownOutline(ctx: ReporterState) {
+  // The reporter runs before the authored <html> start tag, so neither its
+  // attributes nor <body> exist yet: never read them here. Mark the root now
+  // so narrow screens show the compact row from the first paint; the parser
+  // keeps this attribute when it merges the authored root tag.
+  // startMarkdownOutline removes it again when the document has no outline.
+  ctx.doc.documentElement.setAttribute(READY_MARK, '')
   if (ctx.doc.readyState === 'loading') {
     ctx.doc.addEventListener(
       'DOMContentLoaded',
@@ -41,12 +49,15 @@ function startMarkdownOutline(ctx: ReporterState) {
   const doc = ctx.doc
   const win = ctx.win
   const body = doc.body
+  // Without a running controller the outline list itself must stay visible
+  // on narrow screens, so every failed start drops the provisional mark.
+  const notReady = () => doc.documentElement.removeAttribute(READY_MARK)
   if (
     !body ||
     !body.hasAttribute('data-artifact-markdown') ||
     body.getAttribute('data-md-outline-version') !== '2'
   )
-    return
+    return notReady()
   const railNav = doc.querySelector<HTMLElement>('[data-md-outline="rail"]')
   const panelNav = doc.querySelector<HTMLElement>('[data-md-outline="panel"]')
   const dialog = doc.querySelector<HTMLDialogElement>('dialog.md-outline-panel')
@@ -71,7 +82,7 @@ function startMarkdownOutline(ctx: ReporterState) {
     !closeButton ||
     !article
   )
-    return
+    return notReady()
 
   const items: OutlineItem[] = []
   const itemsById = new Map<string, OutlineItem>()
@@ -90,10 +101,7 @@ function startMarkdownOutline(ctx: ReporterState) {
     items.push(item)
     itemsById.set(id, item)
   }
-  if (!items.length) return
-  // The compact row and panel need this controller; without the mark the
-  // outline list itself stays visible on narrow screens.
-  doc.documentElement.setAttribute('data-md-outline-ready', '')
+  if (!items.length) return notReady()
   const allLinks = doc.querySelectorAll<HTMLAnchorElement>(
     '[data-md-outline] a[href^="#"]',
   )

@@ -83,7 +83,9 @@ async function fixture(
   body = '<a id="normal" href="?artifact-link=1">Normal link</a><a id="target" href="?artifact-link=1">Highlighted text</a>',
   handshake = true,
   documentNavigation = false,
-  markdown?: { width: number; theme: 'light' | 'dark' },
+  // `injected`: the document already carries the reporter where
+  // injectReadyReporter places it, before every authored node.
+  markdown?: { width: number; theme: 'light' | 'dark'; injected?: boolean },
 ) {
   messages = []
   readyEvents = []
@@ -95,12 +97,14 @@ async function fixture(
     await server.commands.setMermaidColorScheme(markdown.theme)
     frame.style.cssText = `width:${markdown.width}px;height:600px;border:0`
   }
-  const html = markdown
-    ? body.replace(
-        '</body>',
-        `<script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`,
-      )
-    : `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
+  const html = markdown?.injected
+    ? body
+    : markdown
+      ? body.replace(
+          '</body>',
+          `<script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`,
+        )
+      : `<!doctype html><body style="margin:40px;background:white"><div id="content">${body}</div><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></body>`
   const objectUrl = documentNavigation
     ? URL.createObjectURL(new Blob([html], { type: 'text/html' }))
     : null
@@ -2520,6 +2524,109 @@ describe('Markdown outline viewer', () => {
       expect(top(doc, 'section-6')).toBeGreaterThanOrEqual(0)
       expect(top(doc, 'section-6')).toBeLessThan(100)
     })
+  })
+
+  type ParserProbe = {
+    readyState: DocumentReadyState
+    ready: boolean
+    lang: string | null
+    body: boolean
+    sidebar?: string
+    row?: string
+  }
+  const probe = (layout: boolean) =>
+    `<script>(window.__outlineProbes = window.__outlineProbes || []).push({
+      readyState: document.readyState,
+      ready: document.documentElement.hasAttribute('data-md-outline-ready'),
+      lang: document.documentElement.getAttribute('lang'),
+      body: !!document.body,
+      ${
+        layout
+          ? `sidebar: getComputedStyle(document.querySelector('.md-sidebar')).display,
+      row: getComputedStyle(document.querySelector('.md-position')).display,`
+          : ''
+      }
+    })</script>`
+  const reporterEnd = (html: string) =>
+    html.indexOf(VIOLATION_REPORTER_SCRIPT_BODY) +
+    VIOLATION_REPORTER_SCRIPT_BODY.length +
+    '</script>'.length
+
+  test('early-injected long Markdown shows the compact row from the first parse on phones', async () => {
+    const injected = injectReadyReporter(
+      renderMarkdownDocument(longDocument(120), { logTiming: false }),
+    )
+    const at = reporterEnd(injected)
+    // One probe runs right after the reporter, before the authored root; the
+    // other once the outline markup is parsed but the article is not.
+    const html = (
+      injected.slice(0, at) +
+      probe(false) +
+      injected.slice(at)
+    ).replace(
+      '<article class="md" data-comment-content>',
+      `${probe(true)}<article class="md" data-comment-content>`,
+    )
+    const doc = await fixture(html, true, false, {
+      width: 390,
+      theme: 'light',
+      injected: true,
+    })
+    const probes = (
+      doc.defaultView as Window & { __outlineProbes?: ParserProbe[] }
+    ).__outlineProbes
+    expect(probes).toEqual([
+      { readyState: 'loading', ready: true, lang: null, body: false },
+      {
+        readyState: 'loading',
+        ready: true,
+        lang: 'en',
+        body: true,
+        sidebar: 'none',
+        row: expect.not.stringMatching(/^none$/),
+      },
+    ])
+    const win = doc.defaultView!
+    const sidebar = doc.querySelector('.md-sidebar')!
+    const row = doc.querySelector<HTMLElement>('.md-position')!
+    expect(doc.documentElement.hasAttribute('data-md-outline-ready')).toBe(true)
+    expect(win.getComputedStyle(sidebar).display).toBe('none')
+    expect(win.getComputedStyle(row).display).not.toBe('none')
+    const title = row.querySelector('.md-position-current')!
+    for (const id of ['section-30', 'section-90']) {
+      await placeHeading(doc, id, row.getBoundingClientRect().bottom + 8)
+      expect(current(doc)).toEqual([`#${id}`])
+      expect(title.textContent).toBe(doc.getElementById(id)!.textContent)
+    }
+  })
+
+  test.each([
+    [
+      'heading-free Markdown',
+      () => renderMarkdownDocument('Plain text only.', { logTiming: false }),
+    ],
+    [
+      'Markdown whose outline resolves no heading',
+      () =>
+        renderMarkdownDocument('## One\n\nText', { logTiming: false }).replace(
+          /<h2 id="one"/,
+          '<h2',
+        ),
+    ],
+    [
+      'ordinary HTML',
+      () =>
+        '<!doctype html><html lang="en"><body><p>Plain page.</p></body></html>',
+    ],
+  ])('early-injected %s ends without the outline mark', async (_name, html) => {
+    const doc = await fixture(injectReadyReporter(html()), true, false, {
+      width: 390,
+      theme: 'light',
+      injected: true,
+    })
+    expect(doc.documentElement.hasAttribute('data-md-outline-ready')).toBe(
+      false,
+    )
   })
 
   const foldedDocument = () =>

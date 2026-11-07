@@ -104,16 +104,17 @@ function outlineDocument(markdown: SplitMarkdown) {
 </html>`
 }
 
-/** A frontmatter `lang` wins; otherwise kana or kanji in the body mean Japanese. */
+/**
+ * A frontmatter `lang` wins; otherwise kana in the body means Japanese. Kanji
+ * alone does not: Chinese text and English mentioning a kanji word stay `en`.
+ */
 function documentLanguage(metadata: string[], body: string) {
   for (const line of metadata) {
     const match = line.match(/^lang\s*:\s*(['"]?)([^'"]*)\1\s*$/)
     const tag = match?.[2]?.trim() ?? ''
     if (/^[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*$/.test(tag)) return tag
   }
-  return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(body)
-    ? 'ja'
-    : 'en'
+  return /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(body) ? 'ja' : 'en'
 }
 
 interface OutlineHeading {
