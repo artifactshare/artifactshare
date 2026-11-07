@@ -131,6 +131,13 @@ describe('getExportSource', () => {
         renderedHtml: expect.stringContaining('<h1 id="report">Report</h1>'),
       },
     })
+    // The exported file has no reporter script, so its contents navigation
+    // must work without one, including the narrow-screen disclosure.
+    const html = result.kind === 'ok' ? result.data.renderedHtml : ''
+    expect(html).toContain(
+      '<details class="md-toc-mobile"><summary>Contents</summary>',
+    )
+    expect(html).not.toContain('class="md-position"')
   })
 
   test('returns html source for html_page artifacts', async () => {

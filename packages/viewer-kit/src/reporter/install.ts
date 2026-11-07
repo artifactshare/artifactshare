@@ -1,6 +1,7 @@
 import { installHashTracking } from './hash.js'
 import { installCspViolations } from './csp-violations.js'
 import { installCodeCopy, updateMarkdownToc } from './toc.js'
+import { installMarkdownOutline } from './outline.js'
 import { installMessageListener, readEventValue, ready } from './messaging.js'
 import { installAnchorObserver } from './mutations.js'
 import { capturePrimordials, type ReporterWindow } from './primordials.js'
@@ -90,6 +91,7 @@ export function installReporter(win: ReporterWindow) {
     ctx.win.setTimeout(() => sendSelection(ctx), 0)
   })
   installCodeCopy(ctx)
+  installMarkdownOutline(ctx)
   ctx.primordials.addEventListener(
     ctx.win,
     'click',

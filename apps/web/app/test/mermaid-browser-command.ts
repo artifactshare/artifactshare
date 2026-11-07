@@ -8,8 +8,17 @@ export const setMermaidColorScheme = defineBrowserCommand(
   },
 )
 
+export const setReducedMotion = defineBrowserCommand(
+  async ({ page }, reducedMotion: 'reduce' | 'no-preference' | null) => {
+    await page.emulateMedia({ reducedMotion })
+  },
+)
+
 declare module 'vitest/browser' {
   interface BrowserCommands {
+    setReducedMotion: (
+      reducedMotion: 'reduce' | 'no-preference' | null,
+    ) => Promise<void>
     setMermaidColorScheme: (
       colorScheme: 'light' | 'dark' | null,
     ) => Promise<void>

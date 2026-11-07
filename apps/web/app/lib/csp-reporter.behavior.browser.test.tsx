@@ -819,15 +819,33 @@ describe('CSP reporter runtime behavior', () => {
     ).toHaveLength(0)
   })
 
-  test('marks matching desktop and mobile table-of-contents links as current', async () => {
+  test('static-site Markdown keeps 96px tracking on both legacy contents copies', async () => {
+    const doc = await fixture(
+      renderMarkdownDocument('## Intro\n\nText\n\n## Next', {
+        logTiming: false,
+        mode: 'static_site',
+      }),
+      true,
+      false,
+      { width: 800, theme: 'light' },
+    )
+    doc.defaultView!.dispatchEvent(new Event('scroll'))
+
+    expect(
+      [...doc.querySelectorAll('.md-toc a[aria-current="location"]')].map(
+        (link) => link.getAttribute('href'),
+      ),
+    ).toEqual(['#intro', '#intro'])
+    expect(doc.querySelector('.md-position, dialog, .md-outline')).toBeNull()
+  })
+
+  test('contents tracking does nothing in a non-Markdown document', async () => {
     const doc = await fixture(
       '<nav class="md-toc"><a href="#intro">Intro</a></nav><details><nav class="md-toc"><a href="#intro">Intro</a></nav></details><h2 id="intro">Intro</h2>',
     )
     doc.defaultView!.dispatchEvent(new Event('scroll'))
 
-    expect(
-      doc.querySelectorAll('.md-toc a[aria-current="location"]'),
-    ).toHaveLength(2)
+    expect(doc.querySelectorAll('[aria-current]')).toHaveLength(0)
   })
 
   test('sanitizes Mermaid SVG before it reaches the artifact frame', () => {
@@ -2247,4 +2265,409 @@ describe('Mermaid document presentation', () => {
       15000,
     )
   }
+})
+
+describe('Markdown outline viewer', () => {
+  afterEach(async () => {
+    await server.commands.setMermaidColorScheme(null)
+    await server.commands.setReducedMotion(null)
+  })
+
+  const paragraph = (label: string) =>
+    Array.from({ length: 5 }, () =>
+      `Body text for ${label} that fills a readable paragraph. `.repeat(6),
+    ).join('\n\n')
+  const longDocument = (count = 12) =>
+    [
+      '# Outline guide',
+      'Intro paragraph.',
+      ...Array.from({ length: count }, (_, index) => [
+        `## Section ${index + 1}`,
+        paragraph(`section ${index + 1}`),
+      ]).flat(),
+      '## Short ending',
+      'Done.',
+    ].join('\n\n')
+
+  async function outlineFixture(
+    source: string,
+    width = 1440,
+    theme: 'light' | 'dark' = 'light',
+  ) {
+    return fixture(
+      renderMarkdownDocument(source, { logTiming: false }),
+      true,
+      false,
+      { width, theme },
+    )
+  }
+  async function frames(doc: Document, count = 3) {
+    for (let index = 0; index < count; index++)
+      await new Promise<void>((resolve) =>
+        doc.defaultView!.requestAnimationFrame(() => resolve()),
+      )
+  }
+  const current = (doc: Document) =>
+    [...doc.querySelectorAll('[aria-current="location"]')].map((link) =>
+      link.getAttribute('href'),
+    )
+  const top = (doc: Document, id: string) =>
+    doc.getElementById(id)!.getBoundingClientRect().top
+  async function placeHeading(doc: Document, id: string, at: number) {
+    const win = doc.defaultView!
+    win.scrollTo({ top: win.scrollY + top(doc, id) - at, behavior: 'instant' })
+    await frames(doc)
+  }
+  const railLink = (doc: Document, id: string) =>
+    doc.querySelector<HTMLAnchorElement>(
+      `[data-md-outline="rail"] a[href="#${id}"]`,
+    )!
+  const panelLink = (doc: Document, id: string) =>
+    doc.querySelector<HTMLAnchorElement>(
+      `[data-md-outline="panel"] a[href="#${id}"]`,
+    )!
+
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 390, 320]) {
+      test(`shows one readable contents surface at ${width}px in ${theme}`, async () => {
+        const doc = await outlineFixture(
+          longDocument(3).replace(
+            '## Section 1',
+            '## Section 1 with a very long heading that cannot fit on one narrow contents row',
+          ),
+          width,
+          theme,
+        )
+        await frames(doc)
+        const win = doc.defaultView!
+        const sidebar = doc.querySelector<HTMLElement>('.md-sidebar')!
+        const row = doc.querySelector<HTMLElement>('.md-position')!
+        const shown = (element: Element) =>
+          win.getComputedStyle(element).display !== 'none'
+        expect(win.getComputedStyle(doc.body).backgroundColor).toBe(
+          theme === 'dark' ? 'rgb(14, 16, 18)' : 'rgb(251, 250, 248)',
+        )
+        expect(doc.documentElement.scrollWidth).toBeLessThanOrEqual(width)
+        expect(current(doc)).toHaveLength(1)
+        if (width === 1440) {
+          expect(shown(sidebar)).toBe(true)
+          expect(shown(row)).toBe(false)
+          expect(sidebar.getBoundingClientRect().left).toBeGreaterThan(
+            doc.querySelector('article')!.getBoundingClientRect().right,
+          )
+          const marker = sidebar.querySelector('.md-outline-progress')!
+          expect(marker.hasAttribute('hidden')).toBe(false)
+          // The current entry keeps the weight of its level.
+          await placeHeading(doc, 'section-3', 100)
+          const active = sidebar.querySelector('[aria-current]')!
+          expect(active.getAttribute('href')).toBe('#section-3')
+          const weights = [
+            ...sidebar.querySelectorAll('li[data-level="2"] > a'),
+          ].map((link) => win.getComputedStyle(link).fontWeight)
+          expect(new Set(weights).size).toBe(1)
+          expect(win.getComputedStyle(active).fontWeight).toBe(
+            win.getComputedStyle(railLink(doc, 'section-2')).fontWeight,
+          )
+        } else {
+          expect(shown(sidebar)).toBe(false)
+          expect(shown(row)).toBe(true)
+          expect(doc.querySelectorAll('.md-position')).toHaveLength(1)
+          await placeHeading(
+            doc,
+            'section-1-with-a-very-long-heading-that-cannot-fit-on-one-narrow-contents-row',
+            100,
+          )
+          const title = row.querySelector<HTMLElement>('.md-position-current')!
+          expect(title.textContent).toContain('Section 1 with a very long')
+          expect(title.scrollWidth).toBeGreaterThan(title.clientWidth)
+          expect(row.getBoundingClientRect().height).toBeLessThanOrEqual(46)
+          expect(row.getBoundingClientRect().top).toBe(0)
+        }
+      })
+    }
+  }
+
+  test('tracks the quarter line below the visible top with a 12px dead band', async () => {
+    const doc = await outlineFixture(longDocument())
+    // 600px frame without the compact row: the reference line is at 150px.
+    await placeHeading(doc, 'section-3', 140)
+    expect(current(doc)).toEqual(['#section-2'])
+    await placeHeading(doc, 'section-3', 136)
+    expect(current(doc)).toEqual(['#section-3'])
+    await placeHeading(doc, 'section-3', 160)
+    expect(current(doc)).toEqual(['#section-3'])
+    await placeHeading(doc, 'section-3', 164)
+    expect(current(doc)).toEqual(['#section-2'])
+  })
+
+  test('measures the quarter line below the compact row on phones', async () => {
+    const doc = await outlineFixture(longDocument(), 390)
+    const rowBottom = doc
+      .querySelector('.md-position')!
+      .getBoundingClientRect().bottom
+    const line = rowBottom + (600 - rowBottom) / 4
+    await placeHeading(doc, 'section-3', line - 8)
+    expect(current(doc)).toEqual(['#section-2'])
+    await placeHeading(doc, 'section-3', line - 16)
+    expect(current(doc)).toEqual(['#section-3'])
+  })
+
+  test('selects a short final section at the bottom and releases it when scrolling up', async () => {
+    const doc = await outlineFixture(longDocument())
+    const win = doc.defaultView!
+    win.scrollTo({ top: doc.documentElement.scrollHeight, behavior: 'instant' })
+    await frames(doc)
+    expect(top(doc, 'short-ending')).toBeGreaterThan(150 + 12)
+    expect(current(doc)).toEqual(['#short-ending'])
+    win.scrollBy({ top: -400, behavior: 'instant' })
+    await frames(doc)
+    expect(current(doc)).toEqual([`#section-12`])
+
+    const short = await outlineFixture('## One\n\nText\n\n## Two\n\nText')
+    await frames(short)
+    expect(current(short)).toEqual(['#one'])
+  })
+
+  test('outline navigation aligns 16px below the top and holds selection until the document moves', async () => {
+    const doc = await outlineFixture(
+      `${longDocument(4)}\n\n## Same\n\n## Same\n\n## Same-2\n\n${paragraph('same')}\n\n## Last bit\n\nEnd.`,
+    )
+    const win = doc.defaultView!
+    for (const id of ['same', 'same-2', 'same-2-2']) {
+      railLink(doc, id).click()
+      expect(current(doc)).toEqual([`#${id}`])
+      expect(Math.abs(top(doc, id) - 16)).toBeLessThanOrEqual(1)
+    }
+    railLink(doc, 'same').click()
+    // The next colliding heading crosses the line too, but the choice holds.
+    expect(top(doc, 'same-2')).toBeLessThan(150 - 12)
+    win.dispatchEvent(new Event('scroll'))
+    win.dispatchEvent(new Event('resize'))
+    await frames(doc)
+    expect(current(doc)).toEqual(['#same'])
+    win.scrollBy({ top: 4, behavior: 'instant' })
+    await frames(doc)
+    expect(current(doc)).not.toEqual(['#same'])
+
+    // Keyboard activation of a link that the browser has to clamp.
+    railLink(doc, 'last-bit').focus()
+    await userEvent.keyboard('{Enter}')
+    expect(current(doc)).toEqual(['#last-bit'])
+    expect(top(doc, 'last-bit')).toBeGreaterThan(17)
+    expect(doc.activeElement).toBe(doc.getElementById('last-bit'))
+    win.dispatchEvent(new Event('scroll'))
+    await frames(doc)
+    expect(current(doc)).toEqual(['#last-bit'])
+    win.scrollBy({ top: -300, behavior: 'instant' })
+    await frames(doc)
+    expect(current(doc)).not.toEqual(['#last-bit'])
+  })
+
+  test('Back and Forward select the URL heading when both positions clamp', async () => {
+    const doc = await fixture(
+      renderMarkdownDocument(
+        `${longDocument(4)}\n\n## Tail one\n\nA.\n\n## Tail two\n\nB.`,
+        { logTiming: false },
+      ),
+      true,
+      true,
+      { width: 1440, theme: 'light' },
+    )
+    const win = doc.defaultView!
+    railLink(doc, 'tail-one').click()
+    const clampedY = win.scrollY
+    railLink(doc, 'tail-two').click()
+    expect(win.scrollY).toBe(clampedY)
+    expect(win.location.hash).toBe('#tail-two')
+    expect(current(doc)).toEqual(['#tail-two'])
+    win.history.back()
+    await vi.waitFor(() => expect(win.location.hash).toBe('#tail-one'))
+    await vi.waitFor(() => expect(current(doc)).toEqual(['#tail-one']))
+    win.history.forward()
+    await vi.waitFor(() => expect(current(doc)).toEqual(['#tail-two']))
+  })
+
+  test('a resize that moves the quarter line places the new marker without travel', async () => {
+    const doc = await outlineFixture(longDocument())
+    const marker = doc.querySelector<SVGPathElement>(
+      '[data-md-outline="rail"] .md-outline-progress',
+    )!
+    // Line at 150px: a heading at 141px is not yet selected.
+    await placeHeading(doc, 'section-3', 141)
+    expect(current(doc)).toEqual(['#section-2'])
+    await vi.waitFor(() => expect(marker.getAnimations()).toHaveLength(0))
+    // A 680px frame moves the line to 170px, past the heading.
+    frame!.style.height = '680px'
+    await vi.waitFor(() => expect(current(doc)).toEqual(['#section-3']))
+    expect(marker.getAnimations()).toHaveLength(0)
+  })
+
+  test('hidden finer headings track their visible section until shown', async () => {
+    const doc = await outlineFixture(
+      `# Doc\n\n## Alpha\n\n${paragraph('alpha')}\n\n##### Alpha detail\n\n${paragraph('detail')}\n\n## Beta\n\n${paragraph('beta')}`,
+    )
+    const toggles = doc.querySelectorAll<HTMLInputElement>(
+      '[data-md-outline-details]',
+    )
+    expect(toggles).toHaveLength(2)
+    expect(railLink(doc, 'alpha-detail').getClientRects()).toHaveLength(0)
+    await placeHeading(doc, 'alpha-detail', 100)
+    expect(current(doc)).toEqual(['#alpha'])
+    toggles[0]!.click()
+    await frames(doc)
+    expect([...toggles].map((toggle) => toggle.checked)).toEqual([true, true])
+    expect(railLink(doc, 'alpha-detail').getClientRects().length).toBe(1)
+    expect(current(doc)).toEqual(['#alpha-detail'])
+    toggles[0]!.click()
+    await frames(doc)
+    expect(current(doc)).toEqual(['#alpha'])
+  })
+
+  for (const width of [390, 320]) {
+    test(`phone panel at ${width}px restores position on cancel and navigates on choice`, async () => {
+      const doc = await outlineFixture(longDocument(30), width)
+      const win = doc.defaultView!
+      win.scrollTo({ top: 6000, behavior: 'instant' })
+      await frames(doc)
+      const openY = win.scrollY
+      const reading = current(doc)[0]!
+      const button = doc.querySelector<HTMLButtonElement>(
+        '.md-position-button',
+      )!
+      const dialog = doc.querySelector<HTMLDialogElement>('dialog')!
+      const list = dialog.querySelector<HTMLElement>('.md-outline-list')!
+      button.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(dialog.open).toBe(true)
+      expect(button.getAttribute('aria-expanded')).toBe('true')
+      expect(doc.activeElement).toBe(
+        dialog.querySelector('[data-md-outline-close]'),
+      )
+      expect(dialog.getBoundingClientRect().width).toBe(width)
+      // The current entry is revealed inside the independently scrolling list.
+      const active = list.querySelector('[aria-current]')!
+      expect(active.getAttribute('href')).toBe(reading)
+      expect(active.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        list.getBoundingClientRect().top,
+      )
+      expect(active.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        list.getBoundingClientRect().bottom,
+      )
+      expect(
+        [...list.querySelectorAll('a')].every(
+          (link) => link.getBoundingClientRect().height >= 44,
+        ),
+      ).toBe(true)
+      expect(win.getComputedStyle(doc.documentElement).overflow).toBe('hidden')
+      expect(win.scrollY).toBe(openY)
+      list.scrollTop = 0
+      await frames(doc)
+      expect(win.scrollY).toBe(openY)
+      // Focus stays within the modal panel.
+      for (let index = 0; index < 4; index++) {
+        if (server.browser === 'webkit' && server.platform === 'darwin')
+          await userEvent.keyboard('{Alt>}{Tab}{/Alt}')
+        else await userEvent.tab()
+        expect(dialog.contains(doc.activeElement)).toBe(true)
+      }
+      await userEvent.keyboard('{Escape}')
+      await vi.waitFor(() => expect(dialog.open).toBe(false))
+      await frames(doc)
+      expect(win.scrollY).toBe(openY)
+      expect(doc.activeElement).toBe(button)
+      expect(current(doc)).toEqual([reading])
+
+      button.click()
+      dialog
+        .querySelector<HTMLButtonElement>('[data-md-outline-close]')!
+        .click()
+      await vi.waitFor(() => expect(dialog.open).toBe(false))
+      expect(win.scrollY).toBe(openY)
+
+      button.click()
+      expect(dialog.open).toBe(true)
+      panelLink(doc, 'section-5').click()
+      expect(dialog.open).toBe(false)
+      expect(current(doc)).toEqual(['#section-5'])
+      // Queued close events from every panel session have no later effect.
+      await frames(doc)
+      expect(current(doc)).toEqual(['#section-5'])
+      const rowBottom = doc
+        .querySelector('.md-position')!
+        .getBoundingClientRect().bottom
+      expect(
+        Math.abs(top(doc, 'section-5') - rowBottom - 16),
+      ).toBeLessThanOrEqual(1)
+      expect(panelLink(doc, 'section-5').getAttribute('aria-current')).toBe(
+        'location',
+      )
+    })
+  }
+
+  test('places the marker without travel and animates only section changes', async () => {
+    const doc = await outlineFixture(longDocument())
+    await frames(doc)
+    const marker = doc.querySelector<SVGPathElement>(
+      '[data-md-outline="rail"] .md-outline-progress',
+    )!
+    const win = doc.defaultView!
+    expect(marker.getAnimations()).toHaveLength(0)
+    expect(
+      win.getComputedStyle(railLink(doc, 'section-2')).transitionDuration,
+    ).toContain('0.16s')
+    await placeHeading(doc, 'section-4', 100)
+    expect(marker.getAnimations().length).toBeGreaterThan(0)
+    // Reversing mid-flight retargets the running transitions instead of queuing.
+    await placeHeading(doc, 'section-2', 100)
+    expect(marker.getAnimations().length).toBeLessThanOrEqual(2)
+    win.dispatchEvent(new Event('resize'))
+    expect(marker.getAnimations()).toHaveLength(0)
+    expect(
+      parseFloat(win.getComputedStyle(marker).strokeDashoffset),
+    ).toBeCloseTo(parseFloat(marker.style.strokeDashoffset), 1)
+  })
+
+  test('reduced motion removes marker travel and smooth outline scrolling', async () => {
+    await server.commands.setReducedMotion('reduce')
+    const doc = await outlineFixture(longDocument(40))
+    await frames(doc)
+    const win = doc.defaultView!
+    const marker = doc.querySelector<SVGPathElement>(
+      '[data-md-outline="rail"] .md-outline-progress',
+    )!
+    expect(win.matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(
+      true,
+    )
+    expect(win.getComputedStyle(marker).transitionDuration).toBe('0s')
+    await placeHeading(doc, 'section-30', 100)
+    expect(current(doc)).toEqual(['#section-30'])
+    expect(marker.getAnimations()).toHaveLength(0)
+    // The bounded outline scrolled immediately, just enough to show the entry.
+    const sidebar = doc.querySelector<HTMLElement>('.md-sidebar')!
+    expect(sidebar.scrollTop).toBeGreaterThan(0)
+    const link = railLink(doc, 'section-30').getBoundingClientRect()
+    expect(link.bottom).toBeLessThanOrEqual(
+      sidebar.getBoundingClientRect().bottom,
+    )
+  })
+
+  test('outline text stays out of comment selections while article text is selectable', async () => {
+    const doc = await outlineFixture(
+      '# Title\n\n## Part\n\nArticle words here.',
+    )
+    const select = (node: Node) => {
+      const range = doc.createRange()
+      range.selectNodeContents(node)
+      const selection = doc.defaultView!.getSelection()!
+      selection.removeAllRanges()
+      selection.addRange(range)
+      doc.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    }
+    const from = messages.length
+    select(railLink(doc, 'part'))
+    await waitForMessage('text-selection-cleared', () => true, from)
+    select(doc.querySelector('article p')!)
+    const message = await waitForMessage('text-selection', () => true, from)
+    expect(message.quotedText).toBe('Article words here.')
+  })
 })

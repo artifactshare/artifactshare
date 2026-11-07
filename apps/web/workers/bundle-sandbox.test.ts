@@ -3794,7 +3794,10 @@ describe('handleArtifactSandboxRequest', () => {
       .where('id', '=', 'abc123def4')
       .execute()
     storageMock.getArtifact.mockResolvedValue(
-      storedArtifact('# Bundle docs', 'text/markdown; charset=utf-8'),
+      storedArtifact(
+        '---\nlang: ja\n---\n# Bundle docs\n\n日本語の説明。\n\n## Same\n\n## Same\n\n## Same-2',
+        'text/markdown; charset=utf-8',
+      ),
     )
     const token = await staticSiteToken({
       versionId: 'v-md-entry',
@@ -3812,9 +3815,24 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Type')).toBe(
       'text/html; charset=utf-8',
     )
-    await expect(response.text()).resolves.toContain(
-      '<h1 id="bundle-docs">Bundle docs</h1>',
+    const body = await response.text()
+    expect(body).toContain('<h1 id="bundle-docs">Bundle docs</h1>')
+    // Static-site Markdown keeps the legacy presentation and heading IDs.
+    expect(body).toContain('<html lang="en">')
+    expect(body).toContain('<body data-artifact-markdown>')
+    expect(body).toContain(
+      '<details class="md-toc-mobile"><summary>Contents</summary>',
     )
+    expect(body).toContain(
+      '<details class="md-metadata" aria-label="Frontmatter">',
+    )
+    expect(body.match(/<h2 id="same-2">/g)).toHaveLength(2)
+    // The reporter script mentions the outline names; inspect the markup only.
+    const markup = body.slice(body.indexOf('<body'))
+    expect(markup).not.toContain('data-md-outline-version')
+    expect(markup).not.toContain('md-position')
+    expect(markup).not.toContain('<dialog')
+    expectStaticSiteCsp(response.headers.get('Content-Security-Policy') ?? '')
   })
 
   test('keeps markdown links and image references usable inside the bundle', async () => {
@@ -3856,7 +3874,10 @@ describe('handleArtifactSandboxRequest', () => {
         ),
       )
       .mockResolvedValueOnce(
-        storedArtifact('# Other page', 'text/markdown; charset=utf-8'),
+        storedArtifact(
+          '# Other page\n\n日本語の本文。',
+          'text/markdown; charset=utf-8',
+        ),
       )
       .mockResolvedValueOnce(storedArtifact('png-data', 'image/png'))
     const token = await staticSiteToken({
@@ -3903,9 +3924,11 @@ describe('handleArtifactSandboxRequest', () => {
     expect(cspDirective(linkedPageCsp, 'style-src-elem')).toBe(
       `style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://fonts.googleapis.com ${socialEmbedStyleCspSources}`,
     )
-    await expect(linkedPage.text()).resolves.toContain(
-      '<h1 id="other-page">Other page</h1>',
-    )
+    const linkedBody = await linkedPage.text()
+    expect(linkedBody).toContain('<h1 id="other-page">Other page</h1>')
+    expect(linkedBody).toContain('<html lang="en">')
+    expect(linkedBody).toContain('<nav class="md-toc md-toc-desktop"')
+    expect(linkedBody).toContain('<body data-artifact-markdown>')
 
     const image = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin('v-md-links')}/logo.png`, {
@@ -4242,6 +4265,8 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.status).toBe(200)
     const body = await response.text()
     expect(body).toContain('<h1 id="日本語">日本語</h1>')
+    expect(body).toContain('<html lang="ja">')
+    expect(body).toContain('data-md-outline-version="2"')
     expect(body).toContain('を通す')
     expect(body).not.toContain('譌')
     expect(body).not.toContain('繧')
