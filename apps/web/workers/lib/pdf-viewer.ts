@@ -402,6 +402,7 @@ function failureState(error) {
 
 let pdfjs
 let loadedPdf = null
+let fullyLoaded = false
 let viewerModule
 try {
   pdfjs = await import(PDFJS + 'pdf.min.mjs')
@@ -506,8 +507,7 @@ if (viewerModule) {
       showState('page-error', text.pageFailed, true)
       return
     }
-    const state = document.documentElement.dataset.pdfState
-    if (state === 'loading' || state === 'page-error') {
+    if (document.documentElement.dataset.pdfState === 'page-error') {
       status.hidden = true
       document.documentElement.dataset.pdfState = 'ready'
     }
@@ -515,6 +515,11 @@ if (viewerModule) {
   eventBus.on('pagerendered', ({ pageNumber, error }) => {
     if (error) failedPages.add(pageNumber)
     else failedPages.delete(pageNumber)
+    // The loading message stays until a page has actually rendered.
+    if (!error && document.documentElement.dataset.pdfState === 'loading') {
+      status.hidden = true
+      document.documentElement.dataset.pdfState = 'ready'
+    }
     showPageState()
   })
   previous.addEventListener('click', () => viewer.previousPage())
@@ -574,10 +579,18 @@ if (viewerModule) {
     // Download serves the bytes pdf.js already holds, so it keeps working
     // after the sandbox's short-lived cookie expires during long reading.
     const download = byId('download')
+    // Only once the whole file is in memory: until then the link itself
+    // still works, and waiting for the rest could expire the click.
     download.addEventListener('click', async (event) => {
-      if (!loadedPdf) return
+      if (!loadedPdf || !fullyLoaded) return
       event.preventDefault()
-      const bytes = await loadedPdf.getData()
+      let bytes
+      try {
+        bytes = await loadedPdf.getData()
+      } catch {
+        location.assign(download.href)
+        return
+      }
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
       const link = document.createElement('a')
       link.href = url
@@ -597,6 +610,9 @@ if (viewerModule) {
       iccUrl: PDFJS + 'iccs/',
     }).promise
     loadedPdf = pdf
+    pdf.getDownloadInfo().then(() => {
+      fullyLoaded = true
+    }, () => {})
     const first = await pdf.getPage(1)
     const viewport = first.getViewport({ scale: 1 })
     slides = viewport.width > viewport.height
