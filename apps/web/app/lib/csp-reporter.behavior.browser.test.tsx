@@ -2488,6 +2488,75 @@ describe('Markdown outline viewer', () => {
     expect(Math.abs(top(doc, 'section-6') - 16)).toBeLessThanOrEqual(1)
   })
 
+  test('without the reporter the narrow-screen outline stays reachable', async () => {
+    frame?.remove()
+    frame = document.createElement('iframe')
+    frame.style.cssText = 'width:390px;height:600px;border:0'
+    const url = URL.createObjectURL(
+      new Blob([renderMarkdownDocument(longDocument(), { logTiming: false })], {
+        type: 'text/html',
+      }),
+    )
+    frame.src = url
+    const loaded = new Promise<void>((resolve) =>
+      frame!.addEventListener('load', () => resolve(), { once: true }),
+    )
+    document.body.appendChild(frame)
+    await loaded
+    URL.revokeObjectURL(url)
+    const doc = frame.contentDocument!
+    const win = doc.defaultView!
+    const shown = (element: Element) =>
+      win.getComputedStyle(element).display !== 'none'
+    expect(doc.documentElement.hasAttribute('data-md-outline-ready')).toBe(
+      false,
+    )
+    expect(shown(doc.querySelector('.md-position')!)).toBe(false)
+    expect(shown(doc.querySelector('.md-sidebar')!)).toBe(true)
+    railLink(doc, 'section-6').click()
+    await vi.waitFor(() => expect(win.location.hash).toBe('#section-6'))
+    await vi.waitFor(() => {
+      expect(win.scrollY).toBeGreaterThan(0)
+      expect(top(doc, 'section-6')).toBeGreaterThanOrEqual(0)
+      expect(top(doc, 'section-6')).toBeLessThan(100)
+    })
+  })
+
+  const foldedDocument = () =>
+    [
+      '# Outline guide',
+      'Intro paragraph.',
+      '## Before',
+      paragraph('before'),
+      '<details>\n<summary>More</summary>\n\n## Folded\n\nFolded text.\n\n</details>',
+      '## After',
+      paragraph('after'),
+      '## Later',
+      paragraph('later'),
+    ].join('\n\n')
+
+  test('headings inside closed details do not decide the current section', async () => {
+    const doc = await outlineFixture(foldedDocument())
+    expect(railLink(doc, 'folded')).toBeTruthy()
+    // Line at 150px; the folded heading is not rendered.
+    await placeHeading(doc, 'after', 140)
+    expect(current(doc)).toEqual(['#before'])
+    await placeHeading(doc, 'after', 100)
+    expect(current(doc)).toEqual(['#after'])
+    await placeHeading(doc, 'after', 300)
+    expect(current(doc)).toEqual(['#before'])
+  })
+
+  test('choosing a heading inside closed details opens it and aligns the heading', async () => {
+    const doc = await outlineFixture(foldedDocument())
+    const details = doc.querySelector('article details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    railLink(doc, 'folded').click()
+    expect(details.open).toBe(true)
+    expect(current(doc)).toEqual(['#folded'])
+    expect(Math.abs(top(doc, 'folded') - 16)).toBeLessThanOrEqual(1)
+  })
+
   test('Back and Forward select the URL heading when both positions clamp', async () => {
     const doc = await fixture(
       renderMarkdownDocument(

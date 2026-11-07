@@ -173,13 +173,13 @@ describe('renderMarkdownDocument', () => {
     )
     expect(out.match(/class="md-position"/g)).toHaveLength(1)
     expect(out).toContain(
-      '<div class="md-position" data-comment-ui><button type="button" class="md-position-button" aria-haspopup="dialog" aria-controls="md_outline_panel" aria-expanded="false"><span class="md-position-label">Contents</span><span class="md-position-current">Start</span>',
+      '<div class="md-position" data-comment-ui data-anchor-ignore><button type="button" class="md-position-button" aria-haspopup="dialog" aria-controls="md_outline_panel" aria-expanded="false"><span class="md-position-label">Contents</span><span class="md-position-current">Start</span>',
     )
     expect(out).toContain(
-      '<aside class="md-sidebar" data-comment-ui><nav class="md-outline" data-md-outline="rail" aria-labelledby="md_outline_title"><div class="md-outline-header"><h2 id="md_outline_title">On this page</h2></div>',
+      '<aside class="md-sidebar" data-comment-ui data-anchor-ignore><nav class="md-outline" data-md-outline="rail" aria-labelledby="md_outline_title"><div class="md-outline-header"><h2 id="md_outline_title">On this page</h2></div>',
     )
     expect(out).toContain(
-      '<dialog id="md_outline_panel" class="md-outline-panel" aria-labelledby="md_outline_panel_title" data-comment-ui>',
+      '<dialog id="md_outline_panel" class="md-outline-panel" aria-labelledby="md_outline_panel_title" data-comment-ui data-anchor-ignore>',
     )
     expect(out).toContain('data-md-outline-close>Close</button>')
     expect(out).not.toContain(

@@ -180,9 +180,9 @@ function renderOutline(headings: OutlineHeading[], labels: OutlineLabels) {
   const rail =
     '<svg class="md-outline-rail" aria-hidden="true" hidden><path class="md-outline-track"/><path class="md-outline-progress" hidden/></svg>'
   const current = headings.find((h) => h.level <= maxLevel) ?? headings[0]!
-  const row = `<div class="md-position" data-comment-ui><button type="button" class="md-position-button" aria-haspopup="dialog" aria-controls="${PANEL_ID}" aria-expanded="false"><span class="md-position-label">${escapeHtml(labels.contents)}</span><span class="md-position-current">${current.label}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>`
-  const sidebar = `<aside class="md-sidebar" data-comment-ui><nav class="md-outline" data-md-outline="rail" aria-labelledby="md_outline_title"><div class="md-outline-header"><h2 id="md_outline_title">${escapeHtml(labels.onThisPage)}</h2>${toggle}</div>${list}${rail}</nav></aside>`
-  const panel = `<dialog id="${PANEL_ID}" class="md-outline-panel" aria-labelledby="md_outline_panel_title" data-comment-ui><div class="md-outline-sheet"><div class="md-outline-panel-head"><h2 id="md_outline_panel_title">${escapeHtml(labels.contents)}</h2><button type="button" class="md-outline-close" data-md-outline-close>${escapeHtml(labels.close)}</button></div>${toggle}<nav class="md-outline md-outline-list" data-md-outline="panel" aria-labelledby="md_outline_panel_title">${list}${rail}</nav></div></dialog>`
+  const row = `<div class="md-position" data-comment-ui data-anchor-ignore><button type="button" class="md-position-button" aria-haspopup="dialog" aria-controls="${PANEL_ID}" aria-expanded="false"><span class="md-position-label">${escapeHtml(labels.contents)}</span><span class="md-position-current">${current.label}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>`
+  const sidebar = `<aside class="md-sidebar" data-comment-ui data-anchor-ignore><nav class="md-outline" data-md-outline="rail" aria-labelledby="md_outline_title"><div class="md-outline-header"><h2 id="md_outline_title">${escapeHtml(labels.onThisPage)}</h2>${toggle}</div>${list}${rail}</nav></aside>`
+  const panel = `<dialog id="${PANEL_ID}" class="md-outline-panel" aria-labelledby="md_outline_panel_title" data-comment-ui data-anchor-ignore><div class="md-outline-sheet"><div class="md-outline-panel-head"><h2 id="md_outline_panel_title">${escapeHtml(labels.contents)}</h2><button type="button" class="md-outline-close" data-md-outline-close>${escapeHtml(labels.close)}</button></div>${toggle}<nav class="md-outline md-outline-list" data-md-outline="panel" aria-labelledby="md_outline_panel_title">${list}${rail}</nav></div></dialog>`
   return { row, sidebar, panel }
 }
 
@@ -840,8 +840,12 @@ body {
 }
 @media (max-width: 1119px) {
   .md-shell, .md-shell:has(> .md-sidebar) { display: block; max-width: 760px; padding: 28px 20px 64px; }
-  .md-sidebar { display: none; }
-  .md-position { display: block; }
+  /* Without the outline controller (no reporter), the list itself stays
+     usable at the top of the document with plain fragment links. */
+  .md-sidebar { position: static; max-height: none; overflow: visible; margin: 0 0 24px; }
+  .md-outline-header { position: static; }
+  :root[data-md-outline-ready] .md-sidebar { display: none; }
+  :root[data-md-outline-ready] .md-position { display: block; }
   .md h1 { font-size: 28px; }
   .md h2 { font-size: 23px; }
   .md-outline-panel { width: 100%; border: 0; }

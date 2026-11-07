@@ -91,6 +91,9 @@ function startMarkdownOutline(ctx: ReporterState) {
     itemsById.set(id, item)
   }
   if (!items.length) return
+  // The compact row and panel need this controller; without the mark the
+  // outline list itself stays visible on narrow screens.
+  doc.documentElement.setAttribute('data-md-outline-ready', '')
   const allLinks = doc.querySelectorAll<HTMLAnchorElement>(
     '[data-md-outline] a[href^="#"]',
   )
@@ -290,7 +293,12 @@ function startMarkdownOutline(ctx: ReporterState) {
       if (Math.abs(win.scrollY - jumpPosition) <= 1) return
       jumpPosition = null
     }
-    if (!tracking.length) return
+    // Headings inside a closed details element are not rendered and must not
+    // decide the current section.
+    const rendered = tracking.filter(
+      (item) => !item.heading.closest('details:not([open])'),
+    )
+    if (!rendered.length) return
     const root = doc.scrollingElement || doc.documentElement
     // A short final section cannot always reach the reference line.
     if (
@@ -298,28 +306,28 @@ function startMarkdownOutline(ctx: ReporterState) {
       root.scrollTop > 0 &&
       root.scrollTop + win.innerHeight >= root.scrollHeight - 2
     ) {
-      setActive(tracking[tracking.length - 1]!, animate)
+      setActive(rendered[rendered.length - 1]!, animate)
       return
     }
     const top = contentTop()
     const line = top + (win.innerHeight - top) / 4
     let index = Math.max(
       0,
-      tracking.findIndex((item) => item.id === activeId),
+      rendered.findIndex((item) => item.id === activeId),
     )
     // Separate entry and exit edges keep small reversals from flipping it.
     while (
-      index + 1 < tracking.length &&
-      tracking[index + 1]!.heading.getBoundingClientRect().top <=
+      index + 1 < rendered.length &&
+      rendered[index + 1]!.heading.getBoundingClientRect().top <=
         line - switchMargin
     )
       index++
     while (
       index > 0 &&
-      tracking[index]!.heading.getBoundingClientRect().top > line + switchMargin
+      rendered[index]!.heading.getBoundingClientRect().top > line + switchMargin
     )
       index--
-    setActive(tracking[index]!, animate)
+    setActive(rendered[index]!, animate)
   }
   const schedule = () => {
     if (!frame) frame = win.requestAnimationFrame(update)
@@ -339,6 +347,17 @@ function startMarkdownOutline(ctx: ReporterState) {
 
   const jump = (item: OutlineItem) => {
     const heading = item.heading
+    // Like native fragment navigation, reveal a heading inside closed details.
+    for (
+      let ancestor = heading.parentElement;
+      ancestor;
+      ancestor = ancestor.parentElement
+    )
+      if (
+        ancestor.tagName === 'DETAILS' &&
+        !(ancestor as HTMLDetailsElement).open
+      )
+        (ancestor as HTMLDetailsElement).open = true
     win.scrollTo({
       top: Math.max(
         0,
