@@ -25,6 +25,8 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(
       Math.max(page.width / container.width, page.height / container.height),
     ).toBeGreaterThan(0.85)
+    // The whole slide, viewer padding included, fits without scrolling.
+    expect(result.initial!.verticalOverflow).toBe(0)
     expect(result.selection).toContain('Slide page 1')
     expect(result.navigation).toEqual(ALL_NAVIGATION)
     expect(result.atStart).toMatchObject({
@@ -42,6 +44,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(result.afterResize!.page.height).toBeLessThanOrEqual(
       result.afterResize!.container.height,
     )
+    expect(result.afterResize!.verticalOverflow).toBe(0)
     expect(result.pdfjsRequests).toEqual(
       expect.arrayContaining([
         `${result.origin}/__as_pdf/pdfjs/pdf.min.mjs`,
@@ -94,6 +97,12 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     const tops = initial!.controls.map(({ top, height }) => top + height / 2)
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(2)
     expect(initial!.toolbarHeight).toBeLessThanOrEqual(56)
+    // The app header's collapse handle covers the frame's top-right corner.
+    const { download, frameWidth } = initial!
+    expect(
+      download.right <= frameWidth - 60 || download.top >= 20,
+      JSON.stringify({ download, frameWidth }),
+    ).toBe(true)
     if (width < 700)
       for (const { width: w, height: h } of initial!.controls) {
         expect(w).toBeGreaterThanOrEqual(44)
@@ -109,7 +118,8 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
 
     expect(result.mode).toBe('page')
     expect(result.mixedPage).toBe(2)
-    const { page, container } = result.mixed!
+    const { page, container, verticalOverflow } = result.mixed!
+    expect(verticalOverflow).toBe(0)
     expect(page.width).toBeLessThanOrEqual(container.width)
     expect(page.height).toBeLessThanOrEqual(container.height)
     expect(

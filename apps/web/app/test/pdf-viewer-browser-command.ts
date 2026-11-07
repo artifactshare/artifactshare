@@ -249,7 +249,18 @@ function layout(frame: Frame) {
     const current = document.querySelector<HTMLElement>(
       `.page[data-page-number="${(document.getElementById('page-number') as HTMLInputElement).value}"]`,
     )!
+    const download = document
+      .getElementById('download')!
+      .getBoundingClientRect()
     return {
+      frameWidth: innerWidth,
+      download: {
+        left: download.left,
+        right: download.right,
+        top: download.top,
+        bottom: download.bottom,
+      },
+      verticalOverflow: container.scrollHeight - container.clientHeight,
       toolbarHeight: Math.round(
         document.querySelector('.pdf-toolbar')!.getBoundingClientRect().height,
       ),
@@ -597,6 +608,9 @@ export const pdfViewerScenario = defineBrowserCommand(
 type Box = { top: number; width: number; height: number }
 type Edges = { left: number; right: number; top: number; bottom: number }
 type Layout = {
+  frameWidth: number
+  download: Edges
+  verticalOverflow: number
   toolbarHeight: number
   controls: Box[]
   previousDisabled: boolean

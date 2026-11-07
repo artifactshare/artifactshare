@@ -217,7 +217,10 @@ button:focus-visible, input:focus-visible, a:focus-visible, #viewer-container:fo
 svg { flex-shrink: 0; }
 .pdf-toolbar {
   height: var(--toolbar-height);
-  padding: 6px 16px;
+  /* The app header's collapse handle overlaps the frame's top-right corner
+     (44x18px, 12px from the edge), so the controls stay clear of it with
+     room for subpixel layout. */
+  padding: 6px 64px 6px 16px;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -301,7 +304,7 @@ body[data-mode='page'] .pdfViewer .page { flex-shrink: 0; margin: 0 auto; }
 @media (max-width: 700px) {
   :root { --toolbar-height: 52px; }
   .pdf-toolbar {
-    padding: 4px 8px;
+    padding: 4px 64px 4px 8px;
     gap: 0;
     grid-template-columns: minmax(44px, 1fr) auto minmax(44px, 1fr);
   }
@@ -433,12 +436,25 @@ if (viewerModule) {
     previous.disabled = current <= 1
     next.disabled = current >= viewer.pagesCount
   }
-  // Slides fit the page being shown, so each page change refits it. A report
+  // Slides fit the page being shown, so each page change refits it. pdf.js
+  // 'page-fit' ignores the viewer padding, so the slide is fitted to the
+  // container minus that padding and never makes the area scroll. A report
   // scrolls all pages at one scale, chosen so the widest page fits the width.
   function fit() {
     if (!ready) return
     if (slides) {
-      viewer.currentScaleValue = 'page-fit'
+      const view = viewer.getPageView(viewer.currentPageNumber - 1)
+      if (!view) return
+      const padding = getComputedStyle(byId('viewer'))
+      const availableWidth =
+        container.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - 1
+      const availableHeight =
+        container.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1
+      const scale = Math.min(
+        (availableWidth * view.scale) / view.width,
+        (availableHeight * view.scale) / view.height,
+      )
+      if (scale > 0 && Math.abs(scale - viewer.currentScale) > 0.0001) viewer.currentScale = scale
       return
     }
     viewer.currentScaleValue = 'page-width'
