@@ -2621,6 +2621,10 @@ describe('Markdown outline viewer', () => {
     test(`phone panel at ${width}px restores position on cancel and navigates on choice`, async () => {
       const doc = await outlineFixture(longDocument(30), width)
       const win = doc.defaultView!
+      // Headless Chromium hides scrollbars but still reserves the gutter that
+      // the scroll lock keeps. Reserve it up front, as a visible classic
+      // scrollbar does, so opening the panel does not reflow the page.
+      doc.documentElement.style.scrollbarGutter = 'stable'
       win.scrollTo({ top: 6000, behavior: 'instant' })
       await frames(doc)
       const openY = win.scrollY
@@ -2637,11 +2641,11 @@ describe('Markdown outline viewer', () => {
       expect(doc.activeElement).toBe(
         dialog.querySelector('[data-md-outline-close]'),
       )
-      // Full width of the visible area; classic scrollbars (Linux, Windows)
-      // take their width out of the frame.
-      expect(dialog.getBoundingClientRect().width).toBe(
-        doc.documentElement.clientWidth,
-      )
+      // Full width from the left edge, not the 380px desktop drawer. The
+      // scroll lock keeps a scrollbar gutter on engines that reserve one.
+      const panel = dialog.getBoundingClientRect()
+      expect(panel.left).toBe(0)
+      expect(panel.width).toBeGreaterThanOrEqual(width - 16)
       // The current entry is revealed inside the independently scrolling list.
       const active = list.querySelector('[aria-current]')!
       expect(active.getAttribute('href')).toBe(reading)
