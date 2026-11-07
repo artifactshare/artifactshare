@@ -1,7 +1,16 @@
 import { anchorIgnoreAttribute } from './anchor-engine.js'
 import type { ReporterState } from './state.js'
 
+// Legacy 96px tracking for Markdown in the legacy (export) layout. The outline
+// viewer (data-md-outline-version) is driven by installMarkdownOutline instead.
 export function updateMarkdownToc(ctx: ReporterState) {
+  let body = ctx.doc.body
+  if (
+    !body ||
+    !body.hasAttribute('data-artifact-markdown') ||
+    body.hasAttribute('data-md-outline-version')
+  )
+    return
   let links = ctx.doc.querySelectorAll('.md-toc a[href^="#"]')
   if (!links.length) return
   let activeId = null

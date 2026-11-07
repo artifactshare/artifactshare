@@ -10,11 +10,18 @@ import {
 
 const markdownExtensions = [markdownDisclosureExtension, httpAutolinkExtension]
 
-export function renderMarkdownBody(source: string): string {
+/** `legacy` keeps the original per-base counters, which can repeat an ID such
+ * as `same-2`; `unique` also skips every ID already used in the document. */
+export type HeadingIdStrategy = 'legacy' | 'unique'
+
+export function renderMarkdownBody(
+  source: string,
+  options: { headingIds?: HeadingIdStrategy } = {},
+): string {
   const parsed = parseMarkdown(source, {
     allowHtml: true,
     extensions: markdownExtensions,
-    headingIds: uniqueHeadingId(),
+    headingIds: uniqueHeadingId(options.headingIds === 'unique'),
   })
   return embedYouTube(
     highlightCode(
@@ -26,8 +33,9 @@ export function renderMarkdownBody(source: string): string {
   )
 }
 
-function uniqueHeadingId() {
+function uniqueHeadingId(documentUnique: boolean) {
   const counts = new Map<string, number>()
+  const used = new Set<string>()
   return (text: string) => {
     const base =
       text
@@ -35,9 +43,12 @@ function uniqueHeadingId() {
         .toLowerCase()
         .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
         .replace(/^-|-$/g, '') || 'section'
-    const count = (counts.get(base) ?? 0) + 1
+    let count = (counts.get(base) ?? 0) + 1
+    let id = count === 1 ? base : `${base}-${count}`
+    while (documentUnique && used.has(id)) id = `${base}-${++count}`
     counts.set(base, count)
-    return count === 1 ? base : `${base}-${count}`
+    used.add(id)
+    return id
   }
 }
 

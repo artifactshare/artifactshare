@@ -640,6 +640,9 @@ describe('markdown rendering', () => {
       expect(response.headers.get('content-type')).toContain('text/html')
       const html = await response.text()
       expect(html).toContain('Title')
+      expect(html).toContain(
+        '<body data-artifact-markdown data-md-outline-version="2">',
+      )
       expect(html).toContain(VIOLATION_REPORTER_SCRIPT_BODY)
     } finally {
       await context.server.close()

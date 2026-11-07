@@ -10,7 +10,10 @@ import {
   staticSiteXmlEmbedding,
   staticSiteWasm,
 } from './app/test/static-site-wasm-browser-command'
-import { setMermaidColorScheme } from './app/test/mermaid-browser-command'
+import {
+  setMermaidColorScheme,
+  setReducedMotion,
+} from './app/test/mermaid-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
 import {
   projectPlacementDestinations,
@@ -58,6 +61,7 @@ export default defineConfig({
         projectPlacementCandidates,
         selectAnchorText,
         setMermaidColorScheme,
+        setReducedMotion,
         staticSiteWasm,
         staticSiteExtensions,
         staticSiteXmlEmbedding,
