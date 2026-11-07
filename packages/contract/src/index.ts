@@ -638,6 +638,11 @@ export type ArtifactReadQueryParams = z.infer<
 >
 
 export const CLI_STATIC_METADATA_HEADER = 'X-ArtifactShare-Static-Metadata'
+// A CLI sends the artifact kinds it understands beyond the original set.
+// Released CLIs reject a whole list or resolve response that contains a kind
+// they do not know, so the server only reports newer kinds to clients that
+// name them here.
+export const CLI_ARTIFACT_KINDS_HEADER = 'X-ArtifactShare-Artifact-Kinds'
 
 export const ArtifactVersionSummarySchema = z.object({
   retain_versions: z.number().int().positive().nullable(),

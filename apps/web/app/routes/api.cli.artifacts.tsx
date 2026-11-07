@@ -5,6 +5,7 @@ import {
   ArtifactsListResponseSchema,
 } from '@artifactshare/contract'
 import { errorResponse } from '~/lib/api-errors'
+import { artifactsListForClient } from '~/lib/cli-artifact-kinds'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import {
@@ -56,7 +57,12 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       if (result.kind !== 'ok') {
         return errorResponse('invalid-destination', 'Invalid project.', 400)
       }
-      return Response.json(ArtifactsListResponseSchema.parse(result.data))
+      return Response.json(
+        artifactsListForClient(
+          ArtifactsListResponseSchema.parse(result.data),
+          request,
+        ),
+      )
     }
     const result = await listCliArtifacts(db, user, {
       includeVersionSummaries: true,
@@ -67,7 +73,12 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     })
     switch (result.kind) {
       case 'ok':
-        return Response.json(ArtifactsListResponseSchema.parse(result.data))
+        return Response.json(
+          artifactsListForClient(
+            ArtifactsListResponseSchema.parse(result.data),
+            request,
+          ),
+        )
       case 'invalid-project':
         return errorResponse(
           'invalid-destination',

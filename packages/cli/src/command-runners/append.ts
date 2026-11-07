@@ -81,7 +81,9 @@ export async function runAppend(
         mode,
         1,
       )
-    if (isPdfFileName(file.name) || (await blobHasPdfMagic(file.blob)))
+    // A PDF is a .pdf name with the %PDF- header; text that merely starts
+    // with those bytes is still appended.
+    if (isPdfFileName(file.name) && (await blobHasPdfMagic(file.blob)))
       return writeFailure(
         command,
         validationError(

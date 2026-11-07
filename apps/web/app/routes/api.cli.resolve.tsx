@@ -4,6 +4,7 @@ import {
   ResolveQuerySchema,
   ResolveResponseSchema,
 } from '@artifactshare/contract'
+import { resolveForClient } from '~/lib/cli-artifact-kinds'
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { getCliAuthority, requireUser } from '~/middleware/context'
 import { withDb } from '~/services/db.server'
@@ -29,8 +30,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
 
   return await withDb(async (db) =>
     Response.json(
-      ResolveResponseSchema.parse(
-        await resolveCliCandidates(db, user, parsedQuery.data.q),
+      resolveForClient(
+        ResolveResponseSchema.parse(
+          await resolveCliCandidates(db, user, parsedQuery.data.q),
+        ),
+        request,
       ),
     ),
   )

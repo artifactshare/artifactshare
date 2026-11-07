@@ -797,6 +797,25 @@ describe('uploadShareable', () => {
     },
   )
 
+  test('stores text under a .pdf name by its MIME type, not as a PDF', async () => {
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      new File(['# Notes\n'], 'deck.pdf', { type: 'text/markdown' }),
+      'private',
+    )
+
+    expect(result).toMatchObject({ kind: 'ok' })
+    if (result.kind !== 'ok') return
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('artifact_kind')
+        .where('id', '=', result.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ artifact_kind: 'markdown_page' })
+  })
+
   test('rejects a pdf over the 25 MiB single-artifact limit as too-large', async () => {
     const bytes = new Uint8Array(25 * MB + 1)
     bytes.set(new TextEncoder().encode('%PDF-1.4\n'))

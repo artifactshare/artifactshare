@@ -48,6 +48,46 @@ test('append refuses a PDF file before authentication', async () => {
   assert.match(payload.error.message, /does not support PDF/)
 })
 
+test('append sends Markdown whose text starts with the PDF header', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-pdf-text-'))
+  const path = join(dir, 'section.md')
+  await writeFile(path, '%PDF- is the required PDF header.\n')
+
+  await withServer(
+    async (request, response) => {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      assert.deepEqual(JSON.parse(body), {
+        content: '%PDF- is the required PDF header.\n',
+      })
+      // Every CLI request names the newer artifact kinds it can parse.
+      assert.equal(request.headers['x-artifactshare-artifact-kinds'], 'pdf')
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          id: 'abc123def4',
+          shareUrl: 'https://artifactshare.test/a/abc123def4',
+          versionId: 'version2',
+          artifactKind: 'markdown_page',
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync([
+        'append',
+        'abc123def4',
+        path,
+        '--base-url',
+        baseUrl,
+        '--token',
+        'token',
+        '--json',
+      ])
+      expectSuccess(result, 'append')
+    },
+  )
+})
+
 test('append sends UTF-8 content and returns the new version', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-'))
   const path = join(dir, 'section.md')

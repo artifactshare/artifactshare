@@ -87,8 +87,10 @@ export function pdfDownloadFileName(entrypointPath: string | null): string {
     .replace(/\.pdf$/i, '')
     .replace(/[^\p{L}\p{N}._ -]+/gu, '_')
     .replace(/^[.\s_-]+|[.\s_-]+$/g, '')
-    .slice(0, 120)
-  return `${stem || 'document'}.pdf`
+  // Cut by code point so a character outside the BMP is never split into a
+  // lone surrogate, which encodeURIComponent rejects.
+  const short = Array.from(stem).slice(0, 120).join('')
+  return `${short || 'document'}.pdf`
 }
 
 export function pdfContentDisposition(
@@ -399,6 +401,7 @@ function failureState(error) {
 }
 
 let pdfjs
+let loadedPdf = null
 let viewerModule
 try {
   pdfjs = await import(PDFJS + 'pdf.min.mjs')
@@ -487,6 +490,7 @@ if (viewerModule) {
   })
   eventBus.on('pagechanging', () => {
     sync()
+    showPageState()
     if (slides) queueMicrotask(fit)
   })
   // Every page's own size is known only once all pages have loaded.
@@ -494,15 +498,24 @@ if (viewerModule) {
     fit()
     keepTopAtLoad()
   })
-  eventBus.on('pagerendered', ({ error }) => {
-    if (error) {
+  // A page that failed to render shows its message only while it is the
+  // current page; rendering it, or moving to a page that rendered, clears it.
+  const failedPages = new Set()
+  const showPageState = () => {
+    if (failedPages.has(viewer.currentPageNumber)) {
       showState('page-error', text.pageFailed, true)
       return
     }
-    if (document.documentElement.dataset.pdfState !== 'page-error') {
+    const state = document.documentElement.dataset.pdfState
+    if (state === 'loading' || state === 'page-error') {
       status.hidden = true
       document.documentElement.dataset.pdfState = 'ready'
     }
+  }
+  eventBus.on('pagerendered', ({ pageNumber, error }) => {
+    if (error) failedPages.add(pageNumber)
+    else failedPages.delete(pageNumber)
+    showPageState()
   })
   previous.addEventListener('click', () => viewer.previousPage())
   next.addEventListener('click', () => viewer.nextPage())
@@ -558,6 +571,22 @@ if (viewerModule) {
   new ResizeObserver(fit).observe(container)
 
   try {
+    // Download serves the bytes pdf.js already holds, so it keeps working
+    // after the sandbox's short-lived cookie expires during long reading.
+    const download = byId('download')
+    download.addEventListener('click', async (event) => {
+      if (!loadedPdf) return
+      event.preventDefault()
+      const bytes = await loadedPdf.getData()
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = download.getAttribute('download') || 'document.pdf'
+      document.body.append(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    })
     const pdf = await pdfjs.getDocument({
       url: ORIGINAL,
       isEvalSupported: false,
@@ -567,6 +596,7 @@ if (viewerModule) {
       wasmUrl: PDFJS + 'wasm/',
       iccUrl: PDFJS + 'iccs/',
     }).promise
+    loadedPdf = pdf
     const first = await pdf.getPage(1)
     const viewport = first.getViewport({ scale: 1 })
     slides = viewport.width > viewport.height

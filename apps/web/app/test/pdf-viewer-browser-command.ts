@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
+import { readFile } from 'node:fs/promises'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import type { Frame, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
@@ -573,6 +574,26 @@ export const pdfViewerScenario = defineBrowserCommand(
         await frame.click('#next')
         await waitForPage(frame, 2)
       }
+      // Download serves the bytes pdf.js already holds, so it keeps working
+      // after the sandbox cookie is gone.
+      await context.clearCookies()
+      const originalFetches = () =>
+        requests.filter((url) => new URL(url).pathname === PDF_ORIGINAL_PATH)
+          .length
+      const fetchesBeforeDownload = originalFetches()
+      const [saved] = await Promise.all([
+        artifact.waitForEvent('download'),
+        frame.click('#download'),
+      ])
+      const download = {
+        name: saved.suggestedFilename(),
+        sameBytes:
+          Buffer.compare(
+            await readFile((await saved.path())!),
+            Buffer.from(scenarioPdf(scenario)),
+          ) === 0,
+        fetchedOriginal: originalFetches() > fetchesBeforeDownload,
+      }
       const beforeResize = await pageNumber(frame)
       await artifact.setViewportSize({
         width: Math.round(width * 0.8),
@@ -596,6 +617,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         scrolledPage,
         beforeResize,
         afterResize,
+        download,
       }
     } finally {
       await context?.close()
@@ -661,6 +683,7 @@ declare module 'vitest/browser' {
       scrolledPage?: number | null
       beforeResize?: number
       afterResize?: Layout & { pageNumber: number }
+      download?: { name: string; sameBytes: boolean; fetchedOriginal: boolean }
     }>
   }
 }

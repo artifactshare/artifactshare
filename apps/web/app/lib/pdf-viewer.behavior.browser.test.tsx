@@ -41,6 +41,13 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(result.afterResize!.page.width).toBeLessThanOrEqual(
       result.afterResize!.container.width,
     )
+    // Download keeps working without the sandbox cookie: it saves the loaded
+    // bytes instead of fetching the original again.
+    expect(result.download).toEqual({
+      name: expect.stringMatching(/\.pdf$/),
+      sameBytes: true,
+      fetchedOriginal: false,
+    })
     expect(result.afterResize!.page.height).toBeLessThanOrEqual(
       result.afterResize!.container.height,
     )
