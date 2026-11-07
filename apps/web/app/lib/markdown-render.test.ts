@@ -32,6 +32,12 @@ describe('renderMarkdownDocument', () => {
     expect(out).toMatch(
       /\.md \{[^}]*word-break: auto-phrase;[^}]*line-break: strict;/,
     )
+    // Outline entries sit outside .md and need phrase-aware breaking too.
+    expect(out).toMatch(
+      /\.md-outline li > a \{[^}]*overflow-wrap: anywhere;[^}]*word-break: auto-phrase;[^}]*line-break: strict;/,
+    )
+    // A blockquote's last paragraph must not add trailing space inside it.
+    expect(out).toContain('.md blockquote > :last-child { margin-bottom: 0; }')
     expect(out).toMatch(/\.md code \{[^}]*ui-monospace/)
     expect(out).toMatch(/\.md table \{[\s\S]*?overflow-wrap: normal;/)
     expect(out).toContain('--md-bg: #fbfaf8')

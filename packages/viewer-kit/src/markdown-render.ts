@@ -641,6 +641,7 @@ body {
 .md { grid-column: 1; grid-row: 2; width: 100%; max-width: 720px; min-width: 0; margin: 0; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
+.md blockquote > :last-child { margin-bottom: 0; }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
   margin: 28px 0 12px;
   font-weight: 700;
@@ -724,6 +725,8 @@ body {
   font-weight: 400;
   text-decoration: none;
   overflow-wrap: anywhere;
+  word-break: auto-phrase;
+  line-break: strict;
   transition: color 160ms ease-out, background-color 160ms ease-out;
 }
 .md-outline li[data-indent="1"] > a { padding-left: 32px; }
