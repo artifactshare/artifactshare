@@ -49,6 +49,7 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
       .map((step) => step.uses)
       .filter(Boolean),
   )
+  pins.add('actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9')
   for (const [name, job] of Object.entries(workflow.jobs)) {
     assert.equal(job['runs-on'], 'ubuntu-latest')
     assert.equal(job['timeout-minutes'], name === 'worker' ? 60 : 10)
@@ -139,4 +140,86 @@ test('every flaky detector job uses stock Playwright libraries', () => {
     JSON.stringify(workflow),
     /replace-webkit-libsoup|webkit-libsoup|WEBKIT_LIBSOUP_CACHE_DIR/i,
   )
+})
+
+test('only default-branch browser workers best-effort stage and save archives before repetition', () => {
+  const guard =
+    "matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))"
+  const imageGuard =
+    "steps.browser-cache-image.outcome == 'success' && env.ImageOS != ''"
+  const ids = [
+    'browser-cache-image',
+    'browser-cache-stage',
+    'browser-cache-save',
+  ]
+  const [image, stage, save] = ids.map((id) => {
+    const matches = steps.filter((step) => step.id === id)
+    assert.equal(matches.length, 1)
+    return matches[0]
+  })
+  assert.equal(workflow.jobs.worker['continue-on-error'], undefined)
+  for (const step of steps) {
+    assert.equal(
+      step['continue-on-error'],
+      ids.includes(step.id) ? true : undefined,
+    )
+  }
+  assert.equal(image.if, '${{ ' + guard + ' }}')
+  for (const step of [stage, save])
+    assert.equal(step.if, '${{ ' + guard + ' && ' + imageGuard + ' }}')
+  const install = steps.findIndex((step) =>
+    step.run?.includes('playwright install'),
+  )
+  assert.deepEqual(steps.slice(install + 1, install + 4), [image, stage, save])
+  assert.equal(steps[install + 4].run, 'node scripts/ci/flaky-runs.mjs run')
+  assert.equal(steps[install + 4].if, undefined)
+  assert.equal(
+    stage.run,
+    'bash scripts/ci/browser-system-packages.sh /var/cache/apt/archives "$RUNNER_TEMP/browser-system-packages"',
+  )
+  assert.equal(
+    save.uses,
+    'actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+  )
+  assert.match(
+    fs.readFileSync('.github/workflows/flaky-detector.yml', 'utf8'),
+    /actions\/cache\/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0/,
+  )
+  for (const name of ['browser-validation', 'changed-browser-repetitions']) {
+    const restore = ci.jobs[name].steps.find(
+      (step) => step.id === 'browser-cache-restore',
+    )
+    assert.deepEqual(save.with, {
+      path: restore.with.path,
+      key: restore.with.key,
+    })
+  }
+  assert.ok(
+    !steps.some((step) => step.uses?.startsWith('actions/cache/restore@')),
+  )
+
+  // Exact YAML guard equality above binds this predicate to the documented event cases.
+  const eligible = (suite, event, ref, repository) =>
+    suite === 'behavior-browser' &&
+    (event === 'schedule' ||
+      (event === 'workflow_dispatch' &&
+        Boolean(repository?.default_branch) &&
+        ref === `refs/heads/${repository.default_branch}`))
+  for (const [event, ref, repository, expected] of [
+    ['schedule', 'refs/heads/main', undefined, true],
+    ['workflow_dispatch', 'refs/heads/main', { default_branch: 'main' }, true],
+    [
+      'workflow_dispatch',
+      'refs/heads/other',
+      { default_branch: 'main' },
+      false,
+    ],
+    ['workflow_dispatch', 'refs/tags/main', { default_branch: 'main' }, false],
+    ['workflow_dispatch', 'refs/heads/main', undefined, false],
+    ['workflow_dispatch', 'refs/heads/main', {}, false],
+    ['workflow_dispatch', 'refs/heads/', { default_branch: '' }, false],
+  ]) {
+    assert.equal(eligible('behavior-browser', event, ref, repository), expected)
+    assert.equal(eligible('scripts', event, ref, repository), false)
+  }
 })

@@ -59,6 +59,24 @@ jobs:
         run: pnpm --filter @artifactshare/contract build
       - if: matrix.suite == 'behavior-browser'
         run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
+      - id: browser-cache-image
+        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          : "${ImageOS:?runner ImageOS is required for caching}"
+          printf 'ImageOS=%s\n' "$ImageOS" >> "$GITHUB_ENV"
+      - id: browser-cache-stage
+        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
+        continue-on-error: true
+        run: bash scripts/ci/browser-system-packages.sh /var/cache/apt/archives "$RUNNER_TEMP/browser-system-packages"
+      - id: browser-cache-save
+        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/browser-system-packages
+          key: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ github.run_id }}
       - name: Repeat the whole suite
         env:
           SHARD: ${{ toJSON(matrix) }}

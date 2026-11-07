@@ -449,7 +449,17 @@ test('every executable validation lane checks out the merge-group SHA', () => {
     assert.equal(checkout.with.ref, '${{ github.sha }}', jobName)
     assert.equal(checkout.with['persist-credentials'], false, jobName)
     assert.equal(checkout.with['fetch-depth'], 0, jobName)
-    assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u, jobName)
+    if (jobName === 'browser-validation') {
+      assert.equal(job['continue-on-error'], undefined)
+      for (const step of job.steps) {
+        assert.equal(
+          step['continue-on-error'],
+          browserCacheIds.includes(step.id) ? true : undefined,
+        )
+      }
+    } else {
+      assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u, jobName)
+    }
   }
 })
 
@@ -865,8 +875,12 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   })
   for (const step of lane.steps.slice(2)) {
     assert.match(step.if, /steps\.classify\.outputs\.is_maintainer == 'true'/)
-    assert.equal(step['continue-on-error'], undefined)
+    assert.equal(
+      step['continue-on-error'],
+      browserCacheIds.includes(step.id) ? true : undefined,
+    )
   }
+  assert.equal(lane['continue-on-error'], undefined)
   const selection = lane.steps.find((step) => step.id === 'select')
   assert.match(selection.run, /git cat-file -e "\$PUBLIC_PR_BASE\^\{commit\}"/)
   assert.match(selection.run, /changed-browser-repetitions\.mjs select/)
@@ -904,10 +918,7 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.match(summary.if, /failure\(\)/)
   assert.match(summary.run, /changed-browser-repetitions\.mjs report/)
   assert.match(summary.run, /exit 1/)
-  assert.doesNotMatch(
-    JSON.stringify(lane),
-    /fixtures:build|continue-on-error|restore-keys/,
-  )
+  assert.doesNotMatch(JSON.stringify(lane), /fixtures:build/)
   assert.ok(
     !parsedWorkflow.jobs.validate.needs.includes('changed-browser-repetitions'),
   )
@@ -1046,4 +1057,112 @@ test('upload boundary suite runs with a CLI build on all supported operating sys
     parsedWorkflow.jobs.validate.steps[0].env.UPLOAD_BOUNDARY_RESULT,
     '${{ needs.upload-boundary-validation.result }}',
   )
+})
+
+const browserCacheIds = [
+  'browser-cache-image',
+  'browser-cache-restore',
+  'browser-cache-copy',
+]
+const archivePrefix =
+  'browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-'
+const archivePath = '${{ runner.temp }}/browser-system-packages'
+const imageGuard =
+  "steps.browser-cache-image.outcome == 'success' && env.ImageOS != ''"
+
+test('both browser consumers restore optional system packages before unchanged installs', () => {
+  assert.doesNotMatch(workflow, /actions\/cache(?:\/save)?@/)
+  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
+    if (!['browser-validation', 'changed-browser-repetitions'].includes(name)) {
+      assert.doesNotMatch(JSON.stringify(job), /browser-cache-|restore-keys/)
+      continue
+    }
+    const steps = job.steps
+    const [image, restore, copy] = browserCacheIds.map((id) => {
+      const matches = steps.filter((step) => step.id === id)
+      assert.equal(matches.length, 1)
+      assert.equal(matches[0]['continue-on-error'], true)
+      return matches[0]
+    })
+    const gate =
+      name === 'changed-browser-repetitions'
+        ? "steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true'"
+        : ''
+    assert.equal(image.if, gate ? '${{ ' + gate + ' }}' : undefined)
+    for (const step of [restore, copy]) {
+      assert.equal(
+        step.if,
+        '${{ ' + (gate ? gate + ' && ' : '') + imageGuard + ' }}',
+      )
+    }
+    assert.equal(
+      restore.uses,
+      'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+    )
+    assert.deepEqual(restore.with, {
+      path: archivePath,
+      key: archivePrefix + '${{ github.run_id }}',
+      'restore-keys': archivePrefix,
+    })
+    assert.match(
+      workflow,
+      /actions\/cache\/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0/,
+    )
+    assert.equal(
+      copy.run,
+      'sudo bash scripts/ci/browser-system-packages.sh "$RUNNER_TEMP/browser-system-packages" /var/cache/apt/archives',
+    )
+    const install = steps.findIndex((step) =>
+      step.run?.includes('playwright install'),
+    )
+    assert.deepEqual(steps.slice(install - 3, install), [image, restore, copy])
+    for (const step of steps) {
+      if (step !== restore) assert.equal(step.with?.['restore-keys'], undefined)
+    }
+  }
+})
+
+test('all cache image preparations export only nonempty runner metadata', (t) => {
+  const detector = YAML.parse(
+    fs.readFileSync('.github/workflows/flaky-detector.yml', 'utf8'),
+  )
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-image-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const jobs = [
+    parsedWorkflow.jobs['browser-validation'],
+    parsedWorkflow.jobs['changed-browser-repetitions'],
+    detector.jobs.worker,
+  ]
+  for (const job of jobs) {
+    const index = job.steps.findIndex(
+      (step) => step.id === 'browser-cache-image',
+    )
+    const image = job.steps[index]
+    assert.equal(image.shell, 'bash')
+    assert.equal(image['continue-on-error'], true)
+    for (const value of ['ubuntu24', '', undefined]) {
+      const output = path.join(directory, 'env')
+      fs.writeFileSync(output, '')
+      const env = { ...process.env, GITHUB_ENV: output }
+      delete env.ImageOS
+      if (value !== undefined) env.ImageOS = value
+      const result = spawnSync('bash', ['-e', '-c', image.run], {
+        env,
+        encoding: 'utf8',
+      })
+      assert.equal(result.status === 0, value === 'ubuntu24', result.stderr)
+      assert.equal(
+        fs.readFileSync(output, 'utf8'),
+        value === 'ubuntu24' ? 'ImageOS=ubuntu24\n' : '',
+      )
+    }
+    for (const step of job.steps.filter(
+      (candidate) =>
+        candidate.id?.startsWith('browser-cache-') && candidate !== image,
+    )) {
+      assert.ok(job.steps.indexOf(step) > index)
+      assert.ok(step.if.includes(imageGuard))
+      assert.equal(step['continue-on-error'], true)
+    }
+  }
 })
