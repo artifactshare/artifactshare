@@ -831,6 +831,7 @@ body {
   padding: 16px 20px calc(24px + env(safe-area-inset-bottom));
   scrollbar-color: var(--md-border) transparent;
 }
+.md-outline-list > .md-outline-rail { left: 20px; width: calc(100% - 20px); }
 .md-outline-list li > a { min-height: 44px; padding-top: 6px; padding-bottom: 6px; font-size: 14px; line-height: 1.65; }
 .md-outline-list li[data-level="2"] > a, .md-outline-list li[data-level="1"]:not([data-overview]) > a { font-size: 15px; }
 .md-outline a:focus-visible, .md-outline-detail input:focus-visible, .md-position-button:focus-visible, .md-outline-panel button:focus-visible {

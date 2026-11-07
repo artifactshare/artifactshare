@@ -49,6 +49,11 @@ describe('renderMarkdownDocument', () => {
     // The current entry changes color and tint only, never its weight.
     expect(out).toMatch(/li > a\[aria-current\] \{[^}]*color: var\(--md-link\)/)
     expect(out).not.toMatch(/\[aria-current\][^{]*\{[^}]*font-weight/)
+    // The panel rail starts at the list's 20px padding, beside its entries.
+    expect(out).toMatch(/\.md-outline-list \{[^}]*padding: 16px 20px /)
+    expect(out).toContain(
+      '.md-outline-list > .md-outline-rail { left: 20px; width: calc(100% - 20px); }',
+    )
     expect(out).toContain('stroke-dasharray 280ms')
     expect(out).toContain('color 160ms ease-out')
     expect(out).toMatch(
