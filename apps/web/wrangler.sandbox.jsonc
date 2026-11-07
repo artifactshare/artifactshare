@@ -7,6 +7,13 @@
   "workers_dev": false,
   "preview_urls": false,
   "observability": { "enabled": true, "redact_query_string": true },
+  // pdf.js files for the PDF viewer. The Worker always runs first and serves an
+  // allowlisted subset under /__as_pdf/pdfjs/ after the artifact access check.
+  "assets": {
+    "directory": "./node_modules/pdfjs-dist",
+    "binding": "PDFJS_ASSETS",
+    "run_worker_first": true,
+  },
   "d1_databases": [
     {
       "binding": "DB",

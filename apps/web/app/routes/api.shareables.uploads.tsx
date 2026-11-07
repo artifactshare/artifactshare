@@ -463,7 +463,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case 'unsupported-type':
       return errorResponse(
         'unsupported-type',
-        'Only `.html` and `.md` files are supported for now.',
+        'Only `.html`, `.md`, and `.pdf` files are supported for now.',
         415,
       )
     case 'invalid-path':

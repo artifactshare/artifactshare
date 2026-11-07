@@ -2442,8 +2442,10 @@ function useViewerShellController({
   // 別オリジンの sandbox iframe にあり選択を取得できない。
   const textAnchorsEnabled =
     !isHistoricalVersion && (renderType === 'html' || renderType === 'md')
-  // 全体コメントの新規作成 composer は static_site のみ。html / md は本文選択で付ける。
-  const newThreadComposerEnabled = renderType === 'static_site'
+  // 全体コメントの新規作成 composer は static_site と pdf。html / md は本文選択で付ける。
+  // pdf の本文も別オリジンの iframe にあり、位置コメントは後続タスク。
+  const newThreadComposerEnabled =
+    renderType === 'static_site' || renderType === 'pdf'
   const comments = useViewerComments({
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
@@ -2737,6 +2739,7 @@ function useViewerShellController({
     new URL(sandboxUrl).pathname !== DELIVERY_UNAVAILABLE_PATH &&
     (renderType === 'html' ||
       renderType === 'md' ||
+      renderType === 'pdf' ||
       renderType === 'static_site') &&
     !linkSafety?.lowTrust &&
     displayedBodyVersion

@@ -198,6 +198,51 @@ describe('comments server', () => {
     expect(events.map((event) => event.subject_id)).toEqual(messageIds)
   })
 
+  test('pdf artifacts accept overall comments but reject text anchors', async () => {
+    await fixture.db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'pdf', name: 'report.pdf' })
+      .where('id', '=', 's1')
+      .execute()
+    await fixture.db
+      .updateTable('versions')
+      .set({
+        artifact_kind: 'pdf',
+        entrypoint_path: '/report.pdf',
+        r2_key: 'artifacts/s1/v1/original.pdf',
+      })
+      .where('id', '=', 'v1')
+      .execute()
+    const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    expect(access.artifactKind).toBe('pdf')
+
+    const created = await createCommentThread(
+      fixture.db,
+      access,
+      viewerUser,
+      'Overall note',
+    )
+    expect(created.kind).toBe('ok')
+    const threads = await loadCommentThreads(fixture.db, access, viewerUser)
+    expect(threads.map((thread) => thread.messages[0]?.body)).toEqual([
+      'Overall note',
+    ])
+
+    expect(
+      await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Anchored',
+        selector,
+      ),
+    ).toEqual({ kind: 'invalid-anchor' })
+    expect(
+      await buildQuoteAnchor(access, { quote: 'words', before: '', after: '' }),
+    ).toEqual({ kind: 'unsupported' })
+    expect(sqliteRef.bucketGetCount).toBe(0)
+  })
+
   test('notifies the live room after successful comment changes', async () => {
     const access = await loadCommentAccess(fixture.db, viewerUser, 's1')
     expect(access).not.toBeNull()

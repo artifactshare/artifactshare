@@ -49,6 +49,14 @@ import { injectReadyReporter } from '@artifactshare/viewer-kit/inject'
 export { injectReadyReporter }
 import { validateBundlePath } from './lib/path-validator'
 import {
+  PDF_MIME_TYPE,
+  PDF_ORIGINAL_PATH,
+  pdfContentDisposition,
+  pdfjsAssetSource,
+  pdfViewerAsset,
+  pdfViewerDocument,
+} from './lib/pdf-viewer'
+import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
 } from '../app/lib/sandbox-block-report'
@@ -446,7 +454,8 @@ async function handleEntrypointRequest(
       }
     }
     const response = await serveEntrypoint(entrypoint, false, identity)
-    if (!response.ok || entrypoint.renderType !== 'static_site') return response
+    if (!response.ok || !usesBundleCookie(entrypoint.renderType))
+      return response
     response.headers.append('Set-Cookie', await bundleCookieFor(payload))
     return response
   }
@@ -500,6 +509,15 @@ async function handleEntrypointRequest(
     })
   }
 
+  if (entrypoint.renderType === 'pdf') {
+    // The generated viewer is our code, not the artifact's, so it is served
+    // directly. Its original-file and asset requests carry only the bound
+    // cookie, and each one rechecks current access and the version.
+    const response = await serveEntrypoint(entrypoint, payload.emb === true)
+    if (!response.ok) return response
+    response.headers.append('Set-Cookie', await bundleCookieFor(payload))
+    return response
+  }
   if (entrypoint.renderType !== 'static_site') {
     return await serveEntrypoint(entrypoint, payload.emb === true)
   }
@@ -587,6 +605,13 @@ interface Entrypoint {
   renderType: ArtifactType
   r2Key: string
   contentType: string | null
+  entrypointPath: string | null
+}
+
+// Kinds whose entry document loads further same-origin resources that only
+// the host-bound cookie can authorize.
+function usesBundleCookie(renderType: ArtifactType): boolean {
+  return renderType === 'static_site' || renderType === 'pdf'
 }
 
 async function publishedEntrypoint(
@@ -624,6 +649,7 @@ async function publishedEntrypoint(
       renderType: payload.t,
       r2Key: version.r2_key,
       contentType: 'text/html; charset=utf-8',
+      entrypointPath: version.entrypoint_path,
     }
   }
 
@@ -639,6 +665,7 @@ async function publishedEntrypoint(
     renderType: 'static_site',
     r2Key: file.r2_key,
     contentType: file.mime_type,
+    entrypointPath: version.entrypoint_path,
   }
 }
 
@@ -662,6 +689,7 @@ async function bundleCookieFor(payload: SandboxPayload): Promise<string> {
 function artifactKindForToken(renderType: ArtifactType): ArtifactKind | null {
   if (renderType === 'html') return 'html_page'
   if (renderType === 'md') return 'markdown_page'
+  if (renderType === 'pdf') return 'pdf'
   if (renderType === 'static_site') return 'static_site'
   return null
 }
@@ -686,6 +714,15 @@ async function serveEntrypoint(
   embed: boolean,
   responseDomain?: SandboxResponseDomain,
 ): Promise<Response> {
+  if (entrypoint.renderType === 'pdf') {
+    // The entry document is generated; the PDF bytes are fetched separately
+    // from PDF_ORIGINAL_PATH and never pass through the reporter rewriter.
+    return documentResponse(
+      pdfViewerDocument(entrypoint.entrypointPath),
+      'text/html; charset=utf-8',
+      artifactCsp('pdf', embed, responseDomain),
+    )
+  }
   const object = await getArtifact(env.BUCKET, entrypoint.r2Key)
   if (!object) {
     return deniedResponse(
@@ -748,6 +785,19 @@ async function serveBundleAsset(
     .where('versions.published_at', 'is not', null)
     .where('versions.artifact_kind', '=', 'static_site')
     .execute()
+  // No static-site version matched: the bundle may be a PDF version, whose
+  // virtual resources exist only there and never shadow static-site paths.
+  if (files.length === 0) {
+    const pdfResponse = await servePdfResource(
+      db,
+      bundle,
+      path,
+      request,
+      now,
+      responseDomain,
+    )
+    if (pdfResponse) return pdfResponse
+  }
   if (files[0] && !bundle.uid && files[0].current_version_id !== bundle.vid) {
     return deniedResponse(
       'stale_anonymous_version',
@@ -799,6 +849,134 @@ async function serveBundleAsset(
   return await serveBundleFile(fallback, request, responseDomain)
 }
 
+async function servePdfResource(
+  db: Kysely<DB>,
+  bundle: { uid?: string | null; wid: string; aid: string; vid: string },
+  path: string,
+  request: Request,
+  now: string,
+  responseDomain?: SandboxResponseDomain,
+): Promise<Response | null> {
+  const version = await db
+    .selectFrom('versions')
+    .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
+    .select([
+      'shareables.current_version_id',
+      'versions.entrypoint_path',
+      'versions.r2_key',
+      'versions.size_bytes',
+    ])
+    .where('shareables.id', '=', bundle.aid)
+    .where('shareables.workspace_id', '=', bundle.wid)
+    .where('versions.id', '=', bundle.vid)
+    .where('versions.status', '=', 'published')
+    .where('versions.published_at', 'is not', null)
+    .where('versions.artifact_kind', '=', 'pdf')
+    .executeTakeFirst()
+  if (!version) return null
+  if (!bundle.uid && version.current_version_id !== bundle.vid) {
+    return deniedResponse(
+      'stale_anonymous_version',
+      'Invalid token',
+      401,
+      {},
+      responseDomain,
+    )
+  }
+  const accessFacts = await access.facts(db, {
+    shareableId: bundle.aid,
+    viewerUserId: bundle.uid ?? null,
+    now,
+  })
+  if (!sandboxAccessAllowed(accessFacts, bundle)) {
+    return deniedResponse(
+      bundle.uid ? 'viewer_access_revoked' : 'anon_bundle_unavailable',
+      'Invalid token',
+      401,
+      { aid: bundle.aid, vid: bundle.vid, path },
+      responseDomain,
+    )
+  }
+  const refusal = staticSiteServiceWorkerRefusal(request)
+  if (refusal) return refusal
+
+  if (path === version.entrypoint_path) {
+    return documentResponse(
+      pdfViewerDocument(version.entrypoint_path),
+      'text/html; charset=utf-8',
+      artifactCsp('pdf', false, responseDomain),
+    )
+  }
+  const asset = pdfViewerAsset(path)
+  if (asset) {
+    return staticSiteAssetResponse(
+      asset.body,
+      asset.contentType,
+      frameAncestorsValue(false, responseDomain),
+    )
+  }
+  const pdfjs = pdfjsAssetSource(path)
+  const pdfjsAssets = (env as unknown as { PDFJS_ASSETS?: Fetcher })
+    .PDFJS_ASSETS
+  if (pdfjs && pdfjsAssets) {
+    const library = await pdfjsAssets.fetch(
+      new Request(`https://pdfjs.assets${pdfjs.path}`),
+    )
+    if (library.ok) {
+      return staticSiteAssetResponse(
+        library.body,
+        pdfjs.contentType,
+        frameAncestorsValue(false, responseDomain),
+      )
+    }
+  }
+  if (path !== PDF_ORIGINAL_PATH) {
+    return deniedResponse(
+      'pdf_resource_missing',
+      'This artifact is unavailable.',
+      404,
+      { aid: bundle.aid, vid: bundle.vid, path },
+      responseDomain,
+    )
+  }
+
+  const rangeSatisfiability = rangeSatisfiabilityFor(
+    request.headers.get('Range'),
+    version.size_bytes,
+  )
+  if (rangeSatisfiability === false) {
+    return rangeNotSatisfiableResponse(version.size_bytes)
+  }
+  const range = rangeSatisfiability === true ? request.headers : undefined
+  const object = range
+    ? await getArtifact(env.BUCKET, version.r2_key, { range })
+    : await getArtifact(env.BUCKET, version.r2_key)
+  if (!object) {
+    return deniedResponse(
+      'r2_missing',
+      'This artifact is unavailable.',
+      404,
+      { r2Key: version.r2_key },
+      responseDomain,
+    )
+  }
+  const rangeHeader = range?.get('Range') ?? null
+  const headers = rangeResponseHeaders(object.size, rangeHeader)
+  headers.set(
+    'Content-Disposition',
+    pdfContentDisposition(
+      version.entrypoint_path,
+      new URL(request.url).searchParams.get('download') === '1',
+    ),
+  )
+  return staticSiteAssetResponse(
+    object.body,
+    PDF_MIME_TYPE,
+    frameAncestorsValue(false, responseDomain),
+    { status: rangeHeader ? 206 : 200, headers },
+  )
+}
+
 async function authenticatedSandboxAccess(
   db: Kysely<DB>,
   payload: SandboxPayload,
@@ -841,7 +1019,7 @@ async function serveAnonymousLinkBundleAsset(
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
     .where('shareables.visibility', '=', 'link')
-    .where('versions.artifact_kind', '=', 'static_site')
+    .where('versions.artifact_kind', 'in', ['static_site', 'pdf'])
     .executeTakeFirst()
   if (!bundle) {
     return deniedResponse(

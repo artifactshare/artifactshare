@@ -29,7 +29,11 @@ describe('ArtifactViewTracker', () => {
   })
 
   function renderTracker(
-    props: { artifactId: string; canTrackView: boolean },
+    props: {
+      artifactId: string
+      canTrackView: boolean
+      renderType?: 'html' | 'pdf'
+    },
     consent: { shouldLoad: boolean; measurementId: string | null } = {
       shouldLoad: true,
       measurementId: 'G-TEST',
@@ -58,8 +62,9 @@ describe('ArtifactViewTracker', () => {
             path: 'a/:id',
             Component: () => (
               <ArtifactViewTracker
-                {...props}
-                renderType="html"
+                artifactId={props.artifactId}
+                canTrackView={props.canTrackView}
+                renderType={props.renderType ?? 'html'}
                 visibility="link"
                 viewerState="anonymous"
               />
@@ -111,6 +116,23 @@ describe('ArtifactViewTracker', () => {
         visibility: 'link',
         viewer_state: 'anonymous',
         utm_source: 'test',
+      }),
+    )
+  })
+
+  it('sends a pdf artifact view through the same gates', async () => {
+    await renderTracker({
+      artifactId: 'tracked-pdf-artifact',
+      canTrackView: true,
+      renderType: 'pdf',
+    })
+    expect(gtag).toHaveBeenCalledTimes(1)
+    expect(gtag).toHaveBeenCalledWith(
+      'event',
+      'artifact_view',
+      expect.objectContaining({
+        artifact_id: 'tracked-pdf-artifact',
+        render_type: 'pdf',
       }),
     )
   })

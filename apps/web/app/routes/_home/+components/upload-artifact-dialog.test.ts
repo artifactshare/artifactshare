@@ -161,6 +161,27 @@ describe('UploadArtifactDialog upload validation', () => {
     },
   )
 
+  test('accepts a single PDF up to the artifact limit but never as a site file', () => {
+    expect(ACCEPTED_FILE_UPLOAD_TYPES.split(',')).toContain('.pdf')
+    expect(ACCEPTED_SITE_UPLOAD_TYPES.split(',')).not.toContain('.pdf')
+    const pdf = (name: string, size: number) =>
+      new File([new Uint8Array(size)], name, { type: 'application/pdf' })
+    // Larger than the 10 MiB static-site per-file limit, within 25 MiB.
+    expect(validateFiles([pdf('report.PDF', 11 * 1024 * 1024)], t)).toBeNull()
+    expect(validateFiles([pdf('report.pdf', 25 * 1024 * 1024 + 1)], t)).toBe(
+      'upload.error.tooLarge',
+    )
+    expect(
+      validateFiles(
+        [new File(['<p>hi</p>'], 'index.html'), pdf('doc.pdf', 1)],
+        t,
+      ),
+    ).toBe('upload.error.unsupportedBundleType')
+    expect(validateFiles([pdf('index.pdf', 1)], t, { staticSite: true })).toBe(
+      'upload.error.unsupportedBundleType',
+    )
+  })
+
   test('accepts a multi-file static site bundle with an entrypoint', () => {
     expect(
       validateFiles(

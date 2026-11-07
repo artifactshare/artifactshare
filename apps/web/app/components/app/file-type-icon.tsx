@@ -4,6 +4,7 @@ import { cn } from '~/lib/utils'
 const LABEL: Record<ArtifactType, string> = {
   html: 'HTML',
   md: 'MD',
+  pdf: 'PDF',
   static_site: 'Site',
 }
 

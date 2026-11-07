@@ -91,7 +91,8 @@ export async function action({
             artifactKind: row.artifact_kind as
               | 'html_page'
               | 'markdown_page'
-              | 'static_site',
+              | 'static_site'
+              | 'pdf',
           }),
           ...metadata,
         }),

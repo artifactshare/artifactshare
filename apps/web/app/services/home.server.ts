@@ -333,6 +333,7 @@ export function unopenedOwnedPredicate(userId: string) {
       'markdown_page',
       'html_page',
       'static_site',
+      'pdf',
     ]),
     eb.not(
       eb.exists(

@@ -251,7 +251,7 @@ type PreparedBridgeArtifact = Pick<
   | 'r2Key'
   | 'derivedTitle'
 > & {
-  artifactKind: 'html_page' | 'markdown_page' | 'static_site'
+  artifactKind: 'html_page' | 'markdown_page' | 'static_site' | 'pdf'
   fallbackToIndex?: number
   versionFiles?: Array<{
     id: string

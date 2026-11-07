@@ -7,20 +7,35 @@
 
 import type { ArtifactKind } from './shareable-types'
 
-export type SingleFileArtifactType = 'html' | 'md'
+export type SingleFileArtifactType = 'html' | 'md' | 'pdf'
 export type ArtifactType = SingleFileArtifactType | 'static_site'
 
 export const HTML_FILE_EXTENSIONS = ['.html', '.htm'] as const
 export const MD_FILE_EXTENSIONS = ['.md', '.markdown'] as const
+export const PDF_FILE_EXTENSIONS = ['.pdf'] as const
+export const PDF_MIME_TYPE = 'application/pdf'
+// ASCII "%PDF-" at byte zero. It only classifies the file: a file starting with
+// it may still be corrupt or encrypted, and the viewer reports that state.
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d] as const
+
+export function hasPdfMagic(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= PDF_MAGIC.length &&
+    PDF_MAGIC.every((value, index) => bytes[index] === value)
+  )
+}
 
 // 在席表示と全体コメントを出せる種別。本文範囲コメントは本文選択を要するため
-// html / md のみで、これとは別 (textAnchorsEnabled)。viewer-chrome の入口と
-// viewer-shell のパネル・live 接続が同じ判定を使うための単一の正。
+// html / md のみで、これとは別 (textAnchorsEnabled)。PDF は全体コメントのみ。
+// viewer-chrome の入口と viewer-shell のパネル・live 接続が同じ判定を使うための単一の正。
 export function artifactSupportsComments(
   renderType: ArtifactType | null,
 ): boolean {
   return (
-    renderType === 'html' || renderType === 'md' || renderType === 'static_site'
+    renderType === 'html' ||
+    renderType === 'md' ||
+    renderType === 'static_site' ||
+    renderType === 'pdf'
   )
 }
 
@@ -42,22 +57,27 @@ export function detectArtifactType(
 
 // Upload inverts the MIME-vs-extension preference of detectArtifactType:
 // browsers report empty / wrong MIME for many drag-dropped .html / .md
-// files, so the filename is the more trustworthy signal here.
+// files, so the filename is the more trustworthy signal here. A PDF needs its
+// `.pdf` suffix (any case) and, where bytes are checked, `%PDF-` magic; its
+// MIME type alone never selects it (detectArtifactType does not return pdf).
 export function detectArtifactTypeForUpload(
   mimeType: string | null,
   fileName: string,
 ): SingleFileArtifactType | null {
   if (hasExtension(fileName, HTML_FILE_EXTENSIONS)) return 'html'
   if (hasExtension(fileName, MD_FILE_EXTENSIONS)) return 'md'
+  if (hasExtension(fileName, PDF_FILE_EXTENSIONS)) return 'pdf'
   return detectArtifactType(mimeType, fileName)
 }
 
 // Inverse of detectArtifactType for the subset of artifact kinds that
 // have a viewer renderer. Other kinds (static_site / spa / workspace_app)
 // don't go through the single-file renderer; callers handle them upstream.
+// A PDF is binary: callers needing text source must check html / md.
 export function renderTypeFromKind(kind: ArtifactKind): ArtifactType | null {
   if (kind === 'markdown_page') return 'md'
   if (kind === 'html_page') return 'html'
+  if (kind === 'pdf') return 'pdf'
   return null
 }
 

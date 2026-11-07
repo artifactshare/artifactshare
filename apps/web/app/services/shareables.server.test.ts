@@ -1,4 +1,5 @@
 import type { CliAuthority } from '~/services/cli-authority.server'
+import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -19,10 +20,16 @@ const storageMock = vi.hoisted(() => ({
   headArtifact: vi.fn(),
   artifactR2Key: vi.fn(
     (args: { shareableId: string; versionId: string; renderType: string }) =>
-      `artifacts/${args.shareableId}/${args.versionId}/index.${args.renderType}`,
+      `artifacts/${args.shareableId}/${args.versionId}/${
+        args.renderType === 'pdf' ? 'original' : 'index'
+      }.${args.renderType}`,
   ),
   artifactContentType: vi.fn((rt: string) =>
-    rt === 'md' ? 'text/markdown; charset=utf-8' : 'text/html; charset=utf-8',
+    rt === 'md'
+      ? 'text/markdown; charset=utf-8'
+      : rt === 'pdf'
+        ? 'application/pdf'
+        : 'text/html; charset=utf-8',
   ),
 }))
 
@@ -471,7 +478,7 @@ async function seedShareableWithVersions(
   db: Kysely<DB>,
   args: {
     shareableId: string
-    artifactKind?: 'html_page' | 'markdown_page' | 'static_site'
+    artifactKind?: 'html_page' | 'markdown_page' | 'static_site' | 'pdf'
     name?: string
     derivedTitle?: string | null
     versions: Array<{ id: string; r2Key: string; sizeBytes: number }>
@@ -712,6 +719,95 @@ describe('uploadShareable', () => {
 
     expect(result).toEqual({ kind: 'quota-exceeded' })
     expect(arrayBufferSpy).not.toHaveBeenCalled()
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['report.pdf', '%PDF-1.4\n%synthetic\n'],
+    ['REPORT.PDF', '%PDF-1.4\n%synthetic\n'],
+    // Magic only classifies the file; a corrupt body is the viewer's concern.
+    ['corrupt.pdf', '%PDF-\u0000ÿ garbage'],
+  ])(
+    'stores %s with PDF magic as one original pdf object',
+    async (name, text) => {
+      const bytes = new TextEncoder().encode(text)
+      const result = await uploadShareable(
+        db,
+        OWNER,
+        new File([bytes], name, { type: '' }),
+        'private',
+      )
+
+      expect(result).toMatchObject({ kind: 'ok', artifactKind: 'pdf' })
+      if (result.kind !== 'ok') return
+      expect(storageMock.putArtifact).toHaveBeenCalledTimes(1)
+      const [, key, body, options] = storageMock.putArtifact.mock.calls[0]!
+      expect(key).toBe(
+        `artifacts/${result.id}/${result.versionId}/original.pdf`,
+      )
+      expect(new Uint8Array(body as ArrayBuffer)).toEqual(bytes)
+      expect(options).toEqual({ contentType: 'application/pdf' })
+      await expect(
+        db
+          .selectFrom('versions')
+          .select(['artifact_kind', 'r2_key', 'size_bytes', 'sha256'])
+          .where('id', '=', result.versionId)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        artifact_kind: 'pdf',
+        r2_key: key,
+        size_bytes: bytes.byteLength,
+        sha256: createHash('sha256').update(bytes).digest('base64url'),
+      })
+      await expect(
+        db
+          .selectFrom('shareables')
+          .select(['artifact_kind', 'name', 'derived_title'])
+          .where('id', '=', result.id)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({ artifact_kind: 'pdf', name, derived_title: null })
+    },
+  )
+
+  test.each([
+    ['fake.pdf', 'application/pdf', '<p>not a pdf</p>'],
+    ['report.bin', 'application/pdf', '%PDF-1.4\n%synthetic\n'],
+  ])(
+    'rejects %s (%s) as unsupported without persistence',
+    async (name, type, text) => {
+      const result = await uploadShareable(
+        db,
+        OWNER,
+        new File([text], name, { type }),
+        'private',
+      )
+
+      expect(result).toEqual({ kind: 'unsupported-type' })
+      expect(storageMock.putArtifact).not.toHaveBeenCalled()
+      expect(
+        await db.selectFrom('shareables').selectAll().execute(),
+      ).toHaveLength(0)
+      expect(
+        await db
+          .selectFrom('workspaces')
+          .select('storage_used_bytes')
+          .where('id', '=', OWNER.workspaceId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual({ storage_used_bytes: 0 })
+    },
+  )
+
+  test('rejects a pdf over the 25 MiB single-artifact limit as too-large', async () => {
+    const bytes = new Uint8Array(25 * MB + 1)
+    bytes.set(new TextEncoder().encode('%PDF-1.4\n'))
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      new File([bytes], 'big.pdf', { type: 'application/pdf' }),
+      'private',
+    )
+
+    expect(result).toEqual({ kind: 'too-large' })
     expect(storageMock.putArtifact).not.toHaveBeenCalled()
   })
 
@@ -5767,6 +5863,75 @@ describe('createVersion', () => {
       }
     },
   )
+
+  test('publishes a new PDF version of a pdf artifact under the version precondition', async () => {
+    await seedShareableWithVersions(db, {
+      shareableId: 'pdf1',
+      artifactKind: 'pdf',
+      name: 'report.pdf',
+      derivedTitle: null,
+      versions: [
+        { id: 'pv1', r2Key: 'artifacts/pdf1/pv1/original.pdf', sizeBytes: 20 },
+      ],
+    })
+    const pdf = (text: string) =>
+      new File([text], 'report.pdf', { type: 'application/pdf' })
+
+    expect(
+      await createVersion({
+        db,
+        user: OWNER,
+        shareableId: 'pdf1',
+        file: pdf('%PDF-1.4\n%stale\n'),
+        expectedCurrentVersionId: 'stale',
+      }),
+    ).toEqual({ kind: 'version-conflict', currentVersionId: 'pv1' })
+
+    const result = await createVersion({
+      db,
+      user: OWNER,
+      shareableId: 'pdf1',
+      file: pdf('%PDF-1.4\n%second\n'),
+      expectedCurrentVersionId: 'pv1',
+    })
+    expect(result).toMatchObject({ kind: 'ok', number: 2, artifactKind: 'pdf' })
+    if (result.kind !== 'ok') throw new Error('expected publication')
+    expect(storageMock.putArtifact).toHaveBeenLastCalledWith(
+      expect.anything(),
+      `artifacts/pdf1/${result.versionId}/original.pdf`,
+      expect.any(ArrayBuffer),
+      { contentType: 'application/pdf' },
+    )
+    expect(
+      await db
+        .selectFrom('shareables')
+        .select(['artifact_kind', 'current_version_id', 'derived_title'])
+        .where('id', '=', 'pdf1')
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      artifact_kind: 'pdf',
+      current_version_id: result.versionId,
+      derived_title: null,
+    })
+  })
+
+  test('refuses to append text to a pdf artifact', async () => {
+    await seedShareableWithVersions(db, {
+      shareableId: 'pdf2',
+      artifactKind: 'pdf',
+      name: 'report.pdf',
+      versions: [
+        { id: 'pv2', r2Key: 'artifacts/pdf2/pv2/original.pdf', sizeBytes: 20 },
+      ],
+    })
+    storageMock.getArtifact.mockClear()
+
+    expect(await appendShareable(db, OWNER, 'pdf2', '\nmore')).toEqual({
+      kind: 'copy-forbidden',
+    })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
 
   test.each([false, true])(
     'prunes after each successful publication without renumbering (conditional: %s)',

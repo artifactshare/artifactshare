@@ -348,25 +348,32 @@ describe('getExportSource', () => {
     expect(result).toEqual({ kind: 'not-found' })
   })
 
-  test('returns unsupported-kind for non-exportable artifact kinds', async () => {
-    loadCommentAccessMock.mockResolvedValue({
-      shareableId: 'spa123abcd',
-      workspaceId: 'ws1',
-      ownerUserId: 'owner1',
-      visibility: 'private',
-      currentVersionId: 'ver123',
-      artifactKind: 'spa',
-      entrypointPath: '/index.html',
-      r2Key: 'ws1/spa123abcd/ver123/index.html',
-      isTeamWorkspaceAdmin: false,
-    })
+  test.each([
+    ['spa', '/index.html'],
+    ['pdf', '/report.pdf'],
+  ])(
+    'returns unsupported-kind for non-exportable %s artifacts without reading storage',
+    async (artifactKind, entrypointPath) => {
+      loadCommentAccessMock.mockResolvedValue({
+        shareableId: 'abc123abcd',
+        workspaceId: 'ws1',
+        ownerUserId: 'owner1',
+        visibility: 'private',
+        currentVersionId: 'ver123',
+        artifactKind,
+        entrypointPath,
+        r2Key: `ws1/abc123abcd/ver123${entrypointPath}`,
+        isTeamWorkspaceAdmin: false,
+      })
 
-    const result = await getExportSource({} as never, user, {
-      id: 'spa123abcd',
-    })
+      const result = await getExportSource({} as never, user, {
+        id: 'abc123abcd',
+      })
 
-    expect(result).toEqual({ kind: 'unsupported-kind', artifactKind: 'spa' })
-  })
+      expect(result).toEqual({ kind: 'unsupported-kind', artifactKind })
+      expect(getArtifactMock).not.toHaveBeenCalled()
+    },
+  )
 
   test('returns non-html-source for static site paths that are not HTML', async () => {
     loadCommentAccessMock.mockResolvedValue({

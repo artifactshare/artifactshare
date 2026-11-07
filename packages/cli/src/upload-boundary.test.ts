@@ -1005,3 +1005,68 @@ test('single-file payload uses stored Markdown kind, name, and content type', as
   assert.equal(file.name, 'report.md')
   assert.equal(file.type, 'text/markdown')
 })
+
+const pdfBytes = () =>
+  Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n%%EOF\n', 'latin1')
+
+for (const name of ['report.pdf', 'REPORT.PDF']) {
+  test(`single-file payload classifies ${name} with %PDF- magic as pdf`, async (t) => {
+    const { prepareUploadPayload } = await import('./files.js')
+    const { cwd } = await fixture(t)
+    await fs.writeFile(path.join(cwd, name), pdfBytes())
+    const result = await prepareUploadPayload(name, { cwd })
+    assert.equal(result.error, undefined)
+    assert.equal(result.payload!.kind, 'pdf')
+    const file = result.payload!.form.get('file') as File
+    assert.equal(file.name, name)
+    assert.equal(file.type, 'application/pdf')
+    assert.deepEqual(Buffer.from(await file.arrayBuffer()), pdfBytes())
+  })
+}
+
+test('single-file payload rejects a .pdf name without %PDF- magic', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  await fs.writeFile(path.join(cwd, 'report.pdf'), '<p>not a pdf</p>')
+  const result = await prepareUploadPayload('report.pdf', { cwd })
+  assert.equal(result.payload, undefined)
+  assert.equal(result.error!.code, 'validation_failed')
+  assert.match(result.error!.message, /report\.pdf is not a PDF/)
+  assert.match(result.error!.hint, /\.pdf/)
+})
+
+for (const name of ['report.html', 'report.txt']) {
+  test(`%PDF- magic alone does not make ${name} a pdf`, async (t) => {
+    const { prepareUploadPayload } = await import('./files.js')
+    const { cwd } = await fixture(t)
+    await fs.writeFile(path.join(cwd, name), pdfBytes())
+    const result = await prepareUploadPayload(name, { cwd })
+    assert.equal(result.error, undefined)
+    assert.equal(result.payload!.kind, 'html_page')
+    const file = result.payload!.form.get('file') as File
+    assert.notEqual(file.type, 'application/pdf')
+  })
+}
+
+test('PDF magic is read from the checked selection without reopening the path', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  const original = pdfBytes()
+  await fs.writeFile(path.join(cwd, 'report.pdf'), original)
+  let opens = 0
+  const result = await prepareUploadPayload('report.pdf', {
+    cwd,
+    open: (name, flags) => {
+      opens++
+      return fs.open(name, flags)
+    },
+    // Same-size rewrite after the boundary read: a reopen would see no magic.
+    checkpoint: async (phase, name) => {
+      if (phase === 'after_read')
+        await fs.writeFile(name, Buffer.alloc(original.length, 0x20))
+    },
+  })
+  assert.equal(opens, 1)
+  assert.equal(result.error, undefined)
+  assert.equal(result.payload!.kind, 'pdf')
+})

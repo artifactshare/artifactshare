@@ -32,7 +32,7 @@ export function publisherArtifactSql(
     AND shareables.workspace_id = ${authority.workspaceId}
     AND shareables.owner_user_id = ${userId}
     AND COALESCE(shareables.assigned_publisher_client_id, shareables.created_by_publisher_client_id) = ${authority.publisherClientId}
-    AND shareables.artifact_kind IN ('html_page', 'markdown_page', 'static_site')`
+    AND shareables.artifact_kind IN ('html_page', 'markdown_page', 'static_site', 'pdf')`
 }
 
 export async function isPublisherArtifact(

@@ -158,6 +158,7 @@ function isSandboxPayload(value: unknown): value is SandboxPayload {
     (typeof payload.mt === 'string' || payload.mt === null) &&
     (payload.t === 'html' ||
       payload.t === 'md' ||
+      payload.t === 'pdf' ||
       payload.t === 'static_site') &&
     typeof payload.jti === 'string' &&
     (payload.emb === undefined || typeof payload.emb === 'boolean') &&

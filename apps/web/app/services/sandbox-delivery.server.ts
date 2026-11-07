@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { artifactDeliveryEnabled } from '~/lib/hosts'
-import { renderTypeFromKind } from '~/lib/artifact-type'
+import { renderTypeFromKind, type ArtifactType } from '~/lib/artifact-type'
+import type { ArtifactKind } from '~/lib/shareable-types'
 import { linkDomainContext, userContext } from '~/middleware/context'
 import {
   viewerAccessAllowed,
@@ -64,14 +65,7 @@ export async function authorizeSandboxDelivery(
     .where('shareables.id', '=', params.id)
     .executeTakeFirst()
   const artifactKind = shareable?.version_artifact_kind
-  const renderType =
-    artifactKind === 'static_site'
-      ? 'static_site'
-      : artifactKind === 'html_page'
-        ? renderTypeFromKind(artifactKind)
-        : artifactKind === 'markdown_page'
-          ? renderTypeFromKind(artifactKind)
-          : null
+  const renderType = artifactKind ? deliveryRenderType(artifactKind) : null
   if (!shareable?.r2_key || !shareable.current_version_id || !renderType) {
     return { ok: false, error: 'not-found', status: 404 } as const
   }
@@ -147,13 +141,9 @@ export async function authorizeSandboxDelivery(
           artifact_kind: shareable.version_artifact_kind,
         }
       : undefined
-  const versionRenderType =
-    version?.artifact_kind === 'static_site'
-      ? 'static_site'
-      : version?.artifact_kind === 'html_page' ||
-          version?.artifact_kind === 'markdown_page'
-        ? renderTypeFromKind(version.artifact_kind)
-        : null
+  const versionRenderType = version?.artifact_kind
+    ? deliveryRenderType(version.artifact_kind)
+    : null
   if (!version || !versionRenderType) {
     return { ok: false, error: 'not-found', status: 404 } as const
   }
@@ -166,4 +156,9 @@ export async function authorizeSandboxDelivery(
     uid: user?.id ?? null,
     modifiedTime: check.meta.modifiedTime,
   } as const
+}
+
+// Kinds the sandbox delivers. spa / workspace_app have no delivery here.
+function deliveryRenderType(kind: ArtifactKind): ArtifactType | null {
+  return kind === 'static_site' ? 'static_site' : renderTypeFromKind(kind)
 }

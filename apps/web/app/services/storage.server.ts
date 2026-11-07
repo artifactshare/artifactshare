@@ -1,3 +1,5 @@
+import { PDF_MIME_TYPE, type SingleFileArtifactType } from '~/lib/artifact-type'
+
 export interface StoredArtifact {
   body: ReadableStream<Uint8Array> | null
   text(): Promise<string>
@@ -10,16 +12,27 @@ export interface StoredArtifact {
 export function artifactR2Key(args: {
   shareableId: string
   versionId: string
-  renderType: 'html' | 'md'
+  renderType: SingleFileArtifactType
 }): string {
+  // A PDF is stored as the uploaded original, not as a renderable index page.
+  if (args.renderType === 'pdf') {
+    return `artifacts/${args.shareableId}/${args.versionId}/original.pdf`
+  }
   const ext = args.renderType === 'md' ? 'md' : 'html'
   return `artifacts/${args.shareableId}/${args.versionId}/index.${ext}`
 }
 
-export function artifactContentType(renderType: 'html' | 'md'): string {
-  return renderType === 'md'
-    ? 'text/markdown; charset=utf-8'
-    : 'text/html; charset=utf-8'
+export function artifactContentType(
+  renderType: SingleFileArtifactType,
+): string {
+  switch (renderType) {
+    case 'md':
+      return 'text/markdown; charset=utf-8'
+    case 'pdf':
+      return PDF_MIME_TYPE
+    case 'html':
+      return 'text/html; charset=utf-8'
+  }
 }
 
 // All R2 helpers take bucket as the first argument. This keeps tests able to

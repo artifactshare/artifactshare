@@ -385,6 +385,10 @@ describe('singleFileFormat', () => {
     expect(singleFileFormat('spa')).toBeNull()
     expect(singleFileFormat('workspace_app')).toBeNull()
   })
+
+  test('returns null for a binary PDF so it is never read as text', () => {
+    expect(singleFileFormat('pdf')).toBeNull()
+  })
 })
 
 describe('capSource', () => {

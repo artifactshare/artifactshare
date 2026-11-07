@@ -39,8 +39,9 @@ function analyticsTypeChecks(
   trackEvent('page_view', undefined)
   // @ts-expect-error — auth methods use the closed shared vocabulary.
   trackEvent('sign_up_start', { method: 'github' })
-  // @ts-expect-error — render types use the closed shared vocabulary.
   trackEvent('artifact_view', { render_type: 'pdf' })
+  // @ts-expect-error — render types use the closed shared vocabulary.
+  trackEvent('artifact_view', { render_type: 'unsupported_render_type' })
   // @ts-expect-error — artifact IDs are strings.
   trackEvent('artifact_view', { artifact_id: 1 })
   // @ts-expect-error — attribution values are strings.
@@ -104,6 +105,21 @@ describe('trackEvent', () => {
     ).toBe(true)
     expect(gtag).toHaveBeenCalledWith('event', 'artifact_view', {
       artifact_id: 'a',
+    })
+  })
+  test('forwards a PDF artifact view with its render type', () => {
+    const gtag = vi.fn()
+    testWindow.gtag = gtag
+    setAnalyticsRuntimeState({
+      shouldLoadAnalytics: true,
+      measurementId: 'G-x',
+    })
+    expect(
+      trackEvent('artifact_view', { artifact_id: 'a', render_type: 'pdf' }),
+    ).toBe(true)
+    expect(gtag).toHaveBeenCalledWith('event', 'artifact_view', {
+      artifact_id: 'a',
+      render_type: 'pdf',
     })
   })
   test('does not throw or send when gtag is absent', () => {

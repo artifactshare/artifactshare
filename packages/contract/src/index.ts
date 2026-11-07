@@ -29,6 +29,7 @@ export const ArtifactKindSchema = z.enum([
   'static_site',
   'spa',
   'workspace_app',
+  'pdf',
 ])
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>
 
@@ -36,6 +37,7 @@ export const UploadArtifactKindSchema = z.enum([
   'markdown_page',
   'html_page',
   'static_site',
+  'pdf',
 ])
 export type UploadArtifactKind = z.infer<typeof UploadArtifactKindSchema>
 

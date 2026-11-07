@@ -43,6 +43,16 @@ describe('artifactR2Key', () => {
       }),
     ).toBe('artifacts/s2/v9/index.md')
   })
+
+  test('stores a pdf as the original file', () => {
+    expect(
+      artifactR2Key({
+        shareableId: 's3',
+        versionId: 'v2',
+        renderType: 'pdf',
+      }),
+    ).toBe('artifacts/s3/v2/original.pdf')
+  })
 })
 
 describe('artifactContentType', () => {
@@ -52,6 +62,10 @@ describe('artifactContentType', () => {
 
   test('html uses utf-8 text/html', () => {
     expect(artifactContentType('html')).toBe('text/html; charset=utf-8')
+  })
+
+  test('pdf uses application/pdf without a charset', () => {
+    expect(artifactContentType('pdf')).toBe('application/pdf')
   })
 })
 

@@ -249,6 +249,62 @@ describe('getCliDownloadFile', () => {
     expect(getArtifactMock).not.toHaveBeenCalled()
   })
 
+  test('returns original PDF bytes as application/pdf with a .pdf default path', async () => {
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'pdf123abcd',
+      workspaceId: 'ws1',
+      ownerUserId: 'u1',
+      visibility: 'private',
+      currentVersionId: 'ver123',
+      artifactKind: 'pdf',
+      entrypointPath: null,
+      r2Key: 'ws1/pdf123abcd/ver123/index.pdf',
+      isTeamWorkspaceAdmin: false,
+    })
+    const bytes = new Uint8Array([
+      ...new TextEncoder().encode('%PDF-1.4\n'),
+      0xe2,
+      0xe3,
+      0xcf,
+      0xd3,
+      0x0a,
+    ])
+    getArtifactMock.mockResolvedValue({
+      body: new Blob([bytes]).stream(),
+      size: bytes.length,
+    })
+    const db = versionMetadataDb({ size_bytes: bytes.length, sha256: 'sha' })
+
+    const manifest = await getCliDownloadManifest(db as never, user, {
+      id: 'pdf123abcd',
+      baseUrl: 'https://artifactshare.test',
+    })
+    expect(manifest.kind).toBe('ok')
+    if (manifest.kind !== 'ok') return
+    expect(manifest.data.files).toEqual([
+      {
+        path: '/index.pdf',
+        size_bytes: bytes.length,
+        content_type: 'application/pdf',
+        sha256: 'sha',
+      },
+    ])
+    const result = await getCliDownloadFile(db as never, user, {
+      id: 'pdf123abcd',
+      path: '/index.pdf',
+    })
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.file.content_type).toBe('application/pdf')
+    expect(
+      new Uint8Array(await new Response(result.object.body).arrayBuffer()),
+    ).toEqual(bytes)
+    expect(getArtifactMock).toHaveBeenCalledWith(
+      {},
+      'ws1/pdf123abcd/ver123/index.pdf',
+    )
+  })
+
   test('returns a static site file selected by manifest path', async () => {
     loadCommentAccessMock.mockResolvedValue({
       shareableId: 'site123abc',

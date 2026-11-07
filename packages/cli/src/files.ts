@@ -1,4 +1,4 @@
-import type { Buffer } from 'node:buffer'
+import type { Blob, Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -10,6 +10,7 @@ import type { CliError, DownloadPlan, UploadPayloadResult } from './types.js'
 import type {
   DownloadManifestFile,
   DownloadManifestResponse,
+  UploadArtifactKind,
 } from '@artifactshare/contract'
 import {
   WriteBoundary,
@@ -55,22 +56,31 @@ export async function prepareUploadPayload(
         ),
       }
     }
+    const single = selection.directory ? null : selection.files[0]!
+    let kind: UploadArtifactKind = 'static_site'
+    if (single) {
+      kind = artifactKindForFile(single.name)
+      if (isPdfFileName(single.name)) {
+        // Classify from the bytes already read through the boundary; the path
+        // is never reopened. A .pdf name without %PDF- magic is not a PDF.
+        if (!(await blobHasPdfMagic(single.blob)))
+          return { error: notPdfError(single.name) }
+        kind = 'pdf'
+      }
+    }
     const form = await createUploadForm()
     for (const file of selection.files) {
       form.append(
         'file',
-        file.blob.slice(0, file.blob.size, contentTypeFor(file.name)),
+        file.blob.slice(
+          0,
+          file.blob.size,
+          kind === 'pdf' ? PDF_CONTENT_TYPE : contentTypeFor(file.name),
+        ),
         file.name,
       )
     }
-    return {
-      payload: {
-        form,
-        kind: selection.directory
-          ? 'static_site'
-          : artifactKindForFile(selection.files[0]!.name),
-      },
-    }
+    return { payload: { form, kind } }
   } catch (error) {
     return { error: uploadReadError(error, targetPath) }
   }
@@ -262,4 +272,30 @@ export function contentTypeFor(path: string): string {
 
 function artifactKindForFile(path: string): 'html_page' | 'markdown_page' {
   return path.endsWith('.md') ? 'markdown_page' : 'html_page'
+}
+
+export const PDF_CONTENT_TYPE = 'application/pdf'
+// ASCII "%PDF-" at byte zero.
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d] as const
+
+/** A single-file upload is a PDF only with a `.pdf` name (any case) and magic. */
+export function isPdfFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.pdf')
+}
+
+export function hasPdfMagic(bytes: Uint8Array): boolean {
+  return PDF_MAGIC.every((value, index) => bytes[index] === value)
+}
+
+export async function blobHasPdfMagic(blob: Blob): Promise<boolean> {
+  return hasPdfMagic(
+    new Uint8Array(await blob.slice(0, PDF_MAGIC.length).arrayBuffer()),
+  )
+}
+
+function notPdfError(name: string): CliError {
+  return validationError(
+    `File ${name} is not a PDF: it does not start with %PDF-.`,
+    'Export the document to PDF again, or share an HTML or Markdown file instead. Supported single files: .html, .htm, .md, .markdown and .pdf.',
+  )
 }
