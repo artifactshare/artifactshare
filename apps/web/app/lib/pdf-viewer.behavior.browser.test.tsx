@@ -77,6 +77,8 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       expect(result.initial!.page.width).toBeLessThanOrEqual(
         result.initial!.container.width,
       )
+    // The first page opens with its top padding, not scrolled under the toolbar.
+    expect(result.initial!.scrollTop).toBe(0)
     expect(result.selection).toContain('Report page 1')
     expect(result.navigation).toEqual(ALL_NAVIGATION)
     expect(result.scrolledPage).toBe(3)
@@ -97,6 +99,10 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     const tops = initial!.controls.map(({ top, height }) => top + height / 2)
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(2)
     expect(initial!.toolbarHeight).toBeLessThanOrEqual(56)
+    // The pager stays centered over the page below it.
+    expect(
+      Math.abs(initial!.pagerCenter - initial!.frameWidth / 2),
+    ).toBeLessThanOrEqual(4)
     // The app header's collapse handle covers the frame's top-right corner.
     const { download, frameWidth } = initial!
     expect(

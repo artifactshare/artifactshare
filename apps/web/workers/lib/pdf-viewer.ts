@@ -220,7 +220,7 @@ svg { flex-shrink: 0; }
   /* The app header's collapse handle overlaps the frame's top-right corner
      (44x18px, 12px from the edge), so the controls stay clear of it with
      room for subpixel layout. */
-  padding: 6px 64px 6px 16px;
+  padding: 6px 64px;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -304,7 +304,7 @@ body[data-mode='page'] .pdfViewer .page { flex-shrink: 0; margin: 0 auto; }
 @media (max-width: 700px) {
   :root { --toolbar-height: 52px; }
   .pdf-toolbar {
-    padding: 4px 64px 4px 8px;
+    padding: 4px 64px;
     gap: 0;
     grid-template-columns: minmax(44px, 1fr) auto minmax(44px, 1fr);
   }
@@ -472,9 +472,15 @@ if (viewerModule) {
     sync()
   }
 
+  // Setting the scale can scroll the report away from its top padding;
+  // until the reader moves, the first page keeps its designed top gap.
+  const keepTopAtLoad = () => {
+    if (!slides && viewer.currentPageNumber === 1) container.scrollTop = 0
+  }
   eventBus.on('pagesinit', () => {
     ready = true
     fit()
+    keepTopAtLoad()
     pageInput.disabled = false
     byId('page-count').textContent = String(viewer.pagesCount)
     sync()
@@ -484,7 +490,10 @@ if (viewerModule) {
     if (slides) queueMicrotask(fit)
   })
   // Every page's own size is known only once all pages have loaded.
-  eventBus.on('pagesloaded', fit)
+  eventBus.on('pagesloaded', () => {
+    fit()
+    keepTopAtLoad()
+  })
   eventBus.on('pagerendered', ({ error }) => {
     if (error) {
       showState('page-error', text.pageFailed, true)

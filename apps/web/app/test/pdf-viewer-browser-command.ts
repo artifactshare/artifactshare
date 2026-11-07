@@ -261,6 +261,11 @@ function layout(frame: Frame) {
         bottom: download.bottom,
       },
       verticalOverflow: container.scrollHeight - container.clientHeight,
+      scrollTop: container.scrollTop,
+      pagerCenter:
+        (document.getElementById('previous')!.getBoundingClientRect().left +
+          document.getElementById('next')!.getBoundingClientRect().right) /
+        2,
       toolbarHeight: Math.round(
         document.querySelector('.pdf-toolbar')!.getBoundingClientRect().height,
       ),
@@ -611,6 +616,8 @@ type Layout = {
   frameWidth: number
   download: Edges
   verticalOverflow: number
+  scrollTop: number
+  pagerCenter: number
   toolbarHeight: number
   controls: Box[]
   previousDisabled: boolean
