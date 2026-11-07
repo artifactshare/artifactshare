@@ -52,10 +52,22 @@ export async function cliFetch(
   init: FetchInit = {},
 ): Promise<Response | NetworkFailure> {
   const { insecureLocalhost, ...requested } = init
-  const { fetch, Agent, Headers } = await loadUndici()
-  // Tell the server which newer artifact kinds this CLI can parse.
-  const headers = new Headers(requested.headers)
-  headers.set(CLI_ARTIFACT_KINDS_HEADER, 'pdf')
+  const { fetch, Agent } = await loadUndici()
+  // Tell the server which newer artifact kinds this CLI can parse. Keep the
+  // caller's headers as a plain object with their original names.
+  const given = requested.headers as
+    | Record<string, string>
+    | [string, string][]
+    | { entries(): Iterable<[string, string]> }
+    | undefined
+  const headers: Record<string, string> = {
+    ...(Array.isArray(given)
+      ? Object.fromEntries(given)
+      : given && typeof given.entries === 'function'
+        ? Object.fromEntries(given.entries())
+        : (given as Record<string, string> | undefined)),
+    [CLI_ARTIFACT_KINDS_HEADER]: 'pdf',
+  }
   const fetchInit = { ...requested, headers }
   const requestInit = insecureLocalhost
     ? {
