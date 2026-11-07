@@ -5,7 +5,7 @@ import { renderMarkdownDocument } from './markdown-render'
 
 // Captured from the renderer before the outline viewer existed.
 const legacyFixture = readFileSync(
-  new URL('./__fixtures__/markdown-static-site-legacy.txt', import.meta.url),
+  new URL('./__fixtures__/markdown-export-legacy.txt', import.meta.url),
   'utf8',
 )
 
@@ -50,11 +50,11 @@ describe('renderMarkdownDocument', () => {
     )
   })
 
-  test('keeps the static-site rendering identical to its pre-outline output', () => {
+  test('keeps the export rendering identical to its pre-outline output', () => {
     const source =
       '---\ntitle: 仕様\nlang: ja\n---\n# 概要\n\n本文です。\n\n## Same\n\n## Same\n\n## Same-2\n\n##### 細部\n\n```ts\nconst x = 1\n```\n'
     expect(
-      renderMarkdownDocument(source, { logTiming: false, mode: 'static_site' }),
+      renderMarkdownDocument(source, { logTiming: false, mode: 'export' }),
     ).toBe(legacyFixture)
   })
 

@@ -12,13 +12,13 @@ export interface MarkdownRenderOptions {
    * losing the measurement for the web. */
   logTiming?: boolean
   /** `document` (default) renders the outline viewer for Markdown artifacts and
-   * the CLI preview. `static_site` keeps the original layout, English labels,
-   * heading IDs and 96px tracking for Markdown pages inside static sites and
-   * for script-free HTML exports. */
+   * the CLI preview, including Markdown pages inside static sites. `export`
+   * keeps the original script-free layout, English labels and heading IDs for
+   * HTML exports, which carry no reporter script. */
   mode?: MarkdownRenderMode
 }
 
-export type MarkdownRenderMode = 'document' | 'static_site'
+export type MarkdownRenderMode = 'document' | 'export'
 
 export function renderMarkdownDocument(
   source: string,
@@ -27,7 +27,7 @@ export function renderMarkdownDocument(
   const startedAt = performance.now()
   const markdown = splitFrontmatter(source)
   const document =
-    options.mode === 'static_site'
+    options.mode === 'export'
       ? legacyDocument(markdown)
       : outlineDocument(markdown)
   if (options.logTiming !== false) {

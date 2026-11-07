@@ -703,11 +703,7 @@ async function serveEntrypoint(
     'text/html; charset=utf-8'
   if (entrypoint.renderType === 'md' || isMarkdownContent(contentType)) {
     return documentResponse(
-      renderMarkdownDocument(await object.text(), {
-        // Markdown inside a static site keeps the static-site presentation.
-        mode:
-          entrypoint.renderType === 'static_site' ? 'static_site' : 'document',
-      }),
+      renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp(entrypoint.renderType, embed, responseDomain),
     )
@@ -912,7 +908,7 @@ async function serveBundleFile(
   }
   if (isMarkdownContent(contentType)) {
     return documentResponse(
-      renderMarkdownDocument(await object.text(), { mode: 'static_site' }),
+      renderMarkdownDocument(await object.text()),
       'text/html; charset=utf-8',
       artifactCsp('static_site', false, responseDomain),
     )

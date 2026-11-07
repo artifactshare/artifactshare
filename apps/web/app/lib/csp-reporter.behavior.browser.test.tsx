@@ -18,6 +18,7 @@ import {
   sanitizeMermaidSvg,
 } from './mermaid-render.client'
 import { resolveExportHtml } from '../routes/a.$id/+components/export-actions'
+import { artifactContentSecurityPolicy } from '../../workers/lib/artifact-response'
 
 type ReporterMessage = { kind?: string; [key: string]: unknown }
 
@@ -819,11 +820,11 @@ describe('CSP reporter runtime behavior', () => {
     ).toHaveLength(0)
   })
 
-  test('static-site Markdown keeps 96px tracking on both legacy contents copies', async () => {
+  test('legacy-layout Markdown keeps 96px tracking on both contents copies', async () => {
     const doc = await fixture(
       renderMarkdownDocument('## Intro\n\nText\n\n## Next', {
         logTiming: false,
-        mode: 'static_site',
+        mode: 'export',
       }),
       true,
       false,
@@ -2461,6 +2462,30 @@ describe('Markdown outline viewer', () => {
     win.scrollBy({ top: -300, behavior: 'instant' })
     await frames(doc)
     expect(current(doc)).not.toEqual(['#last-bit'])
+  })
+
+  test('static-site Markdown tracks and navigates the outline under the static-site CSP', async () => {
+    // Serve the policy the sandbox sends for a static-site Markdown page; the
+    // header-only directives cannot be expressed in a meta element.
+    const policy = artifactContentSecurityPolicy('static_site', "'self'")
+      .split('; ')
+      .filter((directive) => !/^(frame-ancestors|sandbox)\b/.test(directive))
+      .join('; ')
+    const doc = await fixture(
+      renderMarkdownDocument(longDocument(), { logTiming: false }).replace(
+        '<head>',
+        `<head><meta http-equiv="Content-Security-Policy" content="${policy}">`,
+      ),
+      true,
+      false,
+      { width: 1440, theme: 'light' },
+    )
+    expect(doc.documentElement.lang).toBe('en')
+    await placeHeading(doc, 'section-3', 136)
+    expect(current(doc)).toEqual(['#section-3'])
+    railLink(doc, 'section-6').click()
+    expect(current(doc)).toEqual(['#section-6'])
+    expect(Math.abs(top(doc, 'section-6') - 16)).toBeLessThanOrEqual(1)
   })
 
   test('Back and Forward select the URL heading when both positions clamp', async () => {

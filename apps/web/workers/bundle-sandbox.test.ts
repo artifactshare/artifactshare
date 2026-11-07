@@ -3817,21 +3817,17 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const body = await response.text()
     expect(body).toContain('<h1 id="bundle-docs">Bundle docs</h1>')
-    // Static-site Markdown keeps the legacy presentation and heading IDs.
-    expect(body).toContain('<html lang="en">')
-    expect(body).toContain('<body data-artifact-markdown>')
+    // Static-site Markdown uses the outline viewer with collision-safe IDs.
+    expect(body).toContain('<html lang="ja">')
     expect(body).toContain(
-      '<details class="md-toc-mobile"><summary>Contents</summary>',
+      '<body data-artifact-markdown data-md-outline-version="2">',
     )
-    expect(body).toContain(
-      '<details class="md-metadata" aria-label="Frontmatter">',
-    )
-    expect(body.match(/<h2 id="same-2">/g)).toHaveLength(2)
-    // The reporter script mentions the outline names; inspect the markup only.
+    expect(body).toContain('<span class="md-position-label">目次</span>')
+    expect(body).toContain('md-frontmatter')
+    expect(body).toContain('<h2 id="same-2">Same</h2>')
+    expect(body).toContain('<h2 id="same-2-2">Same-2</h2>')
     const markup = body.slice(body.indexOf('<body'))
-    expect(markup).not.toContain('data-md-outline-version')
-    expect(markup).not.toContain('md-position')
-    expect(markup).not.toContain('<dialog')
+    expect(markup).not.toContain('md-toc-mobile')
     expectStaticSiteCsp(response.headers.get('Content-Security-Policy') ?? '')
   })
 
@@ -3926,9 +3922,11 @@ describe('handleArtifactSandboxRequest', () => {
     )
     const linkedBody = await linkedPage.text()
     expect(linkedBody).toContain('<h1 id="other-page">Other page</h1>')
-    expect(linkedBody).toContain('<html lang="en">')
-    expect(linkedBody).toContain('<nav class="md-toc md-toc-desktop"')
-    expect(linkedBody).toContain('<body data-artifact-markdown>')
+    expect(linkedBody).toContain('<html lang="ja">')
+    expect(linkedBody).toContain(
+      '<body data-artifact-markdown data-md-outline-version="2">',
+    )
+    expect(linkedBody).toContain('class="md-position"')
 
     const image = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin('v-md-links')}/logo.png`, {
