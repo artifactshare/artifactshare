@@ -410,6 +410,41 @@ describe('/api/shareables/uploads', () => {
     expect(checkUploadAccessMock).toHaveBeenCalledWith(expect.anything())
   })
 
+  test('returns a pdf artifact kind and names .pdf in the unsupported-type error', async () => {
+    const pdfForm = () => {
+      const form = new FormData()
+      form.append(
+        'file',
+        new File(['%PDF-1.4\n%synthetic\n'], 'report.pdf', {
+          type: 'application/pdf',
+        }),
+      )
+      form.append('visibility', 'private')
+      return form
+    }
+    uploadShareableMock.mockResolvedValueOnce({
+      kind: 'ok',
+      id: 'abc123def4',
+      versionId: 'ver1',
+      artifactKind: 'pdf',
+      visibility: 'private',
+      linkExpiresAt: null,
+    })
+    const created = await action(actionArgs(pdfForm()))
+    expect(created.status).toBe(200)
+    await expect(json(created)).resolves.toMatchObject({ artifactKind: 'pdf' })
+
+    uploadShareableMock.mockResolvedValueOnce({ kind: 'unsupported-type' })
+    const refused = await action(actionArgs(pdfForm()))
+    expect(refused.status).toBe(415)
+    await expect(json(refused)).resolves.toEqual({
+      error: {
+        code: 'unsupported-type',
+        message: 'Only `.html`, `.md`, and `.pdf` files are supported for now.',
+      },
+    })
+  })
+
   test.each(['false', new File(['false'], 'notify.txt')])(
     'preserves single-file slack_notify semantics for %j',
     async (slackNotify) => {

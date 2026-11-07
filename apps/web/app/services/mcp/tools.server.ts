@@ -2480,7 +2480,10 @@ function commentActionFailedError(): ToolTextResult {
 function unreadableKindError(artifactKind: string): ToolTextResult {
   return toolError({
     code: 'unsupported-kind',
-    message: `This artifact is a ${artifactKind}, a multi-file site, so its source cannot be read as a single text. Open the share link to view it.`,
+    message:
+      artifactKind === 'pdf'
+        ? 'This artifact is a PDF, so it has no text source to read. Open the share link to view it, or download the original file with the Artifact Share CLI.'
+        : `This artifact is a ${artifactKind}, a multi-file site, so its source cannot be read as a single text. Open the share link to view it.`,
     recoverable_by: 'human',
   })
 }

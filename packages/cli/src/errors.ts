@@ -324,8 +324,8 @@ export function mapApiError(
       code: 'unsupported_kind',
       message:
         apiMessage ?? 'This artifact cannot be read as a single source file.',
-      why: 'Static sites and other multi-file artifacts do not have one Markdown or HTML source to read back.',
-      hint: 'Open the share URL in a browser, or use a supported artifact kind.',
+      why: 'Static sites, other multi-file artifacts and PDFs do not have one Markdown or HTML source to read back.',
+      hint: 'Run download <artifact> to save the original files (a PDF downloads as its original .pdf), or open the share URL in a browser.',
       agentRecoverable: true,
       requiresHuman: false,
       recovery: { kind: 'change_input' },

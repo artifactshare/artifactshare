@@ -5,6 +5,7 @@ import {
   sandboxHashDocumentLoads,
 } from './app/test/sandbox-hash-browser-command'
 import { cspDiagnostic } from './app/test/csp-diagnostic-browser-command'
+import { pdfViewerScenario } from './app/test/pdf-viewer-browser-command'
 import {
   staticSiteExtensions,
   staticSiteXmlEmbedding,
@@ -66,6 +67,7 @@ export default defineConfig({
         staticSiteExtensions,
         staticSiteXmlEmbedding,
         cspDiagnostic,
+        pdfViewerScenario,
         sandboxHashDocument,
         sandboxHashDocumentLoads,
       },
@@ -99,6 +101,7 @@ export default defineConfig({
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/lib/pdf-viewer.behavior.browser.test.tsx',
             'app/lib/preview-security.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',
@@ -112,6 +115,7 @@ export default defineConfig({
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
+            'app/lib/pdf-viewer.behavior.browser.test.tsx',
             'app/lib/preview-security.behavior.browser.test.tsx',
             'app/routes/comment-frame-recovery.behavior.browser.test.tsx',
             'app/routes/sandbox-frame-recovery.behavior.browser.test.tsx',

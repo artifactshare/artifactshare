@@ -204,6 +204,7 @@ export async function getPublisherArtifactReadback(
 ): Promise<
   | { kind: 'ok'; data: PublisherArtifactReadResponse }
   | { kind: 'not-found' }
+  | { kind: 'unsupported-kind'; artifactKind: string }
   | { kind: 'source-unavailable' }
   | { kind: 'invalid-offset' }
 > {
@@ -235,7 +236,10 @@ export async function getPublisherArtifactReadback(
     }
   }
   const format = singleFileFormat(row.artifact_kind)
-  if (!row.r2_key || !format) return { kind: 'source-unavailable' }
+  // Binary kinds such as PDF have no text source; never decode them.
+  if (!format)
+    return { kind: 'unsupported-kind', artifactKind: row.artifact_kind }
+  if (!row.r2_key) return { kind: 'source-unavailable' }
   const source = await fetchArtifactSource(row.r2_key)
   if (source.kind !== 'ok') return { kind: 'source-unavailable' }
   const capped = capSource(source.body, args.offset ?? 0)

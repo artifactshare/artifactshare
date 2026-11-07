@@ -17,6 +17,7 @@ import {
   expectSuccess,
   run,
   collectBody,
+  collectBodyBuffer,
   runAsync,
   withServer,
 } from './test/helpers.js'
@@ -2138,3 +2139,101 @@ test.each([
     assert.equal(uploads, 1)
   },
 )
+
+test('share --key uploads a PDF as its original application/pdf bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-pdf-'))
+  const target = join(root, 'Report.PDF')
+  const bytes = Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n%%EOF\n', 'latin1')
+  await writeFile(target, bytes)
+  const bodies: Buffer[] = []
+  await withServer(
+    async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
+      bodies.push(await collectBodyBuffer(request))
+      writeJson(response, {
+        id: 'abc123def4',
+        versionId: 'v2',
+        artifactKind: 'pdf',
+        visibility: 'private',
+        shareUrl: 'https://example.com/a/abc123def4',
+        created: false,
+      })
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['share', target, '--home', '--key', 'deck', '--base-url', baseUrl],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.equal(result.status, 0, result.stderr)
+    },
+  )
+  assert.equal(bodies.length, 1)
+  const body = bodies[0]!
+  assert.match(
+    body.toString('latin1'),
+    /filename="Report\.PDF"\r\nContent-Type: application\/pdf\r\n\r\n/,
+  )
+  assert.ok(body.includes(bytes))
+})
+
+test('share rejects a .pdf without %PDF- magic before any request', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-pdf-'))
+  const target = join(root, 'report.pdf')
+  await writeFile(target, 'plain text')
+  let requests = 0
+  await withServer(
+    (_request, response) => {
+      requests++
+      writeJson(response, {}, 500)
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['share', target, '--home', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const payload = expectFailure(result, {
+        command: 'share',
+        code: 'validation_failed',
+      })
+      assert.match(payload.error.message, /is not a PDF/)
+    },
+  )
+  assert.equal(requests, 0)
+})
+
+test('share maps an oversize PDF to the existing file_too_large error', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-pdf-'))
+  const target = join(root, 'large.pdf')
+  const bytes = Buffer.alloc(25 * 1024 * 1024 + 1, 0x20)
+  bytes.write('%PDF-1.4\n', 'latin1')
+  await writeFile(target, bytes)
+  await withServer(
+    async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
+      await collectBodyBuffer(request)
+      writeJson(
+        response,
+        { error: { code: 'too-large', message: 'File is larger than 25 MB.' } },
+        413,
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['share', target, '--home', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const payload = expectFailure(result, {
+        command: 'share',
+        code: 'file_too_large',
+      })
+      assert.match(payload.error.message, /25 MB/)
+    },
+  )
+  await rm(root, { recursive: true, force: true })
+})

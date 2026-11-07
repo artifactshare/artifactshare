@@ -278,6 +278,18 @@ describe('ViewerChrome', () => {
     expect(html).not.toContain('aria-label="Back"')
   })
 
+  test('labels a PDF artifact as PDF in the unchanged header', () => {
+    const html = renderChrome({
+      artifact,
+      user: null,
+      renderType: 'pdf',
+      collapsible: false,
+    })
+
+    expect(html).toContain('>PDF<')
+    expect(html).toContain('id="viewer-heading"')
+  })
+
   test('anonymous link viewer can change analytics consent', () => {
     const html = renderChrome({
       artifact,

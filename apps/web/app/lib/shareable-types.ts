@@ -8,6 +8,7 @@ export type ArtifactKind =
   | 'static_site'
   | 'spa'
   | 'workspace_app'
+  | 'pdf'
 
 export type Visibility = 'private' | 'workspace' | 'project' | 'link'
 

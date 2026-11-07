@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import pinnedPdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?raw'
 import type { Kysely } from 'kysely'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '../app/test/sqlite-fixture'
@@ -866,9 +868,10 @@ async function seedSingleFile(
   args: {
     id: string
     versionId: string
-    artifactKind: 'html_page' | 'markdown_page'
+    artifactKind: 'html_page' | 'markdown_page' | 'pdf'
     entrypointPath: string
     r2Key: string
+    sizeBytes?: number
   },
 ) {
   await seedOwnerInbox(db)
@@ -901,7 +904,7 @@ async function seedSingleFile(
       status: 'published',
       entrypoint_path: args.entrypointPath,
       r2_key: args.r2Key,
-      size_bytes: 20,
+      size_bytes: args.sizeBytes ?? 20,
       sha256: `sha-${args.versionId}`,
       created_by_id: 'owner-1',
       created_at: '2026-05-22T00:00:00.000Z',
@@ -1021,18 +1024,20 @@ async function singleFileToken(args: {
   id: string
   versionId: string
   r2Key: string
-  renderType: 'html' | 'md'
+  renderType: 'html' | 'md' | 'pdf'
+  uid?: string | null
+  jti?: string
 }) {
   return await signSandboxToken(
     {
-      uid: 'owner-1',
+      uid: args.uid === undefined ? 'owner-1' : args.uid,
       wid: 'ws-a',
       aid: args.id,
       vid: args.versionId,
       fid: args.r2Key,
       mt: null,
       t: args.renderType,
-      jti: `j-${args.id}`,
+      jti: args.jti ?? `j-${args.id}`,
     },
     'test-secret',
   )
@@ -5001,5 +5006,381 @@ describe('handleArtifactSandboxRequest', () => {
 
     expect(response.status).toBe(401)
     await expect(response.text()).resolves.toBe('Invalid token')
+  })
+})
+
+describe('PDF virtual bundle', () => {
+  const pdfBytes = new TextEncoder().encode(
+    '%PDF-1.4\n%synthetic-pdf-fixture\n%%EOF\n',
+  )
+  const pdfId = 'pdf123abcd'
+  const pdfKey = 'artifacts/pdf123abcd/v-pdf/original.pdf'
+
+  beforeEach(async () => {
+    envMock.APP_ENV = 'development'
+    const fixture = createMigratedInMemoryDb()
+    dbRef.current = fixture.db
+    await seedStaticSite(fixture.db)
+    await seedSingleFile(fixture.db, {
+      id: pdfId,
+      versionId: 'v-pdf',
+      artifactKind: 'pdf',
+      entrypointPath: '/Quarterly Deck.pdf',
+      r2Key: pdfKey,
+      sizeBytes: pdfBytes.byteLength,
+    })
+    await fixture.db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: pdfId,
+        granted_email: 'viewer@example.com',
+        granted_at: '2026-05-22T00:00:00.000Z',
+        granted_by: 'owner-1',
+      })
+      .execute()
+    consumeJtiMock.mockReset().mockResolvedValue(true)
+    storageMock.getArtifact.mockReset()
+    storageMock.getArtifact.mockImplementation(
+      async (_bucket, key: string, options?: { range?: Headers }) => {
+        if (key !== pdfKey) return null
+        const range = options?.range?.get('Range')?.match(/^bytes=(\d*)-(\d*)$/)
+        if (!range) return storedBinaryArtifact(pdfBytes, 'application/pdf')
+        const size = pdfBytes.byteLength
+        const start =
+          range[1] === '' ? size - Number(range[2]) : Number(range[1])
+        const end =
+          range[1] === '' || range[2] === ''
+            ? size
+            : Math.min(Number(range[2]) + 1, size)
+        return {
+          ...storedBinaryArtifact(
+            pdfBytes.slice(start, end),
+            'application/pdf',
+          ),
+          size,
+        }
+      },
+    )
+  })
+
+  async function openViewer(uid: string | null = 'viewer-1') {
+    const token = await singleFileToken({
+      id: pdfId,
+      versionId: 'v-pdf',
+      r2Key: pdfKey,
+      renderType: 'pdf',
+      uid,
+    })
+    const origin = uid
+      ? sandboxOrigin('v-pdf', pdfId)
+      : linkOrigin('v-pdf', pdfId)
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${origin}/Quarterly%20Deck.pdf?__as_token=${token}`),
+    )
+    const cookie = response.headers.get('Set-Cookie')?.split(';')[0] ?? ''
+    return { response, cookie, origin }
+  }
+
+  test('serves the generated viewer with the reporter, static-site CSP and a bound cookie', async () => {
+    const { response, cookie } = await openViewer()
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe(
+      'text/html; charset=utf-8',
+    )
+    expect(cookie).toMatch(/^__Host-as_bnd=/)
+    expectStaticSiteCsp(response.headers.get('Content-Security-Policy')!)
+    const html = await response.text()
+    expect(html).toContain(VIOLATION_REPORTER_TAG)
+    expect(html).toContain('<script type="module" src="/__as_pdf/viewer.js">')
+    expect(html).toContain('href="/__as_pdf/original.pdf?download=1"')
+    expect(html).not.toContain('%PDF-')
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves the shared viewer script with evaluation disabled and no per-artifact copy', async () => {
+    const { cookie } = await openViewer()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/viewer.js`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe(
+      'text/javascript; charset=utf-8',
+    )
+    const script = await response.text()
+    expect(script).toContain('isEvalSupported: false')
+    expect(script).toContain("'/__as_pdf/pdfjs/'")
+    expect(script).not.toMatch(/https?:\/\//)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves allowlisted pdf.js files from the pinned package after the access check', async () => {
+    const fetchAsset = vi.fn(async (request: Request) => {
+      const path = new URL(request.url).pathname
+      try {
+        return new Response(
+          await readFile(
+            new URL(`../node_modules/pdfjs-dist${path}`, import.meta.url),
+          ),
+        )
+      } catch {
+        return new Response(null, { status: 404 })
+      }
+    })
+    Object.assign(envMock, { PDFJS_ASSETS: { fetch: fetchAsset } })
+    const { cookie } = await openViewer()
+    const get = (path: string) =>
+      handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/pdfjs/${path}`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+
+    const worker = await get('pdf.worker.min.mjs')
+    expect(worker.status).toBe(200)
+    expect(worker.headers.get('Content-Type')).toBe(
+      'text/javascript; charset=utf-8',
+    )
+    expectStaticSiteCsp(worker.headers.get('Content-Security-Policy')!)
+    expect(await worker.text()).toBe(pinnedPdfjsWorker)
+    const cmap = await get('cmaps/UniJIS-UCS2-H.bcmap')
+    expect(cmap.status).toBe(200)
+    expect(cmap.headers.get('Content-Type')).toBe('application/octet-stream')
+    expect(fetchAsset.mock.calls.map(([request]) => request.url)).toEqual([
+      'https://pdfjs.assets/build/pdf.worker.min.mjs',
+      'https://pdfjs.assets/cmaps/UniJIS-UCS2-H.bcmap',
+    ])
+
+    for (const path of [
+      'package.json',
+      'cmaps/..%2Fpackage.json',
+      'build/pdf.mjs',
+    ])
+      expect((await get(path)).status).toBe(404)
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', pdfId)
+      .execute()
+    expect((await get('pdf.min.mjs')).status).toBe(401)
+    expect(fetchAsset).toHaveBeenCalledTimes(2)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('returns the original bytes unchanged with PDF MIME and a safe download name', async () => {
+    const { cookie } = await openViewer()
+    const origin = sandboxOrigin('v-pdf', pdfId)
+
+    const inline = await handleArtifactSandboxRequest(
+      new Request(`${origin}/__as_pdf/original.pdf`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+    const download = await handleArtifactSandboxRequest(
+      new Request(`${origin}/__as_pdf/original.pdf?download=1`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(inline.status).toBe(200)
+    expect(new Uint8Array(await inline.arrayBuffer())).toEqual(pdfBytes)
+    expect(inline.headers.get('Content-Type')).toBe('application/pdf')
+    expect(inline.headers.get('Content-Length')).toBe(String(pdfBytes.length))
+    expect(inline.headers.get('Accept-Ranges')).toBe('bytes')
+    expect(inline.headers.get('Content-Disposition')).toMatch(/^inline;/)
+    expect(download.headers.get('Content-Disposition')).toBe(
+      `attachment; filename="Quarterly Deck.pdf"; filename*=UTF-8''Quarterly%20Deck.pdf`,
+    )
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(pdfBytes)
+  })
+
+  test.each([
+    ['bytes=0-3', 206, '%PDF', 'bytes 0-3/'],
+    ['bytes=-6', 206, '%EOF\n', 'bytes '],
+    ['bytes=999-', 416, '', 'bytes */'],
+  ])(
+    'answers range %s with %i',
+    async (range, status, bodyStart, contentRange) => {
+      const { cookie } = await openViewer()
+
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/original.pdf`, {
+          headers: { Cookie: cookie, Range: range },
+        }),
+      )
+
+      expect(response.status).toBe(status)
+      expect(response.headers.get('Content-Range')).toContain(contentRange)
+      expect(response.headers.get('Content-Range')).toContain(
+        String(pdfBytes.length),
+      )
+      if (status === 206) {
+        const body = await response.text()
+        expect(body.includes(bodyStart.trim())).toBe(true)
+        expect(response.headers.get('Content-Length')).toBe(
+          String(new TextEncoder().encode(body).byteLength),
+        )
+      } else {
+        expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      }
+    },
+  )
+
+  test('rechecks access on every original request after the grant is removed', async () => {
+    const { cookie } = await openViewer()
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', pdfId)
+      .execute()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/original.pdf`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(response.status).toBe(401)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses the cookie on another artifact or version origin', async () => {
+    const { cookie } = await openViewer()
+
+    for (const origin of [
+      sandboxOrigin('v-bundle', 'abc123def4'),
+      sandboxOrigin('v-other', pdfId),
+    ]) {
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${origin}/__as_pdf/original.pdf`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(response.status).toBe(401)
+    }
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves a link PDF to anonymous readers only while the version is current', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', pdfId)
+      .execute()
+    const { response: viewer } = await openViewer(null)
+    expect(viewer.status).toBe(200)
+
+    const current = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin('v-pdf', pdfId)}/__as_pdf/original.pdf`),
+    )
+    expect(current.status).toBe(200)
+    expect(new Uint8Array(await current.arrayBuffer())).toEqual(pdfBytes)
+
+    await dbRef
+      .current!.insertInto('versions')
+      .values({
+        id: 'v-pdf-newer',
+        shareable_id: pdfId,
+        artifact_kind: 'pdf',
+        status: 'published',
+        entrypoint_path: '/Quarterly Deck.pdf',
+        r2_key: 'artifacts/pdf123abcd/v-pdf-newer/original.pdf',
+        size_bytes: pdfBytes.byteLength,
+        sha256: 'sha-v-pdf-newer',
+        created_by_id: 'owner-1',
+        created_at: '2026-05-23T00:00:00.000Z',
+        published_at: '2026-05-23T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ current_version_id: 'v-pdf-newer' })
+      .where('id', '=', pdfId)
+      .execute()
+    const stale = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin('v-pdf', pdfId)}/__as_pdf/original.pdf`),
+    )
+    expect(stale.status).toBe(401)
+  })
+
+  test('downloads the selected retained version for an authenticated reader', async () => {
+    const newerBytes = new TextEncoder().encode(
+      '%PDF-1.4\n%synthetic-pdf-fixture-newer-version\n%%EOF\n',
+    )
+    const newerKey = 'artifacts/pdf123abcd/v-pdf-newer/original.pdf'
+    await dbRef
+      .current!.insertInto('versions')
+      .values({
+        id: 'v-pdf-newer',
+        shareable_id: pdfId,
+        artifact_kind: 'pdf',
+        status: 'published',
+        entrypoint_path: '/Quarterly Deck.pdf',
+        r2_key: newerKey,
+        size_bytes: newerBytes.byteLength,
+        sha256: 'sha-v-pdf-newer',
+        created_by_id: 'owner-1',
+        created_at: '2026-05-23T00:00:00.000Z',
+        published_at: '2026-05-23T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ current_version_id: 'v-pdf-newer' })
+      .where('id', '=', pdfId)
+      .execute()
+    const serveOriginal = storageMock.getArtifact.getMockImplementation()!
+    storageMock.getArtifact.mockImplementation(async (bucket, key, options) =>
+      key === newerKey
+        ? storedBinaryArtifact(newerBytes, 'application/pdf')
+        : serveOriginal(bucket, key, options),
+    )
+
+    // The reader selected the retained version v-pdf in the history.
+    const { response: viewer, cookie } = await openViewer()
+    expect(viewer.status).toBe(200)
+    const html = await viewer.text()
+    const downloadPath = html.match(/<a id="download"[^>]* href="([^"]+)"/)?.[1]
+    expect(downloadPath).toBe('/__as_pdf/original.pdf?download=1')
+
+    const download = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-pdf', pdfId)}${downloadPath}`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(download.status).toBe(200)
+    expect(download.headers.get('Content-Type')).toBe('application/pdf')
+    expect(download.headers.get('Content-Disposition')).toMatch(/^attachment;/)
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(pdfBytes)
+    expect(storageMock.getArtifact).toHaveBeenCalledTimes(1)
+    expect(storageMock.getArtifact.mock.calls[0]?.[1]).toBe(pdfKey)
+  })
+
+  test('does not fall back to the original for unknown virtual paths or static sites', async () => {
+    const { cookie } = await openViewer()
+    const unknown = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/other.pdf`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+    expect(unknown.status).toBe(404)
+
+    const siteToken = await entrypointToken()
+    storageMock.getArtifact.mockResolvedValueOnce(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const site = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${siteToken}`),
+    )
+    const siteCookie = site.headers.get('Set-Cookie')?.split(';')[0] ?? ''
+    const shadow = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/__as_pdf/viewer.js`, {
+        headers: { Cookie: siteCookie },
+      }),
+    )
+    expect(shadow.status).toBe(404)
   })
 })

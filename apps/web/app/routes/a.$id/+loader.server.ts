@@ -7,7 +7,10 @@ import { nanoid } from 'nanoid'
 import { data } from 'react-router'
 import { type VersionRow } from './+components/history-panel'
 import { allowsHumanCliMutation } from '~/lib/cli-authority-policy'
-import { detectArtifactType } from '~/lib/artifact-type'
+import {
+  detectArtifactType,
+  type SingleFileArtifactType,
+} from '~/lib/artifact-type'
 import * as access from '~/modules/access'
 import { type CommentThreadView } from '~/lib/comments'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
@@ -149,7 +152,7 @@ export type LoaderData =
       kind: 'ok'
       user: UserInfo | null
       artifact: ArtifactSummary
-      renderType: 'html' | 'md'
+      renderType: SingleFileArtifactType
       canTrackView: boolean
       sandboxUrl: string
       canonicalUrl: string
@@ -552,7 +555,9 @@ export async function loader({
       ? 'md'
       : displayedVersion.artifact_kind === 'html_page'
         ? 'html'
-        : detectArtifactType(mimeType, fileName)
+        : displayedVersion.artifact_kind === 'pdf'
+          ? 'pdf'
+          : detectArtifactType(mimeType, fileName)
   const canReplaceFile =
     isOwner ||
     (user.selfUploadEnabled === true &&
@@ -1163,7 +1168,9 @@ async function buildLinkAnonymousResponse(
       mt: modifiedTime,
       t: isStaticSite
         ? 'static_site'
-        : (detectArtifactType(artifactMimeType, fileName) ?? 'html'),
+        : shareable.version_artifact_kind === 'pdf'
+          ? 'pdf'
+          : (detectArtifactType(artifactMimeType, fileName) ?? 'html'),
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
@@ -1194,7 +1201,10 @@ async function buildLinkAnonymousResponse(
     )
   }
 
-  const renderType = detectArtifactType(artifactMimeType, fileName)
+  const renderType =
+    shareable.version_artifact_kind === 'pdf'
+      ? 'pdf'
+      : detectArtifactType(artifactMimeType, fileName)
   if (!renderType) {
     return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
   }

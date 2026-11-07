@@ -3,6 +3,8 @@ import {
   artifactSupportsComments,
   detectArtifactType,
   detectArtifactTypeForUpload,
+  hasPdfMagic,
+  renderTypeFromKind,
 } from './artifact-type'
 
 describe('detectArtifactType', () => {
@@ -53,6 +55,37 @@ describe('detectArtifactTypeForUpload', () => {
     expect(detectArtifactTypeForUpload('text/html', 'page')).toBe('html')
     expect(detectArtifactTypeForUpload('text/plain', 'notes.txt')).toBeNull()
   })
+
+  test('selects pdf only by a .pdf suffix in any case, never by MIME', () => {
+    expect(detectArtifactTypeForUpload('', 'report.pdf')).toBe('pdf')
+    expect(detectArtifactTypeForUpload('application/pdf', 'REPORT.PDF')).toBe(
+      'pdf',
+    )
+    expect(detectArtifactTypeForUpload('application/pdf', 'report.bin')).toBe(
+      null,
+    )
+    expect(detectArtifactTypeForUpload('application/pdf', 'report')).toBe(null)
+  })
+})
+
+describe('hasPdfMagic', () => {
+  const bytes = (text: string) => new TextEncoder().encode(text)
+
+  test('requires %PDF- at byte zero', () => {
+    expect(hasPdfMagic(bytes('%PDF-1.4\n%synthetic\n'))).toBe(true)
+    expect(hasPdfMagic(bytes('%PDF-garbage'))).toBe(true)
+    expect(hasPdfMagic(bytes(' %PDF-1.4'))).toBe(false)
+    expect(hasPdfMagic(bytes('%PDF'))).toBe(false)
+    expect(hasPdfMagic(bytes('%pdf-1.4'))).toBe(false)
+    expect(hasPdfMagic(new Uint8Array())).toBe(false)
+  })
+})
+
+describe('renderTypeFromKind', () => {
+  test('maps the pdf kind to the pdf render type', () => {
+    expect(renderTypeFromKind('pdf')).toBe('pdf')
+    expect(renderTypeFromKind('static_site')).toBeNull()
+  })
 })
 
 describe('artifactSupportsComments', () => {
@@ -60,6 +93,10 @@ describe('artifactSupportsComments', () => {
     expect(artifactSupportsComments('html')).toBe(true)
     expect(artifactSupportsComments('md')).toBe(true)
     expect(artifactSupportsComments('static_site')).toBe(true)
+  })
+
+  test('enables overall comments for pdf', () => {
+    expect(artifactSupportsComments('pdf')).toBe(true)
   })
 
   test('disables comments for unrenderable artifacts', () => {

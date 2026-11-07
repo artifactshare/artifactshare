@@ -1,7 +1,7 @@
 {
   "name": "@artifactshare/cli",
   "version": "0.22.0",
-  "description": "Upload and share HTML, Markdown, folders, and static sites from terminals, AI agents, automation, and CI.",
+  "description": "Upload and share HTML, Markdown, PDF, folders, and static sites from terminals, AI agents, automation, and CI.",
   "homepage": "https://artifactshare.com/connect",
   "repository": {
     "type": "git",
@@ -15,6 +15,7 @@
     "upload",
     "share",
     "static-site",
+    "pdf",
     "automation",
     "ai-agents"
   ],

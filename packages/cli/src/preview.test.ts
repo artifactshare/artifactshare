@@ -639,6 +639,18 @@ test('a directory named like a page is refused', async () => {
   expectFailure(result, { command: 'preview', code: 'validation_failed' })
 })
 
+test('a PDF file is refused with share guidance', async () => {
+  const { env, dir } = previewEnv()
+  const target = join(dir, 'report.PDF')
+  writeFileSync(target, '%PDF-1.4\n%%EOF\n')
+  const result = run(['preview', target, '--no-open', '--json'], env)
+  const payload = expectFailure(result, {
+    command: 'preview',
+    code: 'validation_failed',
+  })
+  assert.match(payload.error.message, /PDF files cannot be previewed/)
+})
+
 test('a session id that is not 16 hex characters is refused', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)

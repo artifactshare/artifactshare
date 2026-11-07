@@ -1,3 +1,4 @@
+import { blobHasPdfMagic, isPdfFileName } from '../files.js'
 import { prepareUploadSelection, uploadReadError } from '../upload-boundary.js'
 import {
   type ArtifactAppendRequest,
@@ -76,6 +77,18 @@ export async function runAppend(
         validationError(
           'Path must be a non-empty file.',
           'Append supports one non-empty UTF-8 file for Markdown or HTML artifacts.',
+        ),
+        mode,
+        1,
+      )
+    // A PDF is a .pdf name with the %PDF- header; text that merely starts
+    // with those bytes is still appended.
+    if (isPdfFileName(file.name) && (await blobHasPdfMagic(file.blob)))
+      return writeFailure(
+        command,
+        validationError(
+          'Append does not support PDF files.',
+          'Append adds UTF-8 text to Markdown or HTML artifacts. To replace a PDF artifact, run update <artifact> <file.pdf>.',
         ),
         mode,
         1,

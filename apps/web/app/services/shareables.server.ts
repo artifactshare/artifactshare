@@ -20,7 +20,11 @@ import { sql } from 'kysely'
 import { externalGrantDomainSql } from './project-membership.server'
 import { env } from 'cloudflare:workers'
 import { nanoid } from 'nanoid'
-import { detectArtifactTypeForUpload } from '~/lib/artifact-type'
+import {
+  detectArtifactType,
+  detectArtifactTypeForUpload,
+  hasPdfMagic,
+} from '~/lib/artifact-type'
 import { nowIso } from '~/lib/datetime'
 import { displayTitle } from '~/lib/display-title'
 import { extractTitleFromBytes } from '~/lib/extract-title'
@@ -3204,11 +3208,11 @@ export async function prepareUpload(
 ) {
   if (file.size > MAX_CONTENT_BYTES) return { kind: 'too-large' } as const
 
-  const renderType = detectArtifactTypeForUpload(
+  const nameType = detectArtifactTypeForUpload(
     logicalFile.type,
     logicalFile.name,
   )
-  if (!renderType) return { kind: 'unsupported-type' } as const
+  if (!nameType) return { kind: 'unsupported-type' } as const
   const pathValidation = validateBundlePath(logicalFile.name)
   if (pathValidation.kind === 'blocked') {
     return { kind: 'invalid-path' } as const
@@ -3249,15 +3253,33 @@ export async function prepareUpload(
   }
 
   const buffer = await file.arrayBuffer()
-  const derivedTitle = extractTitleFromBytes(buffer, renderType, {
-    shareableId,
-    fileName: logicalFile.name,
-  })
+  // A PDF needs both the `.pdf` name and `%PDF-` bytes. Text under a `.pdf`
+  // name (for example Markdown appended to an artifact still named
+  // deck.pdf) is classified by its MIME type instead; anything else is
+  // rejected before any quota reservation or R2 write.
+  const renderType =
+    nameType === 'pdf' && !hasPdfMagic(new Uint8Array(buffer))
+      ? detectArtifactType(logicalFile.type, logicalFile.name)
+      : nameType
+  if (!renderType) return { kind: 'unsupported-type' } as const
+  // PDF bytes are never decoded as text; a null derived title falls back to
+  // the file name like an html / md file without a title.
+  const derivedTitle =
+    renderType === 'pdf'
+      ? null
+      : extractTitleFromBytes(buffer, renderType, {
+          shareableId,
+          fileName: logicalFile.name,
+        })
   const sha256 = await computeFileSha256(buffer)
   const versionId = nanoid(16)
   const now = fixedNow ?? new Date().toISOString()
   const artifactKind: ArtifactKind =
-    renderType === 'md' ? 'markdown_page' : 'html_page'
+    renderType === 'md'
+      ? 'markdown_page'
+      : renderType === 'pdf'
+        ? 'pdf'
+        : 'html_page'
   const entrypointPath = normalizeBundlePath(logicalFile.name)
   return {
     kind: 'ok' as const,

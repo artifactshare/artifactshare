@@ -7,6 +7,7 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
+import { PDF_MIME_TYPE } from '~/lib/artifact-type'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
@@ -43,6 +44,22 @@ export type CliDownloadManifest = {
   project_id: string | null
 }
 
+// Kinds downloaded as one stored original file. Text kinds come from
+// singleFileFormat; a PDF is binary and never goes through that text-only
+// readback helper, so it is listed here explicitly.
+const SINGLE_FILE_DOWNLOAD_KINDS = [
+  'html_page',
+  'markdown_page',
+  'pdf',
+] as const satisfies readonly ArtifactKind[]
+
+function isSingleFileDownload(artifactKind: string): boolean {
+  return (
+    singleFileFormat(artifactKind as ArtifactKind) !== null ||
+    artifactKind === 'pdf'
+  )
+}
+
 export async function getCliDownloadManifest(
   db: Kysely<DB>,
   user: SessionUser,
@@ -71,7 +88,7 @@ export async function getCliDownloadManifest(
   if (!access?.currentVersionId) return { kind: 'not-found' }
   const projectId = access.projectId ?? null
 
-  if (singleFileFormat(access.artifactKind as ArtifactKind)) {
+  if (isSingleFileDownload(access.artifactKind)) {
     if (!access.r2Key) return { kind: 'source-unavailable' }
     const metadata = await loadSingleFileVersionMetadata(
       db,
@@ -146,7 +163,7 @@ export async function getCliDownloadFile(
   )
   if (!access?.currentVersionId) return { kind: 'not-found' }
 
-  if (singleFileFormat(access.artifactKind as ArtifactKind)) {
+  if (isSingleFileDownload(access.artifactKind)) {
     const filePath = singleFileDownloadPath(
       access.artifactKind,
       access.entrypointPath,
@@ -203,7 +220,9 @@ function singleFileDownloadPath(
 ): string {
   if (entrypointPath?.startsWith('/')) return entrypointPath
   if (entrypointPath) return `/${entrypointPath}`
-  return artifactKind === 'markdown_page' ? '/index.md' : '/index.html'
+  if (artifactKind === 'markdown_page') return '/index.md'
+  if (artifactKind === 'pdf') return '/index.pdf'
+  return '/index.html'
 }
 
 async function loadSingleFileVersionMetadata(
@@ -220,6 +239,7 @@ async function loadSingleFileVersionMetadata(
 }
 
 function singleFileContentType(artifactKind: string): string {
+  if (artifactKind === 'pdf') return PDF_MIME_TYPE
   return artifactKind === 'markdown_page'
     ? 'text/markdown; charset=utf-8'
     : 'text/html; charset=utf-8'
@@ -249,7 +269,7 @@ export async function getPublisherDownloadFile(
     .where('shareables.id', '=', id)
     .where(publisherArtifactSql(user.id, authority))
     .where('versions.status', '=', 'published')
-    .where('versions.artifact_kind', 'in', ['html_page', 'markdown_page'])
+    .where('versions.artifact_kind', 'in', SINGLE_FILE_DOWNLOAD_KINDS)
     .executeTakeFirst()
   if (!row) return { kind: 'not-found' }
   if (!row.r2_key) return { kind: 'source-unavailable' }

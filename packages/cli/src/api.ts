@@ -1,3 +1,4 @@
+import { CLI_ARTIFACT_KINDS_HEADER } from '@artifactshare/contract'
 import { DEFAULT_BASE_URL } from './constants.js'
 import type { Agent, Response } from 'undici'
 import type {
@@ -50,8 +51,24 @@ export async function cliFetch(
   input: string | URL,
   init: FetchInit = {},
 ): Promise<Response | NetworkFailure> {
-  const { insecureLocalhost, ...fetchInit } = init
+  const { insecureLocalhost, ...requested } = init
   const { fetch, Agent } = await loadUndici()
+  // Tell the server which newer artifact kinds this CLI can parse. Keep the
+  // caller's headers as a plain object with their original names.
+  const given = requested.headers as
+    | Record<string, string>
+    | [string, string][]
+    | { entries(): Iterable<[string, string]> }
+    | undefined
+  const headers: Record<string, string> = {
+    ...(Array.isArray(given)
+      ? Object.fromEntries(given)
+      : given && typeof given.entries === 'function'
+        ? Object.fromEntries(given.entries())
+        : (given as Record<string, string> | undefined)),
+    [CLI_ARTIFACT_KINDS_HEADER]: 'pdf',
+  }
+  const fetchInit = { ...requested, headers }
   const requestInit = insecureLocalhost
     ? {
         ...fetchInit,

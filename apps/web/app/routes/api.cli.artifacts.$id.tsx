@@ -117,7 +117,10 @@ export async function loader({
           'Static-site readback has no source offset.',
           400,
         )
-      return cliArtifactErrorResponse(result, 'Source unavailable.')
+      return cliArtifactErrorResponse(
+        result,
+        'This artifact cannot be read as a single source file.',
+      )
     }
     const authority = cliReadAuthority(resolved)
     if (authority === 'denied') return cliScopeDeniedResponse()

@@ -17,7 +17,7 @@ test('append --help describes exact single-file append', () => {
   assert.equal(result.status, 0)
   assert.match(result.stdout, /append <OPTIONS> <artifactIdOrUrl> <path>/)
   assert.match(result.stdout, /Non-empty UTF-8 file/)
-  assert.match(result.stdout, /Static sites are not supported/)
+  assert.match(result.stdout, /Static sites and PDFs are not supported/)
 })
 
 test('append rejects an empty file before authentication', async () => {
@@ -32,6 +32,60 @@ test('append rejects an empty file before authentication', async () => {
     code: 'validation_failed',
   })
   assert.match(payload.error.message, /non-empty file/i)
+})
+
+test('append refuses a PDF file before authentication', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-pdf-'))
+  const path = join(dir, 'report.pdf')
+  await writeFile(path, '%PDF-1.4\n%%EOF\n')
+
+  const result = await runAsync(['append', 'abc123def4', path, '--json'])
+
+  const payload = expectFailure(result, {
+    command: 'append',
+    code: 'validation_failed',
+  })
+  assert.match(payload.error.message, /does not support PDF/)
+})
+
+test('append sends Markdown whose text starts with the PDF header', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-pdf-text-'))
+  const path = join(dir, 'section.md')
+  await writeFile(path, '%PDF- is the required PDF header.\n')
+
+  await withServer(
+    async (request, response) => {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      assert.deepEqual(JSON.parse(body), {
+        content: '%PDF- is the required PDF header.\n',
+      })
+      // Every CLI request names the newer artifact kinds it can parse.
+      assert.equal(request.headers['x-artifactshare-artifact-kinds'], 'pdf')
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          id: 'abc123def4',
+          shareUrl: 'https://artifactshare.test/a/abc123def4',
+          versionId: 'version2',
+          artifactKind: 'markdown_page',
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync([
+        'append',
+        'abc123def4',
+        path,
+        '--base-url',
+        baseUrl,
+        '--token',
+        'token',
+        '--json',
+      ])
+      expectSuccess(result, 'append')
+    },
+  )
 })
 
 test('append sends UTF-8 content and returns the new version', async () => {

@@ -57,7 +57,7 @@ export const ANALYTICS_PARAMS = defineUniqueAnalyticsValues({
 } as const)
 export type AnalyticsParamKey =
   (typeof ANALYTICS_PARAMS)[keyof typeof ANALYTICS_PARAMS]
-export type AnalyticsRenderType = 'html' | 'md' | 'static_site'
+export type AnalyticsRenderType = 'html' | 'md' | 'pdf' | 'static_site'
 
 export type AnalyticsParamValue = string | number | boolean | undefined
 type AnalyticsParamValues = {

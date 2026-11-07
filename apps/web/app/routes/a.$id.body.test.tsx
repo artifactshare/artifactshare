@@ -111,7 +111,7 @@ beforeEach(() =>
   }),
 )
 
-test.each(['html_page', 'markdown_page', 'static_site'])(
+test.each(['html_page', 'markdown_page', 'static_site', 'pdf'])(
   'opens pinned %s history with independent 60-second tokens',
   async (kind) => {
     state.kind = kind
@@ -215,7 +215,7 @@ test.each([
 test.each([
   ['access removed', { access: false }, 'v1', 'GET', 404],
   ['nonexistent', {}, 'missing', 'GET', 404],
-  ['unsupported', { kind: 'pdf' }, 'v1', 'GET', 404],
+  ['unsupported', { kind: 'spa' }, 'v1', 'GET', 404],
   ['unavailable', { stage: 'disabled' }, 'v1', 'GET', 503],
   ['missing pin', {}, '', 'GET', 400],
   ['HEAD', {}, 'v1', 'HEAD', 405],

@@ -532,6 +532,17 @@ export async function runPreview(
     )
   }
   const lower = real.realpath.toLowerCase()
+  if (lower.endsWith('.pdf')) {
+    return writeFailure(
+      command,
+      validationError(
+        'PDF files cannot be previewed locally.',
+        'Run share <file.pdf> to publish it and open the share URL, or preview a Markdown or HTML file.',
+      ),
+      mode,
+      1,
+    )
+  }
   if (!lower.endsWith('.md') && !lower.endsWith('.html')) {
     return writeFailure(
       command,
