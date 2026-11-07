@@ -209,13 +209,25 @@ describe('renderMarkdownDocument', () => {
   )
 
   test.each([
-    ['kana', '# はじめに\n\nこれは本文です。', 'ja'],
-    ['kanji', '# 概要\n\n仕様書', 'ja'],
+    ['Hiragana', '# はじめに\n\nこれは本文です。', 'ja'],
+    ['Katakana', '# データ\n\nサーバー', 'ja'],
+    [
+      'English mentioning a kanji word',
+      '# Intro\n\nSupported languages: English, 日本語',
+      'en',
+    ],
+    ['kanji-only text', '# 概要\n\n仕様書', 'en'],
+    ['Chinese without kana', '# 简介\n\n这是一个中文文档。', 'en'],
     ['English', '# Intro\n\nPlain English.', 'en'],
     [
       'frontmatter English override',
       '---\nlang: en\n---\n# 概要\n\n本文です。',
       'en',
+    ],
+    [
+      'frontmatter Japanese override of kanji-only text',
+      '---\nlang: ja\n---\n# 概要\n\n仕様書',
+      'ja',
     ],
     [
       'quoted frontmatter Japanese override',
@@ -237,7 +249,7 @@ describe('renderMarkdownDocument', () => {
   })
 
   test('labels the finer-headings checkbox in Japanese', () => {
-    const out = renderMarkdownDocument('## 章\n##### 細部', {
+    const out = renderMarkdownDocument('## はじめに\n##### 細部', {
       logTiming: false,
     })
     expect(out).toContain('data-md-outline-details>細かい見出しも表示</label>')

@@ -5,6 +5,7 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Fix local Markdown preview on phones showing the full outline list before the compact contents row. Markdown is labelled Japanese only when its body contains kana, so English or Chinese text with kanji stays English unless frontmatter `lang` says otherwise.
 - Fix local preview dark-mode contrast, document backgrounds, truncated labels and narrow headers. Preserve failed annotation drafts with a retry message and keep Share sign-in, upload and result state when reopened. Oversized element anchors use bounded hash/excerpt fields while normal and legacy anchors remain compatible.
 - Update the bundled skill to version 59 with oversized preview anchor and retry guidance.
 
