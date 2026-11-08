@@ -751,6 +751,26 @@ export const videoViewerScenario = defineBrowserCommand(
         fetchedOriginal: originalFetches() > fetchesBeforeDownload,
         urlUnchanged: player.url() === playerUrl,
       }
+      // A later network failure of the element (the expired cookie) switches
+      // playback to the in-memory copy instead of a failure state.
+      const playsFromLocalCopy = await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement
+        Object.defineProperty(video, 'error', {
+          configurable: true,
+          get: () => ({ code: 2 }),
+        })
+        video.dispatchEvent(new Event('error'))
+        const switched =
+          video.currentSrc.startsWith('blob:') || video.src.startsWith('blob:')
+        Object.defineProperty(video, 'error', {
+          configurable: true,
+          get: () => null,
+        })
+        return {
+          switched,
+          state: document.documentElement.dataset.videoState,
+        }
+      })
       // A page kept for back/forward navigation keeps its copy.
       await frame.evaluate(() =>
         dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })),
@@ -766,6 +786,7 @@ export const videoViewerScenario = defineBrowserCommand(
         speedOptions,
         download,
         afterBackForward,
+        playsFromLocalCopy,
         ...(await common()),
         origin,
         offOrigin: requests.filter(
@@ -860,6 +881,7 @@ declare module 'vitest/browser' {
       settingsClosed?: boolean
       speedOptions?: number[]
       download?: Saved & { fetchedOriginal: boolean; urlUnchanged: boolean }
+      playsFromLocalCopy?: { switched: boolean; state?: string }
       afterBackForward?: Saved
       fallbackDownload?: Saved & { urlUnchanged: boolean }
       playback?: {

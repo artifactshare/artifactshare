@@ -129,6 +129,10 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   test('keeps the original download after the sandbox cookie expires', async () => {
     const result = await server.commands.videoViewerScenario('controls', width)
 
+    // A network failure after the cookie expires switches playback to the
+    // in-memory copy instead of a failure state.
+    expect(result.playsFromLocalCopy!.switched).toBe(true)
+    expect(result.playsFromLocalCopy!.state).not.toBe('transport')
     expect(result.download).toEqual({
       name: savedName,
       sameBytes: true,

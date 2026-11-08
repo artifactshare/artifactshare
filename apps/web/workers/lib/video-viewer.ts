@@ -545,6 +545,13 @@ function syncVolume() {
   volume.value = String(video.muted ? 0 : video.volume)
 }
 
+let playRequested = false
+video.addEventListener('play', () => {
+  playRequested = true
+})
+video.addEventListener('pause', () => {
+  playRequested = false
+})
 async function togglePlay() {
   if (failed()) return
   if (!video.paused && !video.ended) {
@@ -555,7 +562,10 @@ async function togglePlay() {
     await video.play()
     hideStatus()
   } catch (error) {
-    // A media error reports its own state; anything else is a refused start.
+    // A pause right after play() interrupts it with AbortError; that is not
+    // a failure. A media error reports its own state; anything else is a
+    // refused start.
+    if (error && error.name === 'AbortError') return
     if (!video.error && !failed()) showNotice(text.playFailed)
   }
 }
@@ -568,6 +578,7 @@ async function showMediaError() {
   if (classifying || failed()) return
   const code = video.error ? video.error.code : 0
   if (code === 3) return showState('corrupt', text.corrupt)
+  if (useLocalCopy(playRequested)) return
   if (code === 2) return showState('transport', text.transport)
   classifying = true
   let reachable = false
@@ -732,6 +743,28 @@ function acquire() {
       if (root.dataset.videoState !== 'loading') hideStatus()
     })
   return acquiring
+}
+// The sandbox cookie expires after a while, so the element's later Range
+// requests can fail during long viewing. When that happens and the whole
+// original is already in memory, continue from that copy at the same
+// position, speed and play state instead of showing a failure.
+let localSource = false
+function useLocalCopy(resume) {
+  if (!original || localSource) return false
+  localSource = true
+  const at = video.currentTime
+  const rate = video.playbackRate
+  video.addEventListener(
+    'loadedmetadata',
+    () => {
+      video.playbackRate = rate
+      if (at > 0) video.currentTime = at
+      if (resume) void video.play().catch(() => {})
+    },
+    { once: true },
+  )
+  video.src = URL.createObjectURL(original)
+  return true
 }
 function saveOriginal(event) {
   // Not kept yet: the link downloads the attachment, and the copy is fetched
