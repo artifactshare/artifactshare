@@ -974,7 +974,7 @@ if (viewerModule) {
   eventBus.on('updatefindmatchescount', ({ matchesCount }) => showMatches(matchesCount))
   eventBus.on('updatefindcontrolstate', ({ state, matchesCount, rawQuery }) => {
     if (searchBar.hidden || rawQuery !== searchQuery.value) return
-    if (state === FindState.NOT_FOUND) {
+    if (state === FindState.NOT_FOUND && !findController._dirtyMatch) {
       void hasSearchableText().then((found) => {
         if (!searchBar.hidden && rawQuery === searchQuery.value)
           searchResults.textContent = found ? text.noResults : text.noText
