@@ -1,9 +1,18 @@
 import { createServer, type IncomingMessage } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
-import type { Frame } from 'playwright'
+import type { Frame, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
+import {
+  viewerPreferencesMessage,
+  type ViewerPreferences,
+} from '../viewers/shared/preferences'
 import { VIDEO_ORIGINAL_PATH } from '../../workers/lib/video-viewer'
+import {
+  PARENT_PATH,
+  parentDocument,
+  type ParentWindow,
+} from './pdf-viewer-browser-command'
 
 const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'video-viewer-browser-fixture-only-'.repeat(3)
@@ -18,12 +27,16 @@ const secret = 'video-viewer-browser-fixture-only-'.repeat(3)
 //   it only where the engine actually decodes it.
 // acquire-failure: like controls, but the player's own fetch of the whole
 //   original fails, so only the attachment link can download.
+// preferences: like controls, framed in a stand-in for the app page that
+//   sends the app's language and theme late, changes them and replaces the
+//   frame.
 export type VideoScenario =
   | 'controls'
   | 'damaged'
   | 'transport'
   | 'playback'
   | 'acquire-failure'
+  | 'preferences'
 
 // A synthetic ISO base media header (ftyp box) and bytes that are not a movie.
 const FIXTURE = new Uint8Array([
@@ -98,11 +111,12 @@ const PLAYABLE_CLIP = new Uint8Array(
 )
 
 // Seeds one link-shared video version in the real sandbox Worker's D1 and R2
-// and returns the signed anonymous entry URL the app would hand to the player.
+// and returns a signer of the anonymous entry URL the app would hand to the
+// player (each signed entry opens once).
 async function seedVideoArtifact(
   env: { DB: D1Database; BUCKET: R2Bucket },
   bytes: Uint8Array,
-): Promise<string> {
+): Promise<() => Promise<string>> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 8)
   const ids = {
     workspace: `ws-vid-${suffix}`,
@@ -157,21 +171,22 @@ async function seedVideoArtifact(
   await env.BUCKET.put(r2Key, bytes, {
     httpMetadata: { contentType: 'video/mp4' },
   })
-  return signSandboxUrl(
-    {
-      uid: null,
-      wid: ids.workspace,
-      aid: ids.artifact,
-      vid: ids.version,
-      fid: r2Key,
-      mt: null,
-      t: 'video',
-      jti: `jti-${suffix}`,
-    },
-    secret,
-    { APP_ENV: 'development' },
-    '/録画 Demo.mp4',
-  )
+  return () =>
+    signSandboxUrl(
+      {
+        uid: null,
+        wid: ids.workspace,
+        aid: ids.artifact,
+        vid: ids.version,
+        fid: r2Key,
+        mt: null,
+        t: 'video',
+        jti: `jti-${crypto.randomUUID()}`,
+      },
+      secret,
+      { APP_ENV: 'development' },
+      '/録画 Demo.mp4',
+    )
 }
 
 // The media element's own requests (as opposed to the player's fetches).
@@ -273,6 +288,188 @@ function snapshot(frame: Frame) {
   })
 }
 
+// Sets a range the way a reader's drag does. React ignores a value set
+// through the element's own property, so this uses the native setter.
+function setRangeValue(frame: Frame, id: string, value: number) {
+  return frame.evaluate(
+    ([target, next]) => {
+      const input = document.getElementById(target) as HTMLInputElement
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!.call(input, String(next))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    },
+    [id, value] as const,
+  )
+}
+
+async function framedPlayer(page: Page, name: string) {
+  const element = await page.waitForSelector(`iframe[name="${name}"]`)
+  const frame = (await element.contentFrame())!
+  await frame.waitForURL(/Demo\.mp4/, {
+    timeout: 15000,
+    waitUntil: 'domcontentloaded',
+  })
+  await frame.waitForFunction(
+    () => document.getElementById('controls')?.hidden === false,
+    undefined,
+    { timeout: 15000 },
+  )
+  return frame
+}
+
+function preferencesState(frame: Frame) {
+  return frame.evaluate(() => {
+    const video = document.getElementById('video') as HTMLVideoElement & {
+      probe?: true
+    }
+    const label = (id: string) =>
+      document.getElementById(id)!.getAttribute('aria-label')
+    return {
+      lang: document.documentElement.lang,
+      theme: document.documentElement.dataset.theme ?? null,
+      colorScheme: getComputedStyle(document.documentElement).colorScheme,
+      background: getComputedStyle(document.getElementById('controls')!)
+        .backgroundColor,
+      player: label('player'),
+      play: label('play'),
+      settings: label('settings'),
+      message: document.getElementById('status')!.hidden
+        ? null
+        : document.getElementById('status-message')!.textContent,
+      startHidden: document.getElementById('start-play')!.hidden,
+      paused: video.paused,
+      currentTime: video.currentTime,
+      playbackRate: video.playbackRate,
+      // Set on the element below: still there means the same element kept
+      // playing through every change.
+      sameVideo: video.probe === true,
+    }
+  })
+}
+
+// The player starts in the browser's language, takes the app's preferences
+// late and as they change without touching playback, ignores malformed ones
+// and any not sent by its parent, and a replacement frame gets the current
+// ones.
+async function preferencesFlow(
+  page: Page,
+  frame: Frame,
+  browser: 'en' | 'ja',
+  signEntry: () => Promise<string>,
+) {
+  const app = browser === 'en' ? 'ja' : 'en'
+  const send = async (preferences: ViewerPreferences) => {
+    await page.evaluate(
+      (message) => (window as unknown as ParentWindow).sendPreferences(message),
+      viewerPreferencesMessage(preferences),
+    )
+    await frame.waitForFunction(
+      (wanted) =>
+        `${document.documentElement.lang} ${document.documentElement.dataset.theme}` ===
+        wanted,
+      `${preferences.locale} ${preferences.theme}`,
+      { timeout: 5000 },
+    )
+    return preferencesState(frame)
+  }
+  const initial = await preferencesState(frame)
+  // Late: the loading notice on screen follows the app's language.
+  const late = await send({ locale: app, theme: 'light' })
+  await simulateLoadedClip(frame)
+  const loaded = await preferencesState(frame)
+  // A seek before the first play also retires the large play button.
+  await setRangeValue(frame, 'seek', 50)
+  const seekedFirst = await preferencesState(frame)
+  await frame.click('#settings')
+  await frame.selectOption('#speed', '1.5')
+  await frame.press('#speed', 'Escape')
+  await frame.click('#play')
+  await frame.evaluate(() => {
+    ;(
+      document.getElementById('video') as HTMLVideoElement & { probe?: true }
+    ).probe = true
+  })
+  // A visible failure notice: the player refuses to go full screen.
+  await frame.evaluate(() => {
+    document.getElementById('player')!.requestFullscreen = () =>
+      Promise.reject(new Error('refused'))
+  })
+  await frame.click('#fullscreen')
+  await frame.waitForFunction(
+    () => !document.getElementById('status')!.hidden,
+    undefined,
+    { timeout: 5000 },
+  )
+  const refused = await preferencesState(frame)
+  const changed = await send({ locale: browser, theme: 'dark' })
+  // Counts the messages the player has handled: its own listener runs
+  // before this later one for each message.
+  await frame.evaluate(() => {
+    const counter = window as unknown as { handled: number }
+    counter.handled = 0
+    addEventListener('message', () => {
+      counter.handled += 1
+    })
+  })
+  await page.evaluate(() => {
+    const parent = window as unknown as ParentWindow
+    for (const invalid of [
+      { locale: 'fr', theme: 'dark' },
+      { locale: 'ja', theme: 'sepia' },
+      { locale: 'en' },
+    ])
+      parent.postToViewer({
+        source: 'artifactshare-parent',
+        kind: 'viewer-preferences',
+        ...invalid,
+      })
+  })
+  // Well formed, but from the player's own window instead of its parent.
+  await frame.evaluate(
+    (message) => window.postMessage(message, '*'),
+    viewerPreferencesMessage({ locale: app, theme: 'light' }),
+  )
+  await frame.waitForFunction(
+    () => (window as unknown as { handled: number }).handled >= 4,
+    undefined,
+    { timeout: 5000 },
+  )
+  const ignored = await preferencesState(frame)
+  await send({ locale: app, theme: 'dark' })
+  const next = new URL(await signEntry())
+  await page.evaluate(
+    (src) => (window as unknown as ParentWindow).replaceViewer(src, 'viewer-2'),
+    `${next.pathname}${next.search}`,
+  )
+  const replacement = await framedPlayer(page, 'viewer-2')
+  // The app sends the current preferences when a new document answers its
+  // ready check (see sandbox-frame-recovery). This stand-in sends them on the
+  // frame's load, which WebKit and Firefox hold back while the media requests
+  // are held, so it sends them again once the new player is up.
+  await page.evaluate(
+    (message) => (window as unknown as ParentWindow).sendPreferences(message),
+    viewerPreferencesMessage({ locale: app, theme: 'dark' }),
+  )
+  await replacement.waitForFunction(
+    (wanted) => document.documentElement.lang === wanted,
+    app,
+    { timeout: 5000 },
+  )
+  const replaced = await preferencesState(replacement)
+  return {
+    initial,
+    late,
+    loaded,
+    seekedFirst,
+    refused,
+    changed,
+    ignored,
+    replaced,
+  }
+}
+
 // Runs the real sandbox Worker (wrangler.sandbox.jsonc) with a seeded
 // link-shared video version. A loopback proxy forwards every browser request
 // unchanged to the Worker under the version's sandbox hostname; it only holds
@@ -285,8 +482,14 @@ export const videoViewerScenario = defineBrowserCommand(
     width: number,
     // A landscape phone: touch input and a short viewport wider than 700px.
     device: 'default' | 'landscape-phone' = 'default',
+    // The browser's language.
+    locale: 'en-US' | 'ja-JP' = 'en-US',
   ) => {
     const touch = device === 'landscape-phone'
+    // The preferences scenario frames the player in a parent page the way
+    // the app does; the fixture lets that page be a frame ancestor.
+    const framed = scenario === 'preferences'
+    let parentPage = ''
     const height = touch ? 390 : width < 700 ? 844 : 900
     const { createTestHarness } = await import('wrangler')
     const harness = createTestHarness({
@@ -306,8 +509,17 @@ export const videoViewerScenario = defineBrowserCommand(
     const server = createServer(async (request, response) => {
       try {
         const url = new URL(request.url ?? '/', origin)
+        if (framed && url.pathname === PARENT_PATH) {
+          response
+            .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            .end(parentPage)
+          return
+        }
         if (url.pathname === VIDEO_ORIGINAL_PATH) {
-          const held = scenario === 'controls' || scenario === 'acquire-failure'
+          const held =
+            scenario === 'controls' ||
+            scenario === 'acquire-failure' ||
+            scenario === 'preferences'
           if (held && isMediaRequest(request)) return
           // The player's own full fetch has no query; the attachment link
           // (?download=1) still reaches the Worker.
@@ -347,7 +559,15 @@ export const videoViewerScenario = defineBrowserCommand(
               'transfer-encoding',
             ].includes(name)
           )
-            response.setHeader(name, value)
+            response.setHeader(
+              name,
+              framed && name === 'content-security-policy'
+                ? value.replace(
+                    /frame-ancestors [^;]+/,
+                    "frame-ancestors 'self'",
+                  )
+                : value,
+            )
         const cookies = result.headers.getSetCookie()
         if (cookies.length) response.setHeader('Set-Cookie', cookies)
         response.statusCode = result.status
@@ -363,7 +583,8 @@ export const videoViewerScenario = defineBrowserCommand(
         .browser()!
         .newContext({
           viewport: { width, height },
-          locale: 'en-US',
+          locale,
+          colorScheme: 'light',
           reducedMotion: 'reduce',
           ...(touch
             ? {
@@ -379,9 +600,8 @@ export const videoViewerScenario = defineBrowserCommand(
       await harness.listen()
       await sandbox.applyD1Migrations('DB')
       const fixture = scenario === 'playback' ? PLAYABLE_CLIP : FIXTURE
-      const entry = new URL(
-        await seedVideoArtifact(await sandbox.getEnv(), fixture),
-      )
+      const signEntry = await seedVideoArtifact(await sandbox.getEnv(), fixture)
+      const entry = new URL(await signEntry())
       workerOrigin = entry.origin
       server.listen(0, '127.0.0.1')
       await once(server, 'listening')
@@ -399,6 +619,39 @@ export const videoViewerScenario = defineBrowserCommand(
       })
       browserContext.on('request', (request) => requests.push(request.url()))
       const player = await browserContext.newPage()
+      if (framed) {
+        parentPage = parentDocument(`${entry.pathname}${entry.search}`, null)
+        // The held media requests keep some engines from firing load.
+        await player.goto(`${origin}${PARENT_PATH}`, {
+          timeout: 15000,
+          waitUntil: 'domcontentloaded',
+        })
+        const frame = await framedPlayer(player, 'viewer-1')
+        const flow = await preferencesFlow(
+          player,
+          frame,
+          locale === 'ja-JP' ? 'ja' : 'en',
+          signEntry,
+        )
+        const violations: string[] = []
+        for (const each of player.frames())
+          violations.push(
+            ...(await each.evaluate(
+              () =>
+                (window as unknown as { violations?: string[] }).violations ??
+                [],
+            )),
+          )
+        return {
+          preferences: flow,
+          violations,
+          origin,
+          offOrigin: requests.filter(
+            (url) => !url.startsWith(origin) && !url.startsWith('blob:'),
+          ),
+          workerStatuses,
+        }
+      }
       const entryResponse = await player.goto(
         `${origin}${entry.pathname}${entry.search}`,
         { timeout: 15000, waitUntil: 'domcontentloaded' },
@@ -406,8 +659,9 @@ export const videoViewerScenario = defineBrowserCommand(
       if (entryResponse?.status() !== 200)
         throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
       const frame = player.mainFrame()
+      // The player has mounted its controls.
       await frame.waitForFunction(
-        () => !document.getElementById('controls')!.hidden,
+        () => document.getElementById('controls')?.hidden === false,
       )
       const status = () =>
         frame.evaluate(() => ({
@@ -515,10 +769,8 @@ export const videoViewerScenario = defineBrowserCommand(
             },
             { once: true },
           )
-          const input = document.getElementById('seek') as HTMLInputElement
-          input.value = '50'
-          input.dispatchEvent(new Event('input', { bubbles: true }))
         })
+        await setRangeValue(frame, 'seek', 50)
         // Seekable means the engine completes the seek at the target time;
         // some engines decode the clip but never finish seeking it.
         const seekCompleted = await frame
@@ -604,14 +856,7 @@ export const videoViewerScenario = defineBrowserCommand(
       const loaded = await snapshot(frame)
       const steps: Record<string, Awaited<ReturnType<typeof snapshot>>> = {}
       const setRange = (id: string, value: number) =>
-        frame.evaluate(
-          ([target, next]) => {
-            const input = document.getElementById(target) as HTMLInputElement
-            input.value = String(next)
-            input.dispatchEvent(new Event('input', { bubbles: true }))
-          },
-          [id, value] as const,
-        )
+        setRangeValue(frame, id, value)
 
       // Play and pause with the buttons; nothing played before.
       await frame.click('#start-play')
@@ -665,9 +910,104 @@ export const videoViewerScenario = defineBrowserCommand(
       await frame.selectOption('#speed', '2')
       steps.fastest = await snapshot(frame)
       await player.keyboard.press('Escape')
+      // Escape in the panel closes it and returns to its button.
       const settingsClosed = await frame.evaluate(
-        () => document.getElementById('playback-options')!.hidden,
+        () =>
+          document.getElementById('playback-options')!.hidden &&
+          document.activeElement?.id === 'settings',
       )
+
+      // At the end the large button offers a replay.
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement
+        Object.defineProperty(video, 'ended', {
+          configurable: true,
+          get: () => true,
+        })
+        video.pause()
+        video.dispatchEvent(new Event('ended'))
+      })
+      steps.ended = await snapshot(frame)
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement
+        Object.defineProperty(video, 'ended', {
+          configurable: true,
+          get: () => false,
+        })
+        video.dispatchEvent(new Event('seeked'))
+      })
+
+      // Notices over the picture: buffering while playing, a refused start
+      // and a player that cannot go full screen. Each clears on the next
+      // seek.
+      const notice = () =>
+        frame.evaluate(() =>
+          document.getElementById('status')!.hidden
+            ? null
+            : document.getElementById('status-message')!.textContent,
+        )
+      const clearNotice = () =>
+        frame.evaluate(() =>
+          document.getElementById('video')!.dispatchEvent(new Event('seeked')),
+        )
+      const noticeShown = () =>
+        frame.waitForFunction(
+          () => !document.getElementById('status')!.hidden,
+          undefined,
+          { timeout: 5000 },
+        )
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement
+        void video.play()
+        video.dispatchEvent(new Event('waiting'))
+      })
+      await noticeShown()
+      const notices: Record<string, string | null> = {}
+      notices.buffering = await notice()
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement
+        video.dispatchEvent(new Event('playing'))
+        video.pause()
+      })
+      notices.afterBuffering = await notice()
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement & {
+          allowedPlay?: () => Promise<void>
+        }
+        video.allowedPlay = video.play
+        video.play = () =>
+          Promise.reject(new DOMException('Not allowed', 'NotAllowedError'))
+      })
+      await frame.click('#play')
+      await noticeShown()
+      notices.playRefused = await notice()
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement & {
+          allowedPlay?: () => Promise<void>
+        }
+        video.play = video.allowedPlay!
+      })
+      await clearNotice()
+      await frame.evaluate(() => {
+        const element = document.getElementById('player')!
+        for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
+          Object.defineProperty(element, name, {
+            configurable: true,
+            value: undefined,
+          })
+      })
+      await frame.click('#fullscreen')
+      await noticeShown()
+      notices.fullscreenUnavailable = await notice()
+      notices.fullscreenElement = await frame.evaluate(
+        () => document.fullscreenElement?.id ?? null,
+      )
+      await frame.evaluate(() => {
+        const element = document.getElementById('player')!
+        for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
+          Reflect.deleteProperty(element, name)
+      })
+      await clearNotice()
 
       // Volume and mute (desktop only).
       if (width >= 700 && !touch) {
@@ -711,7 +1051,30 @@ export const videoViewerScenario = defineBrowserCommand(
       await frame.click('#fullscreen')
       await fullscreenLabel('Exit full screen')
       steps.fullscreen = await snapshot(frame)
+      let fullscreenSettings = null
       if (steps.fullscreen.fullscreen) {
+        // The settings open inside the full-screen player and still work.
+        await frame.click('#settings')
+        await frame.selectOption('#speed', '1.25')
+        fullscreenSettings = await frame.evaluate(() => {
+          const panel = document.getElementById('playback-options')!
+          const box = panel.getBoundingClientRect()
+          return {
+            open: !panel.hidden,
+            insidePlayer: document
+              .getElementById('player')!
+              .contains(document.getElementById('speed')),
+            onScreen:
+              box.width > 0 &&
+              box.top >= 0 &&
+              box.bottom <= innerHeight &&
+              box.right <= innerWidth,
+            playbackRate: (document.getElementById('video') as HTMLVideoElement)
+              .playbackRate,
+            fullscreen: document.fullscreenElement?.id ?? null,
+          }
+        })
+        await frame.click('#settings')
         await frame.click('#fullscreen')
         await frame.waitForFunction(() => document.fullscreenElement === null)
         await fullscreenLabel('Full screen')
@@ -753,8 +1116,12 @@ export const videoViewerScenario = defineBrowserCommand(
       }
       // A later network failure of the element (the expired cookie) switches
       // playback to the in-memory copy instead of a failure state.
+      // It continues at the same position and speed, still playing.
       const playsFromLocalCopy = await frame.evaluate(() => {
         const video = document.getElementById('video') as HTMLVideoElement
+        void video.play()
+        video.currentTime = 30
+        video.playbackRate = 1.5
         Object.defineProperty(video, 'error', {
           configurable: true,
           get: () => ({ code: 2 }),
@@ -766,9 +1133,20 @@ export const videoViewerScenario = defineBrowserCommand(
           configurable: true,
           get: () => null,
         })
+        // The copy loads from its start, paused at the normal speed, until
+        // its metadata arrives.
+        video.pause()
+        video.currentTime = 0
+        video.playbackRate = 1
+        video.dispatchEvent(new Event('loadedmetadata'))
         return {
           switched,
           state: document.documentElement.dataset.videoState,
+          restored: {
+            currentTime: video.currentTime,
+            playbackRate: video.playbackRate,
+            paused: video.paused,
+          },
         }
       })
       // A page kept for back/forward navigation keeps its copy.
@@ -784,6 +1162,8 @@ export const videoViewerScenario = defineBrowserCommand(
         settingsOpen,
         settingsClosed,
         speedOptions,
+        fullscreenSettings,
+        notices,
         download,
         afterBackForward,
         playsFromLocalCopy,
@@ -854,6 +1234,21 @@ type Status = {
   paused: boolean
 }
 type Saved = { name: string; sameBytes: boolean }
+type PreferencesState = {
+  lang: string
+  theme: string | null
+  colorScheme: string
+  background: string
+  player: string | null
+  play: string | null
+  settings: string | null
+  message: string | null
+  startHidden: boolean
+  paused: boolean
+  currentTime: number
+  playbackRate: number
+  sameVideo: boolean
+}
 type Media = {
   readyState: number
   error: number | null
@@ -871,6 +1266,7 @@ declare module 'vitest/browser' {
       scenario: VideoScenario,
       width: number,
       device?: 'default' | 'landscape-phone',
+      locale?: 'en-US' | 'ja-JP',
     ) => Promise<{
       initial: Status
       final?: Status
@@ -880,8 +1276,38 @@ declare module 'vitest/browser' {
       settingsOpen?: boolean
       settingsClosed?: boolean
       speedOptions?: number[]
+      fullscreenSettings?: {
+        open: boolean
+        insidePlayer: boolean
+        onScreen: boolean
+        playbackRate: number
+        fullscreen: string | null
+      } | null
+      notices?: Record<
+        | 'buffering'
+        | 'afterBuffering'
+        | 'playRefused'
+        | 'fullscreenUnavailable'
+        | 'fullscreenElement',
+        string | null
+      >
+      preferences?: Record<
+        | 'initial'
+        | 'late'
+        | 'loaded'
+        | 'seekedFirst'
+        | 'refused'
+        | 'changed'
+        | 'ignored'
+        | 'replaced',
+        PreferencesState
+      >
       download?: Saved & { fetchedOriginal: boolean; urlUnchanged: boolean }
-      playsFromLocalCopy?: { switched: boolean; state?: string }
+      playsFromLocalCopy?: {
+        switched: boolean
+        state?: string
+        restored: { currentTime: number; playbackRate: number; paused: boolean }
+      }
       afterBackForward?: Saved
       fallbackDownload?: Saved & { urlUnchanged: boolean }
       playback?: {

@@ -276,6 +276,8 @@ export const COPY_GLOSSARY_ALLOW = {
     'ja.slack.kind.workspace_app': ['アプリ'],
     // The reader's own PDF app, not the service.
     'ja.pdfViewer.password': ['アプリ'],
+    // The reader's own video app, not the service.
+    'ja.videoViewer.unsupported': ['アプリ'],
   },
 }
 

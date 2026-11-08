@@ -6,7 +6,7 @@ import { signSandboxUrl } from '../lib/sandbox-token'
 import {
   viewerPreferencesMessage,
   type ViewerPreferences,
-} from '../viewers/pdf/preferences'
+} from '../viewers/shared/preferences'
 import { PDF_ORIGINAL_PATH, PDFJS_ASSET_PREFIX } from '../viewers/pdf/paths'
 
 const webRoot = new URL('../..', import.meta.url).pathname
@@ -1002,8 +1002,9 @@ async function pageFailureFlow(frame: Frame) {
 // A stand-in for the app page: it frames the viewer with the app's sandbox
 // permissions and sends the app's display preferences in the app's message
 // whenever a viewer document loads, and when they change.
-const PARENT_PATH = '/__pdf_test_parent'
-function parentDocument(entry: string, message: object | null) {
+// The video viewer's browser fixture frames its player the same way.
+export const PARENT_PATH = '/__pdf_test_parent'
+export function parentDocument(entry: string, message: object | null) {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style></head>
 <body><script>
@@ -1027,7 +1028,7 @@ mount(${JSON.stringify(entry)}, 'viewer-1')
 </script></body></html>`
 }
 
-type ParentWindow = Window & {
+export type ParentWindow = Window & {
   sendPreferences(message: object): void
   postToViewer(data: unknown): void
   replaceViewer(src: string, name: string): void

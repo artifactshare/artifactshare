@@ -82,7 +82,14 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     expect(speedOptions).toEqual([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2])
     expect(steps!.slowest!.playbackRate).toBe(0.5)
     expect(steps!.fastest!.playbackRate).toBe(2)
+    // Escape closed the settings and returned to their button.
     expect(settingsClosed).toBe(true)
+    // At the end, the large button offers a replay again.
+    expect(steps!.ended).toMatchObject({
+      paused: true,
+      startHidden: false,
+      playLabel: 'Play again',
+    })
   })
 
   test('answers shortcuts only in the player and leaves native keys alone', async () => {
@@ -105,10 +112,8 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   })
 
   test('goes full screen with its controls and comes back', async () => {
-    const { steps } = await server.commands.videoViewerScenario(
-      'controls',
-      width,
-    )
+    const { steps, fullscreenSettings } =
+      await server.commands.videoViewerScenario('controls', width)
 
     const fullscreen = steps!.fullscreen!
     if (fullscreen.fullscreenEnabled) {
@@ -117,6 +122,14 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       expect(fullscreen.controlsBox.bottom).toBeLessThanOrEqual(
         fullscreen.viewport.height + 1,
       )
+      // The playback settings open over the full-screen player and work.
+      expect(fullscreenSettings).toEqual({
+        open: true,
+        insidePlayer: true,
+        onScreen: true,
+        playbackRate: 1.25,
+        fullscreen: 'player',
+      })
       expect(steps!.afterFullscreen).toMatchObject({
         fullscreen: null,
         fullscreenLabel: 'Full screen',
@@ -126,6 +139,24 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     }
   })
 
+  test('says when it is buffering, cannot start or cannot go full screen', async () => {
+    const { notices } = await server.commands.videoViewerScenario(
+      'controls',
+      width,
+    )
+
+    expect(notices).toEqual({
+      buffering: 'Loading…',
+      afterBuffering: null,
+      playRefused:
+        'The video could not start. Try again, or download the video.',
+      // Only the player goes full screen; where it cannot, the reader is
+      // told so instead of the bare video taking over.
+      fullscreenUnavailable: 'Full screen isn’t available here.',
+      fullscreenElement: null,
+    })
+  })
+
   test('keeps the original download after the sandbox cookie expires', async () => {
     const result = await server.commands.videoViewerScenario('controls', width)
 
@@ -133,6 +164,12 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
     // in-memory copy instead of a failure state.
     expect(result.playsFromLocalCopy!.switched).toBe(true)
     expect(result.playsFromLocalCopy!.state).not.toBe('transport')
+    // It continues where the reader was, at the same speed, still playing.
+    expect(result.playsFromLocalCopy!.restored).toEqual({
+      currentTime: 30,
+      playbackRate: 1.5,
+      paused: false,
+    })
     expect(result.download).toEqual({
       name: savedName,
       sameBytes: true,
@@ -247,6 +284,127 @@ test('says when the original could not be kept and still downloads it from the l
     urlUnchanged: true,
   })
 })
+
+// The player speaks the app's language, set by the reader in the app, not the
+// browser's, and follows the app's theme.
+describe.each([
+  {
+    browser: 'ja-JP',
+    own: {
+      lang: 'ja',
+      player: '動画プレーヤー',
+      loading: '動画を読み込んでいます…',
+      pause: '一時停止',
+      fullscreenFailed: 'この環境では全画面表示を利用できません。',
+    },
+    app: {
+      lang: 'en',
+      player: 'Video player',
+      loading: 'Loading video…',
+      fullscreenFailed: 'Full screen isn’t available here.',
+    },
+  },
+  {
+    browser: 'en-US',
+    own: {
+      lang: 'en',
+      player: 'Video player',
+      loading: 'Loading video…',
+      pause: 'Pause',
+      fullscreenFailed: 'Full screen isn’t available here.',
+    },
+    app: {
+      lang: 'ja',
+      player: '動画プレーヤー',
+      loading: '動画を読み込んでいます…',
+      fullscreenFailed: 'この環境では全画面表示を利用できません。',
+    },
+  },
+] as const)(
+  'video player in the app language with a $browser browser',
+  ({ browser, own, app }) => {
+    test('follows late and changed app preferences without interrupting playback', async () => {
+      const result = await server.commands.videoViewerScenario(
+        'preferences',
+        1440,
+        'default',
+        browser,
+      )
+      const flow = result.preferences!
+      const light = 'rgb(255, 255, 255)'
+      const dark = 'rgb(17, 19, 21)'
+      const playing = {
+        paused: false,
+        currentTime: 30,
+        playbackRate: 1.5,
+        sameVideo: true,
+      }
+
+      // Before the app's preferences arrive: the browser's language.
+      expect(flow.initial).toMatchObject({
+        lang: own.lang,
+        theme: 'system',
+        player: own.player,
+        message: own.loading,
+      })
+      // Late: the app's language, including the notice already on screen.
+      expect(flow.late).toMatchObject({
+        lang: app.lang,
+        theme: 'light',
+        colorScheme: 'light',
+        background: light,
+        player: app.player,
+        message: app.loading,
+      })
+      // A seek before the first play retires the large play button, which
+      // stays hidden while paused.
+      expect(flow.loaded).toMatchObject({ startHidden: false, paused: true })
+      expect(flow.seekedFirst).toMatchObject({
+        startHidden: true,
+        paused: true,
+        currentTime: 30,
+      })
+      expect(flow.refused).toMatchObject({
+        lang: app.lang,
+        message: app.fullscreenFailed,
+      })
+      // Changed while playing: new labels and notice, same playback.
+      expect(flow.changed).toMatchObject({
+        lang: own.lang,
+        theme: 'dark',
+        colorScheme: 'dark',
+        background: dark,
+        play: own.pause,
+        message: own.fullscreenFailed,
+        ...playing,
+      })
+      // Malformed preferences, and preferences not from the parent, change
+      // nothing.
+      expect(flow.ignored).toMatchObject({
+        lang: own.lang,
+        theme: 'dark',
+        background: dark,
+        play: own.pause,
+        message: own.fullscreenFailed,
+        ...playing,
+      })
+      // A replacement frame is a fresh player with the current preferences.
+      expect(flow.replaced).toMatchObject({
+        lang: app.lang,
+        theme: 'dark',
+        background: dark,
+        player: app.player,
+        message: app.loading,
+        paused: true,
+        currentTime: 0,
+        sameVideo: false,
+      })
+      expect(result.offOrigin).toEqual([])
+      expect(result.violations).toEqual([])
+      // Two player documents load in turn.
+    }, 30000)
+  },
+)
 
 describe('video player terminal states', () => {
   test('says a file it cannot open may be damaged and offers the download', async () => {

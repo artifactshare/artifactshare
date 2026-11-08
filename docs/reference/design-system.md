@@ -64,13 +64,15 @@ apps/web/app/
 │   ├── layout/           # 一方向レイアウト primitive (Stack / Inline)
 │   └── app/              # Artifact Share 固有の部品
 ├── viewers/
-│   └── pdf/              # sandbox iframe 内で動く PDF ビューア (React + viewer.css)
+│   ├── shared/           # 両ビューア共通: アプリの言語・テーマを親フレームから受け取る
+│   ├── pdf/              # sandbox iframe 内で動く PDF ビューア (React + viewer.css)
+│   └── video/            # sandbox iframe 内で動く動画プレーヤー (React + viewer.css)
 └── i18n/
     ├── en.json
     └── ja.json
 ```
 
-sandbox iframe 内のビューア (`viewers/pdf/`) は、アプリと同じ `components/ui/` 部品と `styles/theme.css` / `styles/tokens.css` から作る。スタイルシート `viewer.css` は `app.css` を読み込まず、ビューアのソースと使う部品だけを走査して別にビルドする (`app.css` は `viewers/` を走査しない)。生成物 (`apps/web/workers/lib/pdf-viewer-*.generated.ts`) は `pnpm --filter @artifactshare/web generate:pdf-viewer` で作り直し、`check:pdf-viewer` が鮮度を確かめる。ビューアのスタイルシートも `check:design-tokens` の breakpoint・media query・未定義変数の検査対象で、ホストするライブラリ (pdf.js) の markup を整えるため class セレクタだけは許す。
+sandbox iframe 内のビューア (`viewers/pdf/`, `viewers/video/`) は、アプリと同じ `components/ui/` 部品と `styles/theme.css` / `styles/tokens.css` から作り、アプリの言語とテーマは `viewers/shared/` の共通コードで親フレームから受け取る。スタイルシート `viewer.css` は `app.css` を読み込まず、ビューアのソースと使う部品だけを走査して別にビルドする (`app.css` は `viewers/` を走査しない)。両ビューアは同じビルドスクリプト (`apps/web/scripts/build-viewers.mjs`) で作る。生成物 (`apps/web/workers/lib/{pdf,video}-viewer-*.generated.ts`) は `pnpm --filter @artifactshare/web generate:viewers` で作り直し、`check:viewers` (ルートの `typecheck` も) が鮮度を確かめる。ビューアの変更でアプリの CSS が変わらないことは `node apps/web/scripts/check-viewer-app-css.mjs --base <commit>` で、基準コミットとのビルド結果のバイト比較で確かめる。ビューアのスタイルシートも `check:design-tokens` の breakpoint・media query・未定義変数の検査対象で、ホストするライブラリ (pdf.js) の markup を整えるため class セレクタだけは許す。
 
 shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/radius を `@theme` のトークンで上書きする。公式からの独自差分は `catalog.ts` の `upstreamDiff` に記録する。
 

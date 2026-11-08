@@ -6,6 +6,8 @@ import {
   videoPlayerAsset,
   videoPlayerDocument,
 } from './video-viewer'
+import { VIDEO_VIEWER_SCRIPT } from './video-viewer-script.generated'
+import { VIDEO_VIEWER_STYLE } from './video-viewer-style.generated'
 
 describe('video download names', () => {
   test('keeps Unicode letters, drops unsafe characters and always ends in .mp4', () => {
@@ -32,25 +34,36 @@ describe('video player page', () => {
   test('never puts markup from the file name in the page and never autoplays', () => {
     const html = videoPlayerDocument('/a<b>&"c.mp4')
     expect(html).toContain('<title>a_b_c.mp4</title>')
+    expect(html).toContain('data-file-name="a_b_c.mp4"')
     expect(html).not.toContain('<b>')
     expect(html).toContain('preload="metadata"')
     expect(html).not.toMatch(/\bautoplay\b/)
   })
 
-  test('offers playback speeds from 0.5× to 2×', () => {
-    expect(VIDEO_PLAYBACK_RATES).toEqual([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2])
+  test('plays and downloads with native controls until the player script takes over', () => {
     const html = videoPlayerDocument('/demo.mp4')
-    for (const rate of VIDEO_PLAYBACK_RATES)
-      expect(html).toContain(`<option value="${rate}"`)
+    expect(html).toContain(
+      '<video id="video" controls playsinline preload="metadata" src="/__as_video/original.mp4">',
+    )
+    expect(html).toContain(
+      '<a href="/__as_video/original.mp4?download=1" download="demo.mp4">',
+    )
+    expect(html).toContain('<html lang="en" data-theme="system"')
   })
 
-  test('dispatches only the fixed script and style paths', () => {
-    expect(videoPlayerAsset('/__as_video/viewer.js')?.contentType).toBe(
-      'text/javascript; charset=utf-8',
-    )
-    expect(videoPlayerAsset('/__as_video/viewer.css')?.contentType).toBe(
-      'text/css; charset=utf-8',
-    )
+  test('offers playback speeds from 0.5× to 2×', () => {
+    expect(VIDEO_PLAYBACK_RATES).toEqual([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2])
+  })
+
+  test('dispatches only the fixed script and style paths to the built player', () => {
+    expect(videoPlayerAsset('/__as_video/viewer.js')).toEqual({
+      body: VIDEO_VIEWER_SCRIPT,
+      contentType: 'text/javascript; charset=utf-8',
+    })
+    expect(videoPlayerAsset('/__as_video/viewer.css')).toEqual({
+      body: VIDEO_VIEWER_STYLE,
+      contentType: 'text/css; charset=utf-8',
+    })
     expect(videoPlayerAsset('/__as_video/original.mp4')).toBeNull()
     expect(videoPlayerAsset('/__as_video/viewer.js.map')).toBeNull()
   })
