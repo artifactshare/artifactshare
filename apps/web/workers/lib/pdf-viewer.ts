@@ -495,6 +495,11 @@ select {
 @media (max-width: 960px) {
   .desktop-label { display: none; }
 }
+/* At the narrowest phones the row cannot hold every 44px control; the
+   download stays one tap away in the page list. */
+@media (max-width: 360px) {
+  .pdf-toolbar .download { display: none; }
+}
 @media (max-width: 700px) {
   /* The app header's collapse handle covers the frame's top 18px on the
      right, so the one row of controls starts below it. */
@@ -658,7 +663,7 @@ try {
 }
 
 if (viewerModule) {
-  const { EventBus, PDFLinkService, PDFViewer, PDFFindController, ScrollMode } = viewerModule
+  const { EventBus, FindState, PDFLinkService, PDFViewer, PDFFindController, ScrollMode } = viewerModule
   const eventBus = new EventBus()
   const linkService = new PDFLinkService({
     eventBus,
@@ -706,26 +711,35 @@ if (viewerModule) {
       else item.removeAttribute('aria-current')
     }
   }
-  // 'page-fit' fits the page being shown, so each page change refits it in
-  // one-page layout. pdf.js 'page-fit' ignores the viewer padding, so the page
+  // 'page-fit' fits the page being shown in one-page layout, so each page
+  // change refits it; in continuous layout one scale fits every page, so
+  // scrolling across pages of different sizes never changes the scale. pdf.js 'page-fit' ignores the viewer padding, so the page
   // is fitted to the container minus that padding and never makes the area
   // scroll. Width fits use one scale for all pages, chosen so the widest page
   // fits the width; automatic caps it at 100%. Fixed sizes are kept as set.
   function fit() {
     if (!ready) return
     if (size === 'page-fit') {
-      const view = viewer.getPageView(viewer.currentPageNumber - 1)
-      if (!view) return
       const padding = getComputedStyle(byId('viewer'))
       const availableWidth =
         container.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight) - 1
       const availableHeight =
         container.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom) - 1
-      const scale = Math.min(
-        (availableWidth * view.scale) / view.width,
-        (availableHeight * view.scale) / view.height,
-      )
-      if (scale > 0 && Math.abs(scale - viewer.currentScale) > 0.0001) viewer.currentScale = scale
+      const pageFit = (view) =>
+        Math.min((availableWidth * view.scale) / view.width, (availableHeight * view.scale) / view.height)
+      let scale = Infinity
+      if (layoutMode === 'page') {
+        const view = viewer.getPageView(viewer.currentPageNumber - 1)
+        if (!view) return
+        scale = pageFit(view)
+      } else {
+        for (let index = 0; index < viewer.pagesCount; index++) {
+          const view = viewer.getPageView(index)
+          if (view) scale = Math.min(scale, pageFit(view))
+        }
+      }
+      if (scale > 0 && scale !== Infinity && Math.abs(scale - viewer.currentScale) > 0.0001)
+        viewer.currentScale = scale
       return
     }
     if (size !== 'auto' && size !== 'page-width') {
@@ -781,7 +795,7 @@ if (viewerModule) {
   eventBus.on('pagechanging', () => {
     sync()
     showPageState()
-    if (size === 'page-fit') queueMicrotask(fit)
+    if (size === 'page-fit' && layoutMode === 'page') queueMicrotask(fit)
   })
   // Every page's own size is known only once all pages have loaded.
   eventBus.on('pagesloaded', () => {
@@ -908,6 +922,8 @@ if (viewerModule) {
       searchQuery.select()
       return
     }
+    // Closing ends the search, so reopening starts from an empty field.
+    searchQuery.value = ''
     searchResults.textContent = ''
     eventBus.dispatch('findbarclose', { source: searchBar })
     if (returnFocus) searchToggle.focus()
@@ -915,7 +931,11 @@ if (viewerModule) {
   searchToggle.addEventListener('click', () => toggleSearch(searchBar.hidden, true))
   byId('search-close').addEventListener('click', () => toggleSearch(false, true))
   byId('search-next').addEventListener('click', () => find('again', false))
-  searchQuery.addEventListener('input', () => find('', false))
+  // Text being composed (Japanese input) is searched once it is confirmed.
+  searchQuery.addEventListener('input', (event) => {
+    if (!event.isComposing) find('', false)
+  })
+  searchQuery.addEventListener('compositionend', () => find('', false))
   searchQuery.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
     event.preventDefault()
@@ -934,13 +954,12 @@ if (viewerModule) {
   eventBus.on('updatefindmatchescount', ({ matchesCount }) => showMatches(matchesCount))
   eventBus.on('updatefindcontrolstate', ({ state, matchesCount, rawQuery }) => {
     if (searchBar.hidden || rawQuery !== searchQuery.value) return
-    // 1: not found; 3: still searching.
-    if (state === 1) {
+    if (state === FindState.NOT_FOUND) {
       void hasSearchableText().then((found) => {
         if (!searchBar.hidden && rawQuery === searchQuery.value)
           searchResults.textContent = found ? text.noResults : text.noText
       })
-    } else if (state !== 3) showMatches(matchesCount)
+    } else if (state !== FindState.PENDING) showMatches(matchesCount)
   })
 
   // Page list. Thumbnails are drawn only while the list is open and the
@@ -983,6 +1002,9 @@ if (viewerModule) {
           await thumbnailTask.promise
           thumbnailsDone.add(n)
           item.dataset.rendered = 'true'
+          // Releases what the thumbnail needed; pdf.js keeps a page the
+          // viewer is still drawing.
+          page.cleanup()
         } catch (error) {
           // A cancelled thumbnail is drawn again later; one that failed, in
           // loading its page or in drawing it, stays blank and is not retried.
@@ -1091,7 +1113,7 @@ if (viewerModule) {
       (event.ctrlKey || event.metaKey) &&
       !event.altKey &&
       !event.shiftKey &&
-      (event.code === 'KeyF' || event.key.toLowerCase() === 'f') &&
+      (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() === 'f' : event.code === 'KeyF') &&
       !dialog.open
     ) {
       event.preventDefault()

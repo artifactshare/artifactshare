@@ -31,7 +31,8 @@ function expectOneToolbarRow(layout: Layout, width: number) {
     'next',
     'fit',
     'search-toggle',
-    'download',
+    // The narrowest phones leave the download to the page list.
+    ...(width > 360 ? ['download'] : []),
   ])
   const middles = controls.map(({ top, height }) => top + height / 2)
   expect(Math.max(...middles) - Math.min(...middles)).toBeLessThanOrEqual(2)
@@ -60,6 +61,12 @@ function expectOneToolbarRow(layout: Layout, width: number) {
     ).toBeLessThanOrEqual(4)
   }
 }
+
+test('keeps the controls in one row on a 320px phone', async () => {
+  const { initial } = await server.commands.pdfViewerScenario('pages', 320)
+
+  expectOneToolbarRow(initial!, 320)
+})
 
 describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
   test('opens landscape slides one page at a time fitted to the visible area', async () => {
@@ -238,9 +245,12 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       highlights: 0,
       results: '',
     })
+    // Closing ends the search: it reopens with an empty field.
     expect(search.reopened).toMatchObject({
       open: true,
       focusedId: 'search-query',
+      query: '',
+      results: '',
     })
     expect(search.closedByButton).toMatchObject({
       open: false,

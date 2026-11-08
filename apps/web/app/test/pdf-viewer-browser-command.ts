@@ -322,7 +322,11 @@ function layout(frame: Frame) {
         'fit',
         'search-toggle',
         'download',
-      ].map(box),
+      ]
+        .filter(
+          (id) => document.getElementById(id)!.getClientRects().length > 0,
+        )
+        .map(box),
       pageCountRight: document
         .getElementById('page-count')!
         .getBoundingClientRect().right,
@@ -582,6 +586,7 @@ function searchState(frame: Frame) {
       .getAttribute('aria-expanded'),
     focusedId: document.activeElement?.id ?? null,
     results: document.getElementById('search-results')!.textContent,
+    query: (document.getElementById('search-query') as HTMLInputElement).value,
     highlights: document.querySelectorAll('.textLayer .highlight').length,
     page: Number(
       (document.getElementById('page-number') as HTMLInputElement).value,
