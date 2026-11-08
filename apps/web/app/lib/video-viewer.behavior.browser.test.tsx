@@ -203,7 +203,12 @@ test('plays and seeks a real clip where the engine decodes it', async (context) 
     )
   expect(seeked!.paused).toBe(true)
   expect(seeked!.currentTime).toBeCloseTo(seeked!.duration / 2, 0)
-  expect(seeked!.total).toBe('0:02')
+  // The total follows the duration the engine reports for the recorded clip,
+  // which differs between engines.
+  const whole = Math.floor(seeked!.duration)
+  expect(seeked!.total).toBe(
+    `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`,
+  )
   expect(result.final!.state).toBe('ready')
   // The engine streamed the original with byte ranges.
   expect(result.workerStatuses).toContain('/__as_video/original.mp4: 206')
