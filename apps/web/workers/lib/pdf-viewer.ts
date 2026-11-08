@@ -518,6 +518,7 @@ select {
   .pdf-toolbar button, .pdf-toolbar .download { width: 44px; padding: 0; }
   .page-label { gap: 3px; }
   .page-label input { width: 44px; height: 44px; font-size: 16px; }
+  .size-options select { font-size: 16px; }
   .display-options fieldset label { min-height: 44px; }
   .pdfViewer { padding: 12px 4px; }
   .pdfViewer .page { margin-bottom: 12px; }
