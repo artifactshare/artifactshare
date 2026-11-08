@@ -42,6 +42,11 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       expect(control.top, control.id).toBeGreaterThanOrEqual(
         loaded.picture.bottom - 1,
       )
+      // The app's version chip covers the frame's bottom-right 64x46px.
+      const underChip =
+        control.right > loaded.viewport.width - 64 &&
+        control.bottom > loaded.viewport.height - 46
+      expect(underChip, control.id).toBe(false)
     }
     expect(result.offOrigin).toEqual([])
     expect(result.violations).toEqual([])

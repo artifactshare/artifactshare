@@ -287,6 +287,9 @@ input[type='range']:disabled { cursor: default; }
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  /* The app's version chip overlaps the frame's bottom-right corner
+     (51x28px, 12px from the right edge), so the buttons stay clear of it. */
+  padding-right: 60px;
 }
 .controls-start, .controls-end, .volume-control {
   display: flex;
