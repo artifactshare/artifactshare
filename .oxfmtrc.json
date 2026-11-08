@@ -29,6 +29,8 @@
     "apps/web/worker-configuration.d.ts",
     "packages/viewer-kit/src/reporter.generated.ts",
     "apps/web/workers/lib/pdf-viewer-script.generated.ts",
-    "apps/web/workers/lib/pdf-viewer-style.generated.ts"
+    "apps/web/workers/lib/pdf-viewer-style.generated.ts",
+    "apps/web/workers/lib/video-viewer-script.generated.ts",
+    "apps/web/workers/lib/video-viewer-style.generated.ts"
   ]
 }

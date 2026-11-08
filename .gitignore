@@ -34,3 +34,6 @@ backup-*.sql
 # Compatibility for pre-migration captures; new captures are written outside checkout.
 /screen-captures/
 /.tmp-task-walkthrough/
+
+# Temporary base-commit copy made by apps/web/scripts/check-viewer-app-css.mjs
+apps/web/.app-css-base-*/

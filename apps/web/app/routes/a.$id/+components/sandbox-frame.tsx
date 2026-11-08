@@ -67,7 +67,7 @@ import {
   sandboxMessageFromFrame,
 } from '~/lib/sandbox-frame-message'
 import { DEFAULT_APP_THEME, isAppTheme } from '~/lib/app-theme'
-import { viewerPreferencesMessage } from '~/viewers/pdf/preferences'
+import { viewerPreferencesMessage } from '~/viewers/shared/preferences'
 import { renderMermaidRequest } from './mermaid-render-request'
 import {
   classifyViewerLinkNavigation,
@@ -852,10 +852,12 @@ function useSandboxFrameController({
     frameUrl,
   ])
 
-  // The PDF viewer shows its controls in the app's language and theme. These
-  // are presentation only and separate from the ready handshake's token.
+  // The common viewers (PDF and video) show their controls in the app's
+  // language and theme. These are presentation only and separate from the
+  // ready handshake's token.
+  const showsViewerPreferences = renderType === 'pdf' || renderType === 'video'
   const sendViewerPreferences = useCallback(() => {
-    if (renderType !== 'pdf') return
+    if (!showsViewerPreferences) return
     const theme = document.documentElement.dataset.theme
     frameRef.current?.contentWindow?.postMessage(
       viewerPreferencesMessage({
@@ -864,7 +866,7 @@ function useSandboxFrameController({
       }),
       trustedMessageOrigin,
     )
-  }, [locale, renderType, trustedMessageOrigin])
+  }, [locale, showsViewerPreferences, trustedMessageOrigin])
 
   const focusFrame = useCallback(() => {
     requestAnimationFrame(() => {
@@ -1015,7 +1017,7 @@ function useSandboxFrameController({
   // A language change re-runs this; a theme change is applied to the root
   // element first (see the theme menus), so it is observed there.
   useEffect(() => {
-    if (renderType !== 'pdf' || loadState !== 'ready') return
+    if (!showsViewerPreferences || loadState !== 'ready') return
     sendViewerPreferences()
     const observer = new MutationObserver(sendViewerPreferences)
     observer.observe(document.documentElement, {
@@ -1023,7 +1025,7 @@ function useSandboxFrameController({
       attributeFilter: ['data-theme'],
     })
     return () => observer.disconnect()
-  }, [loadState, renderType, sendViewerPreferences])
+  }, [loadState, showsViewerPreferences, sendViewerPreferences])
 
   useEffect(() => {
     if (

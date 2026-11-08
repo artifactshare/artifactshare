@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { PdfViewerApp } from './pdf-viewer-app'
-import { createPreferencesStore } from './preferences-store'
+import { createPreferencesStore } from '../shared/preferences-store'
 import { PdfViewerRuntime } from './runtime'
 import './viewer.css'
 

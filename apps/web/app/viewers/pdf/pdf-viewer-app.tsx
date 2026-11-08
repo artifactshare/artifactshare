@@ -39,7 +39,8 @@ import {
   SheetTitle,
 } from '~/components/ui/sheet'
 import { t, type TKey } from '~/lib/i18n'
-import type { PreferencesStore } from './preferences-store'
+import type { PreferencesStore } from '../shared/preferences-store'
+import { useViewerPreferences } from '../shared/use-viewer-preferences'
 import {
   offersDownload,
   PAGE_SIZES,
@@ -178,10 +179,9 @@ export function PdfViewerApp({
   fileName: string
   downloadHref: string
 }) {
-  const { locale, theme } = useSyncExternalStore(
-    preferences.subscribe,
-    preferences.getSnapshot,
-  )
+  // The viewer UI follows the app's language and theme; the PDF content
+  // keeps its own language (see the page area below).
+  const { locale } = useViewerPreferences(preferences)
   const viewer = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const text: Text = (key, vars) => t(locale, key, vars)
   const [surface, setSurface] = useState<Surface>(null)
@@ -192,13 +192,6 @@ export function PdfViewerApp({
   const searchToggleRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { ready, pageCount } = viewer
-
-  // The viewer UI follows the app's language and theme; the PDF content
-  // keeps its own language (see the page area below).
-  useEffect(() => {
-    document.documentElement.lang = locale
-    document.documentElement.dataset.theme = theme
-  }, [locale, theme])
 
   useEffect(() => {
     const container = containerRef.current

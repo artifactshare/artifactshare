@@ -159,88 +159,91 @@ describe('SandboxFrame recovery', () => {
     postMessage.mockRestore()
   })
 
-  test('sends a PDF frame the app language and theme once it answers and whenever they change', async () => {
-    vi.useFakeTimers()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => new Promise<Response>(() => {})),
-    )
-    i18n.locale = 'ja'
-    document.documentElement.dataset.theme = 'dark'
-    try {
-      const host = await renderFrame(undefined, false, false, undefined, {
-        renderType: 'pdf',
-      })
-      const frame = host.querySelector('iframe')!
-      await act(async () => {
-        await new Promise<void>((resolve) => {
-          const onLoad = () => {
-            if (frame.contentDocument?.title !== 'Preferences fixture') return
-            frame.removeEventListener('load', onLoad)
-            resolve()
-          }
-          frame.addEventListener('load', onLoad)
-          frame.srcdoc = '<!doctype html><title>Preferences fixture</title>'
+  test.each(['pdf', 'video'])(
+    'sends a %s frame the app language and theme once it answers and whenever they change',
+    async (renderType) => {
+      vi.useFakeTimers()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Promise<Response>(() => {})),
+      )
+      i18n.locale = 'ja'
+      document.documentElement.dataset.theme = 'dark'
+      try {
+        const host = await renderFrame(undefined, false, false, undefined, {
+          renderType,
         })
-      })
-      const postMessage = vi
-        .spyOn(frame.contentWindow!, 'postMessage')
-        .mockImplementation(() => {})
-      const sent = () =>
-        postMessage.mock.calls
-          .filter(([message]) => message.kind === 'viewer-preferences')
-          .map(([message, targetOrigin]) => ({ message, targetOrigin }))
+        const frame = host.querySelector('iframe')!
+        await act(async () => {
+          await new Promise<void>((resolve) => {
+            const onLoad = () => {
+              if (frame.contentDocument?.title !== 'Preferences fixture') return
+              frame.removeEventListener('load', onLoad)
+              resolve()
+            }
+            frame.addEventListener('load', onLoad)
+            frame.srcdoc = '<!doctype html><title>Preferences fixture</title>'
+          })
+        })
+        const postMessage = vi
+          .spyOn(frame.contentWindow!, 'postMessage')
+          .mockImplementation(() => {})
+        const sent = () =>
+          postMessage.mock.calls
+            .filter(([message]) => message.kind === 'viewer-preferences')
+            .map(([message, targetOrigin]) => ({ message, targetOrigin }))
 
-      await act(async () => frame.dispatchEvent(new Event('load')))
-      expect(sent()).toEqual([])
-      const challenge = postMessage.mock.calls
-        .filter(([message]) => message.kind === 'ready-check')
-        .at(-1)![0].challenge
-      await act(async () => {
-        window.dispatchEvent(
-          new MessageEvent('message', {
-            origin: window.location.origin,
-            source: frame.contentWindow,
-            data: {
-              source: 'artifactshare',
-              kind: 'ready',
-              challenge,
-              token: 'a'.repeat(64),
-            },
-          }),
-        )
-      })
-      expect(sent().at(-1)).toEqual({
-        message: {
-          source: 'artifactshare-parent',
-          kind: 'viewer-preferences',
+        await act(async () => frame.dispatchEvent(new Event('load')))
+        expect(sent()).toEqual([])
+        const challenge = postMessage.mock.calls
+          .filter(([message]) => message.kind === 'ready-check')
+          .at(-1)![0].challenge
+        await act(async () => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              origin: window.location.origin,
+              source: frame.contentWindow,
+              data: {
+                source: 'artifactshare',
+                kind: 'ready',
+                challenge,
+                token: 'a'.repeat(64),
+              },
+            }),
+          )
+        })
+        expect(sent().at(-1)).toEqual({
+          message: {
+            source: 'artifactshare-parent',
+            kind: 'viewer-preferences',
+            locale: 'ja',
+            theme: 'dark',
+          },
+          targetOrigin: window.location.origin,
+        })
+
+        await act(async () => {
+          document.documentElement.dataset.theme = 'light'
+        })
+        expect(sent().at(-1)?.message).toMatchObject({
           locale: 'ja',
-          theme: 'dark',
-        },
-        targetOrigin: window.location.origin,
-      })
-
-      await act(async () => {
-        document.documentElement.dataset.theme = 'light'
-      })
-      expect(sent().at(-1)?.message).toMatchObject({
-        locale: 'ja',
-        theme: 'light',
-      })
-      i18n.locale = 'en'
-      await renderFrame(undefined, false, false, undefined, {
-        host,
-        renderType: 'pdf',
-      })
-      expect(sent().at(-1)?.message).toMatchObject({
-        locale: 'en',
-        theme: 'light',
-      })
-      postMessage.mockRestore()
-    } finally {
-      delete document.documentElement.dataset.theme
-    }
-  })
+          theme: 'light',
+        })
+        i18n.locale = 'en'
+        await renderFrame(undefined, false, false, undefined, {
+          host,
+          renderType,
+        })
+        expect(sent().at(-1)?.message).toMatchObject({
+          locale: 'en',
+          theme: 'light',
+        })
+        postMessage.mockRestore()
+      } finally {
+        delete document.documentElement.dataset.theme
+      }
+    },
+  )
 
   test('remounts once, then stops automatic recovery at the manual retry state', async () => {
     vi.useFakeTimers()

@@ -43,6 +43,8 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 import { staticSiteAssetResponse } from './lib/artifact-response'
 import { PDF_VIEWER_SCRIPT } from './lib/pdf-viewer-script.generated'
 import { PDF_VIEWER_STYLE } from './lib/pdf-viewer-style.generated'
+import { VIDEO_VIEWER_SCRIPT } from './lib/video-viewer-script.generated'
+import { VIDEO_VIEWER_STYLE } from './lib/video-viewer-style.generated'
 import { signSandboxToken as signDeliveryToken } from '../app/lib/sandbox-token'
 const signSandboxToken = (
   payload: Parameters<typeof signDeliveryToken>[0],
@@ -5518,6 +5520,9 @@ describe('Video virtual bundle', () => {
     expect(html).toContain(VIOLATION_REPORTER_TAG)
     expect(html).toContain('<script type="module" src="/__as_video/viewer.js">')
     expect(html).toContain('src="/__as_video/original.mp4"')
+    expect(html).toContain(
+      'data-download-href="/__as_video/original.mp4?download=1"',
+    )
     expect(html).not.toMatch(/\bautoplay\b/)
     // The stored name keeps its Unicode letters and never reaches markup raw.
     expect(html).toContain('download="製品デモ _v2.mp4"')
@@ -5525,7 +5530,7 @@ describe('Video virtual bundle', () => {
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
-  test('serves the shared player script and style without external URLs', async () => {
+  test('serves the shared player script and style that load nothing from another origin', async () => {
     const { cookie } = await openPlayer()
     const get = (path: string) =>
       handleArtifactSandboxRequest(
@@ -5543,8 +5548,20 @@ describe('Video virtual bundle', () => {
     const style = await get('/__as_video/viewer.css')
     expect(style.status).toBe(200)
     expect(style.headers.get('Content-Type')).toBe('text/css; charset=utf-8')
-    for (const body of [await script.text(), await style.text()])
-      expect(body).not.toMatch(/https?:\/\//)
+    const scriptBody = await script.text()
+    const styleBody = await style.text()
+    expect(scriptBody).toBe(VIDEO_VIEWER_SCRIPT)
+    expect(styleBody).toBe(VIDEO_VIEWER_STYLE)
+    // React's markup namespaces and error-page links are inert strings; the
+    // script imports, fetches and links nothing from another origin (the
+    // browser tests also watch its actual requests).
+    expect(scriptBody).not.toMatch(/\bimport\s*\(\s*["'`]https?:/)
+    expect(scriptBody).not.toMatch(/\bfetch\s*\(\s*["'`]https?:/)
+    expect(scriptBody).not.toMatch(
+      /["'`]https?:\/\/(?!www\.w3\.org\/|react\.dev\/errors\/["'`])/,
+    )
+    // The stylesheet loads no fonts, images or other stylesheets.
+    expect(styleBody).not.toMatch(/@import|url\((?!\s*["']?data:)/i)
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -5722,7 +5739,7 @@ describe('Video virtual bundle', () => {
     const { response: player, cookie } = await openPlayer()
     expect(player.status).toBe(200)
     const html = await player.text()
-    const downloadPath = html.match(/<a id="download"[^>]* href="([^"]+)"/)?.[1]
+    const downloadPath = html.match(/ data-download-href="([^"]+)"/)?.[1]
     expect(downloadPath).toBe('/__as_video/original.mp4?download=1')
 
     const download = await handleArtifactSandboxRequest(

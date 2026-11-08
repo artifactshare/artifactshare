@@ -1,0 +1,62 @@
+/*
+ * The video player's stylesheet, built from the app's own theme. It scans
+ * only the player sources, the shared viewer code and the UI components the
+ * player uses; app.css and its page styles are not part of it.
+ */
+@import 'tailwindcss' source(none);
+@source './';
+@source '../shared/';
+@source '../../components/ui/button.tsx';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '../../styles/tokens.css';
+@import '../../styles/theme.css';
+
+/* Phones in any orientation (touch without hover) use the device volume. */
+@custom-variant touch (@media (hover: none) and (pointer: coarse));
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  html:lang(ja) {
+    line-break: strict;
+    word-break: auto-phrase;
+  }
+  html,
+  body {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground m-0 overflow-hidden;
+  }
+  button,
+  a {
+    touch-action: manipulation;
+  }
+  /* The page's own <video>, shown with native controls until the player
+     script renders or if it never runs, fits the frame. */
+  #video-viewer-root > video {
+    @apply block size-full bg-black object-contain;
+  }
+}
+
+/* The app's light or dark setting decides native controls (the ranges and
+   the speed list). */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}

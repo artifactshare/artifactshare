@@ -26,7 +26,7 @@ export interface PdfViewerAsset {
 }
 
 // The viewer's own script and style, built from apps/web/app/viewers/pdf by
-// apps/web/scripts/build-pdf-viewer.mjs. pdf.js files under
+// apps/web/scripts/build-viewers.mjs. pdf.js files under
 // PDFJS_ASSET_PREFIX come from the pinned pdfjs-dist package through
 // pdfjsAsset().
 export function pdfViewerAsset(path: string): PdfViewerAsset | null {
