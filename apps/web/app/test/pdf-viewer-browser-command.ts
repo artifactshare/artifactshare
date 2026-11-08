@@ -1066,6 +1066,7 @@ function preferencesState(frame: Frame) {
       theme: document.documentElement.dataset.theme ?? null,
       toolbar: toolbar.getAttribute('aria-label'),
       background: getComputedStyle(toolbar).backgroundColor,
+      colorScheme: getComputedStyle(document.documentElement).colorScheme,
       contentLang: document
         .getElementById('viewer-container')!
         .getAttribute('lang'),

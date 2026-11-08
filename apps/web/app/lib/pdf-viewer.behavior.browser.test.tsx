@@ -598,6 +598,8 @@ describe('PDF viewer in the app language', () => {
     expect(flow.late).toMatchObject({
       lang: 'ja',
       theme: 'light',
+      // Native controls follow the app's light theme over the dark browser.
+      colorScheme: 'light',
       toolbar: 'PDFの操作',
       background: light,
       contentLang: '',

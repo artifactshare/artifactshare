@@ -33,6 +33,17 @@
 }
 
 /*
+ * pdf_viewer.css sets an unlayered `color-scheme: light dark`; the app's
+ * light or dark setting decides native controls and scrollbars instead.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/*
  * pdf.js's page area. pdf_viewer.css is not in a layer, so these rules are
  * not either, and follow it.
  */
