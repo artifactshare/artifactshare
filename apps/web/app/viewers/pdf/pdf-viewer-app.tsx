@@ -454,7 +454,7 @@ function Toolbar({
               commitPage()
               event.currentTarget.blur()
             }}
-            className="text-foreground hover:bg-accent max-stack:size-11 max-stack:text-base h-9 w-10 rounded-md border-0 px-0.5 text-center text-sm shadow-none disabled:bg-transparent"
+            className="text-foreground hover:bg-accent max-stack:size-11 max-stack:text-base dark:hover:bg-accent h-9 w-10 rounded-md border-0 px-0.5 text-center text-sm shadow-none disabled:bg-transparent dark:bg-transparent"
           />
           <span aria-hidden="true">/</span>
           <output id="page-count">{pageCount || '–'}</output>

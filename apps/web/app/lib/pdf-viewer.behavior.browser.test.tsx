@@ -559,12 +559,14 @@ describe('PDF viewer in the app language', () => {
     expect(result.searchOnce!.results).toBe('This PDF has no searchable text')
   })
 
-  test('opens unframed in the app default language whatever the browser language', async () => {
-    const result = await server.commands.pdfViewerScenario('image-only', 1440, {
+  test('opens unframed in the browser language until the app says otherwise', async () => {
+    const japanese = await server.commands.pdfViewerScenario('image-only', 1440, {
       locale: 'ja-JP',
     })
+    const english = await server.commands.pdfViewerScenario('image-only', 1440)
 
-    expect(result.labels).toMatchObject({ lang: 'en', toolbar: 'PDF controls' })
+    expect(japanese.labels).toMatchObject({ lang: 'ja', toolbar: 'PDFの操作' })
+    expect(english.labels).toMatchObject({ lang: 'en', toolbar: 'PDF controls' })
   })
 
   test('follows late and changed app preferences without reloading the PDF', async () => {
@@ -578,10 +580,10 @@ describe('PDF viewer in the app language', () => {
     const dark = 'rgb(17, 19, 21)'
     const reading = { page: 3, layout: 'page', sameDocument: true }
 
-    // Before the app's preferences arrive: the app defaults, with the
-    // browser's dark scheme for the system theme.
+    // Before the app's preferences arrive: the browser's language and its
+    // dark scheme for the system theme.
     expect(flow.initial).toMatchObject({
-      lang: 'en',
+      lang: 'ja',
       theme: 'system',
       background: dark,
       ...reading,
