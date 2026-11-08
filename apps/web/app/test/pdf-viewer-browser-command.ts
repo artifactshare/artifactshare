@@ -1,8 +1,7 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { readFile } from 'node:fs/promises'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
-import type { Frame, Page } from 'playwright'
+import type { Download, Frame, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
 import {
   PDF_ORIGINAL_PATH,
@@ -22,6 +21,11 @@ export type PdfScenario =
   | 'mixed-slides'
   | 'mixed-report'
   | 'embedded-font'
+  | 'pages'
+  | 'search'
+  | 'image-only'
+  | 'late-text'
+  | 'settings'
 
 type Size = readonly [number, number]
 const PAGE_SIZES = {
@@ -80,10 +84,13 @@ function embeddedBoxFont(firstGlyphObject: number) {
 }
 
 // Synthetic multi-page PDF; every page carries one text line in standard
-// Helvetica, or in the embedded box font when `embedFont` is set.
+// Helvetica, or in the embedded box font when `embedFont` is set. A null
+// page has no text at all, only a drawn box, like a scanned page. A page
+// with `boxes` also draws that many tiny boxes, so it takes long to draw.
+type SyntheticPage = string | null | { text: string; boxes: number }
 function syntheticPdf(
   sizes: readonly Size[],
-  pages: string[],
+  pages: SyntheticPage[],
   trailerExtra = '',
   embedFont = false,
 ): Uint8Array<ArrayBuffer> {
@@ -93,9 +100,17 @@ function syntheticPdf(
     `<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`,
     embedded?.font ?? STANDARD_FONT,
   ]
-  pages.forEach((text, i) => {
+  pages.forEach((page, i) => {
     const size = sizes[i] ?? sizes[0]
-    const stream = `BT /F1 28 Tf 48 ${size[1] - 96} Td (${text}) Tj ET`
+    const text = typeof page === 'object' && page ? page.text : page
+    let boxes = ''
+    if (typeof page === 'object' && page)
+      for (let b = 0; b < page.boxes; b++)
+        boxes += `0.${b % 10} g ${b % 600} ${Math.floor(b / 600) % 300} 1 1 re f\n`
+    const stream =
+      text === null
+        ? `0.4 g 48 48 ${size[0] - 96} ${size[1] - 96} re f`
+        : `${boxes}BT /F1 28 Tf 48 ${size[1] - 96} Td (${text}) Tj ET`
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${size[0]} ${size[1]}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + i * 2} 0 R >>`,
       `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
@@ -120,7 +135,32 @@ function syntheticPdf(
 // does not match /U, so pdf.js asks for a password.
 const ENCRYPTION = ` /Encrypt << /Filter /Standard /V 1 /R 2 /O <${'4f'.repeat(32)}> /U <${'55'.repeat(32)}> /P -4 >> /ID [<${'01'.repeat(16)}> <${'01'.repeat(16)}>]`
 
+// The search fixture has the term on pages 2, 4 and 6.
+const SEARCH_TERM = 'lantern'
+// In the page list fixture, the neighbours of page 40 take long to draw.
+const SLOW_PAGES = [39, 41]
+const FEATURE_PAGES: Partial<Record<PdfScenario, SyntheticPage[]>> = {
+  pages: Array.from({ length: 100 }, (_, i) =>
+    SLOW_PAGES.includes(i + 1)
+      ? { text: `Deck page ${i + 1}`, boxes: 120000 }
+      : `Deck page ${i + 1}`,
+  ),
+  search: [
+    'Harbor overview',
+    'Quarterly lantern figures',
+    'Nothing to see',
+    'Lantern route map',
+    'Summary notes',
+    'Closing lantern',
+  ],
+  'image-only': [null, null, null],
+  // The first page has no text; a later page does.
+  'late-text': [null, 'Later lantern page', 'Another page'],
+}
+
 function scenarioPdf(scenario: PdfScenario): Uint8Array<ArrayBuffer> {
+  const featurePages = FEATURE_PAGES[scenario]
+  if (featurePages) return syntheticPdf([PAGE_SIZES.landscape], featurePages)
   if (scenario === 'corrupt')
     return new TextEncoder().encode('%PDF-1.7\nsynthetic damaged bytes\n')
   if (scenario === 'embedded-font')
@@ -241,6 +281,9 @@ function layout(frame: Frame) {
     const box = (id: string) => {
       const rect = document.getElementById(id)!.getBoundingClientRect()
       return {
+        id,
+        left: rect.left,
+        right: rect.right,
         top: Math.round(rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
@@ -270,7 +313,20 @@ function layout(frame: Frame) {
       toolbarHeight: Math.round(
         document.querySelector('.pdf-toolbar')!.getBoundingClientRect().height,
       ),
-      controls: ['previous', 'page-number', 'next', 'download'].map(box),
+      // Every control of the row, in owner order.
+      controls: [
+        'pages',
+        'previous',
+        'page-number',
+        'next',
+        'fit',
+        'search-toggle',
+        'download',
+      ].map(box),
+      pageCountRight: document
+        .getElementById('page-count')!
+        .getBoundingClientRect().right,
+      documentScrollWidth: document.documentElement.scrollWidth,
       previousDisabled: (
         document.getElementById('previous') as HTMLButtonElement
       ).disabled,
@@ -300,13 +356,509 @@ async function selectFirstLine(page: Page, frame: Frame): Promise<string> {
   return frame.evaluate(() => String(getSelection()))
 }
 
+// Lets the viewer apply a change and lay out the result.
+function settle(frame: Frame) {
+  return frame.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setTimeout(resolve, 150)),
+        ),
+      ),
+  )
+}
+
+async function goToPage(frame: Frame, page: number) {
+  await frame.fill('#page-number', String(page))
+  await frame.press('#page-number', 'Enter')
+  return waitForPage(frame, page)
+}
+
+function focusedId(frame: Frame) {
+  return frame.evaluate(() => document.activeElement?.id ?? null)
+}
+
+async function savedBytes(
+  page: Page,
+  frame: Frame,
+  selector: string,
+  original: Uint8Array<ArrayBuffer>,
+) {
+  const [saved] = await Promise.all([
+    page.waitForEvent('download'),
+    frame.click(selector),
+  ])
+  return Buffer.compare(await downloadBytes(saved), Buffer.from(original)) === 0
+}
+
+// Read through a stream, which also works with a remote browser.
+async function downloadBytes(saved: Download): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  for await (const chunk of await saved.createReadStream())
+    chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks)
+}
+
+// The page list of a 100-page PDF: what is drawn before and after opening,
+// while the viewer page is hidden, and every way of leaving the list.
+async function pageListFlow(
+  page: Page,
+  frame: Frame,
+  width: number,
+  clearCookies: () => Promise<void>,
+  originalFetches: () => number,
+  original: Uint8Array<ArrayBuffer>,
+) {
+  const thumbnails = () =>
+    frame.evaluate(() => ({
+      items: document.querySelectorAll('#page-list button').length,
+      drawn: [
+        ...document.querySelectorAll<HTMLElement>(
+          '#page-list button[data-rendered]',
+        ),
+      ].map((item) => Number(item.dataset.page)),
+    }))
+  const waitDrawn = (n: number) =>
+    frame
+      .waitForFunction(
+        (expected) =>
+          !!document.querySelector(
+            `#page-list button[data-page="${expected}"][data-rendered]`,
+          ),
+        n,
+        { timeout: 10000 },
+      )
+      .then(
+        () => true,
+        () => false,
+      )
+  const dialogState = () =>
+    frame.evaluate(() => ({
+      open: (document.getElementById('pages-dialog') as HTMLDialogElement).open,
+      focusedId: document.activeElement?.id ?? null,
+    }))
+  const beforeOpen = await thumbnails()
+  await goToPage(frame, 40)
+  await frame.click('#pages')
+  const currentDrawn = await waitDrawn(40)
+  const opened = await frame.evaluate(() => {
+    const dialog = document.getElementById('pages-dialog') as HTMLDialogElement
+    const list = document.getElementById('page-list')!
+    const current = [...list.querySelectorAll<HTMLElement>('[aria-current]')]
+    const box = current[0]?.getBoundingClientRect()
+    const visible = list.getBoundingClientRect()
+    return {
+      open: dialog.open,
+      modal: dialog.matches(':modal'),
+      heading: document.getElementById('pages-heading')!.textContent,
+      current: current.map((item) => ({
+        page: Number(item.dataset.page),
+        marker: item.getAttribute('aria-current'),
+        label: item.getAttribute('aria-label'),
+      })),
+      focusedPage: (document.activeElement as HTMLElement).dataset.page ?? null,
+      currentVisible:
+        !!box && box.top >= visible.top && box.bottom <= visible.bottom,
+      thumbnailWidth: list.querySelector<HTMLCanvasElement>(
+        'button[data-page="40"] canvas',
+      )!.width,
+    }
+  })
+  // Keys that turn pages leave the page alone behind the open list.
+  await page.keyboard.press('ArrowRight')
+  const pageAfterArrowRight = await pageNumber(frame)
+  await page.keyboard.press('ArrowLeft')
+  const pageAfterArrowLeft = await pageNumber(frame)
+  const setHidden = (hidden: boolean) =>
+    frame.evaluate((hide) => {
+      if (hide)
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => 'hidden',
+        })
+      else delete (document as { visibilityState?: string }).visibilityState
+      document.dispatchEvent(new Event('visibilitychange'))
+    }, hidden)
+  // A slow neighbour of page 40 is being drawn: its canvas has its
+  // thumbnail size but is not drawn yet.
+  const slowHandle = await frame.waitForFunction(
+    (pages) =>
+      pages.find((n) => {
+        const item = document.querySelector<HTMLElement>(
+          `#page-list button[data-page="${n}"]`,
+        )!
+        return (
+          item.querySelector('canvas')!.width === 240 && !item.dataset.rendered
+        )
+      }) ?? false,
+    SLOW_PAGES,
+    { timeout: 10000 },
+  )
+  const slowPage = (await slowHandle.jsonValue()) as number
+  // Hidden, the drawing is cancelled: it stays undrawn for longer than
+  // drawing it takes once visible again.
+  await setHidden(true)
+  const hiddenWaitMs = 3000
+  await frame.waitForTimeout(hiddenWaitMs)
+  const slowWhileHidden = (await thumbnails()).drawn.includes(slowPage)
+  const resumeStart = Date.now()
+  await setHidden(false)
+  const slowResumed = await waitDrawn(slowPage)
+  const resumeMs = Date.now() - resumeStart
+  await waitDrawn(SLOW_PAGES.find((n) => n !== slowPage)!)
+  const afterOpen = await thumbnails()
+  // While the viewer page is hidden, newly visible items stay undrawn.
+  await setHidden(true)
+  await frame.evaluate(() => {
+    document.getElementById('page-list')!.scrollTop = 0
+  })
+  await frame.waitForTimeout(1000)
+  const whileHidden = await thumbnails()
+  await setHidden(false)
+  const resumed = await waitDrawn(1)
+  await frame.evaluate(() => {
+    const list = document.getElementById('page-list')!
+    list.scrollTop = list.scrollHeight
+  })
+  const lastDrawn = await waitDrawn(100)
+  await page.keyboard.press('Escape')
+  const afterEscape = await dialogState()
+  // On phones the list covers the whole frame, so there is no outside.
+  let afterBackdrop = null
+  if (width >= 700) {
+    await frame.click('#pages')
+    await page.mouse.click(40, 400)
+    afterBackdrop = await dialogState()
+  }
+  await frame.click('#pages')
+  await frame.click('#pages-close')
+  const afterCloseButton = await dialogState()
+  await frame.click('#pages')
+  await frame.click('#page-list button[data-page="5"]')
+  const chosen = {
+    page: await waitForPage(frame, 5),
+    ...(await dialogState()),
+    marked: await frame.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>('#page-list [aria-current]')]
+        .map((item) => Number(item.dataset.page))
+        .join(),
+    ),
+  }
+  await frame.click('#pages')
+  await clearCookies()
+  const fetchesBefore = originalFetches()
+  const download = {
+    sameBytes: await savedBytes(page, frame, '#pages-download', original),
+    fetchedOriginal: originalFetches() > fetchesBefore,
+  }
+  return {
+    beforeOpen,
+    opened,
+    currentDrawn,
+    afterOpen,
+    pageAfterArrowRight,
+    pageAfterArrowLeft,
+    slowPage,
+    slowWhileHidden,
+    slowResumed,
+    resumeMs,
+    hiddenWaitMs,
+    whileHidden,
+    resumed,
+    lastDrawn,
+    afterEscape,
+    afterBackdrop,
+    afterCloseButton,
+    chosen,
+    download,
+  }
+}
+
+function searchState(frame: Frame) {
+  return frame.evaluate(() => ({
+    open: !document.getElementById('search-bar')!.hidden,
+    expanded: document
+      .getElementById('search-toggle')!
+      .getAttribute('aria-expanded'),
+    focusedId: document.activeElement?.id ?? null,
+    results: document.getElementById('search-results')!.textContent,
+    highlights: document.querySelectorAll('.textLayer .highlight').length,
+    page: Number(
+      (document.getElementById('page-number') as HTMLInputElement).value,
+    ),
+    containerHeight: document.getElementById('viewer-container')!.clientHeight,
+  }))
+}
+
+async function waitForResults(frame: Frame, pattern: string) {
+  await frame
+    .waitForFunction(
+      (source) =>
+        new RegExp(source).test(
+          document.getElementById('search-results')!.textContent ?? '',
+        ),
+      pattern,
+      { timeout: 10000 },
+    )
+    .catch(() => undefined)
+  return searchState(frame)
+}
+
+// Search across pages: both ways in, stepping both ways, no results, an
+// emptied query, and both ways out.
+async function searchFlow(page: Page, frame: Frame) {
+  const closed = await searchState(frame)
+  await frame.focus('#viewer-container')
+  await page.keyboard.press('ControlOrMeta+f')
+  const openedByShortcut = await searchState(frame)
+  await page.keyboard.type(SEARCH_TERM)
+  const first = await waitForResults(frame, '^1 ')
+  await frame
+    .waitForSelector('.textLayer .highlight.selected', { timeout: 10000 })
+    .catch(() => undefined)
+  const highlighted = await searchState(frame)
+  await page.keyboard.press('Enter')
+  const second = await waitForResults(frame, '^2 ')
+  await page.keyboard.press('Enter')
+  const third = await waitForResults(frame, '^3 ')
+  await page.keyboard.press('Shift+Enter')
+  const back = await waitForResults(frame, '^2 ')
+  await frame.click('#search-next')
+  const nextButton = await waitForResults(frame, '^3 ')
+  await frame.fill('#search-query', 'zebra')
+  const absent = await waitForResults(frame, '^[^0-9]+$')
+  await frame.fill('#search-query', '')
+  const emptied = await waitForResults(frame, '^$')
+  // Emptied while the search it started is still running: no late counts.
+  await frame.fill('#search-query', SEARCH_TERM)
+  await frame.waitForTimeout(300)
+  await frame.fill('#search-query', '')
+  await frame.waitForTimeout(1000)
+  const emptiedWhileSearching = await searchState(frame)
+  await frame.fill('#search-query', SEARCH_TERM)
+  await waitForResults(frame, '^1 ')
+  await page.keyboard.press('Escape')
+  await frame
+    .waitForFunction(
+      () => document.querySelectorAll('.textLayer .highlight').length === 0,
+      undefined,
+      { timeout: 5000 },
+    )
+    .catch(() => undefined)
+  const closedByEscape = await searchState(frame)
+  await frame.click('#search-toggle')
+  const reopened = await searchState(frame)
+  await frame.click('#search-close')
+  const closedByButton = await searchState(frame)
+  return {
+    closed,
+    openedByShortcut,
+    first,
+    highlighted,
+    second,
+    third,
+    back,
+    nextButton,
+    absent,
+    emptied,
+    emptiedWhileSearching,
+    closedByEscape,
+    reopened,
+    closedByButton,
+  }
+}
+
+async function searchOnce(frame: Frame) {
+  await frame.click('#search-toggle')
+  await frame.fill('#search-query', SEARCH_TERM)
+  return waitForResults(frame, '.')
+}
+
+function settingsState(frame: Frame) {
+  return frame.evaluate(() => {
+    const options = document.getElementById('display-options')!
+    const container = document.getElementById('viewer-container')!
+    const current = document.querySelector<HTMLElement>(
+      `.page[data-page-number="${(document.getElementById('page-number') as HTMLInputElement).value}"]`,
+    )!
+    const box = options.getBoundingClientRect()
+    return {
+      open: !options.hidden,
+      expanded: document.getElementById('fit')!.getAttribute('aria-expanded'),
+      layout:
+        document.querySelector<HTMLInputElement>('input[name="layout"]:checked')
+          ?.value ?? null,
+      size: (document.getElementById('zoom') as HTMLInputElement).value,
+      mode: document.body.dataset.mode,
+      page: Number(
+        (document.getElementById('page-number') as HTMLInputElement).value,
+      ),
+      focusedId: document.activeElement?.id ?? null,
+      focusedCheckedLayout:
+        document.activeElement?.matches('input[name="layout"]:checked') ??
+        false,
+      popover: { left: box.left, right: box.right },
+      frameWidth: innerWidth,
+      pageWidth: current.offsetWidth,
+      pageHeight: current.offsetHeight,
+      container: {
+        width: container.clientWidth,
+        height: container.clientHeight,
+      },
+      horizontalOverflow: container.scrollWidth - container.clientWidth,
+      dialogOpen: (document.getElementById('pages-dialog') as HTMLDialogElement)
+        .open,
+      searchOpen: !document.getElementById('search-bar')!.hidden,
+    }
+  })
+}
+
+// A swipe made of touch events carrying only the coordinates the viewer reads,
+// which every engine can dispatch.
+async function swipeLeft(frame: Frame, turns: boolean) {
+  const before = await pageNumber(frame)
+  await frame.evaluate(() => {
+    const container = document.getElementById('viewer-container')!
+    const fire = (type: string, key: string, x: number) => {
+      const event = new Event(type)
+      Object.defineProperty(event, key, {
+        value: [{ clientX: x, clientY: 300 }],
+      })
+      container.dispatchEvent(event)
+    }
+    fire('touchstart', 'touches', 300)
+    fire('touchend', 'changedTouches', 100)
+  })
+  if (turns) await waitForPage(frame, before + 1)
+  else await frame.waitForTimeout(500)
+  return pageNumber(frame)
+}
+
+// Display settings on a 4-page slide deck, starting from page 3.
+async function settingsFlow(
+  page: Page,
+  frame: Frame,
+  width: number,
+  height: number,
+) {
+  await goToPage(frame, 3)
+  const initial = await settingsState(frame)
+  await frame.click('#fit')
+  const opened = await settingsState(frame)
+  await frame.check('input[name="layout"][value="scroll"]')
+  await settle(frame)
+  const scrollLayout = await settingsState(frame)
+  const sizes: Record<string, Awaited<ReturnType<typeof settingsState>>> = {}
+  for (const size of ['auto', 'page-fit', 'page-width', '1', '1.5', '2']) {
+    await frame.selectOption('#zoom', size)
+    await settle(frame)
+    sizes[size] = await settingsState(frame)
+  }
+  await frame.check('input[name="layout"][value="page"]')
+  await settle(frame)
+  const pageLayout = await settingsState(frame)
+  await page.setViewportSize({
+    width: Math.round(width * 0.8),
+    height: Math.round(height * 0.8),
+  })
+  await settle(frame)
+  const afterResize = await settingsState(frame)
+  await page.setViewportSize({ width, height })
+  await frame.click('#next')
+  await waitForPage(frame, 4)
+  await settle(frame)
+  const afterNext = await settingsState(frame)
+
+  await frame.click('#fit')
+  await page.keyboard.press('Escape')
+  const afterEscape = await settingsState(frame)
+  // Keyboard only: open, move between the layout radios, reach the select.
+  await frame.focus('#fit')
+  await page.keyboard.press('Enter')
+  const keyboardOpened = await settingsState(frame)
+  await page.keyboard.press('ArrowDown')
+  await settle(frame)
+  const keyboardLayout = await settingsState(frame)
+  await page.keyboard.press('Tab')
+  const keyboardTab = await focusedId(frame)
+  await page.keyboard.press('Escape')
+  const keyboardEscape = await settingsState(frame)
+  await frame.click('#fit')
+  await frame.click('#viewer-container', { position: { x: 10, y: 10 } })
+  const afterOutsideClick = await settingsState(frame)
+
+  // Opening one surface closes the one it would overlap.
+  await frame.click('#fit')
+  await frame.click('#search-toggle')
+  const settingsToSearch = await settingsState(frame)
+  await frame.click('#fit')
+  const searchToSettings = await settingsState(frame)
+  await frame.click('#pages')
+  const settingsToPages = await settingsState(frame)
+  await page.keyboard.press('Escape')
+  await frame.click('#search-toggle')
+  await frame.click('#pages')
+  const searchToPages = await settingsState(frame)
+  await page.keyboard.press('Escape')
+  const pagesClosed = await settingsState(frame)
+
+  // Swipes turn pages only one page at a time while the page fits the width.
+  await frame.click('#fit')
+  await frame.check('input[name="layout"][value="page"]')
+  await frame.selectOption('#zoom', 'page-fit')
+  await page.keyboard.press('Escape')
+  await goToPage(frame, 2)
+  await settle(frame)
+  const fittedSwipe = await swipeLeft(frame, true)
+  await frame.click('#fit')
+  await frame.selectOption('#zoom', '2')
+  await page.keyboard.press('Escape')
+  const zoomed = await settingsState(frame)
+  const zoomedSwipe = await swipeLeft(frame, false)
+  await frame.click('#fit')
+  await frame.selectOption('#zoom', 'page-fit')
+  await frame.check('input[name="layout"][value="scroll"]')
+  await page.keyboard.press('Escape')
+  await settle(frame)
+  const continuousSwipe = await swipeLeft(frame, false)
+  return {
+    initial,
+    opened,
+    scrollLayout,
+    sizes,
+    pageLayout,
+    afterResize,
+    afterNext,
+    afterEscape,
+    keyboardOpened,
+    keyboardLayout,
+    keyboardTab,
+    keyboardEscape,
+    afterOutsideClick,
+    settingsToSearch,
+    searchToSettings,
+    settingsToPages,
+    searchToPages,
+    pagesClosed,
+    fittedSwipe,
+    zoomed,
+    zoomedSwipe,
+    continuousSwipe,
+  }
+}
+
 // Runs the real sandbox Worker (wrangler.sandbox.jsonc, including its
 // PDFJS_ASSETS binding) with a seeded link-shared PDF version. A loopback
 // proxy forwards every browser request unchanged to the Worker under the
 // version's sandbox hostname; it only injects the transport failure and the
 // missing-library case. The viewer is then driven the way a reader does.
 export const pdfViewerScenario = defineBrowserCommand(
-  async ({ page }, scenario: PdfScenario, width: number) => {
+  async (
+    { page },
+    scenario: PdfScenario,
+    width: number,
+    options: PdfScenarioOptions = {},
+  ) => {
     const height = width < 700 ? 844 : 900
     const { createTestHarness } = await import('wrangler')
     const harness = createTestHarness({
@@ -374,11 +926,15 @@ export const pdfViewerScenario = defineBrowserCommand(
     })
     let context: Awaited<ReturnType<typeof createContext>> | undefined
     const createContext = () =>
-      page.context().browser()!.newContext({
-        viewport: { width, height },
-        locale: 'en-US',
-        reducedMotion: 'reduce',
-      })
+      page
+        .context()
+        .browser()!
+        .newContext({
+          viewport: { width, height },
+          locale: options.locale ?? 'en-US',
+          colorScheme: 'light',
+          reducedMotion: 'reduce',
+        })
     try {
       await harness.listen()
       await sandbox.applyD1Migrations('DB')
@@ -439,8 +995,50 @@ export const pdfViewerScenario = defineBrowserCommand(
           () => (window as unknown as { violations: string[] }).violations,
         ),
         workerStatuses,
+        settings: await frame.evaluate(() => ({
+          layout:
+            document.querySelector<HTMLInputElement>(
+              'input[name="layout"]:checked',
+            )?.value ?? null,
+          size: (document.getElementById('zoom') as HTMLInputElement).value,
+        })),
       }
       if (status.state !== 'ready') return common
+      const original = scenarioPdf(scenario)
+      const originalFetches = () =>
+        requests.filter((url) => new URL(url).pathname === PDF_ORIGINAL_PATH)
+          .length
+      const finish = async <T>(result: T) => ({
+        ...common,
+        ...result,
+        offOrigin: requests.filter(
+          (url) => !url.startsWith(origin) && !url.startsWith('blob:'),
+        ),
+        violations: await frame.evaluate(
+          () => (window as unknown as { violations: string[] }).violations,
+        ),
+      })
+
+      if (scenario === 'pages') {
+        const initial = await layout(frame)
+        const pageList = await pageListFlow(
+          artifact,
+          frame,
+          width,
+          () => context!.clearCookies(),
+          originalFetches,
+          original,
+        )
+        return await finish({ initial, pageList })
+      }
+      if (scenario === 'search')
+        return await finish({ search: await searchFlow(artifact, frame) })
+      if (scenario === 'image-only' || scenario === 'late-text')
+        return await finish({ searchOnce: await searchOnce(frame) })
+      if (scenario === 'settings')
+        return await finish({
+          settingsFlow: await settingsFlow(artifact, frame, width, height),
+        })
 
       if (scenario === 'embedded-font') {
         const selection = await selectFirstLine(artifact, frame)
@@ -514,11 +1112,26 @@ export const pdfViewerScenario = defineBrowserCommand(
         await frame.click('#next')
         const mixedPage = await waitForPage(frame, 2)
         await frame.waitForTimeout(500)
+        const mixed = await layout(frame)
+        const mixedMode = await frame.evaluate(() => document.body.dataset.mode)
+        // Fit page in continuous layout refits each page reached.
+        let continuousFit = null
+        if (scenario === 'mixed-slides') {
+          await frame.click('#fit')
+          await frame.check('input[name="layout"][value="scroll"]')
+          await artifact.keyboard.press('Escape')
+          await goToPage(frame, 1)
+          await settle(frame)
+          await goToPage(frame, 2)
+          await settle(frame)
+          continuousFit = await layout(frame)
+        }
         return {
+          continuousFit,
           ...common,
-          mode: await frame.evaluate(() => document.body.dataset.mode),
+          mode: mixedMode,
           mixedPage,
-          mixed: await layout(frame),
+          mixed,
           widestPage: await frame.evaluate(() =>
             Math.max(
               ...[...document.querySelectorAll<HTMLElement>('.page')].map(
@@ -577,9 +1190,6 @@ export const pdfViewerScenario = defineBrowserCommand(
       // Download serves the bytes pdf.js already holds, so it keeps working
       // after the sandbox cookie is gone.
       await context.clearCookies()
-      const originalFetches = () =>
-        requests.filter((url) => new URL(url).pathname === PDF_ORIGINAL_PATH)
-          .length
       const fetchesBeforeDownload = originalFetches()
       const [saved] = await Promise.all([
         artifact.waitForEvent('download'),
@@ -589,7 +1199,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         name: saved.suggestedFilename(),
         sameBytes:
           Buffer.compare(
-            await readFile((await saved.path())!),
+            await downloadBytes(saved),
             Buffer.from(scenarioPdf(scenario)),
           ) === 0,
         fetchedOriginal: originalFetches() > fetchesBeforeDownload,
@@ -608,7 +1218,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         ),
         sameBytes:
           Buffer.compare(
-            await readFile((await savedAfterHide.path())!),
+            await downloadBytes(savedAfterHide),
             Buffer.from(scenarioPdf(scenario)),
           ) === 0,
       }
@@ -651,7 +1261,14 @@ export const pdfViewerScenario = defineBrowserCommand(
   },
 )
 
-type Box = { top: number; width: number; height: number }
+type Box = {
+  id: string
+  left: number
+  right: number
+  top: number
+  width: number
+  height: number
+}
 type Edges = { left: number; right: number; top: number; bottom: number }
 type Layout = {
   frameWidth: number
@@ -661,17 +1278,22 @@ type Layout = {
   pagerCenter: number
   toolbarHeight: number
   controls: Box[]
+  pageCountRight: number
+  documentScrollWidth: number
   previousDisabled: boolean
   nextDisabled: boolean
   container: { width: number; height: number }
   page: { width: number; height: number }
 }
 
+export type PdfScenarioOptions = { locale?: 'en-US' | 'ja-JP' }
+
 declare module 'vitest/browser' {
   interface BrowserCommands {
     pdfViewerScenario: (
       scenario: PdfScenario,
       width: number,
+      options?: PdfScenarioOptions,
     ) => Promise<{
       state?: string
       initialState?: string
@@ -683,6 +1305,11 @@ declare module 'vitest/browser' {
       pdfjsRequests: string[]
       violations: string[]
       workerStatuses: string[]
+      settings: { layout: string | null; size: string }
+      pageList?: Awaited<ReturnType<typeof pageListFlow>>
+      search?: Awaited<ReturnType<typeof searchFlow>>
+      searchOnce?: Awaited<ReturnType<typeof searchState>>
+      settingsFlow?: Awaited<ReturnType<typeof settingsFlow>>
       embeddedFont?: {
         inkDensity: number
         ink: Edges
@@ -690,6 +1317,7 @@ declare module 'vitest/browser' {
       }
       mixedPage?: number
       mixed?: Layout
+      continuousFit?: Layout | null
       widestPage?: number
       mode?: string
       pageCount?: string | null
