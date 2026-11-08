@@ -37,6 +37,11 @@
   a {
     touch-action: manipulation;
   }
+  /* The page's own <video>, shown with native controls until the player
+     script renders or if it never runs, fits the frame. */
+  #video-viewer-root > video {
+    @apply block size-full bg-black object-contain;
+  }
 }
 
 /* The app's light or dark setting decides native controls (the ranges and

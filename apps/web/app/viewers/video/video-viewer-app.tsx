@@ -271,6 +271,9 @@ function Controls({
           onPointerDown={() => setDragging(position)}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
+          // A drag can also end without a pointerup reaching the input.
+          onLostPointerCapture={endDrag}
+          onBlur={endDrag}
           onChange={(event) => {
             const value = event.currentTarget.value
             if (dragging !== null) setDragging(value)

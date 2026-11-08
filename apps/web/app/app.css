@@ -1,5 +1,5 @@
 @import 'tailwindcss' source('.');
-/* The sandboxed viewers build their own stylesheets (viewers/pdf/viewer.css). */
+/* The sandboxed viewers build their own stylesheets (viewers/pdf/viewer.css, viewers/video/viewer.css). */
 @source not './viewers';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
