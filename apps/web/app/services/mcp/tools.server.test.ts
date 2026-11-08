@@ -389,6 +389,10 @@ describe('singleFileFormat', () => {
   test('returns null for a binary PDF so it is never read as text', () => {
     expect(singleFileFormat('pdf')).toBeNull()
   })
+
+  test('returns null for a binary video so it is never read as text', () => {
+    expect(singleFileFormat('video')).toBeNull()
+  })
 })
 
 describe('capSource', () => {
@@ -3062,6 +3066,38 @@ describe('headless publish wiring', () => {
 
     const body = await callTool(db, 'get_artifact', { id: published.id })
     expect(errorPayload(body).code).toBe('unsupported-kind')
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('get_artifact refuses an uploaded MP4 with download guidance', async () => {
+    const user = await loadMcpUser(db, 'owner-1')
+    if (!user) throw new Error('seed failed')
+    // A synthetic ftyp header: uploaded as one video original.
+    const mp4 = new Uint8Array([
+      0,
+      0,
+      0,
+      0x18,
+      ...new TextEncoder().encode('ftypisom'),
+      0xff,
+    ])
+    const published = await uploadShareable(
+      db,
+      user,
+      new File([mp4], 'demo.mp4', { type: 'video/mp4' }),
+      'private',
+      [],
+      null,
+    )
+    expect(published).toMatchObject({ kind: 'ok', artifactKind: 'video' })
+    if (published.kind !== 'ok') return
+    storageMock.getArtifact.mockClear()
+
+    const body = await callTool(db, 'get_artifact', { id: published.id })
+    const error = errorPayload(body)
+    expect(error.code).toBe('unsupported-kind')
+    expect(error.message).toMatch(/is a video.*download the original file/)
+    // Never decoded as text.
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 

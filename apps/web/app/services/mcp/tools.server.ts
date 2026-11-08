@@ -2483,7 +2483,9 @@ function unreadableKindError(artifactKind: string): ToolTextResult {
     message:
       artifactKind === 'pdf'
         ? 'This artifact is a PDF, so it has no text source to read. Open the share link to view it, or download the original file with the Artifact Share CLI.'
-        : `This artifact is a ${artifactKind}, a multi-file site, so its source cannot be read as a single text. Open the share link to view it.`,
+        : artifactKind === 'video'
+          ? 'This artifact is a video, so it has no text source to read. Open the share link to watch it, or download the original file with the Artifact Share CLI.'
+          : `This artifact is a ${artifactKind}, a multi-file site, so its source cannot be read as a single text. Open the share link to view it.`,
     recoverable_by: 'human',
   })
 }

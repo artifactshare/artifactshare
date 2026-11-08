@@ -66,7 +66,7 @@ export async function cliFetch(
       : given && typeof given.entries === 'function'
         ? Object.fromEntries(given.entries())
         : (given as Record<string, string> | undefined)),
-    [CLI_ARTIFACT_KINDS_HEADER]: 'pdf',
+    [CLI_ARTIFACT_KINDS_HEADER]: 'pdf, video',
   }
   const fetchInit = { ...requested, headers }
   const requestInit = insecureLocalhost

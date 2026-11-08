@@ -182,6 +182,27 @@ describe('UploadArtifactDialog upload validation', () => {
     )
   })
 
+  test('accepts a single MP4 up to the artifact limit and keeps site MP4 assets', () => {
+    expect(ACCEPTED_FILE_UPLOAD_TYPES.split(',')).toContain('.mp4')
+    expect(ACCEPTED_SITE_UPLOAD_TYPES.split(',')).toContain('.mp4')
+    const mp4 = (name: string, size: number) =>
+      new File([new Uint8Array(size)], name, { type: 'video/mp4' })
+    // Larger than the 10 MiB static-site per-file limit, within 25 MiB.
+    expect(validateFiles([mp4('Demo.MP4', 11 * 1024 * 1024)], t)).toBeNull()
+    expect(validateFiles([mp4('demo.mp4', 25 * 1024 * 1024 + 1)], t)).toBe(
+      'upload.error.tooLarge',
+    )
+    expect(validateFiles([mp4('demo.mov', 1)], t)).toBe(
+      'upload.error.unsupported',
+    )
+    expect(
+      validateFiles(
+        [new File(['<p>hi</p>'], 'index.html'), mp4('clip.mp4', 1)],
+        t,
+      ),
+    ).toBeNull()
+  })
+
   test('accepts a multi-file static site bundle with an entrypoint', () => {
     expect(
       validateFiles(

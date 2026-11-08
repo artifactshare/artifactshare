@@ -974,7 +974,9 @@ describe('CSP reporter runtime behavior', () => {
     expect([...ranges[0].getClientRects()].some((rect) => rect.width > 0)).toBe(
       false,
     )
-  })
+    // Rendering a real Mermaid diagram takes about 12 s on Firefox and WebKit,
+    // close to the 15 s default.
+  }, 45_000)
 
   test('preserves Mermaid SVG and hidden source in HTML export', async () => {
     const source = 'flowchart LR\nA --> B'

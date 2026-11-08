@@ -9,7 +9,8 @@ vi.mock('cloudflare:workers', () => ({
 vi.mock('~/services/comments.server', () => ({
   loadCommentAccess: loadCommentAccessMock,
 }))
-vi.mock('~/services/storage.server', () => ({
+vi.mock('~/services/storage.server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/services/storage.server')>()),
   getArtifact: getArtifactMock,
 }))
 
@@ -346,6 +347,46 @@ describe('getExportSource', () => {
     const result = await getExportSource({} as never, user, { id: 'nope' })
 
     expect(result).toEqual({ kind: 'not-found' })
+  })
+
+  test('refuses to export an uploaded MP4 without reading storage', async () => {
+    // Classify a synthetic MP4 the way an upload does, then export it.
+    const { prepareUpload } = await import('~/services/shareables.server')
+    const noWorkspaceRow = {
+      selectFrom: () => ({
+        select: () => ({
+          where: () => ({ executeTakeFirst: async () => undefined }),
+        }),
+      }),
+    }
+    const bytes = new Uint8Array([
+      0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
+    ])
+    const prepared = await prepareUpload(
+      noWorkspaceRow as never,
+      'ws1',
+      'vid123abcd',
+      new File([bytes], 'Demo.MP4', { type: 'video/mp4' }),
+    )
+    if (prepared.kind !== 'ok') throw new Error(prepared.kind)
+    loadCommentAccessMock.mockResolvedValue({
+      shareableId: 'vid123abcd',
+      workspaceId: 'ws1',
+      ownerUserId: 'owner1',
+      visibility: 'private',
+      currentVersionId: prepared.versionId,
+      artifactKind: prepared.artifactKind,
+      entrypointPath: prepared.entrypointPath,
+      r2Key: prepared.r2Key,
+      isTeamWorkspaceAdmin: false,
+    })
+
+    const result = await getExportSource({} as never, user, {
+      id: 'vid123abcd',
+    })
+
+    expect(result).toEqual({ kind: 'unsupported-kind', artifactKind: 'video' })
+    expect(getArtifactMock).not.toHaveBeenCalled()
   })
 
   test.each([

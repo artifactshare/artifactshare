@@ -92,7 +92,8 @@ export async function action({
               | 'html_page'
               | 'markdown_page'
               | 'static_site'
-              | 'pdf',
+              | 'pdf'
+              | 'video',
           }),
           ...metadata,
         }),

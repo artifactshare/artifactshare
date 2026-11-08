@@ -9,6 +9,7 @@ export type ArtifactKind =
   | 'spa'
   | 'workspace_app'
   | 'pdf'
+  | 'video'
 
 export type Visibility = 'private' | 'workspace' | 'project' | 'link'
 

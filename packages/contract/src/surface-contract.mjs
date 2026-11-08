@@ -83,7 +83,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'share <path>',
-    'Share an HTML, Markdown, or PDF file (up to 25 MiB; a `.pdf` must start with `%PDF-`) or a static-site folder; unspecified Home audiences use workspace when available, otherwise private (`--project`, `--home`, `--visibility`, `--key`, link expiry options)',
+    'Share an HTML, Markdown, PDF, or MP4 video file (up to 25 MiB; a `.pdf` must start with `%PDF-`, a `.mp4` needs an `ftyp` box) or a static-site folder; unspecified Home audiences use workspace when available, otherwise private (`--project`, `--home`, `--visibility`, `--key`, link expiry options)',
   ],
   [
     'update <target> <path>',
@@ -91,7 +91,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'append <target> <path>',
-    'Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end; not for PDFs or static sites',
+    'Append a non-empty UTF-8 file without a separator: at Markdown source end or before `</body>` in HTML, falling back to source end; not for PDFs, videos, or static sites',
   ],
   [
     'edit <target>',
@@ -105,7 +105,7 @@ export const CLI_README_COMMANDS = [
   ['resolve <value>', 'Find files by URL, ID, title, or project name'],
   [
     'artifacts get <target>',
-    'Read file source or static-site metadata and version totals; PDFs have no text source, so use download',
+    'Read file source or static-site metadata and version totals; PDFs and videos have no text source, so use download',
   ],
   [
     'artifacts versions <target>',
@@ -113,7 +113,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'download <target>',
-    'Save a file (a PDF as its original `.pdf` bytes) or a whole static site locally',
+    'Save a file (a PDF or video as its original `.pdf` or `.mp4` bytes) or a whole static site locally',
   ],
   [
     'comments list / post / edit / resolve / reopen / delete <target>',
@@ -129,7 +129,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     '`preview <file>` (alias of `preview start`)',
-    'Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded; PDFs cannot be previewed',
+    'Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded; PDFs and videos cannot be previewed',
   ],
   [
     '`preview next` / `preview done` / `preview reply` / `preview stop`',

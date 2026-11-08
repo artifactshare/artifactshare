@@ -30,6 +30,7 @@ export const ArtifactKindSchema = z.enum([
   'spa',
   'workspace_app',
   'pdf',
+  'video',
 ])
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>
 
@@ -38,6 +39,7 @@ export const UploadArtifactKindSchema = z.enum([
   'html_page',
   'static_site',
   'pdf',
+  'video',
 ])
 export type UploadArtifactKind = z.infer<typeof UploadArtifactKindSchema>
 

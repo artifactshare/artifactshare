@@ -111,7 +111,7 @@ beforeEach(() =>
   }),
 )
 
-test.each(['html_page', 'markdown_page', 'static_site', 'pdf'])(
+test.each(['html_page', 'markdown_page', 'static_site', 'pdf', 'video'])(
   'opens pinned %s history with independent 60-second tokens',
   async (kind) => {
     state.kind = kind

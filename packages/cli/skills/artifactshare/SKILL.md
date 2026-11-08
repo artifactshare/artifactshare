@@ -1,18 +1,18 @@
 ---
 name: artifactshare
-description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs; or show a local file in the browser for review before sharing. Use when the user wants a browser link for an HTML/Markdown report, PDF, folder, static site, or generated file; wants to update the same URL; wants to look at, check, preview, or comment on a file you just generated before it is shared; says Artifact Share, artifactshare, or contextual "as"; or asks to read comments from a shared URL.
+description: Share, publish, upload, host, update, open, or read back existing files and Artifact Share URLs; or show a local file in the browser for review before sharing. Use when the user wants a browser link for an HTML/Markdown report, PDF, MP4 video, folder, static site, or generated file; wants to update the same URL; wants to look at, check, preview, or comment on a file you just generated before it is shared; says Artifact Share, artifactshare, or contextual "as"; or asks to read comments from a shared URL.
 ---
 
 <!-- artifactshare-skill
-version: 60
+version: 61
 managed: true
 -->
 
 # Artifact Share CLI
 
 Artifact Share is for the last step after a file already exists: share,
-publish, upload, or host HTML pages, Markdown documents, PDFs, folders, and
-static sites; return a browser link; update the same URL; open or read back an
+publish, upload, or host HTML pages, Markdown documents, PDFs, MP4 videos,
+folders, and static sites; return a browser link; update the same URL; open or read back an
 Artifact Share URL; and read or post comments. The CLI is designed for agents:
 every command supports `--json` with a stable contract.
 
@@ -59,7 +59,8 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
 this skill, and reports the next steps (sign in, then share). When you receive
 a share URL instead, start with `open <artifact-id-or-url> --json`. It ensures
 this skill is installed or updated, then reads single-file artifacts or returns
-a `download` next command for static sites, multi-file artifacts, and PDFs.
+a `download` next command for static sites, multi-file artifacts, PDFs, and
+videos.
 
 For attended setup, use `login --profile <name> --preset agent --json` and approve
 the browser request. Omit `--preset` for unrestricted personal login. Check
@@ -74,17 +75,21 @@ Use `share` for new files. Use `update` to replace an existing artifact. Use
 `append` to add a non-empty UTF-8 file exactly as-is to a single-file artifact;
 Markdown is appended at source end, while HTML is inserted before an ASCII
 case-insensitive `</body>` when present, or at source end otherwise. It adds no
-newline or separator and does not support sites or PDFs.
+newline or separator and does not support sites, PDFs, or videos.
 
 ```bash
 npm exec --yes --package=@artifactshare/cli -- artifactshare share ./report.html --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --project-id <id> --json
 ```
 
-- `share` accepts a single `.html` / `.md` / `.pdf` file or a static-site directory.
+- `share` accepts a single `.html` / `.md` / `.pdf` / `.mp4` file or a static-site directory.
   A `.pdf` (any case) must start with `%PDF-`; it is stored as the original
   file, up to 25 MiB. `update` and `share --key` accept PDFs the same way.
   `append`, local `preview`, and static-site folders do not accept PDFs.
+  A `.mp4` (any case) must have an ISO base media `ftyp` box at byte 4; it is
+  stored as the original video, up to 25 MiB, and plays in the viewer. Other
+  video formats are not accepted. `append` and local `preview` refuse MP4s;
+  an `.mp4` inside a static-site folder stays a site asset.
   If a successful result contains `data.warnings`, tell the user each warning
   explicitly. `slack_reauthorization_required` means project Slack
   notifications are not being delivered until the channel is reauthorized.
@@ -163,8 +168,9 @@ Use `--label <label>` for an immutable version note. Read [version labels](refer
 ## Read back and download
 
 Use `artifacts get` for HTML and Markdown sources. Use `download` for static
-sites and PDFs: a PDF has no text source (`artifacts get` returns
-`unsupported_kind`), and `download` saves its original `.pdf` bytes.
+sites, PDFs and videos: a PDF or video has no text source (`artifacts get`
+returns `unsupported_kind`), and `download` saves its original `.pdf` or
+`.mp4` bytes.
 
 ```bash
 npm exec --yes --package=@artifactshare/cli -- artifactshare artifacts get <artifact-id-or-url> --json

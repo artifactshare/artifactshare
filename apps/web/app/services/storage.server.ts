@@ -1,4 +1,8 @@
-import { PDF_MIME_TYPE, type SingleFileArtifactType } from '~/lib/artifact-type'
+import {
+  PDF_MIME_TYPE,
+  VIDEO_MIME_TYPE,
+  type SingleFileArtifactType,
+} from '~/lib/artifact-type'
 
 export interface StoredArtifact {
   body: ReadableStream<Uint8Array> | null
@@ -18,6 +22,9 @@ export function artifactR2Key(args: {
   if (args.renderType === 'pdf') {
     return `artifacts/${args.shareableId}/${args.versionId}/original.pdf`
   }
+  if (args.renderType === 'video') {
+    return `artifacts/${args.shareableId}/${args.versionId}/original.mp4`
+  }
   const ext = args.renderType === 'md' ? 'md' : 'html'
   return `artifacts/${args.shareableId}/${args.versionId}/index.${ext}`
 }
@@ -30,6 +37,8 @@ export function artifactContentType(
       return 'text/markdown; charset=utf-8'
     case 'pdf':
       return PDF_MIME_TYPE
+    case 'video':
+      return VIDEO_MIME_TYPE
     case 'html':
       return 'text/html; charset=utf-8'
   }

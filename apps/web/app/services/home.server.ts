@@ -334,6 +334,7 @@ export function unopenedOwnedPredicate(userId: string) {
       'html_page',
       'static_site',
       'pdf',
+      'video',
     ]),
     eb.not(
       eb.exists(

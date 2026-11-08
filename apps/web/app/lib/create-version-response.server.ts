@@ -24,7 +24,7 @@ export function createVersionFailureResponse(
     case 'unsupported-type':
       return errorResponse(
         'unsupported-type',
-        'Only `.html`, `.md`, and `.pdf` files are supported for now.',
+        'Only `.html`, `.md`, `.pdf`, and `.mp4` files are supported for now.',
         415,
       )
     case 'invalid-path':

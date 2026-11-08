@@ -57,6 +57,13 @@ import {
   pdfViewerDocument,
 } from './lib/pdf-viewer'
 import {
+  VIDEO_MIME_TYPE,
+  VIDEO_ORIGINAL_PATH,
+  videoContentDisposition,
+  videoPlayerAsset,
+  videoPlayerDocument,
+} from './lib/video-viewer'
+import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
 } from '../app/lib/sandbox-block-report'
@@ -509,7 +516,7 @@ async function handleEntrypointRequest(
     })
   }
 
-  if (entrypoint.renderType === 'pdf') {
+  if (entrypoint.renderType === 'pdf' || entrypoint.renderType === 'video') {
     // The generated viewer is our code, not the artifact's, so it is served
     // directly. Its original-file and asset requests carry only the bound
     // cookie, and each one rechecks current access and the version.
@@ -611,7 +618,11 @@ interface Entrypoint {
 // Kinds whose entry document loads further same-origin resources that only
 // the host-bound cookie can authorize.
 function usesBundleCookie(renderType: ArtifactType): boolean {
-  return renderType === 'static_site' || renderType === 'pdf'
+  return (
+    renderType === 'static_site' ||
+    renderType === 'pdf' ||
+    renderType === 'video'
+  )
 }
 
 async function publishedEntrypoint(
@@ -690,6 +701,7 @@ function artifactKindForToken(renderType: ArtifactType): ArtifactKind | null {
   if (renderType === 'html') return 'html_page'
   if (renderType === 'md') return 'markdown_page'
   if (renderType === 'pdf') return 'pdf'
+  if (renderType === 'video') return 'video'
   if (renderType === 'static_site') return 'static_site'
   return null
 }
@@ -721,6 +733,14 @@ async function serveEntrypoint(
       pdfViewerDocument(entrypoint.entrypointPath),
       'text/html; charset=utf-8',
       artifactCsp('pdf', embed, responseDomain),
+    )
+  }
+  if (entrypoint.renderType === 'video') {
+    // Likewise generated; the player streams VIDEO_ORIGINAL_PATH with Range.
+    return documentResponse(
+      videoPlayerDocument(entrypoint.entrypointPath),
+      'text/html; charset=utf-8',
+      artifactCsp('video', embed, responseDomain),
     )
   }
   const object = await getArtifact(env.BUCKET, entrypoint.r2Key)
@@ -785,10 +805,10 @@ async function serveBundleAsset(
     .where('versions.published_at', 'is not', null)
     .where('versions.artifact_kind', '=', 'static_site')
     .execute()
-  // No static-site version matched: the bundle may be a PDF version, whose
-  // virtual resources exist only there and never shadow static-site paths.
+  // No static-site version matched: the bundle may be a PDF or video version,
+  // whose virtual resources exist only there and never shadow static-site paths.
   if (files.length === 0) {
-    const pdfResponse = await servePdfResource(
+    const viewerResponse = await serveViewerResource(
       db,
       bundle,
       path,
@@ -796,7 +816,7 @@ async function serveBundleAsset(
       now,
       responseDomain,
     )
-    if (pdfResponse) return pdfResponse
+    if (viewerResponse) return viewerResponse
   }
   if (files[0] && !bundle.uid && files[0].current_version_id !== bundle.vid) {
     return deniedResponse(
@@ -849,7 +869,29 @@ async function serveBundleAsset(
   return await serveBundleFile(fallback, request, responseDomain)
 }
 
-async function servePdfResource(
+// A PDF or video version is a virtual bundle: a generated viewer page at the
+// entrypoint, the shared viewer files, and the original at a fixed path.
+// These names exist only for such versions and never shadow static-site paths.
+const VIEWER_KINDS = {
+  pdf: {
+    document: pdfViewerDocument,
+    asset: pdfViewerAsset,
+    originalPath: PDF_ORIGINAL_PATH,
+    mimeType: PDF_MIME_TYPE,
+    contentDisposition: pdfContentDisposition,
+    missingReason: 'pdf_resource_missing',
+  },
+  video: {
+    document: videoPlayerDocument,
+    asset: videoPlayerAsset,
+    originalPath: VIDEO_ORIGINAL_PATH,
+    mimeType: VIDEO_MIME_TYPE,
+    contentDisposition: videoContentDisposition,
+    missingReason: 'video_resource_missing',
+  },
+} as const
+
+async function serveViewerResource(
   db: Kysely<DB>,
   bundle: { uid?: string | null; wid: string; aid: string; vid: string },
   path: string,
@@ -862,6 +904,7 @@ async function servePdfResource(
     .innerJoin('shareables', 'shareables.id', 'versions.shareable_id')
     .select([
       'shareables.current_version_id',
+      'versions.artifact_kind',
       'versions.entrypoint_path',
       'versions.r2_key',
       'versions.size_bytes',
@@ -871,9 +914,11 @@ async function servePdfResource(
     .where('versions.id', '=', bundle.vid)
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
-    .where('versions.artifact_kind', '=', 'pdf')
+    .where('versions.artifact_kind', 'in', ['pdf', 'video'])
     .executeTakeFirst()
   if (!version) return null
+  const renderType = version.artifact_kind === 'video' ? 'video' : 'pdf'
+  const viewer = VIEWER_KINDS[renderType]
   if (!bundle.uid && version.current_version_id !== bundle.vid) {
     return deniedResponse(
       'stale_anonymous_version',
@@ -902,12 +947,12 @@ async function servePdfResource(
 
   if (path === version.entrypoint_path) {
     return documentResponse(
-      pdfViewerDocument(version.entrypoint_path),
+      viewer.document(version.entrypoint_path),
       'text/html; charset=utf-8',
-      artifactCsp('pdf', false, responseDomain),
+      artifactCsp(renderType, false, responseDomain),
     )
   }
-  const asset = pdfViewerAsset(path)
+  const asset = viewer.asset(path)
   if (asset) {
     return staticSiteAssetResponse(
       asset.body,
@@ -915,7 +960,7 @@ async function servePdfResource(
       frameAncestorsValue(false, responseDomain),
     )
   }
-  const pdfjs = pdfjsAssetSource(path)
+  const pdfjs = renderType === 'pdf' ? pdfjsAssetSource(path) : null
   const pdfjsAssets = (env as unknown as { PDFJS_ASSETS?: Fetcher })
     .PDFJS_ASSETS
   if (pdfjs && pdfjsAssets) {
@@ -930,9 +975,9 @@ async function servePdfResource(
       )
     }
   }
-  if (path !== PDF_ORIGINAL_PATH) {
+  if (path !== viewer.originalPath) {
     return deniedResponse(
-      'pdf_resource_missing',
+      viewer.missingReason,
       'This artifact is unavailable.',
       404,
       { aid: bundle.aid, vid: bundle.vid, path },
@@ -964,14 +1009,14 @@ async function servePdfResource(
   const headers = rangeResponseHeaders(object.size, rangeHeader)
   headers.set(
     'Content-Disposition',
-    pdfContentDisposition(
+    viewer.contentDisposition(
       version.entrypoint_path,
       new URL(request.url).searchParams.get('download') === '1',
     ),
   )
   return staticSiteAssetResponse(
     object.body,
-    PDF_MIME_TYPE,
+    viewer.mimeType,
     frameAncestorsValue(false, responseDomain),
     { status: rangeHeader ? 206 : 200, headers },
   )
@@ -1019,7 +1064,7 @@ async function serveAnonymousLinkBundleAsset(
     .where('versions.status', '=', 'published')
     .where('versions.published_at', 'is not', null)
     .where('shareables.visibility', '=', 'link')
-    .where('versions.artifact_kind', 'in', ['static_site', 'pdf'])
+    .where('versions.artifact_kind', 'in', ['static_site', 'pdf', 'video'])
     .executeTakeFirst()
   if (!bundle) {
     return deniedResponse(

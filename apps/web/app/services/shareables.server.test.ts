@@ -21,15 +21,19 @@ const storageMock = vi.hoisted(() => ({
   artifactR2Key: vi.fn(
     (args: { shareableId: string; versionId: string; renderType: string }) =>
       `artifacts/${args.shareableId}/${args.versionId}/${
-        args.renderType === 'pdf' ? 'original' : 'index'
-      }.${args.renderType}`,
+        args.renderType === 'pdf' || args.renderType === 'video'
+          ? 'original'
+          : 'index'
+      }.${args.renderType === 'video' ? 'mp4' : args.renderType}`,
   ),
   artifactContentType: vi.fn((rt: string) =>
     rt === 'md'
       ? 'text/markdown; charset=utf-8'
       : rt === 'pdf'
         ? 'application/pdf'
-        : 'text/html; charset=utf-8',
+        : rt === 'video'
+          ? 'video/mp4'
+          : 'text/html; charset=utf-8',
   ),
 }))
 
@@ -478,7 +482,12 @@ async function seedShareableWithVersions(
   db: Kysely<DB>,
   args: {
     shareableId: string
-    artifactKind?: 'html_page' | 'markdown_page' | 'static_site' | 'pdf'
+    artifactKind?:
+      | 'html_page'
+      | 'markdown_page'
+      | 'static_site'
+      | 'pdf'
+      | 'video'
     name?: string
     derivedTitle?: string | null
     versions: Array<{ id: string; r2Key: string; sizeBytes: number }>
@@ -823,6 +832,123 @@ describe('uploadShareable', () => {
       db,
       OWNER,
       new File([bytes], 'big.pdf', { type: 'application/pdf' }),
+      'private',
+    )
+
+    expect(result).toEqual({ kind: 'too-large' })
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  // A synthetic ISO base media header: an ftyp box at offset 0, its type at
+  // bytes 4-7, followed by bytes that are not a playable movie.
+  const mp4Bytes = (tail = 'synthetic movie body') =>
+    new Uint8Array([
+      0,
+      0,
+      0,
+      0x18,
+      ...new TextEncoder().encode('ftypisom'),
+      0,
+      0,
+      2,
+      0,
+      ...new TextEncoder().encode('isommp41'),
+      ...new TextEncoder().encode(tail),
+      0xff,
+      0x00,
+    ])
+
+  test.each(['demo.mp4', 'Screen Recording.MP4'])(
+    'stores %s with an ftyp box as one original video object',
+    async (name) => {
+      const bytes = mp4Bytes()
+      const result = await uploadShareable(
+        db,
+        OWNER,
+        new File([bytes], name, { type: '' }),
+        'private',
+      )
+
+      expect(result).toMatchObject({ kind: 'ok', artifactKind: 'video' })
+      if (result.kind !== 'ok') return
+      expect(storageMock.putArtifact).toHaveBeenCalledTimes(1)
+      const [, key, body, options] = storageMock.putArtifact.mock.calls[0]!
+      expect(key).toBe(
+        `artifacts/${result.id}/${result.versionId}/original.mp4`,
+      )
+      expect(new Uint8Array(body as ArrayBuffer)).toEqual(bytes)
+      expect(options).toEqual({ contentType: 'video/mp4' })
+      await expect(
+        db
+          .selectFrom('versions')
+          .select(['artifact_kind', 'r2_key', 'size_bytes', 'sha256'])
+          .where('id', '=', result.versionId)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({
+        artifact_kind: 'video',
+        r2_key: key,
+        size_bytes: bytes.byteLength,
+        sha256: createHash('sha256').update(bytes).digest('base64url'),
+      })
+      // Binary bytes are never decoded for a title; the file name is shown.
+      await expect(
+        db
+          .selectFrom('shareables')
+          .select(['artifact_kind', 'name', 'derived_title'])
+          .where('id', '=', result.id)
+          .executeTakeFirstOrThrow(),
+      ).resolves.toEqual({ artifact_kind: 'video', name, derived_title: null })
+    },
+  )
+
+  test.each([
+    ['fake.mp4', 'video/mp4', 'not a movie at all'],
+    ['short.mp4', 'video/mp4', '\0\0\0\x18ftyp'.slice(0, 7)],
+    ['demo.mov', 'video/mp4', mp4Bytes()],
+  ])(
+    'rejects %s (%s) as unsupported without persistence',
+    async (name, type, content) => {
+      const result = await uploadShareable(
+        db,
+        OWNER,
+        new File([content], name, { type }),
+        'private',
+      )
+
+      expect(result).toEqual({ kind: 'unsupported-type' })
+      expect(storageMock.putArtifact).not.toHaveBeenCalled()
+      expect(
+        await db.selectFrom('shareables').selectAll().execute(),
+      ).toHaveLength(0)
+    },
+  )
+
+  test('stores text under a .mp4 name by its MIME type, not as a video', async () => {
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      new File(['# Notes\n'], 'notes.mp4', { type: 'text/markdown' }),
+      'private',
+    )
+
+    expect(result).toMatchObject({ kind: 'ok' })
+    if (result.kind !== 'ok') return
+    await expect(
+      db
+        .selectFrom('shareables')
+        .select('artifact_kind')
+        .where('id', '=', result.id)
+        .executeTakeFirstOrThrow(),
+    ).resolves.toEqual({ artifact_kind: 'markdown_page' })
+  })
+
+  test('rejects a video over the 25 MiB single-artifact limit as too-large', async () => {
+    const bytes = new Uint8Array(25 * MB + 1)
+    bytes.set(mp4Bytes())
+    const result = await uploadShareable(
+      db,
+      OWNER,
+      new File([bytes], 'long.mp4', { type: 'video/mp4' }),
       'private',
     )
 
@@ -5946,6 +6072,24 @@ describe('createVersion', () => {
     storageMock.getArtifact.mockClear()
 
     expect(await appendShareable(db, OWNER, 'pdf2', '\nmore')).toEqual({
+      kind: 'copy-forbidden',
+    })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses to append text to a video artifact', async () => {
+    await seedShareableWithVersions(db, {
+      shareableId: 'vid2',
+      artifactKind: 'video',
+      name: 'demo.mp4',
+      versions: [
+        { id: 'vv2', r2Key: 'artifacts/vid2/vv2/original.mp4', sizeBytes: 20 },
+      ],
+    })
+    storageMock.getArtifact.mockClear()
+
+    expect(await appendShareable(db, OWNER, 'vid2', '\nmore')).toEqual({
       kind: 'copy-forbidden',
     })
     expect(storageMock.getArtifact).not.toHaveBeenCalled()

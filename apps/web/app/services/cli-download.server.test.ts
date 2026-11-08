@@ -305,6 +305,67 @@ describe('getCliDownloadFile', () => {
     )
   })
 
+  test.each([
+    ['/画面録画 デモ.mp4', '/画面録画 デモ.mp4'],
+    [null, '/index.mp4'],
+  ])(
+    'returns original video bytes as video/mp4 under %s',
+    async (entrypointPath, path) => {
+      loadCommentAccessMock.mockResolvedValue({
+        shareableId: 'vid123abcd',
+        workspaceId: 'ws1',
+        ownerUserId: 'u1',
+        visibility: 'private',
+        currentVersionId: 'ver123',
+        artifactKind: 'video',
+        entrypointPath,
+        r2Key: 'artifacts/vid123abcd/ver123/original.mp4',
+        isTeamWorkspaceAdmin: false,
+      })
+      const bytes = new Uint8Array([
+        0,
+        0,
+        0,
+        0x18,
+        ...new TextEncoder().encode('ftypisom'),
+        0xff,
+        0x00,
+        0x80,
+      ])
+      getArtifactMock.mockResolvedValue({
+        body: new Blob([bytes]).stream(),
+        size: bytes.length,
+      })
+      const db = versionMetadataDb({ size_bytes: bytes.length, sha256: 'sha' })
+
+      const manifest = await getCliDownloadManifest(db as never, user, {
+        id: 'vid123abcd',
+        baseUrl: 'https://artifactshare.test',
+      })
+      expect(manifest.kind).toBe('ok')
+      if (manifest.kind !== 'ok') return
+      expect(manifest.data.artifact_kind).toBe('video')
+      expect(manifest.data.files).toEqual([
+        {
+          path,
+          size_bytes: bytes.length,
+          content_type: 'video/mp4',
+          sha256: 'sha',
+        },
+      ])
+      const result = await getCliDownloadFile(db as never, user, {
+        id: 'vid123abcd',
+        path,
+      })
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') return
+      expect(result.file.content_type).toBe('video/mp4')
+      expect(
+        new Uint8Array(await new Response(result.object.body).arrayBuffer()),
+      ).toEqual(bytes)
+    },
+  )
+
   test('returns a static site file selected by manifest path', async () => {
     loadCommentAccessMock.mockResolvedValue({
       shareableId: 'site123abc',

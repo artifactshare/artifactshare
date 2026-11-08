@@ -445,10 +445,12 @@ test('artifacts get --json maps unsupported kinds', async () => {
         { ARTIFACTSHARE_TOKEN: 'test-token' },
       )
 
-      expectFailure(result, {
+      const payload = expectFailure(result, {
         command: 'artifacts get',
         code: 'unsupported_kind',
       })
+      // PDFs and videos have no text source; the hint points to download.
+      assert.match(payload.error.hint, /download <artifact>.*\.mp4/)
     },
   )
 })

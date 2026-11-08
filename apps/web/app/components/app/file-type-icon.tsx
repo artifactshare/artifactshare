@@ -1,7 +1,9 @@
+import { useT } from '~/hooks/use-t'
 import type { ArtifactType } from '~/lib/artifact-type'
 import { cn } from '~/lib/utils'
 
-const LABEL: Record<ArtifactType, string> = {
+// Format names are shown as-is; video is labelled by its type, localized.
+const LABEL: Record<Exclude<ArtifactType, 'video'>, string> = {
   html: 'HTML',
   md: 'MD',
   pdf: 'PDF',
@@ -14,7 +16,14 @@ interface FileTypeIconProps {
 }
 
 export function FileTypeIcon({ renderType, size = 'md' }: FileTypeIconProps) {
+  const { t } = useT()
   const isSm = size === 'sm'
+  const label =
+    renderType === 'video'
+      ? t('fileType.video')
+      : renderType
+        ? LABEL[renderType]
+        : '—'
   return (
     <span
       className={cn(
@@ -28,7 +37,7 @@ export function FileTypeIcon({ renderType, size = 'md' }: FileTypeIconProps) {
       }}
       aria-hidden="true"
     >
-      {renderType ? LABEL[renderType] : '—'}
+      {label}
     </span>
   )
 }

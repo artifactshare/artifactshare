@@ -2,6 +2,7 @@ import {
   HTML_FILE_EXTENSIONS,
   MD_FILE_EXTENSIONS,
   PDF_FILE_EXTENSIONS,
+  VIDEO_FILE_EXTENSIONS,
   hasExtension,
 } from '~/lib/artifact-type'
 import type { TKey } from '~/lib/i18n'
@@ -11,9 +12,14 @@ export { STATIC_SITE_UPLOAD_LIMITS } from '~/lib/product-contracts'
 const MAX_UPLOAD_BYTES = STATIC_SITE_UPLOAD_LIMITS.totalBytes
 const MAX_STATIC_SITE_FILE_BYTES = STATIC_SITE_UPLOAD_LIMITS.fileBytes
 const TEXT_EXTENSIONS = [...HTML_FILE_EXTENSIONS, ...MD_FILE_EXTENSIONS]
-// A single-file upload may also be a PDF. Static sites keep text entry pages
-// and their asset list; a PDF is never a site file or entrypoint.
-const ALLOWED_EXTENSIONS = [...TEXT_EXTENSIONS, ...PDF_FILE_EXTENSIONS]
+// A single-file upload may also be a PDF or an MP4 video. Static sites keep
+// text entry pages and their asset list; a PDF is never a site file or
+// entrypoint, and an MP4 inside a site stays an ordinary site asset.
+const ALLOWED_EXTENSIONS = [
+  ...TEXT_EXTENSIONS,
+  ...PDF_FILE_EXTENSIONS,
+  ...VIDEO_FILE_EXTENSIONS,
+]
 const STATIC_SITE_ALLOWED_EXTENSIONS = [
   ...TEXT_EXTENSIONS,
   '.css',

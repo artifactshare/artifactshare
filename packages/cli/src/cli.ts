@@ -444,6 +444,7 @@ const shareDefinition = define({
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare share report.html --project-id <id> --key nightly-report --json
 npm exec --yes --package=@artifactshare/cli -- artifactshare share deck.pdf --project-id <id> --json
+npm exec --yes --package=@artifactshare/cli -- artifactshare share demo.mp4 --project-id <id> --json
 
 Posting to a project delivers to the audience defined by that project.
 With no destination, share posts to home. Choose the setting by purpose:
@@ -462,9 +463,11 @@ With no destination, share posts to home. Choose the setting by purpose:
 To keep an existing share URL, use update:
   npm exec --yes --package=@artifactshare/cli -- artifactshare update <artifact-id-or-url> <path> --json
 
-A single file can be HTML (.html, .htm), Markdown (.md, .markdown), or PDF.
+A single file can be HTML (.html, .htm), Markdown (.md, .markdown), PDF, or MP4 video.
 A PDF needs a .pdf name (any case) and must start with %PDF-; it is stored as
 the original file, up to 25 MiB. A static-site folder still cannot include a .pdf file.
+A video needs a .mp4 name (any case) and an ftyp box at byte 4; it is stored as
+the original file, up to 25 MiB, and plays in the viewer. An .mp4 inside a folder stays a site asset.
 
 For repeat jobs, use --key: first share creates the artifact, later runs add versions.
 Resending never changes visibility. An explicit --visibility whose effective value differs from the stored value fails before creating a version. Home treats project as private, as on creation. Use edit <id> --visibility <value> --json to change it intentionally.
@@ -474,7 +477,7 @@ Common failures:
   self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
   upload_read_failed     Check filesystem availability and permissions, then retry
-  validation_failed      Check file type (.html / .md / .pdf for single files; a .pdf must start with %PDF-) and directory layout
+  validation_failed      Check file type (.html / .md / .pdf / .mp4 for single files; a .pdf must start with %PDF-, a .mp4 needs an ftyp box) and directory layout
     link                 Copy into the selection or pass the target by absolute path
     outside_cwd          Pass an absolute path
     parent_traversal     Pass a direct absolute path without any .. component
@@ -543,7 +546,7 @@ Common failures:
   self_upload_disabled   Sign in with Google or Microsoft to upload your own files
   file_too_large         Reduce file or directory size and retry
   upload_read_failed     Check filesystem availability and permissions, then retry
-  validation_failed      Check file type (.html / .md / .pdf for single files; a .pdf must start with %PDF-) and directory layout
+  validation_failed      Check file type (.html / .md / .pdf / .mp4 for single files; a .pdf must start with %PDF-, a .mp4 needs an ftyp box) and directory layout
     link                 Copy into the selection or pass the target by absolute path
     outside_cwd          Pass an absolute path
     parent_traversal     Pass a direct absolute path without any .. component
@@ -567,7 +570,7 @@ const appendDefinition = define({
     },
     path: { type: 'positional', description: 'Non-empty UTF-8 file to append' },
   },
-  examples: `Append <path> without a separator and create a new version at the existing share URL.\n\nFor Markdown, the file is added at the end of the current source. For HTML, it is inserted immediately before an ASCII case-insensitive </body> closing tag; when the tag is absent, it is added at the end.\n\nStatic sites and PDFs are not supported, and a PDF file cannot be appended. Use update to replace the full source or PDF instead.
+  examples: `Append <path> without a separator and create a new version at the existing share URL.\n\nFor Markdown, the file is added at the end of the current source. For HTML, it is inserted immediately before an ASCII case-insensitive </body> closing tag; when the tag is absent, it is added at the end.\n\nStatic sites, PDFs and videos are not supported, and a PDF or MP4 file cannot be appended. Use update to replace the full source, PDF or video instead.
 
 Common failures:
   upload_read_failed     Check filesystem availability and permissions, then retry
@@ -749,6 +752,7 @@ const downloadDefinition = define({
 Use resolve first when a user gives a title or project name, then pass the id here.
 Download writes files to a directory so the result can be inspected or passed to update.
 A PDF artifact downloads as its original bytes under its stored .pdf name (index.pdf when none is stored).
+A video artifact downloads as its original MP4 bytes under its stored .mp4 name (index.mp4 when none is stored).
 Artifact IDs must match ^[a-z0-9]{10}$; invalid or duplicate list/index IDs fail before writes.
 Download accepts linked output parents and rechecks their resolved directory identities.
 Links in the output root, index, and every listed artifact are rejected, regardless of --force.
@@ -786,8 +790,8 @@ It installs or updates the bundled Artifact Share skill in user scope (Claude Co
 Codex, or Cursor detected from the working directory; all three if none are
 detected), then reads single-file artifacts. Cursor project scope is not
 auto-installed; use skills install --tool cursor --scope project. Existing
-project-scope skills are not modified. For static sites, multi-file artifacts or
-PDFs, the JSON includes a download next_command.
+project-scope skills are not modified. For static sites, multi-file artifacts,
+PDFs or videos, the JSON includes a download next_command.
 
 Claude Code user skills go to $CLAUDE_CONFIG_DIR/skills when set, otherwise
 ~/.claude/skills. Relative paths resolve against cwd without tilde expansion.
@@ -881,7 +885,7 @@ The response also includes data.truncated and data.next_offset. If data.truncate
 Common failures:
   auth_required      Set ARTIFACTSHARE_TOKEN before artifacts get
   target_not_found   Retry with an artifact ID, share URL, or sandbox URL
-  unsupported_kind   Static sites do not support --include or --version; PDFs have no text source, use download
+  unsupported_kind   Static sites do not support --include or --version; PDFs and videos have no text source, use download
   version_removed    Omit --version to inspect current content
   validation_failed  Check --version, --offset and --include values`,
 })
@@ -1368,7 +1372,7 @@ Prints one ready JSON line ({url, session, share_origin, reused, agent}) and
 keeps serving until stopped. Re-running against a live session reuses it.
 
 Common failures:
-  validation_failed            Pass a single local .md or .html file; PDF files cannot be previewed, share them instead
+  validation_failed            Pass a single local .md or .html file; PDF and video files cannot be previewed, share them instead
   preview_session_unverified   Retry an unresponsive session; stop and restart a session created by an older CLI`,
 })
 
@@ -1389,7 +1393,7 @@ const previewDefinition = define({
 npm exec --yes --package=@artifactshare/cli -- artifactshare preview next ./lp.html --wait 90
 
 Common failures:
-  validation_failed            Pass a single local .md or .html file; PDF files cannot be previewed, share them instead
+  validation_failed            Pass a single local .md or .html file; PDF and video files cannot be previewed, share them instead
   preview_session_unverified   Retry an unresponsive session; stop and restart a session created by an older CLI
   preview_session_not_found    No live session; start one with preview <file>`,
   run: parentCommandRunner('preview'),
