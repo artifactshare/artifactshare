@@ -957,9 +957,13 @@ if (viewerModule) {
     event.preventDefault()
     find('again', event.shiftKey)
   })
+  // After the query changes, pdf.js waits briefly before recounting and
+  // until then may add new-query counts to the old total; its pending
+  // recount (\`_dirtyMatch\`, pdfjs-dist 5.4.624) marks counts as not yet valid.
   const showMatches = ({ current, total }) => {
     if (
       !searchBar.hidden &&
+      !findController._dirtyMatch &&
       searchQuery.value.trim() &&
       findController.state?.query === searchQuery.value &&
       total > 0 &&
@@ -1018,9 +1022,9 @@ if (viewerModule) {
           await thumbnailTask.promise
           thumbnailsDone.add(n)
           item.dataset.rendered = 'true'
-          // Releases what the thumbnail needed; pdf.js keeps a page the
-          // viewer is still drawing.
-          page.cleanup()
+          // Releases what the thumbnail needed, unless the viewer has drawn
+          // or is drawing this page and would need it again.
+          if (!viewer.getPageView(n - 1)?.renderingState) page.cleanup()
         } catch (error) {
           // A cancelled thumbnail is drawn again later; one that failed, in
           // loading its page or in drawing it, stays blank and is not retried.
@@ -1173,6 +1177,7 @@ if (viewerModule) {
       if (
         touchStart &&
         touch &&
+        displayOptions.hidden &&
         layoutMode === 'page' &&
         container.scrollWidth <= container.clientWidth + 2
       ) {
