@@ -232,6 +232,10 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(search.third).toMatchObject({ results: '3 of 3', page: 6 })
     expect(search.back).toMatchObject({ results: '2 of 3', page: 4 })
     expect(search.nextButton).toMatchObject({ results: '3 of 3', page: 6 })
+    expect(search.previousButton).toMatchObject({
+      results: '2 of 3',
+      page: 4,
+    })
     expect(search.absent.results).toBe('No results')
     expect(search.emptied).toMatchObject({ results: '', highlights: 0 })
     expect(search.emptiedWhileSearching).toMatchObject({

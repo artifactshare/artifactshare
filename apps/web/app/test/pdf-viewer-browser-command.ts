@@ -630,6 +630,8 @@ async function searchFlow(page: Page, frame: Frame) {
   const back = await waitForResults(frame, '^2 ')
   await frame.click('#search-next')
   const nextButton = await waitForResults(frame, '^3 ')
+  await frame.click('#search-previous')
+  const previousButton = await waitForResults(frame, '^2 ')
   await frame.fill('#search-query', 'zebra')
   const absent = await waitForResults(frame, '^[^0-9]+$')
   await frame.fill('#search-query', '')
@@ -664,6 +666,7 @@ async function searchFlow(page: Page, frame: Frame) {
     third,
     back,
     nextButton,
+    previousButton,
     absent,
     emptied,
     emptiedWhileSearching,

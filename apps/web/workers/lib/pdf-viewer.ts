@@ -175,7 +175,7 @@ export function pdfViewerDocument(entrypointPath: string | null): string {
 </select>
 </fieldset>
 </div>
-<div id="search-bar" class="search-bar" role="search" hidden><input id="search-query" type="search" autocomplete="off" data-label="searchQuery" aria-label="Text to find"><output id="search-results" aria-live="polite"></output><button id="search-next" type="button" data-label="searchNext" aria-label="Next result">${icon('next')}</button><button id="search-close" type="button" data-label="searchClose" aria-label="Close search">${icon('close')}</button></div>
+<div id="search-bar" class="search-bar" role="search" hidden><input id="search-query" type="search" autocomplete="off" data-label="searchQuery" aria-label="Text to find"><output id="search-results" aria-live="polite"></output><button id="search-previous" type="button" data-label="searchPrevious" aria-label="Previous result">${icon('prev')}</button><button id="search-next" type="button" data-label="searchNext" aria-label="Next result">${icon('next')}</button><button id="search-close" type="button" data-label="searchClose" aria-label="Close search">${icon('close')}</button></div>
 <div id="viewer-container" lang="" tabindex="0" data-label="content" aria-label="PDF content"><div id="viewer" class="pdfViewer"></div></div>
 <div id="status" role="status" aria-live="polite"><p id="status-message" data-text="loading">Loading PDF…</p><a id="status-download" class="download-link" href="${download}" download="${fileName}" data-text="downloadOriginal" hidden>Download the original PDF</a></div>
 <dialog id="pages-dialog" aria-labelledby="pages-heading"><header class="pages-header"><h2 id="pages-heading" data-text="pages">Pages</h2><button id="pages-close" type="button" data-label="closePages" aria-label="Close the page list">${icon('close')}</button></header><nav id="page-list" class="page-list" data-label="choosePage" aria-label="Choose a page"></nav><footer><a id="pages-download" class="download-link" href="${download}" download="${fileName}">${icon('download')}<span data-text="download">Download PDF</span></a></footer></dialog>
@@ -448,6 +448,7 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
+  grid-auto-rows: max-content;
   gap: 12px;
 }
 .page-list button {
@@ -469,11 +470,12 @@ select {
 }
 .thumbnail {
   display: block;
+  flex-shrink: 0;
   min-height: 64px;
   background: var(--surface);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
 }
-.thumbnail canvas { display: block; width: 100%; height: 100%; }
+.thumbnail canvas { display: block; width: 100%; height: auto; }
 .thumbnail-number {
   font-size: 12px;
   text-align: center;
@@ -515,12 +517,13 @@ select {
   .toolbar-end, .page-navigation { gap: 0; }
   .pdf-toolbar button, .pdf-toolbar .download { width: 44px; padding: 0; }
   .page-label { gap: 3px; }
-  .page-label input { width: 44px; height: 44px; }
+  .page-label input { width: 44px; height: 44px; font-size: 16px; }
   .display-options fieldset label { min-height: 44px; }
   .pdfViewer { padding: 12px 4px; }
   .pdfViewer .page { margin-bottom: 12px; }
   .search-bar { padding: 4px 8px; gap: 0; }
-  .search-bar input { flex: 1; width: 0; }
+  /* iOS zooms into a focused field whose text is smaller than 16px. */
+  .search-bar input { flex: 1; width: 0; font-size: 16px; }
   .search-bar output { padding: 0 4px; font-size: 11px; }
   #pages-dialog { width: 100%; border-left: 0; }
   .pages-header { padding-top: 20px; }
@@ -570,6 +573,7 @@ const text = ja
       sizeWidth: '幅に合わせる',
       search: '文書内を検索',
       searchQuery: '検索する文字',
+      searchPrevious: '前の検索結果',
       searchNext: '次の検索結果',
       searchClose: '検索を閉じる',
       matches: (current, total) => current + ' / ' + total + '件',
@@ -607,6 +611,7 @@ const text = ja
       sizeWidth: 'Fit width',
       search: 'Search the document',
       searchQuery: 'Text to find',
+      searchPrevious: 'Previous result',
       searchNext: 'Next result',
       searchClose: 'Close search',
       matches: (current, total) => current + ' of ' + total,
@@ -930,6 +935,7 @@ if (viewerModule) {
   }
   searchToggle.addEventListener('click', () => toggleSearch(searchBar.hidden, true))
   byId('search-close').addEventListener('click', () => toggleSearch(false, true))
+  byId('search-previous').addEventListener('click', () => find('again', true))
   byId('search-next').addEventListener('click', () => find('again', false))
   // Text being composed (Japanese input) is searched once it is confirmed.
   searchQuery.addEventListener('input', (event) => {
