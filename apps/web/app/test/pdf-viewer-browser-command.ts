@@ -880,7 +880,7 @@ async function settingsFlow(
   await page.keyboard.press('Escape')
   await frame.click('#fit')
   await page.keyboard.press('ControlOrMeta+f')
-  await frame.waitForTimeout(500)
+  await waitForClosed(frame, SETTINGS)
   const shortcutToSearch = await settingsState(frame)
   await frame.click('#fit')
   const searchToSettings = await settingsState(frame)
@@ -1431,6 +1431,26 @@ export const pdfViewerScenario = defineBrowserCommand(
 
       if (scenario === 'pages') {
         const initial = await layout(frame)
+        // A download that left a narrow row comes back once the row widens.
+        let widened: Awaited<ReturnType<typeof layout>> | undefined
+        const narrowViewport = artifact.viewportSize()
+        if (width <= 360 && narrowViewport) {
+          await artifact.setViewportSize({
+            width: 1440,
+            height: narrowViewport.height,
+          })
+          await frame
+            .waitForFunction(
+              () =>
+                document.getElementById('download')!.getClientRects().length >
+                0,
+              undefined,
+              { timeout: 5000 },
+            )
+            .catch(() => undefined)
+          widened = await layout(frame)
+          await artifact.setViewportSize(narrowViewport)
+        }
         const pageList = await pageListFlow(
           artifact,
           frame,
@@ -1439,7 +1459,7 @@ export const pdfViewerScenario = defineBrowserCommand(
           originalFetches,
           original,
         )
-        return await finish({ initial, pageList })
+        return await finish({ initial, widened, pageList })
       }
       if (scenario === 'page-failure')
         return await finish({ pageFailure: await pageFailureFlow(frame) })
@@ -1758,6 +1778,7 @@ declare module 'vitest/browser' {
       scale?: number
       selection?: string
       initial?: Layout
+      widened?: Layout
       atStart?: Layout
       atEnd?: Layout
       navigation?: Record<string, number>

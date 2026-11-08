@@ -7,9 +7,15 @@ import {
 // Holds the app's display preferences for this viewer document. It listens
 // from the moment the viewer script runs, before React renders, so a message
 // the parent sends when the frame loads is never missed. Until one arrives,
-// or when the viewer is not framed, the app defaults apply.
+// or when the viewer is not framed, the browser's language stands in for the
+// app's setting so most readers never see the other language first.
 export function createPreferencesStore(view: Window = window) {
-  let preferences: ViewerPreferences = DEFAULT_VIEWER_PREFERENCES
+  let preferences: ViewerPreferences = {
+    ...DEFAULT_VIEWER_PREFERENCES,
+    locale: /^ja\b/i.test(view.navigator.language || '')
+      ? 'ja'
+      : DEFAULT_VIEWER_PREFERENCES.locale,
+  }
   const listeners = new Set<() => void>()
   view.addEventListener('message', (event) => {
     if (view.parent === view || event.source !== view.parent) return

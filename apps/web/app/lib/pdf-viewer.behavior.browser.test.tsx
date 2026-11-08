@@ -63,9 +63,14 @@ function expectOneToolbarRow(layout: Layout, width: number) {
 }
 
 test('keeps the controls in one row on a 320px phone', async () => {
-  const { initial } = await server.commands.pdfViewerScenario('pages', 320)
+  const { initial, widened } = await server.commands.pdfViewerScenario(
+    'pages',
+    320,
+  )
 
   expectOneToolbarRow(initial!, 320)
+  // Widening the row brings the download back.
+  expectOneToolbarRow(widened!, 1440)
 })
 
 // Phone touch targets and the taller row last up to the app's stack

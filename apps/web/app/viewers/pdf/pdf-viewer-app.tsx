@@ -106,37 +106,62 @@ function statusText(text: Text, state: PdfState) {
 
 // On the narrowest phones the row cannot hold every touch target; the
 // download then leaves the row and stays one tap away in the page list. The
-// row decides from what it holds, not from a width breakpoint: the pager's
-// column is what remains between the start and end controls.
+// row decides from what it holds, not from a width breakpoint: the space left
+// in the whole row once every visible control has its own width.
 function useDownloadFitsRow(
   pager: RefObject<HTMLDivElement | null>,
   download: RefObject<HTMLAnchorElement | null>,
 ) {
   const [fits, setFits] = useState(true)
   useLayoutEffect(() => {
-    const pagerElement = pager.current
+    const row = pager.current?.parentElement
     const downloadElement = download.current
-    if (!pagerElement || !downloadElement) return
+    if (!row || !downloadElement) return
     let downloadWidth = 0
-    const measure = () => {
-      if (downloadElement.getClientRects().length > 0)
-        downloadWidth = downloadElement.getBoundingClientRect().width
-      const children = [...pagerElement.children]
-      const gap = parseFloat(getComputedStyle(pagerElement).columnGap) || 0
-      const needed =
-        children.reduce(
-          (width, child) => width + child.getBoundingClientRect().width,
+    const shown = (element: Element) => element.getClientRects().length > 0
+    const contentWidth = (group: Element) => {
+      const items = [...group.children].filter(shown)
+      const gap = parseFloat(getComputedStyle(group).columnGap) || 0
+      return (
+        items.reduce(
+          (width, item) => width + item.getBoundingClientRect().width,
           0,
         ) +
-        gap * Math.max(0, children.length - 1)
-      const spare = pagerElement.clientWidth - needed
-      setFits((fitted) =>
-        fitted ? spare >= -0.5 : spare >= downloadWidth - 0.5,
+        gap * Math.max(0, items.length - 1)
+      )
+    }
+    const measure = () => {
+      const downloadShown = shown(downloadElement)
+      if (downloadShown)
+        downloadWidth = downloadElement.getBoundingClientRect().width
+      const style = getComputedStyle(row)
+      const inner =
+        row.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight)
+      const groups = [...row.children]
+      const columnGap = parseFloat(style.columnGap) || 0
+      const needed =
+        groups.reduce((width, group) => width + contentWidth(group), 0) +
+        columnGap * Math.max(0, groups.length - 1)
+      const spare = inner - needed
+      // Coming back also brings its gap to the neighbouring control, so
+      // the threshold includes it and the row cannot flip back and forth.
+      const endGap = downloadElement.parentElement
+        ? parseFloat(
+            getComputedStyle(downloadElement.parentElement).columnGap,
+          ) || 0
+        : 0
+      setFits(
+        downloadShown ? spare >= -0.5 : spare >= downloadWidth + endGap - 0.5,
       )
     }
     const observer = new ResizeObserver(measure)
-    observer.observe(pagerElement)
-    for (const child of pagerElement.children) observer.observe(child)
+    observer.observe(row)
+    for (const group of row.children) {
+      observer.observe(group)
+      for (const item of group.children) observer.observe(item)
+    }
     return () => observer.disconnect()
   }, [pager, download])
   return fits
