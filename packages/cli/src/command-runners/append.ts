@@ -1,4 +1,9 @@
-import { blobHasPdfMagic, isPdfFileName } from '../files.js'
+import {
+  blobHasMp4Signature,
+  blobHasPdfMagic,
+  isMp4FileName,
+  isPdfFileName,
+} from '../files.js'
 import { prepareUploadSelection, uploadReadError } from '../upload-boundary.js'
 import {
   type ArtifactAppendRequest,
@@ -89,6 +94,17 @@ export async function runAppend(
         validationError(
           'Append does not support PDF files.',
           'Append adds UTF-8 text to Markdown or HTML artifacts. To replace a PDF artifact, run update <artifact> <file.pdf>.',
+        ),
+        mode,
+        1,
+      )
+    // Likewise a video is a .mp4 name with an ftyp box at byte 4.
+    if (isMp4FileName(file.name) && (await blobHasMp4Signature(file.blob)))
+      return writeFailure(
+        command,
+        validationError(
+          'Append does not support video files.',
+          'Append adds UTF-8 text to Markdown or HTML artifacts. To replace a video artifact, run update <artifact> <file.mp4>.',
         ),
         mode,
         1,

@@ -15,7 +15,8 @@
 elements or text selections in the browser and submits them as an explicit
 batch, and the agent fixes the file. Nothing is uploaded by previewing;
 an upload happens only if the user opens the share dialog from the page.
-PDF files cannot be previewed; share them and open the share URL instead.
+PDF and MP4 video files cannot be previewed; share them and open the share URL
+instead.
 
 ### Start and own one preview
 

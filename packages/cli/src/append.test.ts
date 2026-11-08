@@ -17,7 +17,7 @@ test('append --help describes exact single-file append', () => {
   assert.equal(result.status, 0)
   assert.match(result.stdout, /append <OPTIONS> <artifactIdOrUrl> <path>/)
   assert.match(result.stdout, /Non-empty UTF-8 file/)
-  assert.match(result.stdout, /Static sites and PDFs are not supported/)
+  assert.match(result.stdout, /Static sites, PDFs and videos are not supported/)
 })
 
 test('append rejects an empty file before authentication', async () => {
@@ -48,6 +48,24 @@ test('append refuses a PDF file before authentication', async () => {
   assert.match(payload.error.message, /does not support PDF/)
 })
 
+test('append refuses an MP4 video before authentication', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-mp4-'))
+  const path = join(dir, 'Demo.MP4')
+  await writeFile(
+    path,
+    Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')]),
+  )
+
+  const result = await runAsync(['append', 'abc123def4', path, '--json'])
+
+  const payload = expectFailure(result, {
+    command: 'append',
+    code: 'validation_failed',
+  })
+  assert.match(payload.error.message, /does not support video/)
+  assert.match(payload.error.hint, /update <artifact> <file\.mp4>/)
+})
+
 test('append sends Markdown whose text starts with the PDF header', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'artifactshare-append-pdf-text-'))
   const path = join(dir, 'section.md')
@@ -61,7 +79,10 @@ test('append sends Markdown whose text starts with the PDF header', async () => 
         content: '%PDF- is the required PDF header.\n',
       })
       // Every CLI request names the newer artifact kinds it can parse.
-      assert.equal(request.headers['x-artifactshare-artifact-kinds'], 'pdf')
+      assert.equal(
+        request.headers['x-artifactshare-artifact-kinds'],
+        'pdf, video',
+      )
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({

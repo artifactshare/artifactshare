@@ -21,7 +21,7 @@ export async function adoptPublisherArtifact(
   const eligible = sql<boolean>`shareables.id = ${id}
     AND shareables.owner_user_id = ${user.id}
     AND shareables.workspace_id = ${user.workspaceId}
-    AND shareables.artifact_kind IN ('html_page', 'markdown_page', 'static_site', 'pdf')
+    AND shareables.artifact_kind IN ('html_page', 'markdown_page', 'static_site', 'pdf', 'video')
     AND NOT ${workspaceAccessRevokedSql(sql.ref('shareables.workspace_id'), user.id)}
     AND EXISTS (SELECT 1 FROM publisher_clients pc JOIN users u ON u.id = pc.user_id
       WHERE pc.id = ${clientId} AND pc.user_id = ${user.id}

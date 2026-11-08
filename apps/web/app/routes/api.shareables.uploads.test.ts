@@ -440,7 +440,8 @@ describe('/api/shareables/uploads', () => {
     await expect(json(refused)).resolves.toEqual({
       error: {
         code: 'unsupported-type',
-        message: 'Only `.html`, `.md`, and `.pdf` files are supported for now.',
+        message:
+          'Only `.html`, `.md`, `.pdf`, and `.mp4` files are supported for now.',
       },
     })
   })

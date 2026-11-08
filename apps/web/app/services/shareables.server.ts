@@ -23,6 +23,7 @@ import { nanoid } from 'nanoid'
 import {
   detectArtifactType,
   detectArtifactTypeForUpload,
+  hasMp4Signature,
   hasPdfMagic,
 } from '~/lib/artifact-type'
 import { nowIso } from '~/lib/datetime'
@@ -3257,15 +3258,18 @@ export async function prepareUpload(
   // name (for example Markdown appended to an artifact still named
   // deck.pdf) is classified by its MIME type instead; anything else is
   // rejected before any quota reservation or R2 write.
-  const renderType =
-    nameType === 'pdf' && !hasPdfMagic(new Uint8Array(buffer))
-      ? detectArtifactType(logicalFile.type, logicalFile.name)
-      : nameType
+  // A video likewise needs both the `.mp4` name and an `ftyp` box at offset 4.
+  const signatureMismatch =
+    (nameType === 'pdf' && !hasPdfMagic(new Uint8Array(buffer))) ||
+    (nameType === 'video' && !hasMp4Signature(new Uint8Array(buffer)))
+  const renderType = signatureMismatch
+    ? detectArtifactType(logicalFile.type, logicalFile.name)
+    : nameType
   if (!renderType) return { kind: 'unsupported-type' } as const
-  // PDF bytes are never decoded as text; a null derived title falls back to
-  // the file name like an html / md file without a title.
+  // PDF and video bytes are never decoded as text; a null derived title falls
+  // back to the file name like an html / md file without a title.
   const derivedTitle =
-    renderType === 'pdf'
+    renderType === 'pdf' || renderType === 'video'
       ? null
       : extractTitleFromBytes(buffer, renderType, {
           shareableId,
@@ -3279,7 +3283,9 @@ export async function prepareUpload(
       ? 'markdown_page'
       : renderType === 'pdf'
         ? 'pdf'
-        : 'html_page'
+        : renderType === 'video'
+          ? 'video'
+          : 'html_page'
   const entrypointPath = normalizeBundlePath(logicalFile.name)
   return {
     kind: 'ok' as const,

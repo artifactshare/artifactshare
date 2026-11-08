@@ -290,6 +290,30 @@ describe('ViewerChrome', () => {
     expect(html).toContain('id="viewer-heading"')
   })
 
+  test.each([
+    [en, 'Video'],
+    [ja, '動画'],
+  ])(
+    'labels a video artifact as video in the unchanged header',
+    (dictionary, label) => {
+      mockDictionary = dictionary
+      try {
+        const html = renderChrome({
+          artifact,
+          user: null,
+          renderType: 'video',
+          collapsible: false,
+        })
+
+        expect(html).toContain(`>${label}<`)
+        expect(html).not.toContain('>MP4<')
+        expect(html).toContain('id="viewer-heading"')
+      } finally {
+        mockDictionary = null
+      }
+    },
+  )
+
   test('anonymous link viewer can change analytics consent', () => {
     const html = renderChrome({
       artifact,

@@ -2237,3 +2237,78 @@ test('share maps an oversize PDF to the existing file_too_large error', async ()
   )
   await rm(root, { recursive: true, force: true })
 })
+
+test('share and update upload an MP4 as its original video/mp4 bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-mp4-'))
+  const target = join(root, 'Demo.MP4')
+  const bytes = Buffer.concat([
+    Buffer.from([0, 0, 0, 0x18]),
+    Buffer.from('ftypisom', 'latin1'),
+    Buffer.from([0, 0, 2, 0, 0xff, 0x00, 0x80]),
+  ])
+  await writeFile(target, bytes)
+  const bodies: Buffer[] = []
+  await withServer(
+    async (request, response) => {
+      if (request.url === '/api/cli/whoami')
+        return writeJson(response, {
+          workspace: { visibility_available: true },
+        })
+      bodies.push(await collectBodyBuffer(request))
+      writeJson(response, {
+        id: 'abc123def4',
+        versionId: 'v2',
+        artifactKind: 'video',
+        visibility: 'private',
+        shareUrl: 'https://example.com/a/abc123def4',
+        created: true,
+      })
+    },
+    async (baseUrl) => {
+      const shared = await runAsync(
+        ['share', target, '--home', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.equal(shared.status, 0, shared.stderr)
+      const updated = await runAsync(
+        ['update', 'abc123def4', target, '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.equal(updated.status, 0, updated.stderr)
+    },
+  )
+  assert.equal(bodies.length, 2)
+  for (const body of bodies) {
+    assert.match(
+      body.toString('latin1'),
+      /filename="Demo\.MP4"\r\nContent-Type: video\/mp4\r\n\r\n/,
+    )
+    assert.ok(body.includes(bytes))
+  }
+})
+
+test('share rejects a .mp4 without an ftyp box before any request', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-mp4-'))
+  const target = join(root, 'demo.mp4')
+  await writeFile(target, 'plain text')
+  let requests = 0
+  await withServer(
+    (_request, response) => {
+      requests++
+      writeJson(response, {}, 500)
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['share', target, '--home', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      const payload = expectFailure(result, {
+        command: 'share',
+        code: 'validation_failed',
+      })
+      assert.match(payload.error.message, /is not an MP4 video/)
+      assert.match(payload.error.hint, /Export or re-encode/)
+    },
+  )
+  assert.equal(requests, 0)
+})

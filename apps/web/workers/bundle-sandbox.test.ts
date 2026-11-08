@@ -868,7 +868,7 @@ async function seedSingleFile(
   args: {
     id: string
     versionId: string
-    artifactKind: 'html_page' | 'markdown_page' | 'pdf'
+    artifactKind: 'html_page' | 'markdown_page' | 'pdf' | 'video'
     entrypointPath: string
     r2Key: string
     sizeBytes?: number
@@ -1024,7 +1024,7 @@ async function singleFileToken(args: {
   id: string
   versionId: string
   r2Key: string
-  renderType: 'html' | 'md' | 'pdf'
+  renderType: 'html' | 'md' | 'pdf' | 'video'
   uid?: string | null
   jti?: string
 }) {
@@ -5378,6 +5378,364 @@ describe('PDF virtual bundle', () => {
     const siteCookie = site.headers.get('Set-Cookie')?.split(';')[0] ?? ''
     const shadow = await handleArtifactSandboxRequest(
       new Request(`${sandboxOrigin()}/__as_pdf/viewer.js`, {
+        headers: { Cookie: siteCookie },
+      }),
+    )
+    expect(shadow.status).toBe(404)
+  })
+})
+
+describe('Video virtual bundle', () => {
+  // A synthetic ISO base media header (ftyp box, then a free box): enough
+  // for delivery, which never decodes the movie.
+  const videoBytes = new Uint8Array([
+    0,
+    0,
+    0,
+    0x18,
+    ...new TextEncoder().encode('ftypisom'),
+    0,
+    0,
+    2,
+    0,
+    ...new TextEncoder().encode('isommp41'),
+    0,
+    0,
+    0,
+    0x11,
+    ...new TextEncoder().encode('free'),
+    ...new TextEncoder().encode('synthetic'),
+    ...new Uint8Array(32).map((_, index) => index),
+  ])
+  const videoId = 'vid123abcd'
+  const videoKey = 'artifacts/vid123abcd/v-video/original.mp4'
+  const entrypointPath = '/製品デモ "v2".mp4'
+
+  beforeEach(async () => {
+    envMock.APP_ENV = 'development'
+    const fixture = createMigratedInMemoryDb()
+    dbRef.current = fixture.db
+    await seedStaticSite(fixture.db)
+    await seedSingleFile(fixture.db, {
+      id: videoId,
+      versionId: 'v-video',
+      artifactKind: 'video',
+      entrypointPath,
+      r2Key: videoKey,
+      sizeBytes: videoBytes.byteLength,
+    })
+    await fixture.db
+      .insertInto('shareable_grants')
+      .values({
+        shareable_id: videoId,
+        granted_email: 'viewer@example.com',
+        granted_at: '2026-05-22T00:00:00.000Z',
+        granted_by: 'owner-1',
+      })
+      .execute()
+    consumeJtiMock.mockReset().mockResolvedValue(true)
+    storageMock.getArtifact.mockReset()
+    storageMock.getArtifact.mockImplementation(
+      async (_bucket, key: string, options?: { range?: Headers }) => {
+        if (key !== videoKey) return null
+        const range = options?.range?.get('Range')?.match(/^bytes=(\d*)-(\d*)$/)
+        if (!range) return storedBinaryArtifact(videoBytes, 'video/mp4')
+        const size = videoBytes.byteLength
+        const start =
+          range[1] === '' ? size - Number(range[2]) : Number(range[1])
+        const end =
+          range[1] === '' || range[2] === ''
+            ? size
+            : Math.min(Number(range[2]) + 1, size)
+        return {
+          ...storedBinaryArtifact(videoBytes.slice(start, end), 'video/mp4'),
+          size,
+        }
+      },
+    )
+  })
+
+  async function openPlayer(uid: string | null = 'viewer-1') {
+    const token = await singleFileToken({
+      id: videoId,
+      versionId: 'v-video',
+      r2Key: videoKey,
+      renderType: 'video',
+      uid,
+    })
+    const origin = uid
+      ? sandboxOrigin('v-video', videoId)
+      : linkOrigin('v-video', videoId)
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${origin}${encodeURI(entrypointPath)}?__as_token=${token}`),
+    )
+    const cookie = response.headers.get('Set-Cookie')?.split(';')[0] ?? ''
+    return { response, cookie, origin }
+  }
+
+  const original = (cookie: string, range?: string) =>
+    handleArtifactSandboxRequest(
+      new Request(
+        `${sandboxOrigin('v-video', videoId)}/__as_video/original.mp4`,
+        { headers: { Cookie: cookie, ...(range ? { Range: range } : {}) } },
+      ),
+    )
+
+  test('serves the generated player with the reporter, static-site CSP and a bound cookie', async () => {
+    const { response, cookie } = await openPlayer()
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe(
+      'text/html; charset=utf-8',
+    )
+    expect(cookie).toMatch(/^__Host-as_bnd=/)
+    expectStaticSiteCsp(response.headers.get('Content-Security-Policy')!)
+    const html = await response.text()
+    expect(html).toContain(VIOLATION_REPORTER_TAG)
+    expect(html).toContain('<script type="module" src="/__as_video/viewer.js">')
+    expect(html).toContain('src="/__as_video/original.mp4"')
+    expect(html).not.toMatch(/\bautoplay\b/)
+    // The stored name keeps its Unicode letters and never reaches markup raw.
+    expect(html).toContain('download="製品デモ _v2.mp4"')
+    expect(html).not.toContain('"v2"')
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves the shared player script and style without external URLs', async () => {
+    const { cookie } = await openPlayer()
+    const get = (path: string) =>
+      handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin('v-video', videoId)}${path}`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+
+    const script = await get('/__as_video/viewer.js')
+    expect(script.status).toBe(200)
+    expect(script.headers.get('Content-Type')).toBe(
+      'text/javascript; charset=utf-8',
+    )
+    expectStaticSiteCsp(script.headers.get('Content-Security-Policy')!)
+    const style = await get('/__as_video/viewer.css')
+    expect(style.status).toBe(200)
+    expect(style.headers.get('Content-Type')).toBe('text/css; charset=utf-8')
+    for (const body of [await script.text(), await style.text()])
+      expect(body).not.toMatch(/https?:\/\//)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('returns the original bytes unchanged with MP4 MIME and a safe download name', async () => {
+    const { cookie, origin } = await openPlayer()
+
+    const inline = await original(cookie)
+    const download = await handleArtifactSandboxRequest(
+      new Request(`${origin}/__as_video/original.mp4?download=1`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(inline.status).toBe(200)
+    expect(new Uint8Array(await inline.arrayBuffer())).toEqual(videoBytes)
+    expect(inline.headers.get('Content-Type')).toBe('video/mp4')
+    expect(inline.headers.get('Content-Length')).toBe(String(videoBytes.length))
+    expect(inline.headers.get('Accept-Ranges')).toBe('bytes')
+    expect(inline.headers.get('Content-Disposition')).toMatch(/^inline;/)
+    expect(download.headers.get('Content-Disposition')).toBe(
+      `attachment; filename="____ _v2.mp4"; filename*=UTF-8''${encodeURIComponent('製品デモ _v2.mp4')}`,
+    )
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(videoBytes)
+  })
+
+  test.each([
+    ['bytes=4-11', 4, 12],
+    ['bytes=-9', videoBytes.length - 9, videoBytes.length],
+    ['bytes=40-', 40, videoBytes.length],
+  ])(
+    'answers seek range %s with 206 and the exact slice',
+    async (range, start, end) => {
+      const { cookie } = await openPlayer()
+
+      const response = await original(cookie, range)
+
+      expect(response.status).toBe(206)
+      expect(response.headers.get('Content-Range')).toBe(
+        `bytes ${start}-${end - 1}/${videoBytes.length}`,
+      )
+      expect(response.headers.get('Content-Length')).toBe(String(end - start))
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        videoBytes.slice(start, end),
+      )
+    },
+  )
+
+  test('answers an unsatisfiable range with 416 without reading storage', async () => {
+    const { cookie } = await openPlayer()
+
+    const response = await original(cookie, 'bytes=999-')
+
+    expect(response.status).toBe(416)
+    expect(response.headers.get('Content-Range')).toBe(
+      `bytes */${videoBytes.length}`,
+    )
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('rechecks access on the page, assets and original after the grant is removed', async () => {
+    const { cookie } = await openPlayer()
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', videoId)
+      .execute()
+
+    for (const path of [
+      encodeURI(entrypointPath),
+      '/__as_video/viewer.js',
+      '/__as_video/viewer.css',
+      '/__as_video/original.mp4',
+    ]) {
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin('v-video', videoId)}${path}`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(response.status).toBe(401)
+    }
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('refuses a reader without access before serving the player', async () => {
+    await dbRef
+      .current!.deleteFrom('shareable_grants')
+      .where('shareable_id', '=', videoId)
+      .execute()
+
+    const { response, cookie } = await openPlayer()
+
+    expect(response.status).toBe(401)
+    expect(cookie).toBe('')
+  })
+
+  test('refuses the cookie on another artifact or version origin', async () => {
+    const { cookie } = await openPlayer()
+
+    for (const origin of [
+      sandboxOrigin('v-bundle', 'abc123def4'),
+      sandboxOrigin('v-other', videoId),
+    ]) {
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${origin}/__as_video/original.mp4`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(response.status).toBe(401)
+    }
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  async function addNewerVersion(bytes: Uint8Array) {
+    const newerKey = 'artifacts/vid123abcd/v-video-newer/original.mp4'
+    await dbRef
+      .current!.insertInto('versions')
+      .values({
+        id: 'v-video-newer',
+        shareable_id: videoId,
+        artifact_kind: 'video',
+        status: 'published',
+        entrypoint_path: entrypointPath,
+        r2_key: newerKey,
+        size_bytes: bytes.byteLength,
+        sha256: 'sha-v-video-newer',
+        created_by_id: 'owner-1',
+        created_at: '2026-05-23T00:00:00.000Z',
+        published_at: '2026-05-23T00:00:00.000Z',
+      })
+      .execute()
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ current_version_id: 'v-video-newer' })
+      .where('id', '=', videoId)
+      .execute()
+    return newerKey
+  }
+
+  test('serves a link video to anonymous readers only while the version is current', async () => {
+    await dbRef
+      .current!.updateTable('shareables')
+      .set({ visibility: 'link' })
+      .where('id', '=', videoId)
+      .execute()
+    const { response: player } = await openPlayer(null)
+    expect(player.status).toBe(200)
+
+    const current = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin('v-video', videoId)}/__as_video/original.mp4`, {
+        headers: { Range: 'bytes=0-7' },
+      }),
+    )
+    expect(current.status).toBe(206)
+    expect(new Uint8Array(await current.arrayBuffer())).toEqual(
+      videoBytes.slice(0, 8),
+    )
+
+    await addNewerVersion(videoBytes)
+    const stale = await handleArtifactSandboxRequest(
+      new Request(`${linkOrigin('v-video', videoId)}/__as_video/original.mp4`),
+    )
+    expect(stale.status).toBe(401)
+  })
+
+  test('plays and downloads the selected retained version for an authenticated reader', async () => {
+    const newerBytes = new Uint8Array([...videoBytes, 1, 2, 3])
+    const newerKey = await addNewerVersion(newerBytes)
+    const serveOriginal = storageMock.getArtifact.getMockImplementation()!
+    storageMock.getArtifact.mockImplementation(async (bucket, key, options) =>
+      key === newerKey
+        ? storedBinaryArtifact(newerBytes, 'video/mp4')
+        : serveOriginal(bucket, key, options),
+    )
+
+    // The reader selected the retained version v-video in the history.
+    const { response: player, cookie } = await openPlayer()
+    expect(player.status).toBe(200)
+    const html = await player.text()
+    const downloadPath = html.match(/<a id="download"[^>]* href="([^"]+)"/)?.[1]
+    expect(downloadPath).toBe('/__as_video/original.mp4?download=1')
+
+    const download = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-video', videoId)}${downloadPath}`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(download.status).toBe(200)
+    expect(download.headers.get('Content-Disposition')).toMatch(/^attachment;/)
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(videoBytes)
+    expect(storageMock.getArtifact.mock.calls.map((call) => call[1])).toEqual([
+      videoKey,
+    ])
+  })
+
+  test('has no PDF resources, and video paths never shadow a static site', async () => {
+    const { cookie } = await openPlayer()
+    for (const path of ['/__as_video/other.mp4', '/__as_pdf/original.pdf']) {
+      const unknown = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin('v-video', videoId)}${path}`, {
+          headers: { Cookie: cookie },
+        }),
+      )
+      expect(unknown.status).toBe(404)
+    }
+
+    const siteToken = await entrypointToken()
+    storageMock.getArtifact.mockResolvedValueOnce(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    const site = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/index.html?__as_token=${siteToken}`),
+    )
+    const siteCookie = site.headers.get('Set-Cookie')?.split(';')[0] ?? ''
+    const shadow = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin()}/__as_video/original.mp4`, {
         headers: { Cookie: siteCookie },
       }),
     )

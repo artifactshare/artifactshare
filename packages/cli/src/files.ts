@@ -66,6 +66,11 @@ export async function prepareUploadPayload(
         if (!(await blobHasPdfMagic(single.blob)))
           return { error: notPdfError(single.name) }
         kind = 'pdf'
+      } else if (isMp4FileName(single.name)) {
+        // Likewise a .mp4 name needs an ISO base media ftyp box at offset 4.
+        if (!(await blobHasMp4Signature(single.blob)))
+          return { error: notMp4Error(single.name) }
+        kind = 'video'
       }
     }
     const form = await createUploadForm()
@@ -75,7 +80,11 @@ export async function prepareUploadPayload(
         file.blob.slice(
           0,
           file.blob.size,
-          kind === 'pdf' ? PDF_CONTENT_TYPE : contentTypeFor(file.name),
+          kind === 'pdf'
+            ? PDF_CONTENT_TYPE
+            : kind === 'video'
+              ? MP4_CONTENT_TYPE
+              : contentTypeFor(file.name),
         ),
         file.name,
       )
@@ -296,6 +305,33 @@ export async function blobHasPdfMagic(blob: Blob): Promise<boolean> {
 function notPdfError(name: string): CliError {
   return validationError(
     `File ${name} is not a PDF: it does not start with %PDF-.`,
-    'Export the document to PDF again, or share an HTML or Markdown file instead. Supported single files: .html, .htm, .md, .markdown and .pdf.',
+    'Export the document to PDF again, or share an HTML or Markdown file instead. Supported single files: .html, .htm, .md, .markdown, .pdf and .mp4.',
+  )
+}
+
+export const MP4_CONTENT_TYPE = 'video/mp4'
+// ASCII "ftyp", the type of the ISO base media file's first box, at bytes 4-7.
+const FTYP = [0x66, 0x74, 0x79, 0x70] as const
+
+/** A single-file upload is a video only with a `.mp4` name (any case) and an ftyp box. */
+export function isMp4FileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.mp4')
+}
+
+export function hasMp4Signature(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 8 &&
+    FTYP.every((value, index) => bytes[index + 4] === value)
+  )
+}
+
+export async function blobHasMp4Signature(blob: Blob): Promise<boolean> {
+  return hasMp4Signature(new Uint8Array(await blob.slice(0, 8).arrayBuffer()))
+}
+
+function notMp4Error(name: string): CliError {
+  return validationError(
+    `File ${name} is not an MP4 video: it has no ftyp box at byte 4.`,
+    'Export or re-encode the recording as MP4 (for example H.264 in an .mp4 container) and retry, or share an HTML, Markdown or PDF file instead. Supported single files: .html, .htm, .md, .markdown, .pdf and .mp4.',
   )
 }

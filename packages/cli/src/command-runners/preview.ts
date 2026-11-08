@@ -543,6 +543,17 @@ export async function runPreview(
       1,
     )
   }
+  if (lower.endsWith('.mp4')) {
+    return writeFailure(
+      command,
+      validationError(
+        'Video files cannot be previewed locally.',
+        'Run share <file.mp4> to publish it and open the share URL, or preview a Markdown or HTML file.',
+      ),
+      mode,
+      1,
+    )
+  }
   if (!lower.endsWith('.md') && !lower.endsWith('.html')) {
     return writeFailure(
       command,

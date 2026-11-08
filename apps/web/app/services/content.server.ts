@@ -16,8 +16,10 @@ export async function fetchAndRenderContent(args: {
   r2Key: string
   renderType: ArtifactType
 }): Promise<FetchAndRenderContentResult> {
-  // A PDF has no text source to render; never decode its bytes as UTF-8.
-  if (args.renderType === 'pdf') return { kind: 'not-found' }
+  // A PDF or video has no text source to render; never decode its bytes as
+  // UTF-8.
+  if (args.renderType === 'pdf' || args.renderType === 'video')
+    return { kind: 'not-found' }
   const object = await getArtifact(env.BUCKET, args.r2Key)
   if (!object) return { kind: 'not-found' }
   const raw = await object.text()

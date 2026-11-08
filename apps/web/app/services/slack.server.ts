@@ -790,6 +790,8 @@ const TYPE_ICON: Record<ArtifactKind, 'html' | 'md' | 'site'> = {
   workspace_app: 'site',
   // No PDF icon is published yet; the document icon is the closest match.
   pdf: 'md',
+  // No video icon is published yet either.
+  video: 'md',
 }
 
 const SLACK_KIND_KEY: Record<ArtifactKind, TKey> = {
@@ -799,6 +801,7 @@ const SLACK_KIND_KEY: Record<ArtifactKind, TKey> = {
   spa: 'slack.kind.spa',
   workspace_app: 'slack.kind.workspace_app',
   pdf: 'slack.kind.pdf',
+  video: 'slack.kind.video',
 }
 
 function slackKindLabel(locale: Locale, kind: ArtifactKind): string {

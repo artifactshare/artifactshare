@@ -1,45 +1,70 @@
 import {
   CLI_ARTIFACT_KINDS_HEADER,
+  type ArtifactKind,
   type ArtifactsListResponse,
   type ResolveResponse,
 } from '@artifactshare/contract'
 
-// Released CLIs validate artifact_kind against the kinds they were built with
-// and reject the whole list or resolve response when one entry has a newer
-// kind. Only clients that name the kind in this header receive it.
-export function clientUnderstandsPdf(request: Request): boolean {
-  return (request.headers.get(CLI_ARTIFACT_KINDS_HEADER) ?? '')
-    .split(',')
-    .some((kind) => kind.trim() === 'pdf')
+// Kinds added after the first CLI release. Released CLIs validate
+// artifact_kind against the kinds they were built with and reject the whole
+// list or resolve response when one entry has a newer kind. Only clients that
+// name a kind in this header receive it; each kind is checked on its own.
+const GATED_ARTIFACT_KINDS = ['pdf', 'video'] as const
+type GatedArtifactKind = (typeof GATED_ARTIFACT_KINDS)[number]
+
+export function clientArtifactKinds(request: Request): Set<string> {
+  return new Set(
+    (request.headers.get(CLI_ARTIFACT_KINDS_HEADER) ?? '')
+      .split(',')
+      .map((kind) => kind.trim())
+      .filter(Boolean),
+  )
 }
 
-// artifact_kind is optional in list entries, so older clients still see the
-// PDF and simply get no kind for it.
+function isGatedArtifactKind(kind: string): kind is GatedArtifactKind {
+  return (GATED_ARTIFACT_KINDS as readonly string[]).includes(kind)
+}
+
+// True when the kind is known to every client or named by this one.
+function understoodBy(
+  kind: ArtifactKind | undefined,
+  named: Set<string>,
+): boolean {
+  return !kind || !isGatedArtifactKind(kind) || named.has(kind)
+}
+
+// artifact_kind is optional in list entries, so older clients still see a
+// PDF or video and simply get no kind for it.
 export function artifactsListForClient(
   data: ArtifactsListResponse,
   request: Request,
 ): ArtifactsListResponse {
-  if (clientUnderstandsPdf(request)) return data
+  const named = clientArtifactKinds(request)
+  if (GATED_ARTIFACT_KINDS.every((kind) => named.has(kind))) return data
   return {
     ...data,
     artifacts: data.artifacts.map(({ artifact_kind, ...entry }) =>
-      artifact_kind === 'pdf' ? entry : { ...entry, artifact_kind },
+      understoodBy(artifact_kind, named) && artifact_kind
+        ? { ...entry, artifact_kind }
+        : entry,
     ),
   }
 }
 
 // artifact_kind is required in resolve candidates, so older clients do not
-// receive PDF candidates; they cannot act on a PDF anyway.
+// receive candidates of a kind they do not name; they cannot act on them.
 export function resolveForClient(
   data: ResolveResponse,
   request: Request,
 ): ResolveResponse {
-  if (clientUnderstandsPdf(request)) return data
+  const named = clientArtifactKinds(request)
+  if (GATED_ARTIFACT_KINDS.every((kind) => named.has(kind))) return data
   return {
     ...data,
     candidates: data.candidates.filter(
       (candidate) =>
-        !('artifact_kind' in candidate) || candidate.artifact_kind !== 'pdf',
+        !('artifact_kind' in candidate) ||
+        understoodBy(candidate.artifact_kind, named),
     ),
   }
 }

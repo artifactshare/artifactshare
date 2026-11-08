@@ -1070,3 +1070,74 @@ test('PDF magic is read from the checked selection without reopening the path', 
   assert.equal(result.error, undefined)
   assert.equal(result.payload!.kind, 'pdf')
 })
+
+// A synthetic ISO base media header: an ftyp box, then bytes that are not a
+// playable movie. Classification never decodes the movie.
+const mp4Bytes = () =>
+  Buffer.concat([
+    Buffer.from([0, 0, 0, 0x18]),
+    Buffer.from('ftypisom', 'latin1'),
+    Buffer.from([0, 0, 2, 0]),
+    Buffer.from('isommp41', 'latin1'),
+    Buffer.from([0xff, 0x00, 0x80]),
+  ])
+
+for (const name of ['demo.mp4', 'Screen Recording.MP4']) {
+  test(`single-file payload classifies ${name} with an ftyp box as video`, async (t) => {
+    const { prepareUploadPayload } = await import('./files.js')
+    const { cwd } = await fixture(t)
+    await fs.writeFile(path.join(cwd, name), mp4Bytes())
+    const result = await prepareUploadPayload(name, { cwd })
+    assert.equal(result.error, undefined)
+    assert.equal(result.payload!.kind, 'video')
+    const file = result.payload!.form.get('file') as File
+    assert.equal(file.name, name)
+    assert.equal(file.type, 'video/mp4')
+    assert.deepEqual(Buffer.from(await file.arrayBuffer()), mp4Bytes())
+  })
+}
+
+test('single-file payload rejects a .mp4 name without an ftyp box', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  await fs.writeFile(path.join(cwd, 'demo.mp4'), '<p>not a movie</p>')
+  const result = await prepareUploadPayload('demo.mp4', { cwd })
+  assert.equal(result.payload, undefined)
+  assert.equal(result.error!.code, 'validation_failed')
+  assert.match(result.error!.message, /demo\.mp4 is not an MP4 video/)
+  assert.match(result.error!.hint, /\.mp4/)
+})
+
+test('an ftyp box alone does not make demo.mov a video', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  await fs.writeFile(path.join(cwd, 'demo.mov'), mp4Bytes())
+  const result = await prepareUploadPayload('demo.mov', { cwd })
+  assert.equal(result.error, undefined)
+  assert.equal(result.payload!.kind, 'html_page')
+  const file = result.payload!.form.get('file') as File
+  assert.notEqual(file.type, 'video/mp4')
+})
+
+test('the MP4 signature is read from the checked selection without reopening the path', async (t) => {
+  const { prepareUploadPayload } = await import('./files.js')
+  const { cwd } = await fixture(t)
+  const original = mp4Bytes()
+  await fs.writeFile(path.join(cwd, 'demo.mp4'), original)
+  let opens = 0
+  const result = await prepareUploadPayload('demo.mp4', {
+    cwd,
+    open: (name, flags) => {
+      opens++
+      return fs.open(name, flags)
+    },
+    // Same-size rewrite after the boundary read: a reopen would see no box.
+    checkpoint: async (phase, name) => {
+      if (phase === 'after_read')
+        await fs.writeFile(name, Buffer.alloc(original.length, 0x20))
+    },
+  })
+  assert.equal(opens, 1)
+  assert.equal(result.error, undefined)
+  assert.equal(result.payload!.kind, 'video')
+})

@@ -53,6 +53,16 @@ describe('artifactR2Key', () => {
       }),
     ).toBe('artifacts/s3/v2/original.pdf')
   })
+
+  test('stores a video as the original MP4 file', () => {
+    expect(
+      artifactR2Key({
+        shareableId: 's4',
+        versionId: 'v3',
+        renderType: 'video',
+      }),
+    ).toBe('artifacts/s4/v3/original.mp4')
+  })
 })
 
 describe('artifactContentType', () => {
@@ -66,6 +76,10 @@ describe('artifactContentType', () => {
 
   test('pdf uses application/pdf without a charset', () => {
     expect(artifactContentType('pdf')).toBe('application/pdf')
+  })
+
+  test('video uses video/mp4 without a charset', () => {
+    expect(artifactContentType('video')).toBe('video/mp4')
   })
 })
 

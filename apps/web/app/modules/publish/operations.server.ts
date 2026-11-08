@@ -177,10 +177,11 @@ export async function appendShareable(
   if (options?.authority?.kind === 'publisher') return { kind: 'not-found' }
   const shareable = await findOwnedShareable(db, user, shareableId)
   if (!shareable) return { kind: 'not-found' }
-  // Appending text needs a text source; a PDF is binary.
+  // Appending text needs a text source; a PDF or video is binary.
   if (
     shareable.artifact_kind === 'static_site' ||
-    shareable.artifact_kind === 'pdf'
+    shareable.artifact_kind === 'pdf' ||
+    shareable.artifact_kind === 'video'
   )
     return { kind: 'copy-forbidden' }
   const current = await db

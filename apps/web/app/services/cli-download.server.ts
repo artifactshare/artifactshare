@@ -7,7 +7,7 @@ import { env } from 'cloudflare:workers'
 import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
-import { PDF_MIME_TYPE } from '~/lib/artifact-type'
+import { PDF_MIME_TYPE, VIDEO_MIME_TYPE } from '~/lib/artifact-type'
 import { isProduction, shareableUrl } from '~/lib/hosts'
 import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
@@ -45,18 +45,20 @@ export type CliDownloadManifest = {
 }
 
 // Kinds downloaded as one stored original file. Text kinds come from
-// singleFileFormat; a PDF is binary and never goes through that text-only
-// readback helper, so it is listed here explicitly.
+// singleFileFormat; a PDF or video is binary and never goes through that
+// text-only readback helper, so it is listed here explicitly.
 const SINGLE_FILE_DOWNLOAD_KINDS = [
   'html_page',
   'markdown_page',
   'pdf',
+  'video',
 ] as const satisfies readonly ArtifactKind[]
 
 function isSingleFileDownload(artifactKind: string): boolean {
   return (
     singleFileFormat(artifactKind as ArtifactKind) !== null ||
-    artifactKind === 'pdf'
+    artifactKind === 'pdf' ||
+    artifactKind === 'video'
   )
 }
 
@@ -222,6 +224,7 @@ function singleFileDownloadPath(
   if (entrypointPath) return `/${entrypointPath}`
   if (artifactKind === 'markdown_page') return '/index.md'
   if (artifactKind === 'pdf') return '/index.pdf'
+  if (artifactKind === 'video') return '/index.mp4'
   return '/index.html'
 }
 
@@ -240,6 +243,7 @@ async function loadSingleFileVersionMetadata(
 
 function singleFileContentType(artifactKind: string): string {
   if (artifactKind === 'pdf') return PDF_MIME_TYPE
+  if (artifactKind === 'video') return VIDEO_MIME_TYPE
   return artifactKind === 'markdown_page'
     ? 'text/markdown; charset=utf-8'
     : 'text/html; charset=utf-8'

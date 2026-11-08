@@ -3,6 +3,7 @@ import {
   artifactSupportsComments,
   detectArtifactType,
   detectArtifactTypeForUpload,
+  hasMp4Signature,
   hasPdfMagic,
   renderTypeFromKind,
 } from './artifact-type'
@@ -81,10 +82,41 @@ describe('hasPdfMagic', () => {
   })
 })
 
+describe('hasMp4Signature', () => {
+  const bytes = (...parts: Array<string | number[]>) =>
+    new Uint8Array(
+      parts.flatMap((part) =>
+        typeof part === 'string' ? [...new TextEncoder().encode(part)] : part,
+      ),
+    )
+
+  test('requires the ftyp box type at bytes 4-7', () => {
+    expect(hasMp4Signature(bytes([0, 0, 0, 0x18], 'ftypisom'))).toBe(true)
+    expect(hasMp4Signature(bytes([0, 0, 0, 0x20], 'ftyp'))).toBe(true)
+    expect(hasMp4Signature(bytes('ftyp', [0, 0, 0, 0]))).toBe(false)
+    expect(hasMp4Signature(bytes([0, 0, 0, 0x18], 'FTYP'))).toBe(false)
+    expect(hasMp4Signature(bytes([0, 0, 0], 'ftyp'))).toBe(false)
+    expect(hasMp4Signature(new Uint8Array())).toBe(false)
+  })
+})
+
+describe('detectArtifactTypeForUpload video', () => {
+  test('selects video only by a .mp4 suffix in any case, never by MIME', () => {
+    expect(detectArtifactTypeForUpload('', 'demo.mp4')).toBe('video')
+    expect(detectArtifactTypeForUpload('video/mp4', 'DEMO.MP4')).toBe('video')
+    expect(detectArtifactTypeForUpload('video/mp4', 'demo.mov')).toBeNull()
+    expect(detectArtifactTypeForUpload('video/mp4', 'demo')).toBeNull()
+  })
+})
+
 describe('renderTypeFromKind', () => {
   test('maps the pdf kind to the pdf render type', () => {
     expect(renderTypeFromKind('pdf')).toBe('pdf')
     expect(renderTypeFromKind('static_site')).toBeNull()
+  })
+
+  test('maps the video kind to the video render type', () => {
+    expect(renderTypeFromKind('video')).toBe('video')
   })
 })
 
@@ -97,6 +129,10 @@ describe('artifactSupportsComments', () => {
 
   test('enables overall comments for pdf', () => {
     expect(artifactSupportsComments('pdf')).toBe(true)
+  })
+
+  test('enables overall comments for video', () => {
+    expect(artifactSupportsComments('video')).toBe(true)
   })
 
   test('disables comments for unrenderable artifacts', () => {

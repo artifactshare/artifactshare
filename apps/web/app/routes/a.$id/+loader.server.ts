@@ -557,7 +557,9 @@ export async function loader({
         ? 'html'
         : displayedVersion.artifact_kind === 'pdf'
           ? 'pdf'
-          : detectArtifactType(mimeType, fileName)
+          : displayedVersion.artifact_kind === 'video'
+            ? 'video'
+            : detectArtifactType(mimeType, fileName)
   const canReplaceFile =
     isOwner ||
     (user.selfUploadEnabled === true &&
@@ -1170,7 +1172,9 @@ async function buildLinkAnonymousResponse(
         ? 'static_site'
         : shareable.version_artifact_kind === 'pdf'
           ? 'pdf'
-          : (detectArtifactType(artifactMimeType, fileName) ?? 'html'),
+          : shareable.version_artifact_kind === 'video'
+            ? 'video'
+            : (detectArtifactType(artifactMimeType, fileName) ?? 'html'),
       jti: nanoid(),
     },
     env.BETTER_AUTH_SECRET,
@@ -1204,7 +1208,9 @@ async function buildLinkAnonymousResponse(
   const renderType =
     shareable.version_artifact_kind === 'pdf'
       ? 'pdf'
-      : detectArtifactType(artifactMimeType, fileName)
+      : shareable.version_artifact_kind === 'video'
+        ? 'video'
+        : detectArtifactType(artifactMimeType, fileName)
   if (!renderType) {
     return { kind: 'unavailable', user: null, appOrigin: env.BETTER_AUTH_URL }
   }
