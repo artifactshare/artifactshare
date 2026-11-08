@@ -587,6 +587,11 @@ function searchState(frame: Frame) {
     focusedId: document.activeElement?.id ?? null,
     results: document.getElementById('search-results')!.textContent,
     query: (document.getElementById('search-query') as HTMLInputElement).value,
+    inputWidth: document.getElementById('search-query')!.getBoundingClientRect()
+      .width,
+    barOverflow:
+      document.getElementById('search-bar')!.scrollWidth -
+      document.getElementById('search-bar')!.clientWidth,
     highlights: document.querySelectorAll('.textLayer .highlight').length,
     page: Number(
       (document.getElementById('page-number') as HTMLInputElement).value,

@@ -525,7 +525,9 @@ select {
   .search-bar { padding: 4px 8px; gap: 0; }
   /* iOS zooms into a focused field whose text is smaller than 16px. */
   .search-bar input { flex: 1; width: 0; font-size: 16px; }
-  .search-bar output { padding: 0 4px; font-size: 11px; }
+  /* Long messages wrap so the field keeps its room on narrow phones. */
+  .search-bar input { min-width: 96px; }
+  .search-bar output { padding: 0 4px; font-size: 11px; white-space: normal; line-height: 1.3; min-width: 0; }
   #pages-dialog { width: 100%; border-left: 0; }
   .pages-header { padding-top: 20px; }
   .page-list { gap: 16px; }
@@ -864,6 +866,12 @@ if (viewerModule) {
     if (!displayOptions.hidden) placeSettings()
   })
   fitButton.addEventListener('click', () => toggleSettings(displayOptions.hidden, false))
+  // Keyboard focus leaving the popover closes it.
+  displayOptions.addEventListener('focusout', (event) => {
+    const next = event.relatedTarget
+    if (next instanceof Node && !displayOptions.contains(next) && !fitButton.contains(next))
+      toggleSettings(false, false)
+  })
   document.addEventListener('click', (event) => {
     if (
       !displayOptions.hidden &&
@@ -901,7 +909,8 @@ if (viewerModule) {
     // An emptied query replaces the old one in the controller, so late
     // counts for the old query are recognised as stale below.
     const query = searchQuery.value.trim() ? searchQuery.value : ''
-    if (!query) searchResults.textContent = ''
+    // A new query never shows the previous query's count or message.
+    if (!query || type === '') searchResults.textContent = ''
     else void hasSearchableText()
     eventBus.dispatch('find', {
       source: searchBar,
@@ -1130,6 +1139,7 @@ if (viewerModule) {
     if (
       !ready ||
       dialog.open ||
+      !displayOptions.hidden ||
       event.ctrlKey ||
       event.metaKey ||
       event.altKey ||

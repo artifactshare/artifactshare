@@ -453,6 +453,18 @@ describe('PDF search messages', () => {
     expect(result.searchOnce!.results).toBe('This PDF has no searchable text')
   })
 
+  test('keeps the search field usable when the Japanese no-text message shows on a 320px phone', async () => {
+    const result = await server.commands.pdfViewerScenario('image-only', 320, {
+      locale: 'ja-JP',
+    })
+
+    expect(result.searchOnce!.results).toBe(
+      'このPDFには検索できる文字がありません',
+    )
+    expect(result.searchOnce!.inputWidth).toBeGreaterThanOrEqual(96)
+    expect(result.searchOnce!.barOverflow).toBeLessThanOrEqual(0)
+  })
+
   test('finds text on a later page after a page without text', async () => {
     const result = await server.commands.pdfViewerScenario('late-text', 1440)
 
