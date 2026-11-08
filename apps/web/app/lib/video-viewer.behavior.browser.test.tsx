@@ -134,6 +134,10 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
         fullscreen: null,
         fullscreenLabel: 'Full screen',
       })
+    } else if (fullscreen.videoFullscreen) {
+      // Only the video can go full screen here: it does, with the
+      // system's controls, and no failure notice shows.
+      expect(fullscreen.statusHidden).toBe(true)
     } else {
       expect(fullscreen.statusHidden).toBe(false)
     }
@@ -150,8 +154,8 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       afterBuffering: null,
       playRefused:
         'The video could not start. Try again, or download the video.',
-      // Only the player goes full screen; where it cannot, the reader is
-      // told so instead of the bare video taking over.
+      // Where neither the player nor the video can go full screen, the
+      // reader is told so.
       fullscreenUnavailable: 'Full screen isn’t available here.',
       fullscreenElement: null,
     })

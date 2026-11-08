@@ -283,6 +283,9 @@ function snapshot(frame: Frame) {
       scrollWidth: document.documentElement.scrollWidth,
       fullscreenEnabled: document.fullscreenEnabled,
       fullscreen: document.fullscreenElement?.id ?? null,
+      // Set by the stub that stands in for the video's own full screen.
+      videoFullscreen:
+        document.documentElement.dataset.testVideoFullscreen === 'true',
       fullscreenLabel: byId('fullscreen').getAttribute('aria-label'),
     }
   })
@@ -1017,6 +1020,7 @@ export const videoViewerScenario = defineBrowserCommand(
         video.play = video.allowedPlay!
       })
       await clearNotice()
+      // Neither the player nor the video can go full screen.
       await frame.evaluate(() => {
         const element = document.getElementById('player')!
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
@@ -1024,6 +1028,11 @@ export const videoViewerScenario = defineBrowserCommand(
             configurable: true,
             value: undefined,
           })
+        Object.defineProperty(
+          document.getElementById('video')!,
+          'webkitEnterFullscreen',
+          { configurable: true, value: undefined },
+        )
       })
       await frame.click('#fullscreen')
       await noticeShown()
@@ -1035,6 +1044,10 @@ export const videoViewerScenario = defineBrowserCommand(
         const element = document.getElementById('player')!
         for (const name of ['requestFullscreen', 'webkitRequestFullscreen'])
           Reflect.deleteProperty(element, name)
+        Reflect.deleteProperty(
+          document.getElementById('video')!,
+          'webkitEnterFullscreen',
+        )
       })
       await clearNotice()
 
@@ -1077,6 +1090,21 @@ export const videoViewerScenario = defineBrowserCommand(
             timeout: 3000,
           })
           .catch(() => undefined)
+      // Where the player cannot go full screen but the video can (iPhone
+      // Safari, and WebKit in tests), the video's own full screen is used;
+      // a stub records it so the system player does not take over the test.
+      await frame.evaluate(() => {
+        const video = document.getElementById('video') as HTMLVideoElement & {
+          webkitEnterFullscreen?: () => void
+        }
+        if (!document.fullscreenEnabled && video.webkitEnterFullscreen)
+          Object.defineProperty(video, 'webkitEnterFullscreen', {
+            configurable: true,
+            value: () => {
+              document.documentElement.dataset.testVideoFullscreen = 'true'
+            },
+          })
+      })
       await frame.click('#fullscreen')
       await fullscreenLabel('Exit full screen')
       steps.fullscreen = await snapshot(frame)
@@ -1250,6 +1278,7 @@ type Snapshot = {
   viewport: { width: number; height: number }
   scrollWidth: number
   fullscreenEnabled: boolean
+  videoFullscreen: boolean
   fullscreen: string | null
   fullscreenLabel: string | null
 }
@@ -1330,7 +1359,7 @@ declare module 'vitest/browser' {
         | 'ignored'
         | 'replaced',
         PreferencesState
-      >
+      > & { videoOnlyFullscreen: { entered: boolean; notice: boolean } }
       download?: Saved & { fetchedOriginal: boolean; urlUnchanged: boolean }
       playsFromLocalCopy?: {
         switched: boolean
