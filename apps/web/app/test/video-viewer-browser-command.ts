@@ -199,6 +199,7 @@ function simulateLoadedClip(frame: Frame) {
       set: (value: number) => {
         time = value
         video.dispatchEvent(new Event('timeupdate'))
+        video.dispatchEvent(new Event('seeked'))
       },
     })
     video.play = () => {

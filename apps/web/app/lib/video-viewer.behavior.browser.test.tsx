@@ -61,9 +61,11 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       startHidden: true,
       playLabel: 'Pause',
     })
+    // Once played, a pause keeps the frame clear of the large play button.
     expect(steps!.pausedByButton).toMatchObject({
       paused: true,
       playLabel: 'Play',
+      startHidden: true,
     })
     expect(steps!.seekEnd).toMatchObject({
       currentTime: 60,
@@ -72,6 +74,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
       seekText: '1:00 / 1:00',
     })
     expect(steps!.seekMiddle).toMatchObject({
+      startHidden: true,
       currentTime: 30,
       elapsed: '0:30',
     })

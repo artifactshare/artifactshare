@@ -148,7 +148,7 @@ const VIDEO_PLAYER_STYLE = `:root {
   --bg: #f0efec;
   --paper: #faf9f7;
   --text: #35352f;
-  --muted: #777770;
+  --muted: #6b6b65;
   --line: #e5e4e0;
   --link: #1865a4;
   --picture: #151612;
@@ -524,6 +524,7 @@ function setIcon(button, name) {
   for (const span of button.querySelectorAll('[data-icon]'))
     span.hidden = span.dataset.icon !== name
 }
+let moved = false
 function syncPlay() {
   const paused = video.paused || video.ended
   setIcon(play, paused ? 'play' : 'pause')
@@ -531,7 +532,9 @@ function syncPlay() {
     'aria-label',
     video.ended ? text.replay : paused ? text.play : text.pause,
   )
-  start.hidden = !paused || failed()
+  // The large button invites the first play and a replay; once the reader
+  // has played or moved the video, it would only cover the paused frame.
+  start.hidden = !paused || failed() || (moved && !video.ended)
   start.setAttribute('aria-label', video.ended ? text.replay : text.startPlay)
 }
 function syncVolume() {
@@ -585,7 +588,13 @@ async function showMediaError() {
 play.addEventListener('click', () => void togglePlay())
 start.addEventListener('click', () => void togglePlay())
 video.addEventListener('click', () => void togglePlay())
-for (const name of ['play', 'pause', 'ended']) video.addEventListener(name, syncPlay)
+video.addEventListener('play', () => {
+  moved = true
+})
+video.addEventListener('seeked', () => {
+  if (video.currentTime > 0) moved = true
+})
+for (const name of ['play', 'pause', 'ended', 'seeked']) video.addEventListener(name, syncPlay)
 for (const name of ['timeupdate', 'durationchange', 'loadedmetadata', 'seeked', 'emptied'])
   video.addEventListener(name, syncTime)
 video.addEventListener('loadedmetadata', () => {
