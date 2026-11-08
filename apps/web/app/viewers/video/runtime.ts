@@ -57,6 +57,9 @@ type FullscreenDocument = Document & {
   webkitExitFullscreen?: () => void
 }
 type FullscreenElement = HTMLElement & { webkitRequestFullscreen?: () => void }
+// iPhone Safari can put only a video element in full screen, with its own
+// controls.
+type FullscreenVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
 
 // Runs one player document: it owns the page's <video> element (the one the
 // generated page shipped with native controls, so the video still plays if
@@ -284,7 +287,9 @@ export class VideoPlayerRuntime {
   }
 
   // Full screen puts the whole player, controls included, in full screen.
-  // Where the player itself cannot go full screen, the reader is told so.
+  // Where only the video can (iPhone Safari), the video goes full screen
+  // with the system's own controls, as the player did before; where neither
+  // can, the reader is told so.
   async toggleFullscreen(player: FullscreenElement) {
     const current = document as FullscreenDocument
     try {
@@ -295,6 +300,8 @@ export class VideoPlayerRuntime {
         await player.requestFullscreen()
       } else if (player.webkitRequestFullscreen) {
         player.webkitRequestFullscreen()
+      } else if ((this.video as FullscreenVideo).webkitEnterFullscreen) {
+        ;(this.video as FullscreenVideo).webkitEnterFullscreen!()
       } else {
         throw new Error('fullscreen unavailable')
       }

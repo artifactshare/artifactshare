@@ -364,6 +364,7 @@ describe.each([
         paused: true,
         currentTime: 30,
       })
+      expect(flow.videoOnlyFullscreen).toEqual({ entered: true, notice: false })
       expect(flow.refused).toMatchObject({
         lang: app.lang,
         message: app.fullscreenFailed,

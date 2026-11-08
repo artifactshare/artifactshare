@@ -391,6 +391,34 @@ async function preferencesFlow(
       document.getElementById('video') as HTMLVideoElement & { probe?: true }
     ).probe = true
   })
+  // Where only the video can go full screen (iPhone Safari), the video does,
+  // with the system's controls, and no failure notice shows.
+  const videoOnlyFullscreen = await frame.evaluate(async () => {
+    const player = document.getElementById('player') as HTMLElement & {
+      webkitRequestFullscreen?: unknown
+    }
+    const video = document.getElementById('video') as HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void
+    }
+    Object.defineProperty(player, 'requestFullscreen', {
+      value: undefined,
+      configurable: true,
+    })
+    Object.defineProperty(player, 'webkitRequestFullscreen', {
+      value: undefined,
+      configurable: true,
+    })
+    let entered = false
+    video.webkitEnterFullscreen = () => {
+      entered = true
+    }
+    document.getElementById('fullscreen')!.click()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    delete (player as { requestFullscreen?: unknown }).requestFullscreen
+    delete player.webkitRequestFullscreen
+    delete video.webkitEnterFullscreen
+    return { entered, notice: !document.getElementById('status')!.hidden }
+  })
   // A visible failure notice: the player refuses to go full screen.
   await frame.evaluate(() => {
     document.getElementById('player')!.requestFullscreen = () =>
@@ -464,6 +492,7 @@ async function preferencesFlow(
     loaded,
     seekedFirst,
     refused,
+    videoOnlyFullscreen,
     changed,
     ignored,
     replaced,
