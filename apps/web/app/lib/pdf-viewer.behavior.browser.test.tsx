@@ -47,7 +47,7 @@ function expectOneToolbarRow(layout: Layout, width: number) {
       control.right <= frameWidth - 60 || control.top >= 20,
       JSON.stringify({ control, frameWidth }),
     ).toBe(true)
-  if (width < 700) {
+  if (width < 780) {
     expect(layout.toolbarHeight).toBe(72)
     for (const { width: w, height: h } of controls) {
       expect(w).toBeGreaterThanOrEqual(44)
@@ -63,9 +63,22 @@ function expectOneToolbarRow(layout: Layout, width: number) {
 }
 
 test('keeps the controls in one row on a 320px phone', async () => {
-  const { initial } = await server.commands.pdfViewerScenario('pages', 320)
+  const { initial, widened } = await server.commands.pdfViewerScenario(
+    'pages',
+    320,
+  )
 
   expectOneToolbarRow(initial!, 320)
+  // Widening the row brings the download back.
+  expectOneToolbarRow(widened!, 1440)
+})
+
+// Phone touch targets and the taller row last up to the app's stack
+// breakpoint, not only on the narrowest phones.
+test('keeps phone-sized touch targets on a 600px frame', async () => {
+  const { initial } = await server.commands.pdfViewerScenario('pages', 600)
+
+  expectOneToolbarRow(initial!, 600)
 })
 
 describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
@@ -204,7 +217,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(list.lastDrawn).toBe(true)
     const closed = { open: false, focusedId: 'pages' }
     expect(list.afterEscape).toEqual(closed)
-    if (width >= 700) expect(list.afterBackdrop).toEqual(closed)
+    if (width >= 780) expect(list.afterBackdrop).toEqual(closed)
     expect(list.afterCloseButton).toEqual(closed)
     expect(list.chosen).toEqual({ page: 5, marked: '5', ...closed })
     expect(list.download).toEqual({ sameBytes: true, fetchedOriginal: false })
@@ -275,10 +288,11 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       open: false,
       expanded: 'false',
     })
+    // Opened by pointer, the menu itself takes focus.
     expect(flow.opened).toMatchObject({
       open: true,
       expanded: 'true',
-      focusedCheckedLayout: true,
+      focusInSettings: true,
     })
     expect(flow.opened.popover.left).toBeGreaterThanOrEqual(0)
     expect(flow.opened.popover.right).toBeLessThanOrEqual(width)
@@ -314,7 +328,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     expect(sizes['page-width']!.pageWidth).toBeLessThanOrEqual(
       sizes['page-width']!.container.width,
     )
-    if (width >= 700)
+    if (width >= 780)
       expect(sizes['page-width']!.pageWidth).toBeGreaterThan(960)
     expect(flow.pageLayout).toMatchObject({
       layout: 'page',
@@ -343,7 +357,8 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       size: '2',
       page: 4,
     })
-    expect(flow.keyboardTab).toBe('zoom')
+    // The arrow keys continue from the layouts to the sizes.
+    expect(flow.keyboardToSize).toBe('auto')
     expect(flow.keyboardEscape).toMatchObject({
       open: false,
       focusedId: 'fit',
@@ -354,10 +369,15 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       searchOpen: true,
       focusedId: 'search-query',
     })
+    expect(flow.shortcutToSearch).toMatchObject({
+      open: false,
+      searchOpen: true,
+      focusedId: 'search-query',
+    })
     expect(flow.searchToSettings).toMatchObject({
       open: true,
       searchOpen: false,
-      focusedCheckedLayout: true,
+      focusInSettings: true,
     })
     expect(flow.settingsToPages).toMatchObject({
       open: false,
@@ -455,7 +475,7 @@ describe('PDF search messages', () => {
 
   test('keeps the search field usable when the Japanese no-text message shows on a 320px phone', async () => {
     const result = await server.commands.pdfViewerScenario('image-only', 320, {
-      locale: 'ja-JP',
+      app: { locale: 'ja', theme: 'system' },
     })
 
     expect(result.searchOnce!.results).toBe(
@@ -472,12 +492,25 @@ describe('PDF search messages', () => {
   })
 })
 
-describe('PDF viewer in Japanese', () => {
-  const ja = { locale: 'ja-JP' } as const
+// The viewer speaks the app's language, set by the reader in the app, not the
+// browser's.
+describe('PDF viewer in the app language', () => {
+  const ja = {
+    locale: 'en-US',
+    app: { locale: 'ja', theme: 'system' },
+  } as const
 
   test('labels the page list items and fits the row on a phone', async () => {
     const result = await server.commands.pdfViewerScenario('pages', 390, ja)
 
+    expect(result.labels).toEqual({
+      lang: 'ja',
+      toolbar: 'PDFの操作',
+      pages: 'ページ一覧を開く',
+      content: 'PDFの内容',
+      // The PDF content keeps its own language for text measurement.
+      contentLang: '',
+    })
     expectOneToolbarRow(result.initial!, 390)
     expect(result.pageList!.opened).toMatchObject({
       heading: 'ページ一覧',
@@ -500,6 +533,109 @@ describe('PDF viewer in Japanese', () => {
     expect(imageOnly.searchOnce!.results).toBe(
       'このPDFには検索できる文字がありません',
     )
+  })
+
+  test('reports a failure in the app language', async () => {
+    const result = await server.commands.pdfViewerScenario('corrupt', 1440, ja)
+
+    expect(result.state).toBe('corrupt')
+    expect(result.message).toBe(
+      'このPDFは壊れているか、PDFとして読み込めませんでした。',
+    )
+    expect(result.downloadOffered).toBe(true)
+  })
+
+  test('stays in English when the app is English and the browser Japanese', async () => {
+    const result = await server.commands.pdfViewerScenario('image-only', 390, {
+      locale: 'ja-JP',
+      app: { locale: 'en', theme: 'system' },
+    })
+
+    expect(result.labels).toMatchObject({
+      lang: 'en',
+      toolbar: 'PDF controls',
+      pages: 'Open the page list',
+    })
+    expect(result.searchOnce!.results).toBe('This PDF has no searchable text')
+  })
+
+  test('opens unframed in the browser language until the app says otherwise', async () => {
+    const japanese = await server.commands.pdfViewerScenario(
+      'image-only',
+      1440,
+      {
+        locale: 'ja-JP',
+      },
+    )
+    const english = await server.commands.pdfViewerScenario('image-only', 1440)
+
+    expect(japanese.labels).toMatchObject({ lang: 'ja', toolbar: 'PDFの操作' })
+    expect(english.labels).toMatchObject({
+      lang: 'en',
+      toolbar: 'PDF controls',
+    })
+  })
+
+  test('follows late and changed app preferences without reloading the PDF', async () => {
+    const result = await server.commands.pdfViewerScenario(
+      'preferences',
+      1440,
+      { locale: 'ja-JP', colorScheme: 'dark' },
+    )
+    const flow = result.preferences!
+    const light = 'rgb(255, 255, 255)'
+    const dark = 'rgb(17, 19, 21)'
+    const reading = { page: 3, layout: 'page', sameDocument: true }
+
+    // Before the app's preferences arrive: the browser's language and its
+    // dark scheme for the system theme.
+    expect(flow.initial).toMatchObject({
+      lang: 'ja',
+      theme: 'system',
+      background: dark,
+      ...reading,
+    })
+    expect(flow.late).toMatchObject({
+      lang: 'ja',
+      theme: 'light',
+      // Native controls follow the app's light theme over the dark browser.
+      colorScheme: 'light',
+      toolbar: 'PDFの操作',
+      background: light,
+      contentLang: '',
+      ...reading,
+    })
+    expect(flow.late.renderedPages).toBeGreaterThan(0)
+    // The browser now prefers light.
+    expect(flow.dark).toMatchObject({
+      lang: 'en',
+      toolbar: 'PDF controls',
+      background: dark,
+      ...reading,
+    })
+    expect(flow.system).toMatchObject({ background: light, ...reading })
+    expect(flow.systemChanged).toMatchObject({ background: dark, ...reading })
+    // Malformed preferences, and preferences not from the parent, change
+    // nothing.
+    expect(flow.ignored).toMatchObject({
+      lang: 'en',
+      theme: 'system',
+      ...reading,
+    })
+    expect(flow.beforeReplacement).toMatchObject({ lang: 'ja', ...reading })
+    // A replacement frame is a fresh document with the current preferences.
+    expect(flow.replaced).toMatchObject({
+      lang: 'ja',
+      theme: 'dark',
+      toolbar: 'PDFの操作',
+      background: dark,
+      page: 1,
+      layout: 'page',
+      size: 'page-fit',
+      sameDocument: false,
+    })
+    expect(result.offOrigin).toEqual([])
+    expect(result.violations).toEqual([])
   })
 })
 
@@ -528,6 +664,36 @@ describe('PDF viewer terminal states', () => {
     expect(result.state).toBe('corrupt')
     expect(result.message).toMatch(/damaged/)
     expect(result.downloadOffered).toBe(true)
+  })
+
+  test('says a page that cannot be drawn failed, with the download, until a page that drew is shown', async () => {
+    const result = await server.commands.pdfViewerScenario('page-failure', 1440)
+    const { failed, recovered } = result.pageFailure!
+
+    expect(failed).toEqual({
+      state: 'page-error',
+      message:
+        'This page could not be displayed. Download the original PDF to view it.',
+      downloadOffered: true,
+      page: 4,
+    })
+    expect(recovered).toMatchObject({ state: 'ready', page: 1 })
+    expect(recovered.statusHidden).toBe(true)
+  })
+
+  test('downloads the original while the PDF is still loading without leaving the viewer', async () => {
+    const result = await server.commands.pdfViewerScenario(
+      'slow-original',
+      1440,
+    )
+
+    expect(result.earlyDownload).toEqual({
+      clickedWhile: 'loading',
+      name: 'Synthetic.pdf',
+      sameBytes: true,
+      stayed: true,
+    })
+    expect(result.state).toBe('ready')
   })
 
   test('reports that the PDF cannot be displayed when pdf.js cannot run', async () => {

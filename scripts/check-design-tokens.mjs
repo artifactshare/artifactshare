@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SPACING_OWNERSHIP_POLICY } from './spacing-ownership-policy.mjs'
 import {
@@ -11,6 +11,11 @@ const ROOT = new URL('..', import.meta.url).pathname
 const APP_DIR = join(ROOT, 'apps/web/app')
 const STYLES_DIR = join(APP_DIR, 'styles')
 export const APP_CSS = join(APP_DIR, 'app.css')
+// The theme (dark variant, @theme tokens and breakpoints, @theme inline
+// bridges, light/dark/system values), imported by app.css and the viewers.
+export const THEME_CSS = join(STYLES_DIR, 'theme.css')
+// Sandboxed viewers build their own stylesheets from the shared theme.
+const VIEWERS_DIR = join(APP_DIR, 'viewers')
 const CATALOG_TS = join(APP_DIR, 'components/catalog.ts')
 const TOKENS_CSS = join(STYLES_DIR, 'tokens.css')
 const ROOT_TSX = join(APP_DIR, 'root.tsx')
@@ -868,12 +873,15 @@ export function findRawWidthMediaQueries(cssSource) {
 
 const THEME_BREAKPOINT_REF_RE = /theme\(\s*--breakpoint-([A-Za-z0-9_-]+)\s*\)/g
 
-export function findUndefinedThemeBreakpointReferences(cssSources) {
-  const appCssEntry = cssSources.find((entry) => entry.path === APP_CSS)
-  if (!appCssEntry) {
-    throw new Error('app.css not found in cssSources')
+export function findUndefinedThemeBreakpointReferences(
+  cssSources,
+  themePath = THEME_CSS,
+) {
+  const themeEntry = cssSources.find((entry) => entry.path === themePath)
+  if (!themeEntry) {
+    throw new Error(`${basename(themePath)} not found in cssSources`)
   }
-  const defined = collectThemeBreakpointNames(appCssEntry.content)
+  const defined = collectThemeBreakpointNames(themeEntry.content)
   const violations = []
   const seen = new Set()
 
@@ -1103,6 +1111,71 @@ function excludeThemeInlineBlock(css) {
   }
 
   return css
+}
+
+// The viewers' own stylesheets (apps/web/app/viewers/**/*.css).
+export function collectViewerStylesheets(dir = VIEWERS_DIR) {
+  let entries
+  try {
+    entries = readdirSync(dir, { recursive: true })
+  } catch (error) {
+    if (error.code === 'ENOENT') return []
+    throw error
+  }
+  return entries
+    .filter((name) => name.endsWith('.css'))
+    .sort()
+    .map((name) => ({
+      path: join(dir, name),
+      content: readFileSync(join(dir, name), 'utf8'),
+    }))
+}
+
+// Stylesheet checks. Global CSS (app.css + styles/*.css) and the viewers'
+// stylesheets share the breakpoint, media query and duplicate rules; only
+// global CSS is limited to non-class selectors, since a viewer stylesheet
+// also styles the markup of the library it hosts (pdf.js).
+export function findStylesheetViolations({
+  globalSources,
+  viewerSources,
+  themePath = THEME_CSS,
+}) {
+  const violations = []
+  const allSources = [...globalSources, ...viewerSources]
+  for (const { path, content } of allSources) {
+    for (const match of findRawWidthMediaQueries(content)) {
+      violations.push({
+        check: 'raw-width-media-query',
+        file: rel(path),
+        detail: match,
+      })
+    }
+  }
+  for (const { file, detail } of findUndefinedThemeBreakpointReferences(
+    allSources,
+    themePath,
+  )) {
+    violations.push({ check: 'undefined-theme-breakpoint', file, detail })
+  }
+  for (const { path, content } of allSources) {
+    for (const selector of findDuplicateSelectors(content)) {
+      violations.push({
+        check: 'duplicate-selector',
+        file: rel(path),
+        detail: selector,
+      })
+    }
+  }
+  for (const { path, content } of globalSources) {
+    for (const selector of findForbiddenGlobalSelectors(content)) {
+      violations.push({
+        check: 'global-css-selector',
+        file: rel(path),
+        detail: selector,
+      })
+    }
+  }
+  return violations
 }
 
 function walkSourceFiles(dir, skipUi = false) {
@@ -1787,10 +1860,13 @@ export function runAllChecks() {
     }))
   const styleCssContents = styleCssEntries.map((entry) => entry.content)
   const appCssContent = readFileSync(APP_CSS, 'utf8')
+  const themeCssContent = readFileSync(THEME_CSS, 'utf8')
+  const viewerCssEntries = collectViewerStylesheets()
   const rootTsxContent = readFileSync(ROOT_TSX, 'utf8')
   const designSystemContent = readFileSync(DESIGN_SYSTEM_MD, 'utf8')
+  // app.css imports the font and the theme that defines its stack.
   for (const violation of findFontSourceViolations(
-    appCssContent,
+    `${appCssContent}\n${themeCssContent}`,
     rootTsxContent,
   )) {
     violations.push({
@@ -1822,8 +1898,8 @@ export function runAllChecks() {
       detail,
     })
   }
-  const themeBreakpointNames = collectThemeBreakpointNames(appCssContent)
-  const themeContainerNames = collectThemeContainerNames(appCssContent)
+  const themeBreakpointNames = collectThemeBreakpointNames(themeCssContent)
+  const themeContainerNames = collectThemeContainerNames(themeCssContent)
 
   // catalog.ts quotes class strings and var names as documentation, not as
   // applied styles, so it is excluded from every source scan.
@@ -1897,12 +1973,19 @@ export function runAllChecks() {
     ...styleCssContents,
   ])
 
+  // The @theme inline bridges map utility names onto semantic values and are
+  // not themselves references to check.
   const referenceSources = [
-    ...styleCssEntries,
+    ...styleCssEntries.map((entry) =>
+      entry.path === THEME_CSS
+        ? { ...entry, content: excludeThemeInlineBlock(entry.content) }
+        : entry,
+    ),
     {
       path: APP_CSS,
       content: excludeThemeInlineBlock(appCssContent),
     },
+    ...viewerCssEntries,
     ...sourceFiles.map((file) => ({
       path: file,
       content: readFileSync(file, 'utf8'),
@@ -1933,50 +2016,15 @@ export function runAllChecks() {
     }
   }
 
-  const cssSources = [
-    { path: APP_CSS, content: appCssContent },
-    ...styleCssEntries,
-  ]
-
-  for (const { path, content } of cssSources) {
-    for (const match of findRawWidthMediaQueries(content)) {
-      violations.push({
-        check: 'raw-width-media-query',
-        file: rel(path),
-        detail: match,
-      })
-    }
-  }
-
-  for (const { file, detail } of findUndefinedThemeBreakpointReferences(
-    cssSources,
-  )) {
-    violations.push({
-      check: 'undefined-theme-breakpoint',
-      file,
-      detail,
-    })
-  }
-
-  for (const { path, content } of cssSources) {
-    for (const selector of findDuplicateSelectors(content)) {
-      violations.push({
-        check: 'duplicate-selector',
-        file: rel(path),
-        detail: selector,
-      })
-    }
-  }
-
-  for (const { path, content } of cssSources) {
-    for (const selector of findForbiddenGlobalSelectors(content)) {
-      violations.push({
-        check: 'global-css-selector',
-        file: rel(path),
-        detail: selector,
-      })
-    }
-  }
+  violations.push(
+    ...findStylesheetViolations({
+      globalSources: [
+        { path: APP_CSS, content: appCssContent },
+        ...styleCssEntries,
+      ],
+      viewerSources: viewerCssEntries,
+    }),
+  )
 
   for (const entry of findSettingsRouteSpacingViolations()) {
     violations.push({

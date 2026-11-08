@@ -207,6 +207,7 @@
     "apps/web/fixtures/",
     "apps/web/integration/",
     "apps/web/public/",
+    "apps/web/scripts/",
     "apps/web/workers/",
     "docs/brand/",
     "docs/demo-samples/",

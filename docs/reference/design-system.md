@@ -1,6 +1,6 @@
 # Artifact Share — Design System
 
-> **値の正本**: `apps/web/app/app.css` の `@theme` / `apps/web/app/styles/tokens.css` (light / dark とも) と各部品コード
+> **値の正本**: `apps/web/app/styles/theme.css` の `@theme` / `apps/web/app/styles/tokens.css` (light / dark とも) と各部品コード
 > **部品一覧の正本**: `apps/web/app/components/catalog.ts` (何があり・いつ使い・どの variant を持ち・公式から何が違うか)
 > ステータス: 現行仕様 v0.28 (unreleased)
 
@@ -22,7 +22,7 @@ UI 実装時は、次の順で参照する。
 
 1. `docs/reference/design-system.md`: 語彙と意図。色・余白・部品の意味、いつ何を使うか、文言、避ける表現。
 2. `apps/web/app/components/catalog.ts`: どの部品があり、どの variant を持ち、公式から何が違うか。
-3. `apps/web/app/app.css` (`@theme`) / `apps/web/app/styles/tokens.css`: 実装で使うトークン値の正本。
+3. `apps/web/app/styles/theme.css` (`@theme`) / `apps/web/app/styles/tokens.css`: 実装で使うトークン値の正本。
 4. 既存 React component と近接の `*-styles.ts`: 共通スタイルの正本。挙動、状態、アクセシビリティ、細部の DOM 構造、寸法もここが正本。
 5. UI 付き spec の静的モックを作る場合は、画面構成と状態遷移を spec 内で自己完結させる。
 
@@ -51,8 +51,9 @@ UX Bar の「原則」にある「驚かせない」「速く感じさせる」�
 
 ```
 apps/web/app/
-├── app.css               # body reset, font-family, focus-visible, @theme (トークン値の正本)
+├── app.css               # アプリの CSS 入口: body reset, base, theme.css の取り込み
 ├── styles/
+│   ├── theme.css         # dark variant, @theme, @theme inline, light / dark / system 値 (トークン値の正本)
 │   ├── tokens.css        # design tokens (light :root ＋ dark)
 │   ├── landing.css       # トップページ LP 専用トークン (製品 UI からは参照しない)
 │   └── view-transitions.css  # ドキュメント級グローバル CSS (view transitions)
@@ -62,10 +63,14 @@ apps/web/app/
 │   ├── form/             # フォーム複合部品 (§11.12、スタイル同居)
 │   ├── layout/           # 一方向レイアウト primitive (Stack / Inline)
 │   └── app/              # Artifact Share 固有の部品
+├── viewers/
+│   └── pdf/              # sandbox iframe 内で動く PDF ビューア (React + viewer.css)
 └── i18n/
     ├── en.json
     └── ja.json
 ```
+
+sandbox iframe 内のビューア (`viewers/pdf/`) は、アプリと同じ `components/ui/` 部品と `styles/theme.css` / `styles/tokens.css` から作る。スタイルシート `viewer.css` は `app.css` を読み込まず、ビューアのソースと使う部品だけを走査して別にビルドする (`app.css` は `viewers/` を走査しない)。生成物 (`apps/web/workers/lib/pdf-viewer-*.generated.ts`) は `pnpm --filter @artifactshare/web generate:pdf-viewer` で作り直し、`check:pdf-viewer` が鮮度を確かめる。ビューアのスタイルシートも `check:design-tokens` の breakpoint・media query・未定義変数の検査対象で、ホストするライブラリ (pdf.js) の markup を整えるため class セレクタだけは許す。
 
 shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/radius を `@theme` のトークンで上書きする。公式からの独自差分は `catalog.ts` の `upstreamDiff` に記録する。
 
@@ -77,7 +82,7 @@ shadcn/ui の new-york style を**ベースに採用**しつつ、color/spacing/
 
 ## 3. Color
 
-値の正本は `app.css` の semantic 変数とし、`@theme inline` を介して named utility を生成する。ここでは語彙だけ定める。
+値の正本は `styles/theme.css` の semantic 変数とし、`@theme inline` を介して named utility を生成する。ここでは語彙だけ定める。
 
 ### 3.1 Surface (background hierarchy)
 
@@ -239,7 +244,7 @@ Home の「最近見たもの」日付レールは、viewport breakpoint では�
 
 ## 10. Breakpoints
 
-breakpoint の正本は `app.css` の `@theme` にある semantic 名の `--breakpoint-*` 6 値。TSX では named variant (`max-stack:` 等)、生 CSS では `@media (width < theme(--breakpoint-*))` で参照する (CSS `@media` は `var()` を解釈できないが `theme()` は解決される)。値はこの文書に重複させず、`check:design-tokens` が px の再導入を deny する。
+breakpoint の正本は `styles/theme.css` の `@theme` にある semantic 名の `--breakpoint-*` 6 値。TSX では named variant (`max-stack:` 等)、生 CSS では `@media (width < theme(--breakpoint-*))` で参照する (CSS `@media` は `var()` を解釈できないが `theme()` は解決される)。値はこの文書に重複させず、`check:design-tokens` が px の再導入を deny する。
 
 - **phone**: 電話幅。ビューア操作のアイコン化、メニュー切替。
 - **nav**: 小画面境界。topbar のラベル省略や viewer chrome の畳み込み。

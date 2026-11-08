@@ -66,6 +66,8 @@ import {
   sandboxExternalLinkPolicyMessage,
   sandboxMessageFromFrame,
 } from '~/lib/sandbox-frame-message'
+import { DEFAULT_APP_THEME, isAppTheme } from '~/lib/app-theme'
+import { viewerPreferencesMessage } from '~/viewers/pdf/preferences'
 import { renderMermaidRequest } from './mermaid-render-request'
 import {
   classifyViewerLinkNavigation,
@@ -850,6 +852,20 @@ function useSandboxFrameController({
     frameUrl,
   ])
 
+  // The PDF viewer shows its controls in the app's language and theme. These
+  // are presentation only and separate from the ready handshake's token.
+  const sendViewerPreferences = useCallback(() => {
+    if (renderType !== 'pdf') return
+    const theme = document.documentElement.dataset.theme
+    frameRef.current?.contentWindow?.postMessage(
+      viewerPreferencesMessage({
+        locale,
+        theme: isAppTheme(theme) ? theme : DEFAULT_APP_THEME,
+      }),
+      trustedMessageOrigin,
+    )
+  }, [locale, renderType, trustedMessageOrigin])
+
   const focusFrame = useCallback(() => {
     requestAnimationFrame(() => {
       const active = document.activeElement
@@ -894,6 +910,9 @@ function useSandboxFrameController({
         sandboxExternalLinkPolicyMessage(lowTrust ? 'parent' : 'direct'),
         trustedMessageOrigin,
       )
+      // Every document that answers, including a reloaded or replacement
+      // one, gets the current preferences.
+      sendViewerPreferences()
       markFrameReadyFromMessage()
       clearReadyFallback()
     } else if (message.kind === 'hash-changed') {
@@ -992,6 +1011,19 @@ function useSandboxFrameController({
     if (loadState !== 'ready') return
     sendHighlights()
   }, [loadState, sendHighlights])
+
+  // A language change re-runs this; a theme change is applied to the root
+  // element first (see the theme menus), so it is observed there.
+  useEffect(() => {
+    if (renderType !== 'pdf' || loadState !== 'ready') return
+    sendViewerPreferences()
+    const observer = new MutationObserver(sendViewerPreferences)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+    return () => observer.disconnect()
+  }, [loadState, renderType, sendViewerPreferences])
 
   useEffect(() => {
     if (
