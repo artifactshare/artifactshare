@@ -875,6 +875,13 @@ async function settingsFlow(
   await frame.click('#fit')
   await frame.click('#search-toggle')
   const settingsToSearch = await settingsState(frame)
+  // Ctrl/Cmd+F from the open settings moves focus to the search field and
+  // keeps it there after the menu closes.
+  await page.keyboard.press('Escape')
+  await frame.click('#fit')
+  await page.keyboard.press('ControlOrMeta+f')
+  await frame.waitForTimeout(500)
+  const shortcutToSearch = await settingsState(frame)
   await frame.click('#fit')
   const searchToSettings = await settingsState(frame)
   await frame.click('#pages')
@@ -921,6 +928,7 @@ async function settingsFlow(
     keyboardEscape,
     afterOutsideClick,
     settingsToSearch,
+    shortcutToSearch,
     searchToSettings,
     settingsToPages,
     searchToPages,

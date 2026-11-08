@@ -364,6 +364,11 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       searchOpen: true,
       focusedId: 'search-query',
     })
+    expect(flow.shortcutToSearch).toMatchObject({
+      open: false,
+      searchOpen: true,
+      focusedId: 'search-query',
+    })
     expect(flow.searchToSettings).toMatchObject({
       open: true,
       searchOpen: false,

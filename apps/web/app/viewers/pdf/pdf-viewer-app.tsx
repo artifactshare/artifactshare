@@ -663,6 +663,17 @@ function DisplaySettings({
         align="end"
         collisionPadding={8}
         data-pdf-settings=""
+        // Closing returns focus to the button only when nothing else has
+        // taken it, such as the search field opened with Ctrl/Cmd+F.
+        onCloseAutoFocus={(event) => {
+          const active = document.activeElement
+          if (
+            active &&
+            active !== document.body &&
+            !active.closest('[data-pdf-settings]')
+          )
+            event.preventDefault()
+        }}
         aria-labelledby={undefined}
         aria-label={text('pdfViewer.settings')}
         className="w-61 p-2"
