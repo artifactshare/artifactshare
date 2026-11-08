@@ -50,6 +50,7 @@ export function suiteCommand(lane, report, root) {
         'scripts/*.test.mjs',
         'packages/contract/generate-surfaces.test.mjs',
         'packages/viewer-kit/scripts/*.test.mjs',
+        'apps/web/scripts/*.test.mjs',
       ],
       env: {},
       format: 'node-jsonl',

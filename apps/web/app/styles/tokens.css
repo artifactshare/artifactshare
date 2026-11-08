@@ -2,7 +2,7 @@
  * Artifact Share — Design Tokens
  * Spec: docs/reference/design-system.md
  *
- * spacing スケールの正本は app.css の @theme (--spacing-*) に移行済み。
+ * spacing スケールの正本は styles/theme.css の @theme (--spacing-*) に移行済み。
  * このファイルは type / layout / shape / shadow / motion トークンを持つ。
  */
 

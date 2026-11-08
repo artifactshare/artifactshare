@@ -92,7 +92,7 @@ test('commands preserve whole-suite selection and environment', () => {
       const root = JSON.parse(fs.readFileSync('package.json'))
         .scripts['test:scripts'].split(' ')
         .slice(2)
-      assert.deepEqual(command.args.slice(-3), root)
+      assert.deepEqual(command.args.slice(-root.length), root)
       assert.equal(command.command, process.execPath)
     } else {
       assert.deepEqual(command.args.slice(0, 4), [

@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   APP_CSS,
+  THEME_CSS,
+  collectViewerStylesheets,
+  findStylesheetViolations,
   findBreakpointDocumentationViolations,
   findDesignSystemVersionViolations,
   findFontSourceViolations,
@@ -1359,7 +1362,7 @@ test('check 10: ignores --ring-* text inside quoted CSS string values', () => {
 })
 
 test('check 8: denies undefined theme() breakpoint refs; @theme is the only valid source', () => {
-  const appCss = `
+  const themeCss = `
 @theme {
   --breakpoint-phone: 520px;
   --breakpoint-stack: 780px;
@@ -1378,7 +1381,7 @@ test('check 8: denies undefined theme() breakpoint refs; @theme is the only vali
   ).pathname
 
   const undefinedRefs = findUndefinedThemeBreakpointReferences([
-    { path: APP_CSS, content: appCss },
+    { path: THEME_CSS, content: themeCss },
     { path: localCssPath, content: localOnlyCss },
   ])
   assert.equal(undefinedRefs.length, 1)
@@ -1387,7 +1390,7 @@ test('check 8: denies undefined theme() breakpoint refs; @theme is the only vali
 
   assert.deepEqual(
     findUndefinedThemeBreakpointReferences([
-      { path: APP_CSS, content: appCss },
+      { path: THEME_CSS, content: themeCss },
       { path: localCssPath, content: validCss },
     ]),
     [],
@@ -1397,10 +1400,60 @@ test('check 8: denies undefined theme() breakpoint refs; @theme is the only vali
       findUndefinedThemeBreakpointReferences([
         { path: localCssPath, content: localOnlyCss },
       ]),
-    /app\.css not found in cssSources/,
+    /theme\.css not found in cssSources/,
   )
   assert.deepEqual(
-    collectThemeBreakpointNames(appCss),
+    collectThemeBreakpointNames(themeCss),
     new Set(['phone', 'stack']),
   )
+})
+
+test('check 8: viewer stylesheets follow the shared theme breakpoints and may style hosted markup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'design-tokens-viewers-'))
+  try {
+    const themePath = join(root, 'styles/theme.css')
+    const viewerPath = join(root, 'viewers/pdf/viewer.css')
+    await mkdir(dirname(themePath), { recursive: true })
+    await mkdir(dirname(viewerPath), { recursive: true })
+    await writeFile(
+      themePath,
+      '@theme { --breakpoint-phone: 520px; }\n:root { --link: #116bb1; }\n',
+    )
+    await writeFile(
+      viewerPath,
+      [
+        '.pdfViewer .page { margin: 0 auto; }',
+        '@media (width < theme(--breakpoint-phone)) { .pdfViewer { padding: 0; } }',
+        '@media (max-width: 700px) { .pdfViewer { padding: 0; } }',
+        '@media (width < theme(--breakpoint-tablet)) { .pdfViewer { padding: 0; } }',
+      ].join('\n'),
+    )
+    const viewerSources = collectViewerStylesheets(join(root, 'viewers'))
+    assert.deepEqual(
+      viewerSources.map((entry) => entry.path),
+      [viewerPath],
+    )
+    const violations = findStylesheetViolations({
+      globalSources: [
+        {
+          path: themePath,
+          content:
+            '@theme { --breakpoint-phone: 520px; }\n.as-x { color: red; }',
+        },
+      ],
+      viewerSources,
+      themePath,
+    })
+    assert.deepEqual(
+      violations.map(({ check, detail }) => `${check} ${detail}`),
+      [
+        'raw-width-media-query @media (max-width: 700px)',
+        'undefined-theme-breakpoint theme(--breakpoint-tablet)',
+        // Only global CSS is limited to non-class selectors.
+        'global-css-selector .as-x',
+      ],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

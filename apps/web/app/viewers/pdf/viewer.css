@@ -1,0 +1,81 @@
+/*
+ * The PDF viewer's stylesheet, built from the app's own theme. It scans only
+ * the viewer sources and the UI components they use; app.css and its page
+ * styles are not part of it.
+ */
+@import 'tailwindcss' source(none);
+@source './';
+@source '../../components/ui/button.tsx';
+@source '../../components/ui/dropdown-menu.tsx';
+@source '../../components/ui/input.tsx';
+@source '../../components/ui/sheet.tsx';
+/* A variable name in the sources, not a utility the viewer uses. */
+@source not inline('container');
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '../../styles/tokens.css';
+@import '../../styles/theme.css';
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  html:lang(ja) {
+    line-break: strict;
+    word-break: auto-phrase;
+  }
+  body {
+    @apply bg-muted text-foreground overflow-hidden;
+  }
+}
+
+/*
+ * pdf.js's page area. pdf_viewer.css is not in a layer, so these rules are
+ * not either, and follow it.
+ */
+.pdfViewer {
+  @apply px-4 py-5;
+}
+.pdfViewer .page {
+  box-sizing: content-box;
+  border: 0;
+  margin: 0 auto var(--spacing-5);
+  @apply shadow-sm;
+}
+.pdfViewer .page:last-child {
+  margin-bottom: 0;
+}
+.pdfViewer .page.loading::after {
+  display: none;
+}
+body[data-mode='page'] .pdfViewer {
+  min-height: 100%;
+  min-width: 100%;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body[data-mode='page'] .pdfViewer .page {
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+@media (width < theme(--breakpoint-stack)) {
+  .pdfViewer {
+    @apply px-1 py-3;
+  }
+  .pdfViewer .page {
+    margin-bottom: var(--spacing-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}

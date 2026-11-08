@@ -41,6 +41,8 @@ vi.mock('../app/services/sandbox-jti.server', () => ({
 }))
 
 import { staticSiteAssetResponse } from './lib/artifact-response'
+import { PDF_VIEWER_SCRIPT } from './lib/pdf-viewer-script.generated'
+import { PDF_VIEWER_STYLE } from './lib/pdf-viewer-style.generated'
 import { signSandboxToken as signDeliveryToken } from '../app/lib/sandbox-token'
 const signSandboxToken = (
   payload: Parameters<typeof signDeliveryToken>[0],
@@ -5093,7 +5095,12 @@ describe('PDF virtual bundle', () => {
     const html = await response.text()
     expect(html).toContain(VIOLATION_REPORTER_TAG)
     expect(html).toContain('<script type="module" src="/__as_pdf/viewer.js">')
-    expect(html).toContain('href="/__as_pdf/original.pdf?download=1"')
+    expect(html).toContain(
+      '<link rel="stylesheet" href="/__as_pdf/viewer.css">',
+    )
+    expect(html).toContain(
+      'data-download-href="/__as_pdf/original.pdf?download=1"',
+    )
     expect(html).not.toContain('%PDF-')
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
@@ -5112,9 +5119,26 @@ describe('PDF virtual bundle', () => {
       'text/javascript; charset=utf-8',
     )
     const script = await response.text()
-    expect(script).toContain('isEvalSupported: false')
-    expect(script).toContain("'/__as_pdf/pdfjs/'")
-    expect(script).not.toMatch(/https?:\/\//)
+    expect(script).toBe(PDF_VIEWER_SCRIPT)
+    expect(script).toMatch(/isEvalSupported:\s*(?:false|!1)/)
+    expect(script).toContain('/__as_pdf/pdfjs/')
+    // Nothing is imported from another origin.
+    expect(script).not.toMatch(/\bimport\s*\(\s*["'`]https?:/)
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
+  test('serves the shared viewer stylesheet with no per-artifact copy', async () => {
+    const { cookie } = await openViewer()
+
+    const response = await handleArtifactSandboxRequest(
+      new Request(`${sandboxOrigin('v-pdf', pdfId)}/__as_pdf/viewer.css`, {
+        headers: { Cookie: cookie },
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe('text/css; charset=utf-8')
+    expect(await response.text()).toBe(PDF_VIEWER_STYLE)
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
@@ -5342,7 +5366,7 @@ describe('PDF virtual bundle', () => {
     const { response: viewer, cookie } = await openViewer()
     expect(viewer.status).toBe(200)
     const html = await viewer.text()
-    const downloadPath = html.match(/<a id="download"[^>]* href="([^"]+)"/)?.[1]
+    const downloadPath = html.match(/ data-download-href="([^"]+)"/)?.[1]
     expect(downloadPath).toBe('/__as_pdf/original.pdf?download=1')
 
     const download = await handleArtifactSandboxRequest(

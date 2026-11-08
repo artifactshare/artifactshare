@@ -27,6 +27,8 @@
     "pnpm-lock.yaml",
     "worker-configuration.d.ts",
     "apps/web/worker-configuration.d.ts",
-    "packages/viewer-kit/src/reporter.generated.ts"
+    "packages/viewer-kit/src/reporter.generated.ts",
+    "apps/web/workers/lib/pdf-viewer-script.generated.ts",
+    "apps/web/workers/lib/pdf-viewer-style.generated.ts"
   ]
 }

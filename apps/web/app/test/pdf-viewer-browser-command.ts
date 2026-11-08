@@ -4,9 +4,10 @@ import { defineBrowserCommand } from '@vitest/browser-playwright'
 import type { Download, Frame, Page } from 'playwright'
 import { signSandboxUrl } from '../lib/sandbox-token'
 import {
-  PDF_ORIGINAL_PATH,
-  PDFJS_ASSET_PREFIX,
-} from '../../workers/lib/pdf-viewer'
+  viewerPreferencesMessage,
+  type ViewerPreferences,
+} from '../viewers/pdf/preferences'
+import { PDF_ORIGINAL_PATH, PDFJS_ASSET_PREFIX } from '../viewers/pdf/paths'
 
 const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'pdf-viewer-browser-fixture-only-'.repeat(3)
@@ -26,6 +27,9 @@ export type PdfScenario =
   | 'image-only'
   | 'late-text'
   | 'settings'
+  | 'preferences'
+  | 'page-failure'
+  | 'slow-original'
 
 type Size = readonly [number, number]
 const PAGE_SIZES = {
@@ -181,11 +185,12 @@ function scenarioPdf(scenario: PdfScenario): Uint8Array<ArrayBuffer> {
 }
 
 // Seeds one link-shared PDF version in the real sandbox Worker's D1 and R2 and
-// returns the signed anonymous entry URL the app would hand to the viewer.
+// returns a signer for the anonymous entry URLs the app would hand to the
+// viewer, each with its own one-time delivery id.
 async function seedPdfArtifact(
   env: { DB: D1Database; BUCKET: R2Bucket },
   pdf: Uint8Array<ArrayBuffer>,
-): Promise<string> {
+): Promise<() => Promise<string>> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 8)
   const ids = {
     workspace: `ws-pdf-${suffix}`,
@@ -240,21 +245,23 @@ async function seedPdfArtifact(
   await env.BUCKET.put(r2Key, pdf, {
     httpMetadata: { contentType: 'application/pdf' },
   })
-  return signSandboxUrl(
-    {
-      uid: null,
-      wid: ids.workspace,
-      aid: ids.artifact,
-      vid: ids.version,
-      fid: r2Key,
-      mt: null,
-      t: 'pdf',
-      jti: `jti-${suffix}`,
-    },
-    secret,
-    { APP_ENV: 'development' },
-    '/Synthetic.pdf',
-  )
+  let deliveries = 0
+  return () =>
+    signSandboxUrl(
+      {
+        uid: null,
+        wid: ids.workspace,
+        aid: ids.artifact,
+        vid: ids.version,
+        fid: r2Key,
+        mt: null,
+        t: 'pdf',
+        jti: `jti-${suffix}-${++deliveries}`,
+      },
+      secret,
+      { APP_ENV: 'development' },
+      '/Synthetic.pdf',
+    )
 }
 
 function pageNumber(frame: Frame): Promise<number> {
@@ -311,7 +318,7 @@ function layout(frame: Frame) {
           document.getElementById('next')!.getBoundingClientRect().right) /
         2,
       toolbarHeight: Math.round(
-        document.querySelector('.pdf-toolbar')!.getBoundingClientRect().height,
+        document.getElementById('pdf-toolbar')!.getBoundingClientRect().height,
       ),
       // Every control of the row, in owner order.
       controls: [
@@ -382,6 +389,30 @@ function focusedId(frame: Frame) {
   return frame.evaluate(() => document.activeElement?.id ?? null)
 }
 
+// The page list and the settings menu leave the document once closed and
+// then return focus in a later task. A surface that stays open is left to
+// the caller's assertions, but the wait's failure is logged.
+async function waitForClosed(frame: Frame, selector: string) {
+  await frame
+    .waitForFunction((closed) => !document.querySelector(closed), selector, {
+      timeout: 5000,
+    })
+    .catch((error: unknown) => {
+      console.warn(`waitForClosed(${selector}) did not settle:`, error)
+    })
+  await settle(frame)
+}
+
+function waitForPagesClosed(frame: Frame) {
+  return waitForClosed(frame, '[data-pdf-pages]')
+}
+
+// Arrow keys move focus between menu items in a later task.
+async function pressInMenu(page: Page, frame: Frame, key: string) {
+  await page.keyboard.press(key)
+  await settle(frame)
+}
+
 async function savedBytes(
   page: Page,
   frame: Frame,
@@ -436,25 +467,34 @@ async function pageListFlow(
         () => true,
         () => false,
       )
-  const dialogState = () =>
-    frame.evaluate(() => ({
-      open: (document.getElementById('pages-dialog') as HTMLDialogElement).open,
+  // A closed list has left the document and returned focus.
+  const dialogState = async () => {
+    await waitForPagesClosed(frame)
+    return frame.evaluate(() => ({
+      open: !!document.querySelector('[data-pdf-pages][data-state="open"]'),
       focusedId: document.activeElement?.id ?? null,
     }))
+  }
   const beforeOpen = await thumbnails()
   await goToPage(frame, 40)
   await frame.click('#pages')
   const currentDrawn = await waitDrawn(40)
   const opened = await frame.evaluate(() => {
-    const dialog = document.getElementById('pages-dialog') as HTMLDialogElement
+    const dialog = document.querySelector('[data-pdf-pages]')!
     const list = document.getElementById('page-list')!
     const current = [...list.querySelectorAll<HTMLElement>('[aria-current]')]
     const box = current[0]?.getBoundingClientRect()
     const visible = list.getBoundingClientRect()
     return {
-      open: dialog.open,
-      modal: dialog.matches(':modal'),
-      heading: document.getElementById('pages-heading')!.textContent,
+      open: dialog.getAttribute('data-state') === 'open',
+      // The controls outside the open list are hidden from assistive
+      // technology (live status regions stay announced).
+      modal:
+        dialog.getAttribute('role') === 'dialog' &&
+        !!document
+          .getElementById('pdf-toolbar')!
+          .closest('[aria-hidden="true"]'),
+      heading: dialog.querySelector('[data-slot="sheet-title"]')!.textContent,
       current: current.map((item) => ({
         page: Number(item.dataset.page),
         marker: item.getAttribute('aria-current'),
@@ -529,8 +569,22 @@ async function pageListFlow(
   const afterEscape = await dialogState()
   // On phones the list covers the whole frame, so there is no outside.
   let afterBackdrop = null
-  if (width >= 700) {
+  if (width >= 780) {
     await frame.click('#pages')
+    // The list listens for outside clicks once it has opened.
+    await frame
+      .waitForFunction(
+        () =>
+          !!document.activeElement?.closest(
+            '[data-pdf-pages][data-state="open"]',
+          ),
+        undefined,
+        { timeout: 5000 },
+      )
+      .catch((error: unknown) => {
+        console.warn('The page list did not take focus on opening:', error)
+      })
+    await settle(frame)
     await page.mouse.click(40, 400)
     afterBackdrop = await dialogState()
   }
@@ -539,16 +593,19 @@ async function pageListFlow(
   const afterCloseButton = await dialogState()
   await frame.click('#pages')
   await frame.click('#page-list button[data-page="5"]')
+  const chosenPage = await waitForPage(frame, 5)
+  const chosenState = await dialogState()
+  // The list marks the chosen page when it opens again.
+  await frame.click('#pages')
   const chosen = {
-    page: await waitForPage(frame, 5),
-    ...(await dialogState()),
+    page: chosenPage,
+    ...chosenState,
     marked: await frame.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>('#page-list [aria-current]')]
         .map((item) => Number(item.dataset.page))
         .join(),
     ),
   }
-  await frame.click('#pages')
   await clearCookies()
   const fetchesBefore = originalFetches()
   const download = {
@@ -687,29 +744,39 @@ async function searchOnce(frame: Frame) {
   return waitForResults(frame, '.')
 }
 
+// The display settings menu: its options carry data-layout and data-size,
+// and the viewer keeps the current choice on the body.
+const SETTINGS = '[data-pdf-settings]'
+
+function chooseSetting(frame: Frame, option: string) {
+  return frame.click(`${SETTINGS} ${option}`)
+}
+
 function settingsState(frame: Frame) {
-  return frame.evaluate(() => {
-    const options = document.getElementById('display-options')!
+  return frame.evaluate((settings) => {
+    const options = document.querySelector(settings)
     const container = document.getElementById('viewer-container')!
     const current = document.querySelector<HTMLElement>(
       `.page[data-page-number="${(document.getElementById('page-number') as HTMLInputElement).value}"]`,
     )!
-    const box = options.getBoundingClientRect()
+    const box = options?.getBoundingClientRect() ?? { left: 0, right: 0 }
     return {
-      open: !options.hidden,
+      open: options?.getAttribute('data-state') === 'open',
       expanded: document.getElementById('fit')!.getAttribute('aria-expanded'),
-      layout:
-        document.querySelector<HTMLInputElement>('input[name="layout"]:checked')
-          ?.value ?? null,
-      size: (document.getElementById('zoom') as HTMLInputElement).value,
+      layout: document.body.dataset.mode ?? null,
+      size: document.body.dataset.size ?? null,
       mode: document.body.dataset.mode,
       page: Number(
         (document.getElementById('page-number') as HTMLInputElement).value,
       ),
       focusedId: document.activeElement?.id ?? null,
+      focusInSettings: !!options?.contains(document.activeElement),
       focusedCheckedLayout:
-        document.activeElement?.matches('input[name="layout"]:checked') ??
-        false,
+        document.activeElement?.matches(
+          `${settings} [data-layout][aria-checked="true"]`,
+        ) ?? false,
+      focusedSize:
+        (document.activeElement as HTMLElement | null)?.dataset.size ?? null,
       popover: { left: box.left, right: box.right },
       frameWidth: innerWidth,
       pageWidth: current.offsetWidth,
@@ -719,11 +786,12 @@ function settingsState(frame: Frame) {
         height: container.clientHeight,
       },
       horizontalOverflow: container.scrollWidth - container.clientWidth,
-      dialogOpen: (document.getElementById('pages-dialog') as HTMLDialogElement)
-        .open,
+      dialogOpen: !!document.querySelector(
+        '[data-pdf-pages][data-state="open"]',
+      ),
       searchOpen: !document.getElementById('search-bar')!.hidden,
     }
-  })
+  }, SETTINGS)
 }
 
 // A swipe made of touch events carrying only the coordinates the viewer reads,
@@ -758,16 +826,16 @@ async function settingsFlow(
   const initial = await settingsState(frame)
   await frame.click('#fit')
   const opened = await settingsState(frame)
-  await frame.check('input[name="layout"][value="scroll"]')
+  await chooseSetting(frame, '[data-layout="scroll"]')
   await settle(frame)
   const scrollLayout = await settingsState(frame)
   const sizes: Record<string, Awaited<ReturnType<typeof settingsState>>> = {}
   for (const size of ['auto', 'page-fit', 'page-width', '1', '1.5', '2']) {
-    await frame.selectOption('#zoom', size)
+    await chooseSetting(frame, `[data-size="${size}"]`)
     await settle(frame)
     sizes[size] = await settingsState(frame)
   }
-  await frame.check('input[name="layout"][value="page"]')
+  await chooseSetting(frame, '[data-layout="page"]')
   await settle(frame)
   const pageLayout = await settingsState(frame)
   await page.setViewportSize({
@@ -784,17 +852,20 @@ async function settingsFlow(
 
   await frame.click('#fit')
   await page.keyboard.press('Escape')
+  await waitForClosed(frame, SETTINGS)
   const afterEscape = await settingsState(frame)
-  // Keyboard only: open, move between the layout radios, reach the select.
+  // Keyboard only: open, move to the other layout and choose it, move on to
+  // the sizes.
   await frame.focus('#fit')
-  await page.keyboard.press('Enter')
+  await pressInMenu(page, frame, 'Enter')
   const keyboardOpened = await settingsState(frame)
-  await page.keyboard.press('ArrowDown')
-  await settle(frame)
+  await pressInMenu(page, frame, 'ArrowDown')
+  await pressInMenu(page, frame, 'Enter')
   const keyboardLayout = await settingsState(frame)
-  await page.keyboard.press('Tab')
-  const keyboardTab = await focusedId(frame)
+  await pressInMenu(page, frame, 'ArrowDown')
+  const keyboardToSize = (await settingsState(frame)).focusedSize
   await page.keyboard.press('Escape')
+  await waitForClosed(frame, SETTINGS)
   const keyboardEscape = await settingsState(frame)
   await frame.click('#fit')
   await frame.click('#viewer-container', { position: { x: 10, y: 10 } })
@@ -813,24 +884,25 @@ async function settingsFlow(
   await frame.click('#pages')
   const searchToPages = await settingsState(frame)
   await page.keyboard.press('Escape')
+  await waitForPagesClosed(frame)
   const pagesClosed = await settingsState(frame)
 
   // Swipes turn pages only one page at a time while the page fits the width.
   await frame.click('#fit')
-  await frame.check('input[name="layout"][value="page"]')
-  await frame.selectOption('#zoom', 'page-fit')
+  await chooseSetting(frame, '[data-layout="page"]')
+  await chooseSetting(frame, '[data-size="page-fit"]')
   await page.keyboard.press('Escape')
   await goToPage(frame, 2)
   await settle(frame)
   const fittedSwipe = await swipeLeft(frame, true)
   await frame.click('#fit')
-  await frame.selectOption('#zoom', '2')
+  await chooseSetting(frame, '[data-size="2"]')
   await page.keyboard.press('Escape')
   const zoomed = await settingsState(frame)
   const zoomedSwipe = await swipeLeft(frame, false)
   await frame.click('#fit')
-  await frame.selectOption('#zoom', 'page-fit')
-  await frame.check('input[name="layout"][value="scroll"]')
+  await chooseSetting(frame, '[data-size="page-fit"]')
+  await chooseSetting(frame, '[data-layout="scroll"]')
   await page.keyboard.press('Escape')
   await settle(frame)
   const continuousSwipe = await swipeLeft(frame, false)
@@ -845,7 +917,7 @@ async function settingsFlow(
     afterEscape,
     keyboardOpened,
     keyboardLayout,
-    keyboardTab,
+    keyboardToSize,
     keyboardEscape,
     afterOutsideClick,
     settingsToSearch,
@@ -857,6 +929,247 @@ async function settingsFlow(
     zoomed,
     zoomedSwipe,
     continuousSwipe,
+  }
+}
+
+// While the page's flag is set, drawing a page fails: pdf.js starts every
+// page by filling its background.
+function breakPageDrawing() {
+  const fillRect = CanvasRenderingContext2D.prototype.fillRect
+  CanvasRenderingContext2D.prototype.fillRect = function (...args) {
+    if ((window as unknown as { breakPageDrawing?: boolean }).breakPageDrawing)
+      throw new Error('Synthetic page drawing failure')
+    return fillRect.apply(this, args)
+  }
+}
+
+function statusState(frame: Frame) {
+  return frame.evaluate(() => ({
+    state: document.documentElement.dataset.pdfState,
+    message: document.getElementById('status-message')!.textContent,
+    downloadOffered: !document.getElementById('status-download')!.hidden,
+    page: Number(
+      (document.getElementById('page-number') as HTMLInputElement).value,
+    ),
+  }))
+}
+
+// A page that cannot be drawn says so while it is the current page, with
+// the original download; moving to a page that drew clears it.
+async function pageFailureFlow(frame: Frame) {
+  await frame.evaluate(() => {
+    ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
+      true
+  })
+  await goToPage(frame, 4)
+  await frame
+    .waitForFunction(
+      () => document.documentElement.dataset.pdfState === 'page-error',
+      undefined,
+      { timeout: 10000 },
+    )
+    .catch(() => undefined)
+  const failed = await statusState(frame)
+  await frame.evaluate(() => {
+    ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
+      false
+  })
+  await goToPage(frame, 1)
+  await frame
+    .waitForFunction(
+      () => document.documentElement.dataset.pdfState === 'ready',
+      undefined,
+      { timeout: 10000 },
+    )
+    .catch(() => undefined)
+  const recovered = {
+    ...(await statusState(frame)),
+    statusHidden: await frame.evaluate(
+      () => document.getElementById('status')!.hidden,
+    ),
+  }
+  return { failed, recovered }
+}
+
+// A stand-in for the app page: it frames the viewer with the app's sandbox
+// permissions and sends the app's display preferences in the app's message
+// whenever a viewer document loads, and when they change.
+const PARENT_PATH = '/__pdf_test_parent'
+function parentDocument(entry: string, message: object | null) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style></head>
+<body><script>
+let message = ${JSON.stringify(message)}
+let frame = null
+const send = () => { if (message && frame) frame.contentWindow.postMessage(message, '*') }
+function mount(src, name) {
+  const next = document.createElement('iframe')
+  next.name = name
+  next.sandbox = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
+  next.src = src
+  next.addEventListener('load', () => { if (next === frame) send() })
+  frame?.remove()
+  frame = next
+  document.body.append(next)
+}
+window.sendPreferences = (next) => { message = next; send() }
+window.postToViewer = (data) => frame.contentWindow.postMessage(data, '*')
+window.replaceViewer = mount
+mount(${JSON.stringify(entry)}, 'viewer-1')
+</script></body></html>`
+}
+
+type ParentWindow = Window & {
+  sendPreferences(message: object): void
+  postToViewer(data: unknown): void
+  replaceViewer(src: string, name: string): void
+}
+
+async function viewerFrame(page: Page, name: string) {
+  const element = await page.waitForSelector(`iframe[name="${name}"]`)
+  const frame = (await element.contentFrame())!
+  await frame.waitForURL(/\/Synthetic\.pdf/, { timeout: 15000 })
+  await frame.waitForFunction(
+    () => !!document.getElementById('pdf-viewer-root'),
+    undefined,
+    { timeout: 15000 },
+  )
+  return frame
+}
+
+function viewerLabels() {
+  const label = (id: string) =>
+    document.getElementById(id)?.getAttribute('aria-label') ?? null
+  return {
+    lang: document.documentElement.lang,
+    toolbar: label('pdf-toolbar'),
+    pages: label('pages'),
+    content: label('viewer-container'),
+    contentLang:
+      document.getElementById('viewer-container')?.getAttribute('lang') ?? null,
+  }
+}
+
+function preferencesState(frame: Frame) {
+  return frame.evaluate(() => {
+    const toolbar = document.getElementById('pdf-toolbar')!
+    return {
+      lang: document.documentElement.lang,
+      theme: document.documentElement.dataset.theme ?? null,
+      toolbar: toolbar.getAttribute('aria-label'),
+      background: getComputedStyle(toolbar).backgroundColor,
+      contentLang: document
+        .getElementById('viewer-container')!
+        .getAttribute('lang'),
+      page: Number(
+        (document.getElementById('page-number') as HTMLInputElement).value,
+      ),
+      layout: document.body.dataset.mode ?? null,
+      size: document.body.dataset.size ?? null,
+      // Set on the PDF page area below: still there means the same pdf.js
+      // instance kept rendering the same document.
+      sameDocument:
+        (document.getElementById('viewer') as HTMLElement & { probe?: true })
+          .probe === true,
+      renderedPages: document.querySelectorAll('.page canvas').length,
+    }
+  })
+}
+
+// The viewer starts on the app defaults, takes the app's preferences late
+// and as they change without reloading its PDF, ignores malformed ones and
+// any not sent by its parent, and a replacement frame gets the current ones.
+async function preferencesFlow(
+  page: Page,
+  frame: Frame,
+  signEntry: () => Promise<string>,
+) {
+  const send = async (preferences: ViewerPreferences, expected: string) => {
+    await page.evaluate(
+      (message) => (window as unknown as ParentWindow).sendPreferences(message),
+      viewerPreferencesMessage(preferences),
+    )
+    await frame
+      .waitForFunction(
+        (wanted) =>
+          `${document.documentElement.lang} ${document.documentElement.dataset.theme}` ===
+          wanted,
+        expected,
+        { timeout: 5000 },
+      )
+      .catch(() => undefined)
+    await settle(frame)
+    return preferencesState(frame)
+  }
+  await goToPage(frame, 3)
+  await settle(frame)
+  await frame.evaluate(() => {
+    ;(
+      document.getElementById('viewer') as HTMLElement & { probe?: true }
+    ).probe = true
+  })
+  const initial = await preferencesState(frame)
+  // The browser prefers dark; the app chose light.
+  const late = await send({ locale: 'ja', theme: 'light' }, 'ja light')
+  await page.emulateMedia({ colorScheme: 'light' })
+  const dark = await send({ locale: 'en', theme: 'dark' }, 'en dark')
+  const system = await send({ locale: 'en', theme: 'system' }, 'en system')
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await settle(frame)
+  const systemChanged = await preferencesState(frame)
+  await page.evaluate(() => {
+    const parent = window as unknown as ParentWindow
+    for (const invalid of [
+      { locale: 'fr', theme: 'dark' },
+      { locale: 'ja', theme: 'sepia' },
+      { locale: 'ja' },
+    ])
+      parent.postToViewer({
+        source: 'artifactshare-parent',
+        kind: 'viewer-preferences',
+        ...invalid,
+      })
+  })
+  // Well formed, but from the viewer's own window instead of its parent.
+  await frame.evaluate(
+    (message) => window.postMessage(message, '*'),
+    viewerPreferencesMessage({ locale: 'ja', theme: 'light' }),
+  )
+  await frame.waitForTimeout(500)
+  const ignored = await preferencesState(frame)
+  const beforeReplacement = await send(
+    { locale: 'ja', theme: 'dark' },
+    'ja dark',
+  )
+  const next = new URL(await signEntry())
+  await page.evaluate(
+    (src) => (window as unknown as ParentWindow).replaceViewer(src, 'viewer-2'),
+    `${next.pathname}${next.search}`,
+  )
+  const replacement = await viewerFrame(page, 'viewer-2')
+  await replacement.waitForFunction(
+    () => document.documentElement.dataset.pdfState === 'ready',
+    undefined,
+    { timeout: 20000 },
+  )
+  await replacement
+    .waitForFunction(() => document.documentElement.lang === 'ja', undefined, {
+      timeout: 5000,
+    })
+    .catch(() => undefined)
+  const replaced = await preferencesState(replacement)
+  return {
+    frame: replacement,
+    result: {
+      initial,
+      late,
+      dark,
+      system,
+      systemChanged,
+      ignored,
+      beforeReplacement,
+      replaced,
+    },
   }
 }
 
@@ -872,7 +1185,7 @@ export const pdfViewerScenario = defineBrowserCommand(
     width: number,
     options: PdfScenarioOptions = {},
   ) => {
-    const height = width < 700 ? 844 : 900
+    const height = width < 780 ? 844 : 900
     const { createTestHarness } = await import('wrangler')
     const harness = createTestHarness({
       root: webRoot,
@@ -888,9 +1201,19 @@ export const pdfViewerScenario = defineBrowserCommand(
     const workerStatuses: string[] = []
     let origin = ''
     let workerOrigin = ''
+    // Framed scenarios load the viewer in a parent page the way the app
+    // does; the fixture lets that page be a frame ancestor of the viewer.
+    const framed = scenario === 'preferences' || options.app !== undefined
+    let parentPage = ''
     const server = createServer(async (request, response) => {
       try {
         const url = new URL(request.url ?? '/', origin)
+        if (framed && url.pathname === PARENT_PATH) {
+          response
+            .writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            .end(parentPage)
+          return
+        }
         if (
           (scenario === 'unsupported' &&
             url.pathname.startsWith(PDFJS_ASSET_PREFIX)) ||
@@ -901,6 +1224,14 @@ export const pdfViewerScenario = defineBrowserCommand(
           response.writeHead(scenario === 'transport' ? 500 : 404).end()
           return
         }
+        // The viewer's own fetch of the original is slow; the download
+        // link's request is not.
+        if (
+          scenario === 'slow-original' &&
+          url.pathname === PDF_ORIGINAL_PATH &&
+          !url.searchParams.has('download')
+        )
+          await new Promise((resolve) => setTimeout(resolve, 4000))
         const headers: Record<string, string> = {}
         for (const [name, value] of Object.entries(request.headers))
           if (
@@ -927,7 +1258,15 @@ export const pdfViewerScenario = defineBrowserCommand(
               'transfer-encoding',
             ].includes(name)
           )
-            response.setHeader(name, value)
+            response.setHeader(
+              name,
+              framed && name === 'content-security-policy'
+                ? value.replace(
+                    /frame-ancestors [^;]+/,
+                    "frame-ancestors 'self'",
+                  )
+                : value,
+            )
         const cookies = result.headers.getSetCookie()
         if (cookies.length) response.setHeader('Set-Cookie', cookies)
         response.statusCode = result.status
@@ -945,15 +1284,17 @@ export const pdfViewerScenario = defineBrowserCommand(
         .newContext({
           viewport: { width, height },
           locale: options.locale ?? 'en-US',
-          colorScheme: 'light',
+          colorScheme: options.colorScheme ?? 'light',
           reducedMotion: 'reduce',
         })
     try {
       await harness.listen()
       await sandbox.applyD1Migrations('DB')
-      const entry = new URL(
-        await seedPdfArtifact(await sandbox.getEnv(), scenarioPdf(scenario)),
+      const signEntry = await seedPdfArtifact(
+        await sandbox.getEnv(),
+        scenarioPdf(scenario),
       )
+      const entry = new URL(await signEntry())
       workerOrigin = entry.origin
       server.listen(0, '127.0.0.1')
       await once(server, 'listening')
@@ -969,23 +1310,72 @@ export const pdfViewerScenario = defineBrowserCommand(
           violations.push(`${event.violatedDirective} ${event.blockedURI}`),
         )
       })
+      if (scenario === 'page-failure')
+        await context.addInitScript(breakPageDrawing)
       context.on('request', (request) => requests.push(request.url()))
       const artifact = await context.newPage()
-      const entryResponse = await artifact.goto(
-        `${origin}${entry.pathname}${entry.search}`,
-        { timeout: 15000 },
-      )
-      if (entryResponse?.status() !== 200)
-        throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
-      const frame = artifact.mainFrame()
+      let frame: Frame
+      if (framed) {
+        parentPage = parentDocument(
+          `${entry.pathname}${entry.search}`,
+          options.app ? viewerPreferencesMessage(options.app) : null,
+        )
+        await artifact.goto(`${origin}${PARENT_PATH}`, { timeout: 15000 })
+        frame = await viewerFrame(artifact, 'viewer-1')
+        if (!workerStatuses.includes('/Synthetic.pdf: 200'))
+          throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
+      } else {
+        const entryResponse = await artifact.goto(
+          `${origin}${entry.pathname}${entry.search}`,
+          { timeout: 15000 },
+        )
+        if (entryResponse?.status() !== 200)
+          throw new Error(`Sandbox entry failed: ${workerStatuses.join(', ')}`)
+        frame = artifact.mainFrame()
+      }
       const initialState = await frame.evaluate(
         () => document.documentElement.dataset.pdfState,
       )
+      // The original downloads while the PDF is still loading, and the
+      // viewer stays on its document.
+      let earlyDownload = null
+      if (scenario === 'slow-original') {
+        await frame.waitForSelector('#download', { timeout: 10000 })
+        await frame.evaluate(() => {
+          ;(window as unknown as { stayed: boolean }).stayed = true
+        })
+        const clickedWhile = await frame.evaluate(
+          () => document.documentElement.dataset.pdfState,
+        )
+        const [saved] = await Promise.all([
+          artifact.waitForEvent('download'),
+          frame.click('#download'),
+        ])
+        earlyDownload = {
+          clickedWhile,
+          name: saved.suggestedFilename(),
+          sameBytes:
+            Buffer.compare(
+              await downloadBytes(saved),
+              Buffer.from(scenarioPdf(scenario)),
+            ) === 0,
+          stayed: await frame.evaluate(
+            () => (window as unknown as { stayed?: boolean }).stayed === true,
+          ),
+        }
+      }
       await frame.waitForFunction(
         () => document.documentElement.dataset.pdfState !== 'loading',
         undefined,
         { timeout: 20000 },
       )
+      // The app's language has reached the viewer before its text is read.
+      if (options.app)
+        await frame.waitForFunction(
+          (locale) => document.documentElement.lang === locale,
+          options.app.locale,
+          { timeout: 5000 },
+        )
       const status = await frame.evaluate(() => ({
         state: document.documentElement.dataset.pdfState,
         message: document.getElementById('status-message')!.textContent,
@@ -1009,12 +1399,11 @@ export const pdfViewerScenario = defineBrowserCommand(
         ),
         workerStatuses,
         settings: await frame.evaluate(() => ({
-          layout:
-            document.querySelector<HTMLInputElement>(
-              'input[name="layout"]:checked',
-            )?.value ?? null,
-          size: (document.getElementById('zoom') as HTMLInputElement).value,
+          layout: document.body.dataset.mode ?? null,
+          size: document.body.dataset.size ?? null,
         })),
+        labels: await frame.evaluate(viewerLabels),
+        earlyDownload,
       }
       if (status.state !== 'ready') return common
       const original = scenarioPdf(scenario)
@@ -1043,6 +1432,21 @@ export const pdfViewerScenario = defineBrowserCommand(
           original,
         )
         return await finish({ initial, pageList })
+      }
+      if (scenario === 'page-failure')
+        return await finish({ pageFailure: await pageFailureFlow(frame) })
+      if (scenario === 'preferences') {
+        const flow = await preferencesFlow(artifact, frame, signEntry)
+        return {
+          ...common,
+          preferences: flow.result,
+          offOrigin: requests.filter(
+            (url) => !url.startsWith(origin) && !url.startsWith('blob:'),
+          ),
+          violations: await flow.frame.evaluate(
+            () => (window as unknown as { violations: string[] }).violations,
+          ),
+        }
       }
       if (scenario === 'search')
         return await finish({ search: await searchFlow(artifact, frame) })
@@ -1131,7 +1535,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         let continuousFit = null
         if (scenario === 'mixed-slides') {
           await frame.click('#fit')
-          await frame.check('input[name="layout"][value="scroll"]')
+          await chooseSetting(frame, '[data-layout="scroll"]')
           await artifact.keyboard.press('Escape')
           await goToPage(frame, 1)
           await settle(frame)
@@ -1299,7 +1703,14 @@ type Layout = {
   page: { width: number; height: number }
 }
 
-export type PdfScenarioOptions = { locale?: 'en-US' | 'ja-JP' }
+export type PdfScenarioOptions = {
+  // The browser's own language and color scheme.
+  locale?: 'en-US' | 'ja-JP'
+  colorScheme?: 'light' | 'dark'
+  // The app's display preferences, sent by a parent page that frames the
+  // viewer the way the app does. Without them the viewer opens unframed.
+  app?: ViewerPreferences
+}
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
@@ -1318,7 +1729,9 @@ declare module 'vitest/browser' {
       pdfjsRequests: string[]
       violations: string[]
       workerStatuses: string[]
-      settings: { layout: string | null; size: string }
+      settings: { layout: string | null; size: string | null }
+      labels: ReturnType<typeof viewerLabels>
+      preferences?: Awaited<ReturnType<typeof preferencesFlow>>['result']
       pageList?: Awaited<ReturnType<typeof pageListFlow>>
       search?: Awaited<ReturnType<typeof searchFlow>>
       searchOnce?: Awaited<ReturnType<typeof searchState>>
@@ -1344,6 +1757,13 @@ declare module 'vitest/browser' {
       beforeResize?: number
       afterResize?: Layout & { pageNumber: number }
       download?: { name: string; sameBytes: boolean; fetchedOriginal: boolean }
+      earlyDownload: {
+        clickedWhile: string | undefined
+        name: string
+        sameBytes: boolean
+        stayed: boolean
+      } | null
+      pageFailure?: Awaited<ReturnType<typeof pageFailureFlow>>
       afterBackForward?: { renderedPages: number; sameBytes: boolean }
     }>
   }

@@ -14,7 +14,7 @@ import {
 import { useT } from '~/hooks/use-t'
 import { LinkReportDialog } from './link-report-dialog'
 
-// Mirrors --breakpoint-phone in app.css; the phone layout gets a bottom sheet
+// Mirrors --breakpoint-phone in styles/theme.css; the phone layout gets a bottom sheet
 // instead of a popover.
 const PHONE_QUERY = '(max-width: 519.98px)'
 
