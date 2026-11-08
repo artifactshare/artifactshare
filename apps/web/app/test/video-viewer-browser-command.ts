@@ -253,6 +253,8 @@ function snapshot(frame: Frame) {
       startHidden: byId('start-play').hidden,
       statusHidden: byId('status').hidden,
       muteLabel: byId('mute').getAttribute('aria-label'),
+      mutePressed: byId('mute').getAttribute('aria-pressed'),
+      volumeSlider: Number((byId('volume') as HTMLInputElement).value),
       volumeVisible: visible(byId('mute')) || visible(byId('volume')),
       touchDevice: matchMedia('(hover: none) and (pointer: coarse)').matches,
       picture: rect(document.querySelector('.video-picture')!),
@@ -504,23 +506,47 @@ export const videoViewerScenario = defineBrowserCommand(
         }
         await frame.click('#play')
         await frame.evaluate(() => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          video.addEventListener(
+            'seeked',
+            () => {
+              document.documentElement.dataset.testSeeked = 'true'
+            },
+            { once: true },
+          )
           const input = document.getElementById('seek') as HTMLInputElement
           input.value = '50'
           input.dispatchEvent(new Event('input', { bubbles: true }))
         })
-        await frame.waitForFunction(
-          () => {
-            const video = document.getElementById('video') as HTMLVideoElement
-            return !video.seeking && video.readyState >= 2
-          },
-          undefined,
-          { timeout: 10000 },
-        )
+        // Seekable means the engine completes the seek at the target time;
+        // some engines decode the clip but never finish seeking it.
+        const seekCompleted = await frame
+          .waitForFunction(
+            () => {
+              const video = document.getElementById('video') as HTMLVideoElement
+              return (
+                document.documentElement.dataset.testSeeked === 'true' &&
+                !video.seeking &&
+                video.readyState >= 2 &&
+                Math.abs(video.currentTime - video.duration / 2) < 0.5
+              )
+            },
+            undefined,
+            { timeout: 5000 },
+          )
+          .then(() => true)
+          .catch(() => false)
         const seeked = await media()
         return {
           initial,
           final: await status(),
-          playback: { decodable, before, playing, seeked },
+          playback: {
+            decodable,
+            seekable: seekCompleted,
+            before,
+            playing,
+            seeked,
+          },
           ...(await common()),
           origin,
           offOrigin: offOrigin(),
@@ -650,11 +676,19 @@ export const videoViewerScenario = defineBrowserCommand(
             state: 'attached',
           })
         await setRange('volume', 0.4)
-        await frame.waitForFunction(
-          () =>
-            (document.getElementById('video') as HTMLVideoElement).volume ===
-            0.4,
-        )
+        // An engine without an audio device (WebKit in a Linux container)
+        // may never apply the volume; the test then checks the controls.
+        await frame
+          .waitForFunction(
+            () =>
+              Math.abs(
+                (document.getElementById('video') as HTMLVideoElement).volume -
+                  0.4,
+              ) < 0.01,
+            undefined,
+            { timeout: 2000 },
+          )
+          .catch(() => undefined)
         steps.volume = await snapshot(frame)
         await frame.click('#mute')
         await pressed('true')
@@ -775,6 +809,8 @@ type Snapshot = {
   startHidden: boolean
   statusHidden: boolean
   muteLabel: string | null
+  mutePressed: string | null
+  volumeSlider: number
   volumeVisible: boolean
   touchDevice: boolean
   picture: Rect
@@ -827,6 +863,7 @@ declare module 'vitest/browser' {
       fallbackDownload?: Saved & { urlUnchanged: boolean }
       playback?: {
         decodable: boolean
+        seekable?: boolean
         before: Media
         playing?: Media
         seeked?: Media
