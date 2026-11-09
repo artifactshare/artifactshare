@@ -537,7 +537,16 @@ describe('toMcpCommentThread', () => {
       quote_before: '',
       quote_after: '',
       version_id: 'v1',
+      target_path: '/index.html',
     })
+  })
+
+  test('returns the page location of a static-site route anchor', () => {
+    const mapped = toMcpCommentThread({
+      ...baseThread,
+      subject: textSubject({ targetPath: '/index.html#/billing' }),
+    })
+    expect(mapped.anchor).toMatchObject({ target_path: '/index.html#/billing' })
   })
 
   test('marks an orphaned anchor so the agent knows the quote no longer matches', () => {
@@ -3775,6 +3784,7 @@ describe('headless publish wiring', () => {
         quote_before: before,
         quote_after: index === 0 ? ' end;' : ' end',
         version_id: access.currentVersionId,
+        target_path: access.entrypointPath ?? '/index.html',
         ambiguous_at_creation: index === 1,
       })
     }

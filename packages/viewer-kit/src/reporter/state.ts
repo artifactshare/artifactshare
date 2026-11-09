@@ -107,6 +107,16 @@ export function createReporterState(
     lastResolutionSignature: '',
     displayedVersionId: null as string | null,
     displayedPath: null as string | null,
+    // Static sites scope comments to the live page location (path plus hash
+    // route). The parent's location labels highlights; measurements use it
+    // only while it still matches the document's own location.
+    locationScoped: false,
+    // With fallback to index, the site root stays `/` rather than
+    // `/index.html` (see comment-location.ts).
+    fallbackToIndex: false,
+    lastLocation: null as string | null,
+    locationGeneration: 0,
+    pendingScrollThreadId: null as string | null,
     badges: [] as BadgeEntry[],
     badgeOffsets: {} as Record<string, { x: number; y: number }>,
     badgeDragged: false,

@@ -765,6 +765,29 @@ test.each([
   },
 )
 
+test.each([
+  [undefined, true],
+  [null, true],
+  ['/index.html#/billing', true],
+  ['/' + 'x'.repeat(1000), false],
+  [42, false],
+])('selection location %j is accepted: %s', (targetPath, accepted) => {
+  expect(
+    isSandboxMessage({
+      source: 'artifactshare',
+      kind: 'text-selection',
+      quotedText: 'quote',
+      prefixText: '',
+      suffixText: '',
+      textStart: 0,
+      textEnd: 5,
+      cssPath: null,
+      rect: { top: 0, left: 0, width: 10, height: 10 },
+      targetPath,
+    }),
+  ).toBe(accepted)
+})
+
 test('Mermaid failures retain source and allow successful neighbors only for matching pending ids', () => {
   const ctx = state()
   ctx.readyChallenge = 'synthetic-challenge'

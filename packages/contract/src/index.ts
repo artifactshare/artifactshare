@@ -847,6 +847,9 @@ export const CommentAnchorSchema = z.union([
       })
       .optional(),
     version_id: z.string().nullable().optional(),
+    // Page location: the file or route path, plus a `#/…` or `#!/…` hash
+    // route on static sites. Older responses omit it.
+    target_path: z.string().optional(),
     ambiguous_at_creation: z.boolean().optional(),
   }),
 ])

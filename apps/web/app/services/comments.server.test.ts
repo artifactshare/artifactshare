@@ -965,6 +965,202 @@ describe('comments server', () => {
     ).toEqual([])
   })
 
+  async function useStaticSite(fallbackToIndex: boolean) {
+    await fixture.db
+      .insertInto('versions')
+      .values({
+        id: 'sv1',
+        shareable_id: 's1',
+        artifact_kind: 'static_site',
+        status: 'published',
+        entrypoint_path: '/index.html',
+        r2_key: 'ws1/s1/sv1/',
+        size_bytes: 300,
+        sha256: 'site',
+        fallback_to_index: fallbackToIndex ? 1 : 0,
+        created_by_id: ownerUser.id,
+        created_at: '2026-05-29T00:01:00.000Z',
+        published_at: '2026-05-29T00:01:00.000Z',
+      })
+      .execute()
+    await fixture.db
+      .insertInto('version_files')
+      .values(
+        ['/index.html', '/docs/page.html', '/café.html'].map((path) => ({
+          id: `file:${path}`,
+          version_id: 'sv1',
+          path,
+          r2_key: `ws1/s1/sv1${path}`,
+          mime_type: 'text/html',
+          size_bytes: 100,
+          sha256: path,
+          created_at: '2026-05-29T00:01:00.000Z',
+        })),
+      )
+      .execute()
+    await fixture.db
+      .updateTable('shareables')
+      .set({ current_version_id: 'sv1', artifact_kind: 'static_site' })
+      .where('id', '=', 's1')
+      .execute()
+    return (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+  }
+  const siteSelector = { ...selector, versionId: 'sv1' }
+
+  test('static-site text threads keep their own file or route location', async () => {
+    const access = await useStaticSite(true)
+    const created = []
+    for (const targetPath of [
+      '/docs/page.html',
+      '/café.html',
+      '/settings',
+      '/index.html#/billing',
+      '/index.html#!/caf%C3%A9',
+      // With fallback to index the root route stays `/`.
+      '/',
+      '/#/billing',
+    ]) {
+      const result = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Here',
+        { ...siteSelector, targetPath },
+      )
+      expect(result.kind).toBe('ok')
+      if (result.kind !== 'ok') throw new Error('creation failed')
+      created.push([result.threadId, targetPath])
+    }
+    // Whole-artifact comments remain available.
+    expect(
+      (await createCommentThread(fixture.db, access, viewerUser, 'Whole')).kind,
+    ).toBe('ok')
+    const threads = await loadCommentThreads(fixture.db, access, viewerUser)
+    for (const [threadId, targetPath] of created)
+      expect(
+        threads.find((thread) => thread.id === threadId)?.subject,
+      ).toMatchObject({ kind: 'text', targetPath, positionState: 'unchecked' })
+    // Agents still cannot post quoted text on a static site.
+    expect(buildQuoteAnchor(access, { quote: 'selected words' })).toEqual({
+      kind: 'unsupported',
+    })
+  })
+
+  test('static-site creation rejects locations outside the version without writing', async () => {
+    const access = await useStaticSite(false)
+    for (const targetPath of [
+      undefined,
+      '/missing.html',
+      '/settings',
+      '/docs/../index.html',
+      '//evil.example/index.html',
+      'https://evil.example/index.html',
+      '/artifact.html',
+      '/docs/page.html#intro',
+      '/index.html#/caf%E9',
+      '/index.html#/café',
+      '/café.html',
+      // Without fallback the root is stored as /index.html.
+      '/',
+      '/#/billing',
+      // Unpaired surrogates cannot be encoded into a URL.
+      '/index.html#/\ud800',
+      '/\ud800.html',
+    ]) {
+      expect(
+        await createCommentThread(fixture.db, access, viewerUser, 'Here', {
+          ...siteSelector,
+          targetPath,
+        }),
+      ).toEqual({ kind: 'invalid-anchor' })
+    }
+    expect(
+      await createCommentThread(fixture.db, access, viewerUser, 'Here', {
+        ...siteSelector,
+        selectorFormat: 'quote-v1',
+        textStart: null,
+        textEnd: null,
+        textHash: undefined,
+        ambiguousAtCreation: undefined,
+        versionId: undefined,
+        targetPath: '/index.html',
+      }),
+    ).toEqual({ kind: 'invalid-anchor' })
+    expect(
+      await fixture.db.selectFrom('comment_threads').selectAll().execute(),
+    ).toEqual([])
+  })
+
+  test('static-site position writes are scoped to the thread location', async () => {
+    const access = await useStaticSite(true)
+    const ids: Record<string, string> = {}
+    for (const targetPath of ['/docs/page.html', '/settings']) {
+      const result = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Here',
+        { ...siteSelector, targetPath },
+      )
+      if (result.kind !== 'ok') throw new Error('creation failed')
+      ids[targetPath] = result.threadId
+    }
+    const events = async () =>
+      (await fixture.db.selectFrom('events').selectAll().execute()).length
+    const eventCount = await events()
+    const write = (targetPath: string, threadIds: string[]) =>
+      storeAnchorResolutions(fixture.db, access, {
+        versionId: 'sv1',
+        targetPath,
+        frameToken,
+        generation: 1,
+        results: threadIds.map((threadId) => ({
+          threadId,
+          state: 'attached',
+          textStart: 24,
+          textEnd: 38,
+          textHash: selector.textHash,
+        })),
+      })
+    // One route cannot save results for another route's thread, nor can a
+    // path outside the version or another version.
+    expect(
+      await write('/docs/page.html', [
+        ids['/docs/page.html'],
+        ids['/settings'],
+      ]),
+    ).toBe(false)
+    expect(await write('/settings', [ids['/docs/page.html']])).toBe(false)
+    expect(await write('/missing.html', [])).toBe(false)
+    expect(await write('/docs/page.html#intro', [])).toBe(false)
+    expect(await write('/settings#/\ud800', [ids['/settings']])).toBe(false)
+    expect(
+      await storeAnchorResolutions(fixture.db, access, {
+        versionId: 'v1',
+        targetPath: '/docs/page.html',
+        frameToken,
+        generation: 1,
+        results: [],
+      }),
+    ).toBe(false)
+    expect(
+      await fixture.db
+        .selectFrom('comment_anchor_results')
+        .selectAll()
+        .execute(),
+    ).toEqual([])
+    expect(await write('/docs/page.html', [ids['/docs/page.html']])).toBe(true)
+    const threads = await loadCommentThreads(fixture.db, access, viewerUser)
+    expect(
+      threads.find((thread) => thread.id === ids['/docs/page.html'])?.subject,
+    ).toMatchObject({ state: 'attached', positionState: 'attached' })
+    expect(
+      threads.find((thread) => thread.id === ids['/settings'])?.subject,
+    ).toMatchObject({ positionState: 'unchecked' })
+    // Position-only writes create no activity or unread events.
+    expect(await events()).toBe(eventCount)
+  })
+
   test('persists trimmed legacy quotes and valid peers while skipping a mismatched result', async () => {
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
     const quote = ' selected   words \n'
@@ -2327,6 +2523,7 @@ describe('comments server', () => {
       quote_before: 'a b',
       quote_after: ' tail ',
       version_id: 'v1',
+      target_path: '/artifact.html',
     }
     expect(toAgentCommentThread(result.thread).anchor).toEqual(expected)
     const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!

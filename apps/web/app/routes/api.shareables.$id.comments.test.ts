@@ -122,6 +122,52 @@ test('a stale selection uses the existing version_conflict response', async () =
   })
 })
 
+test('forwards a static-site selection location and maps its rejection', async () => {
+  mocks.create.mockResolvedValue({ kind: 'invalid-anchor' })
+  const anchor = {
+    selectorFormat: 'normalized-v1',
+    versionId: 'current-v3',
+    quotedText: 'word',
+    prefixText: '',
+    suffixText: '',
+    textStart: 0,
+    textEnd: 4,
+    textHash: 'b'.repeat(64),
+    ambiguousAtCreation: false,
+    cssPath: null,
+    targetPath: '/index.html#/billing',
+  }
+  const response = await post({
+    intent: 'create-thread',
+    body: 'Check',
+    anchor,
+  })
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    'Check',
+    expect.objectContaining({ targetPath: '/index.html#/billing' }),
+    expect.anything(),
+  )
+  expect(response.status).toBe(400)
+  expect(await response.json()).toMatchObject({
+    error: { code: 'invalid-comment-anchor' },
+  })
+  mocks.create.mockClear()
+  // A non-string location is a malformed payload, never forwarded.
+  expect(
+    (
+      await post({
+        intent: 'create-thread',
+        body: 'Check',
+        anchor: { ...anchor, targetPath: 42 },
+      })
+    ).status,
+  ).toBe(400)
+  expect(mocks.create).not.toHaveBeenCalled()
+})
+
 test('accepts the pre-deploy text selection payload as a legacy selector', async () => {
   mocks.create.mockResolvedValue({ kind: 'invalid-body' })
   const anchor = {

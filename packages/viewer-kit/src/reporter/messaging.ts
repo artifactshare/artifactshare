@@ -86,7 +86,8 @@ export function createMessagePayload(
   const keys = primitives.objectKeys(message)
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
-    if (key === 'locus' && message[key] === undefined) continue
+    if ((key === 'locus' || key === 'targetPath') && message[key] === undefined)
+      continue
     payload[key] = message[key]
   }
   return payload
@@ -123,6 +124,9 @@ export function installMessageListener(ctx: ReporterState) {
       ctx.previewReceiveSequence = data.sequence
     }
     if (data.kind === READY_CHECK_MESSAGE_KIND) {
+      // Scope first, so the ready report records this document's location.
+      ctx.locationScoped = data.locationScoped === true
+      ctx.fallbackToIndex = data.fallbackToIndex === true
       onReadyCheck(ctx, event)
       ctx.displayedVersionId = data.versionId || ctx.displayedVersionId
       ctx.displayedPath = data.targetPath || ctx.displayedPath
@@ -138,6 +142,8 @@ export function installMessageListener(ctx: ReporterState) {
       setCommentLabels(ctx, data.commentLabels)
       ctx.displayedVersionId = data.versionId || null
       ctx.displayedPath = data.targetPath || null
+      ctx.locationScoped = data.locationScoped === true
+      ctx.fallbackToIndex = data.fallbackToIndex === true
       applyHighlights(ctx, data.highlights)
     } else if (data.kind === 'scroll-to-comment') {
       scrollToThread(ctx, data.threadId)

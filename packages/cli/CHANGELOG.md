@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- `comments list` text anchors now include `target_path`, the page the quoted text is on. On multi-file sites, where readers can now comment on selected text, it is the file or route path plus any `#/` or `#!/` hash route. Quoted-text posting by agents on multi-file sites remains unsupported. Update the bundled skill to version 62 with this guidance.
+
 - Share PDF files with `share`, keyed resend and `update`. A file is a PDF only when its name ends in `.pdf` (any case) and it starts with `%PDF-`; the 25 MiB per-artifact limit is unchanged. `download` saves the original PDF bytes. `append`, `preview` and `artifacts get` text readback do not support PDFs. Update the bundled skill to version 60 with PDF guidance.
 - Send `X-ArtifactShare-Artifact-Kinds: pdf` with every request, so the server reports PDF artifacts to this CLI while earlier releases keep receiving lists and resolve results they can parse.
 - Share MP4 videos with `share`, keyed resend and `update`. A file is a video only when its name ends in `.mp4` (any case) and it has an ISO base media `ftyp` box at byte 4; otherwise `share` fails with `validation_failed` before any upload. The 25 MiB per-artifact limit is unchanged, and an `.mp4` inside a static-site folder stays a site asset. Readers play the video in the viewer. `download` saves the original MP4 bytes; `append`, `preview` and `artifacts get` text readback do not support videos. The CLI now sends `X-ArtifactShare-Artifact-Kinds: pdf, video`. Update the bundled skill to version 61 with video guidance.

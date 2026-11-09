@@ -66,6 +66,9 @@ export function toAgentCommentThread(thread: CommentThreadView) {
             quote_after: thread.subject.suffixText,
             ...(thread.subject.locus ? { locus: thread.subject.locus } : {}),
             version_id: thread.subject.versionId,
+            // The page location: a static-site file or route path, plus a
+            // `#/…` or `#!/…` hash route; single-file pages use the entry page.
+            target_path: thread.subject.targetPath,
             ...(thread.subject.selectorFormat === 'normalized-v1'
               ? { ambiguous_at_creation: thread.subject.ambiguousAtCreation }
               : {}),

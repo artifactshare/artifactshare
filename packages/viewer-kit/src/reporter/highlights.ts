@@ -17,6 +17,7 @@ import { createTextAnchorEngine } from './anchor-engine.js'
 import { anchorRoot } from './selection.js'
 import { verifyAnchors } from './annotate.js'
 import { send } from './messaging.js'
+import { liveCommentLocation } from './hash.js'
 
 export function ensureCommentStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById(highlightStyleId())) return
@@ -563,6 +564,9 @@ export function applyHighlights(
   engine?: TextAnchorEngine,
 ) {
   ctx.anchorSnapshotGeneration++
+  // Highlights labelled for another location never paint or report here.
+  if (ctx.locationScoped && ctx.displayedPath !== liveCommentLocation(ctx))
+    list = []
   ctx.pendingHighlights = Array.isArray(list) ? list : []
   if (!ctx.pendingHighlights.length) {
     ctx.checkingHighlights = []
@@ -708,6 +712,27 @@ export function applyHighlights(
   ctx.lastResolutionSignature = signature
   ctx.checkingHighlights = checking
   scheduleChecking(ctx)
+  completePendingScroll(ctx)
+}
+
+// A jump requested before its text was verified completes once it paints,
+// while that conversation is still the target.
+function completePendingScroll(ctx: ReporterState) {
+  let id = ctx.pendingScrollThreadId
+  if (!id) return
+  let targeted = ctx.pendingHighlights.some(function (highlight) {
+    return highlight.threadId === id && highlight.target
+  })
+  if (!targeted) {
+    ctx.pendingScrollThreadId = null
+    return
+  }
+  if (
+    ctx.paintedAnchors.some(function (entry) {
+      return entry.highlight.threadId === id
+    })
+  )
+    scrollToThread(ctx, id)
 }
 
 export function invalidateChangedPaint(
@@ -749,6 +774,7 @@ export function scrollToThread(ctx: ReporterState, id: string) {
   let painted = ctx.paintedAnchors.find(function (entry) {
     return entry.highlight.threadId === id
   })
+  ctx.pendingScrollThreadId = painted && painted.ranges.length ? null : id
   if (painted && painted.ranges.length) {
     let start = painted.ranges[0].startContainer
     let target =

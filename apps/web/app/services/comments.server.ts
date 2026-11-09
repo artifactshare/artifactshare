@@ -16,6 +16,11 @@ import { nanoid } from 'nanoid'
 import type { Compilable, Kysely, Selectable } from 'kysely'
 import { sql } from 'kysely'
 import { nowIso } from '~/lib/datetime'
+import {
+  hasCommentPathExtension,
+  isCommentLocationServed,
+  parseCommentLocation,
+} from '@artifactshare/viewer-kit/reporter/comment-location'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import {
   MAX_COMMENT_BODY_LENGTH,
@@ -97,6 +102,11 @@ export interface CommentAnchorInput {
   textStart: number | null
   textEnd: number | null
   cssPath: string | null
+  /**
+   * Static sites: the page location (file or route path, plus a hash route).
+   * Validated against the version; HTML and Markdown use their entry page.
+   */
+  targetPath?: string
 }
 
 // Agent selectors are measured only when a viewer opens the artifact.
@@ -596,6 +606,17 @@ export async function createCommentThread(
   ) {
     return { kind: 'version-conflict' }
   }
+  if (
+    anchor &&
+    access.artifactKind === 'static_site' &&
+    !(await isStaticSiteLocationServed(
+      db,
+      access.shareableId,
+      access.currentVersionId,
+      anchor.targetPath,
+    ))
+  )
+    return { kind: 'invalid-anchor' }
 
   const admission = await admitCommentPost(db, user.id, access.shareableId)
   if (admission.kind !== 'ok') return admission
@@ -1344,6 +1365,25 @@ function normalizeCommentAnchor(
       rawAnchor.cssPath.length > MAX_CSS_PATH_LENGTH)
   )
     return null
+  let targetPath = access.entrypointPath ?? '/index.html'
+  if (access.artifactKind === 'static_site') {
+    // Static-site anchors are browser selections on a captured location. The
+    // posted location must already be canonical; the caller checks version
+    // files and which root form (`/` with fallback, else `/index.html`) the
+    // version uses.
+    const canonical = [false, true].some(
+      (fallbackToIndex) =>
+        parseCommentLocation(rawAnchor.targetPath, fallbackToIndex)
+          ?.location === rawAnchor.targetPath,
+    )
+    if (
+      rawAnchor.selectorFormat !== 'normalized-v1' ||
+      typeof rawAnchor.targetPath !== 'string' ||
+      !canonical
+    )
+      return null
+    targetPath = rawAnchor.targetPath
+  }
   return {
     ...rawAnchor,
     locus:
@@ -1351,15 +1391,63 @@ function normalizeCommentAnchor(
         ? undefined
         : parseTextLocus(rawAnchor.locus),
     quotedText,
-    targetPath: access.entrypointPath ?? '/index.html',
+    targetPath,
   }
+}
+
+/**
+ * A static-site location is a file of the version or, when the version falls
+ * back to index, an extensionless route. Only the pathname selects files.
+ */
+async function isStaticSiteLocationServed(
+  db: Kysely<DB>,
+  shareableId: string,
+  versionId: string | null,
+  location: string,
+): Promise<boolean> {
+  // The root `/` reads as `/index.html` here, so its file is among the
+  // candidates; the version's fallback flag decides which form is canonical.
+  const parsed = parseCommentLocation(location)
+  if (!versionId || !parsed) return false
+  const candidates = hasCommentPathExtension(parsed.pathname)
+    ? [parsed.pathname]
+    : [parsed.pathname, '/index.html']
+  const rows = await db
+    .selectFrom('versions')
+    .leftJoin('version_files', (join) =>
+      join
+        .onRef('version_files.version_id', '=', 'versions.id')
+        .on('version_files.path', 'in', candidates),
+    )
+    .select(['versions.fallback_to_index', 'version_files.path'])
+    .where('versions.id', '=', versionId)
+    .where('versions.shareable_id', '=', shareableId)
+    .where('versions.artifact_kind', '=', 'static_site')
+    .execute()
+  if (!rows.length) return false
+  const files = new Set(
+    rows.flatMap((row) => (row.path === null ? [] : [row.path])),
+  )
+  return isCommentLocationServed(
+    location,
+    files,
+    Number(rows[0].fallback_to_index) === 1,
+  )
 }
 
 function validTextHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
+// Browser selections: single-file pages and static-site locations.
 function canUseTextAnchors(access: CommentAccess): boolean {
+  if (access.artifactKind === 'static_site')
+    return Boolean(access.currentVersionId)
+  return canUseQuoteAnchors(access)
+}
+
+// Agent quotes need one anchorable text, so static sites stay excluded.
+function canUseQuoteAnchors(access: CommentAccess): boolean {
   return (
     (access.artifactKind === 'html_page' ||
       access.artifactKind === 'markdown_page') &&
@@ -1423,17 +1511,22 @@ async function resolveCommentSubjects(
   }
   for (const anchor of anchors) {
     const results = resultsByAnchor.get(anchor.id) ?? []
+    // Static-site anchors are located on their own page location; single-file
+    // pages on the displayed entry page.
+    const resultPath =
+      access.artifactKind === 'static_site'
+        ? anchor.target_path
+        : (access.entrypointPath ?? '/index.html')
     const current = results.find(
       (result) =>
         result.version_id === access.currentVersionId &&
-        result.target_path === (access.entrypointPath ?? '/index.html'),
+        result.target_path === resultPath,
     )
     const latest =
       current ??
       results.find(
         (result) =>
-          result.target_path === (access.entrypointPath ?? '/index.html') &&
-          result.text_hash !== null,
+          result.target_path === resultPath && result.text_hash !== null,
       )
     const positionState = current?.state ?? 'unchecked'
     subjects.set(anchor.thread_id, {
@@ -1466,7 +1559,7 @@ export function buildQuoteAnchor(
   access: CommentAccess,
   input: QuoteAnchorInput,
 ): BuildQuoteAnchorResult {
-  if (!canUseTextAnchors(access)) return { kind: 'unsupported' }
+  if (!canUseQuoteAnchors(access)) return { kind: 'unsupported' }
   if (
     typeof input.quote !== 'string' ||
     (input.before !== undefined && typeof input.before !== 'string') ||
@@ -1547,17 +1640,31 @@ export async function storeAnchorResolutions(
     input.targetPath.length > 1000
   )
     return false
-  const version = await db
-    .selectFrom('versions')
-    .select(['id', 'entrypoint_path'])
-    .where('id', '=', input.versionId)
-    .where('shareable_id', '=', access.shareableId)
-    .executeTakeFirst()
-  if (
-    !version ||
-    (version.entrypoint_path ?? '/index.html') !== input.targetPath
-  )
-    return false
+  const staticSite = access.artifactKind === 'static_site'
+  if (staticSite) {
+    // A static-site location must be served by that version of this artifact.
+    if (
+      !(await isStaticSiteLocationServed(
+        db,
+        access.shareableId,
+        input.versionId,
+        input.targetPath,
+      ))
+    )
+      return false
+  } else {
+    const version = await db
+      .selectFrom('versions')
+      .select(['id', 'entrypoint_path'])
+      .where('id', '=', input.versionId)
+      .where('shareable_id', '=', access.shareableId)
+      .executeTakeFirst()
+    if (
+      !version ||
+      (version.entrypoint_path ?? '/index.html') !== input.targetPath
+    )
+      return false
+  }
   const writes: Compilable<unknown>[] = []
   const anchors = input.results.length
     ? await db
@@ -1585,6 +1692,12 @@ export async function storeAnchorResolutions(
   const anchorsByThread = new Map(
     anchors.map((anchor) => [anchor.thread_id, anchor]),
   )
+  // Check the whole batch before any write: one location's verdicts cannot
+  // be saved for another location's thread.
+  for (const anchor of anchors) {
+    if (anchor.shareable_id !== access.shareableId) return false
+    if (staticSite && anchor.target_path !== input.targetPath) return false
+  }
   for (const result of input.results) {
     const anchor = anchorsByThread.get(result.threadId)
     if (!anchor) continue // A deleted thread must not discard the remaining batch.

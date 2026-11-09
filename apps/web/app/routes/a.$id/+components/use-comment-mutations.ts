@@ -30,6 +30,7 @@ export type CommentMutationPayload =
         textStart: number
         textEnd: number
         cssPath: string | null
+        targetPath?: string
       }
     }
   | { intent: 'reply'; threadId: string; body: string }

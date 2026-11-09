@@ -18,7 +18,11 @@ afterEach(() => {
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
-    t: (key: keyof typeof en) => (locale.value === 'en' ? en : ja)[key],
+    t: (key: keyof typeof en, params: Record<string, string> = {}) =>
+      (locale.value === 'en' ? en : ja)[key].replace(
+        /\{(\w+)\}/g,
+        (match, name: string) => params[name] ?? match,
+      ),
     tPlural: (key: string, count: number) =>
       (locale.value === 'en' ? en : ja)[
         `${key}${count === 1 ? 'One' : 'Other'}` as keyof typeof en
@@ -38,6 +42,7 @@ vi.mock('~/components/app/app-side-panel', async () => {
     ),
   }
 })
+import { CommentLocationsContext } from './comment-locations-context'
 import { CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
 import { mergeCommentWindow } from './comment-history'
@@ -79,6 +84,24 @@ function textThread(
 
 function render(positionState: PositionState) {
   return renderThreads([textThread(positionState)])
+}
+
+function renderThreadsElement(threads: CommentThreadView[]) {
+  return (
+    <CommentPanel
+      shareableId="artifact"
+      viewerUserId="viewer"
+      threads={threads}
+      newCommentMessages={[]}
+      onThreadsChange={() => {}}
+      isCurrentShareableId={() => true}
+      open
+      onOpenChange={() => {}}
+      targetThreadId={null}
+      targetThreadScroll="center"
+      onThreadNavigate={() => {}}
+    />
+  )
 }
 
 function renderThreads(
@@ -844,4 +867,40 @@ test('a failed older page retains its normal expand label and offers an exact re
     fetchPage.mockRestore()
     vi.unstubAllGlobals()
   }
+})
+
+test('static-site threads name their page and the general composer names the site', () => {
+  locale.value = 'en'
+  const site = renderToStaticMarkup(
+    <CommentLocationsContext value>
+      <CommentPanel
+        shareableId="artifact"
+        viewerUserId="viewer"
+        threads={[textThread('attached')]}
+        newCommentMessages={[]}
+        onThreadsChange={() => {}}
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId={null}
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+        showNewThreadComposer
+      />
+    </CommentLocationsContext>,
+  )
+  expect(site).toContain('Page: /index.html')
+  expect(site).toContain('Write a comment on the whole site')
+  // An SPA's root route reads as the top page, not a bare slash.
+  const root = textThread('attached')
+  if (root.subject.kind === 'text') root.subject.targetPath = '/'
+  const rootSite = renderToStaticMarkup(
+    <CommentLocationsContext value>
+      {renderThreadsElement([root])}
+    </CommentLocationsContext>,
+  )
+  expect(rootSite).toContain('Page: Top (/)')
+  // Single-document artifacts keep their wording and show no page.
+  const single = render('attached')
+  expect(single).not.toContain('Page: /index.html')
 })

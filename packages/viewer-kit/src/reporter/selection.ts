@@ -1,6 +1,7 @@
 import type { ReporterState } from './state.js'
 import { send } from './messaging.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
+import { liveCommentLocation } from './hash.js'
 
 export function cssPath(ctx: ReporterState, element: Element | null) {
   if (!element || element.nodeType !== 1) return null
@@ -56,9 +57,18 @@ export function sendSelection(ctx: ReporterState) {
   } catch {
     // Optional metadata must not prevent a valid selection from being sent.
   }
+  // Static-site selections carry the document's own location, never a label
+  // the parent may still hold from a previous route. Single-file pages keep
+  // their existing message shape.
+  let targetPath = ctx.locationScoped ? liveCommentLocation(ctx) : undefined
+  if (ctx.locationScoped && !targetPath) {
+    send(ctx, { kind: 'text-selection-cleared' })
+    return
+  }
   let rect = range.getBoundingClientRect()
   send(ctx, {
     kind: 'text-selection',
+    targetPath,
     locus,
     token: ctx.documentToken,
     quotedText: selector.quotedText,

@@ -1037,6 +1037,10 @@ supplied for agent posts. version_id identifies the original comment version
 unchecked means no browser has checked it; needs-check means it was opened
 but no unique position was found. ambiguous_at_creation records whether a
 viewer selection was ambiguous when created; agent and legacy anchors omit it.
+target_path names the page the text is on: the entry page, or on a multi-file
+site the file or route path plus any #/ or #!/ hash route (for example
+/settings or /index.html#/billing). Other fragments such as #intro are not
+part of it. Quoted-text posting on multi-file sites remains unsupported.
 Older servers may omit these optional fields.
 
 Common failures:

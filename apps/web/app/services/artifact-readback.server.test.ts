@@ -111,6 +111,7 @@ for (const selectorFormat of ['normalized-v1', 'quote-v1', null] as const) {
           quote_before: ' a b ',
           quote_after: '',
           version_id: positionState === 'needs-check' ? null : 'v1',
+          target_path: '/index.html',
           state: positionState === 'attached' ? 'attached' : 'orphaned',
           position_state: positionState,
           ...(selectorFormat === 'normalized-v1'
@@ -129,3 +130,39 @@ for (const selectorFormat of ['normalized-v1', 'quote-v1', null] as const) {
     }
   }
 }
+
+test('static-site text anchors return their page location', () => {
+  for (const targetPath of [
+    '/docs/setup.html',
+    '/settings',
+    '/index.html#/billing',
+  ]) {
+    const textThread: CommentThreadView = {
+      ...thread,
+      subject: {
+        kind: 'text',
+        quotedText: 'word',
+        prefixText: '',
+        suffixText: '',
+        versionId: 'v1',
+        selectorFormat: 'normalized-v1',
+        ambiguousAtCreation: false,
+        positionState: 'unchecked',
+        state: 'orphaned',
+        targetPath,
+        textStart: 0,
+        textEnd: 4,
+        cssPath: null,
+      },
+    }
+    expect(
+      agentCommentMutationFields({ thread: textThread }).thread?.anchor,
+    ).toMatchObject({ kind: 'text', target_path: targetPath })
+  }
+  // Whole-artifact anchors keep their existing shape.
+  expect(agentCommentMutationFields({ thread }).thread?.anchor).toStrictEqual({
+    kind: 'artifact',
+    quoted_text: null,
+    state: null,
+  })
+})

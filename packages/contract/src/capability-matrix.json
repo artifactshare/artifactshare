@@ -517,6 +517,7 @@
               "headings",
               "block_text",
               "version_id",
+              "target_path",
               "ambiguous_at_creation"
             ],
             "mcp_input": [

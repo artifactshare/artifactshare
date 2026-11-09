@@ -16,7 +16,52 @@ import {
   shouldDeferCommentRefreshDuringMutation,
   shouldPromoteLatestVersionRetry,
   viewerShellReducer,
+  viewerTextAnchorsEnabled,
 } from './viewer-shell'
+
+describe('text selection comments', () => {
+  test('static sites select text on the current version, like html and md', () => {
+    for (const renderType of ['html', 'md', 'static_site'])
+      expect(viewerTextAnchorsEnabled(renderType, false)).toBe(true)
+    for (const renderType of ['html', 'md', 'static_site', 'pdf', 'video'])
+      expect(viewerTextAnchorsEnabled(renderType, true)).toBe(false)
+    expect(viewerTextAnchorsEnabled('pdf', false)).toBe(false)
+  })
+
+  test('choosing the same conversation again is a new request', () => {
+    const state = createViewerCommentState('a', 'v1', [], null)
+    const first = viewerCommentReducer(state, {
+      type: 'thread-targeted',
+      threadId: 't1',
+    })
+    const again = viewerCommentReducer(first, {
+      type: 'thread-targeted',
+      threadId: 't1',
+    })
+    expect(again.targetThreadId).toBe('t1')
+    expect(again.targetThreadRequest).toBe(first.targetThreadRequest + 1)
+  })
+
+  test('a location change closes the inline conversation but keeps the panel one', () => {
+    const state = createViewerCommentState('a', 'v1', [], null)
+    const targeted = viewerCommentReducer(state, {
+      type: 'thread-targeted',
+      threadId: 't1',
+    })
+    const inline = viewerCommentReducer(targeted, {
+      type: 'inline-thread-opened',
+      threadId: 't2',
+      rect: { top: 1, left: 2, width: 3, height: 4 },
+    })
+    const moved = viewerCommentReducer(inline, {
+      type: 'comment-location-changed',
+    })
+    expect(moved.inlineThreadId).toBeNull()
+    expect(moved.inlineThreadRect).toBeNull()
+    expect(moved.panelOpen).toBe(true)
+    expect(moved.targetThreadId).toBe('t1')
+  })
+})
 
 describe('parseLiveMessage', () => {
   test('accepts pong heartbeat responses', () => {

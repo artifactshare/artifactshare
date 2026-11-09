@@ -31,6 +31,7 @@ import { ViewerHistoryPanel } from './viewer-history-panel'
 import { DropCatcher } from './drop-catcher'
 import { hasLocalFiles } from './drag-files'
 import { ViewerChrome } from './viewer-chrome'
+import { CommentLocationsContext } from './comment-locations-context'
 import { CommentPanel } from './comment-panel'
 import { ViewerListPanel } from './viewer-list-panel'
 import {
@@ -149,6 +150,8 @@ interface ViewerCommentState {
   focusTargetOnOpen: boolean
   targetThreadId: string | null
   targetThreadScroll: 'center' | 'start'
+  /** Counts conversation choices, so choosing the same one again reopens it. */
+  targetThreadRequest: number
   pendingTextAnchor: PendingTextAnchor | null
   pendingComposerOpen: boolean
   inlineThreadId: string | null
@@ -192,6 +195,7 @@ type ViewerCommentAction =
     }
   | { type: 'inline-popover-closed' }
   | { type: 'pending-text-anchor-cleared' }
+  | { type: 'comment-location-changed' }
 
 type CommentRefreshResult = 'keep-connection' | 'close-connection'
 
@@ -394,6 +398,20 @@ function waitForCommentAuthRecheck(
   })
 }
 
+// 本文範囲コメントは html / md と static_site の現在の版。static_site はページの
+// 場所 (ファイル・ルートのパスとハッシュルート) ごとに付く。
+export function viewerTextAnchorsEnabled(
+  renderType: string | null | undefined,
+  isHistoricalVersion: boolean,
+): boolean {
+  return (
+    !isHistoricalVersion &&
+    (renderType === 'html' ||
+      renderType === 'md' ||
+      renderType === 'static_site')
+  )
+}
+
 export function createViewerCommentState(
   artifactId: string,
   currentVersionId: string | null,
@@ -410,6 +428,7 @@ export function createViewerCommentState(
     focusTargetOnOpen: false,
     targetThreadId,
     targetThreadScroll: 'start',
+    targetThreadRequest: 0,
     pendingTextAnchor: null,
     pendingComposerOpen: false,
     inlineThreadId: null,
@@ -501,6 +520,7 @@ export function viewerCommentReducer(
         panelOpen: true,
         panelHasOpened: true,
         targetThreadId: action.threadId,
+        targetThreadRequest: state.targetThreadRequest + 1,
         focusTargetOnOpen: false,
         targetThreadScroll: action.scroll ?? 'start',
         inlineThreadId: null,
@@ -541,6 +561,16 @@ export function viewerCommentReducer(
       }
     case 'pending-text-anchor-cleared':
       return { ...state, pendingTextAnchor: null, pendingComposerOpen: false }
+    case 'comment-location-changed':
+      // A selection or inline conversation belongs to the location it was
+      // opened on; panel conversations stay open.
+      return {
+        ...state,
+        pendingTextAnchor: null,
+        pendingComposerOpen: false,
+        inlineThreadId: null,
+        inlineThreadRect: null,
+      }
     default: {
       const _exhaustive: never = action
       return _exhaustive
@@ -562,7 +592,10 @@ export function useViewerComments({
   onVersionReconcile,
   onLiveConnectionChanged,
   onPanelOpened,
+  commentLocation,
 }: {
+  /** Static sites: the displayed location; other locations are not checked here. */
+  commentLocation?: string | null
   framePresent: boolean
   artifactId: string
   currentUserId: string | null
@@ -726,6 +759,10 @@ export function useViewerComments({
     dispatchComment({ type: 'pending-text-anchor-cleared' })
   }, [])
 
+  const clearLocationComments = useCallback(() => {
+    dispatchComment({ type: 'comment-location-changed' })
+  }, [])
+
   const replaceThreadsIfChanged = useCallback(
     (
       threads: ReadonlyArray<CommentThreadView>,
@@ -751,14 +788,17 @@ export function useViewerComments({
   const panelThreads = useMemo(
     () =>
       state.threads.map((thread) =>
-        !anchorCheckingAvailable &&
+        (!anchorCheckingAvailable ||
+          (commentLocation !== undefined &&
+            thread.subject.kind === 'text' &&
+            thread.subject.targetPath !== commentLocation)) &&
         thread.subject.kind === 'text' &&
         (thread.subject.checking ||
           thread.subject.positionState === 'unchecked')
           ? { ...thread, subject: { ...thread.subject, checking: false } }
           : thread,
       ),
-    [state.threads, anchorCheckingAvailable],
+    [state.threads, anchorCheckingAvailable, commentLocation],
   )
 
   const openPanel = useCallback(
@@ -1946,6 +1986,7 @@ export function useViewerComments({
     openInlineThread,
     closeInlinePopover,
     clearPendingTextAnchor,
+    clearLocationComments,
   }
 }
 
@@ -2438,16 +2479,20 @@ function useViewerShellController({
       reason: 'forced',
     })
   }, [closeAccessRequests])
-  // 本文範囲コメントは本文の選択を要するため html / md のみ。static_site の本文は
-  // 別オリジンの sandbox iframe にあり選択を取得できない。
-  const textAnchorsEnabled =
-    !isHistoricalVersion && (renderType === 'html' || renderType === 'md')
+  const textAnchorsEnabled = viewerTextAnchorsEnabled(
+    renderType,
+    isHistoricalVersion,
+  )
+  // static_site で表示中のコメントの場所。別の場所の会話は確認待ちにしない。
+  const [commentLocation, setCommentLocation] = useState<string | null>(null)
   // 全体コメントの新規作成 composer は static_site と pdf と video。html / md は本文選択で付ける。
   // pdf / video の本文も別オリジンの iframe にあり、位置・時刻コメントは後続タスク。
   const newThreadComposerEnabled =
     renderType === 'static_site' ||
     renderType === 'pdf' ||
     renderType === 'video'
+  // A static site's text comments live on its pages; the panel names the page.
+  const commentLocationsShown = renderType === 'static_site'
   const comments = useViewerComments({
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
@@ -2462,7 +2507,16 @@ function useViewerShellController({
     onVersionReconcile: latestVersion.reconcile,
     onLiveConnectionChanged: setLiveConnected,
     onPanelOpened: handleCommentsPanelOpened,
+    commentLocation: renderType === 'static_site' ? commentLocation : undefined,
   })
+  const { clearLocationComments } = comments
+  const handleCommentLocationChange = useCallback(
+    (location: string | null) => {
+      setCommentLocation(location)
+      clearLocationComments()
+    },
+    [clearLocationComments],
+  )
   // 閲覧者パネル。入口 (メタ行・メニュー) は showViewerListMetaEntry ゲート。
   const viewerListAvailable = artifact.showViewerListMetaEntry === true
   const viewerListReturnFocusRef = useRef<HTMLElement | null>(null)
@@ -2788,6 +2842,7 @@ function useViewerShellController({
     textAnchorsEnabled,
     commentsEnabled,
     newThreadComposerEnabled,
+    commentLocationsShown,
     revalidator,
     replaceMode,
     viewerListAvailable,
@@ -2798,6 +2853,7 @@ function useViewerShellController({
     submitReplaceVersion,
     handleDrop,
     setFrameExportPath,
+    handleCommentLocationChange,
   }
 }
 
@@ -2847,6 +2903,7 @@ function ViewerShellView({
   textAnchorsEnabled,
   commentsEnabled,
   newThreadComposerEnabled,
+  commentLocationsShown,
   replaceMode,
   viewerListAvailable,
   viewerList,
@@ -2856,6 +2913,7 @@ function ViewerShellView({
   submitReplaceVersion,
   handleDrop,
   setFrameExportPath,
+  handleCommentLocationChange,
   appOrigin,
   analyticsMode,
   linkSafety,
@@ -2960,6 +3018,7 @@ function ViewerShellView({
           onAnchorResolutions={comments.applyAnchorResolutions}
           onAnchorCheckingChange={comments.setAnchorCheckingAvailable}
           targetThreadId={comments.state.targetThreadId}
+          targetRequest={comments.state.targetThreadRequest}
           highlightThreadId={
             comments.state.inlineThreadId ?? comments.state.targetThreadId
           }
@@ -2985,6 +3044,7 @@ function ViewerShellView({
           onFramePathChange={
             renderType === 'static_site' ? setFrameExportPath : undefined
           }
+          onCommentLocationChange={handleCommentLocationChange}
           sandboxPermissions="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
         >
           {canReplaceFile && !state.uploading && state.dropCatcherVisible ? (
@@ -3090,6 +3150,7 @@ function ViewerShellView({
           state={state}
           comments={comments}
           newThreadComposerEnabled={newThreadComposerEnabled}
+          commentLocationsShown={commentLocationsShown}
           collapsedFallbackRef={collapseToggleRef}
         />
       ) : null}
@@ -3120,39 +3181,46 @@ function ViewerCommentPanel({
   state,
   comments,
   newThreadComposerEnabled,
+  commentLocationsShown,
   collapsedFallbackRef,
 }: Pick<
   ViewerShellController,
-  'artifact' | 'state' | 'comments' | 'newThreadComposerEnabled'
+  | 'artifact'
+  | 'state'
+  | 'comments'
+  | 'newThreadComposerEnabled'
+  | 'commentLocationsShown'
 > & {
   user: NonNullable<ViewerShellController['user']>
   collapsedFallbackRef: { current: HTMLButtonElement | null }
 }) {
   return (
-    <CommentPanel
-      key={artifact.id}
-      shareableId={artifact.id}
-      viewerUserId={user.id}
-      threads={comments.panelThreads}
-      onThreadsChange={comments.replaceThreads}
-      isCurrentShareableId={comments.isCurrentArtifactId}
-      open={comments.state.panelOpen}
-      onOpenChange={comments.changePanelOpen}
-      targetFetchFailed={comments.targetFetchFailed}
-      onRetryTarget={comments.retryTargetFetch}
-      targetThreadId={comments.state.targetThreadId}
-      targetThreadScroll={comments.state.targetThreadScroll}
-      onThreadNavigate={(thread) =>
-        comments.targetThread(thread.id, { scroll: 'start' })
-      }
-      returnFocusRef={comments.returnFocusRef}
-      collapsedFallbackRef={collapsedFallbackRef}
-      requestedFilter={comments.requestedFilter}
-      focusTargetOnOpen={comments.focusTargetOnOpen}
-      onTargetFocusConsumed={comments.consumeTargetFocus}
-      newCommentMessages={artifact.revisitContext?.newCommentMessages}
-      topbarCollapsed={state.chromeCollapsed}
-      showNewThreadComposer={newThreadComposerEnabled}
-    />
+    <CommentLocationsContext value={commentLocationsShown}>
+      <CommentPanel
+        key={artifact.id}
+        shareableId={artifact.id}
+        viewerUserId={user.id}
+        threads={comments.panelThreads}
+        onThreadsChange={comments.replaceThreads}
+        isCurrentShareableId={comments.isCurrentArtifactId}
+        open={comments.state.panelOpen}
+        onOpenChange={comments.changePanelOpen}
+        targetFetchFailed={comments.targetFetchFailed}
+        onRetryTarget={comments.retryTargetFetch}
+        targetThreadId={comments.state.targetThreadId}
+        targetThreadScroll={comments.state.targetThreadScroll}
+        onThreadNavigate={(thread) =>
+          comments.targetThread(thread.id, { scroll: 'start' })
+        }
+        returnFocusRef={comments.returnFocusRef}
+        collapsedFallbackRef={collapsedFallbackRef}
+        requestedFilter={comments.requestedFilter}
+        focusTargetOnOpen={comments.focusTargetOnOpen}
+        onTargetFocusConsumed={comments.consumeTargetFocus}
+        newCommentMessages={artifact.revisitContext?.newCommentMessages}
+        topbarCollapsed={state.chromeCollapsed}
+        showNewThreadComposer={newThreadComposerEnabled}
+      />
+    </CommentLocationsContext>
   )
 }

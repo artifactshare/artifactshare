@@ -1097,10 +1097,16 @@ describe('comment position compatibility', () => {
         ).toEqual(anchor)
       }
     }
+    // Static-site page locations round-trip; older anchors omit them.
+    for (const target_path of ['/docs/page.html', '/index.html#/billing']) {
+      const anchor = { ...old, target_path }
+      expect(CommentAnchorSchema.parse(anchor)).toEqual(anchor)
+    }
     for (const field of [
       'quote_before',
       'quote_after',
       'version_id',
+      'target_path',
       'ambiguous_at_creation',
     ]) {
       expect(

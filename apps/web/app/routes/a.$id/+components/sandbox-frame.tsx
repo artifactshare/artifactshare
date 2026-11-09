@@ -87,6 +87,11 @@ import {
 import { type PendingTextAnchor } from './viewer-comment-types'
 import { normalizeStaticSiteFramePath } from './export-actions'
 import {
+  commentLocationFromUrl,
+  commentLocationHref,
+  isCommentLocationServed,
+} from '@artifactshare/viewer-kit/reporter/comment-location'
+import {
   classifySandboxProbeResponse,
   shouldAttemptAutomaticRecovery,
   shouldAcceptNavigationResult,
@@ -107,6 +112,9 @@ function addFrameOffset(
   }
 }
 
+// A conversation jump that opened another static-site location.
+type PendingJump = { threadId: string; location: string }
+
 type SandboxFrameProps = {
   entrypointPath?: string | null
   renderType: string | null
@@ -122,6 +130,8 @@ type SandboxFrameProps = {
   fallbackToIndex: boolean
   commentThreads: ReadonlyArray<CommentThreadView>
   targetThreadId: string | null
+  /** Changes on every conversation choice, including the same one again. */
+  targetRequest?: number
   highlightThreadId: string | null
   followsAppTheme: boolean
   lowTrust?: boolean
@@ -132,6 +142,8 @@ type SandboxFrameProps = {
   onThreadSelect: (threadId: string, rect: TextSelectionMessage['rect']) => void
   onOutsidePointerDown: () => void
   onFramePathChange?: (path: string) => void
+  /** Static sites: the displayed comment location, or null when unusable. */
+  onCommentLocationChange?: (location: string | null) => void
   sandboxPermissions: 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads'
   children?: ReactNode
 }
@@ -426,6 +438,7 @@ function useSandboxFrameController({
   fallbackToIndex,
   commentThreads,
   targetThreadId,
+  targetRequest = 0,
   highlightThreadId,
   onTextSelection,
   onAnchorResolutions,
@@ -434,6 +447,7 @@ function useSandboxFrameController({
   onThreadSelect,
   onOutsidePointerDown,
   onFramePathChange,
+  onCommentLocationChange,
   sandboxPermissions,
   lowTrust = false,
 }: SandboxFrameProps) {
@@ -479,6 +493,35 @@ function useSandboxFrameController({
   const readyFallbackTimeoutRef = useRef<number | null>(null)
   const [staticSiteAuthRef] = useState(() => ({ current: Date.now() }))
   const frameNavigationIdRef = useRef(0)
+  // Counts chosen frame destinations (links, jumps, recovery).
+  const frameDestinationRef = useRef(0)
+  // Counts conversation jump choices; a pending jump checks it is the latest.
+  const jumpGenerationRef = useRef(0)
+  // The reader moved elsewhere (a highlight choice on this page, or a history
+  // or authored route change): a destination whose renewal is still pending
+  // must not replace the page the reader is now on.
+  const supersedePendingDestination = () => {
+    frameDestinationRef.current += 1
+    jumpGenerationRef.current += 1
+  }
+  // A jump whose navigation has started and whose location has not yet been
+  // checked. If the opened document settles elsewhere (an SPA redirect), the
+  // conversation cannot be found there.
+  const pendingJumpRef = useRef<PendingJump | null>(null)
+  const markJumpUnavailable = useEffectEvent((threadId: string) => {
+    // The cannot-find verdict for a page this version does not serve, or one
+    // the opened document left, is known only once the jump is checked.
+    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
+    onAnchorResolutions?.([
+      {
+        threadId,
+        state: 'needs-check',
+        textStart: null,
+        textEnd: null,
+        textHash: null,
+      },
+    ])
+  })
   const automaticRecoveryAttemptsRef = useRef(0)
   const reportedGenerationRef = useRef<number | null>(null)
   const reportTimerRef = useRef<number | null>(null)
@@ -501,10 +544,69 @@ function useSandboxFrameController({
     }),
     [locale],
   )
+  // Static sites scope comments to the displayed page location: the file or
+  // route path plus a hash route. Same-document route changes are reported by
+  // the frame; until then the frame URL is the best known location.
+  const locationScoped = renderType === 'static_site'
+  const servedFiles = useMemo(() => new Set(bundlePaths), [bundlePaths])
+  const servedLocation = useCallback(
+    (location: string | null) =>
+      location &&
+      isCommentLocationServed(location, servedFiles, fallbackToIndex)
+        ? location
+        : null,
+    [servedFiles, fallbackToIndex],
+  )
+  const [reportedLocation, setReportedLocation] = useState<{
+    frameUrl: string
+    frameInstance: number
+    location: string | null
+  } | null>(null)
+  const commentLocation = useMemo(() => {
+    if (!locationScoped)
+      return normalizeStaticSiteFramePath(new URL(frameUrl).pathname)
+    if (
+      reportedLocation?.frameUrl === frameUrl &&
+      reportedLocation.frameInstance === frameInstance
+    )
+      return reportedLocation.location
+    const parsed = new URL(frameUrl)
+    return servedLocation(
+      commentLocationFromUrl(parsed.pathname, parsed.hash, fallbackToIndex),
+    )
+  }, [
+    locationScoped,
+    frameUrl,
+    frameInstance,
+    reportedLocation,
+    servedLocation,
+    fallbackToIndex,
+  ])
+  // Recovery reopens the route the document last reported (an SPA may have
+  // moved there through history), not the iframe's original source. It is
+  // read after the renewal response, so a held response uses the latest one.
+  const recoveryDestinationRef = useRef(frameUrl)
+  useLayoutEffect(() => {
+    const parsed = new URL(frameUrl)
+    const href =
+      locationScoped &&
+      commentLocation &&
+      commentLocation !==
+        commentLocationFromUrl(parsed.pathname, parsed.hash, fallbackToIndex)
+        ? commentLocationHref(commentLocation, fallbackToIndex)
+        : null
+    recoveryDestinationRef.current = href
+      ? new URL(href, parsed.origin).href
+      : frameUrl
+  }, [locationScoped, commentLocation, frameUrl, fallbackToIndex])
+  // The parent learns the location each document reports for itself.
+  const parentLocationRef = useRef<string | null | undefined>(undefined)
   const highlights = useMemo(() => {
     const textHighlights = commentThreads.flatMap((thread) => {
       const subject = thread.subject
       if (subject.kind !== 'text') return []
+      // Only conversations on the displayed location are highlighted.
+      if (locationScoped && subject.targetPath !== commentLocation) return []
       return {
         ...subject,
         threadId: thread.id,
@@ -514,7 +616,7 @@ function useSandboxFrameController({
       }
     })
     return textHighlights
-  }, [commentThreads, highlightThreadId])
+  }, [commentThreads, highlightThreadId, locationScoped, commentLocation])
   const resolutionSyncRef = useRef<ReturnType<
     typeof createAnchorResolutionSync
   > | null>(null)
@@ -533,7 +635,7 @@ function useSandboxFrameController({
       sync.dispose()
       resolutionSyncRef.current = null
     }
-  }, [shareableId, versionId, frameUrl, frameInstance])
+  }, [shareableId, versionId, frameUrl, frameInstance, commentLocation])
   useEffect(() => {
     resolutionSyncRef.current?.reapply()
   }, [commentThreads])
@@ -542,11 +644,35 @@ function useSandboxFrameController({
       if (
         message.token !== securityTokenRef.current ||
         message.versionId !== versionId ||
-        message.targetPath !==
-          normalizeStaticSiteFramePath(new URL(frameUrl).pathname)
+        !commentLocation ||
+        message.targetPath !== commentLocation
       )
         return
-      resolutionSyncRef.current?.accept(message)
+      // Verdicts apply only to conversations on the measured location.
+      const scoped = locationScoped
+        ? {
+            ...message,
+            results: message.results.filter((result) =>
+              commentThreads.some(
+                (thread) =>
+                  thread.id === result.threadId &&
+                  thread.subject.kind === 'text' &&
+                  thread.subject.targetPath === commentLocation,
+              ),
+            ),
+          }
+        : message
+      // A settled verdict on the jump's location completes the jump.
+      const jump = pendingJumpRef.current
+      if (
+        jump?.location === message.targetPath &&
+        scoped.results.some(
+          (result) =>
+            result.threadId === jump.threadId && result.state !== 'checking',
+        )
+      )
+        pendingJumpRef.current = null
+      resolutionSyncRef.current?.accept(scoped)
     },
   )
 
@@ -622,12 +748,16 @@ function useSandboxFrameController({
             return
           }
           automaticRecoveryAttemptsRef.current += 1
+          frameDestinationRef.current += 1
           setLoadState('resuming')
           const next = await refreshSandboxFrameUrl(
             shareableId,
             versionId,
             frameUrl,
-            { getHash: hashSync.latest },
+            {
+              getHash: hashSync.latest,
+              getTargetUrl: () => recoveryDestinationRef.current,
+            },
           )
           if (
             !shouldAcceptNavigationResult(
@@ -696,8 +826,18 @@ function useSandboxFrameController({
           message.versionId !== versionId)
       )
         return
+      // A static-site selection belongs to the location its document measured,
+      // which must be the location shown now.
+      if (
+        locationScoped &&
+        (!message.selectorFormat ||
+          !commentLocation ||
+          message.targetPath !== commentLocation)
+      )
+        return
       const frameRect = frameRef.current?.getBoundingClientRect()
       onTextSelection({
+        ...(locationScoped ? { targetPath: commentLocation } : {}),
         selectorFormat: message.selectorFormat,
         textHash: message.textHash,
         locus: parseTextLocus(message.locus),
@@ -718,6 +858,8 @@ function useSandboxFrameController({
   const handleThreadSelectedMessage = useEffectEvent(
     (threadId: string, rect: TextSelectionMessage['rect']) => {
       const frameRect = frameRef.current?.getBoundingClientRect()
+      supersedePendingDestination()
+      pendingJumpRef.current = null
       onThreadSelect(
         threadId,
         frameRect ? addFrameOffset(rect, frameRect) : rect,
@@ -730,6 +872,68 @@ function useSandboxFrameController({
   const handleTextSelectionClearedMessage = useEffectEvent(() => {
     onTextSelectionClear()
   })
+  // In-artifact frame navigation, for link clicks and conversation jumps.
+  const navigateFrame = useEffectEvent(
+    (
+      destination: string,
+      isCurrent: () => boolean = () => true,
+      jump: PendingJump | null = null,
+    ) => {
+      // Only a conversation jump's own navigation awaits its location.
+      pendingJumpRef.current = null
+      onFramePathChange?.(
+        normalizeStaticSiteFramePath(new URL(destination).pathname),
+      )
+      frameNavigationIdRef.current += 1
+      // Repeated ready answers advance frameNavigationIdRef (liveness), so a
+      // renewal is superseded only by a later choice of frame destination.
+      const destinationId = (frameDestinationRef.current += 1)
+      automaticRecoveryAttemptsRef.current = 0
+      const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
+      const needsRefresh = Date.now() - lastStaticSiteAuthAt > 9 * 60 * 1000
+      if (!needsRefresh) {
+        securityTokenRef.current = null
+        hashSync.flush()
+        securityChallengeRef.current = createSandboxChallenge()
+        clearReadyFallback()
+        // A conversation jump navigates from its target effect: the target is
+        // set by several callers (panel, notifications, deep links), and the
+        // frame must load that location before the jump can complete.
+        // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
+        setViolations([])
+        pendingJumpRef.current = jump
+        // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
+        setLoadState('loading')
+        setFrameUrl(destination)
+        // The same src would not navigate a document that moved away from it
+        // through history; load it again.
+        if (destination === frameUrl) restartFrameInstance()
+        return
+      }
+      void refreshSandboxFrameUrl(shareableId, versionId, destination, {
+        navigation: true,
+      }).then((nextFrameUrl) => {
+        // A later navigation or conversation choice supersedes this renewal.
+        if (destinationId !== frameDestinationRef.current || !isCurrent())
+          return
+        if (!nextFrameUrl) {
+          toast(t('toast.linkRecoveryFailed'))
+          return
+        }
+        // The current document remains active when refresh fails. Invalidate
+        // its handshake only once the replacement navigation can proceed.
+        securityTokenRef.current = null
+        hashSync.flush()
+        securityChallengeRef.current = createSandboxChallenge()
+        staticSiteAuthRef.current = Date.now()
+        clearReadyFallback()
+        pendingJumpRef.current = jump
+        setViolations([])
+        setLoadState('loading')
+        setFrameUrl(nextFrameUrl)
+      })
+    },
+  )
   const handleLinkClickedMessage = useEffectEvent(
     (message: LinkClickedMessage) => {
       const action = classifyViewerLinkNavigation({
@@ -742,43 +946,7 @@ function useSandboxFrameController({
         mode: linkNavigationMode,
       })
       if (action.kind === 'allow-frame') {
-        onFramePathChange?.(
-          normalizeStaticSiteFramePath(new URL(action.url).pathname),
-        )
-        const navigationId = frameNavigationIdRef.current + 1
-        frameNavigationIdRef.current = navigationId
-        automaticRecoveryAttemptsRef.current = 0
-        const lastStaticSiteAuthAt = staticSiteAuthRef.current ?? Date.now()
-        const needsRefresh = Date.now() - lastStaticSiteAuthAt > 9 * 60 * 1000
-        if (!needsRefresh) {
-          securityTokenRef.current = null
-          hashSync.flush()
-          securityChallengeRef.current = createSandboxChallenge()
-          clearReadyFallback()
-          setViolations([])
-          setLoadState('loading')
-          setFrameUrl(action.url)
-          return
-        }
-        void refreshSandboxFrameUrl(shareableId, versionId, action.url, {
-          navigation: true,
-        }).then((nextFrameUrl) => {
-          if (navigationId !== frameNavigationIdRef.current) return
-          if (!nextFrameUrl) {
-            toast(t('toast.linkRecoveryFailed'))
-            return
-          }
-          // The current document remains active when refresh fails. Invalidate
-          // its handshake only once the replacement navigation can proceed.
-          securityTokenRef.current = null
-          hashSync.flush()
-          securityChallengeRef.current = createSandboxChallenge()
-          staticSiteAuthRef.current = Date.now()
-          clearReadyFallback()
-          setViolations([])
-          setLoadState('loading')
-          setFrameUrl(nextFrameUrl)
-        })
+        navigateFrame(action.url)
       } else if (action.kind === 'open-app') {
         window.open(action.url, '_blank', 'noopener,noreferrer')
       } else if (action.kind === 'open-external') {
@@ -822,13 +990,22 @@ function useSandboxFrameController({
         ...SANDBOX_READY_CHECK_MESSAGE,
         challenge,
         versionId,
-        targetPath: normalizeStaticSiteFramePath(new URL(frameUrl).pathname),
+        targetPath: commentLocation,
+        locationScoped,
+        fallbackToIndex,
         textAnchorsEnabled,
         commentLabels,
       },
       '*',
     )
-  }, [commentLabels, textAnchorsEnabled, versionId, frameUrl])
+  }, [
+    commentLabels,
+    textAnchorsEnabled,
+    versionId,
+    commentLocation,
+    locationScoped,
+    fallbackToIndex,
+  ])
 
   const sendHighlights = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
@@ -836,7 +1013,9 @@ function useSandboxFrameController({
         source: 'artifactshare-parent',
         kind: 'comment-highlights',
         versionId,
-        targetPath: normalizeStaticSiteFramePath(new URL(frameUrl).pathname),
+        targetPath: commentLocation,
+        locationScoped,
+        fallbackToIndex,
         textAnchorsEnabled,
         commentLabels,
         highlights,
@@ -849,7 +1028,9 @@ function useSandboxFrameController({
     textAnchorsEnabled,
     trustedMessageOrigin,
     versionId,
-    frameUrl,
+    commentLocation,
+    locationScoped,
+    fallbackToIndex,
   ])
 
   // The common viewers (PDF and video) show their controls in the app's
@@ -923,6 +1104,34 @@ function useSandboxFrameController({
         message.token !== securityTokenRef.current
       )
         return
+      if (locationScoped) {
+        // The URL alone decides the location; in-page fragments are not part
+        // of it. Paths outside this version's files have no location.
+        const location = servedLocation(
+          commentLocationFromUrl(message.path, message.hash, fallbackToIndex),
+        )
+        setReportedLocation((current) =>
+          current?.frameUrl === frameUrl &&
+          current.frameInstance === frameInstance &&
+          current.location === location
+            ? current
+            : { frameUrl, frameInstance, location },
+        )
+        // The jump's document settled on another location (for example an
+        // SPA redirect): the conversation's place is not shown, so the jump
+        // ends in the cannot-find state rather than waiting for its text.
+        const jump = pendingJumpRef.current
+        if (jump && jump.location !== location) {
+          pendingJumpRef.current = null
+          markJumpUnavailable(jump.threadId)
+        }
+        if (parentLocationRef.current !== location) {
+          if (parentLocationRef.current !== undefined)
+            supersedePendingDestination()
+          parentLocationRef.current = location
+          onCommentLocationChange?.(location)
+        }
+      }
       if (
         renderType === 'static_site' &&
         normalizeStaticSiteFramePath(message.path) !==
@@ -1039,8 +1248,63 @@ function useSandboxFrameController({
     })
   }, [loadState])
 
+  // A conversation on another static-site location opens that location first
+  // (routes load through the version's fallback to index). Only the latest
+  // choice navigates; the jump completes once its text is verified there.
+  const targetLocation = useMemo(() => {
+    if (!locationScoped || !targetThreadId) return null
+    const thread = commentThreads.find((item) => item.id === targetThreadId)
+    return thread?.subject.kind === 'text' ? thread.subject.targetPath : null
+  }, [locationScoped, targetThreadId, commentThreads])
+  const jumpRequestRef = useRef<string | null>(null)
+  useEffect(() => {
+    const request =
+      targetThreadId && targetLocation
+        ? `${targetRequest}\n${targetThreadId}\n${targetLocation}`
+        : null
+    // A jump waits until the frame's document is ready: on first load that
+    // document carries the entry authority that lets the frame open other
+    // paths, so a deep link or notification must not replace it early.
+    if (request && targetLocation !== commentLocation && loadState !== 'ready')
+      return
+    if (request === jumpRequestRef.current) return
+    // Any new choice, including one that needs no navigation or clears the
+    // target, supersedes a jump whose renewal is still pending.
+    jumpRequestRef.current = request
+    jumpGenerationRef.current += 1
+    pendingJumpRef.current = null
+    if (!request || !targetThreadId || !targetLocation) return
+    if (targetLocation === commentLocation) return
+    const generation = jumpGenerationRef.current
+    const href = servedLocation(targetLocation)
+      ? commentLocationHref(targetLocation, fallbackToIndex)
+      : null
+    // A page this version no longer serves cannot hold the text.
+    if (!href) {
+      markJumpUnavailable(targetThreadId)
+      return
+    }
+    // Opening the location also updates the export path, as link clicks do.
+    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
+    navigateFrame(
+      new URL(href, trustedMessageOrigin).href,
+      () => generation === jumpGenerationRef.current,
+      { threadId: targetThreadId, location: targetLocation },
+    )
+  }, [
+    targetRequest,
+    targetThreadId,
+    targetLocation,
+    commentLocation,
+    servedLocation,
+    fallbackToIndex,
+    trustedMessageOrigin,
+    loadState,
+  ])
+
   useEffect(() => {
     if (!targetThreadId || loadState !== 'ready') return
+    if (locationScoped && targetLocation !== commentLocation) return
     frameRef.current?.contentWindow?.postMessage(
       {
         source: 'artifactshare-parent',
@@ -1049,7 +1313,15 @@ function useSandboxFrameController({
       },
       trustedMessageOrigin,
     )
-  }, [loadState, targetThreadId, trustedMessageOrigin])
+  }, [
+    loadState,
+    targetRequest,
+    targetThreadId,
+    trustedMessageOrigin,
+    locationScoped,
+    targetLocation,
+    commentLocation,
+  ])
 
   useEffect(() => {
     if (loadState !== 'loading') return
@@ -1126,11 +1398,13 @@ function useSandboxFrameController({
       focusRetryFailureRef.current = true
       const generation = frameNavigationIdRef.current + 1
       frameNavigationIdRef.current = generation
+      frameDestinationRef.current += 1
       automaticRecoveryAttemptsRef.current = 0
       setRetryFailed(false)
       setLoadState('resuming')
       void refreshSandboxFrameUrl(shareableId, versionId, frameUrl, {
         getHash: hashSync.latest,
+        getTargetUrl: () => recoveryDestinationRef.current,
       }).then(
         (nextFrameUrl) => {
           if (generation !== frameNavigationIdRef.current) return
@@ -1165,7 +1439,12 @@ export async function refreshSandboxFrameUrl(
   shareableId: string,
   versionId: string,
   targetUrl: string,
-  options: { navigation?: boolean; getHash?: () => string } = {},
+  options: {
+    navigation?: boolean
+    getHash?: () => string
+    // Recovery reads its destination after the response, like its hash.
+    getTargetUrl?: () => string
+  } = {},
 ): Promise<string | null> {
   let result: {
     response: Response
@@ -1201,7 +1480,7 @@ export async function refreshSandboxFrameUrl(
   }
   const body = result.body
   if (typeof body?.sandboxUrl !== 'string') return null
-  let nextUrl = new URL(targetUrl)
+  let nextUrl = new URL(options.getTargetUrl?.() ?? targetUrl)
   const entrypointUrl = new URL(body.sandboxUrl)
   // A renewal may advance the published version, but never the artifact,
   // authorization kind, or deployment's execution domain.
