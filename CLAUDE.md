@@ -8,3 +8,7 @@
 - Review implementation, user-visible behavior, tests, security boundaries, and maintainability. Keep pull-request descriptions to the implementation, its generalized visible effect, validation results, and any workflow usage included.
 - Classify and run maintainer changes with `docs/development-workflow.md`, which is the source of truth for proportional specification, review, and validation. Initialize the branch objective scope when the boundary-sensitive implementation review applies; every review must use a committed, clean worktree, and spec review records the clean checkout as reference context for a fixed Artifact Share version.
 - Follow the writing and contribution rules in `CONTRIBUTING.md`, `SECURITY.md`, and the nearest directory instructions.
+
+## UI design context
+
+Use the Impeccable skill for UI design and review. Read `apps/web/PRODUCT.md` and `apps/web/DESIGN.md` first, then follow the existing design system, component catalog, and tokens they reference. Keep local Impeccable working files out of Git.
