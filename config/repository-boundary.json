@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "canonical": [
+    "apps/web/PRODUCT.md",
+    "apps/web/DESIGN.md",
     "apps/web/dev.mjs",
     "apps/web/check-migrations.mjs",
     "apps/web/check-schema.mjs",

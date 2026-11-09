@@ -37,3 +37,6 @@ backup-*.sql
 
 # Temporary base-commit copy made by apps/web/scripts/check-viewer-app-css.mjs
 apps/web/.app-css-base-*/
+
+# Local Impeccable previews, reports, and runtime state.
+.impeccable/
