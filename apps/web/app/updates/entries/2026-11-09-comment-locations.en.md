@@ -1,5 +1,5 @@
 ---
-title: Comment on selected text in folder shares and on the open PDF page
+title: Comment on text in folder shares and on PDF pages
 date: 2026-11-09
 products: [web, cli, mcp]
 kind: new

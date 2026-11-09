@@ -1,5 +1,5 @@
 ---
-title: フォルダ共有で選んだ文に、PDF で開いていたページにコメントできます
+title: フォルダ共有の文と PDF のページに、コメントを付けられます
 date: 2026-11-09
 products: [web, cli, mcp]
 kind: new
