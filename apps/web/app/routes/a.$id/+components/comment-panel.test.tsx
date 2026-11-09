@@ -42,7 +42,7 @@ vi.mock('~/components/app/app-side-panel', async () => {
     ),
   }
 })
-import { CommentPanel } from './comment-panel'
+import { CommentLocationsContext, CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
 import { mergeCommentWindow } from './comment-history'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
@@ -83,6 +83,24 @@ function textThread(
 
 function render(positionState: PositionState) {
   return renderThreads([textThread(positionState)])
+}
+
+function renderThreadsElement(threads: CommentThreadView[]) {
+  return (
+    <CommentPanel
+      shareableId="artifact"
+      viewerUserId="viewer"
+      threads={threads}
+      newCommentMessages={[]}
+      onThreadsChange={() => {}}
+      isCurrentShareableId={() => true}
+      open
+      onOpenChange={() => {}}
+      targetThreadId={null}
+      targetThreadScroll="center"
+      onThreadNavigate={() => {}}
+    />
+  )
 }
 
 function renderThreads(
@@ -853,24 +871,34 @@ test('a failed older page retains its normal expand label and offers an exact re
 test('static-site threads name their page and the general composer names the site', () => {
   locale.value = 'en'
   const site = renderToStaticMarkup(
-    <CommentPanel
-      shareableId="artifact"
-      viewerUserId="viewer"
-      threads={[textThread('attached')]}
-      newCommentMessages={[]}
-      onThreadsChange={() => {}}
-      isCurrentShareableId={() => true}
-      open
-      onOpenChange={() => {}}
-      targetThreadId={null}
-      targetThreadScroll="center"
-      onThreadNavigate={() => {}}
-      showNewThreadComposer
-      showCommentLocations
-    />,
+    <CommentLocationsContext value>
+      <CommentPanel
+        shareableId="artifact"
+        viewerUserId="viewer"
+        threads={[textThread('attached')]}
+        newCommentMessages={[]}
+        onThreadsChange={() => {}}
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId={null}
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+        showNewThreadComposer
+      />
+    </CommentLocationsContext>,
   )
   expect(site).toContain('Page: /index.html')
   expect(site).toContain('Write a comment on the whole site')
+  // An SPA's root route reads as the top page, not a bare slash.
+  const root = textThread('attached')
+  if (root.subject.kind === 'text') root.subject.targetPath = '/'
+  const rootSite = renderToStaticMarkup(
+    <CommentLocationsContext value>
+      {renderThreadsElement([root])}
+    </CommentLocationsContext>,
+  )
+  expect(rootSite).toContain('Page: Top (/)')
   // Single-document artifacts keep their wording and show no page.
   const single = render('attached')
   expect(single).not.toContain('Page: /index.html')

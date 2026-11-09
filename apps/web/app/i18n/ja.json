@@ -1691,5 +1691,6 @@
   "videoViewer.fullscreenFailed": "この環境では全画面表示を利用できません。",
   "videoViewer.downloadAtRisk": "動画をダウンロード用に保持できませんでした。このページを開いているうちに今すぐダウンロードするか、再読み込みしてもう一度お試しください。",
   "comments.newSitePlaceholder": "サイト全体へのコメントを書く",
-  "comments.subjectLocation": "ページ: {path}"
+  "comments.subjectLocation": "ページ: {path}",
+  "comments.subjectLocationRoot": "ページ: トップ（/）"
 }

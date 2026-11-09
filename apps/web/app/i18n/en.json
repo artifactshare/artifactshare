@@ -1691,5 +1691,6 @@
   "videoViewer.fullscreenFailed": "Full screen isn’t available here.",
   "videoViewer.downloadAtRisk": "The video couldn’t be kept for download. Download it now while this page is open, or reload the page to try again.",
   "comments.newSitePlaceholder": "Write a comment on the whole site",
-  "comments.subjectLocation": "Page: {path}"
+  "comments.subjectLocation": "Page: {path}",
+  "comments.subjectLocationRoot": "Page: Top (/)"
 }

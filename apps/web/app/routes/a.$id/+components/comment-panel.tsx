@@ -86,11 +86,11 @@ interface CommentPanelProps {
   // 選択範囲からではなく、成果物全体へのコメントを新規作成する composer を
   // パネル下部に出す（static_site・PDF・動画）。
   showNewThreadComposer?: boolean
-  // 静的サイトでは、文章コメントがどのページのものかをカードに示す。
-  showCommentLocations?: boolean
 }
 
-const CommentLocationsContext = createContext(false)
+// 静的サイトでは、文章コメントがどのページのものかをカードに示し、全体への
+// composer を「サイト全体」と呼ぶ。呼び出し側（ビューア）が値を渡す。
+export const CommentLocationsContext = createContext(false)
 
 export function CommentPanel({
   shareableId,
@@ -113,7 +113,6 @@ export function CommentPanel({
   requestedFilter,
   topbarCollapsed = false,
   showNewThreadComposer = false,
-  showCommentLocations = false,
 }: CommentPanelProps) {
   const translator = useT()
   const { setCommentPanelOpen } = useAnalyticsConsent()
@@ -335,64 +334,61 @@ export function CommentPanel({
   )
 
   return (
-    <CommentLocationsContext value={showCommentLocations}>
-      <AppSidePanel
-        open={open}
-        onOpenChange={onOpenChange}
-        onOpenAutoFocus={handleOpenAutoFocus}
-        onCloseAutoFocus={(event) => {
+    <AppSidePanel
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenAutoFocus={handleOpenAutoFocus}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault()
+        restoreViewerPanelFocus({
+          returnFocusRef,
+          collapsedFallbackRef,
+          topbarCollapsed,
+        })
+      }}
+      topbar={topbarCollapsed ? 'none' : 'viewer'}
+      onEscapeKeyDown={(event) => {
+        if (
+          replyState.activeThreadId &&
+          visibleThreads.some(
+            (thread) =>
+              thread.id === replyState.activeThreadId &&
+              thread.status === 'open',
+          )
+        ) {
           event.preventDefault()
-          restoreViewerPanelFocus({
-            returnFocusRef,
-            collapsedFallbackRef,
-            topbarCollapsed,
+          dispatchReply({
+            type: 'cancel',
           })
-        }}
-        topbar={topbarCollapsed ? 'none' : 'viewer'}
-        onEscapeKeyDown={(event) => {
-          if (
-            replyState.activeThreadId &&
-            visibleThreads.some(
-              (thread) =>
-                thread.id === replyState.activeThreadId &&
-                thread.status === 'open',
-            )
-          ) {
-            event.preventDefault()
-            dispatchReply({
-              type: 'cancel',
-            })
-          }
-        }}
-        aria-describedby={undefined}
-      >
-        <CommentPanelHeader />
+        }
+      }}
+      aria-describedby={undefined}
+    >
+      <CommentPanelHeader />
 
-        <CommentPanelTabs
-          value={visibleFilter}
-          onValueChange={(item) => {
-            setActiveRequestedFilter(undefined)
-            setAutoFilterTarget(
-              targetThreadFilterKey
-                ? { key: targetThreadFilterKey, filter: item }
-                : null,
-            )
-            setFilter(item)
-          }}
-        >
-          {commentList}
-        </CommentPanelTabs>
-        {showNewThreadComposer ? (
-          <NewThreadComposer
-            site={showCommentLocations}
-            pending={pendingKeys.has('create-thread')}
-            onSubmit={(body) =>
-              mutate({ intent: 'create-thread', body }, 'create-thread')
-            }
-          />
-        ) : null}
-      </AppSidePanel>
-    </CommentLocationsContext>
+      <CommentPanelTabs
+        value={visibleFilter}
+        onValueChange={(item) => {
+          setActiveRequestedFilter(undefined)
+          setAutoFilterTarget(
+            targetThreadFilterKey
+              ? { key: targetThreadFilterKey, filter: item }
+              : null,
+          )
+          setFilter(item)
+        }}
+      >
+        {commentList}
+      </CommentPanelTabs>
+      {showNewThreadComposer ? (
+        <NewThreadComposer
+          pending={pendingKeys.has('create-thread')}
+          onSubmit={(body) =>
+            mutate({ intent: 'create-thread', body }, 'create-thread')
+          }
+        />
+      ) : null}
+    </AppSidePanel>
   )
 }
 
@@ -505,15 +501,14 @@ function CommentPanelHeader() {
 }
 
 function NewThreadComposer({
-  site,
   pending,
   onSubmit,
 }: {
-  site: boolean
   pending: boolean
   onSubmit: (body: string) => Promise<boolean>
 }) {
   const { t } = useT()
+  const site = use(CommentLocationsContext)
   const [body, setBody] = useState('')
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -900,7 +895,11 @@ function ThreadSubject({ thread }: { thread: CommentThreadView }) {
       </span>
       {showLocation ? (
         <span className="text-muted-foreground [overflow-wrap:anywhere]">
-          {t('comments.subjectLocation', { path: thread.subject.targetPath })}
+          {thread.subject.targetPath === '/'
+            ? t('comments.subjectLocationRoot')
+            : t('comments.subjectLocation', {
+                path: thread.subject.targetPath,
+              })}
         </span>
       ) : null}
     </div>

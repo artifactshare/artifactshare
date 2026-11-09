@@ -31,7 +31,7 @@ import { ViewerHistoryPanel } from './viewer-history-panel'
 import { DropCatcher } from './drop-catcher'
 import { hasLocalFiles } from './drag-files'
 import { ViewerChrome } from './viewer-chrome'
-import { CommentPanel } from './comment-panel'
+import { CommentLocationsContext, CommentPanel } from './comment-panel'
 import { ViewerListPanel } from './viewer-list-panel'
 import {
   createViewerShellState,
@@ -3194,31 +3194,32 @@ function ViewerCommentPanel({
   collapsedFallbackRef: { current: HTMLButtonElement | null }
 }) {
   return (
-    <CommentPanel
-      key={artifact.id}
-      shareableId={artifact.id}
-      viewerUserId={user.id}
-      threads={comments.panelThreads}
-      onThreadsChange={comments.replaceThreads}
-      isCurrentShareableId={comments.isCurrentArtifactId}
-      open={comments.state.panelOpen}
-      onOpenChange={comments.changePanelOpen}
-      targetFetchFailed={comments.targetFetchFailed}
-      onRetryTarget={comments.retryTargetFetch}
-      targetThreadId={comments.state.targetThreadId}
-      targetThreadScroll={comments.state.targetThreadScroll}
-      onThreadNavigate={(thread) =>
-        comments.targetThread(thread.id, { scroll: 'start' })
-      }
-      returnFocusRef={comments.returnFocusRef}
-      collapsedFallbackRef={collapsedFallbackRef}
-      requestedFilter={comments.requestedFilter}
-      focusTargetOnOpen={comments.focusTargetOnOpen}
-      onTargetFocusConsumed={comments.consumeTargetFocus}
-      newCommentMessages={artifact.revisitContext?.newCommentMessages}
-      topbarCollapsed={state.chromeCollapsed}
-      showNewThreadComposer={newThreadComposerEnabled}
-      showCommentLocations={commentLocationsShown}
-    />
+    <CommentLocationsContext value={commentLocationsShown}>
+      <CommentPanel
+        key={artifact.id}
+        shareableId={artifact.id}
+        viewerUserId={user.id}
+        threads={comments.panelThreads}
+        onThreadsChange={comments.replaceThreads}
+        isCurrentShareableId={comments.isCurrentArtifactId}
+        open={comments.state.panelOpen}
+        onOpenChange={comments.changePanelOpen}
+        targetFetchFailed={comments.targetFetchFailed}
+        onRetryTarget={comments.retryTargetFetch}
+        targetThreadId={comments.state.targetThreadId}
+        targetThreadScroll={comments.state.targetThreadScroll}
+        onThreadNavigate={(thread) =>
+          comments.targetThread(thread.id, { scroll: 'start' })
+        }
+        returnFocusRef={comments.returnFocusRef}
+        collapsedFallbackRef={collapsedFallbackRef}
+        requestedFilter={comments.requestedFilter}
+        focusTargetOnOpen={comments.focusTargetOnOpen}
+        onTargetFocusConsumed={comments.consumeTargetFocus}
+        newCommentMessages={artifact.revisitContext?.newCommentMessages}
+        topbarCollapsed={state.chromeCollapsed}
+        showNewThreadComposer={newThreadComposerEnabled}
+      />
+    </CommentLocationsContext>
   )
 }
