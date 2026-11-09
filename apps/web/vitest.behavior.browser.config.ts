@@ -18,6 +18,10 @@ import {
 } from './app/test/mermaid-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
 import {
+  staticSiteCommentSite,
+  staticSiteFrame,
+} from './app/test/static-site-comment-browser-command'
+import {
   projectPlacementDestinations,
   projectPlacementCandidates,
 } from './app/test/project-placement-browser-command'
@@ -62,6 +66,8 @@ export default defineConfig({
         projectPlacementDestinations,
         projectPlacementCandidates,
         selectAnchorText,
+        staticSiteCommentSite,
+        staticSiteFrame,
         setMermaidColorScheme,
         setReducedMotion,
         staticSiteWasm,

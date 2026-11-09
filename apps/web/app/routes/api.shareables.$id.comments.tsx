@@ -339,7 +339,8 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
     typeof raw.suffixText !== 'string' ||
     typeof raw.textStart !== 'number' ||
     typeof raw.textEnd !== 'number' ||
-    (raw.cssPath !== null && typeof raw.cssPath !== 'string')
+    (raw.cssPath !== null && typeof raw.cssPath !== 'string') ||
+    (raw.targetPath !== undefined && typeof raw.targetPath !== 'string')
   ) {
     return null
   }
@@ -355,6 +356,9 @@ function parseAnchor(value: unknown): CommentAnchorPayload | null {
     textStart: raw.textStart,
     textEnd: raw.textEnd,
     cssPath: raw.cssPath,
+    ...(typeof raw.targetPath === 'string'
+      ? { targetPath: raw.targetPath }
+      : {}),
   }
 }
 

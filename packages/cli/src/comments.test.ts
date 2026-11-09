@@ -797,6 +797,43 @@ test('comments JSON preserves optional position_state for strict deferred resolu
   )
 })
 
+test('comments list returns static-site anchor locations and older anchors without one', async () => {
+  const comments = ['/docs/page.html', '/index.html#/billing', null].map(
+    (target_path) => ({
+      ...THREAD,
+      anchor: {
+        kind: 'text',
+        quoted_text: 'original quote',
+        state: 'orphaned',
+        position_state: 'unchecked',
+        ...(target_path ? { target_path } : {}),
+      },
+    }),
+  )
+  await withServer(
+    (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          artifact_id: 'abc123def4',
+          comments,
+          has_more: false,
+        }),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['comments', 'list', 'abc123def4', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'test-token' },
+      )
+      assert.deepEqual(
+        expectSuccess(result, 'comments list').data.comments,
+        comments,
+      )
+    },
+  )
+})
+
 test('comments list sends a bounded thread cursor request and keeps pagination metadata', async () => {
   await withServer(
     (request, response) => {

@@ -20,6 +20,46 @@ const message = (generation = 1, count = 1): AnchorResolutionMessage => ({
 })
 afterEach(() => vi.useRealTimers())
 
+test('a same-token route change scopes verdicts and rechecks a revisited route', async () => {
+  vi.useFakeTimers()
+  const apply = vi.fn()
+  let hold!: (response: Response) => void
+  const request = vi
+    .fn<typeof fetch>()
+    .mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (hold = resolve)),
+    )
+    .mockResolvedValue(new Response(null, { status: 200 }))
+  const sync = createAnchorResolutionSync('/comments', apply, request)
+  const at = (targetPath: string, generation: number, id: string) => ({
+    ...message(generation),
+    targetPath,
+    results: [result(id)],
+  })
+  sync.accept(at('/a', 1, 'thread-a'))
+  expect(request).toHaveBeenCalledTimes(1)
+  // B's verdicts replace A's; A's held write cannot be acknowledged into B.
+  sync.accept(at('/b', 2, 'thread-b'))
+  expect(apply).toHaveBeenLastCalledWith([result('thread-b')])
+  hold(new Response(null, { status: 200 }))
+  await vi.runAllTimersAsync()
+  const bodies = () =>
+    request.mock.calls.map(([, init]) => JSON.parse(init!.body as string))
+  expect(bodies().at(-1)).toMatchObject({
+    targetPath: '/b',
+    results: [{ threadId: 'thread-b' }],
+  })
+  // Returning to A saves A's verdict again, with the same token and quote.
+  sync.accept(at('/a', 3, 'thread-a'))
+  await vi.runAllTimersAsync()
+  expect(bodies().at(-1)).toMatchObject({
+    targetPath: '/a',
+    results: [{ threadId: 'thread-a' }],
+  })
+  expect(bodies().every((body) => body.results.length === 1)).toBe(true)
+  sync.dispose()
+})
+
 test('reapplies cached results after refreshed threads even when the same verdict was saved', async () => {
   const apply = vi.fn()
   const request = vi

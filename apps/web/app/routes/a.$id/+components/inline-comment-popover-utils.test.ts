@@ -25,3 +25,20 @@ test('comment submission retains creation locus when removing selection geometry
     }),
   ).not.toHaveProperty('rect')
 })
+
+test('static-site submission carries the captured page location', () => {
+  const anchor = {
+    quotedText: 'Alice Bob',
+    prefixText: '',
+    suffixText: '',
+    textStart: 0,
+    textEnd: 9,
+    cssPath: null,
+    rect: { top: 0, left: 0, width: 10, height: 10 },
+  }
+  expect(
+    withoutRect({ ...anchor, targetPath: '/index.html#/billing' }),
+  ).toMatchObject({ targetPath: '/index.html#/billing' })
+  // Single-file pages keep their entry page and send no location.
+  expect(withoutRect(anchor)).not.toHaveProperty('targetPath')
+})

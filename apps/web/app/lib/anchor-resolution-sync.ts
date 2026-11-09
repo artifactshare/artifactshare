@@ -85,7 +85,15 @@ export function createAnchorResolutionSync(
   return {
     accept(message: AnchorResolutionMessage) {
       if (disposed) return
-      if (current && current.token !== message.token) {
+      // A frame token or location change (including a same-document route
+      // change) starts a new scope: earlier verdicts must not be saved or
+      // shown under it, and returning to a route checks it afresh.
+      if (
+        current &&
+        (current.token !== message.token ||
+          current.targetPath !== message.targetPath ||
+          current.versionId !== message.versionId)
+      ) {
         controller.abort()
         controller = new AbortController()
         latest.clear()

@@ -84,12 +84,15 @@ export function installReporter(win: ReporterWindow) {
     true,
   )
   installMessageListener(ctx)
-  ctx.doc.addEventListener('mouseup', function () {
-    ctx.win.setTimeout(() => sendSelection(ctx), 0)
-  })
-  ctx.doc.addEventListener('keyup', function () {
-    ctx.win.setTimeout(() => sendSelection(ctx), 0)
-  })
+  // Queued selection work belongs to the location it was started on.
+  const queueSelection = function () {
+    let generation = ctx.locationGeneration
+    ctx.win.setTimeout(() => {
+      if (generation === ctx.locationGeneration) sendSelection(ctx)
+    }, 0)
+  }
+  ctx.doc.addEventListener('mouseup', queueSelection)
+  ctx.doc.addEventListener('keyup', queueSelection)
   installCodeCopy(ctx)
   installMarkdownOutline(ctx)
   ctx.primordials.addEventListener(

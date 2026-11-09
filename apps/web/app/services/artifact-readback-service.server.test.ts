@@ -177,6 +177,7 @@ test('included comments retain stored text metadata through the response contrac
     quote_before: 'lead ',
     quote_after: '',
     version_id: null,
+    target_path: '/index.html',
     ambiguous_at_creation: false,
   })
 })

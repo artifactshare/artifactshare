@@ -62,6 +62,14 @@ carry `ambiguous_at_creation` (including false), describing ambiguity at creatio
 not attachment today. Agent and legacy anchors omit that key. Older servers may
 omit all these additional fields. Artifact-level anchors are unchanged.
 
+Text anchors also return `target_path`, the page the text is on. Single-file
+artifacts return their entry page. On a multi-file site it is the file path
+(for example `/docs/setup.html`), or for a single-page app the route path
+(`/settings`) plus a hash route that starts with `#/` or `#!/`
+(`/index.html#/billing`). Other fragments, such as `#intro`, are in-page anchors
+and are not part of the path. Agents cannot post quoted-text comments on
+multi-file sites; post whole-artifact comments there.
+
 `comments list <target> --json` returns at most 50 threads, open first. Each
 thread contains its current first message and latest three replies, plus
 `message_count`, `reply_count` and `older_cursor`. These are partial histories.

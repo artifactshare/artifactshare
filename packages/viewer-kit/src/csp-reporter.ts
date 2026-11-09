@@ -123,6 +123,8 @@ export interface TextSelectionMessage {
   locus?: TextLocus
   source: 'artifactshare'
   kind: 'text-selection'
+  /** Static sites: the document's comment location (path plus hash route). */
+  targetPath?: string | null
   quotedText: string
   prefixText: string
   suffixText: string
@@ -307,6 +309,9 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (v.kind === 'text-selection') {
     const rect = v.rect as Record<string, unknown> | undefined
     return (
+      (v.targetPath === undefined ||
+        v.targetPath === null ||
+        (typeof v.targetPath === 'string' && v.targetPath.length <= 1000)) &&
       (v.selectorFormat === undefined ||
         (v.selectorFormat === 'normalized-v1' &&
           typeof v.textHash === 'string' &&

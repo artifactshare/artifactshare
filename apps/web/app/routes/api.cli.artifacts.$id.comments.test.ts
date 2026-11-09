@@ -212,6 +212,47 @@ describe('/api/cli/artifacts/:id/comments', () => {
     expect(await posted.json()).toMatchObject({ thread: { anchor } })
   })
 
+  test('list returns a static-site text anchor location', async () => {
+    const thread = {
+      ...THREAD,
+      subject: {
+        kind: 'text',
+        quotedText: 'word',
+        prefixText: '',
+        suffixText: '',
+        state: 'attached',
+        positionState: 'attached',
+        versionId: 'v1',
+        selectorFormat: 'normalized-v1',
+        ambiguousAtCreation: false,
+        targetPath: '/index.html#/billing',
+        textStart: 0,
+        textEnd: 4,
+        cssPath: null,
+      },
+    }
+    loadCommentThreadsMock.mockResolvedValue([thread, THREAD])
+    const listed = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+    const body = (await listed.json()) as {
+      comments: Array<{ anchor: unknown }>
+    }
+    expect(body.comments[0].anchor).toMatchObject({
+      kind: 'text',
+      target_path: '/index.html#/billing',
+    })
+    expect(body.comments[1].anchor).toEqual({
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+    })
+  })
+
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

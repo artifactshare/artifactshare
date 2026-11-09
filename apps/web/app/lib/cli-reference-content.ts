@@ -61,7 +61,7 @@ const roleByPath: Record<string, string> = {
   'comments delete': 'Delete a comment message.',
   'comments edit': 'Edit a comment message.',
   'comments list':
-    'Read first/latest-three comment windows; use --thread-id and --before for older replies (up to 50).',
+    'Read first/latest-three comment windows; use --thread-id and --before for older replies (up to 50). Text anchors include target_path: the page, plus any #/ or #!/ hash route on multi-file sites.',
   'comments post':
     'Post a comment or reply. Quote positions stay unchecked until a viewer resolves the exact context.',
   'comments reopen': 'Reopen a resolved comment thread.',
@@ -177,7 +177,7 @@ const jaRoleByPath: Record<string, string> = {
   'comments delete': 'コメントメッセージを削除します。',
   'comments edit': 'コメントメッセージを編集します。',
   'comments list':
-    '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。',
+    '各スレッドの最初のコメントと最新3件の返信を表示します。以前の返信は --thread-id と --before で最大50件ずつ取得します。本文範囲のアンカーは target_path にページの場所を返します。複数ファイルのサイトでは #/ または #!/ で始まるハッシュルートも含みます。',
   'comments post':
     'コメントや返信を投稿します。引用位置は投稿時には確認せず、その版を共有ページで開いたときに完全一致で確認します。',
   'comments reopen': '解決済みのコメントスレッドを再開します。',

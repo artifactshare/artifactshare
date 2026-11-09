@@ -14,4 +14,5 @@ export type PendingTextAnchor = Pick<
   | 'textHash'
   | 'ambiguousAtCreation'
   | 'versionId'
+  | 'targetPath'
 >

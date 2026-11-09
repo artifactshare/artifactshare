@@ -158,6 +158,8 @@ export function withoutRect(anchor: PendingTextAnchor) {
     textStart: anchor.textStart,
     textEnd: anchor.textEnd,
     cssPath: anchor.cssPath,
+    // Static sites only; HTML and Markdown anchors keep the entry page.
+    ...(anchor.targetPath ? { targetPath: anchor.targetPath } : {}),
   }
 }
 
