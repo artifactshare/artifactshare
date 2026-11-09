@@ -1,13 +1,14 @@
 import { parseTextLocus } from '~/lib/csp-reporter'
 import { parseCommentPageQuery } from '~/services/comment-message-window.server'
 import { errorResponse, commentPostRefusalResponse } from '~/lib/api-errors'
-import { MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
+import { isPdfPageNumber, MAX_COMMENT_BODY_LENGTH } from '~/lib/comments'
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { ctxContext, requireUser } from '~/middleware/context'
 import {
   changeComment,
   storeAnchorResolutions,
   type CommentAnchorInput,
+  type PdfPageAnchorInput,
   createCommentThread,
   loadCommentAccess,
   loadCommentThreads,
@@ -230,7 +231,7 @@ type CommentPayload = (
   | { intent: 'delete-thread'; threadId: string }
 ) & { clientMutationId?: string }
 
-type CommentAnchorPayload = CommentAnchorInput
+type CommentAnchorPayload = CommentAnchorInput | PdfPageAnchorInput
 
 function parseCommentPayload(body: unknown): CommentPayload | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
@@ -326,9 +327,32 @@ function parseClientMutationId(value: unknown): string | undefined {
   return value
 }
 
+// A page anchor carries exactly its kind, page and viewed version: text
+// selector fields or a page count from the browser make it malformed.
+function parsePdfPageAnchor(
+  raw: Record<string, unknown>,
+): PdfPageAnchorInput | null {
+  const keys = Object.keys(raw)
+  if (
+    keys.length !== 3 ||
+    !isPdfPageNumber(raw.pageNumber) ||
+    typeof raw.versionId !== 'string' ||
+    raw.versionId.length === 0 ||
+    raw.versionId.length > 128
+  )
+    return null
+  return {
+    kind: 'pdf-page',
+    pageNumber: raw.pageNumber,
+    versionId: raw.versionId,
+  }
+}
+
 function parseAnchor(value: unknown): CommentAnchorPayload | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
+  if (raw.kind === 'pdf-page') return parsePdfPageAnchor(raw)
+  if (raw.kind !== undefined || raw.pageNumber !== undefined) return null
   if (
     (raw.selectorFormat !== undefined &&
       raw.selectorFormat !== 'normalized-v1') ||

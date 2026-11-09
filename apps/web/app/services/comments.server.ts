@@ -23,6 +23,7 @@ import {
 } from '@artifactshare/viewer-kit/reporter/comment-location'
 import { runD1Batch } from '~/lib/d1-batch.server'
 import {
+  isPdfPageNumber,
   MAX_COMMENT_BODY_LENGTH,
   type CommentAuthor,
   type CommentMessageView,
@@ -107,6 +108,26 @@ export interface CommentAnchorInput {
    * Validated against the version; HTML and Markdown use their entry page.
    */
   targetPath?: string
+}
+
+/**
+ * A PDF page comment from the browser panel: the page open in the viewer and
+ * the version that page was read on. The server checks the version is the
+ * current one; the page needs only the unknown-count bound (versions keep no
+ * page count, and a count reported by the browser is not trusted).
+ */
+export interface PdfPageAnchorInput {
+  kind: 'pdf-page'
+  pageNumber: number
+  versionId: string
+}
+
+export type CommentThreadAnchorInput = CommentAnchorInput | PdfPageAnchorInput
+
+function isPdfPageAnchorInput(
+  anchor: CommentThreadAnchorInput,
+): anchor is PdfPageAnchorInput {
+  return 'kind' in anchor && anchor.kind === 'pdf-page'
 }
 
 // Agent selectors are measured only when a viewer opens the artifact.
@@ -553,6 +574,7 @@ async function loadCommentThreadViews(
         'selector_format',
         'text_hash',
         'ambiguous_at_creation',
+        'page_number',
         'thread_id',
         'version_id',
         'target_path',
@@ -592,14 +614,25 @@ export async function createCommentThread(
   access: CommentAccess,
   user: SessionUser,
   rawBody: string,
-  rawAnchor?: CommentAnchorInput | null,
+  rawAnchor?: CommentThreadAnchorInput | null,
   options?: CommentMutationOptions,
   agent?: string | null,
 ): Promise<CreateCommentThreadResult> {
   const body = normalizeCommentBody(rawBody)
   if (!body) return { kind: 'invalid-body' }
-  const anchor = rawAnchor ? normalizeCommentAnchor(access, rawAnchor) : null
-  if (rawAnchor && !anchor) return { kind: 'invalid-anchor' }
+  const pageAnchor =
+    rawAnchor && isPdfPageAnchorInput(rawAnchor) ? rawAnchor : null
+  if (pageAnchor && !isValidPdfPageAnchor(access, pageAnchor))
+    return { kind: 'invalid-anchor' }
+  // The page was read on the version the reader viewed; a replacement since
+  // then must not receive it.
+  if (pageAnchor && pageAnchor.versionId !== access.currentVersionId)
+    return { kind: 'version-conflict' }
+  const textAnchor = rawAnchor && !pageAnchor ? rawAnchor : null
+  const anchor = textAnchor
+    ? normalizeCommentAnchor(access, textAnchor as CommentAnchorInput)
+    : null
+  if (textAnchor && !anchor) return { kind: 'invalid-anchor' }
   if (
     anchor?.selectorFormat === 'normalized-v1' &&
     anchor.versionId !== access.currentVersionId
@@ -627,9 +660,10 @@ export async function createCommentThread(
   const queries: Compilable<unknown>[] = [
     db.insertInto('comment_threads').values({
       id: threadId,
-      shareable_id: anchor
-        ? sql<string>`(SELECT id FROM shareables WHERE id = ${access.shareableId} AND current_version_id = ${access.currentVersionId})`
-        : access.shareableId,
+      shareable_id:
+        anchor || pageAnchor
+          ? sql<string>`(SELECT id FROM shareables WHERE id = ${access.shareableId} AND current_version_id = ${access.currentVersionId})`
+          : access.shareableId,
       status: 'open',
       created_by_id: user.id,
       resolved_by_id: null,
@@ -654,6 +688,26 @@ export async function createCommentThread(
       createdAt: now,
     }),
   ]
+  if (pageAnchor) {
+    // Text columns are NOT NULL; a page row keeps empty placeholders that are
+    // never read as text.
+    queries.push(
+      db.insertInto('comment_anchors').values({
+        id: nanoid(),
+        thread_id: threadId,
+        version_id: access.currentVersionId,
+        target_path: access.entrypointPath ?? '/index.html',
+        quoted_text: '',
+        prefix_text: '',
+        suffix_text: '',
+        text_start: 0,
+        text_end: 0,
+        css_path: null,
+        page_number: pageAnchor.pageNumber,
+        created_at: now,
+      }),
+    )
+  }
   if (anchor) {
     queries.push(
       db.insertInto('comment_anchors').values({
@@ -684,7 +738,7 @@ export async function createCommentThread(
   try {
     await runD1Batch(db, ...queries)
   } catch {
-    if (anchor) {
+    if (anchor || pageAnchor) {
       const current = await db
         .selectFrom('shareables')
         .select('current_version_id')
@@ -1435,6 +1489,20 @@ async function isStaticSiteLocationServed(
   )
 }
 
+function isValidPdfPageAnchor(
+  access: CommentAccess,
+  anchor: PdfPageAnchorInput,
+): boolean {
+  return (
+    access.artifactKind === 'pdf' &&
+    Boolean(access.currentVersionId) &&
+    isPdfPageNumber(anchor.pageNumber) &&
+    typeof anchor.versionId === 'string' &&
+    anchor.versionId.length > 0 &&
+    anchor.versionId.length <= 128
+  )
+}
+
 function validTextHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
@@ -1457,6 +1525,7 @@ function canUseQuoteAnchors(access: CommentAccess): boolean {
 }
 
 type AnchorRow = {
+  page_number: number | null
   locus_headings: string | null
   locus_block_text: string | null
   id: string
@@ -1477,9 +1546,15 @@ type AnchorRow = {
 async function resolveCommentSubjects(
   db: Kysely<DB>,
   access: CommentAccess,
-  anchors: AnchorRow[],
+  allAnchors: AnchorRow[],
 ): Promise<Map<string, CommentThreadSubject>> {
-  const subjects = new Map<string, CommentThreadSubject>()
+  // Page comments are not text: they never enter text-position resolution.
+  const subjects = await resolvePdfPageSubjects(
+    db,
+    access,
+    allAnchors.filter((anchor) => anchor.page_number !== null),
+  )
+  const anchors = allAnchors.filter((anchor) => anchor.page_number === null)
   type Result = Selectable<DB['comment_anchor_results']>
   const resultsByAnchor = new Map<string, Result[]>()
   // Two additional bindings scope the shareable and displayed version.
@@ -1549,6 +1624,62 @@ async function resolveCommentSubjects(
         latest?.hint_end ??
         (anchor.selector_format === 'normalized-v1' ? anchor.text_end : null),
       cssPath: anchor.css_path,
+    })
+  }
+  return subjects
+}
+
+/**
+ * A page comment opens its page only where that is the same page: on the
+ * posting version itself, or on a version with the same original bytes. A
+ * deleted posting version, or one with other bytes, shows where the comment
+ * was made without moving the viewer. Only this shareable's versions are read.
+ */
+async function resolvePdfPageSubjects(
+  db: Kysely<DB>,
+  access: CommentAccess,
+  anchors: AnchorRow[],
+): Promise<Map<string, CommentThreadSubject>> {
+  const subjects = new Map<string, CommentThreadSubject>()
+  if (anchors.length === 0) return subjects
+  const versionIds = new Set(
+    anchors.flatMap((anchor) =>
+      anchor.version_id === null ? [] : [anchor.version_id],
+    ),
+  )
+  if (access.currentVersionId) versionIds.add(access.currentVersionId)
+  const ids = [...versionIds]
+  const versions = new Map<
+    string,
+    { number: number | null; sha256: string; artifact_kind: string }
+  >()
+  // One binding scopes the shareable.
+  for (let offset = 0; offset < ids.length; offset += 99) {
+    const rows = await db
+      .selectFrom('versions')
+      .select(['id', 'number', 'sha256', 'artifact_kind'])
+      .where('id', 'in', ids.slice(offset, offset + 99))
+      .where('shareable_id', '=', access.shareableId)
+      .execute()
+    for (const row of rows) versions.set(row.id, row)
+  }
+  const current = access.currentVersionId
+    ? versions.get(access.currentVersionId)
+    : undefined
+  for (const anchor of anchors) {
+    const origin =
+      anchor.version_id === null ? undefined : versions.get(anchor.version_id)
+    subjects.set(anchor.thread_id, {
+      kind: 'pdf-page',
+      pageNumber: anchor.page_number!,
+      versionId: origin ? anchor.version_id : null,
+      versionNumber: origin?.number ?? null,
+      canNavigate:
+        access.artifactKind === 'pdf' &&
+        current?.artifact_kind === 'pdf' &&
+        origin?.artifact_kind === 'pdf' &&
+        (anchor.version_id === access.currentVersionId ||
+          origin.sha256 === current.sha256),
     })
   }
   return subjects
@@ -1687,6 +1818,8 @@ export async function storeAnchorResolutions(
           'in',
           input.results.map((result) => result.threadId),
         )
+        // Page comments have no text position to record.
+        .where('comment_anchors.page_number', 'is', null)
         .execute()
     : []
   const anchorsByThread = new Map(

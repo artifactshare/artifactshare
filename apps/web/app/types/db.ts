@@ -671,6 +671,7 @@ interface CommentAnchorsTable {
   text_end: number
   css_path: string | null
   created_at: string
+  page_number: Generated<number | null>
 }
 
 interface ShareableViewerRecencyTable {

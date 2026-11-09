@@ -53,6 +53,12 @@ export {
   type ViewerListStatus,
 } from '../+hooks/use-viewer-list'
 import { SandboxFrame } from './sandbox-frame'
+import {
+  pdfCommentPage,
+  PdfPageContext,
+  type PdfCommentPage,
+  type PdfPageBridge,
+} from './pdf-page-context'
 import { type TextSelectionMessage } from '~/lib/csp-reporter'
 import { type CommentThreadView } from '~/lib/comments'
 import { InlineCommentPopover } from './inline-comment-popover'
@@ -2347,7 +2353,12 @@ type ViewerShellProps = {
   linkSafety?: { lowTrust: boolean } | null
 }
 export function ViewerShell(props: ViewerShellProps) {
-  return <ViewerShellView {...useViewerShellController(props)} />
+  const controller = useViewerShellController(props)
+  return (
+    <PdfPageContext value={controller.pdfPageBridge}>
+      <ViewerShellView {...controller} />
+    </PdfPageContext>
+  )
 }
 
 function useViewerShellController({
@@ -2493,6 +2504,32 @@ function useViewerShellController({
     renderType === 'video'
   // A static site's text comments live on its pages; the panel names the page.
   const commentLocationsShown = renderType === 'static_site'
+  // PDFs: the page the viewer shows, on the version it was reported for. A
+  // new comment from the panel is placed on it; a page comment opens its page.
+  const [shownPdfPage, setShownPdfPage] = useState<PdfCommentPage | null>(null)
+  const [pdfOpenRequest, setPdfOpenRequest] = useState<{
+    pageNumber: number
+  } | null>(null)
+  const commentPage = pdfCommentPage(shownPdfPage, {
+    renderType,
+    isHistoricalVersion,
+    currentVersionId: artifact.currentVersionId ?? null,
+  })
+  const pdfPageBridge = useMemo<PdfPageBridge | null>(
+    () =>
+      renderType === 'pdf'
+        ? {
+            page: commentPage,
+            onPageChange: (versionId, page) =>
+              setShownPdfPage(
+                page ? { versionId, pageNumber: page.pageNumber } : null,
+              ),
+            openRequest: pdfOpenRequest,
+            openPage: (pageNumber) => setPdfOpenRequest({ pageNumber }),
+          }
+        : null,
+    [renderType, commentPage, pdfOpenRequest],
+  )
   const comments = useViewerComments({
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
@@ -2843,6 +2880,7 @@ function useViewerShellController({
     commentsEnabled,
     newThreadComposerEnabled,
     commentLocationsShown,
+    pdfPageBridge,
     revalidator,
     replaceMode,
     viewerListAvailable,

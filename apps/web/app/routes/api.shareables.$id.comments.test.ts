@@ -168,6 +168,42 @@ test('forwards a static-site selection location and maps its rejection', async (
   expect(mocks.create).not.toHaveBeenCalled()
 })
 
+test('forwards a PDF page anchor exactly and refuses malformed ones before any write', async () => {
+  mocks.create.mockResolvedValue({ kind: 'invalid-body' })
+  const anchor = { kind: 'pdf-page', pageNumber: 12, versionId: 'current-v3' }
+  await post({ intent: 'create-thread', body: 'Check', anchor })
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    'Check',
+    anchor,
+    expect.anything(),
+  )
+  mocks.create.mockClear()
+  for (const malformed of [
+    { ...anchor, pageNumber: 0 },
+    { ...anchor, pageNumber: 12.5 },
+    { ...anchor, pageNumber: 100_001 },
+    { ...anchor, pageNumber: '12' },
+    { ...anchor, versionId: '' },
+    // A page count from the browser is not accepted as authority.
+    { ...anchor, pageCount: 20 },
+    { ...anchor, quotedText: 'word' },
+    { kind: 'video-time', pageNumber: 12, versionId: 'current-v3' },
+  ])
+    expect(
+      (
+        await post({
+          intent: 'create-thread',
+          body: 'Check',
+          anchor: malformed,
+        })
+      ).status,
+    ).toBe(400)
+  expect(mocks.create).not.toHaveBeenCalled()
+})
+
 test('accepts the pre-deploy text selection payload as a legacy selector', async () => {
   mocks.create.mockResolvedValue({ kind: 'invalid-body' })
   const anchor = {

@@ -1692,5 +1692,12 @@
   "videoViewer.downloadAtRisk": "The video couldn’t be kept for download. Download it now while this page is open, or reload the page to try again.",
   "comments.newSitePlaceholder": "Write a comment on the whole site",
   "comments.subjectLocation": "Page: {path}",
-  "comments.subjectLocationRoot": "Page: Top (/)"
+  "comments.subjectLocationRoot": "Page: Top (/)",
+  "comments.pdfPageLabel": "Page {page}",
+  "comments.pdfPageRemove": "Remove page {page} and comment on the whole file",
+  "comments.newPdfPagePlaceholder": "Write a comment on this page",
+  "comments.pdfPageShort": "p.{page}",
+  "comments.openPdfPage": "Open page {page}",
+  "comments.pdfPageOfVersion": "Page {page} of {version}",
+  "comments.pdfPageVersionUnavailable": "Page {page} of a deleted version"
 }

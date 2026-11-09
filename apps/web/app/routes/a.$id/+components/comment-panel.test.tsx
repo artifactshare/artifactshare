@@ -43,6 +43,7 @@ vi.mock('~/components/app/app-side-panel', async () => {
   }
 })
 import { CommentLocationsContext } from './comment-locations-context'
+import { PdfPageContext, type PdfPageBridge } from './pdf-page-context'
 import { CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
 import { mergeCommentWindow } from './comment-history'
@@ -904,3 +905,218 @@ test('static-site threads name their page and the general composer names the sit
   const single = render('attached')
   expect(single).not.toContain('Page: /index.html')
 })
+
+function pdfBridge(override: Partial<PdfPageBridge>): PdfPageBridge {
+  return {
+    page: null,
+    onPageChange: () => {},
+    openRequest: null,
+    openPage: () => {},
+    ...override,
+  }
+}
+
+function pdfPageThread(
+  subject: Partial<
+    Extract<CommentThreadView['subject'], { kind: 'pdf-page' }>
+  > = {},
+): CommentThreadView {
+  return {
+    ...textThread('attached', 'page-thread'),
+    subject: {
+      kind: 'pdf-page',
+      pageNumber: 12,
+      versionId: 'v1',
+      versionNumber: 3,
+      canNavigate: true,
+      ...subject,
+    },
+  }
+}
+
+test.each(['en', 'ja'] as const)(
+  'the PDF composer places the shown page until removed, keeping the choice through failure (%s)',
+  async (language) => {
+    locale.value = language
+    const text = language === 'en' ? en : ja
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const posted: unknown[] = []
+    const fetchComment = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (_url, init) => {
+        posted.push(JSON.parse(String(init?.body)))
+        return posted.length === 2
+          ? Response.json({}, { status: 503 })
+          : Response.json({ threads: [] })
+      })
+    let showPage!: (page: number | null) => void
+    function Harness() {
+      const [page, setPage] = useState<number | null>(12)
+      showPage = setPage
+      return (
+        <PdfPageContext
+          value={pdfBridge({
+            page: page === null ? null : { versionId: 'v1', pageNumber: page },
+          })}
+        >
+          <CommentPanel
+            shareableId="synthetic-artifact"
+            viewerUserId="viewer"
+            threads={[]}
+            onThreadsChange={() => {}}
+            isCurrentShareableId={() => true}
+            open
+            onOpenChange={() => {}}
+            targetThreadId={null}
+            targetThreadScroll="center"
+            onThreadNavigate={() => {}}
+            showNewThreadComposer
+          />
+        </PdfPageContext>
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const label = () =>
+      host.querySelector('[data-comment-pdf-page]')?.textContent ?? null
+    const type = (value: string) =>
+      act(async () => {
+        const textarea = host.querySelector('textarea')!
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        )!.set!.call(textarea, value)
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    // A successful post clears the draft; a failed one ends its pending state
+    // with the draft kept.
+    const submit = async (count: number, succeeds: boolean) => {
+      await act(async () => {
+        ;[...host.querySelectorAll('button')]
+          .find((button) => button.textContent === text['comments.post'])!
+          .click()
+      })
+      await waitForRealTaskCondition(async () => {
+        await act(async () => {})
+        const textarea = host.querySelector('textarea')!
+        return (
+          posted.length === count &&
+          (succeeds
+            ? textarea.value === ''
+            : !host.querySelector<HTMLButtonElement>('button[type="submit"]')!
+                .disabled)
+        )
+      }, 'comment post settled')
+    }
+    try {
+      await act(async () => root.render(<Harness />))
+      const pageLabel = (page: number) =>
+        text['comments.pdfPageLabel'].replace('{page}', String(page))
+      expect(label()).toBe(pageLabel(12))
+      // No report, no label: nothing is attached before a page is shown.
+      await act(async () => showPage(null))
+      expect(label()).toBeNull()
+      await act(async () => showPage(12))
+      await type('Legend is reversed')
+      await submit(1, true)
+      expect(posted[0]).toMatchObject({
+        intent: 'create-thread',
+        body: 'Legend is reversed',
+        anchor: { kind: 'pdf-page', pageNumber: 12, versionId: 'v1' },
+      })
+      expect(host.querySelector('textarea')!.value).toBe('')
+
+      await type('Whole deck')
+      const remove = text['comments.pdfPageRemove'].replace('{page}', '12')
+      await act(async () => {
+        host
+          .querySelector<HTMLButtonElement>(`button[aria-label="${remove}"]`)!
+          .click()
+      })
+      expect(label()).toBeNull()
+      await act(async () => showPage(4))
+      expect(label()).toBeNull()
+      await submit(2, false)
+      expect(posted[1]).not.toHaveProperty('anchor')
+      // The failed post keeps its body and its whole-file choice.
+      expect(host.querySelector('textarea')!.value).toBe('Whole deck')
+      expect(label()).toBeNull()
+      await submit(3, true)
+      expect(posted[2]).not.toHaveProperty('anchor')
+      // After a successful post the next draft is on the shown page again.
+      expect(label()).toBe(pageLabel(4))
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      fetchComment.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'a PDF page card opens its page only where it is the same page (%s)',
+  async (language) => {
+    locale.value = language
+    const text = language === 'en' ? en : ja
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const opened: number[] = []
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const bridge = pdfBridge({ openPage: (page) => opened.push(page) })
+    const renderCard = (thread: CommentThreadView) =>
+      act(async () =>
+        root.render(
+          <PdfPageContext value={bridge}>
+            <CommentPanel
+              shareableId="synthetic-artifact"
+              viewerUserId="viewer"
+              threads={[thread]}
+              onThreadsChange={() => {}}
+              isCurrentShareableId={() => true}
+              open
+              onOpenChange={() => {}}
+              targetThreadId={null}
+              targetThreadScroll="center"
+              onThreadNavigate={() => {}}
+            />
+          </PdfPageContext>,
+        ),
+      )
+    try {
+      await renderCard(pdfPageThread())
+      const name = text['comments.openPdfPage'].replace('{page}', '12')
+      const link = host.querySelector<HTMLButtonElement>(
+        `button[aria-label="${name}"]`,
+      )!
+      expect(link.textContent).toBe('p.12')
+      await act(async () => link.click())
+      expect(opened).toEqual([12])
+
+      await renderCard(pdfPageThread({ canNavigate: false }))
+      expect(host.textContent).toContain(
+        text['comments.pdfPageOfVersion']
+          .replace('{page}', '12')
+          .replace('{version}', 'v3'),
+      )
+      expect(host.textContent).not.toContain('p.12')
+      await renderCard(
+        pdfPageThread({
+          canNavigate: false,
+          versionId: null,
+          versionNumber: null,
+        }),
+      )
+      expect(host.textContent).toContain(
+        text['comments.pdfPageVersionUnavailable'].replace('{page}', '12'),
+      )
+      expect(opened).toEqual([12])
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      vi.unstubAllGlobals()
+    }
+  },
+)

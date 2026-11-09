@@ -827,14 +827,40 @@ export type ArtifactsListResponse = z.infer<typeof ArtifactsListResponseSchema>
 
 /* Comments --------------------------------------------------------------- */
 
+export const MAX_COMMENT_PAGE_NUMBER = 100_000
+
 export const CommentAnchorSchema = z.union([
-  z.object({
-    kind: z.literal('artifact'),
-    quoted_text: z.null(),
-    state: z.null(),
-  }),
+  z
+    .object({
+      kind: z.literal('artifact'),
+      quoted_text: z.null(),
+      state: z.null(),
+      // PDF page comments: the page open when posting, and the version it was
+      // posted on (null once that version is deleted; a version without a
+      // number has a null number). All three appear together or not at all.
+      page_number: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_COMMENT_PAGE_NUMBER)
+        .optional(),
+      version_id: z.string().nullable().optional(),
+      version_number: z.number().int().positive().nullable().optional(),
+    })
+    .refine(
+      (anchor) =>
+        [anchor.page_number, anchor.version_id, anchor.version_number].every(
+          (value) => value === undefined,
+        ) ||
+        (anchor.page_number !== undefined &&
+          anchor.version_id !== undefined &&
+          anchor.version_number !== undefined),
+      { message: 'page_number, version_id and version_number go together' },
+    ),
   z.object({
     kind: z.literal('text'),
+    page_number: z.never().optional(),
+    version_number: z.never().optional(),
     quoted_text: z.string(),
     state: z.enum(['attached', 'orphaned']),
     position_state: z.enum(['attached', 'needs-check', 'unchecked']).optional(),

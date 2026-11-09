@@ -16,6 +16,7 @@ import type {
 import { toast } from 'sonner'
 import { IconCheck, IconFile, IconPlugConnected } from '@tabler/icons-react'
 import {
+  use,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -68,6 +69,11 @@ import {
 } from '~/lib/sandbox-frame-message'
 import { DEFAULT_APP_THEME, isAppTheme } from '~/lib/app-theme'
 import { viewerPreferencesMessage } from '~/viewers/shared/preferences'
+import {
+  pdfOpenPageMessage,
+  pdfPageSyncMessage,
+} from '~/viewers/shared/pdf-page'
+import { PdfPageContext } from './pdf-page-context'
 import { renderMermaidRequest } from './mermaid-render-request'
 import {
   classifyViewerLinkNavigation,
@@ -114,6 +120,8 @@ function addFrameOffset(
 
 // A conversation jump that opened another static-site location.
 type PendingJump = { threadId: string; location: string }
+
+type PdfPage = { pageNumber: number; pageCount: number }
 
 type SandboxFrameProps = {
   entrypointPath?: string | null
@@ -533,6 +541,31 @@ function useSandboxFrameController({
   useEffect(() => () => hashSync.clear(), [hashSync])
   const mermaidRenderChallengeRef = useRef<string | null>(null)
   const trustedMessageOrigin = new URL(frameUrl).origin
+  // PDFs: the page shown by the current document, from its last report, and
+  // the viewer's bridge to the comment panel.
+  const pdfBridge = use(PdfPageContext)
+  const pdfBridgeRef = useRef(pdfBridge)
+  useLayoutEffect(() => {
+    pdfBridgeRef.current = pdfBridge
+  })
+  const pdfPageRef = useRef<PdfPage | null>(null)
+  // The sync token given to the document that last answered the ready
+  // check; reports carrying any other token come from another document.
+  const pdfPageTokenRef = useRef<string | null>(null)
+  const setPdfPage = useCallback(
+    (page: PdfPage | null) => {
+      const current = pdfPageRef.current
+      if (
+        current?.pageNumber === page?.pageNumber &&
+        current?.pageCount === page?.pageCount
+      )
+        return
+      pdfPageRef.current = page
+      pdfBridgeRef.current?.onPageChange(versionId, page)
+    },
+    [versionId],
+  )
+  const pdfOpenPage = pdfBridge?.openRequest ?? null
   const commentLabels = useMemo(
     () => ({
       openOne: translatePlural(locale, 'comments.highlightOpen', 1),
@@ -1060,6 +1093,9 @@ function useSandboxFrameController({
   const handleFrameLoad = useCallback(() => {
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
+    // A new document reports its own page once it has answered.
+    pdfPageTokenRef.current = null
+    setPdfPage(null)
     hashSync.flush()
     // A destination confirmed from a previous document must not survive it.
     setPendingExternalNavigation(null)
@@ -1067,7 +1103,13 @@ function useSandboxFrameController({
     requestFrameReady()
     clearReadyFallback()
     sendHighlights()
-  }, [clearReadyFallback, hashSync, requestFrameReady, sendHighlights])
+  }, [
+    clearReadyFallback,
+    hashSync,
+    requestFrameReady,
+    sendHighlights,
+    setPdfPage,
+  ])
 
   const handleFrameMessage = useEffectEvent((event: MessageEvent) => {
     const message = sandboxMessageFromFrame(
@@ -1076,7 +1118,20 @@ function useSandboxFrameController({
       frameRef.current?.contentWindow,
     )
     if (!message) return
-    if (message.kind === 'csp-violation') {
+    if (message.kind === 'pdf-page-changed') {
+      // Only the PDF document that answered this frame's latest ready check.
+      if (
+        renderType !== 'pdf' ||
+        !pdfPageTokenRef.current ||
+        message.token !== pdfPageTokenRef.current
+      )
+        return
+      setPdfPage(
+        message.state === 'ready'
+          ? { pageNumber: message.pageNumber, pageCount: message.pageCount }
+          : null,
+      )
+    } else if (message.kind === 'csp-violation') {
       // Keep early reports without letting environment noise evict artifact reports.
       const entry = { ...message, id: crypto.randomUUID() }
       setViolations((prev) =>
@@ -1096,6 +1151,14 @@ function useSandboxFrameController({
       // Every document that answers, including a reloaded or replacement
       // one, gets the current preferences.
       sendViewerPreferences()
+      if (renderType === 'pdf') {
+        // The answering document reports its page under a token of its own.
+        pdfPageTokenRef.current = createSandboxChallenge()
+        frameRef.current?.contentWindow?.postMessage(
+          pdfPageSyncMessage(pdfPageTokenRef.current),
+          trustedMessageOrigin,
+        )
+      }
       markFrameReadyFromMessage()
       clearReadyFallback()
     } else if (message.kind === 'hash-changed') {
@@ -1235,6 +1298,32 @@ function useSandboxFrameController({
     })
     return () => observer.disconnect()
   }, [loadState, showsViewerPreferences, sendViewerPreferences])
+
+  // A frame that is not showing its document, or is gone, shows no page.
+  useEffect(() => {
+    if (loadState !== 'ready') setPdfPage(null)
+  }, [loadState, setPdfPage])
+  useEffect(() => () => setPdfPage(null), [setPdfPage])
+
+  // Each choice is handled once, by the frame shown when it is made: it
+  // opens a page only in a document showing a page, and only one it has.
+  const handledPdfOpenRef = useRef(pdfOpenPage)
+  useEffect(() => {
+    if (!pdfOpenPage || handledPdfOpenRef.current === pdfOpenPage) return
+    handledPdfOpenRef.current = pdfOpenPage
+    const shown = pdfPageRef.current
+    if (
+      renderType !== 'pdf' ||
+      loadState !== 'ready' ||
+      !shown ||
+      pdfOpenPage.pageNumber > shown.pageCount
+    )
+      return
+    frameRef.current?.contentWindow?.postMessage(
+      pdfOpenPageMessage(pdfOpenPage.pageNumber),
+      trustedMessageOrigin,
+    )
+  }, [pdfOpenPage, renderType, loadState, trustedMessageOrigin])
 
   useEffect(() => {
     if (

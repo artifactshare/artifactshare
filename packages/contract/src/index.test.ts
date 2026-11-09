@@ -1059,6 +1059,47 @@ describe('comment position compatibility', () => {
         .success,
     ).toBe(false)
   })
+  it('PDF page anchors keep the artifact kind and carry page and version together', () => {
+    const page = {
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: 'v1',
+      version_number: 3,
+    }
+    expect(CommentAnchorSchema.parse(page)).toEqual(page)
+    const deleted = { ...page, version_id: null, version_number: null }
+    expect(CommentAnchorSchema.parse(deleted)).toEqual(deleted)
+    for (const malformed of [
+      { ...page, page_number: 0 },
+      { ...page, page_number: 100_001 },
+      { ...page, page_number: 1.5 },
+      { ...page, version_number: undefined },
+      { ...page, version_id: undefined },
+      { kind: 'artifact', quoted_text: null, state: null, version_id: 'v1' },
+      { kind: 'text', quoted_text: 'w', state: 'attached', page_number: 12 },
+    ])
+      expect(CommentAnchorSchema.safeParse(malformed).success).toBe(false)
+    // A released client's artifact anchor parses the page anchor unchanged.
+    const released = z.union([
+      z.object({
+        kind: z.literal('artifact'),
+        quoted_text: z.null(),
+        state: z.null(),
+      }),
+      z.object({
+        kind: z.literal('text'),
+        quoted_text: z.string(),
+        state: z.enum(['attached', 'orphaned']),
+      }),
+    ])
+    expect(released.parse(page)).toEqual({
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+    })
+  })
   it('older non-strict clients strip new fields without rejecting responses', () => {
     const legacy = z.object({
       kind: z.literal('text'),

@@ -166,3 +166,39 @@ test('static-site text anchors return their page location', () => {
     state: null,
   })
 })
+
+test('PDF page comments add page and posting version to the artifact anchor', () => {
+  const pageThread = (
+    versionId: string | null,
+    versionNumber: number | null,
+  ): CommentThreadView => ({
+    ...thread,
+    subject: {
+      kind: 'pdf-page',
+      pageNumber: 12,
+      versionId,
+      versionNumber,
+      canNavigate: false,
+    },
+  })
+  for (const map of [agentCommentMutationFields, agentCommentDeletionFields]) {
+    expect(map({ thread: pageThread('v1', 3) }).thread?.anchor).toStrictEqual({
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: 'v1',
+      version_number: 3,
+    })
+    expect(
+      map({ thread: pageThread(null, null) }).thread?.anchor,
+    ).toStrictEqual({
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: null,
+      version_number: null,
+    })
+  }
+})

@@ -639,6 +639,50 @@ describe('PDF viewer in the app language', () => {
   })
 })
 
+describe.each([
+  ['page-bridge', 'page'],
+  ['page-bridge-report', 'scroll'],
+] as const)('PDF page reports in the %s fixture', (scenario, layout) => {
+  test(`reports the shown page and opens pages its parent asks for (${layout})`, async () => {
+    const result = await server.commands.pdfViewerScenario(scenario, 390, {
+      app: { locale: 'en', theme: 'light' },
+    })
+    const flow = result.pageBridge!
+    const ready = (pageNumber: number, token = 'a'.repeat(64)) => ({
+      token,
+      state: 'ready',
+      pageNumber,
+      pageCount: 14,
+    })
+    const unavailable = {
+      token: 'a'.repeat(64),
+      state: 'unavailable',
+      pageNumber: undefined,
+      pageCount: undefined,
+    }
+
+    expect(flow.layout).toBe(layout)
+    expect(flow.beforeSync).toBe(0)
+    expect(flow.initial).toEqual(ready(1))
+    expect(flow.afterButton).toEqual(ready(2))
+    expect(flow.afterKey).toEqual(ready(14))
+    expect(flow.afterSearch).toEqual(ready(9))
+    if (layout === 'scroll') expect(flow.afterScroll).toEqual(ready(3))
+    expect(flow.opened).toEqual({ page: 12, report: ready(12) })
+    // Out-of-range, malformed and not-from-the-parent commands do nothing.
+    expect(flow.ignored).toEqual({ page: 12, reports: [] })
+    expect(flow.failed).toEqual(unavailable)
+    expect(flow.whileFailed).toBe(6)
+    expect(flow.recovered).toEqual(ready(6))
+    // A reloaded document opens at its first page (the viewer keeps no
+    // reading position across documents) and reports nothing until it is
+    // given its own token.
+    expect(flow.reloadedBeforeSync).toEqual([])
+    expect(flow.reloaded).toEqual([ready(1, 'b'.repeat(64))])
+    expect(result.violations).toEqual([])
+  })
+})
+
 describe('PDF viewer terminal states', () => {
   test('shows loading, then a reload message when the original cannot be fetched', async () => {
     const result = await server.commands.pdfViewerScenario('transport', 1440)

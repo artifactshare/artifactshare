@@ -807,8 +807,13 @@ describe('headless publish wiring', () => {
 
     // These constraints belong to output validation, not the MCP advertisement.
     // Check nested fields too (version metadata, project counts and comments).
+    // The PDF page number alone advertises its integer bounds.
+    const pageNumber = { type: 'integer', minimum: 1, maximum: 100_000 }
     for (const tool of tools) {
-      const json = JSON.stringify(tool.outputSchema)
+      const json = JSON.stringify(tool.outputSchema).replaceAll(
+        `"page_number":${JSON.stringify(pageNumber)}`,
+        '',
+      )
       expect(json).not.toContain('"format":"uri"')
       for (const keyword of ['minLength', 'minimum', 'maximum']) {
         expect(json, `${tool.name}: ${keyword}`).not.toContain(`"${keyword}":`)
@@ -842,6 +847,7 @@ describe('headless publish wiring', () => {
           properties: {
             kind: { type: 'string', enum: ['artifact', 'text'] },
             quoted_text: { type: ['string', 'null'] },
+            page_number: pageNumber,
           },
         },
       },
@@ -3796,6 +3802,94 @@ describe('headless publish wiring', () => {
       expect.arrayContaining(expected),
     )
     expect(data.comments).toHaveLength(2)
+  })
+
+  test('PDF page comments keep their page through listing and every thread mutation', async () => {
+    const { id, sessionUser } = await publishOwnerDoc()
+    const { current_version_id: versionId } = await db
+      .updateTable('shareables')
+      .set({ artifact_kind: 'pdf' })
+      .where('id', '=', id)
+      .returning('current_version_id')
+      .executeTakeFirstOrThrow()
+    await db
+      .updateTable('versions')
+      .set({ artifact_kind: 'pdf', entrypoint_path: '/deck.pdf' })
+      .where('id', '=', versionId!)
+      .execute()
+    const access = (await loadCommentAccess(db, sessionUser, id))!
+    const created = await createCommentThread(
+      db,
+      access,
+      sessionUser,
+      'Legend is reversed',
+      { kind: 'pdf-page', pageNumber: 12, versionId: versionId! },
+    )
+    if (created.kind !== 'ok') throw new Error('creation failed')
+    const { number } = await db
+      .selectFrom('versions')
+      .select('number')
+      .where('id', '=', versionId!)
+      .executeTakeFirstOrThrow()
+    const anchor = {
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: versionId,
+      version_number: number,
+    }
+    // Structured content and the JSON text carry the same thread anchor.
+    const anchors = (body: { result?: Record<string, unknown> }) => {
+      const result = body.result as {
+        isError?: boolean
+        structuredContent: {
+          thread?: { anchor: unknown }
+          comments?: Array<{ anchor: unknown }>
+        }
+        content: Array<{ type: string; text: string }>
+      }
+      expect(result.isError).toBeFalsy()
+      const read = (content: typeof result.structuredContent) =>
+        content.thread
+          ? [content.thread.anchor]
+          : content.comments!.map((thread) => thread.anchor)
+      const structured = read(result.structuredContent)
+      expect(read(JSON.parse(result.content[0]!.text))).toEqual(structured)
+      return structured
+    }
+
+    expect(anchors(await callTool(db, 'list_comments', { id }))).toEqual([
+      anchor,
+    ])
+    const replied = await callTool(db, 'post_comment', {
+      id,
+      body: 'Agreed',
+      reply_to: created.threadId,
+    })
+    expect(anchors(replied)).toEqual([anchor])
+    const replyId = (
+      await db
+        .selectFrom('comment_messages')
+        .select('id')
+        .where('body', '=', 'Agreed')
+        .executeTakeFirstOrThrow()
+    ).id
+    for (const [tool, args] of [
+      ['update_comment', { message_id: replyId, body: 'Agreed, fix it' }],
+      ['resolve_comment', {}],
+      ['reopen_comment', {}],
+      ['delete_comment', { message_id: replyId }],
+    ] as const)
+      expect(
+        anchors(
+          await callTool(db, tool, { thread_id: created.threadId, ...args }),
+        ),
+        tool,
+      ).toEqual([anchor])
+    expect(
+      await db.selectFrom('comment_anchors').select('page_number').execute(),
+    ).toEqual([{ page_number: 12 }])
   })
 
   test('post_comment preserves exact context and leaves unopened versions unchecked', async () => {

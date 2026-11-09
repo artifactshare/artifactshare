@@ -18,20 +18,22 @@ export type CommentMutationPayload =
   | {
       intent: 'create-thread'
       body: string
-      anchor?: {
-        locus?: { headings: string[]; block_text: string }
-        selectorFormat?: 'normalized-v1'
-        textHash?: string
-        ambiguousAtCreation?: boolean
-        versionId?: string | null
-        quotedText: string
-        prefixText: string
-        suffixText: string
-        textStart: number
-        textEnd: number
-        cssPath: string | null
-        targetPath?: string
-      }
+      anchor?:
+        | { kind: 'pdf-page'; pageNumber: number; versionId: string }
+        | {
+            locus?: { headings: string[]; block_text: string }
+            selectorFormat?: 'normalized-v1'
+            textHash?: string
+            ambiguousAtCreation?: boolean
+            versionId?: string | null
+            quotedText: string
+            prefixText: string
+            suffixText: string
+            textStart: number
+            textEnd: number
+            cssPath: string | null
+            targetPath?: string
+          }
     }
   | { intent: 'reply'; threadId: string; body: string }
   | { intent: 'resolve' | 'reopen'; threadId: string }

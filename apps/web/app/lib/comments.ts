@@ -2,8 +2,31 @@ export const MAX_COMMENT_BODY_LENGTH = 4000
 
 export type CommentThreadStatus = 'open' | 'resolved'
 
+// Unknown-count bound for PDF page numbers: versions keep no page count, so
+// the server accepts any page up to this; the viewer enforces the real count.
+export const MAX_PDF_PAGE_NUMBER = 100_000
+
+export function isPdfPageNumber(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= MAX_PDF_PAGE_NUMBER
+  )
+}
+
 export type CommentThreadSubject =
   | { kind: 'artifact' }
+  | {
+      // A PDF comment on the page open when it was posted. versionId is the
+      // posting version (null once deleted); canNavigate is true only when
+      // that page can be opened in the displayed version.
+      kind: 'pdf-page'
+      pageNumber: number
+      versionId: string | null
+      versionNumber: number | null
+      canNavigate: boolean
+    }
   | {
       kind: 'text'
       locus?: { headings: string[]; block_text: string }

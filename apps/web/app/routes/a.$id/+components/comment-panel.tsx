@@ -22,6 +22,7 @@ import {
 } from 'react'
 import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
 import { CommentLocationsContext } from './comment-locations-context'
+import { PdfPageContext } from './pdf-page-context'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
@@ -379,8 +380,8 @@ export function CommentPanel({
       {showNewThreadComposer ? (
         <NewThreadComposer
           pending={pendingKeys.has('create-thread')}
-          onSubmit={(body) =>
-            mutate({ intent: 'create-thread', body }, 'create-thread')
+          onSubmit={(body, anchor) =>
+            mutate({ intent: 'create-thread', body, anchor }, 'create-thread')
           }
         />
       ) : null}
@@ -501,30 +502,68 @@ function NewThreadComposer({
   onSubmit,
 }: {
   pending: boolean
-  onSubmit: (body: string) => Promise<boolean>
+  onSubmit: (
+    body: string,
+    anchor:
+      | { kind: 'pdf-page'; pageNumber: number; versionId: string }
+      | undefined,
+  ) => Promise<boolean>
 }) {
   const { t } = useT()
   const site = use(CommentLocationsContext)
+  const pdfPage = use(PdfPageContext)?.page ?? null
   const [body, setBody] = useState('')
+  // Removing the page keeps this draft on the whole file, wherever the reader
+  // moves next; a posted comment starts the next draft on the page again.
+  const [pageRemoved, setPageRemoved] = useState(false)
+  const attachedPage = pageRemoved ? null : pdfPage
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!body.trim()) return
-    if (await onSubmit(body)) setBody('')
+    // The page is taken when the comment is sent, not when it is saved.
+    const anchor = attachedPage
+      ? { kind: 'pdf-page' as const, ...attachedPage }
+      : undefined
+    if (await onSubmit(body, anchor)) {
+      setBody('')
+      setPageRemoved(false)
+    }
   }
   return (
     <form
       className="bg-background border-border border-t p-3"
       onSubmit={submit}
     >
+      {attachedPage ? (
+        <div className="mb-2 flex">
+          <span
+            className="text-link border-divider inline-flex items-center gap-1 rounded-[var(--r-md)] border pl-2 text-xs font-semibold"
+            data-comment-pdf-page=""
+          >
+            {t('comments.pdfPageLabel', { page: attachedPage.pageNumber })}
+            <IconButton
+              type="button"
+              icon={IconX}
+              size="sm"
+              aria-label={t('comments.pdfPageRemove', {
+                page: attachedPage.pageNumber,
+              })}
+              onClick={() => setPageRemoved(true)}
+            />
+          </span>
+        </div>
+      ) : null}
       <Textarea
         className="text-foreground min-h-comment-textarea border-divider bg-card w-full resize-y rounded-[var(--r-lg)] p-2.5 text-sm"
         value={body}
         maxLength={MAX_COMMENT_BODY_LENGTH}
         aria-label={t('comments.newLabel')}
         placeholder={t(
-          site
-            ? 'comments.newSitePlaceholder'
-            : 'comments.newArtifactPlaceholder',
+          attachedPage
+            ? 'comments.newPdfPagePlaceholder'
+            : site
+              ? 'comments.newSitePlaceholder'
+              : 'comments.newArtifactPlaceholder',
         )}
         onChange={(event) => setBody(event.currentTarget.value)}
       />
@@ -759,7 +798,11 @@ function ThreadCard({
         </div>
       </div>
       <div data-thread-content="">
-        <ThreadSubject thread={thread} />
+        {thread.subject.kind === 'pdf-page' ? (
+          <PdfPageSubject subject={thread.subject} />
+        ) : (
+          <ThreadSubject thread={thread} />
+        )}
       </div>
       {firstMessage ? (
         <div className="min-w-0" data-thread-content="">
@@ -855,8 +898,47 @@ function isThreadNavigationHandledByChild(target: EventTarget | null): boolean {
   )
 }
 
+// A PDF page comment: `p.N` opens the page where it is the same page;
+// otherwise the card names the version it was made on and cannot move the
+// viewer.
+function PdfPageSubject({
+  subject,
+}: {
+  subject: Extract<CommentThreadView['subject'], { kind: 'pdf-page' }>
+}) {
+  const { t } = useT()
+  const onOpenPage = use(PdfPageContext)?.openPage
+  const page = subject.pageNumber
+  if (subject.canNavigate && onOpenPage) {
+    return (
+      <button
+        type="button"
+        className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-semibold hover:underline"
+        aria-label={t('comments.openPdfPage', { page })}
+        onClick={() => onOpenPage(page)}
+      >
+        {t('comments.pdfPageShort', { page })}
+      </button>
+    )
+  }
+  return (
+    <div className="text-muted-foreground p-0 text-xs font-semibold">
+      {subject.versionId === null
+        ? t('comments.pdfPageVersionUnavailable', { page })
+        : t('comments.pdfPageOfVersion', {
+            page,
+            version:
+              subject.versionNumber === null
+                ? subject.versionId
+                : `v${subject.versionNumber}`,
+          })}
+    </div>
+  )
+}
+
 function ThreadSubject({ thread }: { thread: CommentThreadView }) {
   const { t } = useT()
+  if (thread.subject.kind === 'pdf-page') return null
   if (thread.subject.kind === 'artifact') {
     return (
       <div className="text-link p-0 text-xs font-semibold">

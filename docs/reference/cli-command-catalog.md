@@ -397,6 +397,13 @@ artifacts return their entry page. On a multi-file site it is the file path
 and are not part of the path. Agents cannot post quoted-text comments on
 multi-file sites; post whole-artifact comments there.
 
+PDF comments that readers post from the comment panel carry the page that was
+open. Their anchor keeps `kind: "artifact"` (with `quoted_text` and `state`
+null) and adds `page_number`, plus `version_id` and `version_number` for the
+version it was posted on. Both are null once that version is deleted, and
+`version_number` is null for a version without a number. Other whole-artifact
+anchors omit all three. Agents cannot post page comments.
+
 `comments list <target> --json` returns at most 50 threads, open first. Each
 thread contains its current first message and latest three replies, plus
 `message_count`, `reply_count` and `older_cursor`. These are partial histories.
