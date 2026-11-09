@@ -1701,5 +1701,6 @@
   "comments.pdfPageOfVersion": "{version} の {page} ページ",
   "comments.pdfPageVersionUnavailable": "削除された版の {page} ページ",
   "comments.pdfPageOfOtherVersion": "別の版の {page} ページ",
-  "comments.versionConflictPage": "PDF が更新されています。ページを再読み込みして、もう一度投稿してください。"
+  "comments.versionConflictPage": "PDF が更新されています。ページを再読み込みして、もう一度投稿してください。",
+  "comments.emptyBodyPdfPage": "下の入力欄から、表示中のページへのコメントを追加できます。ページの × を押すと、ファイル全体へのコメントになります。"
 }

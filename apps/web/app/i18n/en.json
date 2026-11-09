@@ -1701,5 +1701,6 @@
   "comments.pdfPageOfVersion": "Page {page} of {version}",
   "comments.pdfPageVersionUnavailable": "Page {page} of a deleted version",
   "comments.pdfPageOfOtherVersion": "Page {page} of another version",
-  "comments.versionConflictPage": "The PDF has been updated. Reload the page and post again."
+  "comments.versionConflictPage": "The PDF has been updated. Reload the page and post again.",
+  "comments.emptyBodyPdfPage": "Add a comment on the page shown from the box below. Press × on the page to comment on the whole file instead."
 }

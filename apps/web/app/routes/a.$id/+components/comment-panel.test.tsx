@@ -1132,3 +1132,29 @@ test.each(['en', 'ja'] as const)(
     }
   },
 )
+
+test('an empty PDF panel with a page shown says new comments go on that page', () => {
+  locale.value = 'en'
+  const html = renderToStaticMarkup(
+    <PdfPageContext
+      value={pdfBridge({ page: { versionId: 'v1', pageNumber: 5 } })}
+    >
+      <CommentPanel
+        shareableId="artifact"
+        viewerUserId="viewer"
+        threads={[]}
+        newCommentMessages={[]}
+        onThreadsChange={() => {}}
+        isCurrentShareableId={() => true}
+        open
+        onOpenChange={() => {}}
+        targetThreadId={null}
+        targetThreadScroll="center"
+        onThreadNavigate={() => {}}
+        showNewThreadComposer
+      />
+    </PdfPageContext>,
+  )
+  expect(html).toContain(en['comments.emptyBodyPdfPage'])
+  expect(html).not.toContain(en['comments.emptyBodyArtifact'])
+})

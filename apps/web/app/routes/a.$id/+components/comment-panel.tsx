@@ -227,13 +227,7 @@ export function CommentPanel({
       {visibleThreads.length === 0 ? (
         <div className="bg-muted border-border flex flex-col gap-1 rounded-[var(--r-md)] border p-3.5">
           <strong className="text-sm">{t('comments.emptyTitle')}</strong>
-          <span className="text-muted-foreground text-sm leading-(--lh-loose)">
-            {t(
-              showNewThreadComposer
-                ? 'comments.emptyBodyArtifact'
-                : 'comments.emptyBody',
-            )}
-          </span>
+          <EmptyThreadsBody composer={showNewThreadComposer} />
         </div>
       ) : (
         <>
@@ -497,6 +491,24 @@ function CommentPanelHeader() {
   )
 }
 
+// The empty list's hint matches what the composer below will post: on a PDF
+// with a page shown, a comment on that page.
+function EmptyThreadsBody({ composer }: { composer: boolean }) {
+  const { t } = useT()
+  const pdfPage = use(PdfPageContext)?.page
+  return (
+    <span className="text-muted-foreground text-sm leading-(--lh-loose)">
+      {t(
+        !composer
+          ? 'comments.emptyBody'
+          : pdfPage
+            ? 'comments.emptyBodyPdfPage'
+            : 'comments.emptyBodyArtifact',
+      )}
+    </span>
+  )
+}
+
 function NewThreadComposer({
   pending,
   onSubmit,
@@ -531,7 +543,7 @@ function NewThreadComposer({
   }
   return (
     <form
-      className="bg-background border-border border-t p-3"
+      className="bg-background border-border shrink-0 border-t p-3"
       onSubmit={submit}
     >
       {attachedPage ? (
