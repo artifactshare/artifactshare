@@ -112,6 +112,9 @@ function addFrameOffset(
   }
 }
 
+// A conversation jump that opened another static-site location.
+type PendingJump = { threadId: string; location: string }
+
 type SandboxFrameProps = {
   entrypointPath?: string | null
   renderType: string | null
@@ -501,6 +504,24 @@ function useSandboxFrameController({
     frameDestinationRef.current += 1
     jumpGenerationRef.current += 1
   }
+  // A jump whose navigation has started and whose location has not yet been
+  // checked. If the opened document settles elsewhere (an SPA redirect), the
+  // conversation cannot be found there.
+  const pendingJumpRef = useRef<PendingJump | null>(null)
+  const markJumpUnavailable = useEffectEvent((threadId: string) => {
+    // The cannot-find verdict for a page this version does not serve, or one
+    // the opened document left, is known only once the jump is checked.
+    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
+    onAnchorResolutions?.([
+      {
+        threadId,
+        state: 'needs-check',
+        textStart: null,
+        textEnd: null,
+        textHash: null,
+      },
+    ])
+  })
   const automaticRecoveryAttemptsRef = useRef(0)
   const reportedGenerationRef = useRef<number | null>(null)
   const reportTimerRef = useRef<number | null>(null)
@@ -550,13 +571,16 @@ function useSandboxFrameController({
     )
       return reportedLocation.location
     const parsed = new URL(frameUrl)
-    return servedLocation(commentLocationFromUrl(parsed.pathname, parsed.hash))
+    return servedLocation(
+      commentLocationFromUrl(parsed.pathname, parsed.hash, fallbackToIndex),
+    )
   }, [
     locationScoped,
     frameUrl,
     frameInstance,
     reportedLocation,
     servedLocation,
+    fallbackToIndex,
   ])
   // Recovery reopens the route the document last reported (an SPA may have
   // moved there through history), not the iframe's original source. It is
@@ -567,13 +591,14 @@ function useSandboxFrameController({
     const href =
       locationScoped &&
       commentLocation &&
-      commentLocation !== commentLocationFromUrl(parsed.pathname, parsed.hash)
-        ? commentLocationHref(commentLocation)
+      commentLocation !==
+        commentLocationFromUrl(parsed.pathname, parsed.hash, fallbackToIndex)
+        ? commentLocationHref(commentLocation, fallbackToIndex)
         : null
     recoveryDestinationRef.current = href
       ? new URL(href, parsed.origin).href
       : frameUrl
-  }, [locationScoped, commentLocation, frameUrl])
+  }, [locationScoped, commentLocation, frameUrl, fallbackToIndex])
   // The parent learns the location each document reports for itself.
   const parentLocationRef = useRef<string | null | undefined>(undefined)
   const highlights = useMemo(() => {
@@ -637,6 +662,16 @@ function useSandboxFrameController({
             ),
           }
         : message
+      // A settled verdict on the jump's location completes the jump.
+      const jump = pendingJumpRef.current
+      if (
+        jump?.location === message.targetPath &&
+        scoped.results.some(
+          (result) =>
+            result.threadId === jump.threadId && result.state !== 'checking',
+        )
+      )
+        pendingJumpRef.current = null
       resolutionSyncRef.current?.accept(scoped)
     },
   )
@@ -824,6 +859,7 @@ function useSandboxFrameController({
     (threadId: string, rect: TextSelectionMessage['rect']) => {
       const frameRect = frameRef.current?.getBoundingClientRect()
       supersedePendingDestination()
+      pendingJumpRef.current = null
       onThreadSelect(
         threadId,
         frameRect ? addFrameOffset(rect, frameRect) : rect,
@@ -838,7 +874,13 @@ function useSandboxFrameController({
   })
   // In-artifact frame navigation, for link clicks and conversation jumps.
   const navigateFrame = useEffectEvent(
-    (destination: string, isCurrent: () => boolean = () => true) => {
+    (
+      destination: string,
+      isCurrent: () => boolean = () => true,
+      jump: PendingJump | null = null,
+    ) => {
+      // Only a conversation jump's own navigation awaits its location.
+      pendingJumpRef.current = null
       onFramePathChange?.(
         normalizeStaticSiteFramePath(new URL(destination).pathname),
       )
@@ -859,6 +901,7 @@ function useSandboxFrameController({
         // frame must load that location before the jump can complete.
         // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
         setViolations([])
+        pendingJumpRef.current = jump
         // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
         setLoadState('loading')
         setFrameUrl(destination)
@@ -884,6 +927,7 @@ function useSandboxFrameController({
         securityChallengeRef.current = createSandboxChallenge()
         staticSiteAuthRef.current = Date.now()
         clearReadyFallback()
+        pendingJumpRef.current = jump
         setViolations([])
         setLoadState('loading')
         setFrameUrl(nextFrameUrl)
@@ -948,6 +992,7 @@ function useSandboxFrameController({
         versionId,
         targetPath: commentLocation,
         locationScoped,
+        fallbackToIndex,
         textAnchorsEnabled,
         commentLabels,
       },
@@ -959,6 +1004,7 @@ function useSandboxFrameController({
     versionId,
     commentLocation,
     locationScoped,
+    fallbackToIndex,
   ])
 
   const sendHighlights = useCallback(() => {
@@ -969,6 +1015,7 @@ function useSandboxFrameController({
         versionId,
         targetPath: commentLocation,
         locationScoped,
+        fallbackToIndex,
         textAnchorsEnabled,
         commentLabels,
         highlights,
@@ -983,6 +1030,7 @@ function useSandboxFrameController({
     versionId,
     commentLocation,
     locationScoped,
+    fallbackToIndex,
   ])
 
   // The common viewers (PDF and video) show their controls in the app's
@@ -1060,7 +1108,7 @@ function useSandboxFrameController({
         // The URL alone decides the location; in-page fragments are not part
         // of it. Paths outside this version's files have no location.
         const location = servedLocation(
-          commentLocationFromUrl(message.path, message.hash),
+          commentLocationFromUrl(message.path, message.hash, fallbackToIndex),
         )
         setReportedLocation((current) =>
           current?.frameUrl === frameUrl &&
@@ -1069,6 +1117,14 @@ function useSandboxFrameController({
             ? current
             : { frameUrl, frameInstance, location },
         )
+        // The jump's document settled on another location (for example an
+        // SPA redirect): the conversation's place is not shown, so the jump
+        // ends in the cannot-find state rather than waiting for its text.
+        const jump = pendingJumpRef.current
+        if (jump && jump.location !== location) {
+          pendingJumpRef.current = null
+          markJumpUnavailable(jump.threadId)
+        }
         if (parentLocationRef.current !== location) {
           if (parentLocationRef.current !== undefined)
             supersedePendingDestination()
@@ -1201,20 +1257,6 @@ function useSandboxFrameController({
     return thread?.subject.kind === 'text' ? thread.subject.targetPath : null
   }, [locationScoped, targetThreadId, commentThreads])
   const jumpRequestRef = useRef<string | null>(null)
-  const markJumpUnavailable = useEffectEvent((threadId: string) => {
-    // The cannot-find verdict for a page this version does not serve is
-    // known only once the chosen target is checked against the version.
-    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
-    onAnchorResolutions?.([
-      {
-        threadId,
-        state: 'needs-check',
-        textStart: null,
-        textEnd: null,
-        textHash: null,
-      },
-    ])
-  })
   useEffect(() => {
     const request =
       targetThreadId && targetLocation
@@ -1225,11 +1267,12 @@ function useSandboxFrameController({
     // target, supersedes a jump whose renewal is still pending.
     jumpRequestRef.current = request
     jumpGenerationRef.current += 1
+    pendingJumpRef.current = null
     if (!request || !targetThreadId || !targetLocation) return
     if (targetLocation === commentLocation) return
     const generation = jumpGenerationRef.current
     const href = servedLocation(targetLocation)
-      ? commentLocationHref(targetLocation)
+      ? commentLocationHref(targetLocation, fallbackToIndex)
       : null
     // A page this version no longer serves cannot hold the text.
     if (!href) {
@@ -1241,6 +1284,7 @@ function useSandboxFrameController({
     navigateFrame(
       new URL(href, trustedMessageOrigin).href,
       () => generation === jumpGenerationRef.current,
+      { threadId: targetThreadId, location: targetLocation },
     )
   }, [
     targetRequest,
@@ -1248,6 +1292,7 @@ function useSandboxFrameController({
     targetLocation,
     commentLocation,
     servedLocation,
+    fallbackToIndex,
     trustedMessageOrigin,
   ])
 

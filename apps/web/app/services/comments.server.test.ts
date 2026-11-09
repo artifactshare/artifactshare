@@ -1016,6 +1016,9 @@ describe('comments server', () => {
       '/settings',
       '/index.html#/billing',
       '/index.html#!/caf%C3%A9',
+      // With fallback to index the root route stays `/`.
+      '/',
+      '/#/billing',
     ]) {
       const result = await createCommentThread(
         fixture.db,
@@ -1057,7 +1060,9 @@ describe('comments server', () => {
       '/index.html#/caf%E9',
       '/index.html#/café',
       '/café.html',
+      // Without fallback the root is stored as /index.html.
       '/',
+      '/#/billing',
       // Unpaired surrogates cannot be encoded into a URL.
       '/index.html#/\ud800',
       '/\ud800.html',

@@ -126,6 +126,7 @@ export function installMessageListener(ctx: ReporterState) {
     if (data.kind === READY_CHECK_MESSAGE_KIND) {
       // Scope first, so the ready report records this document's location.
       ctx.locationScoped = data.locationScoped === true
+      ctx.fallbackToIndex = data.fallbackToIndex === true
       onReadyCheck(ctx, event)
       ctx.displayedVersionId = data.versionId || ctx.displayedVersionId
       ctx.displayedPath = data.targetPath || ctx.displayedPath
@@ -142,6 +143,7 @@ export function installMessageListener(ctx: ReporterState) {
       ctx.displayedVersionId = data.versionId || null
       ctx.displayedPath = data.targetPath || null
       ctx.locationScoped = data.locationScoped === true
+      ctx.fallbackToIndex = data.fallbackToIndex === true
       applyHighlights(ctx, data.highlights)
     } else if (data.kind === 'scroll-to-comment') {
       scrollToThread(ctx, data.threadId)

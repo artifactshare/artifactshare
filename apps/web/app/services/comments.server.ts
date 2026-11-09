@@ -1368,16 +1368,21 @@ function normalizeCommentAnchor(
   let targetPath = access.entrypointPath ?? '/index.html'
   if (access.artifactKind === 'static_site') {
     // Static-site anchors are browser selections on a captured location. The
-    // posted location must already be canonical; version files are checked
-    // by the caller.
-    const location = parseCommentLocation(rawAnchor.targetPath)
+    // posted location must already be canonical; the caller checks version
+    // files and which root form (`/` with fallback, else `/index.html`) the
+    // version uses.
+    const canonical = [false, true].some(
+      (fallbackToIndex) =>
+        parseCommentLocation(rawAnchor.targetPath, fallbackToIndex)
+          ?.location === rawAnchor.targetPath,
+    )
     if (
       rawAnchor.selectorFormat !== 'normalized-v1' ||
-      !location ||
-      location.location !== rawAnchor.targetPath
+      typeof rawAnchor.targetPath !== 'string' ||
+      !canonical
     )
       return null
-    targetPath = location.location
+    targetPath = rawAnchor.targetPath
   }
   return {
     ...rawAnchor,
@@ -1400,8 +1405,10 @@ async function isStaticSiteLocationServed(
   versionId: string | null,
   location: string,
 ): Promise<boolean> {
+  // The root `/` reads as `/index.html` here, so its file is among the
+  // candidates; the version's fallback flag decides which form is canonical.
   const parsed = parseCommentLocation(location)
-  if (!versionId || !parsed || parsed.location !== location) return false
+  if (!versionId || !parsed) return false
   const candidates = hasCommentPathExtension(parsed.pathname)
     ? [parsed.pathname]
     : [parsed.pathname, '/index.html']

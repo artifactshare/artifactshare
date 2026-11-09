@@ -430,9 +430,11 @@ test('in-page fragments and their targets never change a file comment location',
 const historySpa = {
   '/index.html': page(
     '<div id="view"></div><button id="to-settings">Settings</button>',
-    `function render() {
+    `// A retired route redirects at once; /index.html is not an app route.
+    if (location.pathname === '/old') history.replaceState(null, '', '/settings')
+    function render() {
       setTimeout(() => {
-        const name = location.pathname === '/settings' ? 'Settings' : 'Billing'
+        const name = location.pathname === '/settings' ? 'Settings' : location.pathname === '/index.html' ? 'Unknown' : 'Billing'
         document.getElementById('view').innerHTML =
           '<p id="route">' + name + ' route text. Shared route words.</p>'
       }, 40)
@@ -502,6 +504,52 @@ test('history routes keep distinct locations through push, back and reload', asy
   await at('/billing')
   await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
   expect(await frame<string>('location.pathname')).toBe('/billing')
+})
+
+test('an SPA root route stays `/` and choosing it reopens `/`, not /index.html', async () => {
+  origin = await commands.staticSiteCommentSite(historySpa, true)
+  await open('/', [], spaSite)
+  await at('/')
+  await vi.waitFor(async () =>
+    expect(await frame<string>('document.body.textContent')).toContain(
+      'Billing route',
+    ),
+  )
+  const home = posted('home', await select('#route', 'Billing route'))
+  expect(home.subject).toMatchObject({ targetPath: '/' })
+  await open('/settings', [home], spaSite)
+  await at('/settings')
+  await choose('home', 1)
+  await at('/')
+  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  expect(await frame<string>('location.pathname')).toBe('/')
+  expect(await painted()).toEqual(['Billing route'])
+})
+
+test('a jump whose route redirects elsewhere ends in cannot-find', async () => {
+  origin = await commands.staticSiteCommentSite(historySpa, true)
+  const threads = [
+    thread('old', '/old', { quotedText: 'Settings route text.' }),
+    thread('billing', '/billing', { quotedText: 'Billing route text.' }),
+  ]
+  await open('/billing', threads, spaSite)
+  await at('/billing')
+  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await choose('old', 1)
+  await at('/settings')
+  await vi.waitFor(() =>
+    expect(
+      verdictLog.some((results) =>
+        results.some(
+          (result) =>
+            result.threadId === 'old' && result.state === 'needs-check',
+        ),
+      ),
+    ).toBe(true),
+  )
+  expect(await frame<string>('location.pathname')).toBe('/settings')
+  // The same text on the route the app moved to is not this conversation.
+  expect(await painted()).toEqual([])
 })
 
 test('a selection from the previous route never becomes a draft on the next', async () => {

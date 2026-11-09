@@ -101,7 +101,6 @@ describe('static-site comment locations', () => {
     expect(isCommentLocationServed('/settings#/tab', files, true)).toBe(true)
     for (const location of [
       '/missing.html',
-      '/',
       '/docs/page.html#intro',
       '//evil.example/docs/page.html',
       'https://evil.example/index.html',
@@ -110,6 +109,25 @@ describe('static-site comment locations', () => {
     ])
       expect(isCommentLocationServed(location, files, true)).toBe(false)
     expect(isCommentLocationServed('/settings', new Set(), true)).toBe(false)
+  })
+
+  test('the site root stays `/` with fallback to index and is /index.html without', () => {
+    const files = new Set(['/index.html'])
+    // Ordinary multi-page sites keep today's root normalization.
+    expect(commentLocationFromUrl('/', '')).toBe('/index.html')
+    expect(isCommentLocationServed('/index.html', files, false)).toBe(true)
+    expect(isCommentLocationServed('/', files, false)).toBe(false)
+    expect(commentLocationHref('/index.html')).toBe('/index.html')
+    // An SPA's root route reopens as `/`, which its router recognizes.
+    expect(commentLocationFromUrl('/', '', true)).toBe('/')
+    expect(commentLocationFromUrl('/', '#/billing', true)).toBe('/#/billing')
+    expect(commentLocationFromUrl('/index.html', '', true)).toBe('/index.html')
+    expect(parseCommentLocation('/', true)?.location).toBe('/')
+    expect(isCommentLocationServed('/', files, true)).toBe(true)
+    expect(isCommentLocationServed('/', new Set(), true)).toBe(false)
+    expect(isCommentLocationServed('/index.html', files, true)).toBe(true)
+    expect(commentLocationHref('/', true)).toBe('/')
+    expect(commentLocationHref('/#/billing', true)).toBe('/#/billing')
   })
 
   test('navigation encodes pathname segments and keeps the route hash', () => {

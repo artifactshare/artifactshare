@@ -8,6 +8,11 @@
 // single-segment index aliases, NFC). Route fragments are stored with each
 // slash-delimited segment decoded once and re-encoded with encodeURIComponent;
 // a route query keeps its literal `?`, `&`, `=` and `+` separators.
+//
+// The site root `/` is stored as `/index.html` on ordinary multi-page sites.
+// A version with fallback to index keeps `/` as the route the SPA saw, since
+// its router may treat `/index.html` as another route; only the served-file
+// check maps it to `/index.html`.
 
 export const MAX_COMMENT_LOCATION_LENGTH = 1000
 
@@ -20,7 +25,10 @@ function hasControlCharacter(value: string): boolean {
 }
 
 /** A decoded pathname in the form delivery serves, or null when unservable. */
-export function canonicalCommentPathname(decoded: string): string | null {
+export function canonicalCommentPathname(
+  decoded: string,
+  fallbackToIndex = false,
+): string | null {
   if (typeof decoded !== 'string' || decoded[0] !== '/') return null
   if (decoded.startsWith('//') || decoded.startsWith('/\\')) return null
   if (hasControlCharacter(decoded) || /[#?]/.test(decoded)) return null
@@ -30,13 +38,12 @@ export function canonicalCommentPathname(decoded: string): string | null {
   } catch {
     return null
   }
-  const rawPath = decoded === '/' ? '/index.html' : decoded
-  const parts = rawPath.replaceAll('\\', '/').split('/')
+  const parts = decoded.replaceAll('\\', '/').split('/')
   if (parts.includes('..')) return null
   // Delivery refuses these extensions (see the bundle path validator).
-  if (/\.(?:exe|sh|php|py|rb|bat|cmd|dll|so)$/i.test(rawPath)) return null
+  if (/\.(?:exe|sh|php|py|rb|bat|cmd|dll|so)$/i.test(decoded)) return null
   const segments = parts.filter((segment) => segment !== '' && segment !== '.')
-  if (segments.length === 0) return '/index.html'
+  if (segments.length === 0) return fallbackToIndex ? '/' : '/index.html'
   if (segments.length === 1) {
     const lower = segments[0].toLowerCase()
     if (lower === 'index.html' || lower === 'index.md') segments[0] = lower
@@ -98,6 +105,7 @@ export function canonicalCommentRouteHash(hash: string): string | null {
 export function commentLocationFromUrl(
   pathname: string,
   hash: string,
+  fallbackToIndex = false,
 ): string | null {
   let decoded: string
   try {
@@ -105,7 +113,7 @@ export function commentLocationFromUrl(
   } catch {
     return null
   }
-  const path = canonicalCommentPathname(decoded)
+  const path = canonicalCommentPathname(decoded, fallbackToIndex)
   const route = canonicalCommentRouteHash(hash)
   if (path === null || route === null) return null
   const location = path + route
@@ -115,6 +123,7 @@ export function commentLocationFromUrl(
 /** Splits a stored or posted location into its canonical parts. */
 export function parseCommentLocation(
   location: unknown,
+  fallbackToIndex = false,
 ): { pathname: string; hash: string; location: string } | null {
   if (
     typeof location !== 'string' ||
@@ -125,6 +134,7 @@ export function parseCommentLocation(
   const hashIndex = location.indexOf('#')
   const pathname = canonicalCommentPathname(
     hashIndex === -1 ? location : location.slice(0, hashIndex),
+    fallbackToIndex,
   )
   const hash = canonicalCommentRouteHash(
     hashIndex === -1 ? '' : location.slice(hashIndex),
@@ -134,8 +144,11 @@ export function parseCommentLocation(
 }
 
 /** The in-frame URL path (pathname plus route hash) that opens a location. */
-export function commentLocationHref(location: string): string | null {
-  const parsed = parseCommentLocation(location)
+export function commentLocationHref(
+  location: string,
+  fallbackToIndex = false,
+): string | null {
+  const parsed = parseCommentLocation(location, fallbackToIndex)
   if (!parsed) return null
   const pathname = parsed.pathname
     .split('/')
@@ -155,7 +168,7 @@ export function isCommentLocationServed(
   files: { has(path: string): boolean },
   fallbackToIndex: boolean,
 ): boolean {
-  const parsed = parseCommentLocation(location)
+  const parsed = parseCommentLocation(location, fallbackToIndex)
   if (!parsed || parsed.location !== location) return false
   return (
     files.has(parsed.pathname) ||

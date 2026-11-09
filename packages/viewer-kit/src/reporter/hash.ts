@@ -10,6 +10,7 @@ export function liveCommentLocation(ctx: ReporterState): string | null {
     return commentLocationFromUrl(
       ctx.win.location.pathname,
       ctx.win.location.hash,
+      ctx.fallbackToIndex,
     )
   } catch (e) {
     return null
