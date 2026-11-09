@@ -85,6 +85,7 @@ function storedThread(anchor: {
       versionId: anchor.versionId,
       versionNumber: 1,
       canNavigate: true,
+      navigableVersionId: anchor.versionId,
     },
     createdAt: at,
     updatedAt: at,

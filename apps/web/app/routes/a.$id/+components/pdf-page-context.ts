@@ -18,7 +18,9 @@ export interface PdfPageBridge {
    * decided for; a new object for every choice.
    */
   openRequest: { pageNumber: number; versionId: string | null } | null
-  openPage: (pageNumber: number) => void
+  /** The version this view shows; a card opens a page only for it. */
+  displayedVersionId: string | null
+  openPage: (pageNumber: number, versionId: string) => void
 }
 
 export const PdfPageContext = createContext<PdfPageBridge | null>(null)

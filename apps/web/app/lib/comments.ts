@@ -26,6 +26,9 @@ export type CommentThreadSubject =
       versionId: string | null
       versionNumber: number | null
       canNavigate: boolean
+      // The version canNavigate was decided for (the server's current
+      // version), so a view still showing another version never opens it.
+      navigableVersionId: string | null
     }
   | {
       kind: 'text'

@@ -35,6 +35,7 @@ async function mount(renderType: 'pdf' | 'video') {
     page: null,
     onPageChange,
     openRequest,
+    displayedVersionId: 'v1',
     openPage: () => {},
   })
   const host = document.createElement('div')

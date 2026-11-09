@@ -1669,17 +1669,19 @@ async function resolvePdfPageSubjects(
   for (const anchor of anchors) {
     const origin =
       anchor.version_id === null ? undefined : versions.get(anchor.version_id)
+    const canNavigate =
+      access.artifactKind === 'pdf' &&
+      current?.artifact_kind === 'pdf' &&
+      origin?.artifact_kind === 'pdf' &&
+      (anchor.version_id === access.currentVersionId ||
+        origin.sha256 === current.sha256)
     subjects.set(anchor.thread_id, {
       kind: 'pdf-page',
       pageNumber: anchor.page_number!,
       versionId: origin ? anchor.version_id : null,
       versionNumber: origin?.number ?? null,
-      canNavigate:
-        access.artifactKind === 'pdf' &&
-        current?.artifact_kind === 'pdf' &&
-        origin?.artifact_kind === 'pdf' &&
-        (anchor.version_id === access.currentVersionId ||
-          origin.sha256 === current.sha256),
+      canNavigate,
+      navigableVersionId: canNavigate ? access.currentVersionId : null,
     })
   }
   return subjects

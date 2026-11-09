@@ -179,6 +179,7 @@ test('PDF page comments add page and posting version to the artifact anchor', ()
       versionId,
       versionNumber,
       canNavigate: false,
+      navigableVersionId: null,
     },
   })
   for (const map of [agentCommentMutationFields, agentCommentDeletionFields]) {

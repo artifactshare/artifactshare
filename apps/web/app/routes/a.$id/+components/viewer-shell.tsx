@@ -2526,13 +2526,11 @@ function useViewerShellController({
                 page ? { versionId, pageNumber: page.pageNumber } : null,
               ),
             openRequest: pdfOpenRequest,
-            // Cards decide navigation against the current version; only a
-            // frame showing that version may move.
-            openPage: (pageNumber) =>
-              setPdfOpenRequest({
-                pageNumber,
-                versionId: artifact.currentVersionId ?? null,
-              }),
+            displayedVersionId: artifact.currentVersionId ?? null,
+            // The request names the version the card's navigation was
+            // decided for; only a frame showing that version moves.
+            openPage: (pageNumber, versionId) =>
+              setPdfOpenRequest({ pageNumber, versionId }),
           }
         : null,
     [renderType, commentPage, pdfOpenRequest, artifact.currentVersionId],

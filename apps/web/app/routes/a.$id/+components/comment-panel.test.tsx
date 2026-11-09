@@ -911,6 +911,7 @@ function pdfBridge(override: Partial<PdfPageBridge>): PdfPageBridge {
     page: null,
     onPageChange: () => {},
     openRequest: null,
+    displayedVersionId: 'v1',
     openPage: () => {},
     ...override,
   }
@@ -929,6 +930,7 @@ function pdfPageThread(
       versionId: 'v1',
       versionNumber: 3,
       canNavigate: true,
+      navigableVersionId: 'v1',
       ...subject,
     },
   }
@@ -1094,6 +1096,16 @@ test.each(['en', 'ja'] as const)(
       expect(link.textContent).toBe('p.12')
       await act(async () => link.click())
       expect(opened).toEqual([12])
+
+      // Navigation decided for a version this view does not show: a label,
+      // and no request for the shown version.
+      await renderCard(pdfPageThread({ navigableVersionId: 'v2' }))
+      expect(host.textContent).not.toContain('p.12')
+      expect(host.textContent).toContain(
+        text['comments.pdfPageOfVersion']
+          .replace('{page}', '12')
+          .replace('{version}', 'v3'),
+      )
 
       await renderCard(pdfPageThread({ canNavigate: false }))
       expect(host.textContent).toContain(

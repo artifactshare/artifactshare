@@ -907,15 +907,23 @@ function PdfPageSubject({
   subject: Extract<CommentThreadView['subject'], { kind: 'pdf-page' }>
 }) {
   const { t } = useT()
-  const onOpenPage = use(PdfPageContext)?.openPage
+  const bridge = use(PdfPageContext)
   const page = subject.pageNumber
-  if (subject.canNavigate && onOpenPage) {
+  const target = subject.navigableVersionId
+  // Navigation was decided for the server's current version; a view still
+  // showing another version labels the page instead of moving.
+  if (
+    subject.canNavigate &&
+    bridge &&
+    target !== null &&
+    target === bridge.displayedVersionId
+  ) {
     return (
       <button
         type="button"
         className="text-link justify-self-start border-0 bg-transparent p-0 text-xs font-semibold hover:underline"
         aria-label={t('comments.openPdfPage', { page })}
-        onClick={() => onOpenPage(page)}
+        onClick={() => bridge.openPage(page, target)}
       >
         {t('comments.pdfPageShort', { page })}
       </button>
