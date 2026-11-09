@@ -135,7 +135,7 @@ export function PublicFooter({
             {links(legal)}
             <button
               type="button"
-              className={linkClass}
+              className={cn(linkClass, 'self-start text-left')}
               onClick={(event) => openBanner(event.currentTarget)}
             >
               {t('analyticsConsent.change')}

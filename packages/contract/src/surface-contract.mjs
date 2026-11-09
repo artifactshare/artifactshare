@@ -142,7 +142,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'doctor',
-    'Diagnose token storage, auth, destination, network, and upload readiness; bot diagnostics accept approved_project_ids while project_id remains the primary',
+    'Diagnose token storage, auth, destination, network, and upload readiness; bot diagnostics distinguish approved_project_ids from live publishable_project_ids while project_id remains the primary',
   ],
   [
     'changelog',

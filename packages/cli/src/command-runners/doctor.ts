@@ -230,7 +230,6 @@ export async function runDoctor(
   data.auth.email = typeof user?.email === 'string' ? user.email : null
   const authority = doctorAuthority(auth?.authority)
   if (authority) data.auth.authority = authority
-  applyAgentDestinationDiagnostic(data, authority)
   if (authority?.preset === 'publisher')
     data.destination = {
       ok: true,
@@ -245,6 +244,7 @@ export async function runDoctor(
     data.upload.code = normalizeApiCode(upload?.code)
     data.upload.hint = uploadBlockedHint(data.upload.code)
   }
+  applyAgentDestinationDiagnostic(data, authority)
   return writeSuccess(command, doctorDataWithNextCommand(data), mode)
 }
 
@@ -271,6 +271,13 @@ function doctorAuthority(value: unknown): DoctorAuthority | null {
     return {
       preset: 'agent',
       project_id: authority.project_id,
+      ...(Array.isArray(authority.publishable_project_ids) &&
+      authority.publishable_project_ids.every((id) => typeof id === 'string')
+        ? {
+            publishable_project_ids:
+              authority.publishable_project_ids as string[],
+          }
+        : {}),
       ...(Array.isArray(authority.approved_project_ids) &&
       authority.approved_project_ids.every((id) => typeof id === 'string')
         ? { approved_project_ids: authority.approved_project_ids as string[] }
@@ -290,6 +297,24 @@ function applyAgentDestinationDiagnostic(
   data: DoctorData,
   authority: DoctorAuthority | null,
 ): void {
+  if (
+    authority?.preset === 'agent' &&
+    data.destination.ok &&
+    (authority.approved_project_ids ?? [authority.project_id]).includes(
+      data.destination.project_id ?? '',
+    ) &&
+    authority.publishable_project_ids !== undefined &&
+    !authority.publishable_project_ids.includes(
+      data.destination.project_id ?? '',
+    )
+  ) {
+    const code = 'agent_destination_unavailable'
+    const hint =
+      'The configured destination is approved but cannot currently accept uploads. Ask a workspace administrator to check whether the project is archived or the bot contributor grant was removed, or select an available destination from projects list.'
+    data.destination = { ok: false, code, hint }
+    if (data.upload.ok) data.upload = { ...data.upload, ok: false, code, hint }
+    return
+  }
   if (
     authority?.preset !== 'agent' ||
     !authority.project_id ||

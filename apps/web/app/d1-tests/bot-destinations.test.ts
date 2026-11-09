@@ -1026,3 +1026,117 @@ test('private destination audience and bot read/comment access survive posting a
   ).toBeDefined()
   await db.destroy()
 })
+
+test.each(['replace-primary', 'archive-secondary', 'revoke-secondary-grant'])(
+  'existing bot session placement follows %s',
+  async (change) => {
+    const { createWorkspaceBot, listWorkspaceBots } =
+      await import('../services/bot-members.server')
+    const { updateWorkspaceBotDestinations } =
+      await import('../services/bot-destinations.server')
+    const { refreshCliSession } =
+      await import('../services/cli-refresh-credentials.server')
+    const { resolveCliAuthorityBySessionToken } =
+      await import('../services/cli-authority.server')
+    const { deleteProjectContainer } =
+      await import('../services/projects.server')
+    const prefix = `session-${change}`
+    await seedProject(prefix)
+    const actor = { id: `${prefix}-owner`, workspaceId: `${prefix}-ws` }
+    const a = `${prefix}-project`
+    const b = `${prefix}-private`
+    await database.batch([
+      database
+        .prepare(
+          "INSERT INTO workspace_members (workspace_id,user_id,role,status,created_at,updated_at) VALUES (?,?,'owner','active',?,?)",
+        )
+        .bind(actor.workspaceId, actor.id, at, at),
+      database
+        .prepare(
+          "INSERT INTO artifact_containers (id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES (?,?,'project','Private B','private',?,?,?)",
+        )
+        .bind(b, actor.workspaceId, actor.id, at, at),
+    ])
+    const db = createDb(database)
+    const bot = await createWorkspaceBot(db, actor, {
+      name: 'Reports',
+      projectId: a,
+      projectIds: [a, b],
+    })
+    if (bot.kind !== 'ok') throw new Error(bot.kind)
+    const session = await refreshCliSession(
+      db,
+      bot.token,
+      prefix,
+      'test-secret',
+    )
+    if (session.kind !== 'ok') throw new Error(session.kind)
+    if (change === 'replace-primary') {
+      const inventory = (await listWorkspaceBots(db, actor.workspaceId))[0]!
+      expect(
+        await updateWorkspaceBotDestinations(db, actor, {
+          botUserId: bot.botUserId,
+          projectId: b,
+          projectIds: [b],
+          revision: inventory.destinationRevision!,
+        }),
+      ).toEqual({ kind: 'ok' })
+      expect(
+        await deleteProjectContainer(db, actor.workspaceId, a, actor.id),
+      ).toBe('ok')
+      expect(
+        await deleteProjectContainer(db, actor.workspaceId, b, actor.id),
+      ).toMatchObject({ kind: 'has-agent-credentials' })
+    } else if (change === 'archive-secondary') {
+      await db
+        .updateTable('artifact_containers')
+        .set({ archived_at: at })
+        .where('id', '=', b)
+        .execute()
+    } else {
+      await db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', b)
+        .where('email', '=', bot.email)
+        .execute()
+    }
+    const authority = await resolveCliAuthorityBySessionToken(
+      session.sessionToken,
+    )
+    if (!authority || authority === 'denied' || authority.kind !== 'agent')
+      throw new Error('existing session lost authentication')
+    expect(authority.projectId).toBe(change === 'replace-primary' ? b : a)
+    if (change === 'replace-primary') return
+
+    const { RouterContextProvider } = await import('react-router')
+    const { userContext, cliAuthorityContext } =
+      await import('../middleware/context')
+    const { loader: doctor } = await import('../routes/api.cli.doctor')
+    const { loader: projects } = await import('../routes/api.cli.projects')
+    const context = new RouterContextProvider()
+    context.set(userContext, {
+      id: bot.botUserId,
+      email: bot.email,
+      workspaceId: actor.workspaceId,
+      emailVerified: true,
+      selfUploadEnabled: true,
+      hd: null,
+    } as never)
+    context.set(cliAuthorityContext, authority)
+    const response = await doctor({ context } as never)
+    expect(await response.json()).toMatchObject({
+      auth: {
+        ok: true,
+        authority: {
+          project_id: a,
+          approved_project_ids: expect.arrayContaining([a, b]),
+          publishable_project_ids: [a],
+        },
+      },
+      upload: { ok: true },
+    })
+    expect(await (await projects({ context } as never)).json()).toMatchObject({
+      projects: [{ id: a }],
+    })
+  },
+)

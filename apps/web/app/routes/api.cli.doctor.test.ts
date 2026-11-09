@@ -6,6 +6,10 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
+vi.mock('~/services/agent-scope.server', () => ({
+  isAgentPublishableDestination: isAgentPublishableDestinationMock,
+}))
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -26,6 +30,7 @@ import { loader, middleware } from './api.cli.doctor'
 
 describe('/api/cli/doctor', () => {
   beforeEach(() => {
+    isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     getCliAuthorityMock.mockReset()
@@ -112,6 +117,7 @@ describe('/api/cli/doctor', () => {
       preset: 'agent',
       project_id: 'a',
       approved_project_ids: ['a', 'b'],
+      publishable_project_ids: ['a', 'b'],
     })
   })
 

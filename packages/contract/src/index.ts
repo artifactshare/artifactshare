@@ -355,6 +355,7 @@ export const DoctorAuthoritySchema = z
     preset: DeviceAuthorizationPresetSchema,
     project_id: stringId.nullable(),
     approved_project_ids: z.array(stringId).optional(),
+    publishable_project_ids: z.array(stringId).optional(),
     publisher_client_id: stringId.optional(),
     publisher_client_name: PublisherClientNameSchema.optional(),
   })

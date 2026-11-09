@@ -1,3 +1,5 @@
+import { withDb } from '~/services/db.server'
+import { isAgentPublishableDestination } from '~/services/agent-scope.server'
 import { isOrgWorkspace } from '~/lib/user'
 import { cliScopeDeniedResponse } from '~/lib/cli-agent-operations'
 import { cliReadAuthority } from '~/lib/cli-authority-policy'
@@ -20,6 +22,23 @@ export async function loader({ context }: Route.LoaderArgs) {
   const authority = publisher ? null : cliReadAuthority(resolved)
   if (authority === 'denied') return cliScopeDeniedResponse()
   const permission = await checkUploadAccess(user)
+  const publishableProjectIds = authority?.ordinaryBot
+    ? await withDb(async (db) => {
+        const projects = await Promise.all(
+          (authority.approvedProjects ?? []).map(async (project) =>
+            (await isAgentPublishableDestination(
+              db,
+              user,
+              authority,
+              project.id,
+            ))
+              ? project.id
+              : null,
+          ),
+        )
+        return projects.filter((id) => id !== null)
+      })
+    : undefined
   const payload = {
     user: {
       id: user.id,
@@ -46,6 +65,7 @@ export async function loader({ context }: Route.LoaderArgs) {
               project_id: authority.projectId,
               ...(authority.ordinaryBot
                 ? {
+                    publishable_project_ids: publishableProjectIds,
                     approved_project_ids:
                       authority.approvedProjects?.map(
                         (project) => project.id,

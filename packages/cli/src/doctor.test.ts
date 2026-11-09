@@ -151,9 +151,24 @@ test('doctor next_command is null when all checks pass', async () => {
   )
 })
 
-test.each([undefined, ['prj-agent'], ['prj-agent', 'prj-old']])(
-  'doctor checks approved bot destinations with legacy fallback: %j',
-  async (approved) => {
+test.each([
+  { approved: undefined, publishable: undefined },
+  { approved: ['prj-agent'], publishable: undefined },
+  { approved: ['prj-agent', 'prj-old'], publishable: undefined },
+  { approved: ['prj-agent', 'prj-old'], publishable: ['prj-agent', 'prj-old'] },
+  {
+    approved: ['prj-agent', 'prj-old'],
+    publishable: ['prj-agent'],
+    reason: 'archived',
+  },
+  {
+    approved: ['prj-agent', 'prj-old'],
+    publishable: ['prj-agent'],
+    reason: 'grant removed',
+  },
+])(
+  'doctor checks approved bot destinations with live placement and legacy fallback: %j',
+  async ({ approved, publishable }) => {
     const workDir = await mkdtemp(join(tmpdir(), 'artifactshare-doctor-scope-'))
     const configHome = await mkdtemp(
       join(tmpdir(), 'artifactshare-doctor-home-'),
@@ -176,6 +191,7 @@ test.each([undefined, ['prj-agent'], ['prj-agent', 'prj-old']])(
                   preset: 'agent',
                   project_id: 'prj-agent',
                   approved_project_ids: approved,
+                  publishable_project_ids: publishable,
                 },
               },
               user: { email: 'person@example.com' },
@@ -217,6 +233,32 @@ test.each([undefined, ['prj-agent'], ['prj-agent', 'prj-old']])(
             { cwd: workDir },
           )
           const payload = expectSuccess(result, 'doctor')
+          if (
+            approved?.includes('prj-old') &&
+            publishable &&
+            !publishable.includes('prj-old')
+          ) {
+            assert.equal(payload.data.auth.ok, true)
+            assert.deepEqual(
+              payload.data.auth.authority.approved_project_ids,
+              approved,
+            )
+            assert.deepEqual(
+              payload.data.auth.authority.publishable_project_ids,
+              publishable,
+            )
+            assert.equal(payload.data.destination.ok, false)
+            assert.equal(
+              payload.data.destination.code,
+              'agent_destination_unavailable',
+            )
+            assert.equal(payload.data.upload.ok, false)
+            assert.match(
+              payload.data.destination.hint,
+              /archived.*contributor grant/,
+            )
+            return
+          }
           if (approved?.includes('prj-old')) {
             assert.equal(payload.data.destination.code, undefined)
             assert.deepEqual(
