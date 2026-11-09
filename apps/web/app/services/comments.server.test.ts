@@ -2678,6 +2678,7 @@ describe('comments server', () => {
         versionId: 'v1',
         versionNumber: 1,
         canNavigate: true,
+        navigableVersionId: 'v1',
       })
       expect(
         await fixture.db
@@ -2806,6 +2807,7 @@ describe('comments server', () => {
         versionId: 'v1',
         versionNumber: 1,
         canNavigate: true,
+        navigableVersionId: 'v2',
       })
       const changed = await publishPdf('v3', 2, 'pdf-bytes-3')
       expect(await subject(changed)).toEqual({
@@ -2814,6 +2816,7 @@ describe('comments server', () => {
         versionId: 'v1',
         versionNumber: 1,
         canNavigate: false,
+        navigableVersionId: null,
       })
       await fixture.db.deleteFrom('versions').where('id', '=', 'v1').execute()
       expect(await subject(changed)).toEqual({
@@ -2822,6 +2825,7 @@ describe('comments server', () => {
         versionId: null,
         versionNumber: null,
         canNavigate: false,
+        navigableVersionId: null,
       })
     })
   })
