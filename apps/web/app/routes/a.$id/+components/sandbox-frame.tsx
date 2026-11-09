@@ -1316,6 +1316,8 @@ function useSandboxFrameController({
       renderType !== 'pdf' ||
       loadState !== 'ready' ||
       !shown ||
+      // A frame still showing another version has different pages.
+      pdfOpenPage.versionId !== versionId ||
       pdfOpenPage.pageNumber > shown.pageCount
     )
       return
@@ -1323,7 +1325,7 @@ function useSandboxFrameController({
       pdfOpenPageMessage(pdfOpenPage.pageNumber),
       trustedMessageOrigin,
     )
-  }, [pdfOpenPage, renderType, loadState, trustedMessageOrigin])
+  }, [pdfOpenPage, renderType, loadState, trustedMessageOrigin, versionId])
 
   useEffect(() => {
     if (

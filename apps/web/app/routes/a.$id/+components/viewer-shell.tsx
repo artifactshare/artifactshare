@@ -2509,6 +2509,7 @@ function useViewerShellController({
   const [shownPdfPage, setShownPdfPage] = useState<PdfCommentPage | null>(null)
   const [pdfOpenRequest, setPdfOpenRequest] = useState<{
     pageNumber: number
+    versionId: string | null
   } | null>(null)
   const commentPage = pdfCommentPage(shownPdfPage, {
     renderType,
@@ -2525,10 +2526,16 @@ function useViewerShellController({
                 page ? { versionId, pageNumber: page.pageNumber } : null,
               ),
             openRequest: pdfOpenRequest,
-            openPage: (pageNumber) => setPdfOpenRequest({ pageNumber }),
+            // Cards decide navigation against the current version; only a
+            // frame showing that version may move.
+            openPage: (pageNumber) =>
+              setPdfOpenRequest({
+                pageNumber,
+                versionId: artifact.currentVersionId ?? null,
+              }),
           }
         : null,
-    [renderType, commentPage, pdfOpenRequest],
+    [renderType, commentPage, pdfOpenRequest, artifact.currentVersionId],
   )
   const comments = useViewerComments({
     framePresent: Boolean(sandboxUrl),

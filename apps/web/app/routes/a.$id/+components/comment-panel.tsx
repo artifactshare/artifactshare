@@ -925,13 +925,12 @@ function PdfPageSubject({
     <div className="text-muted-foreground p-0 text-xs font-semibold">
       {subject.versionId === null
         ? t('comments.pdfPageVersionUnavailable', { page })
-        : t('comments.pdfPageOfVersion', {
-            page,
-            version:
-              subject.versionNumber === null
-                ? subject.versionId
-                : `v${subject.versionNumber}`,
-          })}
+        : subject.versionNumber === null
+          ? t('comments.pdfPageOfOtherVersion', { page })
+          : t('comments.pdfPageOfVersion', {
+              page,
+              version: `v${subject.versionNumber}`,
+            })}
     </div>
   )
 }

@@ -1699,5 +1699,7 @@
   "comments.pdfPageShort": "p.{page}",
   "comments.openPdfPage": "{page}ページを開く",
   "comments.pdfPageOfVersion": "{version} の {page} ページ",
-  "comments.pdfPageVersionUnavailable": "削除された版の {page} ページ"
+  "comments.pdfPageVersionUnavailable": "削除された版の {page} ページ",
+  "comments.pdfPageOfOtherVersion": "別の版の {page} ページ",
+  "comments.versionConflictPage": "PDF が更新されています。ページを再読み込みして、もう一度投稿してください。"
 }

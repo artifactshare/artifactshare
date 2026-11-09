@@ -13,8 +13,11 @@ export interface PdfPageBridge {
     versionId: string,
     page: { pageNumber: number; pageCount: number } | null,
   ) => void
-  /** A page for the frame to open; a new object for every choice. */
-  openRequest: { pageNumber: number } | null
+  /**
+   * A page for the frame to open, on the version the card's navigation was
+   * decided for; a new object for every choice.
+   */
+  openRequest: { pageNumber: number; versionId: string | null } | null
   openPage: (pageNumber: number) => void
 }
 

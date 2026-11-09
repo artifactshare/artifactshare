@@ -163,16 +163,29 @@ export function useCommentMutations({
         }
         if (result.body?.error?.code === 'version_conflict') {
           if (!isCurrentShareableId(requestShareableId)) return false
-          toast.error(t('comments.versionConflict'), {
-            action: {
-              label: t('home.reload'),
-              onClick: () => {
-                if (isCurrentShareableId(requestShareableId)) {
-                  void revalidator.revalidate()
-                }
+          // A PDF page comment is placed on the page, not on selected text.
+          const pagePost =
+            'anchor' in payload &&
+            payload.anchor !== undefined &&
+            'kind' in payload.anchor &&
+            payload.anchor.kind === 'pdf-page'
+          toast.error(
+            t(
+              pagePost
+                ? 'comments.versionConflictPage'
+                : 'comments.versionConflict',
+            ),
+            {
+              action: {
+                label: t('home.reload'),
+                onClick: () => {
+                  if (isCurrentShareableId(requestShareableId)) {
+                    void revalidator.revalidate()
+                  }
+                },
               },
             },
-          })
+          )
           return false
         }
         logViewerNetworkEvent({

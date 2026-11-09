@@ -1699,5 +1699,7 @@
   "comments.pdfPageShort": "p.{page}",
   "comments.openPdfPage": "Open page {page}",
   "comments.pdfPageOfVersion": "Page {page} of {version}",
-  "comments.pdfPageVersionUnavailable": "Page {page} of a deleted version"
+  "comments.pdfPageVersionUnavailable": "Page {page} of a deleted version",
+  "comments.pdfPageOfOtherVersion": "Page {page} of another version",
+  "comments.versionConflictPage": "The PDF has been updated. Reload the page and post again."
 }

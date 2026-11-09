@@ -171,17 +171,19 @@ test('takes page reports only from the document holding the latest sync token', 
 test('opens each chosen page once, only within the shown document', async () => {
   const frame = await mount('pdf')
   // A choice while no page is shown is dropped, not kept for later.
-  await frame.render(frame.bridge({ pageNumber: 2 }))
+  await frame.render(frame.bridge({ pageNumber: 2, versionId: 'v1' }))
   await frame.fromFrame(frame.ready)
   const [token] = frame.syncTokens()
   await frame.fromFrame(frame.report(token!, 12))
   expect(frame.opened()).toEqual([])
 
-  const choice = { pageNumber: 5 }
+  const choice = { pageNumber: 5, versionId: 'v1' }
   await frame.render(frame.bridge(choice))
   await frame.render(frame.bridge(choice))
-  await frame.render(frame.bridge({ pageNumber: 15 }))
-  await frame.render(frame.bridge({ pageNumber: 5 }))
+  await frame.render(frame.bridge({ pageNumber: 15, versionId: 'v1' }))
+  await frame.render(frame.bridge({ pageNumber: 5, versionId: 'v1' }))
+  // A choice decided for another version never moves this frame.
+  await frame.render(frame.bridge({ pageNumber: 3, versionId: 'v2' }))
   expect(frame.opened()).toEqual([5, 5])
   await act(async () => frame.root.unmount())
 })
