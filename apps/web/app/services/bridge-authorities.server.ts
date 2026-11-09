@@ -227,7 +227,25 @@ export async function createBridgeAuthorityForBot(
     )
 
   try {
-    await runD1Batch(db, insertAuthority, attachFamily, audit)
+    await runD1Batch(
+      db,
+      insertAuthority,
+      attachFamily,
+      db
+        .deleteFrom('bot_destination_projects')
+        .where(
+          'family_id',
+          'in',
+          db
+            .selectFrom('cli_family_authorities')
+            .select('family_id')
+            .where('user_id', '=', input.botUserId),
+        )
+        .where(
+          sql<boolean>`EXISTS (SELECT 1 FROM bridge_authorities WHERE id = ${authorityId})`,
+        ),
+      audit,
+    )
   } catch {
     const liveFallback = await db
       .selectFrom('artifact_containers as fallback')

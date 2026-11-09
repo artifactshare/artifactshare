@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 63
+version: 64
 managed: true
 -->
 
@@ -52,6 +52,8 @@ contain `$`, spaces, `*`, or `?`; use single quotes such as
   `recovery.kind` is one of `change_input`, `run_command`, `retry_later`,
   `ask_human`, `report_issue`. When `error.requires_human` is true, report to
   the user instead of retrying.
+
+Workspace administrators can approve multiple destination projects for an ordinary bot in Settings → Bots. Keep the existing primary for old clients, and select another approved destination with `--project-id`. Existing imported credentials and sessions use the live approved set; no reimport is needed. `projects list` lists publishable approvals and `doctor` adds `approved_project_ids` and live `publishable_project_ids` while keeping `project_id` as primary. An approved default that is archived or has lost its private contributor grant reports `agent_destination_unavailable` with destination and upload readiness false; authentication remains valid. Older servers may omit the live array, in which case doctor retains approval-based diagnostics; without either array it uses the singular primary. `whoami` keeps its existing response and does not expose bot approvals. Human agent approvals remain limited to one project. For reports intended only for a private project audience, explicitly pass `--visibility project`: the destination alone does not prevent workspace-visible posts. Removing an approval revokes posting but retains project audience grants and their quota usage until an administrator removes them through project membership management.
 
 ## First-time setup
 
@@ -303,6 +305,7 @@ CLI workflows; do not invent flags for them.
 | Find an ID from a title                | `resolve <value> --json`                                                            |
 | Open a share URL                       | `open <url> --json`                                                                 |
 | Preview a local file                   | `preview <file> --json` (local, no sign-in)                                         |
+| List approved bot destinations         | `projects list --json`                                                              |
 | Log out                                | `logout --profile <name> --json`                                                    |
 
 For an orphaned comment, read its original source with `artifacts get <target> --version <anchor.version_id> --json` or MCP `get_artifact` `version_id`. See [comments](references/comments.md) for null anchors, removed versions and continuation. Historical ids are not the current id required for safe updates.

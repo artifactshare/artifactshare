@@ -33,26 +33,35 @@ export async function loader({ context }: Route.LoaderArgs) {
   const authority = cliReadAuthority(getCliAuthority(context))
   if (authority === 'denied') return cliScopeDeniedResponse()
   if (authority !== null) {
-    const eligible = await withDb((db) =>
-      isAgentPublishableDestination(db, user, authority, authority.projectId),
-    )
-    return Response.json(
-      ProjectsListResponseSchema.parse({
-        projects: eligible
-          ? [
-              {
-                id: authority.projectId,
-                name: authority.projectNameSnapshot,
+    const candidates = authority.ordinaryBot
+      ? [...(authority.approvedProjects ?? [])].sort((a, b) =>
+          a.id === authority.projectId
+            ? -1
+            : b.id === authority.projectId
+              ? 1
+              : a.id.localeCompare(b.id),
+        )
+      : [{ id: authority.projectId, name: authority.projectNameSnapshot }]
+    const projects = await withDb(async (db) => {
+      const rows = await Promise.all(
+        candidates.map(async (project) =>
+          (await isAgentPublishableDestination(db, user, authority, project.id))
+            ? {
+                id: project.id,
+                name: project.name,
                 description: null,
                 base_visibility: 'restricted',
                 file_count: null,
                 updated_at: null,
-              },
-            ]
-          : [],
-      }),
-    )
+              }
+            : null,
+        ),
+      )
+      return rows.filter((row) => row !== null)
+    })
+    return Response.json(ProjectsListResponseSchema.parse({ projects }))
   }
+
   // In-workspace projects only, unpaginated — same scope and reasoning as the
   // MCP list_projects tool: projects are a small curated set, and the token
   // must not reach outside its own workspace.

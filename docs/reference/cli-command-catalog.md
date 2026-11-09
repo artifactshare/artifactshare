@@ -13,6 +13,7 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 
 この文書は、CLI command の利用者向け説明と成功 `data` / 失敗 `error.code` の参照である。command の能力対応、surface の所有、MCP と agent の対応は `packages/contract/src/capability-matrix.json` を正本にする。新しい CLI command の要否、命名、主要 flag はこの文書と共有契約を同じ変更で更新してから実装する。
 
+
 ## 文書の扱い
 
 能力表 `apps/web/app/lib/cli-capability-matrix.json` は `packages/contract/src/capability-matrix.json` から生成され、CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は共有契約を更新して `pnpm check:contract-surfaces` を実行する。
@@ -232,7 +233,7 @@ it reports the current version and uses `recovery.kind: ask_human` with
 
 ## 対象指定
 
-投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus プランでは、管理者という理由だけで他のメンバーの非公開プロジェクトに投稿できません。閲覧権限や成果物への個別共有だけでは、投稿先を選ぶ権限になりません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。
+投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus プランでは、管理者という理由だけで他のメンバーの非公開プロジェクトに投稿できません。閲覧権限や成果物への個別共有だけでは、投稿先を選ぶ権限になりません。人間のエージェントは承認した1つの投稿先に制限されます。workspace の bot は管理者が承認した複数の投稿先を、資格情報の再取り込みなしで選べます。非公開プロジェクト向けのレポートは --visibility project を明示してください。どちらも非公開プロジェクトでは contributor/manager の権限が必要です。publisher はプロジェクトを選択できません。
 
 - `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.artifactshare.link` URL、`a-<id>--v-<hex-version>.artifactshareusercontent.com` / `l-<id>--v-<hex-version>.artifactshareusercontent.com` の実行 URL、旧 sandbox / リンク配信 URL を直接受ける。旧配信 URL は ID の解決だけに使い、内容を取得しない。公開共有 URL は変更しない。タイトルやプロジェクト名からは非対話で解決しない。
 - タイトルやプロジェクト名しかないときは `resolve <value>` で候補を得てから ID を渡す。
@@ -518,3 +519,5 @@ Run `artifacts versions <target> --json` for HTML, Markdown, or static sites. Ea
 For human and agent credentials, updated servers return `retain_versions` (null means unlimited), `version_count`, and `total_size_bytes` in `artifacts get` and every `artifacts list` row, and on history pages. Counts and byte totals cover versions the caller can list, independently of the history page or source `--version`. Static-site history and totals include only published versions with a publication timestamp for every caller, including owners. Publisher credentials do not receive `version_count` or `total_size_bytes` and cannot list artifacts or read history. Publisher-created static-site versions may have a null `creator`. Static-site bytes sum all files in each version, including inherited files. Reused files count in each version. These are logical bytes, not physical storage, billing, or proof of object cleanup. Publisher-managed histories may exceed the policy because human-created and current versions are protected. Combine list pages and compare `total_size_bytes` client-side to find the largest artifacts.
 
 Static-site `artifacts get` now succeeds with metadata only, without `content` or `format`; `--include`, `--version`, and `--offset` remain unsupported for sites. Updated CLI get explicitly requests metadata. Released source-only clients retain unsupported-kind, so open still suggests download. Publisher credentials can read their scoped current metadata and, for sites, retain_versions, without version counts or total sizes but cannot list history or use `get --include versions`. Existing human/agent access rules apply; unreadable artifacts return `target_not_found` (API 404), with failure JSON on stderr, empty stdout, and exit 1. Shared viewers retain history access with creator email redaction. All shared flags and supported target URL forms work with `artifacts versions`.
+
+For ordinary workspace bots, `doctor` keeps `auth.authority.project_id` as the primary and reports `approved_project_ids` separately from live `publishable_project_ids`. If the configured approved destination is archived or loses its private contributor grant, `destination.ok` and `upload.ok` are false with `agent_destination_unavailable`, while `auth.ok` remains true. Older servers without the live array retain approval-based diagnostics; without either array the singular primary is used.

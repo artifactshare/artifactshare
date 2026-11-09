@@ -106,6 +106,7 @@ export default defineConfig({
             },
           }),
           include: [
+            'app/routes/_protected/settings/bots.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',
@@ -122,6 +123,7 @@ export default defineConfig({
         {
           browser: 'webkit',
           include: [
+            'app/routes/_protected/settings/bots.behavior.browser.test.tsx',
             'app/lib/usercontent-delivery.behavior.browser.test.tsx',
             'app/lib/*anchor*.behavior.browser.test.tsx',
             'app/lib/csp-reporter.behavior.browser.test.tsx',

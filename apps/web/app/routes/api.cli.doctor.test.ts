@@ -6,6 +6,10 @@ const requireUserMock = vi.hoisted(() => vi.fn())
 const getCliAuthorityMock = vi.hoisted(() => vi.fn())
 const checkUploadAccessMock = vi.hoisted(() => vi.fn())
 const createDbMock = vi.hoisted(() => vi.fn())
+const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
+vi.mock('~/services/agent-scope.server', () => ({
+  isAgentPublishableDestination: isAgentPublishableDestinationMock,
+}))
 
 vi.mock('~/middleware/auth', () => ({
   requireUserApiWithBearerMiddleware: requireUserApiWithBearerMiddlewareMock,
@@ -26,6 +30,7 @@ import { loader, middleware } from './api.cli.doctor'
 
 describe('/api/cli/doctor', () => {
   beforeEach(() => {
+    isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
     getCliAuthorityMock.mockReset()
@@ -91,6 +96,29 @@ describe('/api/cli/doctor', () => {
       error: { code: 'scope-denied' },
     })
     expect(checkUploadAccessMock).not.toHaveBeenCalled()
+  })
+
+  test('reports bot approvals additively and preserves primary', async () => {
+    checkUploadAccessMock.mockResolvedValue({ kind: 'allowed' })
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'agent',
+      projectId: 'a',
+      ordinaryBot: true,
+      approvedProjects: [
+        { id: 'a', name: 'A' },
+        { id: 'b', name: 'B' },
+      ],
+    })
+    const response = await loader({ context: new Map() } as never)
+    expect(
+      ((await response.json()) as { auth: { authority: unknown } }).auth
+        .authority,
+    ).toEqual({
+      preset: 'agent',
+      project_id: 'a',
+      approved_project_ids: ['a', 'b'],
+      publishable_project_ids: ['a', 'b'],
+    })
   })
 
   test('reports the project selected by an agent credential', async () => {

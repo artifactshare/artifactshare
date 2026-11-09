@@ -3,6 +3,7 @@ import type { Compilable, Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
+import { deleteProjectContainer } from './projects.server'
 import type { DB } from '~/types/db'
 import {
   createBridgeAuthorityForBot,
@@ -270,4 +271,37 @@ describe('bridge authority provisioning', () => {
         .get(),
     ).toEqual({ bridge_authority_id: null })
   })
+})
+
+test('ordinary bot approval becomes irrelevant after bridge conversion', async () => {
+  sqlite.exec(`
+    INSERT INTO artifact_containers (id,workspace_id,kind,created_by_id,name,base_visibility,created_at,updated_at)
+      VALUES ('secondary-1','ws1','project','admin','Secondary','workspace','2026-01-01','2026-01-01');
+    INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot,created_at)
+      VALUES ('family-1','fallback-1','Fallback','2026-01-01'),('family-1','secondary-1','Secondary','2026-01-01');
+    INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,created_at)
+      VALUES ('credential-1','bot1','hash','family-1','2099-01-01','2026-01-01');
+  `)
+  expect(
+    await deleteProjectContainer(db, 'ws1', 'secondary-1', 'admin'),
+  ).toMatchObject({ kind: 'has-agent-credentials' })
+  expect(
+    await createBridgeAuthorityForBot(
+      db,
+      { id: 'admin', workspaceId: 'ws1' },
+      {
+        botUserId: 'bot1',
+        fallbackProjectId: 'fallback-1',
+        sourceKind: 'qm',
+        sourceInstallationId: 'install-1',
+        externalWorkspaceId: 'external-1',
+      },
+    ),
+  ).toMatchObject({ kind: 'ok' })
+  expect(await deleteProjectContainer(db, 'ws1', 'secondary-1', 'admin')).toBe(
+    'ok',
+  )
+  expect(
+    await deleteProjectContainer(db, 'ws1', 'fallback-1', 'admin'),
+  ).not.toBe('ok')
 })

@@ -1,3 +1,4 @@
+import { updateWorkspaceBotDestinations } from '~/services/bot-destinations.server'
 import { errorResponse } from '~/lib/api-errors'
 import { isBotMembersEnabled } from '~/lib/bot-members-flag.server'
 import { requireUser } from '~/middleware/context'
@@ -48,6 +49,20 @@ export const screen = {
           {
             action: 'click',
             selector: 'button:has-text("Add bot")',
+          },
+        ],
+      },
+    },
+    {
+      id: 'edit-bot-destinations',
+      description: 'Botの承認済み投稿先を編集する状態',
+      setup: {
+        scenario: 'settings/with-bots',
+        interactions: [
+          {
+            action: 'click',
+            selector:
+              'tr:has-text("Nightly report bot") button:has-text("Edit destinations")',
           },
         ],
       },
@@ -120,6 +135,8 @@ export async function action({ request, context }: Route.ActionArgs) {
     intent?: unknown
     name?: unknown
     projectId?: unknown
+    projectIds?: unknown
+    revision?: unknown
     botUserId?: unknown
   } | null
   if (!body || typeof body !== 'object') {
@@ -127,6 +144,35 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
   const db = createDb()
   const actor = { id: user.id, workspaceId: user.workspaceId }
+
+  if (body.intent === 'destinations') {
+    if (
+      typeof body.botUserId !== 'string' ||
+      typeof body.projectId !== 'string' ||
+      typeof body.revision !== 'string'
+    )
+      return errorResponse('invalid-body', 'Invalid request body.', 400)
+    const result = await updateWorkspaceBotDestinations(db, actor, {
+      botUserId: body.botUserId,
+      projectId: body.projectId,
+      projectIds: body.projectIds,
+      revision: body.revision,
+    })
+    if (result.kind === 'ok') return Response.json({ ok: true })
+    return errorResponse(
+      result.kind,
+      result.kind === 'bot-conflict'
+        ? 'The bot changed. Reload and retry.'
+        : 'The destinations cannot be saved.',
+      result.kind === 'forbidden'
+        ? 403
+        : result.kind === 'not-found'
+          ? 404
+          : result.kind === 'bot-conflict' || result.kind === 'bot-stopped'
+            ? 409
+            : 400,
+    )
+  }
 
   if (body.intent === 'create') {
     if (!(await isBotMembersEnabled(user.workspaceId))) {
@@ -142,6 +188,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     const result = await createWorkspaceBot(db, actor, {
       name: body.name,
       projectId: body.projectId,
+      projectIds: body.projectIds,
     })
     switch (result.kind) {
       case 'ok':

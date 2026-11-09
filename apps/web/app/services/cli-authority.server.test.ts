@@ -245,6 +245,8 @@ describe('bot CLI authority resolution', () => {
     await expect(resolveCliAuthorityBySessionToken('ass_bot')).resolves.toEqual(
       {
         kind: 'agent',
+        ordinaryBot: true,
+        approvedProjects: [],
         familyId: 'family-b',
         workspaceId: 'ws1',
         projectId: 'project-b',

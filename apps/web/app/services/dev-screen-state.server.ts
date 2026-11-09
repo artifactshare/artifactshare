@@ -2064,6 +2064,7 @@ export async function seedDevScreenState(
       'artifact.delete',
       'artifact.publisher_adopted',
       'admin.grant',
+      'bot.destinations.update',
     ].entries()) {
       await db
         .insertInto('audit_events')
@@ -2079,11 +2080,13 @@ export async function seedDevScreenState(
                 ? 'workspace'
                 : 'user',
           subject_id:
-            action === 'artifact.publisher_adopted'
-              ? 'abc123def4'
-              : index === 0
-                ? workspaceId
-                : userId,
+            action === 'bot.destinations.update'
+              ? `${workspaceId}-activity-bot`
+              : action === 'artifact.publisher_adopted'
+                ? 'abc123def4'
+                : index === 0
+                  ? workspaceId
+                  : userId,
           detail:
             action === 'artifact.publisher_adopted'
               ? JSON.stringify({
@@ -2093,13 +2096,19 @@ export async function seedDevScreenState(
                   publisher_client_id: 'client1',
                   publisher_client_name: 'Reports',
                 })
-              : action === 'plan.change'
-                ? JSON.stringify({ from: 'plus', to: 'team' })
-                : action === 'artifact.delete'
-                  ? JSON.stringify({
-                      name: 'A long representative project handoff file.html',
-                    })
-                  : JSON.stringify({ fromRole: 'member', toRole: 'admin' }),
+              : action === 'bot.destinations.update'
+                ? JSON.stringify({
+                    name: 'Nightly report bot',
+                    project_id: 'reports',
+                    project_ids: ['reports', 'management'],
+                  })
+                : action === 'plan.change'
+                  ? JSON.stringify({ from: 'plus', to: 'team' })
+                  : action === 'artifact.delete'
+                    ? JSON.stringify({
+                        name: 'A long representative project handoff file.html',
+                      })
+                    : JSON.stringify({ fromRole: 'member', toRole: 'admin' }),
           created_at: new Date(
             Date.parse(now) - index * 86_400_000,
           ).toISOString(),
@@ -2208,6 +2217,21 @@ export async function seedDevScreenState(
         description: 'Destination project for bot uploads',
         base_visibility: 'workspace',
         archived_at: null,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict((oc) => oc.column('id').doNothing())
+      .execute()
+    const secondaryProjectId = `${workspaceId}-bot-management`
+    await db
+      .insertInto('artifact_containers')
+      .values({
+        id: secondaryProjectId,
+        workspace_id: workspaceId,
+        kind: 'project',
+        created_by_id: userId,
+        name: 'Management reports',
+        base_visibility: 'workspace',
         created_at: now,
         updated_at: now,
       })
@@ -2324,6 +2348,30 @@ export async function seedDevScreenState(
         })
         .onConflict((oc) => oc.column('family_id').doNothing())
         .execute()
+      await db
+        .insertInto('bot_destination_projects')
+        .values({
+          family_id: familyId,
+          project_id: projectId,
+          project_name_snapshot: projectName,
+          created_at: createdAt,
+        })
+        .onConflict((oc) => oc.columns(['family_id', 'project_id']).doNothing())
+        .execute()
+      if (bot.key === 'active') {
+        await db
+          .insertInto('bot_destination_projects')
+          .values({
+            family_id: familyId,
+            project_id: secondaryProjectId,
+            project_name_snapshot: 'Management reports',
+            created_at: createdAt,
+          })
+          .onConflict((oc) =>
+            oc.columns(['family_id', 'project_id']).doNothing(),
+          )
+          .execute()
+      }
       await db
         .insertInto('cli_refresh_credentials')
         .values({

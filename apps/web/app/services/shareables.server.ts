@@ -3675,7 +3675,6 @@ async function findWritableShareable(
       !['workspace', 'project'].includes(shareable.visibility) ||
       shareable.container_kind !== 'project' ||
       shareable.container_archived_at !== null ||
-      shareable.container_id !== writeAuthority.projectId ||
       !(await isAgentPublishableDestination(
         db,
         { id: user.id, workspaceId: user.workspaceId, email: user.email ?? '' },

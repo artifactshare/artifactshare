@@ -230,7 +230,6 @@ export async function runDoctor(
   data.auth.email = typeof user?.email === 'string' ? user.email : null
   const authority = doctorAuthority(auth?.authority)
   if (authority) data.auth.authority = authority
-  applyAgentDestinationDiagnostic(data, authority)
   if (authority?.preset === 'publisher')
     data.destination = {
       ok: true,
@@ -245,6 +244,7 @@ export async function runDoctor(
     data.upload.code = normalizeApiCode(upload?.code)
     data.upload.hint = uploadBlockedHint(data.upload.code)
   }
+  applyAgentDestinationDiagnostic(data, authority)
   return writeSuccess(command, doctorDataWithNextCommand(data), mode)
 }
 
@@ -268,7 +268,21 @@ function doctorAuthority(value: unknown): DoctorAuthority | null {
     typeof authority.project_id === 'string' &&
     authority.project_id
   ) {
-    return { preset: 'agent', project_id: authority.project_id }
+    return {
+      preset: 'agent',
+      project_id: authority.project_id,
+      ...(Array.isArray(authority.publishable_project_ids) &&
+      authority.publishable_project_ids.every((id) => typeof id === 'string')
+        ? {
+            publishable_project_ids:
+              authority.publishable_project_ids as string[],
+          }
+        : {}),
+      ...(Array.isArray(authority.approved_project_ids) &&
+      authority.approved_project_ids.every((id) => typeof id === 'string')
+        ? { approved_project_ids: authority.approved_project_ids as string[] }
+        : {}),
+    }
   }
   if (
     authority.preset === 'unrestricted' &&
@@ -284,10 +298,30 @@ function applyAgentDestinationDiagnostic(
   authority: DoctorAuthority | null,
 ): void {
   if (
+    authority?.preset === 'agent' &&
+    data.destination.ok &&
+    (authority.approved_project_ids ?? [authority.project_id]).includes(
+      data.destination.project_id ?? '',
+    ) &&
+    authority.publishable_project_ids !== undefined &&
+    !authority.publishable_project_ids.includes(
+      data.destination.project_id ?? '',
+    )
+  ) {
+    const code = 'agent_destination_unavailable'
+    const hint =
+      'The configured destination is approved but cannot currently accept uploads. Ask a workspace administrator to check whether the project is archived or the bot contributor grant was removed, or select an available destination from projects list.'
+    data.destination = { ok: false, code, hint }
+    if (data.upload.ok) data.upload = { ...data.upload, ok: false, code, hint }
+    return
+  }
+  if (
     authority?.preset !== 'agent' ||
     !authority.project_id ||
     !data.destination.ok ||
-    data.destination.project_id === authority.project_id
+    (authority.approved_project_ids ?? [authority.project_id]).includes(
+      data.destination.project_id ?? '',
+    )
   ) {
     return
   }
@@ -296,6 +330,9 @@ function applyAgentDestinationDiagnostic(
     type: data.destination.type,
     project_id: data.destination.project_id,
     approved_project_id: authority.project_id,
+    approved_project_ids: authority.approved_project_ids ?? [
+      authority.project_id,
+    ],
     code: 'agent_scope_mismatch',
     hint: data.auth.profile
       ? `The configured default destination is outside this agent credential's approved project. Run ${CLI_INVOCATION} init --profile ${data.auth.profile} --project-id ${authority.project_id} --json to use the approved project by default.`

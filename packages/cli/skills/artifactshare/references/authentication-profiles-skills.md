@@ -23,6 +23,7 @@
   refresh consumes the displayed token, overwriting an existing profile credential requires
   `--force`, and a revoked or superseded bot token fails with `bot_token_invalid` (ask the
   admin to reissue).
+  Administrators can edit an ordinary bot’s approved destinations in Settings → Bots without reimport. `doctor` checks `approved_project_ids` when available, falling back to the singular primary from older servers. Human agent approvals remain single-project.
   Imported API-token profiles are not renewed by the CLI.
   Use `--allow-plaintext-token-store` only on a trusted machine without a native token store.
   That fallback is mode `0600` on POSIX and unavailable on Windows, where saved profiles require Credential Manager.

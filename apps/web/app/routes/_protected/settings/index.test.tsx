@@ -480,6 +480,23 @@ describe('/settings/bots page', () => {
     lastAuthAt: '2026-07-01T00:00:00.000Z',
   }
 
+  test('shows approved destinations and primary with editing available when creation is off', () => {
+    const html = renderWithBots([
+      {
+        ...activeBot,
+        approvedProjects: [
+          { id: 'proj1', name: 'Reports', unavailable: false },
+          { id: 'prj2', name: 'Management', unavailable: true },
+        ],
+      },
+    ])
+    expect(html).toContain('Reports')
+    expect(html).toContain('Management')
+    expect(html).toContain('team.bots.primary')
+    expect(html).toContain('team.bots.unavailable')
+    expect(html).toContain('team.bots.editDestinations')
+  })
+
   test('active bots render badge, status, email, destination, and actions', () => {
     const html = renderWithBots([activeBot])
     expect(html).toContain('bot-badge')

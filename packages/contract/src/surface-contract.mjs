@@ -73,6 +73,7 @@ export const CLI_QUICK_REFERENCE = [
   ['Find an ID from a title', 'resolve <value> --json'],
   ['Open a share URL', 'open <url> --json'],
   ['Preview a local file', 'preview <file> --json (local, no sign-in)'],
+  ['List approved bot destinations', 'projects list --json'],
   ['Log out', 'logout --profile <name> --json'],
 ]
 
@@ -121,7 +122,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'projects list / create / edit',
-    'List eligible project destinations; create and edit projects and audience',
+    'List eligible destinations, including all approved bot projects with the primary first; create and edit projects and audience',
   ],
   [
     'move <target>',
@@ -141,7 +142,7 @@ export const CLI_README_COMMANDS = [
   ],
   [
     'doctor',
-    'Diagnose token storage, auth, destination, network, and upload readiness — tells you the next command to run',
+    'Diagnose token storage, auth, destination, network, and upload readiness; bot diagnostics distinguish approved_project_ids from live publishable_project_ids while project_id remains the primary',
   ],
   [
     'changelog',

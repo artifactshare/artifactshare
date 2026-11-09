@@ -1131,6 +1131,11 @@ describe('uploadShareable', () => {
     // The guardrail limit is already saturated by three humans; the bot's
     // upload still succeeds and neither reserves nor finalizes a slot.
     await seedProjectContainer(db)
+    sqliteRef.current!
+      .exec(`INSERT INTO agent_profiles (id,user_id,workspace_id,created_at) VALUES ('bot-profile','bot1','ws-a','2026-01-01');
+INSERT INTO cli_family_authorities (family_id,user_id,preset,workspace_id,project_id,project_name_snapshot,agent_profile_id,status,created_at,updated_at) VALUES ('bot-family','bot1','agent','ws-a','project-a','Project','bot-profile','active','2026-01-01','2026-01-01');
+INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,created_at) VALUES ('bot-family','bot1','bot-family-hash','bot-family','2099-01-01','2026-01-01');
+INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot,created_at) VALUES ('bot-family','project-a','Project','2026-01-01');`)
     const result = await uploadShareable(
       db,
       {
@@ -3388,6 +3393,10 @@ describe('StaticSiteBundleUploadSession', () => {
         projectNameSnapshot: 'Project',
         agentProfileId: 'bot-profile',
       }
+      sqliteRef.current!
+        .exec(`INSERT INTO cli_family_authorities (family_id,user_id,preset,workspace_id,project_id,project_name_snapshot,agent_profile_id,status,created_at,updated_at) VALUES ('bot-family','${bot.id}','agent','ws-a','project-a','Project','bot-profile','active','2026-01-01','2026-01-01');
+INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,created_at) VALUES ('bot-family','${bot.id}','bot-family-hash','bot-family','2099-01-01','2026-01-01');
+INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot,created_at) SELECT 'bot-family','project-a','Project','2026-01-01' WHERE ${allowed ? 1 : 0};`)
       const form = new FormData()
       form.set('visibility', 'project')
       form.set('container_id', 'project-a')
@@ -10154,6 +10163,9 @@ describe('destination commit races', () => {
         created_at: now,
       })
       .execute()
+    sqliteRef.current!
+      .exec(`INSERT INTO cli_family_authorities (family_id,user_id,preset,workspace_id,project_id,project_name_snapshot,agent_profile_id,status,created_at,updated_at) VALUES ('placement-family','owner-1','agent','ws-a','project-a','Project','placement-agent','active','2026-01-01','2026-01-01');
+INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,created_at) VALUES ('placement-family','owner-1','placement-family-hash','placement-family','2099-01-01','2026-01-01');`)
   })
   afterEach(async () => {
     await db.destroy()

@@ -220,6 +220,7 @@ const ACTIONS = {
   'artifact.publisher_adopted': true,
   'cli.refresh_credential.revoke': true,
   'bot.create': true,
+  'bot.destinations.update': true,
   'bot.stop': true,
   'bot.credential.reissue': true,
   'access_request.created': true,
@@ -308,6 +309,8 @@ function subjectText(
       return `${d.artifactTitle ?? d.artifactId ?? '—'} · ${d.previousPublisherClientName ?? d.previousPublisherClientId ?? '—'} → ${d.publisherClientName ?? d.publisherClientId ?? '—'}`
     case 'artifact.delete':
       return d.name ?? ''
+    case 'bot.destinations.update':
+      return user ?? d.name ?? ''
     case 'bot.create':
     case 'bot.stop':
     case 'bot.credential.reissue':

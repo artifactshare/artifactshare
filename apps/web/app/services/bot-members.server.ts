@@ -1,4 +1,12 @@
-import { projectPlacementSql } from './projects.server'
+import {
+  botDestinationGrant,
+  botDestinationPlacementSql,
+  normalizeBotDestinations,
+} from './bot-destinations.server'
+import {
+  placementAssertionQueries,
+  projectPlacementSql,
+} from './projects.server'
 import { sql, type Expression, type Kysely } from 'kysely'
 import { nanoid } from 'nanoid'
 import {
@@ -32,6 +40,9 @@ export type WorkspaceBotRow = {
   credentialLive: boolean
   lastAuthAt: string | null
   cancelable: boolean
+  destinationsEditable?: boolean
+  destinationRevision?: string
+  approvedProjects?: { id: string; name: string; unavailable: boolean }[]
 }
 
 export type CreateWorkspaceBotResult =
@@ -172,6 +183,8 @@ export async function listWorkspaceBots(
       'users.id',
       'users.name',
       'users.email',
+      'users.updated_at as destinationRevision',
+      sql<string | null>`max(authority.family_id)`.as('familyId'),
       'users.bot_stopped_at as botStoppedAt',
       sql<string | null>`max(authority.project_id)`.as('projectId'),
       sql<string | null>`max(project.name)`.as('projectName'),
@@ -196,18 +209,49 @@ export async function listWorkspaceBots(
     .groupBy('users.id')
     .orderBy('users.created_at', 'desc')
     .execute()
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    botStoppedAt: row.botStoppedAt,
-    projectId: row.projectId,
-    projectName: row.projectName,
-    projectNameSnapshot: row.projectNameSnapshot,
-    credentialLive: Boolean(row.credentialLive),
-    lastAuthAt: row.lastAuthAt,
-    cancelable: Boolean(row.cancelable),
-  }))
+  return Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      botStoppedAt: row.botStoppedAt,
+      projectId: row.projectId,
+      projectName: row.projectName,
+      projectNameSnapshot: row.projectNameSnapshot,
+      credentialLive: Boolean(row.credentialLive),
+      lastAuthAt: row.lastAuthAt,
+      cancelable: Boolean(row.cancelable),
+      destinationsEditable: !(await db
+        .selectFrom('bridge_authorities')
+        .select('id')
+        .where('bot_user_id', '=', row.id)
+        .executeTakeFirst()),
+      destinationRevision: row.destinationRevision,
+      approvedProjects: row.familyId
+        ? (
+            await db
+              .selectFrom('bot_destination_projects as d')
+              .innerJoin('artifact_containers as p', 'p.id', 'd.project_id')
+              .select([
+                'p.id',
+                'p.name',
+                projectPlacementSql(
+                  { id: row.id, workspaceId },
+                  sql.ref('p.id'),
+                  true,
+                ).as('available'),
+              ])
+              .where('d.family_id', '=', row.familyId)
+              .orderBy('p.id')
+              .execute()
+          ).map((p) => ({
+            id: p.id,
+            name: p.name,
+            unavailable: !p.available,
+          }))
+        : [],
+    })),
+  )
 }
 
 /**
@@ -219,10 +263,15 @@ export async function listWorkspaceBots(
 export async function createWorkspaceBot(
   db: Kysely<DB>,
   actor: Actor,
-  input: { name: string; projectId: string },
+  input: { name: string; projectId: string; projectIds?: unknown },
 ): Promise<CreateWorkspaceBotResult> {
   const admin = await requireWorkspaceAdmin(db, actor)
   if (admin.kind !== 'ok') return { kind: 'forbidden' }
+  const projectIds = normalizeBotDestinations(
+    input.projectId,
+    input.projectIds ?? [input.projectId],
+  )
+  if (!projectIds) return { kind: 'bot-destination-invalid' }
   const name = normalizeBotDisplayName(input.name)
   if (!name) return { kind: 'bot-name-invalid' }
 
@@ -255,6 +304,17 @@ export async function createWorkspaceBot(
 
   const botUserId = nanoid()
   const email = generateBotEmail()
+  for (const id of projectIds) {
+    if (
+      !(await db
+        .selectFrom('users')
+        .select('id')
+        .where('id', '=', actor.id)
+        .where(botDestinationPlacementSql(actor, id, email))
+        .executeTakeFirst())
+    )
+      return { kind: 'bot-destination-invalid' }
+  }
   const profileId = nanoid()
   const familyId = nanoid()
   const credentialId = familyId
@@ -515,6 +575,7 @@ export async function createWorkspaceBot(
               JSON.stringify({
                 name,
                 project_id: input.projectId,
+                project_ids: projectIds,
                 project_name: project.name,
               }),
             )
@@ -530,8 +591,52 @@ export async function createWorkspaceBot(
       memberInsert,
       profileInsert,
       familyInsert,
+      ...projectIds.flatMap((id) =>
+        placementAssertionQueries(
+          db,
+          actor.workspaceId,
+          nanoid(),
+          sql<boolean>`NOT ${botRowExists} OR ${botDestinationPlacementSql(actor, id, email)}`,
+          now,
+        ),
+      ),
+      ...projectIds.map((id) =>
+        db
+          .insertInto('bot_destination_projects')
+          .columns([
+            'family_id',
+            'project_id',
+            'project_name_snapshot',
+            'created_at',
+          ])
+          .expression((eb) =>
+            eb
+              .selectFrom('artifact_containers')
+              .where('id', '=', id)
+              .where(botRowExists)
+              .select([
+                eb.val(familyId).as('family_id'),
+                'id as project_id',
+                'name as project_name_snapshot',
+                eb.val(now).as('created_at'),
+              ]),
+          ),
+      ),
       credentialInsert,
       grantInsert,
+      ...projectIds.flatMap((id) =>
+        id === input.projectId
+          ? []
+          : [
+              botDestinationGrant(
+                db,
+                actor,
+                { id: botUserId, email, name },
+                id,
+                now,
+              ),
+            ],
+      ),
       auditInsert,
     )
   } catch {
@@ -962,6 +1067,8 @@ export async function reissueWorkspaceBotCredential(
     )
     .select([
       'authority.project_id',
+      'authority.family_id',
+      'authority.updated_at',
       'authority.agent_profile_id',
       'authority.bridge_authority_id',
       'project.name as project_name',
@@ -1139,10 +1246,47 @@ export async function reissueWorkspaceBotCredential(
   try {
     await runD1Batch(
       db,
+      ...placementAssertionQueries(
+        db,
+        actor.workspaceId,
+        nanoid(),
+        sql<boolean>`EXISTS (SELECT 1 FROM cli_family_authorities WHERE family_id = ${source.family_id} AND status = 'active' AND updated_at = ${source.updated_at}) AND EXISTS (SELECT 1 FROM workspace_members WHERE user_id = ${actor.id} AND workspace_id = ${actor.workspaceId} AND status = 'active' AND role IN ('owner', 'admin'))`,
+        now,
+      ),
       supersede,
       revokeOldCredentials,
       deleteOldSessions,
       familyInsert,
+      db
+        .insertInto('bot_destination_projects')
+        .columns([
+          'family_id',
+          'project_id',
+          'project_name_snapshot',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('bot_destination_projects')
+            .where('family_id', '=', source.family_id)
+            .where(
+              sql<boolean>`NOT EXISTS (SELECT 1 FROM bridge_authorities WHERE bot_user_id = ${botUserId})`,
+            )
+            .where(
+              sql<boolean>`EXISTS (SELECT 1 FROM cli_family_authorities WHERE family_id = ${familyId})`,
+            )
+            .select([
+              eb.val(familyId).as('family_id'),
+              'project_id',
+              'project_name_snapshot',
+              'created_at',
+            ]),
+        ),
+      db
+        .updateTable('users')
+        .set({ updated_at: uniqueStopMarker() })
+        .where('id', '=', botUserId)
+        .where(botActive),
       credentialInsert,
       reissueAudit,
     )
@@ -1150,6 +1294,13 @@ export async function reissueWorkspaceBotCredential(
     // The batch rolled back. Re-read state to classify instead of guessing:
     // only a genuinely missing/deleted destination is "create a new bot" —
     // a transient D1 error must surface as retryable.
+    const currentBot = await db
+      .selectFrom('users')
+      .select('bot_stopped_at')
+      .where('id', '=', botUserId)
+      .executeTakeFirst()
+    if (!currentBot) return { kind: 'not-found' }
+    if (currentBot.bot_stopped_at) return { kind: 'bot-stopped' }
     const destination = await db
       .selectFrom('artifact_containers')
       .select('id')

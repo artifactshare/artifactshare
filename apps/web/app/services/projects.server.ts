@@ -2046,7 +2046,8 @@ async function findLiveAgentCredentialHolder(
     SELECT users.name AS name
     FROM cli_family_authorities AS fa
     JOIN users ON users.id = fa.user_id
-    WHERE fa.project_id = ${projectId}
+    WHERE (fa.project_id = ${projectId} OR EXISTS (
+      SELECT 1 FROM bot_destination_projects d WHERE d.family_id = fa.family_id AND d.project_id = ${projectId}))
       AND (${liveFamilySql(now)})
     LIMIT 1
   `.execute(db)
@@ -2078,6 +2079,11 @@ async function detachNonLiveAgentCredentials(
   projectId: string,
   now: string,
 ): Promise<void> {
+  await sql`DELETE FROM bot_destination_projects
+    WHERE project_id = ${projectId} AND NOT EXISTS (
+      SELECT 1 FROM cli_family_authorities fa
+      WHERE fa.family_id = bot_destination_projects.family_id AND (${liveFamilySql(now)})
+    )`.execute(db)
   await sql`
     UPDATE cli_family_authorities
     SET project_id = NULL
@@ -2282,6 +2288,42 @@ export function projectPlacementSql(
   )`
 }
 
+/** Always read server state, including for an already resolved session authority. */
+export function agentDestinationSql(
+  user: { id: string; workspaceId: string },
+  authority: Extract<CliAuthority, { kind: 'agent' }>,
+  containerId: string | RawBuilder<unknown>,
+): RawBuilder<boolean> {
+  if (!authority.ordinaryBot) {
+    return sql<boolean>`${containerId} = ${authority.projectId}
+      AND ${projectPlacementSql(user, containerId, true)}`
+  }
+  return sql<boolean>`${user.workspaceId} = ${authority.workspaceId}
+    AND EXISTS (
+      SELECT 1 FROM cli_family_authorities scope_family
+      JOIN users scope_user ON scope_user.id = scope_family.user_id
+      WHERE scope_family.family_id = ${authority.familyId}
+        AND scope_family.user_id = ${user.id}
+        AND scope_family.workspace_id = ${authority.workspaceId}
+        AND scope_user.workspace_id = scope_family.workspace_id
+        AND scope_family.agent_profile_id = ${authority.agentProfileId}
+        AND scope_family.preset = 'agent' AND scope_family.status = 'active'
+        AND scope_family.bridge_authority_id IS NULL
+        AND EXISTS (SELECT 1 FROM cli_refresh_credentials scope_credential
+          WHERE scope_credential.family_id = scope_family.family_id
+            AND scope_credential.revoked_at IS NULL AND scope_credential.expires_at > ${nowIso()})
+        AND (
+          (scope_user.kind = 'human' AND scope_family.project_id = ${containerId}
+            AND ${containerId} = ${authority.projectId})
+          OR (scope_user.kind = 'bot' AND scope_user.bot_stopped_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM bridge_authorities scope_bridge WHERE scope_bridge.bot_user_id = scope_user.id)
+            AND EXISTS (SELECT 1 FROM bot_destination_projects scope_destination
+              WHERE scope_destination.family_id = scope_family.family_id
+                AND scope_destination.project_id = ${containerId}))
+        )
+    ) AND ${projectPlacementSql(user, containerId, true)}`
+}
+
 export function uploadPlacementSql(
   user: { id: string; workspaceId: string },
   containerId: string | RawBuilder<unknown>,
@@ -2295,10 +2337,7 @@ export function uploadPlacementSql(
   }
   const agent = cliWriteAuthority(authority)
   if (agent === 'denied') return sql<boolean>`0 = 1`
-  if (agent)
-    return sql<boolean>`
-    ${user.workspaceId} = ${agent.workspaceId} AND ${containerId} = ${agent.projectId}
-    AND ${projectPlacementSql(user, containerId, true)}`
+  if (agent) return agentDestinationSql(user, agent, containerId)
   return sql<boolean>`EXISTS (SELECT 1 FROM users placement_human WHERE placement_human.id = ${user.id} AND placement_human.kind = 'human') AND (${projectPlacementSql(user, containerId)} OR EXISTS (
     SELECT 1 FROM artifact_containers placement_home JOIN users placement_owner
       ON placement_owner.id = placement_home.owner_user_id

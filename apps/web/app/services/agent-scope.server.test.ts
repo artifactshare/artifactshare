@@ -9,6 +9,7 @@ import {
 import type { DB } from '~/types/db'
 import type { SessionUser } from '~/lib/user'
 import type { CliAuthority } from './cli-authority.server'
+import { uploadPlacementSql } from './projects.server'
 import { listAgentReadableArtifacts } from './cli-artifacts.server'
 import {
   isAgentOwnedArtifact,
@@ -120,6 +121,9 @@ describe('agent artifact read scope', () => {
          VALUES ('agent-1', 'u1', 'ws1', '2026-01-01T00:00:00.000Z')`,
       )
       .run()
+    sqlite.exec(`INSERT INTO cli_family_authorities (family_id,user_id,preset,workspace_id,project_id,project_name_snapshot,agent_profile_id,status,created_at,updated_at)
+      VALUES ('family-1','u1','agent','ws1','project-1','Approved project','agent-1','active','2026-01-01','2026-01-01');
+`)
     sqlite
       .prepare(
         `INSERT INTO shareables (
@@ -513,7 +517,26 @@ describe('agent artifact read scope', () => {
     ).toBe(true)
   })
 
-  test('write scope stays pinned to the approved destination project', async () => {
+  test('human write scope stays fixed without a live refresh credential', async () => {
+    expect(
+      await db.selectFrom('cli_refresh_credentials').select('id').execute(),
+    ).toEqual([])
+    expect(
+      await db
+        .selectFrom('artifact_containers')
+        .select('id')
+        .where('id', '=', 'project-1')
+        .where(uploadPlacementSql(user, 'project-1', authority))
+        .execute(),
+    ).toEqual([{ id: 'project-1' }])
+    expect(
+      await db
+        .selectFrom('artifact_containers')
+        .select('id')
+        .where('id', '=', 'project-2')
+        .where(uploadPlacementSql(user, 'project-2', authority))
+        .execute(),
+    ).toEqual([])
     await expect(
       isAgentPublishableDestination(db, user, authority, 'project-1'),
     ).resolves.toBe(true)

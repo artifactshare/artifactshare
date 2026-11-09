@@ -7,7 +7,7 @@
 
 ## Audience and visibility settings
 
-Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Agents and bots still require their fixed project and a verified contributor/manager grant for private projects; publisher credentials cannot select projects.
+Destination lists include only active projects you can post into. A private project permits its creator, a current workspace owner/admin on the team plan, or a verified contributor/manager. On free and plus, admin status alone does not permit placement in another member’s private project. Viewer access and individual artifact grants do not authorize placement. Human agents remain limited to their fixed approved project. Ordinary workspace bots may select any destination in their administrator-approved set. Both require a verified contributor/manager grant for private projects; publisher credentials cannot select projects.
 
 Posting to a project delivers to the audience defined by that project. Without
 a destination, `share` posts to home. Choose the home audience by purpose:
@@ -98,6 +98,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> 
 npm exec --yes --package=@artifactshare/cli -- artifactshare projects edit <id> --archive --json
 ```
 
+- `projects list` shows all currently publishable bot approvals, primary first. Administrators edit these in Settings → Bots; imported credentials stay valid. Explicitly use `--visibility project` for private-project reports. Removing an approval revokes posting but retains project audience grants and their quota usage.
 - `projects create` uses `default_project_visibility` when saved, otherwise
   `workspace`. Pass `--visibility private` for a confidential project.
 - `projects edit` changes name, description, visibility, audience
