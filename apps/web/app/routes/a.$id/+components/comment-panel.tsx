@@ -215,7 +215,7 @@ export function CommentPanel({
   )
 
   const commentList = (
-    <div className="pb-comment-panel-bottom flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 pt-3">
+    <div className="pb-comment-panel-bottom max-sheet:pb-3 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-3 pt-3">
       {targetFetchFailed ? (
         <div role="status" className="text-muted-foreground text-sm">
           {t('comments.errorThread')}
@@ -447,7 +447,7 @@ function CommentPanelTabs({
   const { t } = useT()
   return (
     <Tabs
-      className="flex min-h-0 flex-1 flex-col"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
       value={value}
       onValueChange={(nextFilter) => onValueChange(nextFilter as CommentFilter)}
     >
