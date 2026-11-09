@@ -834,6 +834,134 @@ test('comments list returns static-site anchor locations and older anchors witho
   )
 })
 
+test('comments list and reply readback keep the PDF page and posting version', async () => {
+  const pageThread = {
+    ...THREAD,
+    anchor: {
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: 'v3',
+      version_number: 3,
+    },
+  }
+  const deletedOrigin = {
+    ...pageThread,
+    id: 'thr2',
+    anchor: { ...pageThread.anchor, version_id: null, version_number: null },
+  }
+  const comments = [pageThread, deletedOrigin, THREAD]
+  await withServer(
+    (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify(
+          request.method === 'GET'
+            ? { artifact_id: 'abc123def4', comments, has_more: false }
+            : {
+                artifact_id: 'abc123def4',
+                thread_id: 'thr1',
+                reply: true,
+                thread: pageThread,
+              },
+        ),
+      )
+    },
+    async (baseUrl) => {
+      const env = { ARTIFACTSHARE_TOKEN: 'test-token' }
+      const listed = await runAsync(
+        ['comments', 'list', 'abc123def4', '--base-url', baseUrl, '--json'],
+        env,
+      )
+      assert.deepEqual(
+        expectSuccess(listed, 'comments list').data.comments,
+        comments,
+      )
+      const replied = await runAsync(
+        [
+          'comments',
+          'post',
+          'abc123def4',
+          '--body',
+          'Done',
+          '--reply-to',
+          'thr1',
+          '--base-url',
+          baseUrl,
+          '--json',
+        ],
+        env,
+      )
+      assert.deepEqual(
+        expectSuccess(replied, 'comments post').data.thread.anchor,
+        pageThread.anchor,
+      )
+    },
+  )
+})
+
+test('comments list and readback reject incomplete or invalid PDF page fields', async () => {
+  const pageAnchor = {
+    kind: 'artifact',
+    quoted_text: null,
+    state: null,
+    page_number: 12,
+    version_id: 'v3',
+    version_number: 3,
+  }
+  for (const anchor of [
+    { kind: 'artifact', quoted_text: null, state: null, page_number: 12 },
+    { ...pageAnchor, page_number: 0 },
+    { ...pageAnchor, page_number: 2.5 },
+  ]) {
+    const thread = { ...THREAD, anchor }
+    await withServer(
+      (request, response) => {
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify(
+            request.method === 'GET'
+              ? {
+                  artifact_id: 'abc123def4',
+                  comments: [thread],
+                  has_more: false,
+                }
+              : {
+                  artifact_id: 'abc123def4',
+                  thread_id: 'thr1',
+                  reply: true,
+                  thread,
+                },
+          ),
+        )
+      },
+      async (baseUrl) => {
+        const env = { ARTIFACTSHARE_TOKEN: 'test-token' }
+        for (const args of [
+          ['comments', 'list', 'abc123def4'],
+          [
+            'comments',
+            'post',
+            'abc123def4',
+            '--body',
+            'Done',
+            '--reply-to',
+            'thr1',
+          ],
+          ['comments', 'resolve', 'abc123def4', '--thread-id', 'thr1'],
+        ]) {
+          const result = await runAsync(
+            [...args, '--base-url', baseUrl, '--json'],
+            env,
+          )
+          expectFailure(result, { code: 'service_error' })
+        }
+      },
+    )
+  }
+})
+
 test('comments list sends a bounded thread cursor request and keeps pagination metadata', async () => {
   await withServer(
     (request, response) => {

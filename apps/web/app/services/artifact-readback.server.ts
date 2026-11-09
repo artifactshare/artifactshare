@@ -76,7 +76,18 @@ export function toAgentCommentThread(thread: CommentThreadView) {
               ? { position_state: thread.subject.positionState }
               : {}),
           }
-        : { kind: 'artifact' as const, quoted_text: null, state: null },
+        : thread.subject.kind === 'pdf-page'
+          ? {
+              // A PDF page comment keeps the artifact anchor kind, so
+              // released CLIs still parse it; the page fields are additive.
+              kind: 'artifact' as const,
+              quoted_text: null,
+              state: null,
+              page_number: thread.subject.pageNumber,
+              version_id: thread.subject.versionId,
+              version_number: thread.subject.versionNumber,
+            }
+          : { kind: 'artifact' as const, quoted_text: null, state: null },
     messages: thread.messages.map(toAgentCommentMessage),
   }
 }

@@ -276,7 +276,11 @@ export const REST_SCHEMAS = {
     message_count: { type: 'integer', minimum: 0 },
     reply_count: { type: 'integer', minimum: 0 },
     older_cursor: nullableString,
-    anchor: { type: 'object' },
+    anchor: {
+      type: 'object',
+      description:
+        'What the thread is attached to: kind artifact (the whole file) or text. A PDF comment posted on a page keeps kind artifact and adds page_number with version_id and version_number of the version it was posted on (null once that version is deleted).',
+    },
     messages: {
       type: 'array',
       maxItems: 51,

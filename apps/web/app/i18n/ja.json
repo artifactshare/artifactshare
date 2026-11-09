@@ -1692,5 +1692,15 @@
   "videoViewer.downloadAtRisk": "動画をダウンロード用に保持できませんでした。このページを開いているうちに今すぐダウンロードするか、再読み込みしてもう一度お試しください。",
   "comments.newSitePlaceholder": "サイト全体へのコメントを書く",
   "comments.subjectLocation": "ページ: {path}",
-  "comments.subjectLocationRoot": "ページ: トップ（/）"
+  "comments.subjectLocationRoot": "ページ: トップ（/）",
+  "comments.pdfPageLabel": "{page}ページ",
+  "comments.pdfPageRemove": "{page}ページの指定を外して、ファイル全体へコメントする",
+  "comments.newPdfPagePlaceholder": "このページへのコメントを書く",
+  "comments.pdfPageShort": "p.{page}",
+  "comments.openPdfPage": "{page}ページを開く",
+  "comments.pdfPageOfVersion": "{version} の {page} ページ",
+  "comments.pdfPageVersionUnavailable": "削除された版の {page} ページ",
+  "comments.pdfPageOfOtherVersion": "別の版の {page} ページ",
+  "comments.versionConflictPage": "PDF が更新されています。ページを再読み込みして、もう一度投稿してください。",
+  "comments.emptyBodyPdfPage": "下の入力欄から、表示中のページへのコメントを追加できます。ページの × を押すと、ファイル全体へのコメントになります。"
 }

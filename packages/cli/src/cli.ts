@@ -1041,6 +1041,9 @@ target_path names the page the text is on: the entry page, or on a multi-file
 site the file or route path plus any #/ or #!/ hash route (for example
 /settings or /index.html#/billing). Other fragments such as #intro are not
 part of it. Quoted-text posting on multi-file sites remains unsupported.
+PDF page comments keep the artifact anchor kind and add page_number, the page
+open when posted, with version_id and version_number of that version (null
+once deleted). Agents cannot post page comments.
 Older servers may omit these optional fields.
 
 Common failures:

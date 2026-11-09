@@ -3,6 +3,7 @@ import {
   COMMENT_DELETE_RESPONSE_SCHEMA,
   COMMENT_POST_RESPONSE_SCHEMA,
   COMMENTS_LIST_RESPONSE_SCHEMA,
+  CommentAnchorSchema,
   type CommentDeleteRequest,
   type CommentPostRequest,
   type CommentReopenRequest,
@@ -108,6 +109,8 @@ export async function runCommentsList(
     : Array.isArray(raw?.comments)
       ? raw.comments
       : []
+  if (hasMalformedPageAnchor(comments))
+    return writeFailure(command, malformedPageError(), mode, 1)
   const data: CommentsListData = {
     artifact_id: artifactId,
     share_url: configString(
@@ -231,6 +234,8 @@ export async function runCommentsPost(
       1,
     )
   }
+  if (hasMalformedPageAnchor([postedResponse?.thread ?? postedRaw?.thread]))
+    return writeFailure(command, malformedPageError(), mode, 1)
   const data: CommentsPostData = {
     artifact_id: artifactId,
     share_url: configString(postedResponse?.share_url ?? postedRaw?.share_url),
@@ -546,7 +551,28 @@ async function postCommentAction(
     )
     return null
   }
+  if (isRecord(result.data) && hasMalformedPageAnchor([result.data.thread])) {
+    writeFailure(command, malformedPageError(), mode, 1)
+    return null
+  }
   return result.data
+}
+
+// The lenient raw fallback keeps unknown fields from other server versions,
+// but a PDF page anchor this CLI understands must be complete and in range.
+function hasMalformedPageAnchor(threads: unknown[]): boolean {
+  return threads.some((thread) => {
+    const anchor = isRecord(thread) ? thread.anchor : undefined
+    return (
+      isRecord(anchor) &&
+      ('page_number' in anchor || 'version_number' in anchor) &&
+      !CommentAnchorSchema.safeParse(anchor).success
+    )
+  })
+}
+
+function malformedPageError() {
+  return serviceError('A comment had incomplete or invalid PDF page fields.')
 }
 
 function requiredOption(

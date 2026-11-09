@@ -2598,6 +2598,237 @@ describe('comments server', () => {
       workspaceId: 'ws1',
     })
   })
+
+  describe('PDF page comments', () => {
+    async function makePdf() {
+      await fixture.db
+        .updateTable('shareables')
+        .set({ artifact_kind: 'pdf', name: 'deck.pdf' })
+        .where('id', '=', 's1')
+        .execute()
+      await fixture.db
+        .updateTable('versions')
+        .set({
+          artifact_kind: 'pdf',
+          entrypoint_path: '/deck.pdf',
+          number: 1,
+          sha256: 'pdf-bytes-1',
+        })
+        .where('id', '=', 'v1')
+        .execute()
+      return (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    }
+
+    async function publishPdf(id: string, minute: number, sha256: string) {
+      await fixture.db
+        .insertInto('versions')
+        .values({
+          id,
+          number: minute + 1,
+          shareable_id: 's1',
+          artifact_kind: 'pdf',
+          status: 'published',
+          entrypoint_path: '/deck.pdf',
+          r2_key: `ws1/s1/${id}/deck.pdf`,
+          size_bytes: 100,
+          sha256,
+          created_by_id: ownerUser.id,
+          created_at: `2026-05-29T00:0${minute}:00.000Z`,
+          published_at: `2026-05-29T00:0${minute}:00.000Z`,
+        })
+        .execute()
+      await fixture.db
+        .updateTable('shareables')
+        .set({ current_version_id: id })
+        .where('id', '=', 's1')
+        .execute()
+      return (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+    }
+
+    const page12 = {
+      kind: 'pdf-page' as const,
+      pageNumber: 12,
+      versionId: 'v1',
+    }
+
+    async function rowCounts() {
+      const count = async (
+        table: 'comment_threads' | 'comment_messages' | 'comment_anchors',
+      ) => (await fixture.db.selectFrom(table).selectAll().execute()).length
+      return {
+        threads: await count('comment_threads'),
+        messages: await count('comment_messages'),
+        anchors: await count('comment_anchors'),
+      }
+    }
+
+    test('stores the viewed page and version, reads it back and keeps replies on the thread', async () => {
+      const access = await makePdf()
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Legend is reversed',
+        page12,
+      )
+      if (created.kind !== 'ok') throw new Error('creation failed')
+      expect(created.threads[0]?.subject).toEqual({
+        kind: 'pdf-page',
+        pageNumber: 12,
+        versionId: 'v1',
+        versionNumber: 1,
+        canNavigate: true,
+        navigableVersionId: 'v1',
+      })
+      expect(
+        await fixture.db
+          .selectFrom('comment_anchors')
+          .select(['page_number', 'version_id', 'quoted_text'])
+          .execute(),
+      ).toEqual([{ page_number: 12, version_id: 'v1', quoted_text: '' }])
+
+      const reply = await replyToCommentThread(
+        fixture.db,
+        access,
+        otherViewerUser,
+        created.threadId,
+        'Agreed',
+      )
+      expect(reply.kind).toBe('ok')
+      const [thread] = await loadCommentThreads(fixture.db, access, viewerUser)
+      // Both messages share the frozen clock, so their order is a tie.
+      expect(thread?.messages.map((message) => message.body).sort()).toEqual([
+        'Agreed',
+        'Legend is reversed',
+      ])
+      expect(toAgentCommentThread(thread!).anchor).toEqual({
+        kind: 'artifact',
+        quoted_text: null,
+        state: null,
+        page_number: 12,
+        version_id: 'v1',
+        version_number: 1,
+      })
+      expect((await rowCounts()).anchors).toBe(1)
+    })
+
+    test('accepts any page within the unknown-count bound', async () => {
+      const access = await makePdf()
+      // Versions keep no page count: a page past a short PDF's end is stored,
+      // and the viewer refuses to open it.
+      const created = await createCommentThread(
+        fixture.db,
+        access,
+        viewerUser,
+        'Far page',
+        { ...page12, pageNumber: 100_000 },
+      )
+      expect(created.kind).toBe('ok')
+    })
+
+    test.each([0, -1, 1.5, 100_001, Number.NaN, '12'])(
+      'rejects page %s without writing',
+      async (pageNumber) => {
+        const access = await makePdf()
+        const result = await createCommentThread(
+          fixture.db,
+          access,
+          viewerUser,
+          'Bad page',
+          { ...page12, pageNumber: pageNumber as number },
+        )
+        expect(result.kind).toBe('invalid-anchor')
+        expect(await rowCounts()).toEqual({
+          threads: 0,
+          messages: 0,
+          anchors: 0,
+        })
+      },
+    )
+
+    test('rejects page comments on other artifact kinds', async () => {
+      const access = (await loadCommentAccess(fixture.db, viewerUser, 's1'))!
+      expect(
+        (
+          await createCommentThread(
+            fixture.db,
+            access,
+            viewerUser,
+            'Page on HTML',
+            page12,
+          )
+        ).kind,
+      ).toBe('invalid-anchor')
+      expect((await rowCounts()).threads).toBe(0)
+    })
+
+    test('a page read on a replaced version, or replaced while posting, is a version conflict', async () => {
+      const oldAccess = await makePdf()
+      const newAccess = await publishPdf('v2', 1, 'pdf-bytes-2')
+      for (const access of [newAccess, oldAccess]) {
+        expect(
+          (
+            await createCommentThread(
+              fixture.db,
+              access,
+              viewerUser,
+              'Stale page',
+              page12,
+            )
+          ).kind,
+        ).toBe('version-conflict')
+      }
+      expect(await rowCounts()).toEqual({
+        threads: 0,
+        messages: 0,
+        anchors: 0,
+      })
+    })
+
+    test('opens the page only on identical bytes and shows the origin otherwise', async () => {
+      const access = await makePdf()
+      expect(
+        (
+          await createCommentThread(
+            fixture.db,
+            access,
+            viewerUser,
+            'Page note',
+            page12,
+          )
+        ).kind,
+      ).toBe('ok')
+      const subject = async (current: typeof access) =>
+        (await loadCommentThreads(fixture.db, current, viewerUser))[0]?.subject
+
+      expect(await subject(await publishPdf('v2', 1, 'pdf-bytes-1'))).toEqual({
+        kind: 'pdf-page',
+        pageNumber: 12,
+        versionId: 'v1',
+        versionNumber: 1,
+        canNavigate: true,
+        navigableVersionId: 'v2',
+      })
+      const changed = await publishPdf('v3', 2, 'pdf-bytes-3')
+      expect(await subject(changed)).toEqual({
+        kind: 'pdf-page',
+        pageNumber: 12,
+        versionId: 'v1',
+        versionNumber: 1,
+        canNavigate: false,
+        navigableVersionId: null,
+      })
+      await fixture.db.deleteFrom('versions').where('id', '=', 'v1').execute()
+      expect(await subject(changed)).toEqual({
+        kind: 'pdf-page',
+        pageNumber: 12,
+        versionId: null,
+        versionNumber: null,
+        canNavigate: false,
+        navigableVersionId: null,
+      })
+    })
+  })
 })
 
 const ownerUser = makeUser('owner', 'owner@example.com')

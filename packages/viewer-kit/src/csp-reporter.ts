@@ -220,7 +220,45 @@ export interface HashChangedMessage {
   token: string
 }
 
+// The PDF viewer's current page. 'unavailable' (loading, a page that failed
+// to render, or a document that cannot be shown) carries no page at all.
+// token echoes the app's sync token for this document, so a report from an
+// earlier document in the same frame is told apart.
+export const MAX_PDF_PAGE_COUNT = 100_000
+export type PdfPageChangedMessage =
+  | {
+      source: 'artifactshare'
+      kind: 'pdf-page-changed'
+      token: string
+      state: 'ready'
+      pageNumber: number
+      pageCount: number
+    }
+  | {
+      source: 'artifactshare'
+      kind: 'pdf-page-changed'
+      token: string
+      state: 'unavailable'
+    }
+
+function isPdfPageChangedMessage(v: Record<string, unknown>): boolean {
+  const keys = Object.keys(v).sort().join(',')
+  if (typeof v.token !== 'string' || !/^[a-f0-9]{64}$/.test(v.token))
+    return false
+  if (v.state === 'unavailable') return keys === 'kind,source,state,token'
+  return (
+    v.state === 'ready' &&
+    keys === 'kind,pageCount,pageNumber,source,state,token' &&
+    Number.isSafeInteger(v.pageNumber) &&
+    Number.isSafeInteger(v.pageCount) &&
+    (v.pageNumber as number) >= 1 &&
+    (v.pageNumber as number) <= (v.pageCount as number) &&
+    (v.pageCount as number) <= MAX_PDF_PAGE_COUNT
+  )
+}
+
 export type SandboxMessage =
+  | PdfPageChangedMessage
   | HashChangedMessage
   | CspViolationMessage
   | ReadyMessage
@@ -237,6 +275,7 @@ export function isSandboxMessage(value: unknown): value is SandboxMessage {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   if (v.source !== 'artifactshare') return false
+  if (v.kind === 'pdf-page-changed') return isPdfPageChangedMessage(v)
   if (v.kind === 'hash-changed') {
     return (
       typeof v.token === 'string' &&

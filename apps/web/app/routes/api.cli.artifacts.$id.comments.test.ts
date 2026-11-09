@@ -253,6 +253,50 @@ describe('/api/cli/artifacts/:id/comments', () => {
     })
   })
 
+  test('list and post return the PDF page and posting version', async () => {
+    const thread = {
+      ...THREAD,
+      subject: {
+        kind: 'pdf-page',
+        pageNumber: 12,
+        versionId: 'v3',
+        versionNumber: 3,
+        canNavigate: true,
+      },
+    }
+    const anchor = {
+      kind: 'artifact',
+      quoted_text: null,
+      state: null,
+      page_number: 12,
+      version_id: 'v3',
+      version_number: 3,
+    }
+    loadCommentThreadsMock.mockResolvedValue([thread, THREAD])
+    const listed = await loader({
+      context: new Map(),
+      params: { id: 'abc123def4' },
+      request: new Request(
+        'https://example.com/api/cli/artifacts/abc123def4/comments',
+      ),
+    } as never)
+    const body = (await listed.json()) as {
+      comments: Array<{ anchor: unknown }>
+    }
+    expect(body.comments.map((comment) => comment.anchor)).toEqual([
+      anchor,
+      { kind: 'artifact', quoted_text: null, state: null },
+    ])
+    postArtifactCommentMock.mockResolvedValue({
+      kind: 'ok',
+      threadId: 'thr1',
+      reply: true,
+      thread,
+    })
+    const posted = await action(postArgs({ body: 'Done', reply_to: 'thr1' }))
+    expect(await posted.json()).toMatchObject({ thread: { anchor } })
+  })
+
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

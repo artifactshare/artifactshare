@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { PdfViewerApp } from './pdf-viewer-app'
 import { createPreferencesStore } from '../shared/preferences-store'
 import { PdfViewerRuntime } from './runtime'
+import { connectPdfPageBridge } from './page-bridge'
 import './viewer.css'
 
 // The sandbox serves this module as /__as_pdf/viewer.js on every PDF
@@ -9,12 +10,16 @@ import './viewer.css'
 // download name and link.
 const preferences = createPreferencesStore()
 const mount = document.getElementById('pdf-viewer-root')
-if (mount)
+if (mount) {
+  const runtime = new PdfViewerRuntime()
+  // Connected before rendering, so no page change goes unreported.
+  connectPdfPageBridge(runtime)
   createRoot(mount).render(
     <PdfViewerApp
-      runtime={new PdfViewerRuntime()}
+      runtime={runtime}
       preferences={preferences}
       fileName={mount.dataset.fileName || 'document.pdf'}
       downloadHref={mount.dataset.downloadHref ?? ''}
     />,
   )
+}

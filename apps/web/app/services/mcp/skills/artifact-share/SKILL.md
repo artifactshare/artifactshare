@@ -58,6 +58,10 @@ also includes the current first message. Cursors remain usable after their
 boundary message is deleted. `around_message_id` selects a bounded page
 containing a message; do not combine it with `before`.
 
+A PDF comment posted on a page keeps `anchor.kind` `artifact` and adds
+`page_number`, with `version_id` and `version_number` of the version it was
+posted on (null once deleted). Agents cannot post page comments.
+
 A thread holds 500 currently stored messages, including its first message.
 `thread-capacity` means start a new thread. Existing excess messages are kept;
 deletions can restore space. Deleting the first message promotes the next

@@ -878,7 +878,8 @@
             "type": ["string", "null"]
           },
           "anchor": {
-            "type": "object"
+            "type": "object",
+            "description": "What the thread is attached to: kind artifact (the whole file) or text. A PDF comment posted on a page keeps kind artifact and adds page_number with version_id and version_number of the version it was posted on (null once that version is deleted)."
           },
           "messages": {
             "type": "array",

@@ -211,3 +211,46 @@ test('hash reports require the current frame origin, source, and document token 
     ),
   ).toBeNull()
 })
+
+test('PDF page reports are accepted only well-formed and from the trusted frame', () => {
+  const origin = 'https://a-site123abc--v-7631.artifactshareusercontent.com'
+  const frame = {} as Window
+  const ready = {
+    source: 'artifactshare',
+    kind: 'pdf-page-changed',
+    token: 'c'.repeat(64),
+    state: 'ready',
+    pageNumber: 12,
+    pageCount: 20,
+  }
+  const unavailable = {
+    source: 'artifactshare',
+    kind: 'pdf-page-changed',
+    token: 'c'.repeat(64),
+    state: 'unavailable',
+  }
+  const read = (data: unknown, overrides: Partial<MessageEvent> = {}) =>
+    sandboxMessageFromFrame(
+      { origin, source: frame, data, ...overrides } as MessageEvent,
+      origin,
+      frame,
+    )
+  expect(read(ready)).toEqual(ready)
+  expect(read(unavailable)).toEqual(unavailable)
+  for (const malformed of [
+    { ...ready, pageNumber: 0 },
+    { ...ready, pageNumber: 21 },
+    { ...ready, pageNumber: 1.5 },
+    { ...ready, pageNumber: '12' },
+    { ...ready, pageCount: 100_001, pageNumber: 1 },
+    { ...ready, pageCount: undefined },
+    { ...ready, extra: true },
+    { ...ready, state: 'loading' },
+    { ...unavailable, pageNumber: 1 },
+    { ...ready, token: undefined },
+    { ...unavailable, token: 'not-a-token' },
+  ])
+    expect(read(malformed)).toBeNull()
+  expect(read(ready, { origin: 'https://example.com' })).toBeNull()
+  expect(read(ready, { source: {} as MessageEventSource })).toBeNull()
+})

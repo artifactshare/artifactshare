@@ -30,6 +30,8 @@ export type PdfScenario =
   | 'preferences'
   | 'page-failure'
   | 'slow-original'
+  | 'page-bridge'
+  | 'page-bridge-report'
 
 type Size = readonly [number, number]
 const PAGE_SIZES = {
@@ -162,7 +164,17 @@ const FEATURE_PAGES: Partial<Record<PdfScenario, SyntheticPage[]>> = {
   'late-text': [null, 'Later lantern page', 'Another page'],
 }
 
+// The page bridge fixtures: 14 pages, with the search term only on page 9.
+const BRIDGE_PAGES = Array.from({ length: 14 }, (_, i) =>
+  i === 8 ? `Bridge ${SEARCH_TERM} page 9` : `Bridge page ${i + 1}`,
+)
+
 function scenarioPdf(scenario: PdfScenario): Uint8Array<ArrayBuffer> {
+  if (scenario === 'page-bridge' || scenario === 'page-bridge-report')
+    return syntheticPdf(
+      [PAGE_SIZES[scenario === 'page-bridge' ? 'landscape' : 'portrait']],
+      BRIDGE_PAGES,
+    )
   const featurePages = FEATURE_PAGES[scenario]
   if (featurePages) return syntheticPdf([PAGE_SIZES.landscape], featurePages)
   if (scenario === 'corrupt')
@@ -1021,8 +1033,13 @@ function mount(src, name) {
   frame = next
   document.body.append(next)
 }
+window.reports = []
+addEventListener('message', (event) => {
+  if (frame && event.source === frame.contentWindow && event.data && event.data.kind === 'pdf-page-changed') reports.push(event.data)
+})
 window.sendPreferences = (next) => { message = next; send() }
 window.postToViewer = (data) => frame.contentWindow.postMessage(data, '*')
+window.syncPage = (token) => frame.contentWindow.postMessage({ source: 'artifactshare-parent', kind: 'pdf-page-sync', token }, '*')
 window.replaceViewer = mount
 mount(${JSON.stringify(entry)}, 'viewer-1')
 </script></body></html>`
@@ -1031,6 +1048,7 @@ mount(${JSON.stringify(entry)}, 'viewer-1')
 export type ParentWindow = Window & {
   sendPreferences(message: object): void
   postToViewer(data: unknown): void
+  syncPage(token: string): void
   replaceViewer(src: string, name: string): void
 }
 
@@ -1183,6 +1201,171 @@ async function preferencesFlow(
   }
 }
 
+type PageReport = {
+  token?: string
+  state: string
+  pageNumber?: number
+  pageCount?: number
+}
+
+// The page the viewer reports to its parent through every way of moving, the
+// pages its parent opens, the commands it ignores, a page that cannot be
+// drawn and a reload. The parent page records every report of its frame.
+async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
+  const reports = () =>
+    page.evaluate(() =>
+      (window as unknown as { reports: PageReport[] }).reports.map(
+        (report) => ({
+          token: report.token,
+          state: report.state,
+          pageNumber: report.pageNumber,
+          pageCount: report.pageCount,
+        }),
+      ),
+    )
+  const waitReport = async (state: string, expectedPage?: number) => {
+    await page
+      .waitForFunction(
+        ([wantedState, wantedPage]) => {
+          const last = (
+            window as unknown as { reports: PageReport[] }
+          ).reports.at(-1)
+          return last?.state === wantedState && last.pageNumber === wantedPage
+        },
+        [state, expectedPage] as const,
+        { timeout: 10000 },
+      )
+      .catch(() => undefined)
+    return (await reports()).at(-1)
+  }
+  const command = (data: unknown) =>
+    page.evaluate(
+      (message) => (window as unknown as ParentWindow).postToViewer(message),
+      data,
+    )
+  // Messages reach the frame in order: once one the frame posts to itself
+  // has arrived, every earlier command has been handled.
+  const flush = () =>
+    frame.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          addEventListener('message', function done(event) {
+            if (event.data !== 'flush') return
+            removeEventListener('message', done)
+            resolve()
+          })
+          postMessage('flush', '*')
+        }),
+    )
+  const open = (target: unknown) => ({
+    source: 'artifactshare-parent',
+    kind: 'pdf-open-page',
+    pageNumber: target,
+  })
+
+  const sync = (token: string) =>
+    page.evaluate(
+      (value) => (window as unknown as ParentWindow).syncPage(value),
+      token,
+    )
+  // Nothing is reported until the parent gives the document its token.
+  await flush()
+  const beforeSync = (await reports()).length
+  await sync('a'.repeat(64))
+  const initial = await waitReport('ready', 1)
+  const mode = await frame.evaluate(() => document.body.dataset.mode)
+  await frame.click('#next')
+  const afterButton = await waitReport('ready', 2)
+  await frame.focus('#viewer-container')
+  await page.keyboard.press('End')
+  const afterKey = await waitReport('ready', 14)
+  await searchOnce(frame)
+  const afterSearch = await waitReport('ready', 9)
+  await frame.click('#search-close')
+  let afterScroll: PageReport | undefined
+  if (mode === 'scroll') {
+    await frame.evaluate(() => {
+      const target = document.querySelector<HTMLElement>(
+        '.page[data-page-number="3"]',
+      )!
+      document.getElementById('viewer-container')!.scrollTop = target.offsetTop
+    })
+    afterScroll = await waitReport('ready', 3)
+  }
+
+  await command(open(12))
+  const opened = {
+    page: await waitForPage(frame, 12),
+    report: await waitReport('ready', 12),
+  }
+  const beforeIgnored = (await reports()).length
+  for (const ignored of [open(15), open(2.5), open('3'), open(0)])
+    await command(ignored)
+  // Well formed, but from the viewer's own window instead of its parent.
+  await frame.evaluate((message) => window.postMessage(message, '*'), open(3))
+  await flush()
+  const ignored = {
+    page: await pageNumber(frame),
+    reports: (await reports()).slice(beforeIgnored),
+  }
+
+  // A page that cannot be drawn makes the page unavailable; a command then
+  // does nothing, and drawing it again reports the same page.
+  await frame.evaluate(() => {
+    ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
+      true
+  })
+  await command(open(6))
+  const failed = await waitReport('unavailable')
+  await command(open(1))
+  await flush()
+  const whileFailed = await pageNumber(frame)
+  await frame.evaluate(() => {
+    ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
+      false
+  })
+  // A narrower frame draws the current page again at its new size.
+  await page.setViewportSize({ width: width - 40, height: 800 })
+  const recovered = await waitReport('ready', 6)
+
+  const beforeReload = (await reports()).length
+  // The mark lives on the reloaded document's window only, so the wait below
+  // ends in the new document, never in the one still unloading.
+  await frame.evaluate(() => {
+    ;(window as unknown as { beforeReload: boolean }).beforeReload = true
+    location.reload()
+  })
+  await frame.waitForFunction(
+    () =>
+      !(window as unknown as { beforeReload?: boolean }).beforeReload &&
+      document.documentElement.dataset.pdfState === 'ready',
+    undefined,
+    { timeout: 20000 },
+  )
+  // The reloaded document reports only under the token it is given.
+  await flush()
+  const reloadedBeforeSync = (await reports()).slice(beforeReload)
+  await sync('b'.repeat(64))
+  await waitReport('ready', 1)
+  const reloaded = (await reports()).slice(beforeReload)
+  return {
+    layout: mode,
+    beforeSync,
+    reloadedBeforeSync,
+    initial,
+    afterButton,
+    afterKey,
+    afterSearch,
+    afterScroll,
+    opened,
+    ignored,
+    failed,
+    whileFailed,
+    recovered,
+    reloaded,
+  }
+}
+
 // Runs the real sandbox Worker (wrangler.sandbox.jsonc, including its
 // PDFJS_ASSETS binding) with a seeded link-shared PDF version. A loopback
 // proxy forwards every browser request unchanged to the Worker under the
@@ -1320,7 +1503,11 @@ export const pdfViewerScenario = defineBrowserCommand(
           violations.push(`${event.violatedDirective} ${event.blockedURI}`),
         )
       })
-      if (scenario === 'page-failure')
+      if (
+        scenario === 'page-failure' ||
+        scenario === 'page-bridge' ||
+        scenario === 'page-bridge-report'
+      )
         await context.addInitScript(breakPageDrawing)
       context.on('request', (request) => requests.push(request.url()))
       const artifact = await context.newPage()
@@ -1465,6 +1652,10 @@ export const pdfViewerScenario = defineBrowserCommand(
       }
       if (scenario === 'page-failure')
         return await finish({ pageFailure: await pageFailureFlow(frame) })
+      if (scenario === 'page-bridge' || scenario === 'page-bridge-report')
+        return await finish({
+          pageBridge: await pageBridgeFlow(artifact, frame, width),
+        })
       if (scenario === 'preferences') {
         const flow = await preferencesFlow(artifact, frame, signEntry)
         return {
@@ -1795,6 +1986,7 @@ declare module 'vitest/browser' {
         stayed: boolean
       } | null
       pageFailure?: Awaited<ReturnType<typeof pageFailureFlow>>
+      pageBridge?: Awaited<ReturnType<typeof pageBridgeFlow>>
       afterBackForward?: { renderedPages: number; sameBytes: boolean }
     }>
   }

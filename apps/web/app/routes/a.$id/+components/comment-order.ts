@@ -35,7 +35,7 @@ export function compareCommentThreads(
     ) {
       return 0
     }
-    if (thread.subject.kind === 'artifact') return 1
+    if (thread.subject.kind !== 'text') return 1
     return 2
   }
   const rankDiff = rank(left) - rank(right)

@@ -964,7 +964,10 @@ CREATE TABLE comment_anchors (
   selector_format TEXT CHECK (selector_format IS NULL OR selector_format IN ('normalized-v1', 'quote-v1')),
   text_hash TEXT,
   ambiguous_at_creation INTEGER CHECK (ambiguous_at_creation IS NULL OR ambiguous_at_creation IN (0, 1)),
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  -- PDF page comments: the page open when posting, on version_id. NULL is a
+  -- text anchor; page rows keep empty text placeholders.
+  page_number   INTEGER CHECK (page_number IS NULL OR (typeof(page_number) = 'integer' AND page_number BETWEEN 1 AND 100000))
 );
 CREATE INDEX comment_anchors_version_path
   ON comment_anchors(version_id, target_path);

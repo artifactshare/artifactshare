@@ -18,20 +18,22 @@ export type CommentMutationPayload =
   | {
       intent: 'create-thread'
       body: string
-      anchor?: {
-        locus?: { headings: string[]; block_text: string }
-        selectorFormat?: 'normalized-v1'
-        textHash?: string
-        ambiguousAtCreation?: boolean
-        versionId?: string | null
-        quotedText: string
-        prefixText: string
-        suffixText: string
-        textStart: number
-        textEnd: number
-        cssPath: string | null
-        targetPath?: string
-      }
+      anchor?:
+        | { kind: 'pdf-page'; pageNumber: number; versionId: string }
+        | {
+            locus?: { headings: string[]; block_text: string }
+            selectorFormat?: 'normalized-v1'
+            textHash?: string
+            ambiguousAtCreation?: boolean
+            versionId?: string | null
+            quotedText: string
+            prefixText: string
+            suffixText: string
+            textStart: number
+            textEnd: number
+            cssPath: string | null
+            targetPath?: string
+          }
     }
   | { intent: 'reply'; threadId: string; body: string }
   | { intent: 'resolve' | 'reopen'; threadId: string }
@@ -161,16 +163,29 @@ export function useCommentMutations({
         }
         if (result.body?.error?.code === 'version_conflict') {
           if (!isCurrentShareableId(requestShareableId)) return false
-          toast.error(t('comments.versionConflict'), {
-            action: {
-              label: t('home.reload'),
-              onClick: () => {
-                if (isCurrentShareableId(requestShareableId)) {
-                  void revalidator.revalidate()
-                }
+          // A PDF page comment is placed on the page, not on selected text.
+          const pagePost =
+            'anchor' in payload &&
+            payload.anchor !== undefined &&
+            'kind' in payload.anchor &&
+            payload.anchor.kind === 'pdf-page'
+          toast.error(
+            t(
+              pagePost
+                ? 'comments.versionConflictPage'
+                : 'comments.versionConflict',
+            ),
+            {
+              action: {
+                label: t('home.reload'),
+                onClick: () => {
+                  if (isCurrentShareableId(requestShareableId)) {
+                    void revalidator.revalidate()
+                  }
+                },
               },
             },
-          })
+          )
           return false
         }
         logViewerNetworkEvent({
