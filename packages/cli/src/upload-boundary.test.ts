@@ -299,6 +299,40 @@ test('macOS NFC input reaches NFD stored filename', async (t) => {
   )
 })
 
+test('directory selection skips local metadata and dependency directories', async (t) => {
+  const { cwd } = await fixture(t)
+  await fs.mkdir(path.join(cwd, 'node_modules', 'pkg'), { recursive: true })
+  await fs.mkdir(path.join(cwd, '.git'))
+  await fs.writeFile(path.join(cwd, '.git', 'config'), 'local metadata')
+  await fs.writeFile(path.join(cwd, '.env'), 'SECRET=1')
+  await fs.writeFile(path.join(cwd, 'node_modules', 'pkg', 'ignored.js'), 'x')
+
+  const selected = await prepareUploadSelection('.', false, { cwd })
+
+  assert.equal(selected.directory, true)
+  assert.deepEqual(
+    selected.files.map((file) => file.name),
+    ['report.html'],
+  )
+})
+
+test('directory selection keeps framework output directories', async (t) => {
+  const { cwd } = await fixture(t)
+  await fs.mkdir(path.join(cwd, 'build'))
+  await fs.mkdir(path.join(cwd, 'dist'))
+  await fs.writeFile(path.join(cwd, 'build', 'app.js'), 'console.log("ok")')
+  await fs.writeFile(path.join(cwd, 'dist', 'style.css'), 'body{}')
+
+  const selected = await prepareUploadSelection('.', false, { cwd })
+
+  assert.equal(selected.directory, true)
+  assert.deepEqual(selected.files.map((file) => file.name).sort(), [
+    'build/app.js',
+    'dist/style.css',
+    'report.html',
+  ])
+})
+
 test('name exclusions happen before inspection, including reparse-like entries', async (t) => {
   const { cwd } = await fixture(t)
   const excluded = [

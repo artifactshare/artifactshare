@@ -1147,44 +1147,6 @@ test('share accepts inline option values that begin with dashes', () => {
   assert.notEqual(payload.error.message, '--base-url requires a value.')
 })
 
-test('collectDirectoryFiles skips local metadata and dependency directories', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
-  await mkdir(join(root, 'node_modules', 'pkg'), { recursive: true })
-  await mkdir(join(root, '.git'), { recursive: true })
-  await writeFile(join(root, 'index.html'), '<html></html>')
-  await writeFile(join(root, '.env'), 'SECRET=1')
-  await writeFile(join(root, 'node_modules', 'pkg', 'ignored.js'), 'x')
-
-  const result = run(
-    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
-  )
-
-  assert.notEqual(result.status, 0)
-  assert.doesNotMatch(result.stderr, /ignored\.js/)
-  assert.doesNotMatch(result.stderr, /\.env/)
-})
-
-test('collectDirectoryFiles keeps framework output directories', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
-  await mkdir(join(root, 'build'), { recursive: true })
-  await mkdir(join(root, 'dist'), { recursive: true })
-  await writeFile(
-    join(root, 'index.html'),
-    '<script src="/build/app.js"></script>',
-  )
-  await writeFile(join(root, 'build', 'app.js'), 'console.log("ok")')
-  await writeFile(join(root, 'dist', 'style.css'), 'body{}')
-
-  const result = run(
-    ['share', root, '--home', '--base-url', 'http://127.0.0.1:1', '--json'],
-    { ARTIFACTSHARE_TOKEN: 'test-token' },
-  )
-
-  assert.equal(result.status, 1)
-  assert.doesNotMatch(result.stderr, /build|dist/)
-})
-
 test('collectDirectoryFiles rejects symlinked directories', async () => {
   const root = await mkdtemp(join(tmpdir(), 'artifactshare-cli-'))
   const target = join(root, 'target')
