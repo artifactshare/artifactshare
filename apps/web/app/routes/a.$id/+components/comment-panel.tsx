@@ -18,10 +18,10 @@ import {
   type FormEvent,
   type RefObject,
   type ReactNode,
-  createContext,
   use,
 } from 'react'
 import { SheetClose, SheetHeader, SheetTitle } from '~/components/ui/sheet'
+import { CommentLocationsContext } from './comment-locations-context'
 import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
@@ -87,10 +87,6 @@ interface CommentPanelProps {
   // パネル下部に出す（static_site・PDF・動画）。
   showNewThreadComposer?: boolean
 }
-
-// 静的サイトでは、文章コメントがどのページのものかをカードに示し、全体への
-// composer を「サイト全体」と呼ぶ。呼び出し側（ビューア）が値を渡す。
-export const CommentLocationsContext = createContext(false)
 
 export function CommentPanel({
   shareableId,

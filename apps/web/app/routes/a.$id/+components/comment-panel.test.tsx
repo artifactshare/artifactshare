@@ -42,7 +42,8 @@ vi.mock('~/components/app/app-side-panel', async () => {
     ),
   }
 })
-import { CommentLocationsContext, CommentPanel } from './comment-panel'
+import { CommentLocationsContext } from './comment-locations-context'
+import { CommentPanel } from './comment-panel'
 import { useViewerComments } from './viewer-shell'
 import { mergeCommentWindow } from './comment-history'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'

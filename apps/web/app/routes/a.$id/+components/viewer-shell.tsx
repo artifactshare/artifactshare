@@ -31,7 +31,8 @@ import { ViewerHistoryPanel } from './viewer-history-panel'
 import { DropCatcher } from './drop-catcher'
 import { hasLocalFiles } from './drag-files'
 import { ViewerChrome } from './viewer-chrome'
-import { CommentLocationsContext, CommentPanel } from './comment-panel'
+import { CommentLocationsContext } from './comment-locations-context'
+import { CommentPanel } from './comment-panel'
 import { ViewerListPanel } from './viewer-list-panel'
 import {
   createViewerShellState,
