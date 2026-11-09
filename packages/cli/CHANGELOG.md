@@ -3,7 +3,7 @@
 All notable changes to `@artifactshare/cli` are documented here.
 For user-facing announcements, see https://artifactshare.com/updates?product=cli.
 
-## Unreleased
+## 0.23.0 - 2026-11-09
 
 - `comments list` and comment readback include the PDF page a reader commented on. Such anchors keep `kind: "artifact"` and add `page_number` with `version_id` and `version_number` of the version it was posted on (null once deleted); released CLIs ignore the added fields. Agents cannot post page comments. Update the bundled skill to version 63 with this guidance.
 
