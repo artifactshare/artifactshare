@@ -249,6 +249,7 @@ describe('createWorkspaceBot', () => {
     expect(detail).toEqual({
       name: 'Deploy bot',
       project_id: 'proj1',
+      project_ids: ['proj1'],
       project_name: 'Project proj1',
     })
     // No token, hash, or generated email in the audit detail.
@@ -745,4 +746,329 @@ describe('listWorkspaceBots', () => {
     const [stopped] = await listWorkspaceBots(db, 'ws1')
     expect(stopped!.botStoppedAt).not.toBeNull()
   })
+})
+
+describe('ordinary bot approved destinations', () => {
+  test('keeps issued authentication and primary while adding private placement, then revokes only posting', async () => {
+    seedProject('a')
+    seedProject('b', { visibility: 'private' })
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Reports',
+      projectId: 'a',
+    })
+    if (created.kind !== 'ok') throw new Error(created.kind)
+    const { refreshCliSession } =
+      await import('./cli-refresh-credentials.server')
+    const { resolveCliAuthorityBySessionToken } =
+      await import('./cli-authority.server')
+    const { isAgentPublishableDestination } =
+      await import('./agent-scope.server')
+    const session = await refreshCliSession(
+      db,
+      created.token,
+      'rotation-one',
+      'test-secret',
+    )
+    if (session.kind !== 'ok') throw new Error(session.kind)
+    const authority = await resolveCliAuthorityBySessionToken(
+      session.sessionToken,
+    )
+    if (!authority || authority === 'denied' || authority.kind !== 'agent')
+      throw new Error('missing agent')
+    const user = {
+      id: created.botUserId,
+      workspaceId: 'ws1',
+      email: created.email,
+    }
+    const { updateWorkspaceBotDestinations } =
+      await import('./bot-destinations.server')
+    let bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+    expect(
+      await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: 'a',
+        projectIds: ['a', 'b', 'b'],
+        revision: bot.destinationRevision!,
+      }),
+    ).toEqual({ kind: 'ok' })
+    expect(await isAgentPublishableDestination(db, user, authority, 'b')).toBe(
+      true,
+    )
+    expect(await isAgentPublishableDestination(db, user, authority, 'a')).toBe(
+      true,
+    )
+    expect(
+      await resolveCliAuthorityBySessionToken(session.sessionToken),
+    ).toMatchObject({
+      projectId: 'a',
+      approvedProjects: [{ id: 'a' }, { id: 'b' }],
+    })
+    expect(
+      (
+        await refreshCliSession(
+          db,
+          session.refreshToken,
+          'rotation-two',
+          'test-secret',
+        )
+      ).kind,
+    ).toBe('ok')
+    const stale = bot.destinationRevision!
+    bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+    expect(
+      await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: 'a',
+        projectIds: ['a'],
+        revision: bot.destinationRevision!,
+      }),
+    ).toEqual({ kind: 'ok' })
+    expect(await isAgentPublishableDestination(db, user, authority, 'b')).toBe(
+      false,
+    )
+    expect(await isAgentPublishableDestination(db, user, authority, 'a')).toBe(
+      true,
+    )
+    expect(
+      await db
+        .selectFrom('project_share_defaults')
+        .select('role')
+        .where('project_container_id', '=', 'b')
+        .where('email', '=', created.email)
+        .execute(),
+    ).toEqual([{ role: 'contributor' }])
+    expect(
+      await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: 'a',
+        projectIds: ['a', 'b'],
+        revision: stale,
+      }),
+    ).toEqual({ kind: 'bot-conflict' })
+    expect(auditRows('bot.destinations.update')).toHaveLength(2)
+  })
+
+  test.each([
+    'empty',
+    'primary-outside',
+    'archived',
+    'foreign',
+    'quota',
+    'viewer',
+    'non-admin',
+    'demoted',
+    'stopped',
+  ] as const)(
+    'rejects %s without partial approvals, grants or audit',
+    async (mode) => {
+      seedProject('a')
+      seedProject('b', { visibility: 'private', archived: mode === 'archived' })
+      const created = await createWorkspaceBot(db, ADMIN, {
+        name: 'Reports',
+        projectId: 'a',
+      })
+      if (created.kind !== 'ok') throw new Error(created.kind)
+      if (mode === 'foreign') {
+        sqlite.exec(
+          "INSERT INTO workspaces (id,name,created_at) VALUES ('ws2','Other','2026-01-01')",
+        )
+        sqlite
+          .prepare(
+            "UPDATE artifact_containers SET workspace_id = 'ws2' WHERE id = 'b'",
+          )
+          .run()
+      }
+      if (mode === 'quota' || mode === 'viewer') {
+        const count = mode === 'quota' ? 100 : 1
+        for (let i = 0; i < count; i++)
+          sqlite
+            .prepare(
+              "INSERT INTO project_share_defaults (id,project_container_id,email,role,created_by_id,created_at,updated_at) VALUES (?,'b',?,'viewer','admin1','2026-01-01','2026-01-01')",
+            )
+            .run(
+              `grant-${i}`,
+              mode === 'viewer' ? created.email : `viewer${i}@example.com`,
+            )
+      }
+      if (mode === 'non-admin')
+        sqlite
+          .prepare(
+            "UPDATE workspace_members SET role = 'member' WHERE user_id = 'admin1'",
+          )
+          .run()
+      if (mode === 'stopped')
+        await stopWorkspaceBot(db, ADMIN, created.botUserId)
+      const bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+      if (mode === 'demoted')
+        d1BatchHook.callback = () => {
+          d1BatchHook.callback = null
+          sqlite
+            .prepare(
+              "UPDATE workspace_members SET role = 'member' WHERE user_id = 'admin1'",
+            )
+            .run()
+        }
+      const { updateWorkspaceBotDestinations } =
+        await import('./bot-destinations.server')
+      const result = await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: mode === 'primary-outside' ? 'b' : 'a',
+        projectIds:
+          mode === 'empty'
+            ? []
+            : mode === 'primary-outside'
+              ? ['a']
+              : ['a', 'b'],
+        revision: bot.destinationRevision!,
+      })
+      expect(result.kind).not.toBe('ok')
+      expect(
+        await db
+          .selectFrom('bot_destination_projects')
+          .select('project_id')
+          .execute(),
+      ).toEqual([{ project_id: 'a' }])
+      expect(auditRows('bot.destinations.update')).toHaveLength(0)
+    },
+  )
+
+  test.each(['became-private', 'grant-removed'])(
+    'provisions private placement when replacing primary: %s',
+    async (change) => {
+      seedProject('a')
+      seedProject('b', {
+        visibility: change === 'grant-removed' ? 'private' : 'workspace',
+      })
+      const created = await createWorkspaceBot(db, ADMIN, {
+        name: 'Reports',
+        projectId: 'a',
+        projectIds: ['a', 'b'],
+      })
+      if (created.kind !== 'ok') throw new Error(created.kind)
+      await db
+        .updateTable('artifact_containers')
+        .set({ base_visibility: 'private' })
+        .where('id', '=', 'b')
+        .execute()
+      await db
+        .deleteFrom('project_share_defaults')
+        .where('project_container_id', '=', 'b')
+        .execute()
+      const { updateWorkspaceBotDestinations } =
+        await import('./bot-destinations.server')
+      const bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+      expect(
+        await updateWorkspaceBotDestinations(db, ADMIN, {
+          botUserId: bot.id,
+          projectId: 'b',
+          projectIds: ['a', 'b'],
+          revision: bot.destinationRevision!,
+        }),
+      ).toEqual({ kind: 'ok' })
+      expect(
+        await db
+          .selectFrom('project_share_defaults')
+          .select(['role', 'created_by_id'])
+          .where('project_container_id', '=', 'b')
+          .where('email', '=', created.email)
+          .execute(),
+      ).toEqual([{ role: 'contributor', created_by_id: ADMIN.id }])
+      expect((await listWorkspaceBots(db, 'ws1'))[0]!.projectId).toBe('b')
+    },
+  )
+
+  test('replaces primary explicitly and reissues the current set without changing grants', async () => {
+    seedProject('a')
+    seedProject('b')
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Reports',
+      projectId: 'a',
+      projectIds: ['a', 'b'],
+    })
+    if (created.kind !== 'ok') throw new Error(created.kind)
+    const { updateWorkspaceBotDestinations } =
+      await import('./bot-destinations.server')
+    const bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+    expect(
+      await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: 'b',
+        projectIds: ['b'],
+        revision: bot.destinationRevision!,
+      }),
+    ).toEqual({ kind: 'ok' })
+    expect((await reissueWorkspaceBotCredential(db, ADMIN, bot.id)).kind).toBe(
+      'ok',
+    )
+    expect((await listWorkspaceBots(db, 'ws1'))[0]).toMatchObject({
+      projectId: 'b',
+      approvedProjects: [{ id: 'b' }],
+    })
+    expect(JSON.parse(auditRows('bot.destinations.update')[0]!.detail)).toEqual(
+      { name: 'Reports', project_id: 'b', project_ids: ['b'] },
+    )
+  })
+})
+
+test.each(['contributor', 'manager'] as const)(
+  'adding a private destination reuses an existing %s at full quota',
+  async (role) => {
+    seedProject('a')
+    seedProject('b', { visibility: 'private' })
+    const created = await createWorkspaceBot(db, ADMIN, {
+      name: 'Reports',
+      projectId: 'a',
+    })
+    if (created.kind !== 'ok') throw new Error(created.kind)
+    for (let i = 0; i < 50; i++)
+      sqlite
+        .prepare(
+          "INSERT INTO project_share_defaults (id,project_container_id,email,role,created_by_id,created_at,updated_at) VALUES (?,'b',?,?,'admin1','2026-01-01','2026-01-01')",
+        )
+        .run(
+          `existing-${i}`,
+          i === 0 ? created.email.toUpperCase() : `viewer${i}@example.com`,
+          i === 0 ? role : 'viewer',
+        )
+    const before = await db
+      .selectFrom('project_share_defaults')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    const bot = (await listWorkspaceBots(db, 'ws1'))[0]!
+    const { updateWorkspaceBotDestinations } =
+      await import('./bot-destinations.server')
+    expect(
+      await updateWorkspaceBotDestinations(db, ADMIN, {
+        botUserId: bot.id,
+        projectId: 'a',
+        projectIds: ['a', 'b'],
+        revision: bot.destinationRevision!,
+      }),
+    ).toEqual({ kind: 'ok' })
+    expect(
+      await db
+        .selectFrom('project_share_defaults')
+        .selectAll()
+        .orderBy('id')
+        .execute(),
+    ).toEqual(before)
+  },
+)
+
+test('secondary approval blocks deletion while live and is detached after stop', async () => {
+  seedProject('a')
+  seedProject('b')
+  const created = await createWorkspaceBot(db, ADMIN, {
+    name: 'Reports',
+    projectId: 'a',
+    projectIds: ['a', 'b'],
+  })
+  if (created.kind !== 'ok') throw new Error(created.kind)
+  expect(await deleteProjectContainer(db, 'ws1', 'b', ADMIN.id)).toEqual({
+    kind: 'has-agent-credentials',
+    holderName: 'Reports',
+  })
+  await stopWorkspaceBot(db, ADMIN, created.botUserId)
+  expect(await deleteProjectContainer(db, 'ws1', 'b', ADMIN.id)).toBe('ok')
 })

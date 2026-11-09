@@ -52,6 +52,12 @@ export interface DB {
   bridge_requests: BridgeRequestsTable
   bridge_operations: BridgeOperationsTable
   bridge_dm_artifacts: BridgeDmArtifactsTable
+  bot_destination_projects: {
+    family_id: string
+    project_id: string
+    project_name_snapshot: string
+    created_at: string
+  }
   cli_family_authorities: CliFamilyAuthoritiesTable
   cli_session_authorities: CliSessionAuthoritiesTable
   deviceCode: DeviceCodeTable

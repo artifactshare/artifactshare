@@ -4,9 +4,10 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('cloudflare:workers', () => ({ env: {} }))
+const language = vi.hoisted(() => ({ locale: 'ja' as 'ja' | 'en' }))
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
-  return { useT: () => bindI18n('ja') }
+  return { useT: () => bindI18n(language.locale) }
 })
 
 import ActivityPage from './activity'
@@ -163,5 +164,32 @@ test.each([null, 'client2'])(
     expect(html).toContain(
       `abc123def4 · ${previousPublisherClientId ?? '—'} → client1`,
     )
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  'bot destination activity is localized with a snapshot fallback: %s',
+  (locale) => {
+    language.locale = locale
+    try {
+      const html = renderActivity({
+        events: [
+          event('bot.destinations.update', {
+            detail: { name: 'Reporting bot' },
+            subject: null,
+          }),
+        ],
+        total: 1,
+        page: 1,
+      })
+      expect(html).toContain(
+        locale === 'en' ? 'Updated bot destinations' : 'bot の投稿先を更新',
+      )
+      expect(html).toContain('Reporting bot')
+      expect(html).toContain('bot-badge')
+      expect(html).not.toContain('bot.destinations.update')
+    } finally {
+      language.locale = 'ja'
+    }
   },
 )

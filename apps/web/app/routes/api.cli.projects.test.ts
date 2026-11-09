@@ -65,6 +65,35 @@ describe('/api/cli/projects', () => {
     })
   })
 
+  test('lists live bot approvals primary first with restricted metadata', async () => {
+    getCliAuthorityMock.mockReturnValue({
+      kind: 'agent',
+      projectId: 'b',
+      ordinaryBot: true,
+      approvedProjects: [
+        { id: 'a', name: 'A' },
+        { id: 'b', name: 'B' },
+        { id: 'c', name: 'C' },
+      ],
+    })
+    isAgentPublishableDestinationMock
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    const response = await loader({ context: new Map() } as never)
+    expect(((await response.json()) as { projects: unknown }).projects).toEqual(
+      ['b', 'a'].map((id) => ({
+        id,
+        name: id.toUpperCase(),
+        description: null,
+        base_visibility: 'restricted',
+        file_count: null,
+        updated_at: null,
+      })),
+    )
+    expect(listPlacementProjectsMock).not.toHaveBeenCalled()
+  })
+
   test('denies an unknown authority for GET before accessing artifact or project data', async () => {
     getCliAuthorityMock.mockReturnValue({
       kind: 'unknown',

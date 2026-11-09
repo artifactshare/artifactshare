@@ -638,6 +638,7 @@ export type DoctorData = {
         type: 'project' | 'home'
         project_id: string | null
         approved_project_id?: string
+        approved_project_ids?: string[]
         code?: string
         hint?: string
       }

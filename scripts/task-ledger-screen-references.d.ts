@@ -65,6 +65,7 @@ export type TaskLedgerScreenReference =
   | 'settings-bots/cancel-bot-dialog'
   | 'settings-bots/create-bot-dialog'
   | 'settings-bots/default'
+  | 'settings-bots/edit-bot-destinations'
   | 'settings-bots/stop-bot-dialog'
   | 'settings-bots/with-bots'
   | 'settings-cli-sessions/active-cli'

@@ -111,6 +111,59 @@ describe('ProjectCandidatePicker', () => {
     expect(container.textContent).toContain('Second project')
   })
 
+  test.each([false, true])(
+    'excludes approved projects without defaulting to them (paginated: %s)',
+    async (paginated) => {
+      const approved = {
+        id: 'approved',
+        name: 'Approved project',
+        baseVisibility: 'workspace',
+        updatedAt: '2026-08-22',
+      }
+      const available = {
+        ...approved,
+        id: 'available',
+        name: 'Available project',
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          Response.json({
+            projects: [approved, available],
+            preferredProject: approved,
+            nextCursor: paginated ? 'next-page' : null,
+          }),
+        ),
+      )
+      const onChange = vi.fn()
+      await React.act(async () =>
+        root.render(
+          <ProjectCandidatePicker
+            id="project"
+            purpose="bot-destination"
+            value={null}
+            onChange={onChange}
+            excludedProjectIds={['approved']}
+          />,
+        ),
+      )
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      if (paginated) {
+        await React.act(async () => container.querySelector('input')!.focus())
+      }
+      expect(onChange).not.toHaveBeenCalled()
+      expect(container.textContent).not.toContain('Approved project')
+      const choice = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.includes('Available project'),
+      )!
+      expect(choice).toBeDefined()
+      await React.act(async () => choice.click())
+      expect(onChange).toHaveBeenCalledWith(available)
+    },
+  )
+
   test('ignores an old response while a changed query is debouncing', async () => {
     vi.useFakeTimers()
     const responses = new Map<string, (value: Response) => void>()

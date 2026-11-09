@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Workspace bot credentials can post to administrator-approved destination projects without reimport. `projects list` shows the approved destinations; `doctor` accepts an approved secondary default while retaining the singular primary contract. Private-project reports must explicitly use project visibility. Update the bundled skill to version 64 with this guidance.
+
 - `comments list` and comment readback include the PDF page a reader commented on. Such anchors keep `kind: "artifact"` and add `page_number` with `version_id` and `version_number` of the version it was posted on (null once deleted); released CLIs ignore the added fields. Agents cannot post page comments. Update the bundled skill to version 63 with this guidance.
 
 - `comments list` text anchors now include `target_path`, the page the quoted text is on. On multi-file sites, where readers can now comment on selected text, it is the file or route path plus any `#/` or `#!/` hash route. Quoted-text posting by agents on multi-file sites remains unsupported. Update the bundled skill to version 62 with this guidance.

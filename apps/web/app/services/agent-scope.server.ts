@@ -1,4 +1,4 @@
-import { projectPlacementSql } from './projects.server'
+import { agentDestinationSql } from './projects.server'
 import { sql, type Kysely } from 'kysely'
 import type { SessionUser } from '~/lib/user'
 import type { DB } from '~/types/db'
@@ -13,7 +13,7 @@ type AgentAuthority = Extract<CliAuthority, { kind: 'agent' }>
 // audience. Artifacts in inbox (home) containers stay unreadable — personal
 // home is deliberately narrower than human read semantics. Link-only and
 // private visibilities stay unreadable. WRITE scope for artifact
-// create/update stays pinned to the approved destination project (see
+// create/update uses the live approved destinations (a singleton for humans; see
 // isAgentPublishableDestination), while COMMENTS deliberately follow read
 // scope — the approved contract is commentable = readable.
 export function agentReadableShareableSql(
@@ -118,12 +118,12 @@ export async function isAgentPublishableDestination(
   containerId: string | null,
 ) {
   if (user.workspaceId !== authority.workspaceId) return false
-  if (containerId !== authority.projectId) return false
+  if (!containerId) return false
   const row = await db
     .selectFrom('artifact_containers as c')
     .select('c.id')
-    .where('c.id', '=', authority.projectId)
-    .where(projectPlacementSql(user, authority.projectId, true))
+    .where('c.id', '=', containerId)
+    .where(agentDestinationSql(user, authority, containerId))
     .executeTakeFirst()
   return Boolean(row)
 }
@@ -134,22 +134,14 @@ export async function isAgentOwnedArtifact(
   authority: Extract<CliAuthority, { kind: 'agent' }>,
   artifactId: string,
 ): Promise<boolean> {
-  if (
-    !(await isAgentPublishableDestination(
-      db,
-      user,
-      authority,
-      authority.projectId,
-    ))
-  ) {
-    return false
-  }
   const row = await db
     .selectFrom('shareables')
     .select('id')
     .where('id', '=', artifactId)
     .where('workspace_id', '=', authority.workspaceId)
-    .where('container_id', '=', authority.projectId)
+    .where(
+      agentDestinationSql(user, authority, sql.ref('shareables.container_id')),
+    )
     .where('created_by_agent_profile_id', '=', authority.agentProfileId)
     .executeTakeFirst()
   return Boolean(row)

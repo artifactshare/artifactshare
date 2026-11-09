@@ -1610,7 +1610,7 @@ Use a project id with share --project-id or init --project-id.
 Only active, authorized destinations are listed. Private projects require creator access,
 team-plan owner/admin access, or a verified contributor/manager grant. Free/plus
 admin status and viewer or artifact-only grants do not authorize placement.
-Agents and bots retain their fixed-project and verified-grant limits; publishers cannot select projects.`,
+Human agents retain their fixed project. Workspace bots list all administrator-approved destinations, primary first; select one with --project-id using the same imported credential. Private-project reports must explicitly use --visibility project. Both require verified contributor/manager grants for private projects; publishers cannot select projects.`,
 })
 
 const projectsCreateDefinition = define({
@@ -1951,6 +1951,8 @@ const whoamiDefinition = define({
 
 const doctorDefinition = define({
   name: 'doctor',
+  examples:
+    'doctor --json\n\nBot authority includes approved_project_ids and keeps project_id as primary. Older servers without the array use the singular primary. The configured default may be any approved project.',
   description:
     'Check token storage, authentication, destination, network, and upload access.',
   toKebab: true,

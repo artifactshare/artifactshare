@@ -44,6 +44,14 @@ export async function loader({ context }: Route.LoaderArgs) {
           ? {
               preset: 'agent',
               project_id: authority.projectId,
+              ...(authority.ordinaryBot
+                ? {
+                    approved_project_ids:
+                      authority.approvedProjects?.map(
+                        (project) => project.id,
+                      ) ?? [],
+                  }
+                : {}),
             }
           : { preset: 'unrestricted', project_id: null },
     },

@@ -13,6 +13,7 @@ CLI は投稿、更新、設定編集、削除、対象解決、成果物一覧�
 
 この文書は、CLI command の利用者向け説明と成功 `data` / 失敗 `error.code` の参照である。command の能力対応、surface の所有、MCP と agent の対応は `packages/contract/src/capability-matrix.json` を正本にする。新しい CLI command の要否、命名、主要 flag はこの文書と共有契約を同じ変更で更新してから実装する。
 
+
 ## 文書の扱い
 
 能力表 `apps/web/app/lib/cli-capability-matrix.json` は `packages/contract/src/capability-matrix.json` から生成され、CLI・MCP・agent の能力と各 surface の所有・参照関係を検査する機械可読の正本である。この文書の既存一覧と `cli-reference-surface.generated.json` は、CLI command の説明と build 済み help の snapshot を担う参照文書であり、能力表の散文生成元ではない。実体を変更した場合は共有契約を更新して `pnpm check:contract-surfaces` を実行する。
@@ -232,7 +233,7 @@ it reports the current version and uses `recovery.kind: ask_human` with
 
 ## 対象指定
 
-投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus プランでは、管理者という理由だけで他のメンバーの非公開プロジェクトに投稿できません。閲覧権限や成果物への個別共有だけでは、投稿先を選ぶ権限になりません。エージェントと bot は固定の投稿先に制限され、非公開プロジェクトでは contributor/manager の権限も必要です。publisher はプロジェクトを選択できません。
+投稿先の一覧には、現在投稿できる有効なプロジェクトだけが表示されます。非公開プロジェクトへ投稿できるのは、作成者、team プランの有効な owner/admin、または確認済みメールアドレスで登録された contributor/manager です。free/plus プランでは、管理者という理由だけで他のメンバーの非公開プロジェクトに投稿できません。閲覧権限や成果物への個別共有だけでは、投稿先を選ぶ権限になりません。人間のエージェントは承認した1つの投稿先に制限されます。workspace の bot は管理者が承認した複数の投稿先を、資格情報の再取り込みなしで選べます。非公開プロジェクト向けのレポートは --visibility project を明示してください。どちらも非公開プロジェクトでは contributor/manager の権限が必要です。publisher はプロジェクトを選択できません。
 
 - `update` / `delete` / `artifacts get` / `download` / `open` は、成果物 ID、`/a/<id>` 共有 URL、`<id>.artifactshare.link` URL、`a-<id>--v-<hex-version>.artifactshareusercontent.com` / `l-<id>--v-<hex-version>.artifactshareusercontent.com` の実行 URL、旧 sandbox / リンク配信 URL を直接受ける。旧配信 URL は ID の解決だけに使い、内容を取得しない。公開共有 URL は変更しない。タイトルやプロジェクト名からは非対話で解決しない。
 - タイトルやプロジェクト名しかないときは `resolve <value>` で候補を得てから ID を渡す。

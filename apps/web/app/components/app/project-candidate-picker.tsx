@@ -54,11 +54,13 @@ export function ProjectCandidatePicker({
   userCode,
   value,
   onChange,
+  excludedProjectIds = [],
 }: {
   id: string
   ariaLabelledBy?: string
   purpose: 'bot-destination' | 'agent-approval'
   userCode?: string
+  excludedProjectIds?: readonly string[]
   value: ProjectCandidateOption | null
   onChange: (project: ProjectCandidateOption | null) => void
 }) {
@@ -67,7 +69,16 @@ export function ProjectCandidatePicker({
   const generation = useRef(0)
   const defaultedScope = useRef<string | null>(null)
   const [query, setQuery] = useState('')
-  const [search, setSearch] = useState(initialSearchState)
+  const [rawSearch, setSearch] = useState(initialSearchState)
+  const excludedIds = new Set(excludedProjectIds)
+  const availableProjects = rawSearch.projects.filter(
+    (project) => !excludedIds.has(project.id),
+  )
+  const search = {
+    ...rawSearch,
+    projects: availableProjects,
+    active: Math.min(rawSearch.active, availableProjects.length - 1),
+  }
   const [mode, setMode] = useState<'compact' | 'search' | null>(null)
   const [preferredProjectId, setPreferredProjectId] = useState<string | null>(
     null,
@@ -78,7 +89,7 @@ export function ProjectCandidatePicker({
     search
   const applyPreferredDefault = useEffectEvent(
     (project: ProjectCandidateOption | null) => {
-      if (!value && project) onChange(project)
+      if (!value && project && !excludedIds.has(project.id)) onChange(project)
     },
   )
 
@@ -195,11 +206,18 @@ export function ProjectCandidatePicker({
     return <PickerError onRetry={retry} />
   }
 
-  if (status === 'ready' && projects.length === 0 && !query) {
+  if (status === 'ready' && rawSearch.projects.length === 0 && !query) {
     return <EmptyProjects onRetry={retry} />
   }
 
   if (mode === 'compact') {
+    if (projects.length === 0) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {t('projectPicker.noAdditionalProjects')}
+        </p>
+      )
+    }
     return (
       <CompactProjectList
         id={id}
@@ -247,7 +265,7 @@ export function ProjectCandidatePicker({
             if (status === 'ready' && projects.length > 0) {
               setSearch((state) => ({
                 ...state,
-                active: Math.min(projects.length - 1, state.active + 1),
+                active: Math.min(projects.length - 1, active + 1),
               }))
             }
           } else if (event.key === 'ArrowUp') {
@@ -255,7 +273,7 @@ export function ProjectCandidatePicker({
             if (status === 'ready' && projects.length > 0) {
               setSearch((state) => ({
                 ...state,
-                active: Math.max(0, state.active - 1),
+                active: Math.max(0, active - 1),
               }))
             }
           } else if (

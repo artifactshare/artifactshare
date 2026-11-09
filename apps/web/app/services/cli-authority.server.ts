@@ -33,6 +33,8 @@ export type CliAuthority =
       workspaceId: string
       projectId: string
       projectNameSnapshot: string
+      ordinaryBot?: boolean
+      approvedProjects?: { id: string; name: string }[]
       agentProfileId: string
     }
   | {
@@ -181,8 +183,16 @@ export async function resolveCliAuthorityBySessionToken(
           externalWorkspaceId: row.bridge_external_workspace_id,
         }
       }
+      const approvedProjects = await db
+        .selectFrom('bot_destination_projects')
+        .select(['project_id as id', 'project_name_snapshot as name'])
+        .where('family_id', '=', row.family_id)
+        .orderBy('project_id')
+        .execute()
       return {
         kind: 'agent',
+        ordinaryBot: true,
+        approvedProjects,
         familyId: row.family_id,
         workspaceId: row.workspace_id,
         projectId: row.project_id,

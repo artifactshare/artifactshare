@@ -268,7 +268,14 @@ function doctorAuthority(value: unknown): DoctorAuthority | null {
     typeof authority.project_id === 'string' &&
     authority.project_id
   ) {
-    return { preset: 'agent', project_id: authority.project_id }
+    return {
+      preset: 'agent',
+      project_id: authority.project_id,
+      ...(Array.isArray(authority.approved_project_ids) &&
+      authority.approved_project_ids.every((id) => typeof id === 'string')
+        ? { approved_project_ids: authority.approved_project_ids as string[] }
+        : {}),
+    }
   }
   if (
     authority.preset === 'unrestricted' &&
@@ -287,7 +294,9 @@ function applyAgentDestinationDiagnostic(
     authority?.preset !== 'agent' ||
     !authority.project_id ||
     !data.destination.ok ||
-    data.destination.project_id === authority.project_id
+    (authority.approved_project_ids ?? [authority.project_id]).includes(
+      data.destination.project_id ?? '',
+    )
   ) {
     return
   }
@@ -296,6 +305,9 @@ function applyAgentDestinationDiagnostic(
     type: data.destination.type,
     project_id: data.destination.project_id,
     approved_project_id: authority.project_id,
+    approved_project_ids: authority.approved_project_ids ?? [
+      authority.project_id,
+    ],
     code: 'agent_scope_mismatch',
     hint: data.auth.profile
       ? `The configured default destination is outside this agent credential's approved project. Run ${CLI_INVOCATION} init --profile ${data.auth.profile} --project-id ${authority.project_id} --json to use the approved project by default.`

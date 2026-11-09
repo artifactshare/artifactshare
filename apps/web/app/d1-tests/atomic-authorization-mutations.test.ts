@@ -817,6 +817,33 @@ describe.sequential('destination placement at the real D1 commit boundary', () =
         projectNameSnapshot: prefix,
         agentProfileId: `${prefix}-profile`,
       }
+      await database.batch([
+        database
+          .prepare(
+            "INSERT INTO cli_family_authorities (family_id,user_id,preset,workspace_id,project_id,project_name_snapshot,agent_profile_id,status,created_at,updated_at) VALUES (?,?,'agent',?,?,?,?,'active',?,?)",
+          )
+          .bind(
+            authority.familyId,
+            user.id,
+            user.workspaceId,
+            projectId,
+            prefix,
+            authority.agentProfileId,
+            at,
+            at,
+          ),
+        database
+          .prepare(
+            "INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,created_at) VALUES (?,?,?,?, '2099-01-01',?)",
+          )
+          .bind(
+            authority.familyId,
+            user.id,
+            authority.familyId,
+            authority.familyId,
+            at,
+          ),
+      ])
       let artifactId = ''
       let versionId = ''
       let keyId: string | undefined

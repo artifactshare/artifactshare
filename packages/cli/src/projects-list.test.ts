@@ -624,3 +624,71 @@ test('projects edit maps missing projects to target_not_found', async () => {
     },
   )
 })
+
+test('listed secondary bot destination is accepted by doctor using the existing session', async () => {
+  const projects = ['a', 'b'].map((id) => ({
+    id,
+    name: id.toUpperCase(),
+    description: null,
+    base_visibility: 'restricted',
+    file_count: null,
+    updated_at: null,
+  }))
+  await mkdir(join(workDir, '.artifactshare'))
+  await writeFile(
+    join(workDir, '.artifactshare/config.local.json'),
+    JSON.stringify({ default_project_id: 'b' }),
+  )
+  await withServer(
+    (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      assert.equal(request.headers.authorization, 'Bearer existing-session')
+      response.end(
+        JSON.stringify(
+          request.url?.startsWith('/api/cli/doctor')
+            ? {
+                auth: {
+                  ok: true,
+                  authority: {
+                    preset: 'agent',
+                    project_id: 'a',
+                    approved_project_ids: ['a', 'b'],
+                  },
+                },
+                upload: { ok: true },
+              }
+            : { projects },
+        ),
+      )
+    },
+    async (baseUrl) => {
+      const result = await runAsync(
+        ['projects', 'list', '--base-url', baseUrl, '--json'],
+        { ARTIFACTSHARE_TOKEN: 'existing-session' },
+        { cwd: workDir },
+      )
+      const diagnosis = expectSuccess(
+        await runAsync(
+          ['doctor', '--base-url', baseUrl, '--json'],
+          { ARTIFACTSHARE_TOKEN: 'existing-session' },
+          { cwd: workDir },
+        ),
+        'doctor',
+      )
+      assert.equal(diagnosis.data.destination.project_id, 'b')
+      assert.equal(diagnosis.data.destination.code, undefined)
+      assert.deepEqual(diagnosis.data.auth.authority.approved_project_ids, [
+        'a',
+        'b',
+      ])
+      const payload = expectSuccess(result, 'projects list')
+      assert.deepEqual(
+        payload.data.projects.map(
+          ({ is_default, ...project }: { is_default: boolean; id: string }) =>
+            project,
+        ),
+        projects,
+      )
+    },
+  )
+})

@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { useFetcher } from 'react-router'
+import { useEffect, useState } from 'react'
+import { useFetcher, useRevalidator } from 'react-router'
 import { ConfirmActionDialog } from './confirm-action-dialog'
 import { BotBadge } from '~/components/app/user-kind-badge'
-import { TeamMuted } from '~/components/form/team-muted'
+import { TeamMuted, TeamMutedParagraph } from '~/components/form/team-muted'
 import { SettingsSection } from '~/components/form/settings-section'
 import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { Badge } from '~/components/ui/badge'
@@ -77,6 +77,7 @@ export function BotSection({
 }) {
   const { t, locale } = useT()
   const [createOpen, setCreateOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<WorkspaceBotRow | null>(null)
   const [stopTarget, setStopTarget] = useState<WorkspaceBotRow | null>(null)
   const [cancelTarget, setCancelTarget] = useState<WorkspaceBotRow | null>(null)
   const [reissueTarget, setReissueTarget] = useState<WorkspaceBotRow | null>(
@@ -105,7 +106,7 @@ export function BotSection({
         </div>
       ) : null}
       <Table>
-        <TableHeader>
+        <TableHeader className="hidden md:table-header-group">
           <TableRow>
             <TableHead>{t('team.bots.name')}</TableHead>
             <TableHead>{t('team.bots.destination')}</TableHead>
@@ -120,22 +121,32 @@ export function BotSection({
             bots.map((bot) => {
               const status = botStatus(bot)
               return (
-                <TableRow key={bot.id} data-testid="bot-row">
+                <TableRow
+                  key={bot.id}
+                  data-testid="bot-row"
+                  className="flex flex-col md:table-row"
+                >
                   <TableCell>
                     <div className="flex flex-col gap-[var(--spacing-1)]">
-                      <span className="flex items-center gap-[var(--spacing-2)]">
+                      <span className="flex flex-wrap items-center gap-[var(--spacing-2)]">
                         {bot.name}
                         <BotBadge />
                         <BotStatusBadge status={status} />
                       </span>
                       <CopyableEmail email={bot.email} />
+                      <div className="whitespace-normal md:hidden">
+                        <BotDestinations bot={bot} />
+                      </div>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <BotDestination bot={bot} />
+                  <TableCell className="hidden md:table-cell">
+                    <BotDestinations bot={bot} />
                   </TableCell>
                   <TableCell>
                     <TeamMuted>
+                      <span className="md:hidden">
+                        {t('team.bots.lastAuth')}:{' '}
+                      </span>
                       {bot.lastAuthAt
                         ? formatRelative(bot.lastAuthAt, locale)
                         : '—'}
@@ -143,9 +154,20 @@ export function BotSection({
                   </TableCell>
                   <TableCell>
                     {status !== 'stopped' || bot.cancelable ? (
-                      <div className="flex gap-[var(--spacing-2)]">
+                      <div className="flex flex-wrap gap-[var(--spacing-2)]">
                         {status !== 'stopped' ? (
                           <>
+                            {bot.destinationsEditable !== false ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                id={`bot-destinations-${bot.id}`}
+                                onClick={() => setEditTarget(bot)}
+                              >
+                                {t('team.bots.editDestinations')}
+                              </Button>
+                            ) : null}
                             <Button
                               type="button"
                               variant="outline"
@@ -184,6 +206,13 @@ export function BotSection({
         </TableBody>
       </Table>
 
+      {editTarget ? (
+        <BotDestinationDialog
+          key={editTarget.id}
+          bot={editTarget}
+          onClose={() => setEditTarget(null)}
+        />
+      ) : null}
       {canCreate ? (
         <BotCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
       ) : null}
@@ -332,18 +361,21 @@ function CopyableEmail({ email }: { email: string }) {
 function FetcherError({
   fetcher,
   variant = 'create',
+  overrides = {},
 }: {
   fetcher: { state: string; data?: BotActionResponse }
   // Reissue shares codes with create but needs different copy: the create
   // hints (pick another project / rename) are impossible advice in a dialog
   // with no inputs.
   variant?: 'create' | 'reissue'
+  overrides?: Record<string, TKey>
 }) {
   const { t } = useT()
   if (fetcher.state !== 'idle') return null
   const code = fetcher.data?.error?.code
   if (!code) return null
   const key =
+    overrides[code] ??
     (variant === 'reissue' ? REISSUE_ERROR_OVERRIDES[code] : undefined) ??
     ERROR_KEYS[code] ??
     'team.bots.error.generic'
@@ -351,6 +383,217 @@ function FetcherError({
     <p role="alert" className="text-destructive text-sm">
       {t(key)}
     </p>
+  )
+}
+
+type SelectedDestination = { id: string; name: string; unavailable?: boolean }
+
+function BotDestinationSelection({
+  projects,
+  primary,
+  onProjectsChange,
+  onPrimaryChange,
+  pending,
+}: {
+  projects: SelectedDestination[]
+  primary: string
+  onProjectsChange: (projects: SelectedDestination[]) => void
+  onPrimaryChange: (id: string) => void
+  pending: boolean
+}) {
+  const { t } = useT()
+  const [candidate, setCandidate] = useState<ProjectCandidateOption | null>(
+    null,
+  )
+  return (
+    <fieldset
+      disabled={pending}
+      className="flex min-w-0 flex-col gap-[var(--spacing-3)]"
+    >
+      <legend className="text-sm font-medium">
+        {t('team.bots.destination')}
+      </legend>
+      {projects.length === 0 ? (
+        <TeamMutedParagraph>
+          {t('team.bots.emptyDestinations')}
+        </TeamMutedParagraph>
+      ) : null}
+      {projects.map((project) => (
+        <div
+          key={project.id}
+          className="flex items-center justify-between gap-[var(--spacing-2)]"
+        >
+          <label className="flex items-center gap-[var(--spacing-2)]">
+            <input
+              type="radio"
+              name="bot-primary"
+              value={project.id}
+              checked={primary === project.id}
+              disabled={project.unavailable && primary !== project.id}
+              onChange={() => onPrimaryChange(project.id)}
+            />
+            {project.name}{' '}
+            {primary === project.id ? `(${t('team.bots.primary')})` : ''}
+            {project.unavailable ? ` · ${t('team.bots.unavailable')}` : ''}
+          </label>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label={t('team.bots.removeDestinationLabel', {
+              name: project.name,
+            })}
+            disabled={projects.length === 1 || primary === project.id}
+            onClick={() =>
+              onProjectsChange(projects.filter((p) => p.id !== project.id))
+            }
+          >
+            {t('team.bots.removeDestination')}
+          </Button>
+        </div>
+      ))}
+      <Field>
+        <FieldLabel id="bot-add-destination-label">
+          {t('team.bots.add.destinationLabel')}
+        </FieldLabel>
+        <ProjectCandidatePicker
+          id="bot-add-destination"
+          ariaLabelledBy="bot-add-destination-label"
+          purpose="bot-destination"
+          excludedProjectIds={projects.map((project) => project.id)}
+          value={candidate}
+          onChange={setCandidate}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!candidate || projects.some((p) => p.id === candidate.id)}
+          onClick={() => {
+            if (!candidate) return
+            onProjectsChange([...projects, candidate])
+            if (!primary) onPrimaryChange(candidate.id)
+            setCandidate(null)
+          }}
+        >
+          {t('team.bots.addDestination')}
+        </Button>
+      </Field>
+      <TeamMutedParagraph>{t('team.bots.primaryHint')}</TeamMutedParagraph>
+    </fieldset>
+  )
+}
+
+function BotDestinations({ bot }: { bot: WorkspaceBotRow }) {
+  const { t } = useT()
+  return (
+    <>
+      {bot.approvedProjects?.length ? (
+        bot.approvedProjects.map((project) => (
+          <div key={project.id}>
+            {project.name}
+            {project.id === bot.projectId ? ` · ${t('team.bots.primary')}` : ''}
+            {project.unavailable ? ` · ${t('team.bots.unavailable')}` : ''}
+          </div>
+        ))
+      ) : (
+        <BotDestination bot={bot} />
+      )}
+    </>
+  )
+}
+
+function BotDestinationDialog({
+  bot,
+  onClose,
+}: {
+  bot: WorkspaceBotRow
+  onClose: () => void
+}) {
+  const { t } = useT()
+  const { revalidate } = useRevalidator()
+  const fetcher = useFetcher<BotActionResponse>()
+  const [projects, setProjects] = useState<SelectedDestination[]>(
+    bot.approvedProjects ?? [],
+  )
+  const [primary, setPrimary] = useState(bot.projectId ?? '')
+  const pending = fetcher.state !== 'idle'
+  useEffect(() => {
+    if (fetcher.data?.ok && fetcher.state === 'idle') onClose()
+  }, [fetcher.data, fetcher.state, onClose])
+  useEffect(() => {
+    if (fetcher.data?.error?.code === 'bot-conflict') void revalidate()
+  }, [fetcher.data, revalidate])
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose()
+      }}
+    >
+      <DialogContent
+        className="max-h-dvh overflow-y-auto"
+        onCloseAutoFocus={() =>
+          document.getElementById(`bot-destinations-${bot.id}`)?.focus()
+        }
+      >
+        <DialogHeader>
+          <DialogTitle>{t('team.bots.editDestinations')}</DialogTitle>
+          <DialogDescription>
+            {bot.name} · {t('team.bots.add.destinationHint')}
+          </DialogDescription>
+        </DialogHeader>
+        <BotDestinationSelection
+          projects={projects}
+          primary={primary}
+          onProjectsChange={setProjects}
+          onPrimaryChange={setPrimary}
+          pending={pending}
+        />
+        <FetcherError
+          fetcher={fetcher}
+          overrides={{
+            'bot-conflict': 'team.bots.error.destinations-conflict',
+          }}
+        />
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={onClose}
+          >
+            {t('team.bots.close')}
+          </Button>
+          <Button
+            type="button"
+            disabled={
+              pending ||
+              !primary ||
+              !projects.length ||
+              Boolean(fetcher.data?.ok)
+            }
+            onClick={() =>
+              fetcher.submit(
+                {
+                  intent: 'destinations',
+                  botUserId: bot.id,
+                  projectId: primary,
+                  projectIds: projects.map((p) => p.id),
+                  revision: bot.destinationRevision ?? '',
+                },
+                {
+                  method: 'post',
+                  action: '/settings/bots',
+                  encType: 'application/json',
+                },
+              )
+            }
+          >
+            {t('team.bots.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -364,7 +607,8 @@ function BotCreateDialog({
   const { t } = useT()
   const fetcher = useFetcher<BotActionResponse>()
   const [name, setName] = useState('')
-  const [project, setProject] = useState<ProjectCandidateOption | null>(null)
+  const [projects, setProjects] = useState<SelectedDestination[]>([])
+  const [primary, setPrimary] = useState('')
   const [dismissedToken, setDismissedToken] = useState<string | null>(null)
   // Derived: once the action returns a token, the form dialog yields to the
   // one-time token dialog until the admin confirms storage.
@@ -379,14 +623,14 @@ function BotCreateDialog({
   return (
     <>
       <Dialog open={open && !token} onOpenChange={onOpenChange}>
-        <DialogContent>
+        <DialogContent className="max-h-dvh overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('team.bots.add.title')}</DialogTitle>
             <DialogDescription>
               {t('team.bots.add.destinationHint')}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-[var(--spacing-4)]">
+          <div className="flex min-w-0 flex-col gap-[var(--spacing-4)]">
             <Field>
               <FieldLabel htmlFor="bot-name">
                 {t('team.bots.add.nameLabel')}
@@ -398,32 +642,27 @@ function BotCreateDialog({
                 onChange={(event) => setName(event.target.value)}
               />
             </Field>
-            <Field>
-              <FieldLabel
-                id="bot-destination-label"
-                onClick={() =>
-                  document.getElementById('bot-destination')?.focus()
-                }
-              >
-                {t('team.bots.add.destinationLabel')}
-              </FieldLabel>
-              <ProjectCandidatePicker
-                id="bot-destination"
-                ariaLabelledBy="bot-destination-label"
-                purpose="bot-destination"
-                value={project}
-                onChange={setProject}
-              />
-            </Field>
+            <BotDestinationSelection
+              projects={projects}
+              primary={primary}
+              onProjectsChange={setProjects}
+              onPrimaryChange={setPrimary}
+              pending={pending}
+            />
             <FetcherError fetcher={fetcher} />
           </div>
           <DialogFooter>
             <Button
               type="button"
-              disabled={pending || !name.trim() || !project}
+              disabled={pending || !name.trim() || !primary}
               onClick={() =>
                 fetcher.submit(
-                  { intent: 'create', name, projectId: project?.id ?? '' },
+                  {
+                    intent: 'create',
+                    name,
+                    projectId: primary,
+                    projectIds: projects.map((p) => p.id),
+                  },
                   {
                     method: 'post',
                     action: '/settings/bots',
@@ -443,7 +682,8 @@ function BotCreateDialog({
           onClose={() => {
             setDismissedToken(token)
             setName('')
-            setProject(null)
+            setProjects([])
+            setPrimary('')
             onOpenChange(false)
           }}
         />
