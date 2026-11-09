@@ -1262,6 +1262,11 @@ function useSandboxFrameController({
       targetThreadId && targetLocation
         ? `${targetRequest}\n${targetThreadId}\n${targetLocation}`
         : null
+    // A jump waits until the frame's document is ready: on first load that
+    // document carries the entry authority that lets the frame open other
+    // paths, so a deep link or notification must not replace it early.
+    if (request && targetLocation !== commentLocation && loadState !== 'ready')
+      return
     if (request === jumpRequestRef.current) return
     // Any new choice, including one that needs no navigation or clears the
     // target, supersedes a jump whose renewal is still pending.
@@ -1294,6 +1299,7 @@ function useSandboxFrameController({
     servedLocation,
     fallbackToIndex,
     trustedMessageOrigin,
+    loadState,
   ])
 
   useEffect(() => {
