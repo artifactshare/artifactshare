@@ -18,7 +18,11 @@ afterEach(() => {
 vi.mock('~/hooks/use-t', () => ({
   useT: () => ({
     locale: locale.value,
-    t: (key: keyof typeof en) => (locale.value === 'en' ? en : ja)[key],
+    t: (key: keyof typeof en, params: Record<string, string> = {}) =>
+      (locale.value === 'en' ? en : ja)[key].replace(
+        /\{(\w+)\}/g,
+        (match, name: string) => params[name] ?? match,
+      ),
     tPlural: (key: string, count: number) =>
       (locale.value === 'en' ? en : ja)[
         `${key}${count === 1 ? 'One' : 'Other'}` as keyof typeof en
@@ -844,4 +848,30 @@ test('a failed older page retains its normal expand label and offers an exact re
     fetchPage.mockRestore()
     vi.unstubAllGlobals()
   }
+})
+
+test('static-site threads name their page and the general composer names the site', () => {
+  locale.value = 'en'
+  const site = renderToStaticMarkup(
+    <CommentPanel
+      shareableId="artifact"
+      viewerUserId="viewer"
+      threads={[textThread('attached')]}
+      newCommentMessages={[]}
+      onThreadsChange={() => {}}
+      isCurrentShareableId={() => true}
+      open
+      onOpenChange={() => {}}
+      targetThreadId={null}
+      targetThreadScroll="center"
+      onThreadNavigate={() => {}}
+      showNewThreadComposer
+      showCommentLocations
+    />,
+  )
+  expect(site).toContain('Page: /index.html')
+  expect(site).toContain('Write a comment on the whole site')
+  // Single-document artifacts keep their wording and show no page.
+  const single = render('attached')
+  expect(single).not.toContain('Page: /index.html')
 })

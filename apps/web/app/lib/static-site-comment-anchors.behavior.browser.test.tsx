@@ -24,6 +24,15 @@ vi.mock('react-router', async (original) => ({
 }))
 
 type Result = AnchorResolutionMessage['results'][number]
+// Anchors settle after the frame's scripts and the reporter run, which is
+// slower on CI's Linux engines than vi.waitFor's 1 s default.
+function waitFor<T>(
+  callback: () => T | Promise<T>,
+  options: { timeout?: number; interval?: number } = {},
+) {
+  return vi.waitFor(callback, { timeout: 8000, interval: 50, ...options })
+}
+
 const originalUrl = window.location.href
 let root: Root | undefined
 let host: HTMLElement
@@ -140,7 +149,7 @@ async function open(
 }
 
 async function at(location: string) {
-  await vi.waitFor(
+  await waitFor(
     () => {
       expect(locations.at(-1)).toBe(location)
       expect(
@@ -164,9 +173,14 @@ const painted = () =>
   )
 
 async function select(selector: string, quote: string) {
-  const text = await frame<string>(
-    `document.querySelector(${JSON.stringify(selector)}).textContent`,
-  )
+  // The route's element can render after the location is reported.
+  const text = await waitFor(async () => {
+    const value = await frame<string | null>(
+      `document.querySelector(${JSON.stringify(selector)})?.textContent ?? null`,
+    )
+    expect(value).toContain(quote)
+    return value!
+  })
   const start = text.indexOf(quote)
   const count = selections.length
   await commands.selectAnchorText(
@@ -176,7 +190,7 @@ async function select(selector: string, quote: string) {
     start + quote.length,
   )
   // Drags report intermediate selections; wait for the completed one.
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(selections.length).toBeGreaterThan(count)
     expect(selections.at(-1)!.quotedText).toBe(quote)
   })
@@ -270,21 +284,21 @@ test('a deep-linked conversation opens its file; choosing it again after leaving
     highlightThreadId: 'second',
   })
   await at('/page.html')
-  await vi.waitFor(() => expect(verdict('second')).toBe('attached'))
+  await waitFor(() => expect(verdict('second')).toBe('attached'))
   await commands.staticSiteFrame({ click: '#home-link' })
   await at('/index.html')
   // Leaving does not pull the reader back while the conversation stays chosen.
-  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  await waitFor(() => expect(verdict('home')).toBe('attached'))
   expect(await frame<string>('location.pathname')).toBe('/index.html')
   await choose('second', 1)
   await at('/page.html')
-  await vi.waitFor(() => expect(verdict('second')).toBe('attached'))
+  await waitFor(() => expect(verdict('second')).toBe('attached'))
 })
 
 // The response has been read once fetchJsonWithViewerTimeout consumed it.
 async function deliver(index: number) {
   renewals[index].release()
-  await vi.waitFor(() => expect(renewals[index].response.bodyUsed).toBe(true))
+  await waitFor(() => expect(renewals[index].response.bodyUsed).toBe(true))
   await act(async () => {})
 }
 
@@ -294,23 +308,23 @@ test('held frame renewals navigate only for the latest conversation choice', asy
   await at('/index.html')
   // Let the handshake settle: a late repeated ready answer supersedes any
   // navigation pending at that moment.
-  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  await waitFor(() => expect(verdict('home')).toBe('attached'))
   // Ten minutes later every jump renews frame authorization first.
   const now = Date.now.bind(Date)
   let offset = 10 * 60 * 1000
   vi.spyOn(Date, 'now').mockImplementation(() => now() + offset)
   await choose('second', 1)
   await choose('third', 2)
-  await vi.waitFor(() => expect(renewals).toHaveLength(2))
+  await waitFor(() => expect(renewals).toHaveLength(2))
   await deliver(0)
   await deliver(1)
   await at('/third.html')
-  await vi.waitFor(() => expect(verdict('third')).toBe('attached'))
+  await waitFor(() => expect(verdict('third')).toBe('attached'))
   expect(await frame<string>('location.pathname')).toBe('/third.html')
   // A later choice on the displayed page supersedes a held jump as well.
   offset += 10 * 60 * 1000
   await choose('second', 3)
-  await vi.waitFor(() => expect(renewals).toHaveLength(3))
+  await waitFor(() => expect(renewals).toHaveLength(3))
   await choose('third', 4)
   await deliver(2)
   expect(await frame<string>('location.pathname')).toBe('/third.html')
@@ -329,15 +343,15 @@ test('choosing a highlight on the displayed page cancels a held jump', async () 
     onThreadSelect: (threadId) => chosen.push(threadId),
   })
   await at('/index.html')
-  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  await waitFor(() => expect(verdict('home')).toBe('attached'))
   const now = Date.now.bind(Date)
   vi.spyOn(Date, 'now').mockImplementation(() => now() + 10 * 60 * 1000)
   await choose('second', 1)
-  await vi.waitFor(() => expect(renewals).toHaveLength(1))
+  await waitFor(() => expect(renewals).toHaveLength(1))
   await commands.staticSiteFrame({
     click: '.ash-comment-highlight-badge[data-thread-id="home"]',
   })
-  await vi.waitFor(() => expect(chosen).toEqual(['home']))
+  await waitFor(() => expect(chosen).toEqual(['home']))
   await deliver(0)
   expect(await frame<string>('location.pathname')).toBe('/index.html')
   expect(host.querySelector('iframe')!.src).not.toContain('renewal-0')
@@ -352,19 +366,19 @@ test('history navigation during a held jump keeps the reader on the new route', 
   ]
   await open('/billing', threads, spaSite)
   await at('/billing')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
   await frame(`history.pushState(null, '', '/other')`)
   await at('/other')
   const now = Date.now.bind(Date)
   vi.spyOn(Date, 'now').mockImplementation(() => now() + 10 * 60 * 1000)
   await choose('settings', 1)
-  await vi.waitFor(() => expect(renewals).toHaveLength(1))
+  await waitFor(() => expect(renewals).toHaveLength(1))
   await frame('history.back()')
   await at('/billing')
   await deliver(0)
   expect(await frame<string>('location.pathname')).toBe('/billing')
   expect(host.querySelector('iframe')!.src).not.toContain('renewal-0')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
 })
 
 test('multi-page threads keep their file, reload to it and ignore the same text elsewhere', async () => {
@@ -380,13 +394,13 @@ test('multi-page threads keep their file, reload to it and ignore the same text 
 
   await open('/index.html', [home, second, wholeArtifact], multiPage)
   await at('/index.html')
-  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  await waitFor(() => expect(verdict('home')).toBe('attached'))
   expect(await painted()).toEqual(['Shared sentence'])
   expect(verdict('second')).toBeUndefined()
   // Choosing the other file's conversation opens that file first.
   await render({ targetThreadId: 'second', highlightThreadId: 'second' })
   await at('/page.html')
-  await vi.waitFor(() => expect(verdict('second')).toBe('attached'))
+  await waitFor(() => expect(verdict('second')).toBe('attached'))
   expect(verdict('home')).toBeUndefined()
   expect(await painted()).toEqual(['Shared sentence'])
   expect(await frame<string>('location.pathname')).toBe('/page.html')
@@ -409,7 +423,7 @@ test('in-page fragments and their targets never change a file comment location',
   expect(selection.targetPath).toBe('/page.html')
   const saved = posted('second', selection)
   await render({ commentThreads: [saved] })
-  await vi.waitFor(async () => expect(await painted()).toEqual(['Second page']))
+  await waitFor(async () => expect(await painted()).toEqual(['Second page']))
   for (const target of ['<h2 id="intro">Intro</h2>', '<a name="intro"></a>']) {
     await frame(`document.querySelector('#slot').innerHTML = '${target}'`)
     await frame(`location.hash = '#intro'`)
@@ -422,7 +436,7 @@ test('in-page fragments and their targets never change a file comment location',
   for (const path of ['/page.html', '/page.html#intro']) {
     await open(path, [saved], multiPage)
     await at('/page.html')
-    await vi.waitFor(() => expect(verdict('second')).toBe('attached'))
+    await waitFor(() => expect(verdict('second')).toBe('attached'))
     expect(await painted()).toEqual(['Second page'])
   }
 })
@@ -457,7 +471,7 @@ test('history routes keep distinct locations through push, back and reload', asy
   expect(billing.subject).toMatchObject({ targetPath: '/billing' })
   await commands.staticSiteFrame({ click: '#to-settings' })
   await at('/settings')
-  await vi.waitFor(async () =>
+  await waitFor(async () =>
     expect(await frame<string>('document.body.textContent')).toContain(
       'Settings route',
     ),
@@ -467,26 +481,26 @@ test('history routes keep distinct locations through push, back and reload', asy
 
   await open('/settings', [billing, settings], spaSite)
   await at('/settings')
-  await vi.waitFor(() => expect(verdict('settings')).toBe('attached'))
+  await waitFor(() => expect(verdict('settings')).toBe('attached'))
   expect(verdict('billing')).toBeUndefined()
   expect(await painted()).toEqual(['Shared route'])
 
   await open('/billing', [billing, settings], spaSite)
   await at('/billing')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
   expect(verdict('settings')).toBeUndefined()
   writes = []
   await commands.staticSiteFrame({ click: '#to-settings' })
   await at('/settings')
-  await vi.waitFor(() => expect(verdict('settings')).toBe('attached'))
+  await waitFor(() => expect(verdict('settings')).toBe('attached'))
   expect(verdict('billing')).toBeUndefined()
   await frame('history.back()')
   await at('/billing')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
   await frame('history.forward()')
   await at('/settings')
   // Returning to a route checks and saves it again under the same token.
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(
       writes.filter((write) => write.targetPath === '/settings'),
     ).toHaveLength(2),
@@ -502,7 +516,7 @@ test('history routes keep distinct locations through push, back and reload', asy
   // Choosing a conversation on another route restores that route first.
   await render({ targetThreadId: 'billing', highlightThreadId: 'billing' })
   await at('/billing')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
   expect(await frame<string>('location.pathname')).toBe('/billing')
 })
 
@@ -510,7 +524,7 @@ test('an SPA root route stays `/` and choosing it reopens `/`, not /index.html',
   origin = await commands.staticSiteCommentSite(historySpa, true)
   await open('/', [], spaSite)
   await at('/')
-  await vi.waitFor(async () =>
+  await waitFor(async () =>
     expect(await frame<string>('document.body.textContent')).toContain(
       'Billing route',
     ),
@@ -521,7 +535,7 @@ test('an SPA root route stays `/` and choosing it reopens `/`, not /index.html',
   await at('/settings')
   await choose('home', 1)
   await at('/')
-  await vi.waitFor(() => expect(verdict('home')).toBe('attached'))
+  await waitFor(() => expect(verdict('home')).toBe('attached'))
   expect(await frame<string>('location.pathname')).toBe('/')
   expect(await painted()).toEqual(['Billing route'])
 })
@@ -534,10 +548,10 @@ test('a jump whose route redirects elsewhere ends in cannot-find', async () => {
   ]
   await open('/billing', threads, spaSite)
   await at('/billing')
-  await vi.waitFor(() => expect(verdict('billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('billing')).toBe('attached'))
   await choose('old', 1)
   await at('/settings')
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(
       verdictLog.some((results) =>
         results.some(
@@ -563,7 +577,7 @@ test('a selection from the previous route never becomes a draft on the next', as
   await at('/settings')
   const cleared = clears
   await frame(`document.dispatchEvent(new KeyboardEvent('keyup'))`)
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(clears + selections.length).toBeGreaterThan(cleared + count),
   )
   expect(selections).toHaveLength(count)
@@ -593,7 +607,7 @@ test('recovery reopens the route the app moved to, not the original source', asy
       new PageTransitionEvent('pageshow', { persisted: true }),
     ),
   )
-  await vi.waitFor(
+  await waitFor(
     () =>
       expect(
         host
@@ -603,15 +617,15 @@ test('recovery reopens the route the app moved to, not the original source', asy
     { timeout: 8000 },
   )
   await act(async () => host.querySelector('button')!.click())
-  await vi.waitFor(() => expect(renewals).toHaveLength(1))
+  await waitFor(() => expect(renewals).toHaveLength(1))
   await deliver(0)
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(
       new URL(host.querySelector('iframe')!.src).searchParams.get('as_next'),
     ).toBe('/settings'),
   )
   await at('/settings')
-  await vi.waitFor(async () =>
+  await waitFor(async () =>
     expect(await frame<string>('location.pathname')).toBe('/settings'),
   )
 }, 20000)
@@ -645,7 +659,7 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async () => 
     if (saved.length) await frame(`location.hash = '${hash}'`)
     await at('/index.html' + hash)
     // Wait for the route's own rendering before measuring offsets.
-    await vi.waitFor(async () =>
+    await waitFor(async () =>
       expect(
         await frame<string>('document.querySelector("#route")?.textContent'),
       ).toBe(`${name} hash text. Common hash words.`),
@@ -656,7 +670,7 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async () => 
   }
   await open('/index.html#/settings', saved, site)
   await at('/index.html#/settings')
-  await vi.waitFor(() => expect(verdict('#/settings')).toBe('attached'))
+  await waitFor(() => expect(verdict('#/settings')).toBe('attached'))
   expect(verdicts.map((result) => result.threadId)).toEqual(['#/settings'])
   // A DOM target named like another route cannot reclassify the location.
   await frame(
@@ -668,7 +682,7 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async () => 
     highlightThreadId: '#!/billing',
   })
   await at('/index.html#!/billing')
-  await vi.waitFor(() => expect(verdict('#!/billing')).toBe('attached'))
+  await waitFor(() => expect(verdict('#!/billing')).toBe('attached'))
   expect(await frame<string>('location.hash')).toBe('#!/billing')
   expect(verdicts.map((result) => result.threadId)).toEqual(['#!/billing'])
 })
@@ -678,7 +692,7 @@ test('a hash route with a query reopens the same route and query', async () => {
   const site = { bundlePaths: ['/index.html'], fallbackToIndex: false }
   await open('/index.html#/search?q=a', [], site)
   await at('/index.html#/search?q=a')
-  await vi.waitFor(async () =>
+  await waitFor(async () =>
     expect(
       await frame<string>('document.querySelector("#route")?.textContent'),
     ).toBe('Search hash text. Common hash words.'),
@@ -690,7 +704,7 @@ test('a hash route with a query reopens the same route and query', async () => {
   await at('/index.html#/billing')
   await render({ targetThreadId: 'search', highlightThreadId: 'search' })
   await at('/index.html#/search?q=a')
-  await vi.waitFor(() => expect(verdict('search')).toBe('attached'))
+  await waitFor(() => expect(verdict('search')).toBe('attached'))
   expect(await frame<string>('location.hash')).toBe('#/search?q=a')
   expect(await painted()).toEqual(['Common hash'])
 })
@@ -705,12 +719,12 @@ test('a missing quote reaches cannot-find, late text completes the latest jump',
   })
   await open('/index.html', [missing, late, elsewhere], multiPage)
   await at('/index.html')
-  await vi.waitFor(() => expect(verdict('elsewhere')).toBe('checking'))
+  await waitFor(() => expect(verdict('elsewhere')).toBe('checking'))
   // Only the latest choice navigates.
   await render({ targetThreadId: 'missing', highlightThreadId: 'missing' })
   await render({ targetThreadId: 'late', highlightThreadId: 'late' })
   await at('/page.html')
-  await vi.waitFor(() => expect(verdict('missing')).toBe('needs-check'), {
+  await waitFor(() => expect(verdict('missing')).toBe('needs-check'), {
     timeout: 8000,
   })
   expect(verdict('elsewhere')).toBeUndefined()
@@ -718,8 +732,8 @@ test('a missing quote reaches cannot-find, late text completes the latest jump',
   await frame(
     `document.getElementById('late').innerHTML = '<p>Arrives later than the rest.</p>'`,
   )
-  await vi.waitFor(() => expect(verdict('late')).toBe('attached'))
-  await vi.waitFor(async () =>
+  await waitFor(() => expect(verdict('late')).toBe('attached'))
+  await waitFor(async () =>
     expect(await frame<number>('scrollY')).toBeGreaterThan(1000),
   )
   expect(await painted()).toEqual(['Arrives later'])
@@ -727,7 +741,7 @@ test('a missing quote reaches cannot-find, late text completes the latest jump',
   const gone = thread('gone', '/removed.html', { quotedText: 'Gone' })
   await render({ commentThreads: [missing, late, gone] })
   await render({ targetThreadId: 'gone', highlightThreadId: 'gone' })
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(
       verdictLog.some((results) =>
         results.some(

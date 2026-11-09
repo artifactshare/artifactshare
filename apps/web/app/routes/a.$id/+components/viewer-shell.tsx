@@ -2490,6 +2490,8 @@ function useViewerShellController({
     renderType === 'static_site' ||
     renderType === 'pdf' ||
     renderType === 'video'
+  // A static site's text comments live on its pages; the panel names the page.
+  const commentLocationsShown = renderType === 'static_site'
   const comments = useViewerComments({
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
@@ -2839,6 +2841,7 @@ function useViewerShellController({
     textAnchorsEnabled,
     commentsEnabled,
     newThreadComposerEnabled,
+    commentLocationsShown,
     revalidator,
     replaceMode,
     viewerListAvailable,
@@ -2899,6 +2902,7 @@ function ViewerShellView({
   textAnchorsEnabled,
   commentsEnabled,
   newThreadComposerEnabled,
+  commentLocationsShown,
   replaceMode,
   viewerListAvailable,
   viewerList,
@@ -3145,6 +3149,7 @@ function ViewerShellView({
           state={state}
           comments={comments}
           newThreadComposerEnabled={newThreadComposerEnabled}
+          commentLocationsShown={commentLocationsShown}
           collapsedFallbackRef={collapseToggleRef}
         />
       ) : null}
@@ -3175,10 +3180,15 @@ function ViewerCommentPanel({
   state,
   comments,
   newThreadComposerEnabled,
+  commentLocationsShown,
   collapsedFallbackRef,
 }: Pick<
   ViewerShellController,
-  'artifact' | 'state' | 'comments' | 'newThreadComposerEnabled'
+  | 'artifact'
+  | 'state'
+  | 'comments'
+  | 'newThreadComposerEnabled'
+  | 'commentLocationsShown'
 > & {
   user: NonNullable<ViewerShellController['user']>
   collapsedFallbackRef: { current: HTMLButtonElement | null }
@@ -3208,6 +3218,7 @@ function ViewerCommentPanel({
       newCommentMessages={artifact.revisitContext?.newCommentMessages}
       topbarCollapsed={state.chromeCollapsed}
       showNewThreadComposer={newThreadComposerEnabled}
+      showCommentLocations={commentLocationsShown}
     />
   )
 }

@@ -1689,5 +1689,7 @@
   "videoViewer.transport": "The video could not be loaded. Reload the page to try again.",
   "videoViewer.playFailed": "The video could not start. Try again, or download the video.",
   "videoViewer.fullscreenFailed": "Full screen isn’t available here.",
-  "videoViewer.downloadAtRisk": "The video couldn’t be kept for download. Download it now while this page is open, or reload the page to try again."
+  "videoViewer.downloadAtRisk": "The video couldn’t be kept for download. Download it now while this page is open, or reload the page to try again.",
+  "comments.newSitePlaceholder": "Write a comment on the whole site",
+  "comments.subjectLocation": "Page: {path}"
 }
