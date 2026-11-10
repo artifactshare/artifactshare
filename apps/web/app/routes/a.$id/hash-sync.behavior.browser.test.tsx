@@ -80,12 +80,16 @@ function documentUrl() {
   )
 }
 async function ready(host: HTMLElement) {
-  await vi.waitFor(() =>
-    expect(
-      host
-        .querySelector('[data-sandbox-state]')
-        ?.getAttribute('data-sandbox-state'),
-    ).toBe('ready'),
+  // A real cross-origin iframe handshake can exceed the default one second
+  // on CI. Keep checking the ready state before reading its document token.
+  await vi.waitFor(
+    () =>
+      expect(
+        host
+          .querySelector('[data-sandbox-state]')
+          ?.getAttribute('data-sandbox-state'),
+      ).toBe('ready'),
+    { timeout: 5000 },
   )
   const frame = host.querySelector('iframe')!
   const token = messages.find(
