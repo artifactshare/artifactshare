@@ -14,10 +14,12 @@ const testPath = (file) =>
 function categories(line, side) {
   const result = []
   if (
-    /\b(?:timeout(?:Ms|-minutes)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats|REPETITIONS|REPETITION_TIMEOUT_MS)\s*[:=]/.test(
+    /\b(?:timeout(?:Ms|-minutes)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats|REPETITIONS|REPETITION_TIMEOUT_MS|repetitionTimeoutMs)\s*[:=]/.test(
       line,
     )
   )
+    result.push('execution-limit')
+  if (/^\s*}\s*,\s*\d[\d_]*\s*\)\s*;?\s*$/.test(line))
     result.push('execution-limit')
   if (/--(?:retry|testTimeout|hookTimeout|bail)(?:=|\s)/.test(line))
     result.push('execution-limit')
@@ -128,6 +130,8 @@ export function collectTestChanges({
     files.push({
       file,
       status,
+      review:
+        'Inspect the full fixed diff; no recognized cues is not a safe verdict.',
       kinds: Object.fromEntries(
         [...new Set(all.map((note) => note.kind))].map((kind) => [
           kind,

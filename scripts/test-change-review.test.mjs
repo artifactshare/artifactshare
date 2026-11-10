@@ -193,3 +193,37 @@ test('capped notes retain kinds after the cap and native config/package selector
       file,
     )
 })
+
+test('existing numeric and nightly deadline syntax produces cues and cue-free files still require review', (t) => {
+  const f = fixture(t)
+  f.write('app/test/native.test.ts', "test('work', async () => {\n}, 30000)\n")
+  f.write(
+    'scripts/ci/flaky-runs.mjs',
+    'export const repetitionTimeoutMs = 20 * 60 * 1000\n',
+  )
+  f.write('app/test/other.test.ts', "test('old', fn)\n")
+  const base = f.commit()
+  f.write(
+    'app/test/native.test.ts',
+    "test('work', async () => {\n}, 480_000)\n",
+  )
+  f.write(
+    'scripts/ci/flaky-runs.mjs',
+    'export const repetitionTimeoutMs = 40 * 60 * 1000\n',
+  )
+  f.write('app/test/other.test.ts', "test('new', fn)\n")
+  const report = collectTestChanges({ base, head: f.commit(), run: f.run })
+  for (const name of ['app/test/native.test.ts', 'scripts/ci/flaky-runs.mjs']) {
+    const row = report.files.find((item) => item.file === name)
+    assert.equal(row.kinds['execution-limit'], 2)
+    assert.deepEqual(
+      row.notes.map((note) => note.side),
+      ['removed', 'added'],
+    )
+  }
+  const row = report.files.find(
+    (item) => item.file === 'app/test/other.test.ts',
+  )
+  assert.deepEqual(row.notes, [])
+  assert.match(row.review, /not a safe verdict/u)
+})
