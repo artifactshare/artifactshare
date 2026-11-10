@@ -670,16 +670,14 @@ function searchState(frame: Frame) {
 }
 
 async function waitForResults(frame: Frame, pattern: string) {
-  await frame
-    .waitForFunction(
-      (source) =>
-        new RegExp(source).test(
-          document.getElementById('search-results')!.textContent ?? '',
-        ),
-      pattern,
-      { timeout: 10000 },
-    )
-    .catch(() => undefined)
+  await frame.waitForFunction(
+    (source) =>
+      new RegExp(source).test(
+        document.getElementById('search-results')!.textContent ?? '',
+      ),
+    pattern,
+    { timeout: 10000 },
+  )
   return searchState(frame)
 }
 
@@ -692,9 +690,9 @@ async function searchFlow(page: Page, frame: Frame) {
   const openedByShortcut = await searchState(frame)
   await page.keyboard.type(SEARCH_TERM)
   const first = await waitForResults(frame, '^1 ')
-  await frame
-    .waitForSelector('.textLayer .highlight.selected', { timeout: 10000 })
-    .catch(() => undefined)
+  await frame.waitForSelector('.textLayer .highlight.selected', {
+    timeout: 10000,
+  })
   const highlighted = await searchState(frame)
   await page.keyboard.press('Enter')
   const second = await waitForResults(frame, '^2 ')
@@ -717,15 +715,14 @@ async function searchFlow(page: Page, frame: Frame) {
   await frame.waitForTimeout(1000)
   const emptiedWhileSearching = await searchState(frame)
   await frame.fill('#search-query', SEARCH_TERM)
-  await waitForResults(frame, '^1 ')
+  // A fresh search starts from the current page, which is still page 4.
+  const resumed = await waitForResults(frame, '^2 ')
   await page.keyboard.press('Escape')
-  await frame
-    .waitForFunction(
-      () => document.querySelectorAll('.textLayer .highlight').length === 0,
-      undefined,
-      { timeout: 5000 },
-    )
-    .catch(() => undefined)
+  await frame.waitForFunction(
+    () => document.querySelectorAll('.textLayer .highlight').length === 0,
+    undefined,
+    { timeout: 5000 },
+  )
   const closedByEscape = await searchState(frame)
   await frame.click('#search-toggle')
   const reopened = await searchState(frame)
@@ -744,6 +741,7 @@ async function searchFlow(page: Page, frame: Frame) {
     absent,
     emptied,
     emptiedWhileSearching,
+    resumed,
     closedByEscape,
     reopened,
     closedByButton,

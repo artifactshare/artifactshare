@@ -255,6 +255,7 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
       results: '',
       highlights: 0,
     })
+    expect(search.resumed).toMatchObject({ results: '2 of 3', page: 4 })
     expect(search.closedByEscape).toMatchObject({
       open: false,
       expanded: 'false',
@@ -529,6 +530,7 @@ describe('PDF viewer in the app language', () => {
 
     expect(search.first.results).toBe('1 / 3件')
     expect(search.back.results).toBe('2 / 3件')
+    expect(search.resumed).toMatchObject({ results: '2 / 3件', page: 4 })
     expect(search.absent.results).toBe('見つかりません')
     expect(imageOnly.searchOnce!.results).toBe(
       'このPDFには検索できる文字がありません',
