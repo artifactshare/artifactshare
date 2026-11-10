@@ -93,7 +93,54 @@ afterEach(async () => {
 })
 
 function page(body: string, script = '') {
-  return `<!doctype html><html><head><meta charset="utf-8"><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></head><body><main data-comment-content>${body}</main><script>${script}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></head><body><main data-comment-content>${body}</main><script>${script}</script><script>
+    addEventListener('message', (event) => {
+      if (event.origin !== ${JSON.stringify(window.location.origin)} || event.source !== parent ||
+          event.data?.type !== 'static-site-fixture-observe' || typeof event.data.id !== 'string') return
+      parent.postMessage({
+        type: 'static-site-fixture-observed',
+        id: event.data.id,
+        observation: {
+          pathname: location.pathname,
+          painted: [...CSS.highlights.values()].flatMap((h) => [...h]).map((r) => r.toString().trim()).filter(Boolean),
+        },
+      }, ${JSON.stringify(window.location.origin)})
+    })
+  </script></body></html>`
+}
+
+// Read the fixture's real document without a Playwright frame execution context.
+async function observeFixture() {
+  const iframe = host.querySelector('iframe')!
+  const id = crypto.randomUUID()
+  let observation: { pathname: string; painted: string[] } | undefined
+  const onMessage = (event: MessageEvent) => {
+    if (
+      event.origin !== origin ||
+      event.source !== iframe.contentWindow ||
+      event.data?.type !== 'static-site-fixture-observed' ||
+      event.data.id !== id
+    )
+      return
+    const value = event.data.observation
+    if (
+      typeof value?.pathname === 'string' &&
+      Array.isArray(value.painted) &&
+      value.painted.every((text: unknown) => typeof text === 'string')
+    )
+      observation = value
+  }
+  window.addEventListener('message', onMessage)
+  try {
+    iframe.contentWindow!.postMessage(
+      { type: 'static-site-fixture-observe', id },
+      origin,
+    )
+    await waitFor(() => expect(observation).toBeDefined())
+    return observation!
+  } finally {
+    window.removeEventListener('message', onMessage)
+  }
 }
 
 async function render(patch: Partial<ComponentProps<typeof SandboxFrame>>) {
@@ -543,7 +590,6 @@ test('an SPA root route stays `/` and choosing it reopens `/`, not /index.html',
 test('a jump whose route redirects elsewhere ends in cannot-find', async ({
   onTestFailed,
 }) => {
-  // Remove this targeted diagnostic after the intermittent failure is localized.
   let phase = 'serve synthetic site'
   onTestFailed(() => {
     console.error('[static-site redirect failure]', {
@@ -580,11 +626,11 @@ test('a jump whose route redirects elsewhere ends in cannot-find', async ({
       ),
     ).toBe(true),
   )
-  phase = 'read final pathname (staticSiteFrame evaluate)'
-  expect(await frame<string>('location.pathname')).toBe('/settings')
+  phase = 'read final pathname and painted highlights (fixture observation)'
+  const observation = await observeFixture()
+  expect(observation.pathname).toBe('/settings')
   // The same text on the route the app moved to is not this conversation.
-  phase = 'read painted highlights (staticSiteFrame evaluate)'
-  expect(await painted()).toEqual([])
+  expect(observation.painted).toEqual([])
   phase = 'test body complete'
 })
 
