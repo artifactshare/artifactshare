@@ -23,6 +23,18 @@ test('real Oxlint rejects dangerous waits and interactions, accepts capability, 
       empty: 'page.waitForSelector("ready").catch(() => {})',
       assertion:
         'expect.poll(read).toBe(true).catch(() => { return undefined })',
+      logging:
+        'page.waitForSelector("ready").catch(error => { console.warn("not ready", error) })',
+      loggingExpression:
+        'page.waitForFunction(probe).catch(error => console.error(error))',
+      returnedLogging:
+        'page.waitForSelector("ready").catch(error => { return console.warn(error) })',
+      null: 'page.waitForFunction(probe).catch(() => null)',
+      false: 'page.waitForFunction(probe).catch(() => { return false })',
+      thenFailure: 'page.waitForFunction(probe).then(ok, () => false)',
+      chained: 'page.waitForFunction(probe).then(ok).catch(() => false)',
+      chainedLogging:
+        'page.waitForFunction(probe).then(ok).finally(cleanup).catch(error => { console.warn(error); return null })',
       optional: 'host.querySelector("button")?.click()',
       optionalMethod: 'button.click?.()',
       sleep: 'await page.waitForTimeout(100)',
@@ -40,7 +52,13 @@ const supported = await page.waitForFunction(probe).then(() => true).catch(error
   return false
 })
 expect(supported).toBe(false)
+await page.waitForFunction(probe).then(ok, error => {
+  if (error.name !== 'TimeoutError') throw error
+  return false
+})
+await page.waitForFunction(probe).catch(error => { console.warn(error); throw error })
 await reader.cancel().catch(() => undefined)
+await context.close().catch(() => null)
 button!.click()
 // test-wait: elapsed-time — no late counts may appear after the query is cleared.
 await page.waitForTimeout(1000)

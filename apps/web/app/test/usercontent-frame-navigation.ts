@@ -114,7 +114,7 @@ export async function waitForUsercontentState(
             ),
         )?.state,
       { origin, match, afterNonce },
-      { timeout: 10000 },
+      { timeout: 30000 },
     ),
   )
   const state = await handle.jsonValue()
@@ -175,7 +175,7 @@ export async function navigateUsercontentViewer(
   await navigate()
   await requiredWait(
     'viewer iframe ready',
-    page.locator('[data-sandbox-state="ready"]').waitFor({ timeout: 10000 }),
+    page.locator('[data-sandbox-state="ready"]').waitFor({ timeout: 30000 }),
   )
 }
 

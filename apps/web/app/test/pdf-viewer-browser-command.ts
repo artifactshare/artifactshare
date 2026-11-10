@@ -382,7 +382,7 @@ async function selectFirstLine(page: Page, frame: Frame): Promise<string> {
   return frame.evaluate(() => String(getSelection()))
 }
 
-// Flush the same commit/layout boundary used by in-browser tests, then
+// Observe the same commit/layout boundary used by in-browser tests, then
 // observe completion of finite menu/sheet transitions.
 async function settle(frame: Frame) {
   await frame.evaluate(waitForBrowserLayout)
@@ -860,7 +860,28 @@ async function settingsFlow(
     width: Math.round(width * 0.8),
     height: Math.round(height * 0.8),
   })
-  await settle(frame)
+  // ResizeObserver-driven refit and popover positioning can follow layout.
+  await frame.waitForFunction(
+    (expectedWidth) => {
+      const current = document.querySelector<HTMLElement>(
+        '.page[data-page-number="3"]',
+      )
+      const popover = document
+        .querySelector('[data-pdf-settings][data-state="open"]')
+        ?.getBoundingClientRect()
+      return (
+        innerWidth === expectedWidth &&
+        document.body.dataset.size === '2' &&
+        !!current &&
+        Math.abs(current.offsetWidth / 1920 - 1) < 0.01 &&
+        !!popover &&
+        popover.left >= 0 &&
+        popover.right <= innerWidth
+      )
+    },
+    Math.round(width * 0.8),
+    { timeout: 5000 },
+  )
   const afterResize = await settingsState(frame)
   await page.setViewportSize({ width, height })
   await frame.click('#next')
@@ -1867,7 +1888,30 @@ export const pdfViewerScenario = defineBrowserCommand(
         width: Math.round(width * 0.8),
         height: Math.round(height * 0.8),
       })
-      await settle(frame)
+      await frame.waitForFunction(
+        ({ expectedWidth, expectedHeight, expectedPage, fitPage }) => {
+          const container = document.getElementById('viewer-container')!
+          const current = document.querySelector<HTMLElement>(
+            `.page[data-page-number="${expectedPage}"]`,
+          )
+          return (
+            innerWidth === expectedWidth &&
+            innerHeight === expectedHeight &&
+            !!current &&
+            current.offsetWidth <= container.clientWidth &&
+            (!fitPage ||
+              (current.offsetHeight <= container.clientHeight &&
+                container.scrollHeight === container.clientHeight))
+          )
+        },
+        {
+          expectedWidth: Math.round(width * 0.8),
+          expectedHeight: Math.round(height * 0.8),
+          expectedPage: beforeResize,
+          fitPage: mode === 'page',
+        },
+        { timeout: 5000 },
+      )
       const afterResize = {
         pageNumber: await pageNumber(frame),
         ...(await layout(frame)),

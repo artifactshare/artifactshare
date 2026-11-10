@@ -50,12 +50,15 @@ export const staticSiteFrame = defineBrowserCommand(
     )
     const artifact = await handle?.contentFrame()
     if (!artifact) throw new Error('Static-site frame is not available')
+    // The token-exchange document has the same origin and can finish loading
+    // before location.replace completes. Only fixture content has this marker.
     await requiredWait(
       'static-site document ready',
       artifact.waitForFunction(
         (expectedOrigin) =>
           location.origin === expectedOrigin &&
-          document.readyState !== 'loading',
+          document.readyState !== 'loading' &&
+          !!document.querySelector('[data-comment-content]'),
         siteOrigin,
         { timeout: 5000 },
       ),

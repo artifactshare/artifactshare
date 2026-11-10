@@ -1065,7 +1065,7 @@ export const videoViewerScenario = defineBrowserCommand(
         await setRange('volume', 0.4)
         // An engine without an audio device (WebKit in a Linux container)
         // may never apply the volume; the test then checks the controls.
-        const volumeApplied = await frame
+        await frame
           .waitForFunction(
             () =>
               Math.abs(
@@ -1080,8 +1080,10 @@ export const videoViewerScenario = defineBrowserCommand(
             if (!(error instanceof errors.TimeoutError)) throw error
             return false
           })
-        volumeCapability = volumeApplied ? 'applied' : 'unapplied'
         steps.volume = await snapshot(frame)
+        // Classify the captured observation, including application just after timeout.
+        volumeCapability =
+          Math.abs(steps.volume.volume - 0.4) < 0.01 ? 'applied' : 'unapplied'
         await frame.click('#mute')
         await pressed('true')
         steps.muted = await snapshot(frame)

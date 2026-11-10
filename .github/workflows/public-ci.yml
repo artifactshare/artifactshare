@@ -516,6 +516,10 @@ jobs:
       - run: pnpm test:behavior-browser --project=${{ matrix.project }}
         env:
           DEBUG: pw:browser
+      - name: Verify native browser waits and popup cancellation
+        if: matrix.project == 'chromium'
+        timeout-minutes: 2
+        run: node --test scripts/browser-waits.integration.mjs
       - name: Verify scenario routes and in-app navigation
         if: matrix.project == 'chromium'
         run: pnpm check:browser-local-state

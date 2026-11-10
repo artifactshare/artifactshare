@@ -87,9 +87,8 @@ test('keeps phone-sized touch targets on a 600px frame', async () => {
 describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
   test('opens landscape slides one page at a time fitted to the visible area', async () => {
     const result = await server.commands.pdfViewerScenario('landscape', width)
-    expectOneToolbarRow(result.initial!, width)
-
     expect(result.state).toBe('ready')
+    expectOneToolbarRow(result.initial!, width)
     expect(result.mode).toBe('page')
     expect(result.settings).toEqual({ layout: 'page', size: 'page-fit' })
     expect(result.pageCount).toBe('4')

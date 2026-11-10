@@ -15,6 +15,7 @@ function fixture() {
     context: {
       waitForEvent(event, options) {
         assert.equal(event, 'page')
+        assert.equal(options.timeout, 30000)
         signal = options.signal
         signal.addEventListener(
           'abort',

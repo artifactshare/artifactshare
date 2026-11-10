@@ -1281,3 +1281,25 @@ test('source feedback selects before install, delegates before Chromium install 
     !parsedWorkflow.jobs.validate.needs.includes('chromium-source-feedback'),
   )
 })
+
+test('native browser wait proof runs in the existing required Chromium lane for every merge', () => {
+  const lane = parsedWorkflow.jobs['browser-validation']
+  const command = 'node --test scripts/browser-waits.integration.mjs'
+  const checks = lane.steps.filter((step) => step.run === command)
+  assert.equal(checks.length, 1)
+  const check = checks[0]
+  assert.equal(check.if, "matrix.project == 'chromium'")
+  assert.equal(check['continue-on-error'], undefined)
+  assert.equal(check['timeout-minutes'], 2)
+  assert.ok(
+    lane.steps.indexOf(check) >
+      lane.steps.findIndex((step) => step.run?.includes('playwright install')),
+  )
+  assert.ok(parsedWorkflow.jobs.validate.needs.includes('browser-validation'))
+  assert.doesNotMatch(
+    JSON.stringify(parsedWorkflow.jobs['static-validation']),
+    /browser-waits.integration|playwright install/,
+  )
+  const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  assert.doesNotMatch(root.scripts['test:scripts'], /integration/)
+})

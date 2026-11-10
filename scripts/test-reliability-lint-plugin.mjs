@@ -10,6 +10,8 @@ function mandatory(node) {
   node = unwrap(node)
   if (node?.type !== 'CallExpression') return false
   const name = member(node.callee) ?? node.callee?.name ?? ''
+  if (['then', 'catch', 'finally'].includes(name))
+    return mandatory(node.callee.object)
   return (
     /^waitFor/.test(name) || /^to[A-Z]/.test(name) || name === 'requiredWait'
   )
@@ -20,16 +22,26 @@ function silent(callback) {
   )
     return false
   const body = callback.body
-  const nothing = (value) =>
+  const discarded = (value) =>
     !value ||
     (value.type === 'Identifier' && value.name === 'undefined') ||
+    (value.type === 'Literal' && [null, false].includes(value.value)) ||
     (value.type === 'UnaryExpression' && value.operator === 'void')
+  const logging = (value) =>
+    value?.type === 'CallExpression' &&
+    value.callee?.type === 'MemberExpression' &&
+    value.callee.object?.type === 'Identifier' &&
+    value.callee.object.name === 'console' &&
+    ['log', 'warn', 'error', 'info', 'debug'].includes(member(value.callee))
   return body.type === 'BlockStatement'
-    ? body.body.length === 0 ||
-        (body.body.length === 1 &&
-          body.body[0].type === 'ReturnStatement' &&
-          nothing(body.body[0].argument))
-    : nothing(body)
+    ? body.body.every(
+        (statement) =>
+          (statement.type === 'ReturnStatement' &&
+            (discarded(statement.argument) || logging(statement.argument))) ||
+          (statement.type === 'ExpressionStatement' &&
+            logging(statement.expression)),
+      )
+    : discarded(body) || logging(body)
 }
 function optional(node) {
   node = unwrap(node)
@@ -57,9 +69,9 @@ export default {
           CallExpression(node) {
             const name = member(node.callee)
             if (
-              name === 'catch' &&
+              ['catch', 'then'].includes(name) &&
               mandatory(node.callee.object) &&
-              silent(node.arguments[0])
+              silent(node.arguments[name === 'catch' ? 0 : 1])
             )
               context.report({
                 node,

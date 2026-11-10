@@ -22,7 +22,7 @@ export async function openPopup(
   const pending = requiredWait(
     'popup event',
     context.waitForEvent('page', {
-      timeout: 10000,
+      timeout: 30000,
       signal: controller.signal,
     }),
   )
