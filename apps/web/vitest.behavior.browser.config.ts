@@ -33,11 +33,24 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   cacheDir: 'node_modules/.vite-browser-behavior',
   optimizeDeps: {
+    // Late discovery of shared React/UI chunks can reload a running test and
+    // split its hook state. Keep these dependencies in the initial bundle.
     include: [
       '@mozilla/readability',
+      '@tabler/icons-react',
+      'class-variance-authority',
+      'clsx',
       'dompurify',
       'mermaid',
+      'radix-ui',
+      'react',
+      'react-dom/client',
       'react-dom/server',
+      'react/jsx-dev-runtime',
+      'react/jsx-runtime',
+      'react-router',
+      'sonner',
+      'tailwind-merge',
       'turndown',
     ],
   },
