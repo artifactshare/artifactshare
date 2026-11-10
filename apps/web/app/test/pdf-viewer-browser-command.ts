@@ -856,13 +856,16 @@ async function settingsFlow(
   await chooseSetting(frame, '[data-layout="page"]')
   await settle(frame)
   const pageLayout = await settingsState(frame)
+  const expectedPageWidth = await frame
+    .locator('.page[data-page-number="3"]')
+    .evaluate((element) => (element as HTMLElement).offsetWidth)
   await page.setViewportSize({
     width: Math.round(width * 0.8),
     height: Math.round(height * 0.8),
   })
   // ResizeObserver-driven refit and popover positioning can follow layout.
   await frame.waitForFunction(
-    (expectedWidth) => {
+    ({ expectedWidth, expectedPageWidth: pageWidth }) => {
       const current = document.querySelector<HTMLElement>(
         '.page[data-page-number="3"]',
       )
@@ -871,15 +874,14 @@ async function settingsFlow(
         ?.getBoundingClientRect()
       return (
         innerWidth === expectedWidth &&
-        document.body.dataset.size === '2' &&
         !!current &&
-        Math.abs(current.offsetWidth / 1920 - 1) < 0.01 &&
+        Math.abs(current.offsetWidth - pageWidth) <= 1 &&
         !!popover &&
         popover.left >= 0 &&
         popover.right <= innerWidth
       )
     },
-    Math.round(width * 0.8),
+    { expectedWidth: Math.round(width * 0.8), expectedPageWidth },
     { timeout: 5000 },
   )
   const afterResize = await settingsState(frame)
@@ -1772,6 +1774,25 @@ export const pdfViewerScenario = defineBrowserCommand(
       if (MIXED_SIZES[scenario]) {
         await frame.click('#next')
         const mixedPage = await waitForPage(frame, 2)
+        await frame.waitForFunction(
+          (slide) => {
+            const container = document.getElementById('viewer-container')!
+            const current = document.querySelector<HTMLElement>(
+              '.page[data-page-number="2"]',
+            )!
+            if (slide)
+              return (
+                current.offsetHeight <= container.clientHeight &&
+                current.offsetWidth <= container.clientWidth &&
+                container.scrollHeight === container.clientHeight
+              )
+            return [...document.querySelectorAll<HTMLElement>('.page')].every(
+              (pageElement) => pageElement.offsetWidth <= container.clientWidth,
+            )
+          },
+          scenario === 'mixed-slides',
+          { timeout: 5000 },
+        )
         await settle(frame)
         const mixed = await layout(frame)
         const mixedMode = await frame.evaluate(() => document.body.dataset.mode)

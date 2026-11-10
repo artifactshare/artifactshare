@@ -204,7 +204,8 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
 })
 
 test('offers volume and mute on desktop', async () => {
-  const { steps, volumeCapability } = await controlScenario(1440)
+  const { steps, volumeCapability, nativeVolumeSupported } =
+    await controlScenario(1440)
 
   // The slider and mute button are the player's; an engine without an audio
   // device may leave the element's volume unapplied.
@@ -213,6 +214,7 @@ test('offers volume and mute on desktop', async () => {
   expect(volumeCapability).toBe(
     steps!.volume!.volume === 1 ? 'unapplied' : 'applied',
   )
+  expect(volumeCapability).toBe(nativeVolumeSupported ? 'applied' : 'unapplied')
   if (volumeCapability === 'applied')
     expect(steps!.volume!.volume).toBeCloseTo(0.4, 2)
   else expect(steps!.volume!.volume).toBe(1)

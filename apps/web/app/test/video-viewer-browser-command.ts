@@ -1055,6 +1055,7 @@ export const videoViewerScenario = defineBrowserCommand(
 
       let volumeCapability: 'not-offered' | 'applied' | 'unapplied' =
         'not-offered'
+      let nativeVolumeSupported: boolean | null = null
       // Volume and mute (desktop only).
       if (width >= 700 && !touch) {
         // volumechange is dispatched asynchronously.
@@ -1062,6 +1063,14 @@ export const videoViewerScenario = defineBrowserCommand(
           frame.waitForSelector(`#mute[aria-pressed="${value}"]`, {
             state: 'attached',
           })
+        nativeVolumeSupported = await frame.evaluate(() => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          const previous = video.volume
+          video.volume = 0.6
+          const supported = Math.abs(video.volume - 0.6) < 0.01
+          video.volume = previous
+          return supported
+        })
         await setRange('volume', 0.4)
         // An engine without an audio device (WebKit in a Linux container)
         // may never apply the volume; the test then checks the controls.
@@ -1249,6 +1258,7 @@ export const videoViewerScenario = defineBrowserCommand(
         speedOptions,
         fullscreenSettings,
         volumeCapability,
+        nativeVolumeSupported,
         notices,
         download,
         afterBackForward,
@@ -1361,6 +1371,7 @@ declare module 'vitest/browser' {
       loaded?: Snapshot
       steps?: Record<string, Snapshot>
       volumeCapability?: 'not-offered' | 'applied' | 'unapplied'
+      nativeVolumeSupported?: boolean | null
       settingsOpen?: boolean
       settingsClosed?: boolean
       speedOptions?: number[]

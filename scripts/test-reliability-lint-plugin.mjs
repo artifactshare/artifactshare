@@ -90,11 +90,13 @@ export default {
             // Narrow to Playwright sleep calls. Timers in fixtures and fake-clock
             // tests are not automatically synchronization sleeps.
             if (name === 'waitForTimeout') {
-              const comments = source.getCommentsBefore(
-                node.parent?.type === 'AwaitExpression'
-                  ? node.parent.parent
-                  : node,
+              let statement = node
+              while (
+                statement.parent &&
+                !['BlockStatement', 'Program'].includes(statement.parent.type)
               )
+                statement = statement.parent
+              const comments = source.getCommentsBefore(statement)
               if (
                 !comments.some((comment) =>
                   /test-wait: elapsed-time\s*[—:-]\s*\S.+/.test(comment.value),
