@@ -38,16 +38,47 @@ export const staticSiteCommentSite = defineBrowserCommand(
 
 // Act inside the cross-origin artifact frame (#anchor-reporter): a trusted
 // click, or an expression whose serializable result is returned.
+// Remove this targeted diagnostic after the intermittent failure is localized.
+let staticSiteFrameCall = 0
 export const staticSiteFrame = defineBrowserCommand(
   async ({ frame }, action: { click?: string; evaluate?: string }) => {
-    const handle = await (await frame()).$('#anchor-reporter')
-    const artifact = await handle?.contentFrame()
-    if (!artifact) throw new Error('Static-site frame is not available')
-    if (action.click) {
-      await artifact.click(action.click)
-      return null
+    const call = ++staticSiteFrameCall
+    const kind = action.click ? 'click' : 'evaluate'
+    const started = performance.now()
+    const debug = process.env.DEBUG?.includes('pw:browser')
+    let phase = 'entry'
+    const trace = (next: string) => {
+      phase = next
+      if (debug) {
+        console.error(
+          `[staticSiteFrame] call=${call} operation=${kind} phase=${phase} elapsedMs=${Math.round(performance.now() - started)}`,
+        )
+      }
     }
-    return (await artifact.evaluate(action.evaluate ?? 'null')) as unknown
+    trace('entry')
+    try {
+      trace('resolve-test-frame')
+      const testFrame = await frame()
+      trace('resolve-artifact-element')
+      const handle = await testFrame.$('#anchor-reporter')
+      trace('resolve-artifact-frame')
+      const artifact = await handle?.contentFrame()
+      if (!artifact) throw new Error('Static-site frame is not available')
+      trace('action-start')
+      if (action.click) {
+        await artifact.click(action.click)
+        trace('complete')
+        return null
+      }
+      const result = (await artifact.evaluate(
+        action.evaluate ?? 'null',
+      )) as unknown
+      trace('complete')
+      return result
+    } catch (error) {
+      trace(`error:${phase}`)
+      throw error
+    }
   },
 )
 

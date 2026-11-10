@@ -540,17 +540,36 @@ test('an SPA root route stays `/` and choosing it reopens `/`, not /index.html',
   expect(await painted()).toEqual(['Billing route'])
 })
 
-test('a jump whose route redirects elsewhere ends in cannot-find', async () => {
+test('a jump whose route redirects elsewhere ends in cannot-find', async ({
+  onTestFailed,
+}) => {
+  // Remove this targeted diagnostic after the intermittent failure is localized.
+  let phase = 'serve synthetic site'
+  onTestFailed(() => {
+    console.error('[static-site redirect failure]', {
+      phase,
+      locations: locations.slice(-8),
+      billingVerdict: verdict('billing'),
+      oldVerdict: verdict('old'),
+      verdictBatchCount: verdictLog.length,
+    })
+  })
   origin = await commands.staticSiteCommentSite(historySpa, true)
   const threads = [
     thread('old', '/old', { quotedText: 'Settings route text.' }),
     thread('billing', '/billing', { quotedText: 'Billing route text.' }),
   ]
+  phase = 'open /billing (act render)'
   await open('/billing', threads, spaSite)
+  phase = 'wait for /billing location and ready'
   await at('/billing')
+  phase = 'wait for billing attached verdict'
   await waitFor(() => expect(verdict('billing')).toBe('attached'))
+  phase = 'choose old thread (act render)'
   await choose('old', 1)
+  phase = 'wait for /settings location and ready'
   await at('/settings')
+  phase = 'wait for old needs-check verdict'
   await waitFor(() =>
     expect(
       verdictLog.some((results) =>
@@ -561,9 +580,12 @@ test('a jump whose route redirects elsewhere ends in cannot-find', async () => {
       ),
     ).toBe(true),
   )
+  phase = 'read final pathname (staticSiteFrame evaluate)'
   expect(await frame<string>('location.pathname')).toBe('/settings')
   // The same text on the route the app moved to is not this conversation.
+  phase = 'read painted highlights (staticSiteFrame evaluate)'
   expect(await painted()).toEqual([])
+  phase = 'test body complete'
 })
 
 test('a selection from the previous route never becomes a draft on the next', async () => {
