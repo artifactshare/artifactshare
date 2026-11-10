@@ -411,9 +411,20 @@ test('Windows credential validation runs in the merge queue and by manual dispat
   const tokenStoreStep = job.steps.find((step) =>
     step.run?.includes('vitest run src/token-store.test.ts'),
   )
+  assert.ok(
+    tokenStoreStep.run.includes(
+      'pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts',
+    ),
+  )
+  assert.match(tokenStoreStep.run, /\$LASTEXITCODE -ne 0/)
+  assert.match(tokenStoreStep.run, /\$failedRuns\+\+/)
+  assert.match(tokenStoreStep.run, /if \(\$failedRuns -gt 0\) \{ throw/)
+  assert.match(tokenStoreStep.env.REPETITIONS, /workflow_dispatch/)
+  assert.match(tokenStoreStep.env.REPETITIONS, /\|\| '1'/)
   assert.equal(
-    tokenStoreStep.run,
-    'pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts',
+    parsedWorkflow.on.workflow_dispatch.inputs.windows_credential_repetitions
+      .default,
+    '1',
   )
   const installIndex = job.steps.findIndex(
     (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',

@@ -104,19 +104,47 @@ const windowsIntegrationTest =
 windowsIntegrationTest(
   'Windows Credential Manager stores, reads, and deletes a credential',
   async () => {
-    const store: NativeStore | null = await detectNativeStore('win32')
+    const timed = async <T>(stage: string, operation: () => Promise<T>) => {
+      const started = performance.now()
+      console.info(`Windows credential stage: ${stage} started`)
+      try {
+        return await operation()
+      } finally {
+        console.info(
+          `Windows credential stage: ${stage} finished in ${Math.round(performance.now() - started)}ms`,
+        )
+      }
+    }
+    const store: NativeStore | null = await timed('probe', () =>
+      detectNativeStore('win32'),
+    )
     assert.ok(store)
     const account = `integration-${process.pid}-${Date.now()}`
     const value = JSON.stringify({ kind: 'api_token', token: 'x'.repeat(6000) })
     try {
-      assert.equal(await store.write(account, value), true)
-      assert.equal(await store.read(account), value)
-      assert.equal(await store.write(account, 'replacement'), true)
-      assert.equal(await store.read(account), 'replacement')
+      assert.equal(
+        await timed('write long token', () => store.write(account, value)),
+        true,
+      )
+      assert.equal(
+        await timed('read long token', () => store.read(account)),
+        value,
+      )
+      assert.equal(
+        await timed('replace token', () => store.write(account, 'replacement')),
+        true,
+      )
+      assert.equal(
+        await timed('read replacement', () => store.read(account)),
+        'replacement',
+      )
     } finally {
-      await store.delete(account)
+      await timed('delete token', () => store.delete(account))
     }
-    assert.equal(await store.read(account), null)
+    assert.equal(
+      await timed('read deleted token', () => store.read(account)),
+      null,
+    )
   },
   30_000,
 )
