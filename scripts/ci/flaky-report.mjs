@@ -105,6 +105,25 @@ export function normalizeReport(text, status) {
       const moduleRows = []
       for (const test of module.tests) {
         validateEntity(test, true)
+        if (test.execution !== undefined && test.execution !== null) {
+          const execution = test.execution
+          if (
+            typeof execution !== 'object' ||
+            Array.isArray(execution) ||
+            !['retryCount', 'repeatCount'].every(
+              (key) =>
+                execution[key] === null ||
+                (Number.isSafeInteger(execution[key]) && execution[key] >= 0),
+            ) ||
+            !(
+              execution.durationMs === null ||
+              (Number.isFinite(execution.durationMs) &&
+                execution.durationMs >= 0)
+            ) ||
+            !(execution.flaky === null || typeof execution.flaky === 'boolean')
+          )
+            throw new Error('Invalid Vitest execution diagnostic')
+        }
         moduleRows.push({
           file: module.moduleId,
           namePath: test.namePath,
@@ -114,6 +133,9 @@ export function normalizeReport(text, status) {
               ? 'absent'
               : test.state,
           error: test.errors.map(errorText).join('\n'),
+          ...(test.execution !== undefined
+            ? { execution: test.execution }
+            : {}),
         })
       }
       for (const suite of module.suites) {
@@ -168,6 +190,32 @@ export function normalizeReport(text, status) {
       rows.push(diagnostic('Vitest reported failure without results'))
   } else throw new Error('Unknown report format')
   return rows.map((row) => ({ ...row, file: normalizeFile(row.file, status) }))
+}
+
+// Native case durations can overlap and exclude setup. They are observations,
+// never an invocation wall clock or proof that the first attempt passed.
+export function executionSummary(rows) {
+  const cases = rows.filter(
+    (row) => !row.diagnosticKind && row.status !== 'skipped',
+  )
+  if (!cases.some((row) => Object.hasOwn(row, 'execution'))) return undefined
+  const durations = cases.flatMap((row) =>
+    typeof row.execution?.durationMs === 'number'
+      ? [row.execution.durationMs]
+      : [],
+  )
+  const retries = cases.filter(
+    (row) => typeof row.execution?.retryCount === 'number',
+  )
+  return {
+    observations: cases.length,
+    durationRecorded: durations.length,
+    durationMsSum: durations.length
+      ? durations.reduce((sum, duration) => sum + duration, 0)
+      : null,
+    retryRecorded: retries.length,
+    retried: retries.filter((row) => row.execution.retryCount > 0).length,
+  }
 }
 
 export function aggregate({ results, repetitions, sha }) {

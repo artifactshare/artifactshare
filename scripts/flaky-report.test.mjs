@@ -5,7 +5,12 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { lanes } from './ci/flaky-runs.mjs'
-import { aggregate, markdown, normalizeReport } from './ci/flaky-report.mjs'
+import {
+  aggregate,
+  markdown,
+  normalizeReport,
+  executionSummary,
+} from './ci/flaky-report.mjs'
 
 const sha = 'example-sha'
 const vitest = (
@@ -417,4 +422,49 @@ test('pending cases remain absent and force an incomplete-run diagnostic', (t) =
   assert.equal(row.skipCount, 1)
   assert.equal(row.passCount, 0)
   assert.equal(report.flaky[0].firstError, 'Vitest run incomplete')
+})
+
+test('execution observations retain duration and recovered retries without inventing missing values', () => {
+  const report = vitest()
+  report.modules[0].tests[0].execution = {
+    durationMs: 125.5,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: true,
+  }
+  const status = { format: 'vitest-structured', project: null }
+  const rows = normalizeReport(JSON.stringify(report), status)
+  assert.deepEqual(executionSummary(rows), {
+    observations: 1,
+    durationRecorded: 1,
+    durationMsSum: 125.5,
+    retryRecorded: 1,
+    retried: 1,
+  })
+  report.modules[0].tests[0].execution = null
+  assert.deepEqual(
+    executionSummary(normalizeReport(JSON.stringify(report), status)),
+    {
+      observations: 1,
+      durationRecorded: 0,
+      durationMsSum: null,
+      retryRecorded: 0,
+      retried: 0,
+    },
+  )
+  delete report.modules[0].tests[0].execution
+  assert.equal(
+    executionSummary(normalizeReport(JSON.stringify(report), status)),
+    undefined,
+  )
+  report.modules[0].tests[0].execution = {
+    durationMs: -1,
+    retryCount: 0,
+    repeatCount: 0,
+    flaky: false,
+  }
+  assert.throws(
+    () => normalizeReport(JSON.stringify(report), status),
+    /Invalid Vitest execution diagnostic/,
+  )
 })

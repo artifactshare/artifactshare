@@ -96,6 +96,8 @@
     "scripts/cursor-review.test.mjs",
     "scripts/implementation-review-gate.mjs",
     "scripts/implementation-review-gate.test.mjs",
+    "scripts/test-change-review.mjs",
+    "scripts/test-change-review.test.mjs",
     "scripts/implementation-review-input.mjs",
     "scripts/spec-review-input.mjs",
     "scripts/spec-review-input.test.mjs",

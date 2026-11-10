@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -650,4 +651,69 @@ test('Vitest reporter uses 4.1.11 entities and writes complete structured result
   )
   assert.equal(report.unhandledErrors[1].moduleId, module.moduleId)
   assert.equal(report.unhandledErrors[2].moduleId, null)
+})
+
+test('installed Vitest emits native retry and timing diagnostics through the real reporter', (t) => {
+  const root = path.resolve(import.meta.dirname, '..')
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'native-test-diagnostic-'),
+  )
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  fs.symlinkSync(
+    path.join(root, 'apps/web/node_modules'),
+    path.join(directory, 'node_modules'),
+    'dir',
+  )
+  fs.writeFileSync(path.join(directory, 'package.json'), '{"type":"module"}')
+  fs.writeFileSync(
+    path.join(directory, 'vitest.config.mjs'),
+    'export default { test: { include: ["case.test.ts"], name: "fixture" } }',
+  )
+  // An intentional recovered retry proves the reporter does not call it a
+  // first-attempt success. This is a synthetic reporter fixture, not a repair.
+  fs.writeFileSync(
+    path.join(directory, 'case.test.ts'),
+    `
+import { test, expect } from 'vitest'
+let attempts = 0
+test('healthy', () => expect(1).toBe(1))
+test('recovered', { retry: 1 }, () => expect(++attempts).toBe(2))
+test.skip('not scheduled', () => {})
+`,
+  )
+  const output = path.join(directory, 'report.json')
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(root, 'apps/web/node_modules/vitest/vitest.mjs'),
+      '--config',
+      path.join(directory, 'vitest.config.mjs'),
+      '--root',
+      directory,
+      '--run',
+      `--reporter=${path.join(root, 'scripts/ci/vitest-flaky-reporter.mjs')}`,
+      `--outputFile=${output}`,
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 30000,
+      env: { ...process.env, CI: 'true' },
+    },
+  )
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const report = JSON.parse(fs.readFileSync(output, 'utf8'))
+  const recovered = report.modules[0].tests.find(
+    (row) => row.namePath.at(-1) === 'recovered',
+  )
+  assert.equal(recovered.state, 'passed')
+  assert.equal(recovered.execution.retryCount, 1)
+  assert.equal(recovered.execution.flaky, true)
+  assert.ok(recovered.execution.durationMs >= 0)
+  assert.equal(
+    report.modules[0].tests.find(
+      (row) => row.namePath.at(-1) === 'not scheduled',
+    ).state,
+    'skipped',
+  )
 })
