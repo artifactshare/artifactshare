@@ -139,7 +139,11 @@ afterEach(async () => {
   delete document.documentElement.dataset.theme
 })
 
-async function mount(props: HarnessProps = {}, strict = false) {
+async function mount(
+  props: HarnessProps = {},
+  strict = false,
+  observe?: (phase: string, host: HTMLElement, load?: string) => void,
+) {
   document.documentElement.dataset.theme = 'light'
   captureStyle = document.createElement('style')
   captureStyle.textContent =
@@ -148,6 +152,7 @@ async function mount(props: HarnessProps = {}, strict = false) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
+  observe?.('mount: act render', host)
   await act(async () =>
     root?.render(
       strict ? (
@@ -159,20 +164,28 @@ async function mount(props: HarnessProps = {}, strict = false) {
       ),
     ),
   )
+  observe?.('mount: render settled', host)
   const frame = host.querySelector('iframe')
   if (!frame) return host
   // A loaded but silent document models a frame that cannot run its reporter.
   // Settling this load prevents native load events from racing the fake clock.
+  observe?.('mount: native silent iframe load', host, 'waiting')
   await act(async () => {
     await new Promise<void>((resolve) => {
       const loaded = () => {
-        if (frame.contentDocument?.title !== 'Silent frame') return
+        observe?.('mount: native silent iframe load', host, 'observed')
+        if (frame.contentDocument?.title !== 'Silent frame') {
+          observe?.('mount: native silent iframe load', host, 'ignored')
+          return
+        }
+        observe?.('mount: silent load act settling', host, 'accepted')
         frame.removeEventListener('load', loaded)
         resolve()
       }
       frame.addEventListener('load', loaded)
       frame.srcdoc =
         '<!doctype html><title>Silent frame</title><p>Comment recovery fixture</p>'
+      observe?.('mount: native silent iframe load', host, 'srcdoc assigned')
     })
   })
   return host
@@ -227,7 +240,49 @@ for (const width of [1280, 390]) {
   for (const failure of ['failed', 'never-ready', 'suspended'] as const) {
     test(`actual comment cards stop checking for ${failure} frames (${width}px)`, async ({
       annotate,
+      onTestFailed,
     }) => {
+      // Snapshot before cleanup; the failure callback must not inspect removed DOM.
+      let phase = 'viewport'
+      let observed: {
+        sandboxState?: string | null
+        iframePresent: boolean
+        title: string
+        load: string
+      } = { iframePresent: false, title: 'not observed', load: 'not started' }
+      const observe = (next: string, host?: HTMLElement, load?: string) => {
+        phase = next
+        if (!host) return
+        const frame = host.querySelector('iframe')
+        let title = 'no document'
+        try {
+          const value = frame?.contentDocument?.title
+          title =
+            value === 'Silent frame'
+              ? 'Silent frame'
+              : value === ''
+                ? 'empty'
+                : value == null
+                  ? 'no document'
+                  : 'other'
+        } catch {
+          title = 'inaccessible'
+        }
+        observed = {
+          sandboxState: state(host),
+          iframePresent: Boolean(frame),
+          title,
+          load: load ?? observed.load,
+        }
+      }
+      onTestFailed(() => {
+        console.error('[comment-frame recovery failure]', {
+          width,
+          failure,
+          phase,
+          ...observed,
+        })
+      })
       await page.viewport(width, 900)
       vi.useFakeTimers({
         toFake: [
@@ -260,10 +315,13 @@ for (const width of [1280, 390]) {
         return Promise.resolve(new Response(null, { status: 204 }))
       })
       vi.stubGlobal('fetch', transport)
-      const host = await mount()
+      observe('render/mount')
+      const host = await mount({}, false, observe)
       if (failure === 'suspended') {
+        observe('suspended setup: ready replay', host)
         await ready(host)
         // Simulate restoring a suspended page whose frame no longer replies.
+        observe('suspended setup: pageshow and 500ms advance', host)
         await act(async () => {
           window.dispatchEvent(
             new PageTransitionEvent('pageshow', { persisted: true }),
@@ -271,6 +329,7 @@ for (const width of [1280, 390]) {
           await vi.advanceTimersByTimeAsync(500)
         })
       }
+      observe('initial assertions', host)
       expect(state(host)).toBe('loading')
       const before = subject()
       expect(before.innerText).toContain(en['comments.positionChecking'])
@@ -280,23 +339,29 @@ for (const width of [1280, 390]) {
         .querySelector('[data-saved-subject]')!
         .getAttribute('data-saved-subject')
       expect(savedSubject).toBe(JSON.stringify(threads[0].subject))
+      observe('first screenshot', host)
       const beforePath = await page.screenshot({
         path: `__screenshots__/comment-recovery-${failure}-${width}-before.png`,
       })
+      observe('first annotation', host)
       await annotate('Before: checking the text comment position', {
         path: beforePath,
         contentType: 'image/png',
       })
 
+      observe('fake timer advance: 3001ms', host)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3001)
       })
       if (failure === 'suspended') {
+        observe('wait for suspended paused state', host)
         await waitForRealTaskCondition(async () => {
           await act(async () => {})
+          observe('wait for suspended paused state', host)
           return state(host) === 'paused'
         }, 'suspended comment frame paused')
       }
+      observe('unavailable-state assertions', host)
       expect(state(host)).toBe(
         failure === 'failed'
           ? 'blocked'
@@ -320,9 +385,11 @@ for (const width of [1280, 390]) {
           String(input).endsWith('/comments'),
         ),
       ).toBe(false)
+      observe('second screenshot', host)
       const afterPath = await page.screenshot({
         path: `__screenshots__/comment-recovery-${failure}-${width}-after.png`,
       })
+      observe('second annotation', host)
       await annotate('After: retained quote without checking or warning', {
         path: afterPath,
         contentType: 'image/png',
@@ -330,8 +397,11 @@ for (const width of [1280, 390]) {
 
       // A later ready reply must allow checking again, not leave the panel
       // permanently suppressed after the unavailable interval.
+      observe('late-ready replay', host)
       await ready(host)
+      observe('late-ready assertions', host)
       expect(subject().innerText).toContain(en['comments.positionChecking'])
+      observe('anchor-resolution replay', host)
       await act(async () => {
         window.dispatchEvent(
           new MessageEvent('message', {
@@ -357,10 +427,12 @@ for (const width of [1280, 390]) {
           }),
         )
       })
+      observe('final assertions', host)
       expect(subject().innerText).toContain(quote)
       expect(subject().innerText).not.toContain(en['comments.positionChecking'])
       expect(subject().innerText).not.toContain(en['comments.subjectOrphaned'])
       expect(subject().className).not.toContain('text-warning')
+      observe('test body complete', host)
     }, 20_000)
   }
 }
