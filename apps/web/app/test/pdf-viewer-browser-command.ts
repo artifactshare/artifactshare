@@ -8,6 +8,7 @@ import {
   type ViewerPreferences,
 } from '../viewers/shared/preferences'
 import { PDF_ORIGINAL_PATH, PDFJS_ASSET_PREFIX } from '../viewers/pdf/paths'
+import { applyBrowserFixtureSchema } from './browser-fixture-schema'
 
 const webRoot = new URL('../..', import.meta.url).pathname
 const secret = 'pdf-viewer-browser-fixture-only-'.repeat(3)
@@ -218,7 +219,7 @@ async function seedPdfArtifact(
       "INSERT INTO workspaces (id, name, created_at, plan, link_sharing_enabled) VALUES (?, 'Synthetic', ?, 'plus', 1)",
     ).bind(ids.workspace, now),
     env.DB.prepare(
-      'INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id, google_sub) VALUES (?, ?, 1, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (id, email, email_verified, name, created_at, updated_at, workspace_id) VALUES (?, ?, 1, ?, ?, ?, ?)',
     ).bind(
       ids.user,
       `${ids.user}@example.test`,
@@ -226,7 +227,6 @@ async function seedPdfArtifact(
       now,
       now,
       ids.workspace,
-      `sub-${suffix}`,
     ),
     env.DB.prepare(
       "INSERT INTO artifact_containers (id, workspace_id, kind, owner_user_id, created_by_id, name, created_at, updated_at) VALUES (?, ?, 'inbox', ?, ?, 'Home', ?, ?)",
@@ -1480,7 +1480,7 @@ export const pdfViewerScenario = defineBrowserCommand(
         })
     try {
       await harness.listen()
-      await sandbox.applyD1Migrations('DB')
+      await applyBrowserFixtureSchema((await sandbox.getEnv()).DB)
       const signEntry = await seedPdfArtifact(
         await sandbox.getEnv(),
         scenarioPdf(scenario),
