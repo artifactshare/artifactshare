@@ -5,7 +5,12 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { lanes } from './ci/flaky-runs.mjs'
-import { aggregate, markdown, normalizeReport } from './ci/flaky-report.mjs'
+import {
+  aggregate,
+  markdown,
+  normalizeReport,
+  executionSummary,
+} from './ci/flaky-report.mjs'
 
 const sha = 'example-sha'
 const vitest = (
@@ -417,4 +422,121 @@ test('pending cases remain absent and force an incomplete-run diagnostic', (t) =
   assert.equal(row.skipCount, 1)
   assert.equal(row.passCount, 0)
   assert.equal(report.flaky[0].firstError, 'Vitest run incomplete')
+})
+
+test('execution observations retain duration and recovered retries without inventing missing values', () => {
+  const report = vitest()
+  report.modules[0].tests[0].execution = {
+    durationMs: 125.5,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: true,
+  }
+  const status = { format: 'vitest-structured', project: null }
+  const rows = normalizeReport(JSON.stringify(report), status)
+  assert.deepEqual(executionSummary(rows), {
+    observations: 1,
+    durationRecorded: 1,
+    durationMsSum: 125.5,
+    retryRecorded: 1,
+    retried: 1,
+    recovered: 1,
+    failedAfterRetry: 0,
+  })
+  report.modules[0].tests[0].execution = null
+  assert.deepEqual(
+    executionSummary(normalizeReport(JSON.stringify(report), status)),
+    {
+      observations: 1,
+      durationRecorded: 0,
+      durationMsSum: null,
+      retryRecorded: 0,
+      retried: 0,
+      recovered: 0,
+      failedAfterRetry: 0,
+    },
+  )
+  delete report.modules[0].tests[0].execution
+  assert.equal(
+    executionSummary(normalizeReport(JSON.stringify(report), status)),
+    undefined,
+  )
+  report.modules[0].tests[0].execution = {
+    durationMs: -1,
+    retryCount: 0,
+    repeatCount: 0,
+    flaky: false,
+  }
+  assert.throws(
+    () => normalizeReport(JSON.stringify(report), status),
+    /Invalid Vitest execution diagnostic/,
+  )
+})
+
+test('nightly JSON and Markdown retain recovered and failed retries without changing classification', (t) => {
+  const f = fixture(t)
+  const recovered = vitest()
+  recovered.modules[0].tests[0].execution = {
+    durationMs: 12,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: true,
+  }
+  f.write(lanes[0], 1, recovered)
+  const failed = vitest('failed', 'outer > leaf', undefined, 'fault')
+  failed.modules[0].tests[0].execution = {
+    durationMs: null,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: false,
+  }
+  f.write(lanes[0], 2, failed, { exitCode: 1 })
+  const report = f.read()
+  const row = report.observations.find(
+    (item) =>
+      item.suite === lanes[0].suite &&
+      item.project === lanes[0].project &&
+      !item.diagnosticKind,
+  )
+  assert.equal(row.passCount, 1)
+  assert.equal(row.failureCount, 1)
+  assert.equal(row.execution.recovered, 1)
+  assert.equal(row.execution.failedAfterRetry, 1)
+  assert.equal(row.execution.durationRecorded, 1)
+  assert.equal(row.execution.durationMsSum, 12)
+  assert.equal(report.execution.recovered, 1)
+  assert.equal(report.execution.failedAfterRetry, 1)
+  assert.match(markdown(report), /1 recovered, 1 failed after retry/u)
+  assert.match(markdown(report), /not wall time/u)
+  assert.equal(fixture(t).read().execution, null)
+  assert.match(markdown(fixture(t).read()), /unknown \(no native diagnostics/u)
+})
+
+test('same-named native cases preserve all retry observations while existing failure deduplication remains', (t) => {
+  const f = fixture(t)
+  const report = vitest()
+  const first = report.modules[0].tests[0]
+  first.execution = {
+    durationMs: 1,
+    retryCount: 0,
+    repeatCount: 0,
+    flaky: false,
+  }
+  report.modules[0].tests.push({
+    ...first,
+    execution: { durationMs: 2, retryCount: 1, repeatCount: 0, flaky: true },
+  })
+  f.write(lanes[0], 1, report)
+  const result = f.read()
+  assert.equal(result.flaky.length, 0)
+  assert.equal(result.execution.recovered, 1)
+  const row = result.observations.find(
+    (item) =>
+      item.suite === lanes[0].suite &&
+      item.project === lanes[0].project &&
+      !item.diagnosticKind,
+  )
+  assert.equal(row.passCount, 2)
+  assert.equal(row.execution.observations, 3)
+  assert.equal(row.execution.durationMsSum, 3)
 })

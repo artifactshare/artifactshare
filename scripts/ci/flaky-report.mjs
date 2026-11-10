@@ -105,6 +105,25 @@ export function normalizeReport(text, status) {
       const moduleRows = []
       for (const test of module.tests) {
         validateEntity(test, true)
+        if (test.execution !== undefined && test.execution !== null) {
+          const execution = test.execution
+          if (
+            typeof execution !== 'object' ||
+            Array.isArray(execution) ||
+            !['retryCount', 'repeatCount'].every(
+              (key) =>
+                execution[key] === null ||
+                (Number.isSafeInteger(execution[key]) && execution[key] >= 0),
+            ) ||
+            !(
+              execution.durationMs === null ||
+              (Number.isFinite(execution.durationMs) &&
+                execution.durationMs >= 0)
+            ) ||
+            !(execution.flaky === null || typeof execution.flaky === 'boolean')
+          )
+            throw new Error('Invalid Vitest execution diagnostic')
+        }
         moduleRows.push({
           file: module.moduleId,
           namePath: test.namePath,
@@ -114,6 +133,9 @@ export function normalizeReport(text, status) {
               ? 'absent'
               : test.state,
           error: test.errors.map(errorText).join('\n'),
+          ...(test.execution !== undefined
+            ? { execution: test.execution }
+            : {}),
         })
       }
       for (const suite of module.suites) {
@@ -170,9 +192,42 @@ export function normalizeReport(text, status) {
   return rows.map((row) => ({ ...row, file: normalizeFile(row.file, status) }))
 }
 
+// Native case durations can overlap and exclude setup. They are observations,
+// never an invocation wall clock or proof that the first attempt passed.
+export function executionSummary(rows) {
+  const cases = rows.filter(
+    (row) => !row.diagnosticKind && row.status !== 'skipped',
+  )
+  if (!cases.some((row) => Object.hasOwn(row, 'execution'))) return undefined
+  const durations = cases.flatMap((row) =>
+    typeof row.execution?.durationMs === 'number'
+      ? [row.execution.durationMs]
+      : [],
+  )
+  const retries = cases.filter(
+    (row) => typeof row.execution?.retryCount === 'number',
+  )
+  return {
+    observations: cases.length,
+    durationRecorded: durations.length,
+    durationMsSum: durations.length
+      ? durations.reduce((sum, duration) => sum + duration, 0)
+      : null,
+    retryRecorded: retries.length,
+    retried: retries.filter((row) => row.execution.retryCount > 0).length,
+    recovered: retries.filter(
+      (row) => row.execution.retryCount > 0 && row.status === 'passed',
+    ).length,
+    failedAfterRetry: retries.filter(
+      (row) => row.execution.retryCount > 0 && row.status === 'failed',
+    ).length,
+  }
+}
+
 export function aggregate({ results, repetitions, sha }) {
   repetitions = validateCount(repetitions)
   const collected = new Map()
+  const nativeRows = new Map()
   const coverage = []
   for (const lane of lanes) {
     const laneCoverage = {
@@ -258,6 +313,9 @@ export function aggregate({ results, repetitions, sha }) {
           row.diagnosticKind ?? null,
           row.namePath ?? row.testName,
         ])
+        const observed = nativeRows.get(key) ?? []
+        observed.push(row)
+        nativeRows.set(key, observed)
         const previous = perRun.get(key)
         if (
           !previous ||
@@ -294,19 +352,25 @@ export function aggregate({ results, repetitions, sha }) {
       }
     }
   }
-  const observations = [...collected.values()].sort((a, b) =>
-    [a.suite, a.project ?? '', a.file, a.testName]
-      .join('\0')
-      .localeCompare(
-        [b.suite, b.project ?? '', b.file, b.testName].join('\0'),
-        'en',
-      ),
-  )
+  const observations = [...collected.entries()]
+    .map(([key, value]) => {
+      const execution = executionSummary(nativeRows.get(key))
+      return { ...value, ...(execution ? { execution } : {}) }
+    })
+    .sort((a, b) =>
+      [a.suite, a.project ?? '', a.file, a.testName]
+        .join('\0')
+        .localeCompare(
+          [b.suite, b.project ?? '', b.file, b.testName].join('\0'),
+          'en',
+        ),
+    )
   return {
     schemaVersion: 1,
     sha,
     repetitions,
     coverage,
+    execution: executionSummary([...nativeRows.values()].flat()) ?? null,
     observations,
     flaky: observations.filter(
       (row) => row.failureCount > 0 && row.failureCount < repetitions,
@@ -329,6 +393,14 @@ export function markdown(report) {
     '# Flaky detector',
     '',
     `Commit: ${report.sha}. Requested repetitions per lane: ${report.repetitions}.`,
+    '',
+    '## Native case diagnostics',
+    '',
+    report.execution
+      ? `${report.execution.durationMsSum === null ? 'unknown' : report.execution.durationMsSum.toFixed(1)} ms summed case time; duration ${report.execution.durationRecorded}/${report.execution.observations}, retry ${report.execution.retryRecorded}/${report.execution.observations} recorded; ${report.execution.retried} retried observations, ${report.execution.recovered} recovered, ${report.execution.failedAfterRetry} failed after retry.`
+      : 'unknown (no native diagnostics recorded).',
+    '',
+    'Durations can overlap and are not wall time. Missing diagnostics remain unknown; recovered retries are not first-attempt passes. Pass/fail classification is unchanged.',
     '',
     ...[
       ['Flaky', report.flaky],

@@ -6,7 +6,12 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 import { suiteCommand, execute } from './flaky-runs.mjs'
-import { normalizeReport, normalizeFile, firstLine } from './flaky-report.mjs'
+import {
+  normalizeReport,
+  normalizeFile,
+  firstLine,
+  executionSummary,
+} from './flaky-report.mjs'
 
 export const REPETITION_TIMEOUT_MS = 600_000
 export const MAX_PAIRS = 15
@@ -336,21 +341,30 @@ export function repetitionResult(directory, pair, plan, repetition) {
     const text = fs.readFileSync(path.join(directory, 'report.json'), 'utf8')
     const rows = normalizeReport(text, status)
     const report = JSON.parse(text)
+    const execution =
+      report.modules.length === 1 &&
+      normalizeFile(report.modules[0].moduleId, status) === pair.file
+        ? executionSummary(rows)
+        : undefined
+    const measured = (result) => ({
+      ...result,
+      ...(execution ? { execution } : {}),
+    })
     const failure = rows.find(
       (row) => row.status === 'failed' || row.status === 'absent' || row.error,
     )
     if (failure)
-      return {
+      return measured({
         passed: false,
         error: firstLine(failure.error || 'Incomplete assertion results'),
-      }
+      })
     if (
       report.modules.length !== 1 ||
       normalizeFile(report.modules[0].moduleId, status) !== pair.file
     )
       throw new Error('Unexpected or absent module identity')
     if (infrastructure)
-      return { passed: false, error: firstLine(infrastructure) }
+      return measured({ passed: false, error: firstLine(infrastructure) })
     if (
       report.reason !== 'passed' ||
       report.modules[0].state !== 'passed' ||
@@ -360,7 +374,7 @@ export function repetitionResult(directory, pair, plan, repetition) {
       !rows.some((row) => row.status === 'passed' && !row.diagnosticKind)
     )
       throw new Error('Absent passing assertions or incomplete results')
-    return { passed: true }
+    return measured({ passed: true })
   } catch (error) {
     return {
       passed: false,
@@ -379,6 +393,17 @@ const cell = (value) =>
       /[&<>|\\`*_[\]{}()#!~]/g,
       (character) => `&#${character.codePointAt(0)};`,
     )
+
+function executionText(runs) {
+  const recorded = runs.flatMap((run) => (run.execution ? [run.execution] : []))
+  if (!recorded.length) return 'unknown'
+  const sum = (key) => recorded.reduce((value, row) => value + row[key], 0)
+  const durationCount = sum('durationRecorded')
+  const duration = durationCount
+    ? recorded.reduce((value, row) => value + (row.durationMsSum ?? 0), 0)
+    : null
+  return `${duration === null ? 'unknown' : duration.toFixed(1)} ms; duration ${durationCount}/${sum('observations')}, retry ${sum('retryRecorded')}/${sum('observations')} recorded; ${sum('retried')} retried observations, ${sum('recovered')} recovered, ${sum('failedAfterRetry')} failed after retry; ${recorded.length}/${runs.length} reports`
+}
 
 export function summarize(plan, { results, setupError } = {}) {
   const lines = ['## Changed browser behavior repetitions', '']
@@ -432,8 +457,8 @@ export function summarize(plan, { results, setupError } = {}) {
     )
   if (plan.pairs?.length) {
     lines.push(
-      '| File | Project | Passes / repetitions | Failed repetitions: first error |',
-      '| --- | --- | --- | --- |',
+      '| File | Project | Passes / repetitions | Failed repetitions: first error | Native case diagnostics |',
+      '| --- | --- | --- | --- | --- |',
     )
     for (const [index, pair] of plan.pairs.entries()) {
       const runs = Array.from({ length: plan.repetitions }, (_, offset) =>
@@ -449,9 +474,13 @@ export function summarize(plan, { results, setupError } = {}) {
       )
       failed ||= errors.length > 0
       lines.push(
-        `| ${cell(pair.file)} | ${cell(pair.project)} | ${runs.filter((run) => run.passed).length}/${plan.repetitions} | ${errors.join('<br>') || '—'} |`,
+        `| ${cell(pair.file)} | ${cell(pair.project)} | ${runs.filter((run) => run.passed).length}/${plan.repetitions} | ${errors.join('<br>') || '—'} | ${cell(executionText(runs))} |`,
       )
     }
+    lines.push(
+      '',
+      'Native case durations are sums of recorded observations, not wall time. Missing diagnostics are unknown; a recovered retry is not a first-attempt pass.',
+    )
   } else if (plan.total && !plan.pairs) {
     failed = true
     lines.push('Project planning did not complete; results unavailable.', '')
@@ -717,8 +746,8 @@ export function summarizeSource(plan, { results, setupError } = {}) {
     lines.push(
       `Observed execution: ${cell(execution.elapsedMs)} ms. Soft admission budget: ${cell(execution.budgetMs)} ms; per-file deadline: ${REPETITION_TIMEOUT_MS} ms.`,
       '',
-      '| Admitted file | Outcome | First error |',
-      '| --- | --- | --- |',
+      '| Admitted file | Outcome | First error | Native case diagnostics |',
+      '| --- | --- | --- | --- |',
     )
     for (const [index, pair] of plan.pairs
       .slice(0, execution.admitted)
@@ -731,7 +760,7 @@ export function summarizeSource(plan, { results, setupError } = {}) {
       )
       failed ||= !result.passed
       lines.push(
-        `| ${cell(pair.file)} | ${result.passed ? 'passed' : 'failed'} | ${cell(result.error ?? '—')} |`,
+        `| ${cell(pair.file)} | ${result.passed ? 'passed' : 'failed'} | ${cell(result.error ?? '—')} | ${cell(executionText([result]))} |`,
       )
     }
     lines.push(
@@ -742,6 +771,8 @@ export function summarizeSource(plan, { results, setupError } = {}) {
     )
   }
   lines.push(
+    'Native case durations are sums of recorded observations, not wall time. Missing diagnostics are unknown; a recovered retry is not a first-attempt pass.',
+    '',
     'Partial feedback only. Merge queue remains the source of full validation.',
     '',
   )

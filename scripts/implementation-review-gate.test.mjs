@@ -57,6 +57,12 @@ const scope = {
 
 function scopeHarness(overrides = {}) {
   return {
+    inspectTestChanges: ({ base: rangeBase, head: rangeHead }) => ({
+      schemaVersion: 1,
+      base: rangeBase,
+      head: rangeHead,
+      files: [],
+    }),
     getBranch: () => 'feature',
     acquireScopeLock: () => Promise.resolve(() => Promise.resolve()),
     admitCandidate: () => ({
@@ -255,10 +261,11 @@ test('coordinator resolves explicit base before launching both reviewers', async
       ).size,
       1,
     )
-    assert.deepEqual(
-      snapshots.map(({ content }) => content),
-      [taskScopeContext({ scope }), taskScopeContext({ scope })],
-    )
+    assert.equal(snapshots[0].content, snapshots[1].content)
+    assert.ok(snapshots[0].content.startsWith(taskScopeContext({ scope })))
+    assert.match(snapshots[0].content, /## Changed test evidence/u)
+    assert.match(snapshots[0].content, new RegExp(`"base": "${base}"`, 'u'))
+    assert.match(snapshots[0].content, new RegExp(`"head": "${head}"`, 'u'))
     assert.deepEqual(
       snapshots.map(({ mode }) => mode),
       [0o400, 0o400],
@@ -354,10 +361,11 @@ test('hands second-candidate dispositions to both reviewers from one stable snap
       calls.map(({ name }) => name),
       ['codex', 'claude'],
     )
-    assert.deepEqual(snapshots, [
-      taskScopeContext({ scope }, dispositions),
-      snapshots[0],
-    ])
+    assert.equal(snapshots[0], snapshots[1])
+    assert.ok(
+      snapshots[0].startsWith(taskScopeContext({ scope }, dispositions)),
+    )
+    assert.match(snapshots[0], new RegExp(`"head": "${correction}"`, 'u'))
     assert.match(
       snapshots[0],
       /Objective: Keep the implementation review bounded/u,
@@ -1019,4 +1027,59 @@ test("an owner's CLAUDE.local.md stops the gate before either reviewer starts", 
     /CLAUDE\.local\.md already exists/u,
   )
   assert.equal(launched, false)
+})
+
+test('fixed test change evidence reaches both reviewers and inspection failures launch neither', async () => {
+  const snapshots = []
+  const common = {
+    countRounds: () => 0,
+    localInstructionsPresent: () => false,
+    ...scopeHarness(),
+    acquireLock: () => Promise.resolve(() => Promise.resolve()),
+    argv: ['--base', 'release'],
+    run: explicitBaseRun,
+    readCleanHead: () => head,
+    review: (name, args) => {
+      snapshots.push(
+        readFileSync(args[args.indexOf('--context-file') + 1], 'utf8'),
+      )
+      return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
+    },
+    log: () => {},
+    timingLog: () => {},
+    recordRounds: () => {},
+  }
+  assert.equal(
+    await main({
+      ...common,
+      inspectTestChanges: (range) => {
+        assert.deepEqual(range, { base, head })
+        return {
+          ...range,
+          files: [
+            {
+              file: 'app/test/example.test.ts',
+              notes: [{ kind: 'removed-assertion', side: 'removed', line: 7 }],
+            },
+          ],
+        }
+      },
+    }),
+    0,
+  )
+  assert.equal(snapshots.length, 2)
+  assert.equal(snapshots[0], snapshots[1])
+  assert.match(snapshots[0], /removed-assertion/u)
+  for (const inspectTestChanges of [
+    () => {
+      throw new Error('diff unavailable')
+    },
+    () => ({ base: head, head }),
+  ]) {
+    await assert.rejects(
+      main({ ...common, inspectTestChanges }),
+      /diff unavailable|does not match/u,
+    )
+    assert.equal(snapshots.length, 2)
+  }
 })

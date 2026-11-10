@@ -10,6 +10,22 @@ function namePath(entity) {
   return names
 }
 
+function executionDiagnostic(test) {
+  const value = test.diagnostic?.()
+  if (!value) return null
+  const count = (number) =>
+    Number.isSafeInteger(number) && number >= 0 ? number : null
+  return {
+    durationMs:
+      Number.isFinite(value.duration) && value.duration >= 0
+        ? value.duration
+        : null,
+    retryCount: count(value.retryCount),
+    repeatCount: count(value.repeatCount),
+    flaky: typeof value.flaky === 'boolean' ? value.flaky : null,
+  }
+}
+
 // Vitest 4.1.11 exposes VITEST_TEST_PATH on runtime errors and wraps browser
 // failures with this exact message, even when collection never created a module.
 // Read the structured error, never the human console rendering.
@@ -40,6 +56,7 @@ export function structuredReport(testModules, unhandledErrors, reason) {
       tests: [...module.children.allTests()].map((test) => ({
         namePath: namePath(test),
         state: test.result().state,
+        execution: executionDiagnostic(test),
         errors: (test.result().errors ?? []).map((error) =>
           serializeError(error),
         ),

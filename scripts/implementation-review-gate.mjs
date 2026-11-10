@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { finalReviews, roundCapConsultation } from './agent-role-settings.mjs'
+import { collectTestChanges, renderTestChanges } from './test-change-review.mjs'
 import {
   launchCodexReview,
   parseArgs as parseCodexArgs,
@@ -297,6 +298,8 @@ async function main({
   run = commandOutput,
   review = runReviewer,
   readCleanHead = () => cleanHead(run),
+  inspectTestChanges = ({ base, head }) =>
+    collectTestChanges({ base, head, run }),
   recordRounds = recordCompletedRounds,
   countRounds = () => completedPairRounds({ run }),
   localInstructionsPresent: hasLocalInstructions = () =>
@@ -337,19 +340,25 @@ async function main({
         `${localInstructionsFile} already exists at the repository root; move it aside before the implementation gate.`,
       )
     const scopeState = admitCandidate(branch, head, run)
-    const context = taskScopeContext(
+    const scopeContext = taskScopeContext(
       scopeState,
       readDispositionsBody(options.dispositionsFile),
     )
-    snapshotDirectory = mkdtempSync(
-      join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
-    )
-    const snapshotPath = createContextSnapshot(context, snapshotDirectory)
     const target = coordinatedBase({ base: options.base, head, run })
     if (target.noTarget)
       throw new Error(
         'No implementation review target exists for the resolved base and HEAD; the final gate is incomplete.',
       )
+    const changes = inspectTestChanges({ base: target.base, head })
+    if (changes.base !== target.base || changes.head !== head)
+      throw new Error(
+        'Test change evidence does not match the fixed review range.',
+      )
+    const context = `${scopeContext}\n\n${renderTestChanges(changes)}`
+    snapshotDirectory = mkdtempSync(
+      join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
+    )
+    const snapshotPath = createContextSnapshot(context, snapshotDirectory)
     const common = [
       '--phase',
       'implementation',
