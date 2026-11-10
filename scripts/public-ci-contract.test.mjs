@@ -844,7 +844,13 @@ test('browser installation precedes execution and retains browser stderr', () =>
   assert.equal(browser.env?.DEBUG, undefined)
   assert.equal(parsedWorkflow.env?.DEBUG, undefined)
   for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
-    if (!['browser-validation', 'changed-browser-repetitions'].includes(name))
+    if (
+      ![
+        'browser-validation',
+        'changed-browser-repetitions',
+        'chromium-source-feedback',
+      ].includes(name)
+    )
       assert.doesNotMatch(JSON.stringify(job), /pw:browser/)
   }
 })
@@ -964,43 +970,53 @@ test('required browser repetition check rejects failed, cancelled or missing mat
   )
 })
 
-test('new lane classification rejects forks, case differences, and missing names before checkout', (t) => {
-  const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  const script = lane.steps[1].run.trim().match(/^node -e "(.*)"$/u)[1]
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'changed-classify-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  for (const [head, base, expected] of [
-    ['owner/repo', 'owner/repo', true],
-    ['fork/repo', 'owner/repo', false],
-    ['Owner/repo', 'owner/repo', false],
-    ['', 'owner/repo', false],
-    ['owner/repo', '', false],
-    [undefined, 'owner/repo', false],
-    ['owner/repo', undefined, false],
-    [undefined, undefined, false],
-    ['', '', false],
-  ]) {
-    const output = path.join(directory, 'output')
-    fs.writeFileSync(output, '')
-    const env = { ...process.env, GITHUB_OUTPUT: output }
-    delete env.PUBLIC_PR_HEAD_REPO
-    delete env.PUBLIC_PR_BASE_REPO
-    if (head !== undefined) env.PUBLIC_PR_HEAD_REPO = head
-    if (base !== undefined) env.PUBLIC_PR_BASE_REPO = base
-    const result = spawnSync(process.execPath, ['-e', script], {
-      env,
-      encoding: 'utf8',
-    })
-    assert.equal(result.status, 0, result.stderr)
-    assert.equal(fs.readFileSync(output, 'utf8'), `is_maintainer=${expected}\n`)
-    if (!expected)
-      for (const step of lane.steps.slice(2))
-        assert.match(
-          step.if,
-          /steps\.classify\.outputs\.is_maintainer == 'true'/,
-        )
-  }
-})
+for (const name of [
+  'changed-browser-repetitions',
+  'chromium-source-feedback',
+]) {
+  test(`${name} classification rejects forks, case differences, and missing names before checkout`, (t) => {
+    const lane = parsedWorkflow.jobs[name]
+    const script = lane.steps[1].run.trim().match(/^node -e "(.*)"$/u)[1]
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'changed-classify-'),
+    )
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+    for (const [head, base, expected] of [
+      ['owner/repo', 'owner/repo', true],
+      ['fork/repo', 'owner/repo', false],
+      ['Owner/repo', 'owner/repo', false],
+      ['', 'owner/repo', false],
+      ['owner/repo', '', false],
+      [undefined, 'owner/repo', false],
+      ['owner/repo', undefined, false],
+      [undefined, undefined, false],
+      ['', '', false],
+    ]) {
+      const output = path.join(directory, 'output')
+      fs.writeFileSync(output, '')
+      const env = { ...process.env, GITHUB_OUTPUT: output }
+      delete env.PUBLIC_PR_HEAD_REPO
+      delete env.PUBLIC_PR_BASE_REPO
+      if (head !== undefined) env.PUBLIC_PR_HEAD_REPO = head
+      if (base !== undefined) env.PUBLIC_PR_BASE_REPO = base
+      const result = spawnSync(process.execPath, ['-e', script], {
+        env,
+        encoding: 'utf8',
+      })
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(
+        fs.readFileSync(output, 'utf8'),
+        `is_maintainer=${expected}\n`,
+      )
+      if (!expected)
+        for (const step of lane.steps.slice(2))
+          assert.match(
+            step.if,
+            /steps\.classify\.outputs\.is_maintainer == 'true'/,
+          )
+    }
+  })
+}
 
 test('changed browser results use runner context only in step environments', () => {
   const lane = parsedWorkflow.jobs['changed-browser-repetitions']
@@ -1205,4 +1221,63 @@ test('all cache image preparations export only nonempty runner metadata', (t) =>
       assert.equal(step['continue-on-error'], true)
     }
   }
+})
+
+test('source feedback selects before install, delegates before Chromium install and reserves reporting time', () => {
+  const lane = parsedWorkflow.jobs['chromium-source-feedback']
+  assert.equal(lane.if, "github.event_name == 'pull_request'")
+  assert.equal(lane['runs-on'], 'ubuntu-latest')
+  assert.equal(
+    lane.env.PUBLIC_PR_BASE,
+    '${{ github.event.pull_request.base.sha }}',
+  )
+  assert.equal(
+    lane.env.PUBLIC_PR_HEAD,
+    '${{ github.event.pull_request.head.sha }}',
+  )
+  const checkout = lane.steps.find((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(checkout.with.ref, '${{ github.event.pull_request.head.sha }}')
+  assert.equal(checkout.with['persist-credentials'], false)
+  const index = (id) => lane.steps.findIndex((step) => step.id === id)
+  const install = lane.steps.findIndex((step) =>
+    step.run?.startsWith('pnpm install'),
+  )
+  assert.ok(index('select') < install && install < index('plan'))
+  for (const step of lane.steps.slice(index('select') + 1, index('plan') + 1))
+    assert.match(step.if, /steps.select.outputs.has_files == 'true'/)
+  const browser = lane.steps.find((step) =>
+    step.run?.includes('playwright install'),
+  )
+  assert.equal(
+    browser.run,
+    'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium',
+  )
+  assert.ok(lane.steps.indexOf(browser) > index('plan'))
+  assert.match(browser.if, /steps.plan.outputs.has_pairs == 'true'/)
+  const run = lane.steps[index('repeat')]
+  assert.equal(
+    run.run,
+    'node scripts/ci/changed-browser-repetitions.mjs source-run',
+  )
+  assert.match(run.if, /steps.plan.outputs.has_pairs == 'true'/)
+  assert.equal(run['timeout-minutes'], 15)
+  assert.ok(run['timeout-minutes'] > (180_000 + 600_000) / 60_000)
+  const setupMinutes = lane.steps
+    .slice(0, index('repeat'))
+    .reduce((sum, step) => sum + step['timeout-minutes'], 0)
+  assert.equal(setupMinutes, 26)
+  assert.ok(
+    lane['timeout-minutes'] >= setupMinutes + run['timeout-minutes'] + 4,
+  )
+  const report = lane.steps.at(-1)
+  assert.match(report.if, /always\(\)/)
+  assert.equal(report.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
+  assert.match(report.env.SETUP_FAILED, /job.status == 'failure'/)
+  assert.match(report.run, /source-report/)
+  assert.doesNotMatch(JSON.stringify(lane), /continue-on-error/)
+  assert.ok(
+    !parsedWorkflow.jobs.validate.needs.includes('chromium-source-feedback'),
+  )
 })

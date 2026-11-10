@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -43,7 +44,7 @@ export function selectFiles(text) {
   }
 }
 
-export function selectChanges({ base, head, root = process.cwd() }) {
+function fixedDiff({ base, head, root = process.cwd(), full = false }) {
   if (!base || !head) throw new Error('Both base and head SHAs are required')
   // Resolve commits first: missing refs fail and option-like inputs cannot reach diff.
   const commit = (ref) =>
@@ -61,12 +62,17 @@ export function selectChanges({ base, head, root = process.cwd() }) {
       '--name-status',
       '-z',
       '--find-renames',
-      '--diff-filter=AM',
+      ...(full ? [] : ['--diff-filter=AM']),
       `${base}...${head}`,
       '--',
     ],
     { cwd: root, encoding: 'utf8' },
   )
+  return { diff, base, head }
+}
+
+export function selectChanges(options) {
+  const { diff, base, head } = fixedDiff(options)
   return { ...selectFiles(diff), base, head }
 }
 
@@ -120,8 +126,47 @@ export async function discoverProjects(root, exclude = []) {
         project: spec.project.name,
       }))
     },
+    async related(inputs) {
+      ctx.config.related = inputs.map((file) => path.resolve(root, file))
+      try {
+        return (await ctx.getRelevantTestSpecifications()).map((spec) => ({
+          file: path.relative(root, spec.moduleId).split(path.sep).join('/'),
+          project: spec.project.name,
+        }))
+      } finally {
+        ctx.config.related = undefined
+      }
+    },
     close: () => ctx.close(),
   }
+}
+
+async function exactPair(discovery, root, file, project) {
+  const filter = path.resolve(root, file)
+  let matches = (await discovery.specifications([filter])).filter(
+    (spec) => spec.project === project,
+  )
+  // Vitest also compares absolute filters as relative, case-insensitive
+  // substrings. Exclude collisions literally, then verify discovery again.
+  const exclude = [
+    ...new Set(
+      matches
+        .filter((spec) => spec.file !== file)
+        .map((spec) =>
+          spec.file
+            .slice('apps/web/'.length)
+            .replace(/[\\*?{}()[\]!+@]/g, '\\$&'),
+        ),
+    ),
+  ]
+  if (exclude.length)
+    matches = (await discovery.specifications([filter], exclude)).filter(
+      (spec) => spec.project === project,
+    )
+  if (matches.length !== 1 || matches[0].file !== file)
+    throw new Error(`Ambiguous file filter for ${file} / ${project}`)
+  const pair = { file, project, filter, exclude }
+  return pair
 }
 
 export async function buildPlan(
@@ -155,30 +200,7 @@ export async function buildPlan(
           plan.skippedPairs.push({ file, project })
           continue
         }
-        const filter = path.resolve(root, file)
-        let matches = (await discovery.specifications([filter])).filter(
-          (spec) => spec.project === project,
-        )
-        // Vitest also compares absolute filters as relative, case-insensitive
-        // substrings. Exclude collisions literally, then verify discovery again.
-        const exclude = [
-          ...new Set(
-            matches
-              .filter((spec) => spec.file !== file)
-              .map((spec) =>
-                spec.file
-                  .slice('apps/web/'.length)
-                  .replace(/[\\*?{}()[\]!+@]/g, '\\$&'),
-              ),
-          ),
-        ]
-        if (exclude.length)
-          matches = (await discovery.specifications([filter], exclude)).filter(
-            (spec) => spec.project === project,
-          )
-        if (matches.length !== 1 || matches[0].file !== file)
-          throw new Error(`Ambiguous file filter for ${file} / ${project}`)
-        const pair = { file, project, filter, exclude }
+        const pair = await exactPair(discovery, root, file, project)
         plan.pairs.push(pair)
       }
     }
@@ -218,10 +240,14 @@ export function planForProject(plan, project) {
 
 export async function runPlan(
   plan,
-  { results, root = process.cwd(), executor = execute } = {},
+  { results, root = process.cwd(), executor = execute, beforeFile } = {},
 ) {
   validateRepetitions(String(plan.repetitions))
+  const admitted = []
   for (const [index, pair] of plan.pairs.entries()) {
+    if (beforeFile && !(await beforeFile(pair, index)))
+      return { admitted, deferred: plan.pairs.slice(index) }
+    admitted.push(pair)
     for (let repetition = 1; repetition <= plan.repetitions; repetition++) {
       const directory = runDirectory(results, index, repetition)
       fs.mkdirSync(directory, { recursive: true })
@@ -277,6 +303,7 @@ export async function runPlan(
       writeJson(statusPath, status)
     }
   }
+  return { admitted, deferred: [] }
 }
 
 export function repetitionResult(directory, pair, plan, repetition) {
@@ -432,7 +459,299 @@ export function summarize(plan, { results, setupError } = {}) {
   return { failed, markdown: [...lines, ''].join('\n') }
 }
 
+export const SOURCE_BUDGET_MS = 180_000
+
+// Known documentation and A/M behavior-browser tests do not trigger this lane.
+// Other application Markdown/assets and renamed/copied/deleted tests remain inputs.
+export function selectSourceFiles(text) {
+  const tokens = text.split('\0')
+  if (tokens.pop() !== '')
+    throw new Error('Expected NUL-delimited Git statuses')
+  const paths = new Map()
+  while (tokens.length) {
+    const status = tokens.shift()
+    if (!/^(?:[ADMTUXB]|[RC]\d{1,3})$/.test(status ?? ''))
+      throw new Error('Invalid Git status record')
+    for (let i = 0; i < (/^[RC]/.test(status) ? 2 : 1); i++) {
+      const file = tokens.shift()
+      if (!file) throw new Error('Incomplete Git status record')
+      const documentation =
+        /^(?:(?:docs|proposals)\/.*\.(?:md|txt)|(?:README|CONTRIBUTING|SECURITY|AGENTS|CLAUDE)\.md|LICENSE)$/s.test(
+          file,
+        ) ||
+        file === 'apps/web/PRODUCT.md' ||
+        file === 'apps/web/DESIGN.md'
+      const repetitionTest =
+        /^[AM]$/.test(status) &&
+        /^apps\/web\/.+\.behavior\.browser\.test\.tsx$/s.test(file)
+      paths.set(file, {
+        file,
+        status,
+        trigger: !documentation && !repetitionTest,
+        reason: documentation
+          ? 'Repository documentation/metadata'
+          : repetitionTest
+            ? 'Added/modified behavior-browser test; repetition lane selection applies'
+            : 'Potential runtime input (conservative)',
+      })
+    }
+  }
+  const changes = [...paths.values()].sort((a, b) =>
+    a.file < b.file ? -1 : a.file > b.file ? 1 : 0,
+  )
+  return {
+    changes,
+    inputs: changes
+      .filter((change) => change.trigger)
+      .map((change) => change.file),
+  }
+}
+
+export function selectSourceChanges(options) {
+  const { diff, base, head } = fixedDiff({ ...options, full: true })
+  return { ...selectSourceFiles(diff), changed: selectFiles(diff), base, head }
+}
+
+export async function buildSourcePlan(
+  selection,
+  { root = process.cwd(), discover = discoverProjects } = {},
+) {
+  const plan = {
+    ...selection,
+    repetitions: 1,
+    pairs: [],
+    delegated: [],
+    candidates: [],
+    related: [],
+    fallback: [],
+  }
+  if (!selection.inputs.length) return plan
+  const discovery = await discover(root)
+  try {
+    const specs = await discovery.specifications()
+    plan.candidates = [
+      ...new Set(
+        specs
+          .filter((spec) => spec.project === 'chromium')
+          .map((spec) => spec.file),
+      ),
+    ].sort()
+    if (!plan.candidates.length)
+      throw new Error('No effective Chromium specifications discovered')
+    // Use exactly the repetition lane's global file/pair caps and effective
+    // config. This shared context remains open until this plan is complete.
+    const global = await buildPlan(selection.changed, {
+      root,
+      discover: () => ({
+        specifications: (...args) => discovery.specifications(...args),
+        close: async () => {},
+      }),
+    })
+    plan.delegated = global.pairs.filter((pair) => pair.project === 'chromium')
+    // The import graph is never a completeness proof: browser commands, schema
+    // and compiled Worker/application inputs can have invisible edges.
+    plan.fallback.push(
+      'Graph is ordering only; Node commands, schema and compiled inputs can have missing edges. All candidates retained before delegation.',
+    )
+    if (
+      selection.changes.some(
+        (change) => change.trigger && /^[DRC]/.test(change.status),
+      )
+    )
+      plan.fallback.push(
+        'Deleted/renamed/copied inputs cannot be fully resolved against the head graph.',
+      )
+    if (
+      selection.inputs.some(
+        (file) =>
+          !file.startsWith('apps/web/app/') || !/\.[cm]?[jt]sx?$/.test(file),
+      )
+    )
+      plan.fallback.push(
+        'Inputs outside known application import coverage; retain the full candidate queue.',
+      )
+    try {
+      const related = await discovery.related(selection.inputs)
+      const known = new Set(plan.candidates)
+      plan.related = [
+        ...new Set(
+          related
+            .filter(
+              (spec) => spec.project === 'chromium' && known.has(spec.file),
+            )
+            .map((spec) => spec.file),
+        ),
+      ].sort()
+      if (!plan.related.length)
+        plan.fallback.push(
+          'Related discovery returned no known Chromium files; use deterministic candidate order.',
+        )
+    } catch (error) {
+      plan.fallback.push(
+        `Related discovery failed; retain all candidates: ${firstLine(error.message)}`,
+      )
+    }
+    const prioritized = new Set(plan.related)
+    const delegated = new Set(plan.delegated.map((pair) => pair.file))
+    for (const file of [
+      ...plan.related,
+      ...plan.candidates.filter((candidate) => !prioritized.has(candidate)),
+    ]) {
+      if (!delegated.has(file))
+        plan.pairs.push(await exactPair(discovery, root, file, 'chromium'))
+    }
+    return plan
+  } finally {
+    await discovery.close()
+  }
+}
+
+export async function runSourcePlan(
+  plan,
+  {
+    results,
+    root = process.cwd(),
+    executor = execute,
+    budgetMs = SOURCE_BUDGET_MS,
+    clock = () => performance.now(),
+    save = () => {},
+  } = {},
+) {
+  if (!Number.isSafeInteger(budgetMs) || budgetMs <= 0)
+    throw new Error(
+      'Admission budget must be a positive integer in milliseconds',
+    )
+  plan.execution = {
+    admitted: 0,
+    deferred: [],
+    completed: false,
+    budgetMs,
+    elapsedMs: 0,
+  }
+  save(plan)
+  const start = clock()
+  const partition = await runPlan(plan, {
+    results,
+    root,
+    executor,
+    beforeFile: (_pair, index) => {
+      plan.execution.elapsedMs = clock() - start
+      if (plan.execution.elapsedMs >= budgetMs) return false
+      // Record admission before launch. An interrupted/missing report can
+      // never turn started work into queue-deferred work.
+      plan.execution.admitted = index + 1
+      save(plan)
+      return true
+    },
+  })
+  plan.execution.deferred = partition.deferred.map((pair) => pair.file)
+  plan.execution.elapsedMs = clock() - start
+  plan.execution.completed = true
+  save(plan)
+  return partition
+}
+
+export function summarizeSource(plan, { results, setupError } = {}) {
+  const lines = ['## Maintainer PR Chromium source feedback', '']
+  let failed = Boolean(setupError)
+  if (setupError)
+    lines.push(
+      `Setup failed or interrupted: ${cell(firstLine(setupError))}`,
+      '',
+    )
+  if (!plan)
+    return {
+      failed: true,
+      markdown: [
+        ...lines,
+        'Selection unavailable; no success established.',
+        '',
+      ].join('\n'),
+    }
+  lines.push(
+    `Fixed diff: ${cell(plan.base)}...${cell(plan.head)}`,
+    '',
+    'Input paths and reasons:',
+    ...plan.changes.map(
+      (change) =>
+        `- ${cell(change.status)} ${cell(change.file)}: ${cell(change.reason)}`,
+    ),
+    '',
+  )
+  if (!plan.inputs.length) {
+    lines.push(
+      'No runtime inputs; no dependencies or Vitest configuration loaded.',
+      '',
+    )
+    return { failed, markdown: lines.join('\n') }
+  }
+  if (!plan.candidates)
+    return {
+      failed: true,
+      markdown: [
+        ...lines,
+        'Planning incomplete; no success established.',
+        '',
+      ].join('\n'),
+    }
+  lines.push(
+    `Effective Chromium candidates before delegation: ${plan.candidates.length}.`,
+    'Related files prioritized (remaining candidates follow in path order):',
+    ...plan.related.map((file) => `- ${cell(file)}`),
+    '',
+    ...plan.fallback.map((reason) => `Fallback: ${cell(reason)}`),
+    '',
+    'Requested/delegated to changed-browser repetitions (not passes):',
+    ...plan.delegated.map((pair) => `- ${cell(pair.file)}`),
+    '',
+  )
+  const execution = plan.execution
+  if (plan.pairs.length && !execution?.completed) {
+    failed = true
+    lines.push(
+      'Execution incomplete; unstarted work is not established as budget-deferred.',
+      '',
+    )
+  }
+  if (execution) {
+    lines.push(
+      `Observed execution: ${cell(execution.elapsedMs)} ms. Soft admission budget: ${cell(execution.budgetMs)} ms; per-file deadline: ${REPETITION_TIMEOUT_MS} ms.`,
+      '',
+      '| Admitted file | Outcome | First error |',
+      '| --- | --- | --- |',
+    )
+    for (const [index, pair] of plan.pairs
+      .slice(0, execution.admitted)
+      .entries()) {
+      const result = repetitionResult(
+        runDirectory(results, index, 1),
+        pair,
+        plan,
+        1,
+      )
+      failed ||= !result.passed
+      lines.push(
+        `| ${cell(pair.file)} | ${result.passed ? 'passed' : 'failed'} | ${cell(result.error ?? '—')} |`,
+      )
+    }
+    lines.push(
+      '',
+      'Queue-deferred by admission budget (not passes):',
+      ...execution.deferred.map((file) => `- ${cell(file)}`),
+      '',
+    )
+  }
+  lines.push(
+    'Partial feedback only. Merge queue remains the source of full validation.',
+    '',
+  )
+  return { failed, markdown: lines.join('\n') }
+}
+
 export async function main(command, env = process.env) {
+  const source = command?.startsWith('source-')
+  if (source) command = command.slice('source-'.length)
+  const render = source ? summarizeSource : summarize
   const selectionPath = path.join(env.RESULTS_DIR, 'selection.json')
   const planPath = path.join(env.RESULTS_DIR, 'plan.json')
   const output = (key, value) => {
@@ -448,28 +767,45 @@ export async function main(command, env = process.env) {
   try {
     if (command === 'select') {
       validateRepetitions(env.REPETITIONS ?? '5')
-      const selection = selectChanges({
+      const selection = (source ? selectSourceChanges : selectChanges)({
         base: env.PUBLIC_PR_BASE,
         head: env.PUBLIC_PR_HEAD,
       })
       writeJson(selectionPath, selection)
-      output('has_files', selection.selected.length > 0)
-      if (!selection.total) summary(summarize(selection).markdown)
+      const hasFiles = source
+        ? selection.inputs.length > 0
+        : selection.selected.length > 0
+      output('has_files', hasFiles)
+      if (!hasFiles) summary(render(selection).markdown)
     } else if (command === 'plan') {
-      const plan = planForProject(
-        await buildPlan(readJson(selectionPath), {
-          repetitions: env.REPETITIONS ?? '5',
-        }),
-        env.BROWSER_PROJECT,
-      )
+      const plan = source
+        ? await buildSourcePlan(readJson(selectionPath))
+        : planForProject(
+            await buildPlan(readJson(selectionPath), {
+              repetitions: env.REPETITIONS ?? '5',
+            }),
+            env.BROWSER_PROJECT,
+          )
       writeJson(planPath, plan)
       output('has_pairs', plan.pairs.length > 0)
-      output('projects', plan.projects.join(' '))
-      output('has_webkit', plan.projects.includes('webkit'))
+      output(
+        'projects',
+        source
+          ? plan.pairs.length
+            ? 'chromium'
+            : ''
+          : plan.projects.join(' '),
+      )
+      output('has_webkit', source ? false : plan.projects.includes('webkit'))
     } else if (command === 'run') {
       const plan = readJson(planPath)
-      await runPlan(plan, { results: env.RESULTS_DIR })
-      return summarize(plan, { results: env.RESULTS_DIR }).failed ? 1 : 0
+      if (source)
+        await runSourcePlan(plan, {
+          results: env.RESULTS_DIR,
+          save: (value) => writeJson(planPath, value),
+        })
+      else await runPlan(plan, { results: env.RESULTS_DIR })
+      return render(plan, { results: env.RESULTS_DIR }).failed ? 1 : 0
     } else if (command === 'report') {
       let plan
       try {
@@ -484,7 +820,7 @@ export async function main(command, env = process.env) {
           /* Selection itself may have failed. */
         }
       }
-      const report = summarize(plan, {
+      const report = render(plan, {
         results: env.RESULTS_DIR,
         setupError:
           env.INTERRUPTED === 'true'
