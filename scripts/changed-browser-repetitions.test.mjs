@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import {
   main,
+  selectSourceFiles,
+  selectSourceChanges,
+  buildSourcePlan,
+  runSourcePlan,
+  summarizeSource,
   MAX_PAIRS,
   REPETITION_TIMEOUT_MS,
   selectFiles,
@@ -946,4 +951,491 @@ test('report fails interrupted jobs even with passing completed reports', async 
   )
   assert.equal(result.status, 1)
   assert.match(fs.readFileSync(summary, 'utf8'), /cancelled or interrupted/)
+})
+
+const sourceSelection = (inputs = ['apps/web/app/lib/viewer-hash.ts']) => ({
+  ...selectSourceFiles(inputs.map((name) => `M\0${name}\0`).join('')),
+  changed: selectFiles(inputs.map((name) => `M\0${name}\0`).join('')),
+  base: 'base',
+  head: 'head',
+})
+const sourceDiscovery =
+  (specs, related = []) =>
+  () => ({
+    ...fixtureDiscovery(specs)(),
+    related: () => {
+      if (related instanceof Error) throw related
+      return related
+    },
+  })
+
+test('source selection keeps deleted and both renamed endpoints, runtime Markdown/assets and unknown inputs', () => {
+  const selection = selectSourceFiles(
+    'D\0apps/web/app/deleted.ts\0R100\0apps/web/app/old.ts\0docs/new.md\0M\0apps/web/app/legal/terms.md\0A\0unknown.png\0M\0README.md\0',
+  )
+  assert.deepEqual(selection.inputs, [
+    'apps/web/app/deleted.ts',
+    'apps/web/app/legal/terms.md',
+    'apps/web/app/old.ts',
+    'unknown.png',
+  ])
+  assert.equal(selection.changes.length, 6)
+  for (const malformed of ['M\0file', 'R100\0old\0', 'WHAT\0file\0'])
+    assert.throws(() => selectSourceFiles(malformed))
+})
+
+test('source selection excludes only A/M configured browser tests and exact context docs', () => {
+  const diff = `A\0${file}\0M\0${anchor}\0M\0apps/web/PRODUCT.md\0A\0apps/web/DESIGN.md\0`
+  const selection = selectSourceFiles(diff)
+  assert.deepEqual(selection.inputs, [])
+  assert.equal(selection.changes.length, 4)
+  for (const change of selection.changes) {
+    assert.equal(change.trigger, false)
+    assert.match(
+      change.reason,
+      change.file.endsWith('.tsx')
+        ? /Added\/modified behavior-browser test; repetition lane selection applies/
+        : /documentation/,
+    )
+  }
+  assert.deepEqual(selectFiles(diff), {
+    total: 2,
+    selected: [file, anchor].sort(),
+    omitted: [],
+  })
+  const runtime = [
+    'apps/web/app/example.test.tsx',
+    'apps/web/app/example.behavior.browser.test.ts',
+    'apps/web/app/test/helper.ts',
+    'packages/example.behavior.browser.test.tsx',
+    'apps/web/app/PRODUCT.md',
+    'apps/web/design.md',
+    'apps/web/OTHER.md',
+    'apps/web/public/icon.svg',
+  ].sort()
+  assert.deepEqual(sourceSelection(runtime).inputs, runtime)
+})
+
+for (const status of ['D', 'R100', 'C100']) {
+  test(`source selection preserves ${status} browser test paths`, async () => {
+    const diff = `${status}\0${file}\0${status === 'D' ? '' : `${anchor}\0`}`
+    const selection = {
+      ...selectSourceFiles(diff),
+      changed: selectFiles(diff),
+    }
+    const expected = (status === 'D' ? [file] : [file, anchor]).sort()
+    assert.deepEqual(selection.inputs, expected)
+    assert.ok(
+      selection.changes.every(
+        (change) => change.trigger && change.status === status,
+      ),
+    )
+    assert.deepEqual(selection.changed, { total: 0, selected: [], omitted: [] })
+    const plan = await buildSourcePlan(selection, {
+      discover: sourceDiscovery([{ file: anchor, project: 'chromium' }]),
+    })
+    assert.deepEqual(plan.delegated, [])
+    assert.deepEqual(
+      plan.pairs.map((pair) => pair.file),
+      [anchor],
+    )
+    assert.ok(
+      plan.fallback.some((reason) => reason.includes('Deleted/renamed/copied')),
+    )
+  })
+}
+
+test('related discovery only orders the complete effective universe, with conservative fallback', async () => {
+  const names = [
+    'apps/web/app/a.behavior.browser.test.tsx',
+    'apps/web/app/b.behavior.browser.test.tsx',
+    'apps/web/app/c.behavior.browser.test.tsx',
+  ]
+  const specs = names.map((name) => ({ file: name, project: 'chromium' }))
+  for (const related of [
+    [specs[2], specs[1], { file: 'unknown', project: 'chromium' }],
+    [],
+    new Error('graph unavailable'),
+  ]) {
+    const plan = await buildSourcePlan(sourceSelection(), {
+      discover: sourceDiscovery(specs.toReversed(), related),
+    })
+    assert.deepEqual(plan.candidates, names)
+    assert.deepEqual(
+      plan.pairs.map((pair) => pair.file),
+      Array.isArray(related) && related.length
+        ? [names[1], names[2], names[0]]
+        : names,
+    )
+    assert.equal(plan.delegated.length, 0)
+    assert.ok(plan.fallback.length)
+  }
+  const selection = {
+    ...sourceSelection(),
+    ...selectSourceFiles(
+      'D\0apps/web/app/deleted.ts\0R100\0packages/cli/old.ts\0packages/cli/new.ts\0',
+    ),
+  }
+  const plan = await buildSourcePlan(selection, {
+    discover: sourceDiscovery(specs),
+  })
+  assert.equal(plan.pairs.length, 3)
+  assert.ok(plan.fallback.some((reason) => reason.includes('Deleted/renamed')))
+  assert.ok(plan.fallback.some((reason) => reason.includes('outside known')))
+  await assert.rejects(
+    buildSourcePlan(sourceSelection(), { discover: sourceDiscovery([]) }),
+    /No effective Chromium/,
+  )
+  await assert.rejects(
+    buildSourcePlan(sourceSelection(), {
+      discover: () => {
+        throw new Error('config failed')
+      },
+    }),
+    /config failed/,
+  )
+})
+
+test('source delegation uses actual global caps and keeps both cap tails eligible once', async () => {
+  const names = Array.from(
+    { length: 12 },
+    (_, i) =>
+      `apps/web/app/${String(i).padStart(2, '0')}.behavior.browser.test.tsx`,
+  )
+  const specs = names.flatMap((name) =>
+    ['chromium', 'firefox', 'webkit'].map((project) => ({
+      file: name,
+      project,
+    })),
+  )
+  const selection = sourceSelection([...names, 'apps/web/app/source.ts'])
+  assert.deepEqual(selection.inputs, ['apps/web/app/source.ts'])
+  assert.equal(selection.changes.length, 13)
+  assert.deepEqual(selection.changed, {
+    total: 12,
+    selected: names.slice(0, 10),
+    omitted: names.slice(10),
+  })
+  const plan = await buildSourcePlan(selection, {
+    discover: sourceDiscovery(specs, specs),
+  })
+  assert.deepEqual(
+    plan.delegated.map((pair) => pair.file),
+    names.slice(0, 5),
+  )
+  assert.deepEqual(
+    plan.pairs.map((pair) => pair.file),
+    names.slice(5),
+  )
+  assert.equal(
+    new Set([...plan.delegated, ...plan.pairs].map((pair) => pair.file)).size,
+    12,
+  )
+})
+
+for (const outcome of [
+  'passed',
+  'assertion',
+  'missing',
+  'malformed',
+  'pending',
+  'timeout',
+  'signal',
+  'hook',
+  'module',
+  'unhandled',
+  'wrongProject',
+]) {
+  test(`source admission preserves ${outcome} before budget exhaustion`, async (t) => {
+    const results = temporary(t)
+    const specs = [file, anchor]
+      .sort()
+      .map((name) => ({ file: name, project: 'chromium' }))
+    const plan = await buildSourcePlan(sourceSelection(), {
+      discover: sourceDiscovery(specs),
+    })
+    let now = 0
+    let calls = 0
+    const partition = await runSourcePlan(plan, {
+      results,
+      budgetMs: 100,
+      clock: () => now,
+      executor: (_command, args, options) => {
+        calls++
+        assert.equal(plan.execution.admitted, 1)
+        assert.equal(options.timeoutMs, 600_000)
+        now = 100
+        const payload = passing(plan.pairs[0])
+        failures[outcome]?.(payload)
+        if (outcome !== 'missing')
+          fs.writeFileSync(
+            args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+            outcome === 'malformed' ? '{' : JSON.stringify(payload),
+          )
+        return {
+          exitCode: 0,
+          timedOut: outcome === 'timeout',
+          signal: outcome === 'signal' ? 'SIGTERM' : null,
+        }
+      },
+    })
+    assert.equal(calls, 1)
+    assert.deepEqual(partition.admitted, [plan.pairs[0]])
+    assert.deepEqual(partition.deferred, [plan.pairs[1]])
+    assert.deepEqual(plan.execution.deferred, [plan.pairs[1].file])
+    assert.equal(
+      summarizeSource(plan, { results }).failed,
+      outcome !== 'passed',
+    )
+    assert.equal(
+      summarizeSource(plan, { results, setupError: 'cancelled' }).failed,
+      true,
+    )
+  })
+}
+
+test('source failures continue within budget and incomplete admission cannot succeed', async (t) => {
+  const results = temporary(t)
+  const plan = await buildSourcePlan(sourceSelection(), {
+    discover: sourceDiscovery(
+      [file, anchor].map((name) => ({ file: name, project: 'chromium' })),
+    ),
+  })
+  let calls = 0
+  await runSourcePlan(plan, {
+    results,
+    clock: () => 0,
+    executor: () => {
+      calls++
+      return { exitCode: 1 }
+    },
+  })
+  assert.equal(calls, 2)
+  assert.deepEqual(plan.execution.deferred, [])
+  assert.equal(summarizeSource(plan, { results }).failed, true)
+  // Abrupt cancellation after admission leaves the existing plan incomplete,
+  // even if a process returned success and its structured report was written.
+  plan.execution.completed = false
+  assert.equal(summarizeSource(plan, { results }).failed, true)
+  assert.equal(
+    summarizeSource({ ...plan, execution: undefined }, { results }).failed,
+    true,
+  )
+})
+
+test('source CLI uses fixed merge-base diff and docs-only selection/planning need no dependencies', (t) => {
+  const root = temporary(t)
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  git('init')
+  git('config', 'user.name', 'Example')
+  git('config', 'user.email', 'test@example.test')
+  fs.writeFileSync(path.join(root, 'README.md'), 'before')
+  git('add', '.')
+  git('commit', '-m', 'base')
+  const base = git('rev-parse', 'HEAD')
+  fs.writeFileSync(path.join(root, 'README.md'), 'after')
+  git('add', '.')
+  git('commit', '-m', 'docs')
+  const head = git('rev-parse', 'HEAD')
+  const results = path.join(root, 'results')
+  const env = {
+    ...process.env,
+    RESULTS_DIR: results,
+    PUBLIC_PR_BASE: base,
+    PUBLIC_PR_HEAD: head,
+    GITHUB_OUTPUT: path.join(root, 'output'),
+  }
+  for (const command of ['source-select', 'source-plan', 'source-report']) {
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve('scripts/ci/changed-browser-repetitions.mjs'), command],
+      { cwd: root, env, encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr)
+  }
+  assert.equal(fs.existsSync(path.join(root, 'node_modules')), false)
+  const selection = JSON.parse(
+    fs.readFileSync(path.join(results, 'selection.json')),
+  )
+  assert.deepEqual(selection.inputs, [])
+  assert.equal(selection.base, base)
+  assert.equal(selection.head, head)
+  // A base-side-only commit is excluded by base...head, while head deletion
+  // and rename endpoints remain visible to the source selector.
+  git('checkout', '-b', 'base-side', base)
+  fs.writeFileSync(path.join(root, 'base-only.ts'), '')
+  git('add', '.')
+  git('commit', '-m', 'base-side')
+  const advancedBase = git('rev-parse', 'HEAD')
+  git('checkout', '--detach', head)
+  git('mv', 'README.md', 'runtime.md')
+  git('commit', '-m', 'rename')
+  const renamed = git('rev-parse', 'HEAD')
+  assert.deepEqual(
+    selectSourceChanges({ root, base: advancedBase, head: renamed }).inputs,
+    ['runtime.md'],
+  )
+  git('rm', 'runtime.md')
+  git('commit', '-m', 'delete')
+  assert.deepEqual(
+    selectSourceChanges({ root, base: renamed, head: git('rev-parse', 'HEAD') })
+      .inputs,
+    ['runtime.md'],
+  )
+  assert.throws(() => selectSourceChanges({ root, base: 'missing', head }))
+})
+
+for (const [label, files] of [
+  ['browser tests', [file, anchor]],
+  ['context docs', ['apps/web/PRODUCT.md', 'apps/web/DESIGN.md']],
+  [
+    'tests and context docs',
+    [file, anchor, 'apps/web/PRODUCT.md', 'apps/web/DESIGN.md'],
+  ],
+]) {
+  test(`source CLI skips install and discovery for A/M ${label}`, async (t) => {
+    const root = temporary(t)
+    const git = (...args) =>
+      execFileSync('git', args, {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim()
+    const write = (name, content) => {
+      fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
+      fs.writeFileSync(path.join(root, name), content)
+    }
+    git('init')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'test@example.test')
+    files
+      .filter((_, index) => index % 2 === 0)
+      .forEach((name) => write(name, 'before'))
+    git('add', '.')
+    git('commit', '-m', 'base')
+    const base = git('rev-parse', 'HEAD')
+    files.forEach((name) => write(name, 'after'))
+    git('add', '.')
+    git('commit', '-m', 'tests and documentation')
+    const head = git('rev-parse', 'HEAD')
+    const results = path.join(root, 'results')
+    const output = path.join(root, 'output')
+    const env = {
+      ...process.env,
+      RESULTS_DIR: results,
+      PUBLIC_PR_BASE: base,
+      PUBLIC_PR_HEAD: head,
+      GITHUB_OUTPUT: output,
+    }
+    for (const command of ['source-select', 'source-plan', 'source-report']) {
+      const result = spawnSync(
+        process.execPath,
+        [path.resolve('scripts/ci/changed-browser-repetitions.mjs'), command],
+        { cwd: root, env, encoding: 'utf8' },
+      )
+      assert.equal(result.status, 0, result.stderr)
+    }
+    assert.equal(fs.existsSync(path.join(root, 'node_modules')), false)
+    assert.match(fs.readFileSync(output, 'utf8'), /^has_files=false$/m)
+    assert.match(fs.readFileSync(output, 'utf8'), /^has_pairs=false$/m)
+    const selection = JSON.parse(
+      fs.readFileSync(path.join(results, 'selection.json')),
+    )
+    assert.deepEqual(selection.inputs, [])
+    assert.deepEqual(
+      selection.changes.map((change) => change.file),
+      [...files].sort(),
+    )
+    assert.deepEqual(
+      [...new Set(selection.changes.map((change) => change.status))].sort(),
+      ['A', 'M'],
+    )
+    assert.deepEqual(selection.changed, {
+      total: files.filter((name) => name.endsWith('.tsx')).length,
+      selected: files.filter((name) => name.endsWith('.tsx')).sort(),
+      omitted: [],
+    })
+    const plan = await buildSourcePlan(selection, {
+      discover: () => {
+        throw new Error('Non-runtime changes must not load Vitest')
+      },
+    })
+    assert.deepEqual(plan.changed, selection.changed)
+    assert.deepEqual(plan.pairs, [])
+    assert.deepEqual(plan.delegated, [])
+  })
+}
+
+test('Vitest related imports prioritize without execution and preserve effective excludes', async (t) => {
+  const root = fs.realpathSync(temporary(t))
+  const workspace = path.join(root, 'apps/web')
+  fs.mkdirSync(workspace, { recursive: true })
+  fs.symlinkSync(
+    path.resolve('apps/web/node_modules'),
+    path.join(workspace, 'node_modules'),
+    'dir',
+  )
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"module"}')
+  fs.writeFileSync(
+    path.join(workspace, 'vitest.behavior.browser.config.ts'),
+    `export default { test: {
+    include: ['*.test.tsx'], exclude: ['excluded.test.tsx'],
+    browser: { enabled: true, instances: [{ browser: 'chromium' }] }
+  } }`,
+  )
+  fs.writeFileSync(path.join(workspace, 'source.ts'), 'export const value = 1')
+  fs.writeFileSync(
+    path.join(workspace, 'a.test.tsx'),
+    'throw new Error("must not execute")',
+  )
+  fs.writeFileSync(
+    path.join(workspace, 'z.test.tsx'),
+    'import { value } from "./source"; throw new Error("must not execute " + value)',
+  )
+  fs.writeFileSync(
+    path.join(workspace, 'excluded.test.tsx'),
+    'import "./source"',
+  )
+  const plan = await buildSourcePlan(sourceSelection(['apps/web/source.ts']), {
+    root,
+  })
+  assert.deepEqual(plan.related, ['apps/web/z.test.tsx'])
+  assert.deepEqual(
+    plan.pairs.map((pair) => pair.file),
+    ['apps/web/z.test.tsx', 'apps/web/a.test.tsx'],
+  )
+  assert.deepEqual(plan.delegated, [])
+})
+
+test('source report cannot pass cancellation even after all admitted assertions pass', async (t) => {
+  const results = temporary(t)
+  const plan = await buildSourcePlan(sourceSelection(), {
+    discover: sourceDiscovery([{ file, project: 'chromium' }]),
+  })
+  await runSourcePlan(plan, {
+    results,
+    executor: (_command, args) => {
+      fs.writeFileSync(
+        args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+        JSON.stringify(passing(plan.pairs[0])),
+      )
+      return { exitCode: 0 }
+    },
+    save: (value) =>
+      fs.writeFileSync(path.join(results, 'plan.json'), JSON.stringify(value)),
+  })
+  assert.equal(summarizeSource(plan, { results }).failed, false)
+  const env = {
+    RESULTS_DIR: results,
+    GITHUB_STEP_SUMMARY: path.join(results, 'summary.md'),
+  }
+  assert.equal(await main('source-report', { ...env, INTERRUPTED: 'true' }), 1)
+  assert.equal(await main('source-report', { ...env, SETUP_FAILED: 'true' }), 1)
+  fs.rmSync(path.join(results, '0', '1', 'status.json'))
+  assert.equal(await main('source-report', env), 1)
 })

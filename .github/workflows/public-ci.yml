@@ -246,6 +246,92 @@ jobs:
             exit 1
           fi
 
+  chromium-source-feedback:
+    name: Maintainer PR Chromium source feedback
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
+      PUBLIC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - timeout-minutes: 1
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Classify pull request
+        id: classify
+        timeout-minutes: 1
+        env:
+          PUBLIC_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PUBLIC_PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          node -e "const fs=require('node:fs'); const headRepoFullName=process.env.PUBLIC_PR_HEAD_REPO ?? ''; const baseRepoFullName=process.env.PUBLIC_PR_BASE_REPO ?? ''; const isMaintainer=headRepoFullName !== '' && headRepoFullName === baseRepoFullName; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'is_maintainer=' + isMaintainer + '\n')"
+      - timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          fetch-tags: false
+      - name: Select runtime inputs
+        id: select
+        timeout-minutes: 2
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
+        run: |
+          git cat-file -e "$PUBLIC_PR_BASE^{commit}" || git fetch --no-tags origin "$PUBLIC_PR_BASE"
+          node scripts/ci/changed-browser-repetitions.mjs source-select
+      - timeout-minutes: 1
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - timeout-minutes: 1
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        timeout-minutes: 5
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - run: pnpm --filter @artifactshare/contract build
+        timeout-minutes: 2
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+      - name: Discover and prioritize Chromium candidates
+        id: plan
+        timeout-minutes: 5
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        run: node scripts/ci/changed-browser-repetitions.mjs source-plan
+      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium
+        timeout-minutes: 5
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+      - name: Run admitted Chromium files
+        id: repeat
+        timeout-minutes: 15
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
+        run: node scripts/ci/changed-browser-repetitions.mjs source-run
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
+          DEBUG: pw:browser
+      - name: Summarize Chromium source feedback
+        if: ${{ always() && steps.classify.outputs.is_maintainer == 'true' && (failure() || cancelled() || steps.select.outputs.has_files == 'true') }}
+        env:
+          RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
+          INTERRUPTED: ${{ job.status == 'cancelled' }}
+          SETUP_FAILED: ${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}
+        run: |
+          if [ -f scripts/ci/changed-browser-repetitions.mjs ]; then
+            node scripts/ci/changed-browser-repetitions.mjs source-report
+          else
+            echo 'Chromium source feedback: checkout/setup failed; results unavailable.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
   changed-browser-repetitions-result:
     name: Changed browser behavior repetitions
     if: ${{ always() && github.event_name == 'pull_request' }}
