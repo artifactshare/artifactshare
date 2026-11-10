@@ -511,3 +511,32 @@ test('nightly JSON and Markdown retain recovered and failed retries without chan
   assert.equal(fixture(t).read().execution, null)
   assert.match(markdown(fixture(t).read()), /unknown \(no native diagnostics/u)
 })
+
+test('same-named native cases preserve all retry observations while existing failure deduplication remains', (t) => {
+  const f = fixture(t)
+  const report = vitest()
+  const first = report.modules[0].tests[0]
+  first.execution = {
+    durationMs: 1,
+    retryCount: 0,
+    repeatCount: 0,
+    flaky: false,
+  }
+  report.modules[0].tests.push({
+    ...first,
+    execution: { durationMs: 2, retryCount: 1, repeatCount: 0, flaky: true },
+  })
+  f.write(lanes[0], 1, report)
+  const result = f.read()
+  assert.equal(result.flaky.length, 0)
+  assert.equal(result.execution.recovered, 1)
+  const row = result.observations.find(
+    (item) =>
+      item.suite === lanes[0].suite &&
+      item.project === lanes[0].project &&
+      !item.diagnosticKind,
+  )
+  assert.equal(row.passCount, 2)
+  assert.equal(row.execution.observations, 3)
+  assert.equal(row.execution.durationMsSum, 3)
+})

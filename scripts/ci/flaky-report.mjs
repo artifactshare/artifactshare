@@ -313,6 +313,9 @@ export function aggregate({ results, repetitions, sha }) {
           row.diagnosticKind ?? null,
           row.namePath ?? row.testName,
         ])
+        const observed = nativeRows.get(key) ?? []
+        observed.push(row)
+        nativeRows.set(key, observed)
         const previous = perRun.get(key)
         if (
           !previous ||
@@ -321,9 +324,6 @@ export function aggregate({ results, repetitions, sha }) {
           perRun.set(key, row)
       }
       for (const [key, row] of perRun) {
-        const observed = nativeRows.get(key) ?? []
-        observed.push(row)
-        nativeRows.set(key, observed)
         let entry = collected.get(key)
         if (!entry) {
           entry = {

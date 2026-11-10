@@ -8,15 +8,18 @@ const testPath = (file) =>
   /(?:^|\/)(?:vitest|playwright)[^/]*\.[cm]?[jt]s$/.test(file) ||
   /(?:^|\/)[^/]*fixture[^/]*\.[cm]?[jt]sx?$/.test(file) ||
   file.startsWith('scripts/ci/') ||
-  file.startsWith('.github/workflows/')
+  file.startsWith('.github/workflows/') ||
+  /(?:^|\/)package\.json$/.test(file)
 
 function categories(line, side) {
   const result = []
   if (
-    /\b(?:timeout(?:Ms)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats|REPETITIONS|REPETITION_TIMEOUT_MS)\s*[:=]/.test(
+    /\b(?:timeout(?:Ms|-minutes)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats|REPETITIONS|REPETITION_TIMEOUT_MS)\s*[:=]/.test(
       line,
     )
   )
+    result.push('execution-limit')
+  if (/--(?:retry|testTimeout|hookTimeout|bail)(?:=|\s)/.test(line))
     result.push('execution-limit')
   if (
     /\b(?:test|it)\s*\.\s*(?:setTimeout|slow)\s*\(|\btimeout\s*[,}]/.test(line)
@@ -24,14 +27,14 @@ function categories(line, side) {
     result.push('execution-limit')
   if (
     side === 'added' &&
-    /\b(?:test|it|describe)\s*\.\s*(?:skip|skipIf|runIf|only|todo|fixme|fails)\b/.test(
+    /\b(?:test|it|describe)(?:\s*\.\s*(?:concurrent|sequential))*\s*\.\s*(?:skip|skipIf|runIf|only|todo|fixme|fails)\b/.test(
       line,
     )
   )
     result.push('test-selection')
   if (
     side === 'added' &&
-    /\b(?:skip|only|todo)\s*:|\bctx\s*\.\s*skip\s*\(/.test(line)
+    /\b(?:skip|only|todo)\s*:|\b(?:ctx|t|context)\s*\.\s*skip\s*\(/.test(line)
   )
     result.push('test-selection')
   if (
@@ -118,11 +121,19 @@ export function collectTestChanges({
       file,
     ])
     const all = inspectTestPatch(patch)
+    if (/(?:^|\/)(?:vitest|playwright)[^/]*\.[cm]?[jt]s$/.test(file))
+      all.unshift({ kind: 'test-selection', side: 'file', line: 1 })
     if (status === 'D')
       all.unshift({ kind: 'removed-test-file', side: 'removed', line: 1 })
     files.push({
       file,
       status,
+      kinds: Object.fromEntries(
+        [...new Set(all.map((note) => note.kind))].map((kind) => [
+          kind,
+          all.filter((note) => note.kind === kind).length,
+        ]),
+      ),
       notes: all.slice(0, 40),
       omitted: Math.max(0, all.length - 40),
     })

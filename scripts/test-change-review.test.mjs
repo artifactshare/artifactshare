@@ -155,3 +155,41 @@ test('fixture, CI limits and native selector options remain visible review cues'
     )
   }
 })
+
+test('capped notes retain kinds after the cap and native config/package selectors remain visible', (t) => {
+  const f = fixture(t)
+  f.write('app/test/many.test.ts', 'expect(answer).toBe(true)\n')
+  const base = f.commit()
+  f.write(
+    'app/test/many.test.ts',
+    Array.from(
+      { length: 45 },
+      (_, i) => `const item${i} = { count: ${i} }`,
+    ).join('\n') + '\ntest.concurrent.skip(fn)\nt.skip()\ncontext.skip()\n',
+  )
+  f.write(
+    'apps/web/vitest.config.ts',
+    `export default { exclude: ['flaky.test.ts'] }`,
+  )
+  f.write('.github/workflows/test.yml', 'timeout-minutes: 30')
+  f.write(
+    'apps/web/package.json',
+    '{"scripts":{"test":"vitest run --retry=3 --testTimeout=120000"}}',
+  )
+  const result = collectTestChanges({ base, head: f.commit(), run: f.run })
+  const many = result.files.find((row) => row.file.endsWith('many.test.ts'))
+  assert.equal(many.notes.length, 40)
+  assert.ok(many.omitted > 0)
+  assert.equal(many.kinds['test-selection'], 3)
+  assert.equal(many.kinds['removed-assertion'], 1)
+  assert.ok(
+    result.files.find((row) => row.file.endsWith('vitest.config.ts')).kinds[
+      'test-selection'
+    ],
+  )
+  for (const file of ['.github/workflows/test.yml', 'apps/web/package.json'])
+    assert.ok(
+      result.files.find((row) => row.file === file).kinds['execution-limit'],
+      file,
+    )
+})
