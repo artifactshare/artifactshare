@@ -664,7 +664,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           // Capture the real proxy response; Firefox need not expose its frame.
           const navigate = () =>
             navigateUsercontentViewer(viewer, () =>
-              viewer.goto(`${publicUrl}#section`),
+              viewer.goto(`${publicUrl}#section`, {
+                waitUntil: 'domcontentloaded',
+              }),
             )
           const blockedDocument = cookieBlocked
             ? await responseObserver.during(
@@ -767,9 +769,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                   viewer.viewportSize()!.width,
             )
             await bodyAction.focus()
-            const opened: Promise<Page> = context.waitForEvent('page')
-            await bodyAction.press('Enter')
-            const bodyPage = await opened
+            const [bodyPage]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              bodyAction.press('Enter'),
+            ])
             const bodyErrors: string[] = []
             bodyPage.on('pageerror', (error) => bodyErrors.push(error.message))
             await bodyPage.waitForLoadState()
@@ -829,10 +832,11 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 url.pathname === new URL(publicUrl).pathname,
             )
             await bodyPage.close()
-            const reopened: Promise<Page> = context.waitForEvent('page')
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            await bodyAction.click()
-            const freshBody = await reopened
+            const [freshBody]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              bodyAction.click(),
+            ])
             await freshBody.waitForLoadState()
             await freshBody
               .getByRole('link', { name: 'Return home', exact: true })
@@ -936,9 +940,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               name: 'Open body alone in a new tab',
             })
             await action.focus()
-            const opened: Promise<Page> = context.waitForEvent('page')
-            await action.press('Enter')
-            const site = await opened
+            const [site]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              action.press('Enter'),
+            ])
             await site.waitForLoadState()
             assert.equal(await site.evaluate(() => window.opener), null)
             await site
@@ -1011,9 +1016,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             // Refuse the exchange cookie as well: the new tab must terminate
             // at guidance, even on the otherwise cookie-free link host.
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const blockedOpening: Promise<Page> = context.waitForEvent('page')
-            await action.click()
-            const blockedSite = await blockedOpening
+            const [blockedSite]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              action.click(),
+            ])
             await blockedSite
               .getByRole('heading', {
                 name:
@@ -1061,9 +1067,10 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               await appBody.close()
             }
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const reopening: Promise<Page> = context.waitForEvent('page')
-            await action.click()
-            const freshSite = await reopening
+            const [freshSite]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              action.click(),
+            ])
             await freshSite
               .getByRole('heading', { name: 'Local delivery' })
               .waitFor()
@@ -1077,7 +1084,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 .run()
           }
           stage = `${engine}: ${kind}:${format} public reload`
-          await navigateUsercontentViewer(viewer, () => viewer.reload())
+          await navigateUsercontentViewer(viewer, () =>
+            viewer.reload({ waitUntil: 'domcontentloaded' }),
+          )
           const reloadedFrame = await waitForUsercontentState(
             viewer,
             executionOrigin,
@@ -1107,7 +1116,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                 ).status,
                 401,
               )
-              await navigateUsercontentViewer(viewer, () => viewer.reload())
+              await navigateUsercontentViewer(viewer, () =>
+                viewer.reload({ waitUntil: 'domcontentloaded' }),
+              )
               await waitForUsercontentState(
                 viewer,
                 executionOrigin,
@@ -1165,11 +1176,13 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           stage = `${engine}: ${kind}:${format} revocation`
           if (standaloneSite) {
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const openedSite: Promise<Page> = context.waitForEvent('page')
-            await viewer
-              .getByRole('menuitem', { name: 'Open body alone in a new tab' })
-              .click()
-            standaloneSite = await openedSite
+            const [openedSite]: [Page, void] = await Promise.all([
+              context.waitForEvent('page'),
+              viewer
+                .getByRole('menuitem', { name: 'Open body alone in a new tab' })
+                .click(),
+            ])
+            standaloneSite = openedSite
             await standaloneSite
               .getByRole('heading', { name: 'Local delivery' })
               .waitFor()
@@ -1291,15 +1304,18 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
       const viewerStates = await Promise.all(
         (context?.pages() ?? []).map(usercontentFrameEvidence),
       )
+      const failure =
+        error instanceof Error
+          ? error.message.replace(
+              /([?&](?:t|__as_token)=)[^&\s"')]+/g,
+              '$1[redacted]',
+            )
+          : 'Unknown harness error'
+      // Browser-command errors can lose their message in structured reports;
+      // retain the failing stage in the runner log as well.
+      console.error(`Usercontent delivery failed at ${stage}: ${failure}`)
       throw new Error(
-        `Usercontent delivery failed at ${stage}\n${
-          error instanceof Error
-            ? error.message.replace(
-                /([?&](?:t|__as_token)=)[^&\s"')]+/g,
-                '$1[redacted]',
-              )
-            : 'Unknown harness error'
-        }\n${JSON.stringify({ responses, viewerStates, navigationEvidence })}`,
+        `Usercontent delivery failed at ${stage}\n${failure}\n${JSON.stringify({ responses, viewerStates, navigationEvidence })}`,
         { cause: error },
       )
     } finally {
