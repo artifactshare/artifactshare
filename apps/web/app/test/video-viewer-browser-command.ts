@@ -1,3 +1,4 @@
+import { errors } from 'playwright'
 import { createServer, type IncomingMessage } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
@@ -761,26 +762,24 @@ export const videoViewerScenario = defineBrowserCommand(
         // decode the clip reports a media error once it tries.
         if (!(await frame.evaluate(failedState))) {
           await frame.click('#start-play')
-          await frame
-            .waitForFunction(
-              () =>
-                (document.getElementById('video') as HTMLVideoElement)
-                  .currentTime > 0.3 ||
-                ['corrupt', 'unsupported', 'transport'].includes(
-                  document.documentElement.dataset.videoState ?? '',
-                ),
-              undefined,
-              { timeout: 10000 },
-            )
-            .catch(() => undefined)
+          await frame.waitForFunction(
+            () =>
+              (document.getElementById('video') as HTMLVideoElement)
+                .currentTime > 0.3 ||
+              ['corrupt', 'unsupported', 'transport'].includes(
+                document.documentElement.dataset.videoState ?? '',
+              ),
+            undefined,
+            { timeout: 10000 },
+          )
         }
         const playing = await media()
         const decodable =
           playing.currentTime > 0.3 && !(await frame.evaluate(failedState))
         if (!decodable) {
-          await frame
-            .waitForFunction(failedState, undefined, { timeout: 10000 })
-            .catch(() => undefined)
+          await frame.waitForFunction(failedState, undefined, {
+            timeout: 10000,
+          })
           return {
             initial,
             final: await status(),
@@ -820,7 +819,10 @@ export const videoViewerScenario = defineBrowserCommand(
             { timeout: 5000 },
           )
           .then(() => true)
-          .catch(() => false)
+          .catch((error: unknown) => {
+            if (!(error instanceof errors.TimeoutError)) throw error
+            return false
+          })
         const seeked = await media()
         return {
           initial,
@@ -1051,6 +1053,9 @@ export const videoViewerScenario = defineBrowserCommand(
       })
       await clearNotice()
 
+      let volumeCapability: 'not-offered' | 'applied' | 'unapplied' =
+        'not-offered'
+      let nativeVolumeSupported: boolean | null = null
       // Volume and mute (desktop only).
       if (width >= 700 && !touch) {
         // volumechange is dispatched asynchronously.
@@ -1058,6 +1063,14 @@ export const videoViewerScenario = defineBrowserCommand(
           frame.waitForSelector(`#mute[aria-pressed="${value}"]`, {
             state: 'attached',
           })
+        nativeVolumeSupported = await frame.evaluate(() => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          const previous = video.volume
+          video.volume = 0.6
+          const supported = Math.abs(video.volume - 0.6) < 0.01
+          video.volume = previous
+          return supported
+        })
         await setRange('volume', 0.4)
         // An engine without an audio device (WebKit in a Linux container)
         // may never apply the volume; the test then checks the controls.
@@ -1071,8 +1084,15 @@ export const videoViewerScenario = defineBrowserCommand(
             undefined,
             { timeout: 2000 },
           )
-          .catch(() => undefined)
+          .then(() => true)
+          .catch((error: unknown) => {
+            if (!(error instanceof errors.TimeoutError)) throw error
+            return false
+          })
         steps.volume = await snapshot(frame)
+        // Classify the captured observation, including application just after timeout.
+        volumeCapability =
+          Math.abs(steps.volume.volume - 0.4) < 0.01 ? 'applied' : 'unapplied'
         await frame.click('#mute')
         await pressed('true')
         steps.muted = await snapshot(frame)
@@ -1084,12 +1104,11 @@ export const videoViewerScenario = defineBrowserCommand(
       // Full screen keeps the controls with the picture.
       // The label follows fullscreenchange, which engines dispatch later.
       const fullscreenLabel = (label: string) =>
-        frame
-          .waitForSelector(`#fullscreen[aria-label="${label}"]`, {
-            state: 'attached',
-            timeout: 3000,
-          })
-          .catch(() => undefined)
+        frame.waitForSelector(`#fullscreen[aria-label="${label}"]`, {
+          state: 'attached',
+          timeout: 3000,
+        })
+
       // Where the player cannot go full screen but the video can (iPhone
       // Safari, and WebKit in tests), the video's own full screen is used;
       // a stub records it so the system player does not take over the test.
@@ -1106,7 +1125,25 @@ export const videoViewerScenario = defineBrowserCommand(
           })
       })
       await frame.click('#fullscreen')
-      await fullscreenLabel('Exit full screen')
+      await frame.waitForFunction(
+        () => {
+          const video = document.getElementById('video') as HTMLVideoElement
+          if (document.fullscreenEnabled)
+            return (
+              document.fullscreenElement?.id === 'player' &&
+              document
+                .getElementById('fullscreen')!
+                .getAttribute('aria-label') === 'Exit full screen'
+            )
+          if ('webkitEnterFullscreen' in video)
+            return (
+              document.documentElement.dataset.testVideoFullscreen === 'true'
+            )
+          return !document.getElementById('status')!.hidden
+        },
+        undefined,
+        { timeout: 3000 },
+      )
       steps.fullscreen = await snapshot(frame)
       let fullscreenSettings = null
       if (steps.fullscreen.fullscreen) {
@@ -1220,6 +1257,8 @@ export const videoViewerScenario = defineBrowserCommand(
         settingsClosed,
         speedOptions,
         fullscreenSettings,
+        volumeCapability,
+        nativeVolumeSupported,
         notices,
         download,
         afterBackForward,
@@ -1331,6 +1370,8 @@ declare module 'vitest/browser' {
       snapshot?: Snapshot
       loaded?: Snapshot
       steps?: Record<string, Snapshot>
+      volumeCapability?: 'not-offered' | 'applied' | 'unapplied'
+      nativeVolumeSupported?: boolean | null
       settingsOpen?: boolean
       settingsClosed?: boolean
       speedOptions?: number[]

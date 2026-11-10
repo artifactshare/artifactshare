@@ -82,7 +82,7 @@ describe('CopyUrlButton sharing recovery', () => {
     })
 
     await React.act(async () => {
-      host.querySelector('button')?.click()
+      host.querySelector('button')!.click()
     })
 
     const recoveryOptions = toastMock.error.mock.calls.at(-1)?.[1]

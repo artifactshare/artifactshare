@@ -929,7 +929,7 @@ describe('/device', () => {
     await React.act(async () => {})
 
     await React.act(async () => {
-      container.querySelectorAll('button')[1]?.click()
+      container.querySelectorAll('button')[1]!.click()
     })
     deviceParams = new URLSearchParams('user_code=ef56-gh78')
     await React.act(async () =>
@@ -978,7 +978,7 @@ describe('/device', () => {
     await React.act(async () => {})
 
     await React.act(async () => {
-      container.querySelectorAll('button')[1]?.click()
+      container.querySelectorAll('button')[1]!.click()
     })
     deviceParams = new URLSearchParams('user_code=ef56-gh78')
     await React.act(async () =>

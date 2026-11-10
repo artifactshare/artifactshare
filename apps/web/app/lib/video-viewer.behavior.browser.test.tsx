@@ -1,6 +1,21 @@
 import { describe, expect, test } from 'vitest'
 import { server } from 'vitest/browser'
 
+// Each controls walk already returns independent snapshots and closes its browser
+// context. Reuse those immutable observations within this file/engine only.
+const controls = new Map<
+  number,
+  ReturnType<typeof server.commands.videoViewerScenario>
+>()
+function controlScenario(width: number) {
+  let result = controls.get(width)
+  if (!result) {
+    result = server.commands.videoViewerScenario('controls', width)
+    controls.set(width, result)
+  }
+  return result
+}
+
 // No engine needs to decode a movie here: the media state is set explicitly
 // (see video-viewer-browser-command.ts), while delivery, download and the
 // terminal states use the real sandbox Worker.
@@ -9,7 +24,7 @@ import { server } from 'vitest/browser'
 const savedName = expect.stringMatching(/^録画[ _]Demo\.mp4$/)
 describe.each([1440, 390])('video player at %ipx', (width) => {
   test('opens paused with controls below the picture that fit the width', async () => {
-    const result = await server.commands.videoViewerScenario('controls', width)
+    const result = await controlScenario(width)
 
     // Loading first, with the download already offered; never autoplays.
     expect(result.initial).toMatchObject({
@@ -54,7 +69,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
 
   test('plays, pauses, seeks within bounds and changes speed', async () => {
     const { steps, speedOptions, settingsOpen, settingsClosed } =
-      await server.commands.videoViewerScenario('controls', width)
+      await controlScenario(width)
 
     expect(steps!.playing).toMatchObject({
       paused: false,
@@ -93,10 +108,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   })
 
   test('answers shortcuts only in the player and leaves native keys alone', async () => {
-    const { steps } = await server.commands.videoViewerScenario(
-      'controls',
-      width,
-    )
+    const { steps } = await controlScenario(width)
 
     expect(steps!.arrowRight!.currentTime).toBe(35)
     expect(steps!.arrowLeftTwice!.currentTime).toBe(25)
@@ -112,8 +124,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   })
 
   test('goes full screen with its controls and comes back', async () => {
-    const { steps, fullscreenSettings } =
-      await server.commands.videoViewerScenario('controls', width)
+    const { steps, fullscreenSettings } = await controlScenario(width)
 
     const fullscreen = steps!.fullscreen!
     if (fullscreen.fullscreenEnabled) {
@@ -144,10 +155,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   })
 
   test('says when it is buffering, cannot start or cannot go full screen', async () => {
-    const { notices } = await server.commands.videoViewerScenario(
-      'controls',
-      width,
-    )
+    const { notices } = await controlScenario(width)
 
     expect(notices).toEqual({
       buffering: 'Loading…',
@@ -162,7 +170,7 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
   })
 
   test('keeps the original download after the sandbox cookie expires', async () => {
-    const result = await server.commands.videoViewerScenario('controls', width)
+    const result = await controlScenario(width)
 
     // A network failure after the cookie expires switches playback to the
     // in-memory copy instead of a failure state.
@@ -196,21 +204,27 @@ describe.each([1440, 390])('video player at %ipx', (width) => {
 })
 
 test('offers volume and mute on desktop', async () => {
-  const { steps } = await server.commands.videoViewerScenario('controls', 1440)
+  const { steps, volumeCapability, nativeVolumeSupported } =
+    await controlScenario(1440)
 
   // The slider and mute button are the player's; an engine without an audio
   // device may leave the element's volume unapplied.
   expect(steps!.volume).toMatchObject({ muted: false, mutePressed: 'false' })
   expect(steps!.volume!.volumeSlider).toBeCloseTo(0.4, 2)
-  if (steps!.volume!.volume !== 1)
+  expect(volumeCapability).toBe(
+    steps!.volume!.volume === 1 ? 'unapplied' : 'applied',
+  )
+  expect(volumeCapability).toBe(nativeVolumeSupported ? 'applied' : 'unapplied')
+  if (volumeCapability === 'applied')
     expect(steps!.volume!.volume).toBeCloseTo(0.4, 2)
+  else expect(steps!.volume!.volume).toBe(1)
   expect(steps!.muted).toMatchObject({ mutePressed: 'true' })
   expect(steps!.muted).toMatchObject({ muted: true, muteLabel: 'Unmute' })
   expect(steps!.unmuted).toMatchObject({ muted: false, muteLabel: 'Mute' })
 })
 
 test('omits volume on phones and keeps 44px touch targets', async () => {
-  const { loaded } = await server.commands.videoViewerScenario('controls', 390)
+  const { loaded } = await controlScenario(390)
 
   expect(loaded!.volumeVisible).toBe(false)
   for (const control of loaded!.controls.filter(({ id }) => id !== 'seek')) {

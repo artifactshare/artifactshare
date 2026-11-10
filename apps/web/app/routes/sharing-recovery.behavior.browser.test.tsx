@@ -177,7 +177,7 @@ describe('sharing recovery browser behavior', () => {
     await vi.waitFor(() =>
       expect(host.querySelector('[aria-label="Copy link"]')).not.toBeNull(),
     )
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
 
     await vi.waitFor(() =>
       expect(document.querySelector('[data-sonner-toast]')).not.toBeNull(),
@@ -192,7 +192,7 @@ describe('sharing recovery browser behavior', () => {
     await dragSelectToastText(recoveryToast!)
     expect(window.getSelection()?.toString()).toContain(failedUrl.toString())
 
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-sonner-toast]')).toHaveLength(1),
     )
@@ -205,7 +205,7 @@ describe('sharing recovery browser behavior', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-sonner-toast]')).toBeNull(),
     )
-    host.querySelector<HTMLButtonElement>('[role="dialog"] button')?.click()
+    host.querySelector<HTMLButtonElement>('[role="dialog"] button')!.click()
     await vi.waitFor(() =>
       expect(host.querySelector('[role="dialog"]')).toBeNull(),
     )
@@ -216,7 +216,7 @@ describe('sharing recovery browser behavior', () => {
     await vi.waitFor(() =>
       expect(host.querySelector('[aria-label="Copy link"]')).not.toBeNull(),
     )
-    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')?.click()
+    host.querySelector<HTMLButtonElement>('[aria-label="Copy link"]')!.click()
 
     await vi.waitFor(() =>
       expect(document.querySelector('[data-sonner-toast]')).not.toBeNull(),

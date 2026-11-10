@@ -1,3 +1,4 @@
+import { requiredWait } from './browser-waits'
 import { createHash } from 'node:crypto'
 import type { Page } from 'playwright'
 
@@ -99,17 +100,22 @@ export async function waitForUsercontentState(
   match: Partial<FixtureState>,
   afterNonce?: string,
 ): Promise<FixtureState> {
-  const handle = await page.waitForFunction(
-    (expected) =>
-      window.usercontentReports.findLast(
-        (report) =>
-          report.origin === expected.origin &&
-          report.state.nonce !== expected.afterNonce &&
-          Object.entries(expected.match).every(
-            ([key, value]) => report.state[key as keyof FixtureState] === value,
-          ),
-      )?.state,
-    { origin, match, afterNonce },
+  const handle = await requiredWait(
+    'usercontent fixture report',
+    page.waitForFunction(
+      (expected) =>
+        window.usercontentReports.findLast(
+          (report) =>
+            report.origin === expected.origin &&
+            report.state.nonce !== expected.afterNonce &&
+            Object.entries(expected.match).every(
+              ([key, value]) =>
+                report.state[key as keyof FixtureState] === value,
+            ),
+        )?.state,
+      { origin, match, afterNonce },
+      { timeout: 30000 },
+    ),
   )
   const state = await handle.jsonValue()
   if (!state) throw new Error('Missing fixture state after wait')
@@ -167,7 +173,10 @@ export async function navigateUsercontentViewer(
   navigate: () => Promise<unknown>,
 ) {
   await navigate()
-  await page.locator('[data-sandbox-state="ready"]').waitFor()
+  await requiredWait(
+    'viewer iframe ready',
+    page.locator('[data-sandbox-state="ready"]').waitFor({ timeout: 30000 }),
+  )
 }
 
 // The Markdown renderer strips raw scripts and permits only hashed reporters.

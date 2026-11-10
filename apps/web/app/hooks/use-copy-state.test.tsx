@@ -42,7 +42,7 @@ describe('useCopyState', () => {
     writeClipboardText.mockRejectedValue(new Error('clipboard unavailable'))
     await React.act(async () => root.render(<CopyProbe />))
 
-    await React.act(async () => host.querySelector('button')?.click())
+    await React.act(async () => host.querySelector('button')!.click())
 
     expect(host.textContent).toBe('failed')
     expect(writeClipboardText).toHaveBeenCalledWith('https://example.test/')
@@ -96,7 +96,7 @@ describe('useCopyState', () => {
     )
     await React.act(async () => root.render(<CopyProbe />))
 
-    await React.act(async () => host.querySelector('button')?.click())
+    await React.act(async () => host.querySelector('button')!.click())
     await React.act(async () => root.render(null))
     await React.act(async () => resolveCopy(true))
 

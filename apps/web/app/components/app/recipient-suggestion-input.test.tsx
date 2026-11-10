@@ -197,14 +197,14 @@ describe('RecipientSuggestionInput', () => {
       )
     }
     await React.act(async () => root.render(<Harness />))
-    await React.act(async () => container.querySelector('input')?.focus())
+    await React.act(async () => container.querySelector('input')!.focus())
     expect(document.body.textContent).toContain('Loading')
     await React.act(async () => vi.advanceTimersByTimeAsync(200))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     await React.act(async () =>
       container
-        .querySelector('button')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+        .querySelector('button')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true })),
     )
     await React.act(async () => vi.advanceTimersByTimeAsync(250))
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -235,7 +235,7 @@ describe('RecipientSuggestionInput', () => {
       )
     }
     await React.act(async () => root.render(<Harness />))
-    await React.act(async () => container.querySelector('input')?.focus())
+    await React.act(async () => container.querySelector('input')!.focus())
   }
 })
 

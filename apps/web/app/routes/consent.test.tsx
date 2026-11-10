@@ -242,7 +242,7 @@ describe('/consent', () => {
     )
     expect(close).toBeDefined()
     expect(container.textContent).not.toContain('oa.consent.allow')
-    await React.act(async () => close?.click())
+    await React.act(async () => close!.click())
     expect(oauthConsentMock).toHaveBeenCalledWith(false)
     await React.act(async () => root.unmount())
   })
@@ -275,7 +275,7 @@ describe('/consent', () => {
     const root = createRoot(container)
 
     await React.act(async () => root.render(<Consent />))
-    await React.act(async () => container.querySelector('button')?.click())
+    await React.act(async () => container.querySelector('button')!.click())
     consentParams = new URLSearchParams('client_id=other&scope=profile')
     oauthClientInfoMock.mockResolvedValue({
       data: { client_name: 'Other app' },
@@ -303,7 +303,7 @@ describe('/consent', () => {
 
     await React.act(async () => root.render(<Consent />))
     const originalHref = window.location.href
-    await React.act(async () => container.querySelector('button')?.click())
+    await React.act(async () => container.querySelector('button')!.click())
     consentParams = new URLSearchParams(
       'client_id=client&scope=openid&state=new-state',
     )
@@ -333,7 +333,7 @@ describe('/consent', () => {
     const root = createRoot(container)
 
     await React.act(async () => root.render(<Consent />))
-    await React.act(async () => container.querySelector('button')?.click())
+    await React.act(async () => container.querySelector('button')!.click())
     consentParams = new URLSearchParams(
       'scope=openid&state=new-state&client_id=client',
     )

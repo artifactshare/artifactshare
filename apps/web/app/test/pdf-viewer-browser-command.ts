@@ -1,3 +1,5 @@
+import { waitForBrowserLayout } from './browser-layout'
+import { requiredWait } from './browser-waits'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
@@ -283,15 +285,16 @@ function pageNumber(frame: Frame): Promise<number> {
 }
 
 async function waitForPage(frame: Frame, page: number): Promise<number> {
-  await frame
-    .waitForFunction(
+  await requiredWait(
+    'PDF page number',
+    frame.waitForFunction(
       (expected) =>
         (document.getElementById('page-number') as HTMLInputElement).value ===
         String(expected),
       page,
       { timeout: 5000 },
-    )
-    .catch(() => undefined)
+    ),
+  )
   return pageNumber(frame)
 }
 
@@ -379,15 +382,21 @@ async function selectFirstLine(page: Page, frame: Frame): Promise<string> {
   return frame.evaluate(() => String(getSelection()))
 }
 
-// Lets the viewer apply a change and lay out the result.
-function settle(frame: Frame) {
-  return frame.evaluate(
+// Observe the same commit/layout boundary used by in-browser tests, then
+// observe completion of finite menu/sheet transitions.
+async function settle(frame: Frame) {
+  await frame.evaluate(waitForBrowserLayout)
+  await frame.waitForFunction(
     () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => setTimeout(resolve, 150)),
+      document
+        .getAnimations()
+        .every(
+          (animation) =>
+            animation.playState !== 'running' ||
+            animation.effect?.getComputedTiming().iterations === Infinity,
         ),
-      ),
+    undefined,
+    { timeout: 5000 },
   )
 }
 
@@ -402,16 +411,15 @@ function focusedId(frame: Frame) {
 }
 
 // The page list and the settings menu leave the document once closed and
-// then return focus in a later task. A surface that stays open is left to
-// the caller's assertions, but the wait's failure is logged.
+// then return focus in a later task. Failure to close must reject.
 async function waitForClosed(frame: Frame, selector: string) {
-  await frame
-    .waitForFunction((closed) => !document.querySelector(closed), selector, {
+  await frame.waitForFunction(
+    (closed) => !document.querySelector(closed),
+    selector,
+    {
       timeout: 5000,
-    })
-    .catch((error: unknown) => {
-      console.warn(`waitForClosed(${selector}) did not settle:`, error)
-    })
+    },
+  )
   await settle(frame)
 }
 
@@ -475,10 +483,7 @@ async function pageListFlow(
         n,
         { timeout: 10000 },
       )
-      .then(
-        () => true,
-        () => false,
-      )
+      .then(() => true)
   // A closed list has left the document and returned focus.
   const dialogState = async () => {
     await waitForPagesClosed(frame)
@@ -555,6 +560,7 @@ async function pageListFlow(
   // drawing it takes once visible again.
   await setHidden(true)
   const hiddenWaitMs = 3000
+  // test-wait: elapsed-time — hidden rendering must stay cancelled longer than visible rendering.
   await frame.waitForTimeout(hiddenWaitMs)
   const slowWhileHidden = (await thumbnails()).drawn.includes(slowPage)
   const resumeStart = Date.now()
@@ -568,6 +574,7 @@ async function pageListFlow(
   await frame.evaluate(() => {
     document.getElementById('page-list')!.scrollTop = 0
   })
+  // test-wait: elapsed-time — observe absence of delayed background work.
   await frame.waitForTimeout(1000)
   const whileHidden = await thumbnails()
   await setHidden(false)
@@ -584,18 +591,14 @@ async function pageListFlow(
   if (width >= 780) {
     await frame.click('#pages')
     // The list listens for outside clicks once it has opened.
-    await frame
-      .waitForFunction(
-        () =>
-          !!document.activeElement?.closest(
-            '[data-pdf-pages][data-state="open"]',
-          ),
-        undefined,
-        { timeout: 5000 },
-      )
-      .catch((error: unknown) => {
-        console.warn('The page list did not take focus on opening:', error)
-      })
+    await frame.waitForFunction(
+      () =>
+        !!document.activeElement?.closest(
+          '[data-pdf-pages][data-state="open"]',
+        ),
+      undefined,
+      { timeout: 5000 },
+    )
     await settle(frame)
     await page.mouse.click(40, 400)
     afterBackdrop = await dialogState()
@@ -710,8 +713,10 @@ async function searchFlow(page: Page, frame: Frame) {
   const emptied = await waitForResults(frame, '^$')
   // Emptied while the search it started is still running: no late counts.
   await frame.fill('#search-query', SEARCH_TERM)
+  // test-wait: elapsed-time — cross the search debounce before clearing the pending query.
   await frame.waitForTimeout(300)
   await frame.fill('#search-query', '')
+  // test-wait: elapsed-time — observe absence of delayed background work.
   await frame.waitForTimeout(1000)
   const emptiedWhileSearching = await searchState(frame)
   await frame.fill('#search-query', SEARCH_TERM)
@@ -821,7 +826,10 @@ async function swipeLeft(frame: Frame, turns: boolean) {
     fire('touchend', 'changedTouches', 100)
   })
   if (turns) await waitForPage(frame, before + 1)
-  else await frame.waitForTimeout(500)
+  else {
+    // test-wait: elapsed-time — a swipe in scroll mode must not turn a page later.
+    await frame.waitForTimeout(500)
+  }
   return pageNumber(frame)
 }
 
@@ -848,11 +856,34 @@ async function settingsFlow(
   await chooseSetting(frame, '[data-layout="page"]')
   await settle(frame)
   const pageLayout = await settingsState(frame)
+  const expectedPageWidth = await frame
+    .locator('.page[data-page-number="3"]')
+    .evaluate((element) => (element as HTMLElement).offsetWidth)
   await page.setViewportSize({
     width: Math.round(width * 0.8),
     height: Math.round(height * 0.8),
   })
-  await settle(frame)
+  // ResizeObserver-driven refit and popover positioning can follow layout.
+  await frame.waitForFunction(
+    ({ expectedWidth, expectedPageWidth: pageWidth }) => {
+      const current = document.querySelector<HTMLElement>(
+        '.page[data-page-number="3"]',
+      )
+      const popover = document
+        .querySelector('[data-pdf-settings][data-state="open"]')
+        ?.getBoundingClientRect()
+      return (
+        innerWidth === expectedWidth &&
+        !!current &&
+        Math.abs(current.offsetWidth - pageWidth) <= 1 &&
+        !!popover &&
+        popover.left >= 0 &&
+        popover.right <= innerWidth
+      )
+    },
+    { expectedWidth: Math.round(width * 0.8), expectedPageWidth },
+    { timeout: 5000 },
+  )
   const afterResize = await settingsState(frame)
   await page.setViewportSize({ width, height })
   await frame.click('#next')
@@ -980,26 +1011,22 @@ async function pageFailureFlow(frame: Frame) {
       true
   })
   await goToPage(frame, 4)
-  await frame
-    .waitForFunction(
-      () => document.documentElement.dataset.pdfState === 'page-error',
-      undefined,
-      { timeout: 10000 },
-    )
-    .catch(() => undefined)
+  await frame.waitForFunction(
+    () => document.documentElement.dataset.pdfState === 'page-error',
+    undefined,
+    { timeout: 10000 },
+  )
   const failed = await statusState(frame)
   await frame.evaluate(() => {
     ;(window as unknown as { breakPageDrawing: boolean }).breakPageDrawing =
       false
   })
   await goToPage(frame, 1)
-  await frame
-    .waitForFunction(
-      () => document.documentElement.dataset.pdfState === 'ready',
-      undefined,
-      { timeout: 10000 },
-    )
-    .catch(() => undefined)
+  await frame.waitForFunction(
+    () => document.documentElement.dataset.pdfState === 'ready',
+    undefined,
+    { timeout: 10000 },
+  )
   const recovered = {
     ...(await statusState(frame)),
     statusHidden: await frame.evaluate(
@@ -1115,15 +1142,13 @@ async function preferencesFlow(
       (message) => (window as unknown as ParentWindow).sendPreferences(message),
       viewerPreferencesMessage(preferences),
     )
-    await frame
-      .waitForFunction(
-        (wanted) =>
-          `${document.documentElement.lang} ${document.documentElement.dataset.theme}` ===
-          wanted,
-        expected,
-        { timeout: 5000 },
-      )
-      .catch(() => undefined)
+    await frame.waitForFunction(
+      (wanted) =>
+        `${document.documentElement.lang} ${document.documentElement.dataset.theme}` ===
+        wanted,
+      expected,
+      { timeout: 5000 },
+    )
     await settle(frame)
     return preferencesState(frame)
   }
@@ -1161,6 +1186,7 @@ async function preferencesFlow(
     (message) => window.postMessage(message, '*'),
     viewerPreferencesMessage({ locale: 'ja', theme: 'light' }),
   )
+  // test-wait: elapsed-time — malformed and non-parent messages must remain ignored.
   await frame.waitForTimeout(500)
   const ignored = await preferencesState(frame)
   const beforeReplacement = await send(
@@ -1178,11 +1204,13 @@ async function preferencesFlow(
     undefined,
     { timeout: 20000 },
   )
-  await replacement
-    .waitForFunction(() => document.documentElement.lang === 'ja', undefined, {
+  await replacement.waitForFunction(
+    () => document.documentElement.lang === 'ja',
+    undefined,
+    {
       timeout: 5000,
-    })
-    .catch(() => undefined)
+    },
+  )
   const replaced = await preferencesState(replacement)
   return {
     frame: replacement,
@@ -1222,18 +1250,16 @@ async function pageBridgeFlow(page: Page, frame: Frame, width: number) {
       ),
     )
   const waitReport = async (state: string, expectedPage?: number) => {
-    await page
-      .waitForFunction(
-        ([wantedState, wantedPage]) => {
-          const last = (
-            window as unknown as { reports: PageReport[] }
-          ).reports.at(-1)
-          return last?.state === wantedState && last.pageNumber === wantedPage
-        },
-        [state, expectedPage] as const,
-        { timeout: 10000 },
-      )
-      .catch(() => undefined)
+    await page.waitForFunction(
+      ([wantedState, wantedPage]) => {
+        const last = (
+          window as unknown as { reports: PageReport[] }
+        ).reports.at(-1)
+        return last?.state === wantedState && last.pageNumber === wantedPage
+      },
+      [state, expectedPage] as const,
+      { timeout: 10000 },
+    )
     return (await reports()).at(-1)
   }
   const command = (data: unknown) =>
@@ -1626,15 +1652,12 @@ export const pdfViewerScenario = defineBrowserCommand(
             width: 1440,
             height: narrowViewport.height,
           })
-          await frame
-            .waitForFunction(
-              () =>
-                document.getElementById('download')!.getClientRects().length >
-                0,
-              undefined,
-              { timeout: 5000 },
-            )
-            .catch(() => undefined)
+          await frame.waitForFunction(
+            () =>
+              document.getElementById('download')!.getClientRects().length > 0,
+            undefined,
+            { timeout: 5000 },
+          )
           widened = await layout(frame)
           await artifact.setViewportSize(narrowViewport)
         }
@@ -1751,7 +1774,26 @@ export const pdfViewerScenario = defineBrowserCommand(
       if (MIXED_SIZES[scenario]) {
         await frame.click('#next')
         const mixedPage = await waitForPage(frame, 2)
-        await frame.waitForTimeout(500)
+        await frame.waitForFunction(
+          (slide) => {
+            const container = document.getElementById('viewer-container')!
+            const current = document.querySelector<HTMLElement>(
+              '.page[data-page-number="2"]',
+            )!
+            if (slide)
+              return (
+                current.offsetHeight <= container.clientHeight &&
+                current.offsetWidth <= container.clientWidth &&
+                container.scrollHeight === container.clientHeight
+              )
+            return [...document.querySelectorAll<HTMLElement>('.page')].every(
+              (pageElement) => pageElement.offsetWidth <= container.clientWidth,
+            )
+          },
+          scenario === 'mixed-slides',
+          { timeout: 5000 },
+        )
+        await settle(frame)
         const mixed = await layout(frame)
         const mixedMode = await frame.evaluate(() => document.body.dataset.mode)
         // Fit page in continuous layout refits each page reached.
@@ -1867,7 +1909,30 @@ export const pdfViewerScenario = defineBrowserCommand(
         width: Math.round(width * 0.8),
         height: Math.round(height * 0.8),
       })
-      await frame.waitForTimeout(500)
+      await frame.waitForFunction(
+        ({ expectedWidth, expectedHeight, expectedPage, fitPage }) => {
+          const container = document.getElementById('viewer-container')!
+          const current = document.querySelector<HTMLElement>(
+            `.page[data-page-number="${expectedPage}"]`,
+          )
+          return (
+            innerWidth === expectedWidth &&
+            innerHeight === expectedHeight &&
+            !!current &&
+            current.offsetWidth <= container.clientWidth &&
+            (!fitPage ||
+              (current.offsetHeight <= container.clientHeight &&
+                container.scrollHeight === container.clientHeight))
+          )
+        },
+        {
+          expectedWidth: Math.round(width * 0.8),
+          expectedHeight: Math.round(height * 0.8),
+          expectedPage: beforeResize,
+          fitPage: mode === 'page',
+        },
+        { timeout: 5000 },
+      )
       const afterResize = {
         pageNumber: await pageNumber(frame),
         ...(await layout(frame)),

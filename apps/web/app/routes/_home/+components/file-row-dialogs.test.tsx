@@ -164,7 +164,7 @@ describe('FileRowDialogs visibility lifetime', () => {
 
   function click(selector: string) {
     return React.act(async () => {
-      host.querySelector<HTMLButtonElement>(selector)?.click()
+      host.querySelector<HTMLButtonElement>(selector)!.click()
     })
   }
 
