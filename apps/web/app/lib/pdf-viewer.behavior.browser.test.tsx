@@ -87,6 +87,7 @@ test('keeps phone-sized touch targets on a 600px frame', async () => {
 describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
   test('opens landscape slides one page at a time fitted to the visible area', async () => {
     const result = await server.commands.pdfViewerScenario('landscape', width)
+    expectOneToolbarRow(result.initial!, width)
 
     expect(result.state).toBe('ready')
     expect(result.mode).toBe('page')
@@ -173,15 +174,6 @@ describe.each([1440, 390])('PDF viewer at %ipx', (width) => {
     )
     expect(result.offOrigin).toEqual([])
     expect(result.violations).toEqual([])
-  })
-
-  test('keeps the controls in one row with phone-sized touch targets', async () => {
-    const { initial } = await server.commands.pdfViewerScenario(
-      'landscape',
-      width,
-    )
-
-    expectOneToolbarRow(initial!, width)
   })
 
   test('opens a page list that marks the current page, draws lazily and closes every way', async () => {

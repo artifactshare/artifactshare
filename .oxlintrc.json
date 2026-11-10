@@ -3,7 +3,8 @@
   "jsPlugins": [
     "./scripts/copy-glossary-lint-plugin.mjs",
     "./scripts/analytics-lint-plugin.mjs",
-    "./scripts/module-boundary-lint-plugin.mjs"
+    "./scripts/module-boundary-lint-plugin.mjs",
+    "./scripts/test-reliability-lint-plugin.mjs"
   ],
   "categories": {
     "correctness": "error"
@@ -17,7 +18,8 @@
     "unicorn/no-useless-length-check": "off",
     "copy-glossary/no-violations": "error",
     "analytics/typed-sender": "error",
-    "module-boundary/no-internal-imports": "error"
+    "module-boundary/no-internal-imports": "error",
+    "test-reliability/observed-waits": "error"
   },
   "overrides": [
     {

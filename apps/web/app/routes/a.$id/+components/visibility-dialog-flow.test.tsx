@@ -230,7 +230,7 @@ describe('VisibilityDialog link save flow', () => {
     await renderDialog()
 
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
 
     const footerLabels = Array.from(
@@ -248,12 +248,12 @@ describe('VisibilityDialog link save flow', () => {
 
     expect(host.querySelector('a')).toBeNull()
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     const save = Array.from(host.querySelectorAll('button')).find(
       (button) => button.textContent === 'visibilityDialog.save',
     )
-    await React.act(async () => save?.click())
+    await React.act(async () => save!.click())
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
@@ -281,7 +281,7 @@ describe('VisibilityDialog link save flow', () => {
     )
     expect(urlInput?.readOnly).toBe(true)
     expect(urlInput?.value).toBe('https://abc123def4.artifactshare.link/')
-    await React.act(async () => urlInput?.focus())
+    await React.act(async () => urlInput!.focus())
     expect(urlInput?.selectionStart).toBe(0)
     expect(urlInput?.selectionEnd).toBe(urlInput?.value.length)
     const status = Array.from(host.querySelectorAll('[role="status"]')).find(
@@ -310,15 +310,15 @@ describe('VisibilityDialog link save flow', () => {
     })
 
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     const expiryInput =
       host.querySelector<HTMLInputElement>('input[type="date"]')!
     await changeInput(expiryInput, '2026-10-20')
     await React.act(async () => {
       host
-        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
-        ?.click()
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')!
+        .click()
     })
 
     expect(
@@ -328,7 +328,7 @@ describe('VisibilityDialog link save flow', () => {
       ),
     ).toEqual(['visibilityDialog.close'])
     const close = host.querySelector<HTMLButtonElement>('footer button')
-    await React.act(async () => close?.click())
+    await React.act(async () => close!.click())
     expect(fetchMock).not.toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -344,14 +344,14 @@ describe('VisibilityDialog link save flow', () => {
 
     await React.act(async () => {
       host
-        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
-        ?.click()
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')!
+        .click()
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-add-grant]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-add-grant]')!.click()
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     const expiryInput =
       host.querySelector<HTMLInputElement>('input[type="date"]')!
@@ -361,7 +361,7 @@ describe('VisibilityDialog link save flow', () => {
     const save = Array.from(host.querySelectorAll('button')).find(
       (button) => button.textContent === 'visibilityDialog.save',
     )
-    await React.act(async () => save?.click())
+    await React.act(async () => save!.click())
 
     const saveCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith('/save'),
@@ -381,11 +381,11 @@ describe('VisibilityDialog link save flow', () => {
     })
     await React.act(async () => {
       host
-        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
-        ?.click()
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')!
+        .click()
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-add-grant]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-add-grant]')!.click()
     })
     await clickFooterButton('visibilityDialog.save')
 
@@ -507,7 +507,7 @@ describe('VisibilityDialog link save flow', () => {
       ),
     ).toEqual(['visibilityDialog.close'])
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     expect(
       host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
@@ -591,8 +591,8 @@ describe('VisibilityDialog link save flow', () => {
 
     await React.act(async () => {
       host
-        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
-        ?.click()
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')!
+        .click()
     })
     await clickFooterButton('visibilityDialog.save')
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
@@ -618,7 +618,7 @@ describe('VisibilityDialog link save flow', () => {
       linkExpiryDefaultDays: 30,
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     expect(
       host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
@@ -652,7 +652,7 @@ describe('VisibilityDialog link save flow', () => {
     expectSavingControls(true)
     expect(expectSavingStatus(true)).toBe(savingStatus)
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-dialog-dismiss]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-dialog-dismiss]')!.click()
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
     await renderDialog({
@@ -711,7 +711,7 @@ describe('VisibilityDialog link save flow', () => {
       linkExpiryMaxDays: 30,
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     await clickFooterButton('visibilityDialog.save')
 
@@ -749,7 +749,7 @@ describe('VisibilityDialog link save flow', () => {
     vi.setSystemTime(new Date(2026, 9, 20, 0, 1))
 
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     await clickFooterButton('visibilityDialog.save')
 
@@ -815,8 +815,8 @@ describe('VisibilityDialog link save flow', () => {
     })
     await React.act(async () => {
       host
-        .querySelector<HTMLButtonElement>('[data-visibility="private"]')
-        ?.click()
+        .querySelector<HTMLButtonElement>('[data-visibility="private"]')!
+        .click()
     })
     await clickFooterButton('visibilityDialog.save')
 
@@ -827,7 +827,7 @@ describe('VisibilityDialog link save flow', () => {
       linkExpiryDefaultDays: 30,
     })
     await React.act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')?.click()
+      host.querySelector<HTMLButtonElement>('[data-visibility="link"]')!.click()
     })
     expect(
       host.querySelector<HTMLInputElement>('input[type="date"]')?.value,
@@ -914,7 +914,7 @@ describe('VisibilityDialog link save flow', () => {
     const button = Array.from(
       host.querySelectorAll<HTMLButtonElement>('footer button'),
     ).find((candidate) => candidate.textContent === label)
-    return React.act(async () => button?.click())
+    return React.act(async () => button!.click())
   }
 
   function expectSavingControls(saving: boolean) {

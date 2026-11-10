@@ -319,7 +319,7 @@ describe('SandboxFrame recovery', () => {
 
     const retry = host.querySelector<HTMLButtonElement>('button')
     expect(retry?.textContent).toBe('Continue viewing')
-    await act(async () => retry?.click())
+    await act(async () => retry!.click())
     expect(stateOf(host)).toBe('resuming')
     expect(host.querySelector('iframe')).toBe(recoveredFrame)
     expect(tokenRequests).toHaveLength(2)
@@ -481,7 +481,7 @@ describe('SandboxFrame recovery', () => {
     expect(checking).toHaveBeenLastCalledWith(false)
 
     await act(async () =>
-      host.querySelector<HTMLButtonElement>('button')?.click(),
+      host.querySelector<HTMLButtonElement>('button')!.click(),
     )
     expect(stateOf(host)).toBe('resuming')
     expect(tokenRequests).toHaveLength(1)

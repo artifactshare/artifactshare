@@ -90,7 +90,7 @@ describe('Japanese home to English home navigation', () => {
     const initialDocument = document
     const englishLink = document.querySelector<HTMLAnchorElement>('a[href="/"]')
     expect(englishLink).not.toBeNull()
-    englishLink?.click()
+    englishLink!.click()
 
     await vi.waitFor(() => {
       expect(document.querySelector('[data-pathname="/"]')).not.toBeNull()

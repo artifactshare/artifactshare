@@ -89,7 +89,7 @@ describe('ProjectCandidatePicker', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
     await React.act(async () => {
-      container.querySelector('input')?.focus()
+      container.querySelector('input')!.focus()
     })
 
     expect(requests).toEqual(['?purpose=bot-destination&q='])
@@ -100,7 +100,7 @@ describe('ProjectCandidatePicker', () => {
     )
     expect(more).toBeDefined()
     await React.act(async () => {
-      more?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      more!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(requests).toEqual([
@@ -293,7 +293,7 @@ describe('ProjectCandidatePicker', () => {
         <>
           <span
             id="project-label"
-            onClick={() => document.getElementById('project')?.focus()}
+            onClick={() => document.getElementById('project')!.focus()}
           >
             Destination project
           </span>
@@ -332,12 +332,12 @@ describe('ProjectCandidatePicker', () => {
     expect(container.textContent).not.toContain('internal-project-id')
 
     await React.act(async () => {
-      choices[1]?.click()
+      choices[1]!.click()
     })
     await React.act(async () => {
       container
-        .querySelector('#project-label')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        .querySelector('#project-label')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(choices[1]?.getAttribute('aria-pressed')).toBe('true')
     expect(document.activeElement).toBe(choices[1])
@@ -410,12 +410,12 @@ describe('ProjectCandidatePicker', () => {
     const input = container.querySelector<HTMLInputElement>('input')
     expect(input).not.toBeNull()
     await React.act(async () => {
-      input?.focus()
+      input!.focus()
       Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         'value',
       )?.set?.call(input, 'retry')
-      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      input!.dispatchEvent(new Event('input', { bubbles: true }))
       await vi.advanceTimersByTimeAsync(250)
     })
     expect(container.textContent).toContain('projectPicker.error')
@@ -424,7 +424,7 @@ describe('ProjectCandidatePicker', () => {
       (button) => button.textContent === 'projectPicker.retry',
     )
     await React.act(async () => {
-      retry?.click()
+      retry!.click()
       await vi.advanceTimersByTimeAsync(250)
     })
 
@@ -433,7 +433,7 @@ describe('ProjectCandidatePicker', () => {
     ).find((element) => element.textContent?.includes('Retried project'))
     expect(option).toBeDefined()
     await React.act(async () => {
-      option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      option!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(onChange).toHaveBeenCalledWith(
@@ -507,8 +507,9 @@ describe('ProjectCandidatePicker', () => {
     await React.act(async () => {
       root.render(<RouterProvider router={router} />)
     })
+    // Initial loading already failed: the error surface replaces the input.
+    expect(container.querySelector('input')).toBeNull()
     await React.act(async () => {
-      container.querySelector('input')?.focus()
       await vi.runAllTimersAsync()
     })
 
@@ -557,7 +558,7 @@ describe('ProjectCandidatePicker', () => {
     expect(retry).toBeDefined()
 
     await React.act(async () => {
-      retry?.click()
+      retry!.click()
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
     await React.act(async () => {

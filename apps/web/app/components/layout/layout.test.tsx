@@ -114,7 +114,7 @@ describe('Inline', () => {
     expect(childRef.current).toBe(button)
 
     await React.act(async () => {
-      button?.click()
+      button!.click()
     })
     expect(calls).toEqual(['child', 'wrapper'])
     expect(wrapperSawPrevented).toBe(true)

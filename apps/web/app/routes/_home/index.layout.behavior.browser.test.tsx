@@ -270,7 +270,7 @@ describe('home page shell spacing', () => {
       (button) => button.textContent?.trim() === 'ファイルを追加',
     )
     expect(homeButton).toBeDefined()
-    homeButton?.click()
+    homeButton!.click()
     expect(openUploadDialog).toHaveBeenCalledTimes(1)
     expect(document.querySelectorAll('button')).toHaveLength(1)
 
@@ -282,7 +282,7 @@ describe('home page shell spacing', () => {
       (button) => button.textContent?.trim() === 'ファイルを追加',
     )
     expect(filesButton).toBeDefined()
-    filesButton?.click()
+    filesButton!.click()
     expect(openUploadDialog).toHaveBeenCalledTimes(2)
     expect(document.querySelectorAll('button')).toHaveLength(1)
   })

@@ -1,3 +1,4 @@
+import { openPopup } from './browser-waits'
 import assert from 'node:assert/strict'
 import type { Cookie, Download, Page } from 'playwright'
 import { execFile } from 'node:child_process'
@@ -769,10 +770,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
                   viewer.viewportSize()!.width,
             )
             await bodyAction.focus()
-            const [bodyPage]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
+            const bodyPage = await openPopup(context, () =>
               bodyAction.press('Enter'),
-            ])
+            )
             const bodyErrors: string[] = []
             bodyPage.on('pageerror', (error) => bodyErrors.push(error.message))
             await bodyPage.waitForLoadState()
@@ -833,10 +833,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             )
             await bodyPage.close()
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const [freshBody]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
-              bodyAction.click(),
-            ])
+            const freshBody = await openPopup(context, () => bodyAction.click())
             await freshBody.waitForLoadState()
             await freshBody
               .getByRole('link', { name: 'Return home', exact: true })
@@ -940,10 +937,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               name: 'Open body alone in a new tab',
             })
             await action.focus()
-            const [site]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
-              action.press('Enter'),
-            ])
+            const site = await openPopup(context, () => action.press('Enter'))
             await site.waitForLoadState()
             assert.equal(await site.evaluate(() => window.opener), null)
             await site
@@ -1016,10 +1010,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
             // Refuse the exchange cookie as well: the new tab must terminate
             // at guidance, even on the otherwise cookie-free link host.
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const [blockedSite]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
-              action.click(),
-            ])
+            const blockedSite = await openPopup(context, () => action.click())
             await blockedSite
               .getByRole('heading', {
                 name:
@@ -1067,10 +1058,7 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
               await appBody.close()
             }
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const [freshSite]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
-              action.click(),
-            ])
+            const freshSite = await openPopup(context, () => action.click())
             await freshSite
               .getByRole('heading', { name: 'Local delivery' })
               .waitFor()
@@ -1176,12 +1164,11 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
           stage = `${engine}: ${kind}:${format} revocation`
           if (standaloneSite) {
             await viewer.locator('[data-viewer-more-menu-trigger]').click()
-            const [openedSite]: [Page, void] = await Promise.all([
-              context.waitForEvent('page'),
+            const openedSite = await openPopup(context, () =>
               viewer
                 .getByRole('menuitem', { name: 'Open body alone in a new tab' })
                 .click(),
-            ])
+            )
             standaloneSite = openedSite
             await standaloneSite
               .getByRole('heading', { name: 'Local delivery' })

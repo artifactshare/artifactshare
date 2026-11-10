@@ -116,7 +116,7 @@ describe('PrivateMobileDesignHandoffPage', () => {
         ),
       ).toContain(switchHref)
 
-      await React.act(async () => button?.click())
+      await React.act(async () => button!.click())
       expect(writeClipboardTextMock).toHaveBeenCalledWith(source)
       expect(writeClipboardTextMock).not.toHaveBeenCalledWith(
         expect.stringContaining('Rendered HTML'),
@@ -129,11 +129,11 @@ describe('PrivateMobileDesignHandoffPage', () => {
       )
 
       writeClipboardTextMock.mockResolvedValue(false)
-      await React.act(async () => button?.click())
+      await React.act(async () => button!.click())
       expect(button?.textContent).toBe(failed)
 
       writeClipboardTextMock.mockResolvedValue(true)
-      await React.act(async () => button?.click())
+      await React.act(async () => button!.click())
       expect(button?.textContent).toBe(
         locale === 'ja' ? 'コピーしました' : 'Copied',
       )
