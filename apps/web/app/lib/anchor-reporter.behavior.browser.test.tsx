@@ -55,10 +55,12 @@ async function fixture(html: string) {
   document.body.appendChild(frame)
   await loaded
   send('ready-check', { challenge: 'anchor-test' })
-  await vi.waitFor(() =>
-    expect(messages.some((m) => (m as { kind: string }).kind === 'ready')).toBe(
-      true,
-    ),
+  await vi.waitFor(
+    () =>
+      expect(
+        messages.some((m) => (m as { kind: string }).kind === 'ready'),
+      ).toBe(true),
+    { interval: 10 },
   )
   return frame.contentDocument!
 }
