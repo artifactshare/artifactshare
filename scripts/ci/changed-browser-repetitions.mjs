@@ -402,7 +402,7 @@ function executionText(runs) {
   const duration = durationCount
     ? recorded.reduce((value, row) => value + (row.durationMsSum ?? 0), 0)
     : null
-  return `${duration === null ? 'unknown' : duration.toFixed(1)} ms; duration ${durationCount}/${sum('observations')}, retry ${sum('retryRecorded')}/${sum('observations')} recorded; ${sum('retried')} retried observations; ${recorded.length}/${runs.length} reports`
+  return `${duration === null ? 'unknown' : duration.toFixed(1)} ms; duration ${durationCount}/${sum('observations')}, retry ${sum('retryRecorded')}/${sum('observations')} recorded; ${sum('retried')} retried observations, ${sum('recovered')} recovered, ${sum('failedAfterRetry')} failed after retry; ${recorded.length}/${runs.length} reports`
 }
 
 export function summarize(plan, { results, setupError } = {}) {

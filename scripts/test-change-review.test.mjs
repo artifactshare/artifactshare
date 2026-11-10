@@ -114,3 +114,44 @@ test('deleted tests and capped observations remain explicit', (t) => {
   assert.equal(load.notes.length, 40)
   assert.equal(load.omitted, 20)
 })
+
+test('literal bracket paths and front-matter removal retain exact file and line evidence', (t) => {
+  const f = fixture(t)
+  const file = 'app/test/robots[.]txt.test.ts'
+  f.write(file, '---\nexpect(answer).toBe(true)\n')
+  f.write('app/test/robots.txt.test.ts', 'expect(other).toBe(true)\n')
+  const base = f.commit()
+  f.write(file, '')
+  const report = collectTestChanges({ base, head: f.commit(), run: f.run })
+  assert.equal(report.files.length, 1)
+  assert.deepEqual(report.files[0].notes, [
+    { kind: 'removed-assertion', side: 'removed', line: 2 },
+  ])
+})
+
+test('fixture, CI limits and native selector options remain visible review cues', (t) => {
+  const f = fixture(t)
+  f.write('initial', 'base')
+  const base = f.commit()
+  f.write('app/loader-fixture.ts', 'const data = { count: 1 }')
+  f.write('scripts/ci/example.mjs', 'const REPETITION_TIMEOUT_MS = 12000')
+  f.write('.github/workflows/test.yml', 'REPETITIONS: 1')
+  f.write(
+    'app/example.test.ts',
+    `test('x', { skip: true }, fn)\ntest.setTimeout(12000)\nctx.skip()\ntest.fails('x', fn)\n`,
+  )
+  const report = collectTestChanges({ base, head: f.commit(), run: f.run })
+  for (const [file, kind] of [
+    ['app/loader-fixture.ts', 'fixture-load'],
+    ['scripts/ci/example.mjs', 'execution-limit'],
+    ['.github/workflows/test.yml', 'execution-limit'],
+    ['app/example.test.ts', 'test-selection'],
+  ]) {
+    assert.ok(
+      report.files
+        .find((row) => row.file === file)
+        ?.notes.some((note) => note.kind === kind),
+      file,
+    )
+  }
+})

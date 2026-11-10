@@ -215,12 +215,19 @@ export function executionSummary(rows) {
       : null,
     retryRecorded: retries.length,
     retried: retries.filter((row) => row.execution.retryCount > 0).length,
+    recovered: retries.filter(
+      (row) => row.execution.retryCount > 0 && row.status === 'passed',
+    ).length,
+    failedAfterRetry: retries.filter(
+      (row) => row.execution.retryCount > 0 && row.status === 'failed',
+    ).length,
   }
 }
 
 export function aggregate({ results, repetitions, sha }) {
   repetitions = validateCount(repetitions)
   const collected = new Map()
+  const nativeRows = new Map()
   const coverage = []
   for (const lane of lanes) {
     const laneCoverage = {
@@ -314,6 +321,9 @@ export function aggregate({ results, repetitions, sha }) {
           perRun.set(key, row)
       }
       for (const [key, row] of perRun) {
+        const observed = nativeRows.get(key) ?? []
+        observed.push(row)
+        nativeRows.set(key, observed)
         let entry = collected.get(key)
         if (!entry) {
           entry = {
@@ -342,19 +352,25 @@ export function aggregate({ results, repetitions, sha }) {
       }
     }
   }
-  const observations = [...collected.values()].sort((a, b) =>
-    [a.suite, a.project ?? '', a.file, a.testName]
-      .join('\0')
-      .localeCompare(
-        [b.suite, b.project ?? '', b.file, b.testName].join('\0'),
-        'en',
-      ),
-  )
+  const observations = [...collected.entries()]
+    .map(([key, value]) => {
+      const execution = executionSummary(nativeRows.get(key))
+      return { ...value, ...(execution ? { execution } : {}) }
+    })
+    .sort((a, b) =>
+      [a.suite, a.project ?? '', a.file, a.testName]
+        .join('\0')
+        .localeCompare(
+          [b.suite, b.project ?? '', b.file, b.testName].join('\0'),
+          'en',
+        ),
+    )
   return {
     schemaVersion: 1,
     sha,
     repetitions,
     coverage,
+    execution: executionSummary([...nativeRows.values()].flat()) ?? null,
     observations,
     flaky: observations.filter(
       (row) => row.failureCount > 0 && row.failureCount < repetitions,
@@ -377,6 +393,14 @@ export function markdown(report) {
     '# Flaky detector',
     '',
     `Commit: ${report.sha}. Requested repetitions per lane: ${report.repetitions}.`,
+    '',
+    '## Native case diagnostics',
+    '',
+    report.execution
+      ? `${report.execution.durationMsSum === null ? 'unknown' : report.execution.durationMsSum.toFixed(1)} ms summed case time; duration ${report.execution.durationRecorded}/${report.execution.observations}, retry ${report.execution.retryRecorded}/${report.execution.observations} recorded; ${report.execution.retried} retried observations, ${report.execution.recovered} recovered, ${report.execution.failedAfterRetry} failed after retry.`
+      : 'unknown (no native diagnostics recorded).',
+    '',
+    'Durations can overlap and are not wall time. Missing diagnostics remain unknown; recovered retries are not first-attempt passes. Pass/fail classification is unchanged.',
     '',
     ...[
       ['Flaky', report.flaky],

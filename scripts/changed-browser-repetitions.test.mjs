@@ -1439,3 +1439,62 @@ test('source report cannot pass cancellation even after all admitted assertions 
   fs.rmSync(path.join(results, '0', '1', 'status.json'))
   assert.equal(await main('source-report', env), 1)
 })
+
+test('repetition and source summaries retain native recovered retries and unknown durations', async (t) => {
+  const plan = await buildPlan(selected(), {
+    discover: fixtureDiscovery([{ file, project: 'chromium' }]),
+    repetitions: '1',
+  })
+  const source = await buildSourcePlan(sourceSelection(), {
+    discover: sourceDiscovery([{ file, project: 'chromium' }]),
+  })
+  for (const [candidate, execute, render] of [
+    [plan, runPlan, summarize],
+    [source, runSourcePlan, summarizeSource],
+  ]) {
+    for (const execution of [
+      { durationMs: 12, retryCount: 1, repeatCount: 0, flaky: true },
+      { durationMs: null, retryCount: null, repeatCount: null, flaky: null },
+      undefined,
+    ]) {
+      const results = temporary(t)
+      await execute(candidate, {
+        results,
+        clock: () => 0,
+        executor: (_command, args) => {
+          const payload = passing(candidate.pairs[0])
+          if (execution !== undefined)
+            payload.modules[0].tests[0].execution = execution
+          fs.writeFileSync(
+            args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+            JSON.stringify(payload),
+          )
+          return { exitCode: 0 }
+        },
+      })
+      const summary = render(candidate, { results })
+      assert.equal(summary.failed, false)
+      assert.match(
+        summary.markdown,
+        execution?.durationMs === 12 ? /12.0 ms.*1 recovered/u : /unknown/u,
+      )
+      if (execution?.durationMs === null)
+        assert.match(summary.markdown, /duration 0\/1/u)
+    }
+  }
+})
+
+test('resolved dependency and harness configuration inputs retain conservative source coverage', () => {
+  const inputs = [
+    'pnpm-lock.yaml',
+    'package.json',
+    'apps/web/package.json',
+    'pnpm-workspace.yaml',
+    'apps/web/vitest.behavior.browser.config.ts',
+    'apps/web/wrangler.sandbox.jsonc',
+  ]
+  assert.deepEqual(
+    selectSourceFiles(inputs.map((input) => `M\0${input}\0`).join('')).inputs,
+    inputs.toSorted(),
+  )
+})

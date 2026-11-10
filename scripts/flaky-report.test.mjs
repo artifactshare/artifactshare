@@ -440,6 +440,8 @@ test('execution observations retain duration and recovered retries without inven
     durationMsSum: 125.5,
     retryRecorded: 1,
     retried: 1,
+    recovered: 1,
+    failedAfterRetry: 0,
   })
   report.modules[0].tests[0].execution = null
   assert.deepEqual(
@@ -450,6 +452,8 @@ test('execution observations retain duration and recovered retries without inven
       durationMsSum: null,
       retryRecorded: 0,
       retried: 0,
+      recovered: 0,
+      failedAfterRetry: 0,
     },
   )
   delete report.modules[0].tests[0].execution
@@ -467,4 +471,43 @@ test('execution observations retain duration and recovered retries without inven
     () => normalizeReport(JSON.stringify(report), status),
     /Invalid Vitest execution diagnostic/,
   )
+})
+
+test('nightly JSON and Markdown retain recovered and failed retries without changing classification', (t) => {
+  const f = fixture(t)
+  const recovered = vitest()
+  recovered.modules[0].tests[0].execution = {
+    durationMs: 12,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: true,
+  }
+  f.write(lanes[0], 1, recovered)
+  const failed = vitest('failed', 'outer > leaf', undefined, 'fault')
+  failed.modules[0].tests[0].execution = {
+    durationMs: null,
+    retryCount: 1,
+    repeatCount: 0,
+    flaky: false,
+  }
+  f.write(lanes[0], 2, failed, { exitCode: 1 })
+  const report = f.read()
+  const row = report.observations.find(
+    (item) =>
+      item.suite === lanes[0].suite &&
+      item.project === lanes[0].project &&
+      !item.diagnosticKind,
+  )
+  assert.equal(row.passCount, 1)
+  assert.equal(row.failureCount, 1)
+  assert.equal(row.execution.recovered, 1)
+  assert.equal(row.execution.failedAfterRetry, 1)
+  assert.equal(row.execution.durationRecorded, 1)
+  assert.equal(row.execution.durationMsSum, 12)
+  assert.equal(report.execution.recovered, 1)
+  assert.equal(report.execution.failedAfterRetry, 1)
+  assert.match(markdown(report), /1 recovered, 1 failed after retry/u)
+  assert.match(markdown(report), /not wall time/u)
+  assert.equal(fixture(t).read().execution, null)
+  assert.match(markdown(fixture(t).read()), /unknown \(no native diagnostics/u)
 })

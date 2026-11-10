@@ -5,21 +5,33 @@ import { pathToFileURL } from 'node:url'
 const testPath = (file) =>
   /(?:^|\/)(?:test|tests|__tests__)\//.test(file) ||
   /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) ||
-  /(?:^|\/)(?:vitest|playwright)[^/]*\.[cm]?[jt]s$/.test(file)
+  /(?:^|\/)(?:vitest|playwright)[^/]*\.[cm]?[jt]s$/.test(file) ||
+  /(?:^|\/)[^/]*fixture[^/]*\.[cm]?[jt]sx?$/.test(file) ||
+  file.startsWith('scripts/ci/') ||
+  file.startsWith('.github/workflows/')
 
 function categories(line, side) {
   const result = []
   if (
-    /\b(?:timeout(?:Ms)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats)\s*[:=]/.test(
+    /\b(?:timeout(?:Ms)?|testTimeout|hookTimeout|actionTimeout|navigationTimeout|retry|retries|repeats|REPETITIONS|REPETITION_TIMEOUT_MS)\s*[:=]/.test(
       line,
     )
   )
     result.push('execution-limit')
   if (
+    /\b(?:test|it)\s*\.\s*(?:setTimeout|slow)\s*\(|\btimeout\s*[,}]/.test(line)
+  )
+    result.push('execution-limit')
+  if (
     side === 'added' &&
-    /\b(?:test|it|describe)\s*\.\s*(?:skip|skipIf|runIf|only|todo|fixme)\b/.test(
+    /\b(?:test|it|describe)\s*\.\s*(?:skip|skipIf|runIf|only|todo|fixme|fails)\b/.test(
       line,
     )
+  )
+    result.push('test-selection')
+  if (
+    side === 'added' &&
+    /\b(?:skip|only|todo)\s*:|\bctx\s*\.\s*skip\s*\(/.test(line)
   )
     result.push('test-selection')
   if (
@@ -42,16 +54,18 @@ export function inspectTestPatch(patch) {
   const notes = []
   let oldLine = 0
   let newLine = 0
+  let inHunk = false
   for (const line of patch.split('\n')) {
     const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
     if (hunk) {
+      inHunk = true
       oldLine = Number(hunk[1])
       newLine = Number(hunk[2])
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
+    } else if (inHunk && line.startsWith('+')) {
       for (const kind of categories(line.slice(1), 'added'))
         notes.push({ kind, side: 'added', line: newLine })
       newLine++
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
+    } else if (inHunk && line.startsWith('-')) {
       for (const kind of categories(line.slice(1), 'removed'))
         notes.push({ kind, side: 'removed', line: oldLine })
       oldLine++
@@ -66,7 +80,8 @@ export function inspectTestPatch(patch) {
 export function collectTestChanges({
   base,
   head,
-  run = (file, args) => execFileSync(file, args, { encoding: 'utf8' }),
+  run = (file, args) =>
+    execFileSync(file, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }),
 }) {
   for (const sha of [base, head]) {
     if (!/^[0-9a-f]{40}$/.test(sha ?? ''))
@@ -91,8 +106,10 @@ export function collectTestChanges({
       throw new Error('Invalid test-change status')
     if (!testPath(file)) continue
     const patch = run('git', [
+      '--literal-pathspecs',
       'diff',
       '--no-ext-diff',
+      '--no-textconv',
       '--no-color',
       '--unified=0',
       base,
