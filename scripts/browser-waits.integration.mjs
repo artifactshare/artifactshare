@@ -31,11 +31,16 @@ test('real browser readiness fault and popup cancellation release native listene
       /wrong completion condition/,
     )
     const listeners = context.listenerCount('page')
+    const failureStarted = performance.now()
     await assert.rejects(
       openPopup(context, () =>
         Promise.reject(new Error('injected trigger failure')),
       ),
       /popup trigger/,
+    )
+    assert.ok(
+      performance.now() - failureStarted < 15_000,
+      'trigger failure must abort before the native 30-second deadline',
     )
     assert.equal(context.listenerCount('page'), listeners)
     const popup = await openPopup(context, () =>

@@ -1,3 +1,7 @@
+import { relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
 const member = (node) =>
   node?.type === 'MemberExpression'
     ? node.computed
@@ -58,12 +62,11 @@ export default {
     'observed-waits': {
       meta: { type: 'problem', schema: [] },
       create(context) {
-        if (
-          !/(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\/(?:test|__tests__)\/)/.test(
-            context.filename.replaceAll('\\', '/'),
-          )
-        )
-          return {}
+        const file = relative(root, context.filename).replaceAll('\\', '/')
+        const namedTest = /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
+        const testHelper =
+          !file.startsWith('../') && /(?:^|\/)(?:test|__tests__)\//.test(file)
+        if (!namedTest && !testHelper) return {}
         const source = context.sourceCode
         return {
           CallExpression(node) {

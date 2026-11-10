@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
@@ -105,6 +112,55 @@ const expired = await page.waitForTimeout(100)
       'production.ts': 'button?.click()',
     })
     assert.equal(good.status, 0, good.output)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a clone beneath test does not classify production as a test and still checks repository helpers', () => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'lint-clone-')))
+  const clone = join(directory, 'test', 'repository')
+  const script = join(clone, 'scripts')
+  const helper = join(clone, 'apps', 'web', 'app', 'test')
+  mkdirSync(script, { recursive: true })
+  mkdirSync(helper, { recursive: true })
+  writeFileSync(
+    join(script, 'plugin.mjs'),
+    readFileSync(join(root, 'scripts/test-reliability-lint-plugin.mjs')),
+  )
+  writeFileSync(
+    join(clone, '.oxlintrc.json'),
+    JSON.stringify({
+      jsPlugins: ['./scripts/plugin.mjs'],
+      rules: { 'test-reliability/observed-waits': 'error' },
+    }),
+  )
+  const production = join(clone, 'apps', 'web', 'app', 'component.ts')
+  const testHelper = join(helper, 'command.ts')
+  writeFileSync(production, 'button?.click()')
+  writeFileSync(testHelper, 'button?.click()')
+  try {
+    const result = spawnSync(
+      'pnpm',
+      [
+        'exec',
+        'vp',
+        'lint',
+        '-c',
+        join(clone, '.oxlintrc.json'),
+        '--format',
+        'json',
+        production,
+        testHelper,
+      ],
+      { cwd: root, encoding: 'utf8' },
+    )
+    assert.notEqual(result.status, 0, result.stdout + result.stderr)
+    const diagnostics = JSON.parse(result.stdout).diagnostics.filter((row) =>
+      row.code.includes('observed-waits'),
+    )
+    assert.equal(diagnostics.length, 1)
+    assert.ok(diagnostics[0].filename.endsWith('apps/web/app/test/command.ts'))
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
