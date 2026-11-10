@@ -52,6 +52,9 @@ export function onReadyCheck(ctx: ReporterState, event: MessageEvent) {
   )
     return
   if (typeof message.challenge !== 'string' || !message.challenge) return
+  // The parent may have rejected an earlier verdict before registering the
+  // document token. A new handshake must let that same verdict be sent again.
+  if (ctx.readyChallenge !== message.challenge) ctx.lastResolutionSignature = ''
   ctx.readyChallenge = message.challenge
   for (let index = 0; index < ctx.pendingCspViolationCount; index++) {
     send(ctx, ctx.pendingCspViolations[index])

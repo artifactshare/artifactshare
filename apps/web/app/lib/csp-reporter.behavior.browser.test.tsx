@@ -128,7 +128,10 @@ function onMessage(event: MessageEvent<ReporterMessage>) {
   if (event.source === frame?.contentWindow) messages.push(event.data)
 }
 
-async function applyHighlights(highlights: unknown[]) {
+async function applyHighlights(
+  highlights: unknown[],
+  { sameHandshake = false }: { sameHandshake?: boolean } = {},
+) {
   frame!.contentWindow!.postMessage(
     {
       source: 'artifactshare-parent',
@@ -143,7 +146,30 @@ async function applyHighlights(highlights: unknown[]) {
     },
     '*',
   )
-  await probeReporter()
+  if (sameHandshake) {
+    const child = frame!.contentWindow!
+    const marker = { source: 'fixture-marker', id: crypto.randomUUID() }
+    let delivered = false
+    const onMarker = (event: MessageEvent) => {
+      if (
+        event.source === window &&
+        event.data?.source === marker.source &&
+        event.data.id === marker.id
+      )
+        delivered = true
+    }
+    child.addEventListener('message', onMarker)
+    try {
+      // FIFO delivery from this sender fences the preceding highlights without
+      // starting a new handshake. Observe only on the same-origin child; no echo.
+      child.postMessage(marker, '*')
+      await vi.waitFor(() => expect(delivered).toBe(true), { timeout: 1000 })
+    } finally {
+      child.removeEventListener('message', onMarker)
+    }
+  } else {
+    await probeReporter()
+  }
   await vi.waitFor(() =>
     expect(
       frame!.contentDocument!.querySelectorAll('.ash-comment-highlight-badge'),
@@ -1523,7 +1549,9 @@ describe('CSP reporter runtime behavior', () => {
       const doc = await fixture(
         `<style>.concealed { visibility: ${visibility}; }</style><section><p><span style="display:${display}"><span style="display:${display}">Highlighted text</span></span></p></section>`,
       )
-      await applyHighlights([{ threadId: 'visibility', count: 1 }])
+      await applyHighlights([{ threadId: 'visibility', count: 1 }], {
+        sameHandshake: true,
+      })
       const ancestor = doc.querySelector('section')!
       const badge = doc.querySelector<HTMLElement>(
         '.ash-comment-highlight-badge',
@@ -1545,7 +1573,9 @@ describe('CSP reporter runtime behavior', () => {
       expect([...registry.values()][0]).toBe(originalHighlights[0])
 
       // Re-resolution must reuse the badge and still refresh its geometry.
-      await applyHighlights([{ threadId: 'visibility', count: 1 }])
+      await applyHighlights([{ threadId: 'visibility', count: 1 }], {
+        sameHandshake: true,
+      })
       expect(doc.querySelector('.ash-comment-highlight-badge')).toBe(badge)
       expect(badge.style.display).toBe('none')
       const refreshedHighlight = [...registry.values()][0]
