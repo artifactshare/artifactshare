@@ -5,6 +5,12 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      windows_credential_repetitions:
+        description: Windows credential test repetitions (1–20)
+        type: string
+        default: '1'
+        required: true
 
 permissions:
   contents: read
@@ -317,9 +323,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @artifactshare/contract build
-      - run: pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts
+      - name: Validate Windows credentials
         env:
           ARTIFACTSHARE_WINDOWS_CREDENTIAL_INTEGRATION: '1'
+          REPETITIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_credential_repetitions || '1' }}
+        run: |
+          if ($env:REPETITIONS -cnotmatch '^(?:[1-9]|1[0-9]|20)$') {
+            throw 'Windows credential repetitions must be an integer from 1 to 20'
+          }
+          $failedRuns = 0
+          for ($attempt = 1; $attempt -le [int]$env:REPETITIONS; $attempt++) {
+            Write-Host "Windows credential repetition $attempt/$env:REPETITIONS"
+            pnpm --filter @artifactshare/cli exec vitest run src/token-store.test.ts
+            if ($LASTEXITCODE -ne 0) { $failedRuns++ }
+          }
+          if ($failedRuns -gt 0) { throw "$failedRuns Windows credential repetitions failed" }
 
   upload-boundary-validation:
     name: CLI upload boundary (${{ matrix.os }})
