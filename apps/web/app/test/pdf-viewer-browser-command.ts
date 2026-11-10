@@ -1638,6 +1638,10 @@ export const pdfViewerScenario = defineBrowserCommand(
           widened = await layout(frame)
           await artifact.setViewportSize(narrowViewport)
         }
+        // Toolbar checks still use the 100-page fixture and exercise resizing,
+        // but do not need the separate page-list interaction walk.
+        if (options.pageListInteractions === false)
+          return await finish({ initial, widened })
         const pageList = await pageListFlow(
           artifact,
           frame,
@@ -1923,6 +1927,8 @@ type Layout = {
 }
 
 export type PdfScenarioOptions = {
+  // Only the pages scenario: omit the interaction walk for toolbar checks.
+  pageListInteractions?: boolean
   // The browser's own language and color scheme.
   locale?: 'en-US' | 'ja-JP'
   colorScheme?: 'light' | 'dark'

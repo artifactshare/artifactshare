@@ -847,7 +847,12 @@ test('every public CI job uses stock Playwright libraries', () => {
 
 test('changed browser lane is PR-only and gates every head-code step with exact classification', () => {
   const lane = parsedWorkflow.jobs['changed-browser-repetitions']
-  assert.equal(lane.name, 'Changed browser behavior repetitions')
+  assert.equal(lane.name, 'Changed browser repetitions (${{ matrix.project }})')
+  assert.deepEqual(lane.strategy, {
+    'fail-fast': false,
+    matrix: { project: ['chromium', 'firefox', 'webkit'] },
+  })
+  assert.equal(lane.env.BROWSER_PROJECT, '${{ matrix.project }}')
   assert.equal(lane.if, "github.event_name == 'pull_request'")
   assert.equal(lane['runs-on'], 'ubuntu-latest')
   assert.equal(lane['timeout-minutes'], 150)
@@ -921,6 +926,30 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   assert.doesNotMatch(JSON.stringify(lane), /fixtures:build/)
   assert.ok(
     !parsedWorkflow.jobs.validate.needs.includes('changed-browser-repetitions'),
+  )
+})
+
+test('required browser repetition check rejects failed, cancelled or missing matrix results', () => {
+  const job = parsedWorkflow.jobs['changed-browser-repetitions-result']
+  assert.equal(job.name, 'Changed browser behavior repetitions')
+  assert.equal(job.if, "${{ always() && github.event_name == 'pull_request' }}")
+  assert.deepEqual(job.needs, ['changed-browser-repetitions'])
+  assert.equal(job['continue-on-error'], undefined)
+  assert.equal(job.steps.length, 1)
+  const step = job.steps[0]
+  assert.equal(
+    step.env.BROWSER_RESULT,
+    '${{ needs.changed-browser-repetitions.result }}',
+  )
+  for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
+    const result = spawnSync('bash', ['-eu', '-c', step.run], {
+      env: { ...process.env, BROWSER_RESULT: status },
+    })
+    assert.equal(result.status, status === 'success' ? 0 : 1, status)
+  }
+  assert.doesNotMatch(
+    JSON.stringify(job),
+    /checkout|install|persist-credentials/,
   )
 })
 

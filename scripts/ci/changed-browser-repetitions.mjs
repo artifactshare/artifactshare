@@ -201,6 +201,21 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'))
 const runDirectory = (results, index, repetition) =>
   path.join(results, String(index), String(repetition))
 
+export function planForProject(plan, project) {
+  if (project === undefined) return plan
+  if (!['chromium', 'firefox', 'webkit'].includes(project))
+    throw new Error('Unsupported browser project')
+  // Partition only after discovery and the global pair cap. Applying the cap
+  // independently in each lane would silently expand the requested work.
+  const pairs = plan.pairs.filter((pair) => pair.project === project)
+  return {
+    ...plan,
+    project,
+    pairs,
+    projects: pairs.length ? [project] : [],
+  }
+}
+
 export async function runPlan(
   plan,
   { results, root = process.cwd(), executor = execute } = {},
@@ -382,7 +397,12 @@ export function summarize(plan, { results, setupError } = {}) {
       '',
     )
   if (plan.total && plan.pairs?.length === 0)
-    lines.push('No selected files belong to a browser project.', '')
+    lines.push(
+      plan.project
+        ? `No selected pairs for ${plan.project} after the global pair cap.`
+        : 'No selected files belong to a browser project.',
+      '',
+    )
   if (plan.pairs?.length) {
     lines.push(
       '| File | Project | Passes / repetitions | Failed repetitions: first error |',
@@ -436,9 +456,12 @@ export async function main(command, env = process.env) {
       output('has_files', selection.selected.length > 0)
       if (!selection.total) summary(summarize(selection).markdown)
     } else if (command === 'plan') {
-      const plan = await buildPlan(readJson(selectionPath), {
-        repetitions: env.REPETITIONS ?? '5',
-      })
+      const plan = planForProject(
+        await buildPlan(readJson(selectionPath), {
+          repetitions: env.REPETITIONS ?? '5',
+        }),
+        env.BROWSER_PROJECT,
+      )
       writeJson(planPath, plan)
       output('has_pairs', plan.pairs.length > 0)
       output('projects', plan.projects.join(' '))
