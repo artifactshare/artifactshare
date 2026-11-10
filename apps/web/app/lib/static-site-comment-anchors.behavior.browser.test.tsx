@@ -219,17 +219,33 @@ const painted = () =>
     '[...CSS.highlights.values()].flatMap((h) => [...h]).map((r) => r.toString().trim()).filter(Boolean)',
   )
 
-async function select(selector: string, quote: string) {
+type SelectionSubstep =
+  | 'wait for text'
+  | 'read text'
+  | 'check text match'
+  | 'drag text'
+  | 'wait for reported selection'
+  | 'complete'
+
+async function select(
+  selector: string,
+  quote: string,
+  observe?: (substep: SelectionSubstep) => void,
+) {
   // The route's element can render after the location is reported.
+  observe?.('wait for text')
   const text = await waitFor(async () => {
+    observe?.('read text')
     const value = await frame<string | null>(
       `document.querySelector(${JSON.stringify(selector)})?.textContent ?? null`,
     )
+    observe?.('check text match')
     expect(value).toContain(quote)
     return value!
   })
   const start = text.indexOf(quote)
   const count = selections.length
+  observe?.('drag text')
   await commands.selectAnchorText(
     selector,
     start,
@@ -237,10 +253,12 @@ async function select(selector: string, quote: string) {
     start + quote.length,
   )
   // Drags report intermediate selections; wait for the completed one.
+  observe?.('wait for reported selection')
   await waitFor(() => {
     expect(selections.length).toBeGreaterThan(count)
     expect(selections.at(-1)!.quotedText).toBe(quote)
   })
+  observe?.('complete')
   return selections.at(-1)!
 }
 
@@ -713,9 +731,58 @@ const hashSpa = {
   ),
 }
 
-test('hash routes with #/ and #!/ prefixes are distinct locations', async () => {
+test('hash routes with #/ and #!/ prefixes are distinct locations', async ({
+  onTestFailed,
+}) => {
+  let phase = 'serve synthetic site'
+  let loopIndex: number | null = null
+  let expectedHash = '#/billing'
+  let selectionSubstep: SelectionSubstep | null = null
+  let selectionAttempt: { countBefore: number; expectedHash: string } | null =
+    null
+  // Retain this test's observations, independent of DOM/URL cleanup.
+  const routeHistory = locations
+  const batches = verdictLog
+  const capturedSelections = selections
+  const hashes = ['#/billing', '#/settings', '#!/billing', '#!/settings']
+  const routeId = (value: string | null) =>
+    value === null || hashes.some((hash) => value === '/index.html' + hash)
+      ? value
+      : 'other'
+  onTestFailed(() => {
+    const lastBatch = batches.at(-1)
+    const lastSelection = capturedSelections.at(-1)
+    console.error('[static-site hash-prefix failure]', {
+      phase,
+      loopIndex,
+      expectedHash,
+      routeCount: routeHistory.length,
+      routes: routeHistory.slice(-8).map(routeId),
+      selectionCount: capturedSelections.length,
+      selectionSubstep,
+      selectionAttempt: selectionAttempt && {
+        ...selectionAttempt,
+        newSelectionRecorded:
+          capturedSelections.length > selectionAttempt.countBefore,
+        lastQuoteMatchesExpected: lastSelection
+          ? lastSelection.quotedText === 'Common hash'
+          : null,
+        lastRouteMatchesExpected: lastSelection
+          ? lastSelection.targetPath ===
+            '/index.html' + selectionAttempt.expectedHash
+          : null,
+      },
+      verdictBatchCount: batches.length,
+      lastVerdictCount: lastBatch?.length ?? 0,
+      lastVerdicts: lastBatch?.slice(0, 8).map(({ threadId, state }) => ({
+        threadId: hashes.includes(threadId) ? threadId : 'other',
+        state,
+      })),
+    })
+  })
   origin = await commands.staticSiteCommentSite(hashSpa, false)
   const site = { bundlePaths: ['/index.html'], fallbackToIndex: false }
+  phase = 'open initial route (act render)'
   await open('/index.html#/billing', [], site)
   const saved: CommentThreadView[] = []
   for (const [hash, name] of [
@@ -724,35 +791,63 @@ test('hash routes with #/ and #!/ prefixes are distinct locations', async () => 
     ['#!/billing', 'Bang billing'],
     ['#!/settings', 'Bang settings'],
   ]) {
+    loopIndex = saved.length
+    expectedHash = hash
+    phase = 'set loop route hash'
     if (saved.length) await frame(`location.hash = '${hash}'`)
+    phase = 'wait for loop location and ready'
     await at('/index.html' + hash)
     // Wait for the route's own rendering before measuring offsets.
+    phase = 'wait for route render text read'
     await waitFor(async () =>
       expect(
         await frame<string>('document.querySelector("#route")?.textContent'),
       ).toBe(`${name} hash text. Common hash words.`),
     )
-    const selection = await select('#route', 'Common hash')
+    phase = 'select common hash text'
+    selectionAttempt = {
+      countBefore: capturedSelections.length,
+      expectedHash: hash,
+    }
+    const selection = await select('#route', 'Common hash', (substep) => {
+      selectionSubstep = substep
+    })
+    phase = 'selection target assertion'
     expect(selection.targetPath).toBe('/index.html' + hash)
     saved.push(posted(hash, selection))
   }
+  loopIndex = null
+  expectedHash = '#/settings'
+  phase = 'reopen settings with saved threads (act render)'
   await open('/index.html#/settings', saved, site)
+  phase = 'wait for reopened settings location and ready'
   await at('/index.html#/settings')
+  phase = 'wait for settings attached verdict'
   await waitFor(() => expect(verdict('#/settings')).toBe('attached'))
+  phase = 'settings verdict identifiers assertion'
   expect(verdicts.map((result) => result.threadId)).toEqual(['#/settings'])
   // A DOM target named like another route cannot reclassify the location.
+  phase = 'insert route-like DOM targets'
   await frame(
     `document.getElementById('targets').innerHTML = '<a id="/billing" name="/billing"></a><a id="!/billing" name="!/billing"></a>'`,
   )
+  phase = 'read painted highlight'
   expect(await painted()).toEqual(['Common hash'])
+  expectedHash = '#!/billing'
+  phase = 'retarget bang billing (act render)'
   await render({
     targetThreadId: '#!/billing',
     highlightThreadId: '#!/billing',
   })
+  phase = 'wait for retargeted bang billing location and ready'
   await at('/index.html#!/billing')
+  phase = 'wait for bang billing attached verdict'
   await waitFor(() => expect(verdict('#!/billing')).toBe('attached'))
+  phase = 'read final hash'
   expect(await frame<string>('location.hash')).toBe('#!/billing')
+  phase = 'final verdict identifiers assertion'
   expect(verdicts.map((result) => result.threadId)).toEqual(['#!/billing'])
+  phase = 'test body complete'
 })
 
 test('a hash route with a query reopens the same route and query', async () => {
