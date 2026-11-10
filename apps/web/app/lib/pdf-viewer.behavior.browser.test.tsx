@@ -66,6 +66,7 @@ test('keeps the controls in one row on a 320px phone', async () => {
   const { initial, widened } = await server.commands.pdfViewerScenario(
     'pages',
     320,
+    { pageListInteractions: false },
   )
 
   expectOneToolbarRow(initial!, 320)
@@ -76,7 +77,9 @@ test('keeps the controls in one row on a 320px phone', async () => {
 // Phone touch targets and the taller row last up to the app's stack
 // breakpoint, not only on the narrowest phones.
 test('keeps phone-sized touch targets on a 600px frame', async () => {
-  const { initial } = await server.commands.pdfViewerScenario('pages', 600)
+  const { initial } = await server.commands.pdfViewerScenario('pages', 600, {
+    pageListInteractions: false,
+  })
 
   expectOneToolbarRow(initial!, 600)
 })

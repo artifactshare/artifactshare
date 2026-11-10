@@ -14,6 +14,7 @@ import {
   selectChanges,
   validateRepetitions,
   buildPlan,
+  planForProject,
   discoverProjects,
   runPlan,
   summarize,
@@ -32,6 +33,43 @@ const temporary = (t) => {
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   return directory
 }
+
+test('browser lanes partition the globally capped plan without dropping or adding pairs', async () => {
+  const files = Array.from(
+    { length: 8 },
+    (_, i) => `apps/web/app/lib/example-${i}.behavior.browser.test.tsx`,
+  )
+  const projects = ['chromium', 'firefox', 'webkit']
+  const plan = await buildPlan(selected(files), {
+    discover: fixtureDiscovery(
+      files.flatMap((testFile) =>
+        projects.map((project) => ({ file: testFile, project })),
+      ),
+    ),
+  })
+  assert.equal(plan.pairs.length, MAX_PAIRS)
+  assert.equal(plan.skippedPairs.length, 9)
+  const lanes = projects.map((project) => planForProject(plan, project))
+  assert.deepEqual(
+    lanes
+      .flatMap((lane) => lane.pairs)
+      .sort((a, b) =>
+        `${a.file}/${a.project}`.localeCompare(`${b.file}/${b.project}`),
+      ),
+    plan.pairs,
+  )
+  for (const [i, lane] of lanes.entries()) {
+    assert.deepEqual(lane.projects, [projects[i]])
+    assert.equal(lane.repetitions, 5)
+    assert.deepEqual(lane.skippedPairs, plan.skippedPairs)
+  }
+  assert.equal(planForProject(plan), plan)
+  for (const invalid of ['', 'Chromium', 'unknown'])
+    assert.throws(() => planForProject(plan, invalid), /Unsupported browser/)
+  const empty = planForProject({ ...plan, pairs: [] }, 'webkit')
+  assert.deepEqual(empty.projects, [])
+  assert.match(summarize(empty).markdown, /No selected pairs for webkit/)
+})
 const fixtureDiscovery = (specifications) => () => ({
   specifications: (filters = [], exclusions = []) =>
     specifications.filter(

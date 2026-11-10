@@ -142,12 +142,17 @@ jobs:
           fi
 
   changed-browser-repetitions:
-    name: Changed browser behavior repetitions
+    name: Changed browser repetitions (${{ matrix.project }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit]
     env:
       REPETITIONS: '5'
+      BROWSER_PROJECT: ${{ matrix.project }}
       PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
       PUBLIC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -240,6 +245,18 @@ jobs:
             echo 'Changed browser behavior repetitions: checkout/setup failed; results unavailable.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+  changed-browser-repetitions-result:
+    name: Changed browser behavior repetitions
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [changed-browser-repetitions]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every browser lane to succeed
+        env:
+          BROWSER_RESULT: ${{ needs.changed-browser-repetitions.result }}
+        run: test "$BROWSER_RESULT" = success
 
   static-validation:
     name: Public static and unit validation
