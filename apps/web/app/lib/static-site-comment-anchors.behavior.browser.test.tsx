@@ -92,8 +92,38 @@ afterEach(async () => {
   window.history.replaceState(null, '', originalUrl)
 })
 
-function page(body: string, script = '') {
-  return `<!doctype html><html><head><meta charset="utf-8"><script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></head><body><main data-comment-content>${body}</main><script>${script}</script><script>
+function page(body: string, script = '', holdReadyChecks = false) {
+  // Hold real checks until the parent observes an early verdict, then replay
+  // the actual checks and latest highlight with their original sender/payload.
+  const beforeReporter = holdReadyChecks
+    ? `<script>
+      let released = false
+      const heldReadyChecks = []
+      let latestHighlights
+      const replay = (event) => dispatchEvent(new MessageEvent('message', {
+        data: event.data, origin: event.origin, source: event.source,
+      }))
+      addEventListener('message', (event) => {
+        if (event.source !== parent ||
+            event.origin !== ${JSON.stringify(window.location.origin)}) return
+        if (event.data?.type === 'static-site-fixture-release-ready' &&
+            event.data.targetPath === location.pathname && !released) {
+          released = true
+          for (const check of heldReadyChecks) replay(check)
+          heldReadyChecks.length = 0
+          if (latestHighlights) replay(latestHighlights)
+          return
+        }
+        if (event.data?.source !== 'artifactshare-parent') return
+        if (event.data.kind === 'comment-highlights') latestHighlights = event
+        if (event.data.kind === 'ready-check' && !released) {
+          event.stopImmediatePropagation()
+          heldReadyChecks.push(event)
+        }
+      }, true)
+    </script>`
+    : ''
+  return `<!doctype html><html><head><meta charset="utf-8">${beforeReporter}<script>${VIOLATION_REPORTER_SCRIPT_BODY}</script></head><body><main data-comment-content>${body}</main><script>${script}</script><script>
     addEventListener('message', (event) => {
       if (event.origin !== ${JSON.stringify(window.location.origin)} || event.source !== parent ||
           event.data?.type !== 'static-site-fixture-observe' || typeof event.data.id !== 'string') return
@@ -321,12 +351,16 @@ const multiPage = {
   fallbackToIndex: false,
 }
 const shared = '<p id="shared">Shared sentence on every page.</p>'
-const multiPageFiles = () => ({
+const multiPageFiles = (holdReadyChecks = false) => ({
   '/index.html': page(
     `${shared}<p id="home">Home page paragraph.</p><a id="go" href="/page.html">Page</a>`,
+    '',
+    holdReadyChecks,
   ),
   '/page.html': page(
     `<a id="home-link" href="/index.html">Home</a><div id="slot"></div>${shared}<p id="second">Second page paragraph.</p><div style="height:3000px"></div><div id="late"></div>`,
+    '',
+    holdReadyChecks,
   ),
   '/third.html': page('<p id="third">Third page paragraph.</p>'),
 })
@@ -358,6 +392,83 @@ test('a deep-linked conversation opens its file; choosing it again after leaving
   await choose('second', 1)
   await at('/page.html')
   await waitFor(() => expect(verdict('second')).toBe('attached'))
+})
+
+test('a deep-linked verdict sent before ready is delivered again after the real handshake', async () => {
+  origin = await commands.staticSiteCommentSite(multiPageFiles(true), false)
+  const readyTokens = new Set<string>()
+  let secondDocumentToken: string | undefined
+  let secondVerdictStart = 0
+  let earlyAttached = false
+  let acceptedBeforeReady: Result[] | undefined
+  const onMessage = (event: MessageEvent) => {
+    if (
+      event.origin !== origin ||
+      event.source !== host.querySelector('iframe')?.contentWindow ||
+      event.data?.source !== 'artifactshare' ||
+      typeof event.data.token !== 'string'
+    )
+      return
+    if (event.data.kind === 'ready') {
+      readyTokens.add(event.data.token)
+      if (
+        event.data.token === secondDocumentToken &&
+        acceptedBeforeReady === undefined
+      )
+        acceptedBeforeReady = verdictLog
+          .slice(secondVerdictStart)
+          .flat()
+          .filter((result) => result.threadId === 'second')
+      return
+    }
+    if (
+      event.data.kind !== 'anchor-resolutions' ||
+      readyTokens.has(event.data.token)
+    )
+      return
+    const targetPath = event.data.targetPath
+    const threadId =
+      targetPath === '/index.html'
+        ? 'home'
+        : targetPath === '/page.html'
+          ? 'second'
+          : null
+    if (
+      !threadId ||
+      !event.data.results.some(
+        (result: Result) =>
+          result.threadId === threadId && result.state === 'attached',
+      )
+    )
+      return
+    if (threadId === 'second' && !earlyAttached) {
+      // Compare the real document token only; never include it in diagnostics.
+      secondDocumentToken = event.data.token
+      secondVerdictStart = verdictLog.length
+      earlyAttached = true
+    }
+    // Home must also finish its handshake before the real deep-link navigation.
+    // The fixture rejects a previous document's release after navigation.
+    ;(event.source as Window).postMessage(
+      { type: 'static-site-fixture-release-ready', targetPath },
+      origin,
+    )
+  }
+  window.addEventListener('message', onMessage)
+  try {
+    await open('/page.html', pageThreads(), multiPage, {
+      targetThreadId: 'second',
+      highlightThreadId: 'second',
+    })
+    await at('/page.html')
+    await waitFor(() => expect(verdict('second')).toBe('attached'))
+    // Prove the race occurred, and the early report did not bypass token checks.
+    expect(earlyAttached).toBe(true)
+    expect(acceptedBeforeReady).toEqual([])
+    expect(await painted()).toEqual(['Second page paragraph.'])
+  } finally {
+    window.removeEventListener('message', onMessage)
+  }
 })
 
 // The response has been read once fetchJsonWithViewerTimeout consumed it.
