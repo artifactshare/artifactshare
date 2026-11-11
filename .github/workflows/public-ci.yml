@@ -145,12 +145,23 @@ jobs:
     name: Changed browser repetitions (${{ matrix.project }})
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --init --ipc=host
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         project: [chromium, firefox, webkit]
     env:
+      # Actions overrides HOME; Firefox requires the root-owned home.
+      HOME: /root
       REPETITIONS: '5'
       BROWSER_PROJECT: ${{ matrix.project }}
       PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -180,6 +191,8 @@ jobs:
           RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
         if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
         run: |
+          # Checkout trusts only its temporary HOME; later Git needs workspace trust.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git cat-file -e "$PUBLIC_PR_BASE^{commit}" || git fetch --no-tags origin "$PUBLIC_PR_BASE"
           node scripts/ci/changed-browser-repetitions.mjs select
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -199,31 +212,6 @@ jobs:
           RESULTS_DIR: ${{ runner.temp }}/changed-browser-repetitions
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
         run: node scripts/ci/changed-browser-repetitions.mjs plan
-      - id: browser-cache-image
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          : "${ImageOS:?runner ImageOS is required for caching}"
-          printf 'ImageOS=%s\n' "$ImageOS" >> "$GITHUB_ENV"
-      - id: browser-cache-restore
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
-          restore-keys: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-
-      - id: browser-cache-copy
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        run: sudo bash scripts/ci/browser-system-packages.sh "$RUNNER_TEMP/browser-system-packages" /var/cache/apt/archives
-      - run: |
-          read -r -a projects <<< "$BROWSER_PROJECTS"
-          pnpm --filter @artifactshare/web exec playwright install --with-deps "${projects[@]}"
-        env:
-          BROWSER_PROJECTS: ${{ steps.plan.outputs.projects }}
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
       - name: Repeat changed browser tests
         id: repeat
         timeout-minutes: 120
@@ -250,8 +238,19 @@ jobs:
     name: Maintainer PR Chromium source feedback
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --init --ipc=host
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 45
     env:
+      # Actions overrides HOME; Firefox requires the root-owned home.
+      HOME: /root
       PUBLIC_PR_BASE: ${{ github.event.pull_request.base.sha }}
       PUBLIC_PR_HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -283,6 +282,8 @@ jobs:
           RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
         if: ${{ steps.classify.outputs.is_maintainer == 'true' }}
         run: |
+          # Checkout trusts only its temporary HOME; later Git needs workspace trust.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git cat-file -e "$PUBLIC_PR_BASE^{commit}" || git fetch --no-tags origin "$PUBLIC_PR_BASE"
           node scripts/ci/changed-browser-repetitions.mjs source-select
       - timeout-minutes: 1
@@ -307,9 +308,6 @@ jobs:
           RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
         run: node scripts/ci/changed-browser-repetitions.mjs source-plan
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium
-        timeout-minutes: 5
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' }}
       - name: Run admitted Chromium files
         id: repeat
         timeout-minutes: 15
@@ -474,6 +472,15 @@ jobs:
     name: Public browser and local-state validation (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.total }})
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --init --ipc=host
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 30
     # Keep one serial browser per runner. Historical file durations balance
     # independent runners without adding resource contention inside a browser.
@@ -488,6 +495,8 @@ jobs:
           - { project: firefox, shard: 2, total: 2 }
           - { project: webkit, shard: 1, total: 2 }
           - { project: webkit, shard: 2, total: 2 }
+    env:
+      HOME: /root
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -495,31 +504,15 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: false
+      - name: Trust browser workspace
+        # Checkout removes its temporary Git config before later steps.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - id: browser-cache-image
-        continue-on-error: true
-        shell: bash
-        run: |
-          : "${ImageOS:?runner ImageOS is required for caching}"
-          printf 'ImageOS=%s\n' "$ImageOS" >> "$GITHUB_ENV"
-      - id: browser-cache-restore
-        if: ${{ steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
-          restore-keys: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-
-      - id: browser-cache-copy
-        if: ${{ steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        run: sudo bash scripts/ci/browser-system-packages.sh "$RUNNER_TEMP/browser-system-packages" /var/cache/apt/archives
-      - run: pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}
       - run: pnpm test:behavior-browser --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}
         env:
           DEBUG: pw:browser

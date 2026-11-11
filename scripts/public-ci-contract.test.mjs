@@ -470,10 +470,7 @@ test('every executable validation lane checks out the merge-group SHA', () => {
     if (jobName === 'browser-validation') {
       assert.equal(job['continue-on-error'], undefined)
       for (const step of job.steps) {
-        assert.equal(
-          step['continue-on-error'],
-          browserCacheIds.includes(step.id) ? true : undefined,
-        )
+        assert.equal(step['continue-on-error'], undefined)
       }
     } else {
       assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u, jobName)
@@ -492,10 +489,7 @@ test('browser lane shares one topology after behavior validation', () => {
   assert.doesNotMatch(runs, /pnpm check:dev-setup/u)
   assert.doesNotMatch(runs, /pnpm check:scenario-routes/u)
   assert.doesNotMatch(runs, /pnpm check:in-app-navigation/u)
-  assert.match(
-    runs,
-    /playwright install --with-deps \$\{\{ matrix\.project \}\}/u,
-  )
+  assert.doesNotMatch(runs, /playwright install/u)
   assert.doesNotMatch(
     JSON.stringify(parsedWorkflow.jobs['browser-validation']),
     /PLAYWRIGHT_CHANNEL/u,
@@ -513,6 +507,15 @@ test('browser lane shares one topology after behavior validation', () => {
     /if \(process\.env\.APP_BASE_URL && process\.env\.APP_BASE_URL !== baseUrl\)/u,
   )
   assert.match(harness, /await assertPortAvailable\(\)/u)
+  const guardIndex = harness.indexOf('await assertPortAvailable()')
+  for (const preparation of [
+    'await mkdtemp(',
+    "await import('./dev-setup.mjs')",
+    'prepareDevEnvironment(',
+    'server = spawn(',
+  ]) {
+    assert.ok(harness.indexOf(preparation) > guardIndex, preparation)
+  }
 })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {
@@ -684,17 +687,6 @@ test('qm bridge release is manual, protected, and publishes one verified tarball
   assert.equal([...publishText.matchAll(/secrets\.[A-Z0-9_]+/gu)].length, 1)
 })
 
-test('public CI installs Playwright from the web workspace', () => {
-  assert.match(
-    workflow,
-    /run:\s*pnpm --filter @artifactshare\/web exec playwright install --with-deps /,
-  )
-  assert.doesNotMatch(
-    workflow,
-    /run:\s*pnpm exec playwright install --with-deps /,
-  )
-})
-
 test('visual gate uses exact Linux Compose baselines', () => {
   assert.doesNotMatch(visualConfig, /allowedMismatchedPixelRatio/u)
   assert.match(visualConfig, /VISUAL_FAULT/u)
@@ -820,7 +812,7 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
   )
 })
 
-test('browser installation precedes execution and retains browser stderr', () => {
+test('browser execution retains every shard and browser stderr', () => {
   const browser = parsedWorkflow.jobs['browser-validation']
   // One serial browser per runner; all seven shards remain required.
   assert.deepEqual(browser.strategy, {
@@ -838,9 +830,7 @@ test('browser installation precedes execution and retains browser stderr', () =>
     },
   })
   const index = browser.steps.findIndex(
-    (step) =>
-      step.run ===
-      'pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}',
+    (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
   )
   assert.ok(index > 0)
   assert.equal(
@@ -917,10 +907,7 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
   })
   for (const step of lane.steps.slice(2)) {
     assert.match(step.if, /steps\.classify\.outputs\.is_maintainer == 'true'/)
-    assert.equal(
-      step['continue-on-error'],
-      browserCacheIds.includes(step.id) ? true : undefined,
-    )
+    assert.equal(step['continue-on-error'], undefined)
   }
   assert.equal(lane['continue-on-error'], undefined)
   const selection = lane.steps.find((step) => step.id === 'select')
@@ -932,20 +919,8 @@ test('changed browser lane is PR-only and gates every head-code step with exact 
     lane.steps.indexOf(plan) + 1,
   ))
     assert.match(step.if, /steps\.select\.outputs\.has_files == 'true'/)
-  const install = lane.steps.find((step) =>
-    step.run?.includes('playwright install'),
-  )
-  assert.match(install.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
-  assert.equal(
-    install.env.BROWSER_PROJECTS,
-    '${{ steps.plan.outputs.projects }}',
-  )
-  assert.match(install.run, /read -r -a projects/)
-  assert.ok(install.run.includes('--with-deps "${projects[@]}"'))
-  assert.doesNotMatch(install.run, /chromium firefox webkit/)
-  assert.ok(lane.steps.indexOf(plan) < lane.steps.indexOf(install))
   const repeat = lane.steps.find((step) => step.id === 'repeat')
-  assert.equal(lane.steps.indexOf(repeat), lane.steps.indexOf(install) + 1)
+  assert.equal(lane.steps.indexOf(repeat), lane.steps.indexOf(plan) + 1)
   assert.equal(repeat['timeout-minutes'], 120)
   assert.equal(repeat.env.DEBUG, 'pw:browser')
   assert.match(repeat.if, /steps\.plan\.outputs\.has_pairs == 'true'/)
@@ -1138,115 +1113,7 @@ test('upload boundary suite runs with a CLI build on all supported operating sys
   )
 })
 
-const browserCacheIds = [
-  'browser-cache-image',
-  'browser-cache-restore',
-  'browser-cache-copy',
-]
-const archivePrefix =
-  'browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-'
-const archivePath = '${{ runner.temp }}/browser-system-packages'
-const imageGuard =
-  "steps.browser-cache-image.outcome == 'success' && env.ImageOS != ''"
-
-test('both browser consumers restore optional system packages before unchanged installs', () => {
-  assert.doesNotMatch(workflow, /actions\/cache(?:\/save)?@/)
-  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
-    if (!['browser-validation', 'changed-browser-repetitions'].includes(name)) {
-      assert.doesNotMatch(JSON.stringify(job), /browser-cache-|restore-keys/)
-      continue
-    }
-    const steps = job.steps
-    const [image, restore, copy] = browserCacheIds.map((id) => {
-      const matches = steps.filter((step) => step.id === id)
-      assert.equal(matches.length, 1)
-      assert.equal(matches[0]['continue-on-error'], true)
-      return matches[0]
-    })
-    const gate =
-      name === 'changed-browser-repetitions'
-        ? "steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true'"
-        : ''
-    assert.equal(image.if, gate ? '${{ ' + gate + ' }}' : undefined)
-    for (const step of [restore, copy]) {
-      assert.equal(
-        step.if,
-        '${{ ' + (gate ? gate + ' && ' : '') + imageGuard + ' }}',
-      )
-    }
-    assert.equal(
-      restore.uses,
-      'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
-    )
-    assert.deepEqual(restore.with, {
-      path: archivePath,
-      key: archivePrefix + '${{ github.run_id }}',
-      'restore-keys': archivePrefix,
-    })
-    assert.match(
-      workflow,
-      /actions\/cache\/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0/,
-    )
-    assert.equal(
-      copy.run,
-      'sudo bash scripts/ci/browser-system-packages.sh "$RUNNER_TEMP/browser-system-packages" /var/cache/apt/archives',
-    )
-    const install = steps.findIndex((step) =>
-      step.run?.includes('playwright install'),
-    )
-    assert.deepEqual(steps.slice(install - 3, install), [image, restore, copy])
-    for (const step of steps) {
-      if (step !== restore) assert.equal(step.with?.['restore-keys'], undefined)
-    }
-  }
-})
-
-test('all cache image preparations export only nonempty runner metadata', (t) => {
-  const detector = YAML.parse(
-    fs.readFileSync('.github/workflows/flaky-detector.yml', 'utf8'),
-  )
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-image-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  const jobs = [
-    parsedWorkflow.jobs['browser-validation'],
-    parsedWorkflow.jobs['changed-browser-repetitions'],
-    detector.jobs.worker,
-  ]
-  for (const job of jobs) {
-    const index = job.steps.findIndex(
-      (step) => step.id === 'browser-cache-image',
-    )
-    const image = job.steps[index]
-    assert.equal(image.shell, 'bash')
-    assert.equal(image['continue-on-error'], true)
-    for (const value of ['ubuntu24', '', undefined]) {
-      const output = path.join(directory, 'env')
-      fs.writeFileSync(output, '')
-      const env = { ...process.env, GITHUB_ENV: output }
-      delete env.ImageOS
-      if (value !== undefined) env.ImageOS = value
-      const result = spawnSync('bash', ['-e', '-c', image.run], {
-        env,
-        encoding: 'utf8',
-      })
-      assert.equal(result.status === 0, value === 'ubuntu24', result.stderr)
-      assert.equal(
-        fs.readFileSync(output, 'utf8'),
-        value === 'ubuntu24' ? 'ImageOS=ubuntu24\n' : '',
-      )
-    }
-    for (const step of job.steps.filter(
-      (candidate) =>
-        candidate.id?.startsWith('browser-cache-') && candidate !== image,
-    )) {
-      assert.ok(job.steps.indexOf(step) > index)
-      assert.ok(step.if.includes(imageGuard))
-      assert.equal(step['continue-on-error'], true)
-    }
-  }
-})
-
-test('source feedback selects before install, delegates before Chromium install and reserves reporting time', () => {
+test('source feedback selects before install, delegates before execution and reserves reporting time', () => {
   const lane = parsedWorkflow.jobs['chromium-source-feedback']
   assert.equal(lane.if, "github.event_name == 'pull_request'")
   assert.equal(lane['runs-on'], 'ubuntu-latest')
@@ -1270,15 +1137,7 @@ test('source feedback selects before install, delegates before Chromium install 
   assert.ok(index('select') < install && install < index('plan'))
   for (const step of lane.steps.slice(index('select') + 1, index('plan') + 1))
     assert.match(step.if, /steps.select.outputs.has_files == 'true'/)
-  const browser = lane.steps.find((step) =>
-    step.run?.includes('playwright install'),
-  )
-  assert.equal(
-    browser.run,
-    'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium',
-  )
-  assert.ok(lane.steps.indexOf(browser) > index('plan'))
-  assert.match(browser.if, /steps.plan.outputs.has_pairs == 'true'/)
+  assert.equal(index('repeat'), index('plan') + 1)
   const run = lane.steps[index('repeat')]
   assert.equal(
     run.run,
@@ -1290,7 +1149,7 @@ test('source feedback selects before install, delegates before Chromium install 
   const setupMinutes = lane.steps
     .slice(0, index('repeat'))
     .reduce((sum, step) => sum + step['timeout-minutes'], 0)
-  assert.equal(setupMinutes, 26)
+  assert.equal(setupMinutes, 21)
   assert.ok(
     lane['timeout-minutes'] >= setupMinutes + run['timeout-minutes'] + 4,
   )
@@ -1316,7 +1175,9 @@ test('native browser wait proof runs in the existing required Chromium lane for 
   assert.equal(check['timeout-minutes'], 2)
   assert.ok(
     lane.steps.indexOf(check) >
-      lane.steps.findIndex((step) => step.run?.includes('playwright install')),
+      lane.steps.findIndex((step) =>
+        step.run?.startsWith('pnpm test:behavior-browser'),
+      ),
   )
   assert.ok(parsedWorkflow.jobs.validate.needs.includes('browser-validation'))
   assert.doesNotMatch(
@@ -1325,4 +1186,123 @@ test('native browser wait proof runs in the existing required Chromium lane for 
   )
   const root = JSON.parse(fs.readFileSync('package.json', 'utf8'))
   assert.doesNotMatch(root.scripts['test:scripts'], /integration/)
+})
+
+const browserJobNames = [
+  'changed-browser-repetitions',
+  'chromium-source-feedback',
+  'browser-validation',
+]
+
+test('only browser jobs use the canonical image with matching locked Playwright', () => {
+  const compose = YAML.parse(visualCompose, { merge: true })
+  const image = compose.services.visual.image
+  const version = image.match(/:v([\d.]+)-noble@sha256:[a-f0-9]{64}$/)?.[1]
+  assert.ok(version)
+  const documents = YAML.parseAllDocuments(
+    fs.readFileSync('pnpm-lock.yaml', 'utf8'),
+  )
+  for (const document of documents) assert.deepEqual(document.errors, [])
+  const locks = documents.map((document) => document.toJS())
+  const workspaceLocks = locks.filter((lock) => lock.importers?.['apps/web'])
+  assert.equal(workspaceLocks.length, 1)
+  const [lock] = workspaceLocks
+  const dependency = lock.importers['apps/web'].devDependencies.playwright
+  assert.equal(dependency.specifier, version)
+  assert.equal(dependency.version, version)
+  assert.ok(lock.packages[`playwright@${version}`])
+  assert.ok(lock.packages[`playwright-core@${version}`])
+  assert.equal(
+    JSON.parse(fs.readFileSync('package.json', 'utf8')).packageManager,
+    'pnpm@12.4.1',
+  )
+  for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
+    if (!browserJobNames.includes(name)) {
+      assert.equal(job.container, undefined, name)
+      assert.equal(job.env?.HOME, undefined, name)
+      assert.equal(job.env?.PLAYWRIGHT_BROWSERS_PATH, undefined, name)
+      continue
+    }
+    assert.equal(job['runs-on'], 'ubuntu-latest')
+    assert.deepEqual(job.container, {
+      image,
+      options: '--init --ipc=host',
+      env: { PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright' },
+    })
+    assert.deepEqual(job.defaults, { run: { shell: 'bash' } })
+    assert.equal(job.env.HOME, '/root')
+    const checkoutIndex = job.steps.findIndex((step) =>
+      step.uses?.startsWith('actions/checkout@'),
+    )
+    const trustCommand =
+      'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+    const trustSteps = job.steps.filter((step) =>
+      step.run?.includes('safe.directory'),
+    )
+    assert.equal(trustSteps.length, 1, name)
+    const [trust] = trustSteps
+    const trustIndex = job.steps.indexOf(trust)
+    assert.equal(trustIndex, checkoutIndex + 1, name)
+    const commands = trust.run
+      .split('\n')
+      .filter((line) => line && !line.startsWith('#'))
+    assert.equal(commands[0], trustCommand, name)
+    assert.equal(trust.if, job.steps[checkoutIndex].if, name)
+    assert.equal(trust.env?.HOME, undefined, name)
+    if (name === 'browser-validation') {
+      assert.deepEqual(commands, [trustCommand])
+      assert.ok(
+        trustIndex <
+          job.steps.findIndex(
+            (step) => step.run === 'pnpm check:browser-local-state',
+          ),
+      )
+    } else {
+      assert.equal(trust.id, 'select')
+      assert.match(commands[1], /^git cat-file /)
+    }
+    assert.equal(job['continue-on-error'], undefined)
+    assert.equal(job.permissions, undefined)
+    assert.ok(
+      job.steps.some(
+        (step) =>
+          step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
+      ),
+    )
+    assert.ok(
+      job.steps.some(
+        (step) =>
+          step.uses?.startsWith('pnpm/action-setup@') && !step.with?.version,
+      ),
+    )
+    for (const step of job.steps) {
+      assert.equal(step['continue-on-error'], undefined)
+      if (step.uses?.startsWith('actions/setup-node@'))
+        assert.equal(step.with['node-version'], '24.21.0')
+    }
+  }
+})
+
+test('image-backed CI has no live apt, browser downloads or obsolete archive plumbing', () => {
+  const detector = fs.readFileSync(
+    '.github/workflows/flaky-detector.yml',
+    'utf8',
+  )
+  for (const source of [workflow, detector]) {
+    assert.doesNotMatch(
+      source,
+      /playwright install|install-deps|\bapt(?:-get)?\b|browser-cache-|browser-system-packages|actions\/cache(?:\/restore|\/save)?@/,
+    )
+    assert.doesNotMatch(source, /--privileged|SYS_ADMIN|--network[= ]host/)
+  }
+  const { canonical } = JSON.parse(
+    fs.readFileSync('config/repository-boundary.json', 'utf8'),
+  )
+  for (const file of [
+    'scripts/ci/browser-system-packages.sh',
+    'scripts/browser-system-packages.test.mjs',
+  ]) {
+    assert.equal(fs.existsSync(file), false)
+    assert.equal(canonical.includes(file), false)
+  }
 })

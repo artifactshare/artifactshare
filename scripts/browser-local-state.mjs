@@ -9,23 +9,26 @@ const ROOT = resolve(import.meta.dirname, '..')
 const baseUrl = 'https://localhost:5173'
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
-function assertPortAvailable() {
-  return new Promise((done, reject) => {
-    const socket = createConnection({ host: '127.0.0.1', port: 5173 })
-    socket.once('connect', () => {
-      socket.destroy()
-      reject(
-        new Error(
-          'check:browser-local-state requires port 5173 to be free so it cannot validate or mutate an existing dev server',
-        ),
-      )
+export async function assertPortAvailable(port = 5173) {
+  // Requests keep localhost for auth/cookies and may resolve to either family.
+  for (const host of ['127.0.0.1', '::1']) {
+    await new Promise((done, reject) => {
+      const socket = createConnection({ host, port })
+      socket.once('connect', () => {
+        socket.destroy()
+        reject(
+          new Error(
+            `check:browser-local-state requires port ${port} to be free on ${host} so it cannot validate or mutate an existing dev server`,
+          ),
+        )
+      })
+      socket.once('error', (error) => {
+        socket.destroy()
+        if (error?.code === 'ECONNREFUSED') done()
+        else reject(error)
+      })
     })
-    socket.once('error', (error) => {
-      socket.destroy()
-      if (error?.code === 'ECONNREFUSED') done()
-      else reject(error)
-    })
-  })
+  }
 }
 
 async function waitForServer(server) {
@@ -123,15 +126,20 @@ async function main() {
       persistTo: isolatedState,
     })
     if (!prepared.ok) throw new Error(`Dev setup failed: ${prepared.reason}`)
-    server = spawn('pnpm', ['--filter', '@artifactshare/web', 'dev:app'], {
-      cwd: ROOT,
-      stdio: ['ignore', 'inherit', 'inherit'],
-      detached: true,
-      env: {
-        ...process.env,
-        ARTIFACTSHARE_DEV_PERSIST_PATH: isolatedState,
+    // Bind the owned listener to IPv4 loopback for browser containers.
+    server = spawn(
+      'pnpm',
+      ['--filter', '@artifactshare/web', 'dev:app', '--host', '127.0.0.1'],
+      {
+        cwd: ROOT,
+        stdio: ['ignore', 'inherit', 'inherit'],
+        detached: true,
+        env: {
+          ...process.env,
+          ARTIFACTSHARE_DEV_PERSIST_PATH: isolatedState,
+        },
       },
-    })
+    )
     await waitForServer(server)
 
     // Keep the anonymous route proof ahead of the navigation proof, which
@@ -144,7 +152,8 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack : String(error))
-  process.exit(1)
-})
+if (import.meta.main)
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack : String(error))
+    process.exit(1)
+  })

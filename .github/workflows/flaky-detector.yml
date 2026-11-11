@@ -44,6 +44,16 @@ jobs:
   worker:
     needs: plan
     runs-on: ubuntu-latest
+    # The runner treats an empty object.image as no job container, keeping
+    # non-browser suites on the host under the same global worker cap.
+    container:
+      image: ${{ matrix.suite == 'behavior-browser' && 'mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f' || '' }}
+      options: --init --ipc=host
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -54,6 +64,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set browser container home
+        if: matrix.suite == 'behavior-browser'
+        # Use one root-owned home for setup, Firefox and persistent Git trust.
+        run: |
+          export HOME=/root
+          echo 'HOME=/root' >> "$GITHUB_ENV"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -64,26 +81,6 @@ jobs:
         run: pnpm fixtures:build
       - if: matrix.suite == 'behavior-browser' || matrix.suite == 'web-unit'
         run: pnpm --filter @artifactshare/contract build
-      - if: matrix.suite == 'behavior-browser'
-        run: pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}
-      - id: browser-cache-image
-        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          : "${ImageOS:?runner ImageOS is required for caching}"
-          printf 'ImageOS=%s\n' "$ImageOS" >> "$GITHUB_ENV"
-      - id: browser-cache-stage
-        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        run: bash scripts/ci/browser-system-packages.sh /var/cache/apt/archives "$RUNNER_TEMP/browser-system-packages"
-      - id: browser-cache-save
-        if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
       - name: Repeat the whole suite
         env:
           SHARD: ${{ toJSON(matrix) }}

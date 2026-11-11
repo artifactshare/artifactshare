@@ -104,7 +104,7 @@ test('documents changed browser repetitions without altering required-check poli
     'before dependency installation or config loading',
     'Vitest discovery',
     'effective excludes',
-    'no browsers are installed',
+    'no browsers are launched',
     '`REPETITIONS`',
     'defaults to `5`',
     '`1` through `10`',
@@ -118,7 +118,7 @@ test('documents changed browser repetitions without altering required-check poli
     '120-minute repetition-step deadline',
     '150-minute job timeout',
     'uses `always()`',
-    'Only browsers required by the plan are installed',
+    'a lane with no pairs skips execution',
     'passes/requested repetitions',
     'all-skipped',
     'Setup failures are explicit',
@@ -152,6 +152,6 @@ test('browser guidance retains stderr without obsolete library replacement instr
   assert.match(workflow, /DEBUG=pw:browser/u)
   assert.match(
     workflow,
-    /installs the Playwright browsers matching the workspace dependency/u,
+    /contract tests require equality with Compose and the exact Playwright version/u,
   )
 })

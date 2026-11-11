@@ -49,7 +49,6 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
       .map((step) => step.uses)
       .filter(Boolean),
   )
-  pins.add('actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9')
   for (const [name, job] of Object.entries(workflow.jobs)) {
     assert.equal(job['runs-on'], 'ubuntu-latest')
     assert.equal(job['timeout-minutes'], name === 'worker' ? 60 : 10)
@@ -78,16 +77,14 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
   )
 })
 
-test('browser installation precedes suite execution', () => {
+test('dependency installation precedes suite execution', () => {
   const index = (command) => steps.findIndex((step) => step.run === command)
-  const install = index(
-    'pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}',
-  )
+  const install = index('pnpm install --frozen-lockfile --ignore-scripts')
   const run = index('node scripts/ci/flaky-runs.mjs run')
   assert.ok(install >= 0 && run > install)
   assert.equal(steps[install]['continue-on-error'], undefined)
   assert.equal(steps[run]['continue-on-error'], undefined)
-  assert.equal(steps[install].if, "matrix.suite == 'behavior-browser'")
+  assert.equal(steps[install].if, undefined)
   assert.ok(index('pnpm --filter @artifactshare/contract build') < run)
   assert.ok(index('pnpm fixtures:build') < run)
   assert.equal(steps[run].env.SHARD, '${{ toJSON(matrix) }}')
@@ -145,84 +142,53 @@ test('every flaky detector job uses stock Playwright libraries', () => {
   )
 })
 
-test('only default-branch browser workers best-effort stage and save archives before repetition', () => {
-  const guard =
-    "matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))"
-  const imageGuard =
-    "steps.browser-cache-image.outcome == 'success' && env.ImageOS != ''"
-  const ids = [
-    'browser-cache-image',
-    'browser-cache-stage',
-    'browser-cache-save',
-  ]
-  const [image, stage, save] = ids.map((id) => {
-    const matches = steps.filter((step) => step.id === id)
-    assert.equal(matches.length, 1)
-    return matches[0]
+test('only behavior-browser entries get a container without splitting the global cap', () => {
+  const image = YAML.parse(fs.readFileSync('compose.playwright.yml', 'utf8'), {
+    merge: true,
+  }).services.visual.image
+  assert.deepEqual(Object.keys(workflow.jobs), ['plan', 'worker', 'report'])
+  const worker = workflow.jobs.worker
+  // PipelineTemplateConverter.ConvertToJobContainer returns null for empty
+  // object.image. A top-level null expression is not supported by that converter.
+  assert.deepEqual(worker.container, {
+    image: "${{ matrix.suite == 'behavior-browser' && '" + image + "' || '' }}",
+    options: '--init --ipc=host',
+    env: { PLAYWRIGHT_BROWSERS_PATH: '/ms-playwright' },
   })
-  assert.equal(workflow.jobs.worker['continue-on-error'], undefined)
-  for (const step of steps) {
-    assert.equal(
-      step['continue-on-error'],
-      ids.includes(step.id) ? true : undefined,
-    )
+  assert.deepEqual(worker.defaults, { run: { shell: 'bash' } })
+  assert.equal(worker.env, undefined)
+  assert.equal(workflow.env, undefined)
+  for (const name of ['plan', 'report']) {
+    assert.equal(workflow.jobs[name].container, undefined)
+    assert.equal(workflow.jobs[name].env, undefined)
+    assert.equal(workflow.jobs[name].defaults, undefined)
   }
-  assert.equal(image.if, '${{ ' + guard + ' }}')
-  for (const step of [stage, save])
-    assert.equal(step.if, '${{ ' + guard + ' && ' + imageGuard + ' }}')
-  const install = steps.findIndex((step) =>
-    step.run?.includes('playwright install'),
+  const home = steps.find((step) => step.name === 'Set browser container home')
+  assert.equal(home.if, "matrix.suite == 'behavior-browser'")
+  assert.deepEqual(home.run.trim().split('\n'), [
+    'export HOME=/root',
+    `echo 'HOME=/root' >> "$GITHUB_ENV"`,
+    'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+  ])
+  const checkoutIndex = steps.findIndex((step) =>
+    step.uses?.startsWith('actions/checkout@'),
   )
-  assert.deepEqual(steps.slice(install + 1, install + 4), [image, stage, save])
-  assert.equal(steps[install + 4].run, 'node scripts/ci/flaky-runs.mjs run')
-  assert.equal(steps[install + 4].if, undefined)
-  assert.equal(
-    stage.run,
-    'bash scripts/ci/browser-system-packages.sh /var/cache/apt/archives "$RUNNER_TEMP/browser-system-packages"',
-  )
-  assert.equal(
-    save.uses,
-    'actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
-  )
-  assert.match(
-    fs.readFileSync('.github/workflows/flaky-detector.yml', 'utf8'),
-    /actions\/cache\/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0/,
-  )
-  for (const name of ['browser-validation', 'changed-browser-repetitions']) {
-    const restore = ci.jobs[name].steps.find(
-      (step) => step.id === 'browser-cache-restore',
-    )
-    assert.deepEqual(save.with, {
-      path: restore.with.path,
-      key: restore.with.key,
-    })
-  }
+  assert.equal(steps.indexOf(home), checkoutIndex + 1)
   assert.ok(
-    !steps.some((step) => step.uses?.startsWith('actions/cache/restore@')),
+    steps.indexOf(home) <
+      steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@')),
   )
-
-  // Exact YAML guard equality above binds this predicate to the documented event cases.
-  const eligible = (suite, event, ref, repository) =>
-    suite === 'behavior-browser' &&
-    (event === 'schedule' ||
-      (event === 'workflow_dispatch' &&
-        Boolean(repository?.default_branch) &&
-        ref === `refs/heads/${repository.default_branch}`))
-  for (const [event, ref, repository, expected] of [
-    ['schedule', 'refs/heads/main', undefined, true],
-    ['workflow_dispatch', 'refs/heads/main', { default_branch: 'main' }, true],
-    [
-      'workflow_dispatch',
-      'refs/heads/other',
-      { default_branch: 'main' },
-      false,
-    ],
-    ['workflow_dispatch', 'refs/tags/main', { default_branch: 'main' }, false],
-    ['workflow_dispatch', 'refs/heads/main', undefined, false],
-    ['workflow_dispatch', 'refs/heads/main', {}, false],
-    ['workflow_dispatch', 'refs/heads/', { default_branch: '' }, false],
-  ]) {
-    assert.equal(eligible('behavior-browser', event, ref, repository), expected)
-    assert.equal(eligible('scripts', event, ref, repository), false)
-  }
+  assert.deepEqual(
+    steps.filter((step) => /safe\.directory|HOME=/.test(step.run ?? '')),
+    [home],
+  )
+  assert.equal(worker['continue-on-error'], undefined)
+  for (const step of steps) assert.equal(step['continue-on-error'], undefined)
+  assert.doesNotMatch(
+    JSON.stringify(workflow),
+    /playwright install|browser-cache-|browser-system-packages|secrets\.|pull_request_target|self-hosted/,
+  )
+  const doc = fs.readFileSync('docs/development-workflow.md', 'utf8')
+  assert.match(doc, /PipelineTemplateConverter/)
+  assert.match(doc, /empty.*image/)
 })
