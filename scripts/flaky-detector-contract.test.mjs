@@ -35,7 +35,7 @@ test('independent daily/dispatch workflow validates before installing or schedul
     !workflow.jobs.plan.steps.some((step) => step.run?.includes('install')),
   )
   assert.equal(workflow.jobs.worker.strategy['fail-fast'], false)
-  assert.equal(workflow.jobs.worker.strategy['max-parallel'], undefined)
+  assert.equal(workflow.jobs.worker.strategy['max-parallel'], 4)
   assert.equal(
     workflow.jobs.worker.strategy.matrix,
     '${{ fromJSON(needs.plan.outputs.matrix) }}',
@@ -81,7 +81,7 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
 test('browser installation precedes suite execution', () => {
   const index = (command) => steps.findIndex((step) => step.run === command)
   const install = index(
-    'pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit',
+    'pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}',
   )
   const run = index('node scripts/ci/flaky-runs.mjs run')
   assert.ok(install >= 0 && run > install)
@@ -127,11 +127,14 @@ test('aggregation runs after failed workers, tolerates missing artifacts, and up
     assert.ok(doc.includes(phrase))
 })
 
-test('overlapping detector runs are independent rather than replacing pending runs', () => {
-  assert.equal(workflow.concurrency, undefined)
+test('detector serializes runs and bounds workers without cancelling active detection', () => {
+  assert.deepEqual(workflow.concurrency, {
+    group: 'flaky-detector',
+    'cancel-in-progress': false,
+  })
   assert.match(
     fs.readFileSync('docs/development-workflow.md', 'utf8'),
-    /Overlapping workflow runs execute independently/,
+    /Detector runs are serialized/,
   )
 })
 

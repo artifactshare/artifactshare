@@ -30,6 +30,7 @@ import { resolve } from 'node:path'
 import { playwright } from '@vitest/browser-playwright'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
+import BrowserDurationSequencer from './app/test/browser-shard-sequencer'
 
 export default defineConfig({
   cacheDir: 'node_modules/.vite-browser-behavior',
@@ -69,6 +70,7 @@ export default defineConfig({
     },
   ],
   test: {
+    sequence: { sequencer: BrowserDurationSequencer },
     include: ['app/**/*.behavior.browser.test.tsx'],
     api: { host: '127.0.0.1' },
     browser: {
