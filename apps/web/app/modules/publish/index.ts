@@ -3,14 +3,12 @@ import type { Compilable, Kysely } from 'kysely'
 import { defaultVisibilityFor } from '~/lib/shareable-types'
 import type { Visibility } from '~/lib/shareable-types'
 import { isOrgWorkspace } from '~/lib/user'
-import {
-  isAgentOwnedArtifact,
-  isAgentPublishableDestination,
-} from '~/services/agent-scope.server'
+import { isAgentPublishableDestination } from '~/services/agent-scope.server'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import {
   appendShareable,
   createVersion,
+  findWritableShareable,
   uploadShareable,
   type CreateVersionResult,
   type UploadShareableResult,
@@ -389,35 +387,21 @@ async function publishWithDb(
   const agentProfileId = authorityAgentProfileId ?? undefined
 
   if (isAppendIntent(intent)) {
-    if (
-      agentAuthority !== null &&
-      !(await isAgentOwnedArtifact(
-        db,
-        {
-          id: normalizedUser.id,
-          workspaceId: normalizedUser.workspaceId,
-          email: normalizedUser.email ?? '',
-        },
-        agentAuthority,
-        intent.target.artifactId,
-      ))
-    ) {
-      return { kind: 'forbidden' }
-    }
     const permission = checkUploadAccess(user)
     if (permission.kind !== 'allowed') return permission
+    const shareable = await findWritableShareable(
+      db,
+      normalizedUser,
+      intent.target.artifactId,
+      authority ?? null,
+      'version',
+    )
+    if (!shareable) return { kind: 'not-found' }
     const content =
       typeof intent.content.content === 'function'
         ? await intent.content.content()
         : intent.content.content
     if (content === null) return { kind: 'invalid-append-content' }
-    // Resolve response metadata before append commits to avoid ambiguous failures.
-    const shareable = await db
-      .selectFrom('shareables')
-      .select('visibility')
-      .where('id', '=', intent.target.artifactId)
-      .executeTakeFirst()
-    if (!shareable) return { kind: 'not-found' }
     const result = await appendShareable(
       db,
       normalizedUser,

@@ -81,6 +81,7 @@ import {
   changeComment,
   COMMENT_THREAD_LIST_LIMIT,
   loadCommentAccess,
+  loadShareableViewAccess,
   loadCommentAccessForThread,
   loadCommentThreads,
   loadCommentThreadPage,
@@ -1049,9 +1050,13 @@ export function registerArtifactTools(
         })
       if (result.kind !== 'ok') return versionError(result)
 
-      let summary: OwnedShareableSummary | null = null
+      let summary: Awaited<ReturnType<typeof loadShareableViewAccess>> = null
       try {
-        summary = await getOwnedShareableSummary(ctx.db, user, args.id)
+        summary = await loadShareableViewAccess(
+          ctx.db,
+          mcpUserAsSessionUser(user),
+          args.id,
+        )
       } catch (err) {
         console.error('mcp_append_summary_failed', {
           shareable_id: args.id,

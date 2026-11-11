@@ -8,13 +8,14 @@ const createVersionMock = vi.hoisted(() => vi.fn())
 const appendShareableMock = vi.hoisted(() => vi.fn())
 const withDbMock = vi.hoisted(() => vi.fn())
 const isAgentPublishableDestinationMock = vi.hoisted(() => vi.fn())
-const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
+const findWritableShareableMock = vi.hoisted(() => vi.fn())
 const executeBridgePublishIntentMock = vi.hoisted(() => vi.fn())
 const staticSitePublishResponseMock = vi.hoisted(() => vi.fn())
 const staticSiteRequestContentMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./operations.server', () => ({
   appendShareable: appendShareableMock,
+  findWritableShareable: findWritableShareableMock,
   createVersion: createVersionMock,
   uploadShareable: uploadShareableMock,
 }))
@@ -24,7 +25,6 @@ vi.mock('./static-site-request.server', () => ({
 }))
 vi.mock('~/services/db.server', () => ({ withDb: withDbMock }))
 vi.mock('~/services/agent-scope.server', () => ({
-  isAgentOwnedArtifact: isAgentOwnedArtifactMock,
   isAgentPublishableDestination: isAgentPublishableDestinationMock,
 }))
 vi.mock('~/services/bridge-publish-session.server', () => ({
@@ -58,7 +58,9 @@ describe('publish', () => {
     createVersionMock.mockReset().mockResolvedValue({ kind: 'ok' })
     appendShareableMock.mockReset().mockResolvedValue({ kind: 'ok' })
     isAgentPublishableDestinationMock.mockReset().mockResolvedValue(true)
-    isAgentOwnedArtifactMock.mockReset().mockResolvedValue(true)
+    findWritableShareableMock
+      .mockReset()
+      .mockImplementation(() => readVisibility())
     executeBridgePublishIntentMock
       .mockReset()
       .mockResolvedValue({ kind: 'upload-failed' })
@@ -278,7 +280,7 @@ describe('publish', () => {
     )
   })
 
-  test('denies append outside an agent owned scope before reading content', async () => {
+  test('denies append outside version-write scope before reading content', async () => {
     const authority = {
       kind: 'agent' as const,
       familyId: 'family-1',
@@ -287,7 +289,7 @@ describe('publish', () => {
       projectNameSnapshot: 'Project',
       agentProfileId: 'agent-1',
     }
-    isAgentOwnedArtifactMock.mockResolvedValueOnce(false)
+    findWritableShareableMock.mockResolvedValueOnce(null)
 
     const readContent = vi.fn().mockResolvedValue(null)
     const result = await publish({
@@ -297,14 +299,39 @@ describe('publish', () => {
       content: { kind: 'append', content: readContent },
     })
 
-    expect(result).toEqual({ kind: 'forbidden' })
-    expect(isAgentOwnedArtifactMock).toHaveBeenCalledWith(
+    expect(result).toEqual({ kind: 'not-found' })
+    expect(findWritableShareableMock).toHaveBeenCalledWith(
       db,
-      { id: user.id, workspaceId: user.workspaceId, email: user.email },
-      authority,
+      expect.objectContaining({ id: user.id, emailVerified: true }),
       'artifact-1',
+      authority,
+      'version',
     )
     expect(readContent).not.toHaveBeenCalled()
+    expect(appendShareableMock).not.toHaveBeenCalled()
+  })
+
+  test('publisher append remains forbidden before input or authorization lookup', async () => {
+    const content = vi.fn()
+    const result = await publish({
+      db,
+      actor: {
+        kind: 'publisher',
+        user,
+        authority: {
+          kind: 'publisher',
+          familyId: 'publisher-family',
+          workspaceId: user.workspaceId,
+          publisherClientId: 'publisher-client',
+          publisherClientName: 'Publisher',
+        },
+      },
+      target: { kind: 'append', artifactId: 'artifact-1' },
+      content: { kind: 'append', content },
+    })
+    expect(result).toEqual({ kind: 'forbidden' })
+    expect(content).not.toHaveBeenCalled()
+    expect(findWritableShareableMock).not.toHaveBeenCalled()
     expect(appendShareableMock).not.toHaveBeenCalled()
   })
 

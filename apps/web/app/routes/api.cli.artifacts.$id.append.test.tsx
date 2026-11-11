@@ -6,12 +6,8 @@ const requireUserApiWithBearerMiddlewareMock = vi.hoisted(() => vi.fn())
 const requireUserMock = vi.hoisted(() => vi.fn())
 const publishMock = vi.hoisted(() => vi.fn())
 const publishPrincipalMock = vi.hoisted(() => vi.fn())
-const isAgentOwnedArtifactMock = vi.hoisted(() => vi.fn())
 vi.mock('~/services/db.server', () => ({
   withDb: (callback: (db: unknown) => unknown) => callback({}),
-}))
-vi.mock('~/services/agent-scope.server', () => ({
-  isAgentOwnedArtifact: isAgentOwnedArtifactMock,
 }))
 const ctxContextMock = vi.hoisted(() => ({}))
 
@@ -39,7 +35,6 @@ describe('/api/cli/artifacts/:id/append', () => {
     authorityMock.mockReset().mockReturnValue(null)
     requireUserApiWithBearerMiddlewareMock.mockReset()
     requireUserMock.mockReset()
-    isAgentOwnedArtifactMock.mockReset().mockResolvedValue(false)
     publishMock.mockReset().mockImplementation(async (intent) => {
       const content = await intent.content.content()
       if (content === null) return { kind: 'invalid-append-content' }
@@ -155,7 +150,7 @@ describe('/api/cli/artifacts/:id/append', () => {
   )
 
   describe.each([
-    ['forbidden', 'CLI agent scope does not allow this update.'],
+    ['not-found', 'Shareable not found.'],
     [
       'self-upload-disabled',
       'Sign in with Google or Microsoft to upload files.',
@@ -164,28 +159,19 @@ describe('/api/cli/artifacts/:id/append', () => {
     test.each(['{', '', '{}', '{"content":""}'])(
       'denies before reading invalid input %j',
       async (body) => {
-        const actual =
-          await vi.importActual<typeof import('~/modules/publish')>(
-            '~/modules/publish',
-          )
-        publishMock.mockImplementation(actual.publish)
-        const user = requireUserMock()
-        publishPrincipalMock.mockReturnValue(
-          code === 'forbidden'
-            ? {
-                kind: 'agent',
-                user,
-                authority: {
-                  kind: 'agent',
-                  familyId: 'family-1',
-                  workspaceId: 'ws1',
-                  projectId: 'project-1',
-                  projectNameSnapshot: 'Project',
-                  agentProfileId: 'agent-1',
-                },
-              }
-            : { kind: 'human', user: { ...user, selfUploadEnabled: false } },
-        )
+        if (code === 'not-found') {
+          publishMock.mockResolvedValueOnce({ kind: 'not-found' })
+        } else {
+          const actual =
+            await vi.importActual<typeof import('~/modules/publish')>(
+              '~/modules/publish',
+            )
+          publishMock.mockImplementation(actual.publish)
+          publishPrincipalMock.mockReturnValue({
+            kind: 'human',
+            user: { ...requireUserMock(), selfUploadEnabled: false },
+          })
+        }
         const request = new Request(
           'https://artifactshare.test/api/cli/artifacts/abc123def4/append',
           { method: 'POST', body },
@@ -198,7 +184,7 @@ describe('/api/cli/artifacts/:id/append', () => {
           request,
         } as never)
 
-        expect(response.status).toBe(403)
+        expect(response.status).toBe(code === 'not-found' ? 404 : 403)
         await expect(response.json()).resolves.toEqual({
           error: { code, message },
         })
