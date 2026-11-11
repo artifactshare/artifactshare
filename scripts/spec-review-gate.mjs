@@ -126,13 +126,13 @@ function runReviewer(name, args, { spawnProcess = spawn } = {}) {
 function validateDispositions(bundle, priorFindings) {
   if (!bundle)
     throw new Error(
-      'Correction review requires dispositions for both prior reviewer results.',
+      'Correction review requires dispositions for the prior reviewer results.',
     )
   const expected = priorFindings.map(({ id }) => id).sort()
   const actual = bundle.prior_findings?.map(({ id }) => id).sort()
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error(
-      'Dispositions must include every prior Codex and Claude finding.',
+      'Dispositions must include every prior reviewer finding.',
     )
   return bundle
 }
@@ -271,11 +271,8 @@ async function main({
   ]
   if (options.dispositions_file)
     common.push('--dispositions-file', options.dispositions_file)
-  const [codexRaw, claudeRaw] = await waitForBoth([
-    review('codex', common),
-    review('claude', common),
-  ])
-  const results = { codex: JSON.parse(codexRaw), claude: JSON.parse(claudeRaw) }
+  const [claudeRaw] = await waitForBoth([review('claude', common)])
+  const results = { claude: JSON.parse(claudeRaw) }
   const findings = Object.entries(results).flatMap(([reviewer, result]) =>
     result.findings.map((finding) => ({
       ...finding,

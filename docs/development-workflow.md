@@ -22,9 +22,9 @@ Typos and explanatory documentation changes need a careful self-review but no se
 
 Write a specification when behavior, requirements, UI states, or acceptance criteria need a design decision before implementation. Routine fixes and contained maintenance may proceed directly when the desired behavior is already clear.
 
-When a specification is required, start Codex and Claude deep reviews in parallel against the exact Artifact Share version that will be handed to implementation. Let both independent reviews finish before classifying findings or changing the specification. Implementation starts only after every finding from both reviewers is classified and neither has an unresolved blocker on that version.
+When a specification is required, start a Claude deep review against the exact Artifact Share version that will be handed to implementation. Let it finish before classifying findings or changing the specification. Implementation starts only after every finding is classified and none is an unresolved blocker on that version.
 
-For an ordinary code, workflow, or normative documentation change, start Codex and Claude deep reviews in parallel against the exact commit intended for Ready. Let both independent reviews finish before classifying findings or changing the implementation. Their different exploration paths are a permanent part of the gate, not a risk category selected per change.
+For an ordinary code, workflow, or normative documentation change, start a Claude deep review against the exact commit intended for Ready. Let it finish before classifying findings or changing the implementation. The deep review is a permanent part of the gate, not a risk category selected per change. Codex billing ended 2026-11-11, so the former Codex and Claude dual review is now Claude-only.
 
 Classify every review finding by its effect on the current change:
 
@@ -32,11 +32,11 @@ Classify every review finding by its effect on the current change:
 - **Follow-up:** useful work that is not required for the current artifact to be sound.
 - **Non-actionable:** a duplicate, false positive, preference, or out-of-scope observation.
 
-The gate passes when neither reviewer has an unresolved blocker on the reviewed target, not when both reviewers report zero findings. A quick `low` review or a single-reviewer pass may help during development but never replaces the dual deep final gate. A specification may have its initial review and at most two correction reviews. A fourth review is refused and requires a coherent rewrite from the original scope lock and acceptance criteria.
+The gate passes when the reviewer has no unresolved blocker on the reviewed target, not when it reports zero findings. A quick `low` review may help during development but never replaces the deep final gate. A specification may have its initial review and at most two correction reviews. A fourth review is refused and requires a coherent rewrite from the original scope lock and acceptance criteria.
 
 Do not promote a finding to blocker merely because it would make the design more general, more future-proof, or more internally complete. A blocker must protect present user value, correctness, safety, or an agreed acceptance criterion. Review the total design after applying findings; if the correction adds more machinery than the observed problem warrants, reduce the design before starting another review round.
 
-Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, start both deep reviews again in parallel against the new target. Do not stop or restart one reviewer merely because the other finishes first or reports a blocker: wait for both results so one correction pass can address the complete finding set. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
+Changing the specification after its gate invalidates that gate. Changing the implementation after its gate invalidates that gate. Finish mechanical corrections before the final review; if the version or commit changes afterward, start the deep review again against the new target. Wait for the full result so one correction pass can address the complete finding set. Keep dispositions in the normal task or reviewer session, and summarize the final gate and any follow-ups in the pull request. Do not create receipts, digests, locks, attempt logs, or review-specific push guards.
 
 A required review or validation remains unfinished while its command is running or its result is pending. Keep the task active and do not give a final response such as "waiting for review" before every required gate has completed and its result has been evaluated. If a required process disappears before producing a result, treat the gate as incomplete and run that process again; absence of a result is never success.
 
@@ -77,11 +77,11 @@ Record the commands and results in the pull request. If the affected surface is 
 ## Delivery sequence
 
 1. Confirm the intended behavior and write a specification when design is needed.
-2. If a specification is required, start Codex and Claude deep reviews of its fixed final version in parallel, wait for both, classify every finding together, and repeat both reviews in parallel on each new version until no blocker remains.
+2. If a specification is required, start a Claude deep review of its fixed final version, classify every finding, and repeat the review on each new version until no blocker remains.
 3. If UI changes, capture the current state or prepare a static mock and use the UI critique below before implementation.
 4. Implement and commit the complete change.
 5. Run the selected local validation. If validation changes files, commit them and rerun the affected checks. Keep the worktree clean before review or publication.
-6. Start Codex and Claude deep reviews of the committed Ready candidate in parallel, wait for both, classify every finding together, and repeat both reviews in parallel on each new commit until the latest commit has no unresolved blocker.
+6. Start a Claude deep review of the committed Ready candidate, classify every finding, and repeat the review on each new commit until the latest commit has no unresolved blocker.
 7. Publish a Draft PR with `pnpm pr:publish -- --body-file <path> --title <title>`. Further fixes use normal commits and pushes; the pre-push boundary guard scans every push.
 8. If UI changed, capture every affected state and repeat UI critique after material visual fixes. Commit any resulting change and return to the implementation gate.
 9. Push the final commit normally and run `pnpm pr:ready`. It verifies the Draft targets `main`, the remote PR head equals local `HEAD`, and required PR checks have succeeded before calling `gh pr ready`. When the diff contains UI changes, it stops until you confirm that affected states were captured, the captures and relevant source were critiqued, and no UI changed afterward; after those checks, rerun it with `pnpm pr:ready -- --ui-gate-complete`.
@@ -93,15 +93,13 @@ UI critique is required only for UI changes and supplements code review. Use `pn
 
 ## Review commands
 
-`review:codex` checks a clean committed checkout and verifies that `HEAD` and the worktree do not change. Its implementation phase runs native `codex review --base origin/main`. Its spec phase reads the fixed Artifact Share version and unresolved comments, then passes them to `codex exec` in a read-only sandbox.
-
 `review:claude` is a thin launcher with a 30-minute limit. Its implementation phase runs Claude Code's built-in `/code-review high` against `origin/main...HEAD`. Its spec phase reads the current Artifact Share version and unresolved comments; the supplied version id prevents review of a stale revision. The default `high` review is the final gate. Use `--level low` only for a quick intermediate pass, never as gate evidence.
 
-For a specification gate, use `review:spec`. It starts both commands concurrently with the same Artifact Share URL and version id, waits for both, and persists one combined state comment only after both valid results are available:
+For a specification gate, use `review:spec`. It runs `review:claude` with the Artifact Share URL and version id and persists one state comment only after a valid result is available (Codex billing ended 2026-11-11, so Claude is the sole reviewer):
 
-The specification must contain a short `## Scope lock` with `### Owner decisions`, `### Non-goals`, and `### Acceptance criteria`. Both commands print that lock followed by only the normalized finding JSON; reviewer exploration and repeated specification text stay captured and are not printed on success. Blockers without a broken current acceptance criterion or new correctness/safety evidence and a minimal fix are downgraded to non-actionable.
+The specification must contain a short `## Scope lock` with `### Owner decisions`, `### Non-goals`, and `### Acceptance criteria`. The command prints that lock followed by only the normalized finding JSON; reviewer exploration and repeated specification text stay captured and are not printed on success. Blockers without a broken current acceptance criterion or new correctness/safety evidence and a minimal fix are downgraded to non-actionable.
 
-The coordinator stores baseline metrics, reviewed version ids, the unresolved-comment fingerprint, and the latest exact findings from both reviewers in one machine-readable Artifact Share comment thread. Older findings are removed after their dispositions are accepted so the state stays within the comment limit. Later sessions append state as replies using the same authenticated CLI profile; a different profile must not silently replace the trusted history. If the state thread was resolved, the next state starts a new thread. The coordinator prints the baseline metrics needed for the next correction. The repository contains no receipt or attempt log. For correction reviews, pass an untracked temporary `--dispositions-file`. It contains `baseline_metrics`, a `prior_findings` array exactly covering the persisted Codex and Claude ids (including an explicitly empty array), and a same-length `dispositions` array keyed by those ids. Each disposition is `fixed`, `follow_up`, `non_actionable`, or `rewrite`; set `repeated` or `contradiction` to `true` when applicable. The coordinator refuses a fourth version and incomplete classification. Only the owner may authorize `--reset`; an agent must stop at the circuit breaker until that approval is present. After an approved full rewrite or detected divergent write, reset the same comment with `--reset`. Do not commit the temporary dispositions file.
+The coordinator stores baseline metrics, reviewed version ids, the unresolved-comment fingerprint, and the latest exact findings from the reviewer in one machine-readable Artifact Share comment thread. Older findings are removed after their dispositions are accepted so the state stays within the comment limit. Later sessions append state as replies using the same authenticated CLI profile; a different profile must not silently replace the trusted history. If the state thread was resolved, the next state starts a new thread. The coordinator prints the baseline metrics needed for the next correction. The repository contains no receipt or attempt log. For correction reviews, pass an untracked temporary `--dispositions-file`. It contains `baseline_metrics`, a `prior_findings` array exactly covering the persisted finding ids (including an explicitly empty array), and a same-length `dispositions` array keyed by those ids. Each disposition is `fixed`, `follow_up`, `non_actionable`, or `rewrite`; set `repeated` or `contradiction` to `true` when applicable. The coordinator refuses a fourth version and incomplete classification. Only the owner may authorize `--reset`; an agent must stop at the circuit breaker until that approval is present. After an approved full rewrite or detected divergent write, reset the same comment with `--reset`. Do not commit the temporary dispositions file.
 
 ```sh
 pnpm review:spec -- --artifact-url <url> --version-id <id>
@@ -110,31 +108,24 @@ pnpm review:spec -- --artifact-url <url> --version-id <corrected-id> --dispositi
 pnpm review:spec -- --artifact-url <url> --version-id <rewrite-id> --reset
 ```
 
-Classify the combined findings before editing the specification. The gate passes only when neither result has an unresolved blocker.
+Classify the findings before editing the specification. The gate passes only when the result has no unresolved blocker.
 
-For an implementation gate, start both commands concurrently on the same clean commit. Wait for both to finish before acting on either result:
+For an implementation gate, run the review on a clean commit and wait for it to finish:
 
 ```sh
-codex_log=$(mktemp); claude_log=$(mktemp)
-pnpm review:codex -- --phase implementation >"$codex_log" 2>&1 & codex_pid=$!
-pnpm review:claude -- --phase implementation >"$claude_log" 2>&1 & claude_pid=$!
-codex_status=0; wait "$codex_pid" || codex_status=$?
-claude_status=0; wait "$claude_pid" || claude_status=$?
-cat "$codex_log"; cat "$claude_log"
-rm -f "$codex_log" "$claude_log"
-test "$codex_status" -eq 0 && test "$claude_status" -eq 0
+pnpm review:claude -- --phase implementation
 ```
 
-Again, successful command exit only establishes that both review results are available. Classify the findings from both logs together before deciding whether the implementation gate passes.
+Successful command exit only establishes that the review result is available. Classify the findings before deciding whether the implementation gate passes.
 
 Normal session history is the review record and the source for elapsed time, review count, and findings. The repository does not duplicate it in receipts or attempt logs.
 
 ## Safety boundaries
 
 - Use a committed, clean worktree for every review and never review a stale remote branch.
-- Start the Codex and Claude reviews concurrently, but do not run commands that can change HEAD or the worktree until both finish.
-- A specification gate applies to one exact Artifact Share version. Any new version requires new Codex and Claude deep reviews before implementation.
-- An implementation gate applies to one exact commit. Any later commit requires new Codex and Claude deep reviews before Ready.
+- Do not run commands that can change HEAD or the worktree until the review finishes.
+- A specification gate applies to one exact Artifact Share version. Any new version requires a new Claude deep review before implementation.
+- An implementation gate applies to one exact commit. Any later commit requires a new Claude deep review before Ready.
 - Keep only one open PR in this repository at a time.
 - A Draft PR is the review workspace; commit and push fixes normally.
 - `pr:ready` requires a clean worktree, a Draft for the current branch targeting `main`, a pushed local `HEAD`, and successful required checks.
@@ -142,4 +133,4 @@ Normal session history is the review record and the source for elapsed time, rev
 - The public PR guard treats same-repository maintainer branches as implementation work. Fork PRs may add exactly one proposal document and cannot change code, workflows, or repository-boundary policy.
 - Production writes use only the protected deployment workflow. Local validation selection never authorizes a production operation.
 
-If a required local tool (`codex`, `claude`, `gh`, or the Artifact Share CLI used for spec readback) is unavailable, stop before any remote write and report the missing dependency.
+If a required local tool (`claude`, `gh`, or the Artifact Share CLI used for spec readback) is unavailable, stop before any remote write and report the missing dependency.

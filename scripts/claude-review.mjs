@@ -10,10 +10,10 @@ import {
 const timeoutMs = 1_800_000
 const reviewReminder = [
   'Before applying findings:',
-  '- Wait for both Codex and Claude reviews to finish, then classify all findings together.',
+  '- Wait for the review to finish, then classify all findings together.',
   '- For each finding, state in one sentence what current acceptance criterion, correctness, or safety property would remain broken without a fix.',
   '- If no such breakage can be named concretely, classify it as follow-up or non-actionable, not a blocker.',
-  '- Fix all blockers together in one pass after considering both reviews.',
+  '- Fix all blockers together in one pass after considering the review.',
   '- Do not add future reuse, generalization, or defenses for unreachable cases to the current change.',
 ].join('\n')
 
