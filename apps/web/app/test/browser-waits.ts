@@ -12,6 +12,24 @@ export async function requiredWait<T>(
   }
 }
 
+// A popup can open before Radix finishes its exit animation and delayed
+// focus restoration. Reopening the menu during that cleanup can lose the click.
+export async function waitForMenuClose(page: Page, triggerSelector: string) {
+  await requiredWait(
+    'menu unmount',
+    page
+      .getByRole('menu', { includeHidden: true })
+      .waitFor({ state: 'detached' }),
+  )
+  await requiredWait(
+    'menu trigger focus restoration',
+    page.waitForFunction(
+      (selector) => document.activeElement?.matches(selector) === true,
+      triggerSelector,
+    ),
+  )
+}
+
 // The waiter is registered before the trigger. Promise.all observes both
 // rejections immediately; abort releases the listener if the trigger fails.
 export async function openPopup(
