@@ -77,10 +77,12 @@ and authorization, separately from whether recovered rows can be adopted.
 
 ## Executable comparison boundary
 
-`app/test/comment-sync-harness.tsx` accepts the viewer hook as its engine. A run
+`app/test/comment-sync-harness.ts` accepts the viewer hook as its engine. A run
 owns one React root, two independent mutation hooks (panel and popover), the
 production reply reducer, deferred HTTP responses, and request/cancellation
-traces. Run the same input script sequentially with each engine; do not mount
+traces. The producer subtree is keyed by artifact, like the product's panel;
+the viewer hook retains its actual lifetime across artifact navigation. Run the
+same input script sequentially with each engine; do not mount
 the engines together. Each run has explicit expected snapshots as well as the
 cross-run equality check, so two equally wrong results do not constitute a pass.
 
@@ -92,6 +94,11 @@ deliberately leaking engine verifies this oracle's detection power.
 Failure cleanup drains unresolved HTTP gates before restoring the original
 fetch, then fails the test; it does not accept unfinished work as success. If
 both the scenario and cleanup fail, the aggregate error preserves both causes.
+All cleanup assertions run and report their failures together. An engine-owned
+leaked lease is a failing run, not a successful comparison: the harness cannot
+forcibly release an unknown owner's lease or promise isolation after a broken
+engine without a reset API. The intentional leak fixture releases its own
+captured lease before the next valid run.
 Requests made during disposal are rejected and recorded rather than opening
 another unresolved HTTP gate.
 There is no production reset function. The harness currently exercises the
@@ -124,3 +131,19 @@ or claim to cover that state machine.
 The comparison harness tests externally observable hook operations. Existing
 scope/epoch and scheduler unit tests additionally inspect internal contracts;
 they are useful diagnostics but do not replace the hook or browser scenarios.
+
+### Returning to an artifact versus remounting a viewer
+
+The legacy viewer's stable callbacks use the currently committed artifact ID.
+Within the same viewer mount, a POST started in A may therefore apply directly
+after A → B → A, then settlement requests reconciliation. Preserve this behavior:
+making the post visible only after a successful GET would introduce a new
+failure mode when that GET fails transiently. UI pending state and drafts belong
+to the keyed producer, so the new A panel is idle while the old Runtime job
+remains pending; its draft survives even when its text matches the old post.
+
+If the entire viewer unmounts, its old callbacks must not directly update a
+separately mounted viewer. A new display subscribes to the retained Runtime job
+and reconciles when it settles. Both cases have separate explicit snapshot and
+request oracles. These hook fixtures model the existing panel reply wiring;
+they do not claim to replace real panel/browser interaction tests.

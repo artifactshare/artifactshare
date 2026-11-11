@@ -1,4 +1,4 @@
-import { act, useReducer } from 'react'
+import { act, createElement, useReducer } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { expect, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
@@ -119,10 +119,23 @@ function createDriver(useEngine: CommentSyncEngine) {
       targetCommentId: target,
       liveEnabled: false,
     })
+    return createElement(Writers, {
+      key: artifact,
+      artifact,
+      comments: display,
+    })
+  }
+  function Writers({
+    artifact,
+    comments,
+  }: {
+    artifact: string
+    comments: Display
+  }) {
     const options = {
       shareableId: artifact,
-      isCurrentShareableId: display.isCurrentArtifactId,
-      onThreadsChange: display.replaceThreads,
+      isCurrentShareableId: comments.isCurrentArtifactId,
+      onThreadsChange: comments.replaceThreads,
     }
     // The panel and inline popover use independent hook instances in production.
     writers = [useCommentMutations(options), useCommentMutations(options)]
@@ -187,7 +200,7 @@ function createDriver(useEngine: CommentSyncEngine) {
       artifacts.add(artifact)
       root ??= createRoot(document.createElement('div'))
       await act(() =>
-        root!.render(<Harness artifact={artifact} target={target} />),
+        root!.render(createElement(Harness, { artifact, target })),
       )
     },
     unmount,
@@ -244,13 +257,15 @@ function createDriver(useEngine: CommentSyncEngine) {
     pending(artifact = 'a') {
       return withCommentRuntime(artifact, (lease) => lease.hasPending())
     },
+    epoch(artifact = 'a') {
+      return withCommentRuntime(artifact, (lease) => lease.getEpoch('selected'))
+    },
     async dispose() {
       // A zero-epoch leaked lease is otherwise indistinguishable from a fresh
       // record. Mark before unmount, then require a newly acquired clean record.
       for (const artifact of artifacts)
         withCommentRuntime(artifact, (lease) => lease.invalidate('selected'))
       disposing = true
-      const countBeforeUnmount = requests.length
       await unmount()
       const unfinished = requests.filter((request) => !request.settled)
       await act(async () => {
@@ -258,17 +273,26 @@ function createDriver(useEngine: CommentSyncEngine) {
         await Promise.allSettled(posts)
       })
       await act(async () => {})
-      expect(unfinished).toEqual([])
-      expect(lateRequests).toEqual([])
-      expect(requests).toHaveLength(countBeforeUnmount)
-      expect(requests.filter((request) => !request.settled)).toEqual([])
-      expect(posts.size).toBe(0)
+      const failures: unknown[] = []
+      const verify = (check: () => void) => {
+        try {
+          check()
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      verify(() => expect(unfinished).toEqual([]))
+      verify(() => expect(lateRequests).toEqual([]))
+      verify(() => expect(posts.size).toBe(0))
       for (const artifact of artifacts) {
         withCommentRuntime(artifact, (lease) => {
-          expect(lease.hasPending()).toBe(false)
-          expect(lease.getEpoch('selected')).toBe(0)
+          verify(() => expect(lease.hasPending()).toBe(false))
+          verify(() => expect(lease.getEpoch('selected')).toBe(0))
         })
       }
+      if (failures.length === 1) throw failures[0]
+      if (failures.length > 1)
+        throw new AggregateError(failures, 'Comment cleanup invariants failed')
     },
   }
 }

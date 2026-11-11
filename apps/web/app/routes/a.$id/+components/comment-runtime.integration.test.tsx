@@ -41,14 +41,16 @@ async function navigationScenario(engine: CommentSyncEngine) {
     expect(driver.snapshot().threads).toEqual([
       { id: 'b-only', bodies: ['B original'] },
     ])
+    expect(driver.snapshot().pending).toEqual([[], []])
     await driver.mount('a')
-    await driver.draft('new draft')
+    await driver.draft('submitted')
+    expect(driver.snapshot().pending).toEqual([[], []])
     expect(driver.pending()).toBe(true)
     await driver.respond(0, { threadId: 'selected', threads: rows('posted') })
     await act(async () => expect(await post.done).toBe(true))
     const afterPost = driver.snapshot()
     expect(afterPost.threads).toEqual(expectedRows('posted'))
-    expect(afterPost.drafts).toEqual({ selected: 'new draft' })
+    expect(afterPost.drafts).toEqual({ selected: 'submitted' })
     expect(afterPost.pending).toEqual([[], []])
     await driver.waitForRequests(2)
     await driver.respond(1, { threads: rows('reconciled') })
@@ -56,7 +58,7 @@ async function navigationScenario(engine: CommentSyncEngine) {
     expect(final).toEqual({
       artifact: 'a',
       threads: expectedRows('reconciled'),
-      drafts: { selected: 'new draft' },
+      drafts: { selected: 'submitted' },
       pending: [[], []],
       failed: false,
     })
@@ -72,6 +74,29 @@ test('the navigation and new draft scenario has independently verified sequentia
   const first = await navigationScenario(useViewerComments)
   const second = await navigationScenario(useViewerComments)
   expect(second).toEqual(first)
+})
+
+test('a successful panel post clears its own unchanged submitted draft', async () => {
+  async function scenario() {
+    return runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount()
+      await driver.draft('submitted')
+      const post = await driver.post()
+      await driver.waitForRequests(1)
+      await driver.respond(0, { threadId: 'selected', threads: rows('posted') })
+      await act(async () => expect(await post.done).toBe(true))
+      expect(driver.snapshot().drafts).toEqual({})
+      expect(driver.snapshot().threads).toEqual(expectedRows('posted'))
+      await driver.waitForRequests(2)
+      await driver.respond(1, { threads: rows('reconciled') })
+      const result = driver.snapshot()
+      expect(result.drafts).toEqual({})
+      expect(result.pending).toEqual([[], []])
+      expect(result.threads).toEqual(expectedRows('reconciled'))
+      return result
+    })
+  }
+  expect(await scenario()).toEqual(await scenario())
 })
 
 test('an A response arriving while B is displayed cannot replace B data', async () => {
@@ -162,6 +187,7 @@ test('a detached post releases its record before a fresh display opens', async (
       })
       await act(async () => expect(await post.done).toBe(true))
       expect(driver.pending()).toBe(false)
+      expect(driver.epoch()).toBe(0)
       // No detached subscriber requested a summary and a new display starts fresh.
       expect(driver.requests).toHaveLength(1)
       await driver.mount()
@@ -181,7 +207,7 @@ test('a fresh display reconciles a detached post without adopting its old displa
       await driver.waitForRequests(1)
       await driver.unmount()
       await driver.mount()
-      await driver.draft('fresh display draft')
+      await driver.draft('submitted')
       await driver.respond(0, {
         threadId: 'selected',
         threads: rows('old display response'),
@@ -189,13 +215,13 @@ test('a fresh display reconciles a detached post without adopting its old displa
       await act(async () => expect(await post.done).toBe(true))
       expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
       expect(driver.snapshot().drafts).toEqual({
-        selected: 'fresh display draft',
+        selected: 'submitted',
       })
       await driver.waitForRequests(2)
       await driver.respond(1, { threads: rows('current server result') })
       const snapshot = driver.snapshot()
       expect(snapshot.threads).toEqual(expectedRows('current server result'))
-      expect(snapshot.drafts).toEqual({ selected: 'fresh display draft' })
+      expect(snapshot.drafts).toEqual({ selected: 'submitted' })
       expect(snapshot.pending).toEqual([[], []])
       expect(driver.trace).toEqual([
         'POST /api/shareables/a/comments',
