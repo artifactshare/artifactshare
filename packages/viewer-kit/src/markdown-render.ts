@@ -624,7 +624,7 @@ html:has(.md-outline-panel[open]) { overflow: hidden; scrollbar-gutter: stable; 
 body {
   background: var(--md-bg);
   color: var(--md-text);
-  font: 400 18px/1.85 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+  font: 400 16px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP",
     "Yu Gothic UI", Meiryo, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
   font-synthesis: none;
@@ -644,20 +644,20 @@ body {
 .md > :last-child { margin-bottom: 0; }
 .md blockquote > :last-child { margin-bottom: 0; }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
-  margin: 28px 0 12px;
-  font-weight: 700;
+  margin: 24px 0 16px;
+  font-weight: 600;
   font-feature-settings: normal;
   letter-spacing: normal;
-  line-height: 1.6;
+  line-height: 1.25;
   text-wrap: balance;
 }
-.md h1 { font-size: 30px; margin-bottom: 24px; }
-.md h2 { font-size: 24px; margin-top: 44px; }
-.md h3 { font-size: 21px; margin-top: 34px; }
-.md h4 { font-size: 19px; }
-.md h5 { font-size: 17px; }
-.md h6 { font-size: 16px; color: var(--md-muted); }
-.md p, .md ul, .md ol { margin-bottom: 24px; }
+.md h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--md-border); }
+.md h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--md-border); }
+.md h3 { font-size: 1.25em; }
+.md h4 { font-size: 1em; }
+.md h5 { font-size: 0.875em; }
+.md h6 { font-size: 0.85em; color: var(--md-muted); }
+.md p, .md ul, .md ol { margin-bottom: 16px; }
 .md strong, .md b, .md th { font-weight: 700; }
 .md :is(h1, h2, h3, h4, h5, h6)[tabindex="-1"]:focus { outline: none; }
 .md-frontmatter { grid-column: 1; grid-row: 1; margin: 0 0 24px; color: var(--md-muted); font-size: 14px; line-height: 1.6; }
@@ -700,7 +700,7 @@ body {
 .md-outline { position: relative; }
 .md-sidebar .md-outline { padding: 0 8px 0 0; }
 .md-outline-header { position: sticky; top: 0; z-index: 3; padding: 0 0 10px; background: var(--md-bg); }
-.md-outline-header h2 { margin: 0; color: var(--md-text); font-size: 14px; line-height: 1.7; font-weight: 700; }
+.md-outline-header h2 { margin: 0; color: var(--md-faint); font-size: 12px; line-height: 1.7; font-weight: 600; }
 .md-outline-detail {
   display: flex;
   align-items: center;
@@ -737,7 +737,7 @@ body {
 .md-outline li[data-indent="5"] > a { padding-left: 80px; }
 .md-outline li > a:hover { color: var(--md-text); background: var(--md-accent-bg); }
 .md-outline li > a[aria-current] { color: var(--md-link); background: color-mix(in srgb, var(--md-link) 3%, transparent); }
-.md-outline li[data-level="2"] > a, .md-outline li[data-level="1"]:not([data-overview]) > a { color: var(--md-text); font-weight: 700; }
+.md-outline li[data-level="2"] > a, .md-outline li[data-level="1"]:not([data-overview]) > a { font-weight: 500; }
 .md-outline li[data-level="2"] > a[aria-current], .md-outline li[data-level="1"] > a[aria-current] { color: var(--md-link); }
 :root:not(:has([data-md-outline-details]:checked)) .md-outline li[data-fine] { display: none; }
 .md-outline-rail {
@@ -847,8 +847,6 @@ body {
   .md-outline-header { position: static; }
   :root[data-md-outline-ready] .md-sidebar { display: none; }
   :root[data-md-outline-ready] .md-position { display: block; }
-  .md h1 { font-size: 28px; }
-  .md h2 { font-size: 23px; }
   .md-outline-panel { width: 100%; border: 0; }
 }
 @media (pointer: coarse) {
