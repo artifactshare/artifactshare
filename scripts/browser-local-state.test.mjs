@@ -34,9 +34,34 @@ async function close(server) {
   })
 }
 
+async function listenOnBothLoopbacks(t) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const ipv4 = await listen(t, '127.0.0.1')
+    const { port } = ipv4.address()
+    let ipv6
+    try {
+      ipv6 = await listen(t, '::1', port)
+      if (!ipv6) return null
+      return { ipv4, ipv6, port }
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE' || attempt === 4) throw error
+    } finally {
+      if (!ipv6) await close(ipv4)
+    }
+  }
+}
+
 for (const host of ['127.0.0.1', '::1']) {
   test(`port guard rejects an existing ${host}-only listener`, async (t) => {
-    const server = await listen(t, host)
+    let server
+    if (host === '::1') {
+      const pair = await listenOnBothLoopbacks(t)
+      if (!pair) return
+      await close(pair.ipv4)
+      server = pair.ipv6
+    } else {
+      server = await listen(t, host)
+    }
     if (!server) return
     const { port } = server.address()
     await assert.rejects(assertPortAvailable(port), (error) => {
@@ -52,10 +77,9 @@ for (const host of ['127.0.0.1', '::1']) {
 }
 
 test('port guard accepts a port free on both loopback addresses', async (t) => {
-  const ipv4 = await listen(t, '127.0.0.1')
-  const { port } = ipv4.address()
-  const ipv6 = await listen(t, '::1', port)
-  if (!ipv6) return
+  const pair = await listenOnBothLoopbacks(t)
+  if (!pair) return
+  const { ipv4, ipv6, port } = pair
   await close(ipv4)
   await close(ipv6)
   await assert.doesNotReject(assertPortAvailable(port))
