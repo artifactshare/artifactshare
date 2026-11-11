@@ -111,6 +111,7 @@ import {
   updateShareableMetadata,
 } from './shareables.server'
 import {
+  publish as publishArtifact,
   appendShareable,
   createVersion,
   staticSiteRequestContent,
@@ -6260,6 +6261,136 @@ describe('createVersion', () => {
     expect(storageMock.putArtifact).not.toHaveBeenCalled()
   })
 
+  test.each(['html_page', 'markdown_page'] as const)(
+    'non-owner project collaborator appends exact %s bytes and preserves identity',
+    async (artifactKind) => {
+      await seedUser(db, 'collaborator')
+      await seedContributor(db, 'collaborator')
+      await seedProjectContainer(db)
+      await db
+        .updateTable('artifact_containers')
+        .set({ base_visibility: 'workspace' })
+        .where('id', '=', 'project-a')
+        .execute()
+      await db
+        .updateTable('shareables')
+        .set({
+          visibility: 'project',
+          container_id: 'project-a',
+          artifact_kind: artifactKind,
+        })
+        .where('id', '=', 'share1')
+        .execute()
+      await db
+        .updateTable('versions')
+        .set({ artifact_kind: artifactKind })
+        .where('id', '=', 'v1')
+        .execute()
+      const source = '<body>first</body>'
+      storageMock.getArtifact.mockReset().mockResolvedValue({
+        size: source.length,
+        body: new Blob([source]).stream(),
+      })
+      const result = await appendShareable(
+        db,
+        { ...OWNER, id: 'collaborator', email: 'collaborator@example.com' },
+        'share1',
+        'next',
+      )
+      expect(result.kind).toBe('ok')
+      expect(
+        new TextDecoder().decode(
+          storageMock.putArtifact.mock.calls[0]?.[2] as ArrayBuffer,
+        ),
+      ).toBe(
+        artifactKind === 'html_page'
+          ? '<body>firstnext</body>'
+          : '<body>first</body>next',
+      )
+      expect(
+        await db
+          .selectFrom('shareables')
+          .select(['owner_user_id', 'name', 'visibility', 'container_id'])
+          .where('id', '=', 'share1')
+          .executeTakeFirstOrThrow(),
+      ).toEqual({
+        owner_user_id: OWNER.id,
+        name: 'doc.html',
+        visibility: 'project',
+        container_id: 'project-a',
+      })
+    },
+  )
+
+  test('append denies a non-owner without version permission before reading source', async () => {
+    await seedUser(db, 'collaborator')
+    await seedContributor(db, 'collaborator')
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'private' })
+      .where('id', '=', 'share1')
+      .execute()
+    storageMock.getArtifact.mockReset()
+    expect(
+      await appendShareable(
+        db,
+        { ...OWNER, id: 'collaborator' },
+        'share1',
+        'next',
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    expect(storageMock.putArtifact).not.toHaveBeenCalled()
+  })
+
+  test('append rechecks collaborator membership at commit and compensates storage', async () => {
+    await seedUser(db, 'collaborator')
+    await seedContributor(db, 'collaborator')
+    await db
+      .updateTable('shareables')
+      .set({ visibility: 'workspace' })
+      .where('id', '=', 'share1')
+      .execute()
+    storageMock.getArtifact
+      .mockReset()
+      .mockResolvedValue({ size: 5, body: new Blob(['first']).stream() })
+    const before = await db
+      .selectFrom('workspaces')
+      .select('storage_used_bytes')
+      .where('id', '=', OWNER.workspaceId)
+      .executeTakeFirstOrThrow()
+    sqliteRef.beforeNextBatch = async () => {
+      await db
+        .updateTable('workspace_members')
+        .set({ status: 'removed' })
+        .where('user_id', '=', 'collaborator')
+        .execute()
+    }
+    expect(
+      await appendShareable(
+        db,
+        { ...OWNER, id: 'collaborator' },
+        'share1',
+        'next',
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(
+      await db
+        .selectFrom('versions')
+        .select('id')
+        .where('shareable_id', '=', 'share1')
+        .execute(),
+    ).toEqual([{ id: 'v1' }])
+    expect(
+      await db
+        .selectFrom('workspaces')
+        .select('storage_used_bytes')
+        .where('id', '=', OWNER.workspaceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(before)
+    expect(storageMock.deleteArtifact).toHaveBeenCalledOnce()
+  })
+
   test('appendShareable concatenates exactly and preserves the artifact name', async () => {
     storageMock.getArtifact.mockResolvedValue({
       size: 9,
@@ -7071,6 +7202,49 @@ describe('cross-workspace owner operations', () => {
       from: 'link',
       to: 'private',
     })
+  })
+
+  test('append honors verified external grants and denies unverified or revoked grants before source read', async () => {
+    await seedExternalProject(db)
+    await db
+      .updateTable('workspaces')
+      .set({ plan: 'plus', external_posting_enabled: 1 })
+      .where('id', '=', OWNER.workspaceId)
+      .execute()
+    const uploaded = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('shared.html', '<body>owner</body>'),
+      'private',
+      ['ADMIN@CLIENT.EXAMPLE'],
+    )
+    if (uploaded.kind !== 'ok') throw new Error('setup failed')
+    storageMock.getArtifact.mockReset()
+    expect(
+      await appendShareable(
+        db,
+        { ...EXTERNAL_VIEWER, emailVerified: false },
+        uploaded.id,
+        'next',
+      ),
+    ).toEqual({ kind: 'not-found' })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+    storageMock.getArtifact.mockResolvedValueOnce({
+      size: 18,
+      body: new Blob(['<body>owner</body>']).stream(),
+    })
+    expect(
+      (await appendShareable(db, EXTERNAL_VIEWER, uploaded.id, 'next')).kind,
+    ).toBe('ok')
+    await db
+      .deleteFrom('shareable_grants')
+      .where('shareable_id', '=', uploaded.id)
+      .execute()
+    storageMock.getArtifact.mockClear()
+    expect(
+      await appendShareable(db, EXTERNAL_VIEWER, uploaded.id, 'denied'),
+    ).toEqual({ kind: 'not-found' })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
   test('verified external artifact grantee can create a version but cannot change metadata', async () => {
@@ -10382,6 +10556,24 @@ INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,
     }
   })
 
+  test('agent append denies an unapproved destination before reading source', async () => {
+    const created = await uploadShareable(
+      db,
+      OWNER,
+      htmlFile('index.html', 'source'),
+      'private',
+      [],
+    )
+    if (created.kind !== 'ok') throw new Error('setup failed')
+    storageMock.getArtifact.mockReset()
+    expect(
+      await appendShareable(db, OWNER, created.id, 'denied', {
+        authority: agent,
+      }),
+    ).toEqual({ kind: 'not-found' })
+    expect(storageMock.getArtifact).not.toHaveBeenCalled()
+  })
+
   test.each([false, true])(
     'agent append retains destination authority at commit (revoked=%s)',
     async (revoked) => {
@@ -10408,13 +10600,16 @@ INSERT INTO cli_refresh_credentials (id,user_id,token_hash,family_id,expires_at,
             .execute()
         }
       }
-      const result = await appendShareable(
+      const result = await publishArtifact({
         db,
-        OWNER,
-        created.id,
-        '<p>appended</p>',
-        { authority: agent },
-      )
+        actor: {
+          kind: 'agent',
+          user: { ...OWNER, kind: 'human', selfUploadEnabled: true },
+          authority: agent,
+        },
+        target: { kind: 'append', artifactId: created.id },
+        content: { kind: 'append', content: '<p>appended</p>' },
+      })
       expect(result.kind).toBe(revoked ? 'not-found' : 'ok')
       if (revoked) {
         expect(snapshot()).toEqual(before)

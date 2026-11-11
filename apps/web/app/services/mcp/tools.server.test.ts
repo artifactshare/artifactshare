@@ -1838,6 +1838,50 @@ describe('headless publish wiring', () => {
     expect(current.current_version_id).toBe(updated.versionId)
   })
 
+  test('append_artifact returns truthful metadata for a non-owner collaborator', async () => {
+    await seedUser(db, { id: 'author', workspaceId: 'ws-a' })
+    const author = await loadMcpUser(db, 'author')
+    if (!author) throw new Error('seed failed')
+    await db
+      .insertInto('workspace_members')
+      .values({
+        workspace_id: 'ws-a',
+        user_id: 'owner-1',
+        role: 'member',
+        status: 'active',
+        created_at: NOW,
+        updated_at: NOW,
+      })
+      .execute()
+    const published = await uploadShareable(
+      db,
+      author,
+      buildArtifactFile('# Shared title', 'markdown'),
+      'workspace',
+      [],
+      null,
+    )
+    if (published.kind !== 'ok') throw new Error('setup failed')
+    storageMock.getArtifact.mockResolvedValue({
+      body: new Blob(['# Shared title']).stream(),
+      size: 14,
+    })
+    const body = await callTool(db, 'append_artifact', {
+      id: published.id,
+      content: '\nNext',
+    })
+    expect(body.error).toBeUndefined()
+    expect(body.result?.isError).not.toBe(true)
+    expect(body.result?.structuredContent).toMatchObject({
+      id: published.id,
+      title: 'Shared title',
+      visibility: 'workspace',
+      visibility_label: expect.any(String),
+      share_url: `https://artifactshare.com/a/${published.id}`,
+      version_id: expect.any(String),
+    })
+  })
+
   test('append_artifact appends inline content without a separator', async () => {
     const user = await loadMcpUser(db, 'owner-1')
     if (!user) throw new Error('seed failed')

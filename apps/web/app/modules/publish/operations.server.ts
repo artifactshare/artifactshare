@@ -164,6 +164,7 @@ export async function appendShareable(
   user: {
     id: string
     email?: string | null
+    emailVerified?: boolean
     workspaceId: string
     hd?: string | null
   },
@@ -175,7 +176,13 @@ export async function appendShareable(
   },
 ): Promise<AppendVersionResult> {
   if (options?.authority?.kind === 'publisher') return { kind: 'not-found' }
-  const shareable = await findOwnedShareable(db, user, shareableId)
+  const shareable = await findWritableShareable(
+    db,
+    user,
+    shareableId,
+    options?.authority ?? null,
+    'version',
+  )
   if (!shareable) return { kind: 'not-found' }
   // Appending text needs a text source; a PDF or video is binary.
   if (
@@ -344,7 +351,7 @@ export async function createVersion(
   if (externalPosting.kind !== 'ok') return externalPosting
   // A version replaces an existing artifact, so storage / quota / suspension all
   // belong to the workspace that owns the artifact, not the poster's, and no
-  // contributor slot is consumed. findOwnedShareable no longer scopes to the
+  // contributor slot is consumed. Version authorization does not scope to the
   // poster's workspace, so cross-workspace external posts account storage against
   // the project's workspace.
   const accounting = {
@@ -1211,28 +1218,7 @@ async function checkExternalVersionUploadAllowed(
   return { kind: 'ok' }
 }
 
-async function findOwnedShareable(
-  db: Kysely<DB>,
-  user: { id: string; workspaceId: string },
-  shareableId: string,
-) {
-  return (
-    (await db
-      .selectFrom('shareables')
-      .select(['id', 'workspace_id', 'current_version_id', 'artifact_kind'])
-      .where('id', '=', shareableId)
-      .where('owner_user_id', '=', user.id)
-      .where(
-        sql<boolean>`NOT ${workspaceAccessRevokedSql(
-          sql.ref('shareables.workspace_id'),
-          user.id,
-        )}`,
-      )
-      .executeTakeFirst()) ?? null
-  )
-}
-
-async function findWritableShareable(
+export async function findWritableShareable(
   db: Kysely<DB>,
   user: {
     id: string
