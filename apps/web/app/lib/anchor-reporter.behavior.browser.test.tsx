@@ -2030,64 +2030,33 @@ test('persisted lifecycle retains an already scheduled resolve debounce', async 
 })
 
 test('persisted lifecycle retains the original checking deadline', async () => {
-  const doc = await fixture('<p>other words</p>')
-  send('comment-highlights', { highlights: [lifecycleHighlight] })
-  await vi.waitFor(() => expect(results()?.results[0]?.state).toBe('checking'))
-  const generation = results()!.generation
-  await new Promise((resolve) => setTimeout(resolve, 1500))
-  lifecycle(doc, true)
-  await vi.waitFor(
-    () => {
-      expect(results()!.generation).toBeGreaterThan(generation)
-      expect(results()?.results[0]?.state).toBe('needs-check')
-    },
-    { timeout: 2400 },
+  const result = await commands.anchorLifecycleScenario(
+    'persisted-deadline',
+    VIOLATION_REPORTER_SCRIPT_BODY,
   )
+  if (result.scenario !== 'persisted-deadline')
+    throw new Error('Wrong lifecycle scenario')
+  expect(result.initial.states).toEqual(['checking'])
+  expect(result.beforeDeadline.states).toEqual(['checking'])
+  expect(result.after.states).toEqual(['needs-check'])
+  expect(result.after.generation).toBeGreaterThan(result.initial.generation)
 }, 15000)
 
 test('non-persisted lifecycle removes paint and cancels pending reports', async () => {
-  const doc = await fixture(
-    '<p>painted words</p><p id="selected">other words</p>',
+  const result = await commands.anchorLifecycleScenario(
+    'unload',
+    VIOLATION_REPORTER_SCRIPT_BODY,
   )
-  send('comment-highlights', {
-    highlights: [
-      {
-        ...lifecycleHighlight,
-        threadId: 'painted',
-        quotedText: 'painted words',
-      },
-      lifecycleHighlight,
-    ],
-  })
-  await vi.waitFor(() => {
-    expect(results()?.results.map((result) => result.state)).toEqual([
-      'attached',
-      'checking',
-    ])
-  })
-  send('verify-anchors', {
-    verificationId: 1,
-    anchors: [
-      { kind: 'text', thread: 'thread-1', quotedText: 'selected words' },
-    ],
-  })
-  const verdicts = () =>
-    messages.filter(
-      (message) => (message as { kind: string }).kind === 'anchor-verdicts',
-    )
-  await vi.waitFor(() => expect(verdicts().length).toBeGreaterThan(0))
-  const verdictCount = verdicts().length
-  const badge = doc.querySelector('.ash-comment-highlight-badge')!
-  await pendingLifecycleMutation(doc)
-  const generation = results()!.generation
-  lifecycle(doc, false)
-  expect(registry(doc).size).toBe(0)
-  expect(badge.isConnected).toBe(false)
-  doc.querySelector('#selected')!.textContent = 'changed again'
-  await new Promise((resolve) => setTimeout(resolve, 3500))
-  expect(results()!.generation).toBe(generation)
-  expect(verdicts()).toHaveLength(verdictCount)
-  expect(registry(doc).size).toBe(0)
+  if (result.scenario !== 'unload') throw new Error('Wrong lifecycle scenario')
+  expect(result.initial.states).toEqual(['attached', 'checking'])
+  expect(result.initial.paintCount).toBeGreaterThan(0)
+  expect(result.initial.badgeConnected).toBe(true)
+  expect(result.initial.verdictCount).toBeGreaterThan(0)
+  expect(result.immediate.paintCount).toBe(0)
+  expect(result.immediate.badgeConnected).toBe(false)
+  expect(result.after.generation).toBe(result.initial.generation)
+  expect(result.after.verdictCount).toBe(result.initial.verdictCount)
+  expect(result.after.paintCount).toBe(0)
 }, 15000)
 
 test.each([
