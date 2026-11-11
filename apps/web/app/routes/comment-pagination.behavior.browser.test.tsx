@@ -110,6 +110,7 @@ function Harness({
   )
 }
 let root: Root | undefined
+let exitObserver: MutationObserver | undefined
 async function mount(showNewThreadComposer = true) {
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -120,6 +121,9 @@ async function mount(showNewThreadComposer = true) {
     .toBeVisible()
 }
 afterEach(() => {
+  vi.useRealTimers()
+  exitObserver?.disconnect()
+  exitObserver = undefined
   locale.value = 'en'
   toast.dismiss()
   root?.unmount()
@@ -237,12 +241,35 @@ test('a failed comment retry stays visible when its prior notification is exitin
       (entry) => 'title' in entry && entry.title === en['comments.errorSave'],
     )!
   expect(priorToast).toBeDefined()
-  toast.dismiss(priorToast.id)
-  // Reissue only after Sonner commits its real exit state, before detachment.
-  await vi.waitFor(() => expect(prior.dataset.removed).toBe('true'))
-  expect(prior.isConnected).toBe(true)
-  expect(await mutate!(payload)).toBe(false)
-  expect(prior.isConnected).toBe(true)
+  // Hold Sonner's exit timeout while its real animation frames commit removal.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const removed = new Promise<void>((resolve) => {
+      exitObserver = new MutationObserver(() => {
+        if (prior.dataset.removed === 'true') {
+          exitObserver!.disconnect()
+          resolve()
+        }
+      })
+      exitObserver.observe(prior, {
+        attributes: true,
+        attributeFilter: ['data-removed'],
+      })
+    })
+    toast.dismiss(priorToast.id)
+    await removed
+    expect(prior.dataset.removed).toBe('true')
+    expect(prior.isConnected).toBe(true)
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    expect(await mutate!(payload)).toBe(false)
+    expect(prior.isConnected).toBe(true)
+    // Run the queued error update and Sonner's 200ms exit lifecycle.
+    await vi.advanceTimersByTimeAsync(200)
+  } finally {
+    exitObserver?.disconnect()
+    exitObserver = undefined
+    vi.useRealTimers()
+  }
   await vi.waitFor(() => expect(prior.isConnected).toBe(false))
   await expect
     .element(page.getByText(en['comments.errorSave'], { exact: true }))
