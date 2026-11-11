@@ -74,3 +74,46 @@ Anchor results still use the existing thread merge precedence. Retained window
 coverage is established by server results, not by adjacency in the local cache.
 The socket recovery state machine remains responsible for connection ownership
 and authorization, separately from whether recovered rows can be adopted.
+
+## Executable comparison boundary
+
+`app/test/comment-sync-harness.tsx` accepts the viewer hook as its engine. A run
+owns one React root, two independent mutation hooks (panel and popover), the
+production reply reducer, deferred HTTP responses, and request/cancellation
+traces. Run the same input script sequentially with each engine; do not mount
+the engines together. Each run has explicit expected snapshots as well as the
+cross-run equality check, so two equally wrong results do not constitute a pass.
+
+Disposal unmounts every display, requires all HTTP gates and mutations to have
+finished, and verifies that the touched Runtime records have been collected.
+Failure cleanup drains unresolved HTTP gates before restoring the original
+fetch, then fails the test; it does not accept unfinished work as success.
+There is no production reset function. The harness currently exercises the
+legacy engine twice. This proves repeatability, not equivalence to an engine
+that has not yet been implemented.
+
+The input surface includes artifact/target navigation, draft edits, independently
+started posts, controlled responses, explicit target recovery, and unmounting.
+Snapshots expose rows, drafts, UI pending keys and target failure. Traces retain
+HTTP method/path and cancellation. Socket authorization/reconnect tests remain
+real hook/browser integration tests; the target-retry scenario does not replace
+or claim to cover that state machine.
+
+| Contract                                                                        | Executable evidence                                                                                                         |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| A post → B → A → settlement preserves a newer draft                             | `comment-runtime.integration.test.tsx`: navigation and new draft scenario                                                   |
+| Independent panel/popover posts suppress partial responses until both settle    | `comment-runtime.integration.test.tsx`: independent panel and popover posts                                                 |
+| Completion after every display unmounts does not notify the next display        | `comment-runtime.integration.test.tsx`: post can finish after every display unmounts                                        |
+| Failed target fetch can recover explicitly; artifact switch cancels its request | `comment-runtime.integration.test.tsx`: target failure, explicit recovery and request cancellation                          |
+| Same-thread dirtiness during a page requires revalidation                       | `comment-reconciliation.test.tsx`: `same-thread change` / `socket reopen` delayed page cases                                |
+| A late page cannot restore removed membership                                   | `comment-reconciliation.test.tsx`: late page cannot restore a thread dropped from the unselected panel                      |
+| A selected thread can survive URL cleanup outside the summary window            | `comment-reconciliation.test.tsx`: accepted outside-window navigation survives URL cleanup                                  |
+| Missing target/range errors retain accessible history and expose retry          | `comment-reconciliation.test.tsx`: invalid range keeps accessible cached replies; missing target exposes retry              |
+| A newer generation supersedes an older refresh                                  | `comment-reconciliation.test.tsx`: page winning the mutation reconciliation race; selection changing during a delayed range |
+| Render attempts cannot mutate committed scope                                   | `comment-reconciliation.test.tsx`: committed artifact changes, StrictMode and suspended renders                             |
+| Thread/all epochs preserve page retry scope                                     | `use-comment-page.test.tsx`: thread/all/other invalidation cases                                                            |
+| Runtime records survive pending reads/jobs and are released afterwards          | `comment-runtime.test.ts`: read leases; reacquiring during settlement                                                       |
+
+The comparison harness tests externally observable hook operations. Existing
+scope/epoch and scheduler unit tests additionally inspect internal contracts;
+they are useful diagnostics but do not replace the hook or browser scenarios.

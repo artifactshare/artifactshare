@@ -1,12 +1,12 @@
-import { withCommentRuntime } from './comment-runtime-browser'
 // @vitest-environment happy-dom
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
-import type { CommentThreadView } from '~/lib/comments'
-import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useViewerComments } from './viewer-shell'
-import { useCommentMutations } from './use-comment-mutations'
+import {
+  commentFixture,
+  runCommentSyncScenario,
+  type CommentSyncEngine,
+} from '~/test/comment-sync-harness'
 
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
@@ -16,221 +16,193 @@ vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
   return { useT: () => bindI18n('en') }
 })
-const at = '2026-05-01T00:00:00.000Z'
-function thread(id: string, body = id): CommentThreadView {
-  return {
-    id,
-    status: 'open',
-    subject: { kind: 'artifact' },
-    createdAt: at,
-    updatedAt: at,
-    resolvedAt: null,
-    canResolve: true,
-    messageCount: 1,
-    replyCount: 0,
-    olderCursor: null,
-    messages: [
-      {
-        id: `${id}-message`,
-        body,
-        createdAt: at,
-        updatedAt: at,
-        agent: null,
-        canEdit: true,
-        canDelete: true,
-        author: {
-          id: 'reviewer',
-          name: 'Reviewer',
-          email: 'reviewer@example.com',
-          image: null,
-        },
-      },
-    ],
-  }
-}
-const initial = [thread('selected'), thread('other')]
-let comments: ReturnType<typeof useViewerComments>
-let mutations: ReturnType<typeof useCommentMutations>
-function Harness({
-  artifact = 'synthetic-artifact',
-  navigationTarget = 'selected',
-  liveEnabled = false,
-}: {
-  artifact?: string
-  navigationTarget?: string | null
-  liveEnabled?: boolean
-}) {
-  comments = useViewerComments({
-    framePresent: false,
-    artifactId: artifact,
-    currentUserId: 'reviewer',
-    currentVersionId: null,
-    initialThreads:
-      artifact === 'different-artifact'
-        ? [thread('b-only', 'B original')]
-        : initial,
-    targetCommentId: navigationTarget,
-    liveEnabled,
-  })
-  mutations = useCommentMutations({
-    shareableId: artifact,
-    isCurrentShareableId: comments.isCurrentArtifactId,
-    onThreadsChange: comments.replaceThreads,
-  })
-  return null
-}
-let root: Root | undefined
-async function render(
-  artifact?: string,
-  navigationTarget: string | null = 'selected',
-) {
-  if (!root) root = createRoot(document.createElement('div'))
-  await act(async () =>
-    root!.render(
-      <Harness artifact={artifact} navigationTarget={navigationTarget} />,
-    ),
-  )
-}
-async function until(condition: () => boolean) {
-  await waitForRealTaskCondition(async () => {
-    await act(async () => {})
-    return condition()
-  }, 'comment reconciliation completed')
-}
-afterEach(async () => {
-  if (root) await act(async () => root!.unmount())
-  root = undefined
-  vi.unstubAllGlobals()
-})
+beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
+afterEach(() => vi.unstubAllGlobals())
 
-test('migration probe: isolated sequential scenarios via public hook operations', async () => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  async function scenario() {
-    let answer!: (value: Response) => void
-    const reads: string[] = []
-    const cancellations: string[] = []
-    let answerSummary!: (response: Response) => void
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string, init?: RequestInit) => {
-        if (init?.method === 'POST')
-          return new Promise<Response>((resolve) => {
-            answer = resolve
-          })
-        reads.push(url)
-        init?.signal?.addEventListener('abort', () => cancellations.push(url), {
-          once: true,
-        })
-        return new Promise<Response>((resolve) => {
-          answerSummary = resolve
-        })
-      }),
-    )
-    await render('synthetic-artifact', null)
-    const pending = mutations.mutate({
-      intent: 'reply',
-      threadId: 'selected',
-      body: 'probe',
-    })
-    await until(() => typeof answer === 'function')
-    await render('different-artifact', null)
-    expect(comments.state.threads[0].messages[0].body).toBe('B original')
-    await render('synthetic-artifact', null)
-    await act(async () => {
-      answer(
-        Response.json({
-          threadId: 'selected',
-          threads: [thread('selected', 'settled'), initial[1]],
-        }),
-      )
-      await pending
-    })
-    const postBodies = comments.state.threads.map((t) => t.messages[0].body)
-    expect(postBodies).toEqual(['settled', 'other'])
-    await until(() => typeof answerSummary === 'function')
-    await act(async () => {
-      answerSummary(
-        Response.json({
-          threads: [thread('selected', 'reconciled'), initial[1]],
-        }),
-      )
-    })
-    await until(
-      () => comments.state.threads[0].messages[0].body === 'reconciled',
-    )
-    const result = {
-      artifact: comments.state.artifactId,
-      postBodies,
-      requests: [...reads],
-      cancellations: [...cancellations],
-      bodies: comments.state.threads.map((t) => t.messages[0].body),
-      failed: comments.targetFetchFailed,
-    }
-    await act(async () => root!.unmount())
-    root = undefined
-    const count = reads.length
-    await act(async () => {})
-    expect(reads).toHaveLength(count)
-    expect(result).toEqual({
-      artifact: 'synthetic-artifact',
-      postBodies: ['settled', 'other'],
-      requests: ['/api/shareables/synthetic-artifact/comments'],
-      cancellations: [],
-      bodies: ['reconciled', 'other'],
+const rows = (body: string) => [
+  commentFixture('selected', body),
+  commentFixture('other'),
+]
+const expectedRows = (body: string) => [
+  { id: 'selected', bodies: [body] },
+  { id: 'other', bodies: ['other'] },
+]
+
+// The same input script can be run with the future engine hook. Each execution
+// owns its React root and HTTP gates, and disposal proves shared records empty.
+async function navigationScenario(engine: CommentSyncEngine) {
+  return runCommentSyncScenario(engine, async (driver) => {
+    await driver.mount('a')
+    await driver.draft('submitted')
+    const post = await driver.post()
+    await driver.waitForRequests(1)
+    await driver.mount('b')
+    expect(driver.snapshot().threads).toEqual([
+      { id: 'b-only', bodies: ['B original'] },
+    ])
+    await driver.mount('a')
+    await driver.draft('new draft')
+    expect(driver.pending()).toBe(true)
+    await driver.respond(0, { threadId: 'selected', threads: rows('posted') })
+    await act(async () => expect(await post.done).toBe(true))
+    const afterPost = driver.snapshot()
+    expect(afterPost.threads).toEqual(expectedRows('posted'))
+    expect(afterPost.drafts).toEqual({ selected: 'new draft' })
+    expect(afterPost.pending).toEqual([[], []])
+    await driver.waitForRequests(2)
+    await driver.respond(1, { threads: rows('reconciled') })
+    const final = driver.snapshot()
+    expect(final).toEqual({
+      artifact: 'a',
+      threads: expectedRows('reconciled'),
+      drafts: { selected: 'new draft' },
+      pending: [[], []],
       failed: false,
     })
-    return result
+    expect(driver.trace).toEqual([
+      'POST /api/shareables/a/comments',
+      'GET /api/shareables/a/comments',
+    ])
+    return { afterPost, final, trace: [...driver.trace] }
+  })
+}
+
+test('the navigation and new draft scenario has independently verified sequential runs', async () => {
+  const first = await navigationScenario(useViewerComments)
+  const second = await navigationScenario(useViewerComments)
+  expect(second).toEqual(first)
+})
+
+test('an A response arriving while B is displayed cannot replace B data', async () => {
+  async function scenario() {
+    return runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount('a')
+      const post = await driver.post()
+      await driver.waitForRequests(1)
+      await driver.mount('b')
+      await driver.respond(0, {
+        threadId: 'selected',
+        threads: rows('A committed'),
+      })
+      await act(async () => expect(await post.done).toBe(false))
+      expect(driver.pending('a')).toBe(false)
+      const snapshot = driver.snapshot()
+      expect(snapshot.artifact).toBe('b')
+      expect(snapshot.threads).toEqual([
+        { id: 'b-only', bodies: ['B original'] },
+      ])
+      expect(driver.requests).toHaveLength(1)
+      return snapshot
+    })
   }
   expect(await scenario()).toEqual(await scenario())
 })
 
-test('an A response arriving while B is shown does not replace B data', async () => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  let answer!: (response: Response) => void
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((url: string, init?: RequestInit) => {
-      if (init?.method === 'POST')
-        return new Promise<Response>((resolve) => {
-          answer = resolve
-        })
-      return Promise.resolve(
-        Response.json({ threads: [thread('b-only', 'B original')] }),
-      )
-    }),
-  )
-  await render('synthetic-artifact', null)
-  let pending!: Promise<boolean>
-  await act(async () => {
-    pending = mutations.mutate({
-      intent: 'reply',
+async function overlappingScenario(engine: CommentSyncEngine) {
+  return runCommentSyncScenario(engine, async (driver) => {
+    await driver.mount()
+    const panelPost = await driver.post(0, 'panel')
+    const popoverPost = await driver.post(1, 'popover')
+    await driver.waitForRequests(2)
+    expect(driver.snapshot().pending).toEqual([
+      ['reply:selected'],
+      ['reply:selected'],
+    ])
+    await driver.respond(0, {
       threadId: 'selected',
-      body: 'A draft',
+      threads: rows('partial panel response'),
     })
+    await act(async () => expect(await panelPost.done).toBe(true))
+    expect(driver.pending()).toBe(true)
+    expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
+    expect(driver.snapshot().pending).toEqual([[], ['reply:selected']])
+    expect(driver.requests).toHaveLength(2)
+    await driver.respond(1, {
+      threadId: 'selected',
+      threads: rows('partial popover response'),
+    })
+    await act(async () => expect(await popoverPost.done).toBe(true))
+    // Neither partial response is a complete authoritative result of both posts.
+    expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
+    expect(driver.pending()).toBe(false)
+    await driver.waitForRequests(3)
+    await driver.respond(2, { threads: rows('both committed') })
+    const snapshot = driver.snapshot()
+    expect(snapshot.threads).toEqual(expectedRows('both committed'))
+    expect(snapshot.pending).toEqual([[], []])
+    expect(driver.trace).toEqual([
+      'POST /api/shareables/a/comments',
+      'POST /api/shareables/a/comments',
+      'GET /api/shareables/a/comments',
+    ])
+    return { snapshot, trace: [...driver.trace] }
   })
-  await until(() => typeof answer === 'function')
-  await render('different-artifact', null)
-  let posted: boolean | undefined
-  await act(async () => {
-    answer(
-      Response.json({
+}
+
+test('independent panel and popover posts share overlap tracking until reconciliation', async () => {
+  expect(await overlappingScenario(useViewerComments)).toEqual(
+    await overlappingScenario(useViewerComments),
+  )
+})
+
+test('a post can finish after every display unmounts without notifying a later display', async () => {
+  async function scenario() {
+    return runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount()
+      const post = await driver.post()
+      await driver.waitForRequests(1)
+      await driver.unmount()
+      expect(driver.pending()).toBe(true)
+      await driver.respond(0, {
         threadId: 'selected',
-        threads: [thread('selected', 'A committed')],
-      }),
-    )
-    posted = await pending
-  })
-  expect(posted).toBe(false)
-  expect(
-    withCommentRuntime('synthetic-artifact', (lease) => lease.hasPending()),
-  ).toBe(false)
-  expect(
-    withCommentRuntime('synthetic-artifact', (lease) =>
-      lease.getEpoch('selected'),
-    ),
-  ).toBe(0)
-  expect(comments.state.artifactId).toBe('different-artifact')
-  expect(comments.state.threads.map((t) => t.messages[0].body)).toEqual([
-    'B original',
-  ])
+        threads: rows('detached response'),
+      })
+      await act(async () => expect(await post.done).toBe(true))
+      expect(driver.pending()).toBe(false)
+      // No detached subscriber requested a summary and a new display starts fresh.
+      expect(driver.requests).toHaveLength(1)
+      await driver.mount()
+      expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
+      expect(driver.snapshot().pending).toEqual([[], []])
+      return { snapshot: driver.snapshot(), trace: [...driver.trace] }
+    })
+  }
+  expect(await scenario()).toEqual(await scenario())
+})
+
+test('the driver observes target failure, explicit recovery and request cancellation', async () => {
+  async function scenario() {
+    return runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount('a', 'outside')
+      await driver.waitForRequests(1)
+      expect(driver.requests[0].path).toBe('/api/shareables/a/comments')
+      await driver.respond(0, { error: 'Synthetic offline' }, 503)
+      expect(driver.snapshot().failed).toBe(true)
+      await driver.retryTarget()
+      await driver.waitForRequests(2)
+      await driver.respond(1, { threads: rows('summary') })
+      await driver.waitForRequests(3)
+      await driver.respond(2, {
+        threads: [commentFixture('outside', 'Recovered target')],
+      })
+      expect(driver.snapshot().failed).toBe(false)
+      expect(driver.snapshot().threads).toContainEqual({
+        id: 'outside',
+        bodies: ['Recovered target'],
+      })
+      const recovered = driver.snapshot()
+      await driver.mount('a', 'another-target')
+      await driver.waitForRequests(4)
+      await driver.mount('b')
+      expect(driver.trace).toEqual([
+        'GET /api/shareables/a/comments',
+        'GET /api/shareables/a/comments',
+        'GET /api/shareables/a/comments?thread_id=outside',
+        'GET /api/shareables/a/comments',
+        'cancel GET /api/shareables/a/comments',
+      ])
+      return { recovered, trace: [...driver.trace] }
+    })
+  }
+  expect(await scenario()).toEqual(await scenario())
 })
