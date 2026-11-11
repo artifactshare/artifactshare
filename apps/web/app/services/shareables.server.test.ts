@@ -7247,6 +7247,37 @@ describe('cross-workspace owner operations', () => {
     expect(storageMock.getArtifact).not.toHaveBeenCalled()
   })
 
+  test.each([
+    { plan: 'plus', external_posting_enabled: 0 },
+    { plan: 'free', external_posting_enabled: 1 },
+  ] as const)(
+    'append denies a verified external grantee before storage access with policy %j',
+    async (policy) => {
+      await seedExternalProject(db)
+      const uploaded = await uploadShareable(
+        db,
+        OWNER,
+        htmlFile('shared.html', '<body>owner</body>'),
+        'private',
+        [EXTERNAL_VIEWER.email],
+      )
+      if (uploaded.kind !== 'ok') throw new Error('setup failed')
+      await db
+        .updateTable('workspaces')
+        .set(policy)
+        .where('id', '=', OWNER.workspaceId)
+        .execute()
+      storageMock.getArtifact.mockReset().mockResolvedValue(null)
+      storageMock.putArtifact.mockClear()
+
+      expect(
+        await appendShareable(db, EXTERNAL_VIEWER, uploaded.id, 'denied'),
+      ).toEqual({ kind: 'invalid-container' })
+      expect(storageMock.getArtifact).not.toHaveBeenCalled()
+      expect(storageMock.putArtifact).not.toHaveBeenCalled()
+    },
+  )
+
   test('verified external artifact grantee can create a version but cannot change metadata', async () => {
     await seedExternalProject(db)
     await db

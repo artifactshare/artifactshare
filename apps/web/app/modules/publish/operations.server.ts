@@ -184,6 +184,12 @@ export async function appendShareable(
     'version',
   )
   if (!shareable) return { kind: 'not-found' }
+  const externalPosting = await checkExternalVersionUploadAllowed(
+    db,
+    shareable.workspace_id,
+    user.workspaceId,
+  )
+  if (externalPosting.kind !== 'ok') return externalPosting
   // Appending text needs a text source; a PDF or video is binary.
   if (
     shareable.artifact_kind === 'static_site' ||
