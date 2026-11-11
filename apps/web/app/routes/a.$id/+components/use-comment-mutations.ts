@@ -6,7 +6,7 @@ import type {
   ChangeCommentThreads,
   CommentThreadPatch,
 } from './comment-history'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -74,6 +74,7 @@ export function useCommentMutations({
   const { t } = useT()
   const revalidator = useRevalidator()
   const toastPrefix = useId()
+  const errorToasts = useRef(new Map<string, string>())
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -89,8 +90,19 @@ export function useCommentMutations({
         : 'threadId' in payload
           ? payload.threadId
           : 'new-thread'
-    const errorToastId = `comment-save:${toastPrefix}:${requestShareableId}:${payload.intent}:${target}`
+    const operationKey = `comment-save:${toastPrefix}:${requestShareableId}:${payload.intent}:${target}`
+    const priorErrorToastId = errorToasts.current.get(operationKey)
     const clientMutationId = createClientMutationId()
+    const showError = (
+      message: string,
+      action?: { label: string; onClick: () => void },
+    ) => {
+      const previous = errorToasts.current.get(operationKey)
+      if (previous !== undefined) toast.dismiss(previous)
+      const id = `${operationKey}:${clientMutationId}`
+      errorToasts.current.set(operationKey, id)
+      toast.error(message, { id, action })
+    }
     let appliedThreads = false
     let threadId = 'threadId' in payload ? payload.threadId : undefined
     const runtime = acquireCommentRuntime(requestShareableId)
@@ -121,22 +133,20 @@ export function useCommentMutations({
       const response = result.response
       if (!response.ok) {
         if (result.body?.error?.code === 'thread-capacity') {
-          toast.error(
+          showError(
             t(
               showNewThreadComposer
                 ? 'comments.threadCapacityArtifact'
                 : 'comments.threadCapacity',
             ),
-            { id: errorToastId, action: undefined },
           )
           return false
         }
         if (result.body?.error?.code === 'rate-limited') {
-          toast.error(
+          showError(
             t('comments.rateLimited', {
               seconds: result.body.error.details?.retry_after_seconds ?? 60,
             }),
-            { id: errorToastId, action: undefined },
           )
           return false
         }
@@ -148,21 +158,18 @@ export function useCommentMutations({
             payload.anchor !== undefined &&
             'kind' in payload.anchor &&
             payload.anchor.kind === 'pdf-page'
-          toast.error(
+          showError(
             t(
               pagePost
                 ? 'comments.versionConflictPage'
                 : 'comments.versionConflict',
             ),
             {
-              id: errorToastId,
-              action: {
-                label: t('home.reload'),
-                onClick: () => {
-                  if (isCurrentShareableId(requestShareableId)) {
-                    void revalidator.revalidate()
-                  }
-                },
+              label: t('home.reload'),
+              onClick: () => {
+                if (isCurrentShareableId(requestShareableId)) {
+                  void revalidator.revalidate()
+                }
               },
             },
           )
@@ -177,7 +184,13 @@ export function useCommentMutations({
         })
         throw new Error('comment mutation failed')
       }
-      toast.dismiss(errorToastId)
+      // A concurrent failure owns its own notification, even for this operation.
+      if (priorErrorToastId !== undefined) {
+        toast.dismiss(priorErrorToastId)
+        if (errorToasts.current.get(operationKey) === priorErrorToastId) {
+          errorToasts.current.delete(operationKey)
+        }
+      }
       if (!isCurrentShareableId(requestShareableId)) return false
       const body = result.body
       threadId =
@@ -201,10 +214,7 @@ export function useCommentMutations({
           reason: viewerFetchFailureReason(error),
         })
       }
-      toast.error(t('comments.errorSave'), {
-        id: errorToastId,
-        action: undefined,
-      })
+      showError(t('comments.errorSave'))
       return false
     } finally {
       job?.settle({

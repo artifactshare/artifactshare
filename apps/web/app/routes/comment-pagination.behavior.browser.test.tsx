@@ -9,6 +9,7 @@ import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
+import { useCommentMutations } from './a.$id/+components/use-comment-mutations'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPanel } from './a.$id/+components/comment-panel'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
@@ -203,6 +204,53 @@ test.each([
   await expect
     .element(page.getByRole('button', { name: 'Post', exact: true }))
     .toBeEnabled()
+})
+
+test('a failed comment retry stays visible when its prior notification is exiting', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => Response.json({ error: {} }, { status: 503 })),
+  )
+  let mutate: ReturnType<typeof useCommentMutations>['mutate'] | undefined
+  function RetryHarness() {
+    mutate = useCommentMutations({
+      shareableId: 'retry-artifact',
+      isCurrentShareableId: () => true,
+      onThreadsChange: () => {},
+    }).mutate
+    return <Toaster duration={Infinity} />
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  root.render(<RetryHarness />)
+  await vi.waitFor(() => expect(mutate).toBeTypeOf('function'))
+  const payload = { intent: 'create-thread', body: 'Unsent review' } as const
+  expect(await mutate!(payload)).toBe(false)
+  await expect
+    .element(page.getByText(en['comments.errorSave'], { exact: true }))
+    .toBeVisible()
+  const prior = host.querySelector<HTMLElement>('[data-sonner-toast]')!
+  const priorToast = toast
+    .getToasts()
+    .find(
+      (entry) => 'title' in entry && entry.title === en['comments.errorSave'],
+    )!
+  expect(priorToast).toBeDefined()
+  toast.dismiss(priorToast.id)
+  // Reissue only after Sonner commits its real exit state, before detachment.
+  await vi.waitFor(() => expect(prior.dataset.removed).toBe('true'))
+  expect(prior.isConnected).toBe(true)
+  expect(await mutate!(payload)).toBe(false)
+  expect(prior.isConnected).toBe(true)
+  await vi.waitFor(() => expect(prior.isConnected).toBe(false))
+  await expect
+    .element(page.getByText(en['comments.errorSave'], { exact: true }))
+    .toBeVisible()
+  const current = host.querySelector<HTMLElement>('[data-sonner-toast]')!
+  expect(current).not.toBe(prior)
+  expect(current.dataset.removed).toBe('false')
+  expect(current.querySelector('[data-button]')).toBeNull()
 })
 
 test.each([
