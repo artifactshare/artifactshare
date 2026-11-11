@@ -28,6 +28,7 @@ import { IconButton } from '~/components/app/icon-button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs'
 import { Textarea } from '~/components/ui/textarea'
 import { useT } from '~/hooks/use-t'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import { copyShareUrl } from '~/lib/clipboard'
 import {
   commentDeepLinkUrl,
@@ -528,15 +529,36 @@ function NewThreadComposer({
   // Removing the page keeps this draft on the whole file, wherever the reader
   // moves next; a posted comment starts the next draft on the page again.
   const [pageRemoved, setPageRemoved] = useState(false)
+  const latestDraft = useLatestRef({ body, pageRemoved })
   const attachedPage = pageRemoved ? null : pdfPage
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!body.trim()) return
+    if (!body.trim() || pending) return
+    const submittedBody = body
+    const submittedPageRemoved = pageRemoved
+    const form = event.currentTarget
+    const button = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    )
+    const textarea = form.querySelector('textarea')
     // The page is taken when the comment is sent, not when it is saved.
     const anchor = attachedPage
       ? { kind: 'pdf-page' as const, ...attachedPage }
       : undefined
-    if (await onSubmit(body, anchor)) {
+    if (
+      (await onSubmit(submittedBody, anchor)) &&
+      latestDraft.current.body === submittedBody &&
+      latestDraft.current.pageRemoved === submittedPageRemoved
+    ) {
+      // Clearing disables Post; keep keyboard focus in this mounted composer
+      // only when the reader has not moved it elsewhere during the request.
+      if (
+        form.isConnected &&
+        form.ownerDocument.activeElement === button &&
+        textarea
+      ) {
+        textarea.focus({ preventScroll: true })
+      }
       setBody('')
       setPageRemoved(false)
     }
@@ -579,14 +601,20 @@ function NewThreadComposer({
         )}
         onChange={(event) => setBody(event.currentTarget.value)}
       />
+      <span role="status" className="sr-only">
+        {pending ? t('comments.sending') : ''}
+      </span>
       <div className="mt-2 flex justify-end gap-2">
         <Button
           type="submit"
           variant="default"
           size="sm"
-          disabled={!body.trim() || pending}
+          className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+          disabled={!body.trim()}
+          aria-disabled={pending || undefined}
+          aria-busy={pending || undefined}
         >
-          {t('comments.post')}
+          {t(pending ? 'comments.sending' : 'comments.post')}
         </Button>
       </div>
     </form>

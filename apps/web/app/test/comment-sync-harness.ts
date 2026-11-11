@@ -1,7 +1,8 @@
+import { commentFixture } from './comment-fixtures'
+export { commentFixture } from './comment-fixtures'
 import { act, createElement, useReducer } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { expect, vi } from 'vitest'
-import type { CommentThreadView } from '~/lib/comments'
 import { waitForRealTaskCondition } from './wait-for-real-task-condition'
 import type { useViewerComments } from '~/routes/a.$id/+components/viewer-shell'
 import { useCommentMutations } from '~/routes/a.$id/+components/use-comment-mutations'
@@ -21,39 +22,6 @@ type Request = {
   settled: boolean
   respond: (body: unknown, status?: number) => void
 }
-const timestamp = '2026-05-01T00:00:00.000Z'
-export function commentFixture(id: string, body = id): CommentThreadView {
-  return {
-    id,
-    status: 'open',
-    subject: { kind: 'artifact' },
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    resolvedAt: null,
-    canResolve: true,
-    messageCount: 1,
-    replyCount: 0,
-    olderCursor: null,
-    messages: [
-      {
-        id: `${id}-message`,
-        body,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        agent: null,
-        canEdit: true,
-        canDelete: true,
-        author: {
-          id: 'reviewer',
-          name: 'Reviewer',
-          email: 'reviewer@example.com',
-          image: null,
-        },
-      },
-    ],
-  }
-}
-
 /** Per-run React roots, HTTP gates and traces. No production reset API. */
 export async function runCommentSyncScenario<T>(
   useEngine: CommentSyncEngine,
@@ -246,6 +214,7 @@ function createDriver(useEngine: CommentSyncEngine) {
     snapshot() {
       return {
         artifact: display.state.artifactId,
+        target: display.state.targetThreadId,
         threads: display.state.threads.map((thread) => ({
           id: thread.id,
           bodies: thread.messages.map((message) => message.body),

@@ -1,6 +1,19 @@
 import { acquireCommentRuntime } from './comment-runtime-browser'
 import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
-import { useCallback, useEffect, useRef, useState, useReducer } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useSyncExternalStore,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useReducer,
+} from 'react'
+import type { CommentPageConsumerSnapshot } from './comment-session'
+import type { CommentSession } from './comment-data-port'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import type { CommentThreadView } from '~/lib/comments'
 import { fetchJsonWithViewerTimeout } from '~/lib/viewer-network'
 import { hasPendingCommentMutation } from './use-comment-mutations'
@@ -9,12 +22,13 @@ import type {
   CommentPageRequest,
 } from './comment-history'
 
-export function useCommentPage(
+function useLegacyCommentPage(
   shareableId: string,
   threadId: string,
   onThreadsChange: ChangeCommentThreads,
   targetMessageId?: string,
   onTargetMissing?: (messageId: string) => void,
+  enabled = true,
 ) {
   const [status, setStatus] = useState<
     | { kind: 'idle' | 'loading' }
@@ -32,13 +46,14 @@ export function useCommentPage(
   }, [targetMessageId])
   const [settled, notifySettled] = useReducer((value: number) => value + 1, 0)
   useEffect(() => {
+    if (!enabled) return
     const runtime = acquireCommentRuntime(shareableId)
     const unsubscribe = runtime.subscribe(() => notifySettled())
     return () => {
       unsubscribe()
       runtime.release()
     }
-  }, [shareableId])
+  }, [shareableId, enabled])
   useEffect(
     () => () => {
       active.current?.abort()
@@ -50,7 +65,7 @@ export function useCommentPage(
   )
   const load = useCallback(
     async (page: CommentPageRequest): Promise<boolean> => {
-      if (active.current) return false
+      if (!enabled || active.current) return false
       if (hasPendingCommentMutation(shareableId)) {
         queued.current = page
         setStatus({ kind: 'loading' })
@@ -144,17 +159,19 @@ export function useCommentPage(
         }
       }
     },
-    [shareableId, threadId, onThreadsChange, onTargetMissing],
+    [shareableId, threadId, onThreadsChange, onTargetMissing, enabled],
   )
   useEffect(() => {
     if (
+      enabled &&
       queued.current &&
       !active.current &&
       !hasPendingCommentMutation(shareableId)
     )
       void load(queued.current)
-  }, [settled, load, shareableId])
+  }, [settled, load, shareableId, enabled])
   useEffect(() => {
+    if (!enabled) return
     if (!targetMessageId) {
       attemptedTarget.current = undefined
       return
@@ -170,11 +187,64 @@ export function useCommentPage(
       aroundMessageId: targetMessageId,
       limit: COMMENT_REPLY_PAGE_LIMIT,
     })
-  }, [targetMessageId, shareableId, threadId, load, status, settled])
+  }, [targetMessageId, shareableId, threadId, load, status, settled, enabled])
   return {
     load,
     pending: status.kind === 'loading',
     failed: status.kind === 'failed',
     failedRequest: status.kind === 'failed' ? status.request : undefined,
   }
+}
+
+/** One provider covers panel and inline consumers; null preserves legacy transport. */
+export const CommentPageSessionContext = createContext<CommentSession | null>(
+  null,
+)
+const idlePage: CommentPageConsumerSnapshot = { pending: false, failed: false }
+const subscribeIdle = () => () => {}
+const getIdle = () => idlePage
+
+export function useCommentPage(
+  shareableId: string,
+  threadId: string,
+  onThreadsChange: ChangeCommentThreads,
+  targetMessageId?: string,
+  onTargetMissing?: (messageId: string) => void,
+) {
+  const session = useContext(CommentPageSessionContext)
+  const legacy = useLegacyCommentPage(
+    shareableId,
+    threadId,
+    onThreadsChange,
+    targetMessageId,
+    onTargetMissing,
+    session === null,
+  )
+  const missingRef = useLatestRef(onTargetMissing)
+  const [ready, notifyReady] = useReducer((value: number) => value + 1, 0)
+  const hasMissingCallback = Boolean(onTargetMissing)
+  const consumer = useMemo(
+    () =>
+      session?.createPageConsumer({
+        threadId,
+        onReady: notifyReady,
+        onTargetMissing: hasMissingCallback
+          ? (id) => missingRef.current?.(id)
+          : undefined,
+      }),
+    [session, threadId, missingRef, hasMissingCallback],
+  )
+  const snapshot = useSyncExternalStore(
+    consumer?.subscribe ?? subscribeIdle,
+    consumer?.getSnapshot ?? getIdle,
+    consumer?.getSnapshot ?? getIdle,
+  )
+  useEffect(() => consumer?.activate(), [consumer])
+  useEffect(() => {
+    consumer?.resume()
+  }, [consumer, ready])
+  useEffect(() => {
+    consumer?.setTarget(targetMessageId)
+  }, [consumer, targetMessageId])
+  return consumer ? { ...snapshot, load: consumer.load } : legacy
 }

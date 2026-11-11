@@ -1,18 +1,26 @@
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { page, userEvent } from 'vitest/browser'
 import { toast, Toaster } from 'sonner'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
-import { useCommentMutations } from './a.$id/+components/use-comment-mutations'
+import {
+  hasPendingCommentMutation,
+  useCommentMutations,
+} from './a.$id/+components/use-comment-mutations'
+import { TextSelectionCommentPopover } from './a.$id/+components/text-selection-comment-popover'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
+import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { CommentPanel } from './a.$id/+components/comment-panel'
-import { useViewerComments } from './a.$id/+components/viewer-shell'
+import {
+  useViewerComments,
+  useSessionViewerComments,
+} from './a.$id/+components/viewer-shell'
 import {
   patchCommentThreads,
   type CommentThreadPatch,
@@ -280,6 +288,241 @@ test('a failed comment retry stays visible when its prior notification is exitin
   expect(current.querySelector('[data-button]')).toBeNull()
 })
 
+test.each(['new-thread panel', 'text-selection popover'] as const)(
+  'a held %s blocks repeat Enter and retains keyboard focus and draft after failure',
+  async (surface) => {
+    const finishes: Array<(response: Response) => void> = []
+    const fetch = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          finishes.push(resolve)
+        }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const onClose = vi.fn()
+    try {
+      if (surface === 'new-thread panel') {
+        await mount()
+      } else {
+        const host = document.createElement('div')
+        document.body.appendChild(host)
+        root = createRoot(host)
+        root.render(
+          <TooltipProvider>
+            <TextSelectionCommentPopover
+              shareableId="synthetic-artifact"
+              anchor={{
+                quotedText: 'Selected words',
+                prefixText: '',
+                suffixText: '',
+                textStart: 0,
+                textEnd: 14,
+                cssPath: null,
+                rect: { top: 100, left: 100, width: 100, height: 20 },
+              }}
+              isCurrentShareableId={() => true}
+              onThreadsChange={() => {}}
+              onClose={onClose}
+            />
+            <Toaster />
+          </TooltipProvider>,
+        )
+      }
+      const draft = page.getByRole('textbox', { name: en['comments.newLabel'] })
+      await draft.fill('Retained new thread draft')
+      await userEvent.keyboard('{Tab}')
+      const submit = page.getByRole('button', {
+        name: en[
+          surface === 'new-thread panel' ? 'comments.post' : 'comments.comment'
+        ],
+        exact: true,
+      })
+      await expect.element(submit).toHaveFocus()
+      const submitButton = document.activeElement
+      await userEvent.keyboard('{Enter}')
+      const sending = page.getByRole('button', {
+        name: en['comments.sending'],
+        exact: true,
+      })
+      await expect.element(sending).toHaveAttribute('aria-busy', 'true')
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch.mock.calls[0]?.[0]).toBe(
+        '/api/shareables/synthetic-artifact/comments',
+      )
+      expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      const retainedPendingFocus = document.activeElement === submitButton
+      await userEvent.keyboard('{Enter}')
+      expect(fetch).toHaveBeenCalledTimes(1)
+      for (const finish of finishes) finish(new Response(null, { status: 503 }))
+      await expect.element(submit).not.toHaveAttribute('aria-busy')
+      await expect.element(draft).toHaveValue('Retained new thread draft')
+      await expect
+        .element(page.getByText(en['comments.errorSave'], { exact: true }))
+        .toBeVisible()
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(onClose).not.toHaveBeenCalled()
+      expect(
+        retainedPendingFocus,
+        'submit button keeps focus while POST is pending',
+      ).toBe(true)
+      await expect.element(submit).toHaveFocus()
+      expect(document.activeElement).toBe(submitButton)
+    } finally {
+      // Drain every intercepted POST even when a baseline focus assertion fails.
+      for (const finish of finishes) finish(new Response(null, { status: 503 }))
+      await vi.waitFor(() =>
+        expect(hasPendingCommentMutation('synthetic-artifact')).toBe(false),
+      )
+    }
+  },
+)
+
+function holdSuccessfulPosts() {
+  const finishes: Array<(response: Response) => void> = []
+  const requests: Array<{ intent: string; body: string; anchor?: unknown }> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe('POST')
+      requests.push(JSON.parse(String(init?.body)))
+      return new Promise<Response>((resolve) => finishes.push(resolve))
+    }),
+  )
+  const release = () => {
+    for (const finish of finishes) finish(Response.json({ threads: [initial] }))
+  }
+  const settle = async () => {
+    release()
+    await vi.waitFor(() =>
+      expect(hasPendingCommentMutation('synthetic-artifact')).toBe(false),
+    )
+  }
+  return { requests, release, settle }
+}
+
+test.each([
+  ['panel', '[UNSENT ADDITION]'],
+  ['popover', '[UNSENT ADDITION]'],
+  ['panel', ' '],
+  ['popover', ' '],
+] as const)(
+  'critical draft: %s retains raw edit %j after success and can submit again on the same anchor',
+  async (surface, addition) => {
+    const held = holdSuccessfulPosts()
+    const anchor = {
+      quotedText: 'Selected words',
+      prefixText: '',
+      suffixText: '',
+      textStart: 0,
+      textEnd: 14,
+      cssPath: null,
+    }
+    function PopoverHarness() {
+      const [open, setOpen] = useState(true)
+      const [, setThreads] = useState<ReadonlyArray<CommentThreadView>>([])
+      return open ? (
+        <TooltipProvider>
+          <TextSelectionCommentPopover
+            shareableId="synthetic-artifact"
+            anchor={{
+              ...anchor,
+              rect: { top: 100, left: 100, width: 100, height: 20 },
+            }}
+            isCurrentShareableId={() => true}
+            onThreadsChange={setThreads}
+            onClose={() => setOpen(false)}
+          />
+        </TooltipProvider>
+      ) : null
+    }
+    try {
+      if (surface === 'panel') await mount()
+      else {
+        const host = document.createElement('div')
+        document.body.appendChild(host)
+        root = createRoot(host)
+        root.render(<PopoverHarness />)
+      }
+      const draft = page.getByRole('textbox', { name: 'New comment' })
+      const submit = page.getByRole('button', {
+        name: surface === 'panel' ? 'Post' : 'Comment',
+        exact: true,
+      })
+      const a = '  Submitted A  '
+      // A whitespace-only edit must also survive: server trimming is not draft identity.
+      const b = a + addition
+      await draft.fill(a)
+      const input = draft.element()
+      await submit.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(1))
+      expect(held.requests[0]).toMatchObject({
+        intent: 'create-thread',
+        body: a,
+      })
+      expect(held.requests[0].anchor).toEqual(
+        surface === 'popover' ? anchor : undefined,
+      )
+      await draft.fill(b)
+      await held.settle()
+      await expect.element(draft).toHaveValue(b)
+      expect(draft.element()).toBe(input)
+      await expect.element(submit).not.toHaveAttribute('aria-busy')
+      await expect.element(draft).toHaveFocus()
+      await submit.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(2))
+      expect(held.requests[1]).toMatchObject({
+        intent: 'create-thread',
+        body: b,
+      })
+      expect(held.requests[1].anchor).toEqual(held.requests[0].anchor)
+      await held.settle()
+      if (surface === 'panel') await expect.element(draft).toHaveValue('')
+      else await expect.element(draft).not.toBeInTheDocument()
+    } finally {
+      await held.settle()
+    }
+  },
+)
+
+test('a held reply blocks repeat Enter and retains keyboard focus and draft after failure', async () => {
+  let finish!: (response: Response) => void
+  const fetch = vi.fn(
+    (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        finish = resolve
+      }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  await mount(false)
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  const draft = page.getByRole('textbox', { name: 'Reply', exact: true })
+  await draft.fill('Retained reply draft')
+  await userEvent.keyboard('{Tab}{Tab}')
+  const reply = page.getByRole('button', { name: 'Reply', exact: true })
+  await expect.element(reply).toHaveFocus()
+  const submitButton = document.activeElement
+  await userEvent.keyboard('{Enter}')
+  const sending = page.getByRole('button', {
+    name: en['comments.sending'],
+    exact: true,
+  })
+  await expect.element(sending).toHaveFocus()
+  await expect.element(sending).toHaveAttribute('aria-busy', 'true')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+  await userEvent.keyboard('{Enter}')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  finish(new Response(null, { status: 503 }))
+  await expect.element(reply).toHaveFocus()
+  expect(document.activeElement).toBe(submitButton)
+  await expect.element(draft).toHaveValue('Retained reply draft')
+  await expect
+    .element(page.getByText(en['comments.errorSave'], { exact: true }))
+    .toBeVisible()
+  await expect.element(reply).not.toHaveAttribute('aria-busy')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
 test.each([
   ['en', false],
   ['en', true],
@@ -450,177 +693,6 @@ const otherThread: CommentThreadView = {
   olderCursor: null,
 }
 const controllerThreads = [initial, otherThread]
-function ReconciliationHarness() {
-  const comments = useViewerComments({
-    artifactId: 'synthetic-artifact',
-    currentUserId: 'reviewer',
-    currentVersionId: null,
-    initialThreads: controllerThreads,
-    targetCommentId: 'thread',
-    liveEnabled: false,
-    framePresent: false,
-  })
-  return (
-    <TooltipProvider>
-      <CommentPanel
-        shareableId="synthetic-artifact"
-        viewerUserId="reviewer"
-        threads={comments.panelThreads}
-        onThreadsChange={comments.replaceThreads}
-        isCurrentShareableId={comments.isCurrentArtifactId}
-        open
-        onOpenChange={comments.changePanelOpen}
-        targetThreadId={comments.state.targetThreadId}
-        targetThreadScroll="start"
-        targetFetchFailed={comments.targetFetchFailed}
-        onRetryTarget={comments.retryTargetFetch}
-        onThreadNavigate={(thread) => comments.targetThread(thread.id)}
-      />
-    </TooltipProvider>
-  )
-}
-async function mountReconciliation() {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  root = createRoot(host)
-  root.render(<ReconciliationHarness />)
-  await expect
-    .element(page.getByText('Review message 9', { exact: true }))
-    .toBeVisible()
-}
-function requestReconciliation(threadId = 'other') {
-  settleCommentRuntimeMutation({
-    shareableId: 'synthetic-artifact',
-    threadId,
-    clientMutationId: 'synthetic-mutation',
-    appliedThreads: true,
-    requiresReconcile: true,
-  })
-}
-const otherUpdated = {
-  ...otherThread,
-  messages: [{ ...otherThread.messages[0], body: 'Other updated' }],
-}
-
-test.each(['selected read', 'loaded range'])(
-  '%s failure preserves drafts and independent updates; explicit retry removes a remote deletion',
-  async (mode) => {
-    let failing = false
-    let deleted = false
-    let rangeReads = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input), 'https://example.com')
-        if (url.searchParams.has('before')) {
-          rangeReads++
-          if (failing) throw new TypeError('Synthetic offline')
-          return Response.json({
-            threads: [
-              {
-                ...older,
-                messages: older.messages.filter(
-                  (row) => !deleted || row.id !== 'message-1',
-                ),
-              },
-            ],
-          })
-        }
-        if (url.searchParams.has('thread_id')) {
-          if (failing) throw new TypeError('Synthetic offline')
-          return Response.json({ threads: [initial] })
-        }
-        return Response.json({
-          threads: [
-            otherUpdated,
-            ...(mode === 'loaded range' ? [initial] : []),
-          ],
-        })
-      }),
-    )
-    await mountReconciliation()
-    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .toBeVisible()
-    const card = page
-      .getByRole('article')
-      .filter({ hasText: 'Review message 9' })
-    await card.getByRole('button', { name: 'Reply', exact: true }).click()
-    const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
-    await draft.fill('Retained draft')
-    failing = true
-    requestReconciliation('thread')
-    await expect
-      .element(page.getByText('Other updated', { exact: true }))
-      .toBeVisible()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained draft')
-    await expect
-      .element(page.getByRole('button', { name: 'Retry comment refresh' }))
-      .toBeVisible()
-    failing = false
-    deleted = true
-    const previousReads = rangeReads
-    await page.getByRole('button', { name: 'Retry comment refresh' }).click()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .not.toBeInTheDocument()
-    await expect
-      .element(page.getByRole('button', { name: 'Retry comment refresh' }))
-      .not.toBeInTheDocument()
-    await expect
-      .element(page.getByText('Review message 2', { exact: true }))
-      .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained draft')
-    expect(rangeReads).toBeGreaterThan(previousReads)
-  },
-)
-
-test('an older page winning reconciliation retains the draft and still applies another thread update', async () => {
-  let resolveList!: (value: Response) => void
-  let listCalls = 0
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://example.com')
-      if (url.searchParams.has('before'))
-        return Response.json({ threads: [older] })
-      listCalls++
-      if (listCalls === 1)
-        return new Promise<Response>((done) => {
-          resolveList = done
-        })
-      return Response.json({ threads: [initial, otherUpdated] })
-    }),
-  )
-  await mountReconciliation()
-  const card = page.getByRole('article').filter({ hasText: 'Review message 9' })
-  await card.getByRole('button', { name: 'Reply', exact: true }).click()
-  await card
-    .getByRole('textbox', { name: 'Reply', exact: true })
-    .fill('Retained draft')
-  requestReconciliation()
-  await vi.waitFor(() => expect(listCalls).toBe(1))
-  await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
-  await expect
-    .element(page.getByText('Review message 1', { exact: true }))
-    .toBeVisible()
-  resolveList(Response.json({ threads: controllerThreads }))
-  await expect
-    .element(page.getByText('Other updated', { exact: true }))
-    .toBeVisible()
-  await expect
-    .element(page.getByText('Review message 1', { exact: true }))
-    .toBeVisible()
-  await expect
-    .element(card.getByRole('textbox', { name: 'Reply', exact: true }))
-    .toHaveValue('Retained draft')
-  expect(listCalls).toBe(2)
-})
-
 test('a failed selected-message lookup offers retry and keeps the loaded tail', async () => {
   let attempts = 0
   vi.stubGlobal(
@@ -719,52 +791,232 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-test.each([401, 403])(
-  'range %i recovers authorization without unmounting the reply draft',
-  async (status) => {
-    let recovering = false
-    let refused = false
-    let finishRecovery!: (response: Response) => void
-    const fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://example.com')
-      if (url.searchParams.has('before')) {
-        if (recovering && !refused) {
-          refused = true
-          return new Response(null, { status })
-        }
-        return Response.json({ threads: [older] })
-      }
-      if (refused)
-        return new Promise<Response>((resolve) => {
-          finishRecovery = resolve
-        })
-      return Response.json({ threads: controllerThreads })
+describe.each([
+  ['legacy', useViewerComments],
+  ['session', useSessionViewerComments],
+] as const)('comment pagination reconciliation (%s)', (_owner, useComments) => {
+  function ReconciliationHarness() {
+    const comments = useComments({
+      artifactId: 'synthetic-artifact',
+      currentUserId: 'reviewer',
+      currentVersionId: null,
+      initialThreads: controllerThreads,
+      targetCommentId: 'thread',
+      liveEnabled: false,
+      framePresent: false,
     })
-    vi.stubGlobal('fetch', fetch)
-    await mountReconciliation()
-    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+    return (
+      <CommentPageSessionContext value={comments.pageSession}>
+        <TooltipProvider>
+          <CommentPanel
+            shareableId="synthetic-artifact"
+            viewerUserId="reviewer"
+            threads={comments.panelThreads}
+            onThreadsChange={comments.replaceThreads}
+            isCurrentShareableId={comments.isCurrentArtifactId}
+            open
+            onOpenChange={comments.changePanelOpen}
+            targetThreadId={comments.state.targetThreadId}
+            targetThreadScroll="start"
+            targetFetchFailed={comments.targetFetchFailed}
+            onRetryTarget={comments.retryTargetFetch}
+            onThreadNavigate={(thread) => comments.targetThread(thread.id)}
+          />
+        </TooltipProvider>
+      </CommentPageSessionContext>
+    )
+  }
+  async function mountReconciliation() {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    root.render(<ReconciliationHarness />)
     await expect
-      .element(page.getByText('Review message 1', { exact: true }))
+      .element(page.getByText('Review message 9', { exact: true }))
       .toBeVisible()
+  }
+  function requestReconciliation(threadId = 'other') {
+    settleCommentRuntimeMutation({
+      shareableId: 'synthetic-artifact',
+      threadId,
+      clientMutationId: 'synthetic-mutation',
+      appliedThreads: true,
+      requiresReconcile: true,
+    })
+  }
+  const otherUpdated = {
+    ...otherThread,
+    messages: [{ ...otherThread.messages[0], body: 'Other updated' }],
+  }
+
+  test.each(['selected read', 'loaded range'])(
+    '%s failure preserves drafts and independent updates; explicit retry removes a remote deletion',
+    async (mode) => {
+      let failing = false
+      let deleted = false
+      let rangeReads = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = new URL(String(input), 'https://example.com')
+          if (url.searchParams.has('before')) {
+            rangeReads++
+            if (failing) throw new TypeError('Synthetic offline')
+            return Response.json({
+              threads: [
+                {
+                  ...older,
+                  messages: older.messages.filter(
+                    (row) => !deleted || row.id !== 'message-1',
+                  ),
+                },
+              ],
+            })
+          }
+          if (url.searchParams.has('thread_id')) {
+            if (failing) throw new TypeError('Synthetic offline')
+            return Response.json({ threads: [initial] })
+          }
+          return Response.json({
+            threads: [
+              otherUpdated,
+              ...(mode === 'loaded range' ? [initial] : []),
+            ],
+          })
+        }),
+      )
+      await mountReconciliation()
+      await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      const card = page
+        .getByRole('article')
+        .filter({ hasText: 'Review message 9' })
+      await card.getByRole('button', { name: 'Reply', exact: true }).click()
+      const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
+      await draft.fill('Retained draft')
+      failing = true
+      requestReconciliation('thread')
+      await expect
+        .element(page.getByText('Other updated', { exact: true }))
+        .toBeVisible()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained draft')
+      await expect
+        .element(page.getByRole('button', { name: 'Retry comment refresh' }))
+        .toBeVisible()
+      failing = false
+      deleted = true
+      const previousReads = rangeReads
+      await page.getByRole('button', { name: 'Retry comment refresh' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .not.toBeInTheDocument()
+      await expect
+        .element(page.getByRole('button', { name: 'Retry comment refresh' }))
+        .not.toBeInTheDocument()
+      await expect
+        .element(page.getByText('Review message 2', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained draft')
+      expect(rangeReads).toBeGreaterThan(previousReads)
+    },
+  )
+
+  test('an older page winning reconciliation retains the draft and still applies another thread update', async () => {
+    let resolveList!: (value: Response) => void
+    let listCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'https://example.com')
+        if (url.searchParams.has('before'))
+          return Response.json({ threads: [older] })
+        listCalls++
+        if (listCalls === 1)
+          return new Promise<Response>((done) => {
+            resolveList = done
+          })
+        return Response.json({ threads: [initial, otherUpdated] })
+      }),
+    )
+    await mountReconciliation()
     const card = page
       .getByRole('article')
       .filter({ hasText: 'Review message 9' })
     await card.getByRole('button', { name: 'Reply', exact: true }).click()
-    const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
-    await draft.fill('Retained authorization draft')
-    recovering = true
-    requestReconciliation('thread')
-    await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'), {
-      timeout: 5000,
-    })
+    await card
+      .getByRole('textbox', { name: 'Reply', exact: true })
+      .fill('Retained draft')
+    requestReconciliation()
+    await vi.waitFor(() => expect(listCalls).toBe(1))
+    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
     await expect
       .element(page.getByText('Review message 1', { exact: true }))
       .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained authorization draft')
-    finishRecovery(Response.json({ threads: [initial, otherUpdated] }))
+    resolveList(Response.json({ threads: controllerThreads }))
     await expect
       .element(page.getByText('Other updated', { exact: true }))
       .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained authorization draft')
-  },
-)
+    await expect
+      .element(page.getByText('Review message 1', { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(card.getByRole('textbox', { name: 'Reply', exact: true }))
+      .toHaveValue('Retained draft')
+    expect(listCalls).toBe(2)
+  })
+
+  test.each([401, 403])(
+    'range %i recovers authorization without unmounting the reply draft',
+    async (status) => {
+      let recovering = false
+      let refused = false
+      let finishRecovery!: (response: Response) => void
+      const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'https://example.com')
+        if (url.searchParams.has('before')) {
+          if (recovering && !refused) {
+            refused = true
+            return new Response(null, { status })
+          }
+          return Response.json({ threads: [older] })
+        }
+        if (refused)
+          return new Promise<Response>((resolve) => {
+            finishRecovery = resolve
+          })
+        return Response.json({ threads: controllerThreads })
+      })
+      vi.stubGlobal('fetch', fetch)
+      await mountReconciliation()
+      await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      const card = page
+        .getByRole('article')
+        .filter({ hasText: 'Review message 9' })
+      await card.getByRole('button', { name: 'Reply', exact: true }).click()
+      const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
+      await draft.fill('Retained authorization draft')
+      recovering = true
+      requestReconciliation('thread')
+      await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'), {
+        timeout: 5000,
+      })
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained authorization draft')
+      finishRecovery(Response.json({ threads: [initial, otherUpdated] }))
+      await expect
+        .element(page.getByText('Other updated', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained authorization draft')
+    },
+  )
+})

@@ -4,6 +4,7 @@ import { Button } from '~/components/ui/button'
 import { IconButton } from '~/components/app/icon-button'
 import { MAX_COMMENT_BODY_LENGTH, type CommentThreadView } from '~/lib/comments'
 import { useT } from '~/hooks/use-t'
+import { useLatestRef } from '~/hooks/use-latest-ref'
 import { CommentQuote } from './comment-thread-parts'
 import { useCommentMutations } from './use-comment-mutations'
 import { type PendingTextAnchor } from './viewer-comment-types'
@@ -29,6 +30,7 @@ export function TextSelectionCommentPopover({
 }) {
   const { t } = useT()
   const [body, setBody] = useState('')
+  const latestBody = useLatestRef(body)
   const popoverRef = useRef<HTMLElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const { mutate, pendingKeys } = useCommentMutations({
@@ -50,12 +52,17 @@ export function TextSelectionCommentPopover({
   )
 
   const submit = async () => {
-    if (!body.trim()) return
+    if (!body.trim() || pending) return
+    const submittedBody = body
     const ok = await mutate(
-      { intent: 'create-thread', body, anchor: withoutRect(anchor) },
+      {
+        intent: 'create-thread',
+        body: submittedBody,
+        anchor: withoutRect(anchor),
+      },
       'create-thread',
     )
-    if (ok) onClose()
+    if (ok && latestBody.current === submittedBody) onClose()
   }
 
   return (
@@ -98,15 +105,21 @@ export function TextSelectionCommentPopover({
           placeholder={t('comments.newTextPlaceholder')}
           onChange={(event) => setBody(event.currentTarget.value)}
         />
+        <span role="status" className="sr-only">
+          {pending ? t('comments.sending') : ''}
+        </span>
         <div className="flex justify-end">
           <Button
             type="button"
             variant="default"
             size="sm"
-            disabled={!body.trim() || pending}
+            className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            disabled={!body.trim()}
+            aria-disabled={pending || undefined}
+            aria-busy={pending || undefined}
             onClick={submit}
           >
-            {t('comments.comment')}
+            {t(pending ? 'comments.sending' : 'comments.comment')}
           </Button>
         </div>
       </div>

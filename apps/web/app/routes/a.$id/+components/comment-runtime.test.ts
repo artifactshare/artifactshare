@@ -55,6 +55,27 @@ test('thread invalidation is scoped and artifact invalidation covers every threa
   lease.release()
 })
 
+test('recovery snapshots observe settlements across all threads separately from invalidation and request ownership', () => {
+  const runtime = createCommentRuntime()
+  const display = runtime.acquire('a')
+  const read = runtime.acquire('a')
+  const captured = read.getSettlementRevision()
+  display.invalidate('one')
+  const post = display.beginMutation('post', 'two')
+  expect(read.getSettlementRevision()).toBe(captured)
+  post.settle({ appliedThreads: false, threadId: 'two' })
+  const settled = read.getSettlementRevision()
+  expect(settled).toBeGreaterThan(captured)
+  display.invalidate()
+  expect(read.getSettlementRevision()).toBe(settled)
+  display.release()
+  expect(read.getSettlementRevision()).toBe(settled)
+  read.release()
+  const next = runtime.acquire('a')
+  expect(next.getSettlementRevision()).toBe(0)
+  next.release()
+})
+
 test('overlap persists until every overlapping post settles', () => {
   const lease = createCommentRuntime().acquire('a')
   const first = lease.beginMutation('one')

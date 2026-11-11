@@ -50,6 +50,45 @@ It does not decide whether its HTTP result may update a particular display or
 draft. Those guards remain with the caller. A detached display cannot reclaim a
 released lease; a pending job can complete after that lease is released.
 
+## Viewer data modes
+
+`useViewerComments` remains the production default and uses the independent
+legacy implementation. `useSessionViewerComments` has the same hook contract
+and selects `CommentSession` for summaries, page consumers, mutation results,
+anchor results, errors, dirty ranges and recovery-data adoption. There is no
+Flagship or server selection yet. This comparison seam is temporary: remove the
+legacy owner and mode selection once rollout and rollback decisions permit it.
+
+Both exports share presentation callbacks and the socket lifecycle. The selected
+`CommentDataPort` owns settlement marking/abort/echo handling, retained recovery
+rows and their adoption, and refresh results. Socket code retains authorization,
+connection retries, visibility, renewal, bounded deadlines and the owning-socket
+check before stopping a connection. Only the selected owner subscribes to Runtime;
+settlement follows mark → abort → invalidate recovery data → remember echo →
+socket continuation → pending check → GET. Session uses Runtime settlementRevision
+for recovery tickets; legacy retains its local counter. These tokens remain
+separate from request generations, dirty revisions and page request identity.
+Session request generations replace the legacy summary sequence; attachment
+generations reject detached work, and page identities isolate consumers. The
+write-only `deferredCommentRefreshDuringMutationRef` has been removed: existing
+pending guards and settlement/recovery scheduling remain the continuation
+mechanism, without a new global retry policy.
+
+Owners are constructed without resources and attached in the committed artifact
+lifecycle, with reversible StrictMode cleanup. Returned mutation, anchor and retry
+callbacks resolve the committed owner at call time within one hook mount. The
+applied-echo cache belongs to that mount (30 seconds, 20 entries), survives A → B → A,
+and is never shared across viewers. The reducer receives replacement events,
+including equal-row mutations and explicit deletion, while Session stores data
+and errors. Error-only publications do not synthesize replacement events.
+
+`CommentPageSessionContext` covers the product panel and inline tree. With a
+Session, `useCommentPage` activates a Session page consumer; its legacy transport
+and subscription stay disabled. Queued page reads resume after the React
+settlement render, preserving the historical ordering with summary refresh.
+401/403 pages request the existing refresh/auth result path. Composer APIs and
+socket policy remain unchanged.
+
 ## Response adoption and continuation
 
 | Path or event                                    | Adoption                                                         | Continuation owner                                                 |
@@ -104,9 +143,19 @@ engine without a reset API. The intentional leak fixture releases its own
 captured lease before the next valid run.
 Requests made during disposal are rejected and recorded rather than opening
 another unresolved HTTP gate.
-There is no production reset function. The harness currently exercises the
-legacy engine twice. This proves repeatability, not equivalence to an engine
-that has not yet been implemented.
+There is no production reset function. Shared navigation, mutation, draft and
+target scenarios run the legacy and Session exports sequentially and compare
+explicit expected snapshots and HTTP traces. Reconciliation scenarios run with
+each export and the real page-consumer adapter, including selection changes,
+anchor/page races, recovery windows, echo retention and StrictMode replay.
+This is focused unit integration evidence, not final browser parity or fault
+injection evidence.
+
+Run the comparison suites from the repository root:
+
+```sh
+pnpm --filter @artifactshare/web test:unit comment-runtime.integration.test.tsx comment-reconciliation.test.tsx
+```
 
 The input surface includes artifact/target navigation, draft edits, independently
 started posts, controlled responses, explicit target recovery, and unmounting.
@@ -150,3 +199,25 @@ separately mounted viewer. A new display subscribes to the retained Runtime job
 and reconciles when it settles. Both cases have separate explicit snapshot and
 request oracles. These hook fixtures model the existing panel reply wiring;
 they do not claim to replace real panel/browser interaction tests.
+
+The socket lifecycle still reauthorizes on a current-user change even when the
+artifact and data owner stay fixed. Recovery checks require the current committed
+owner before capture and on completion. A settlement observed between layout
+attachment and socket-policy registration retains one consumed continuation;
+teardown discards it. Data adoption interrupts superseded reads while retaining
+explicit queued refreshes; lifecycle cancellation still cancels the queue.
+
+## Mutation checks for the comparison oracles
+
+The Session tests were checked against three temporary faults, restoring the
+source after each run. Disabling both summary supersession fences (generation
+advance and abort) made the authoritative-summary test observe `stale` instead
+of `posted`. Appending absent page rows before the membership-preserving merge
+made all three late-page cases revive `one` after patch, summary or recovery
+removal. Clearing refresh scope without checking the captured revision prevented
+the newer-dirty-intent test from issuing its required retained-range read.
+
+These are test sensitivity checks, not production fault switches. Run
+`comment-session.test.ts` with the original guards restored for the positive
+case; the shared hook scenarios additionally exercise both data owners in
+independent runs. No sleep, retry or timeout was added to make these checks pass.
