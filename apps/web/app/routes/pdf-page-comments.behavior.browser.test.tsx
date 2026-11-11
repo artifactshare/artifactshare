@@ -1,7 +1,8 @@
 import { createRoot, type Root } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
+import { hasPendingCommentMutation } from './a.$id/+components/use-comment-mutations'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentThreadView } from '~/lib/comments'
@@ -234,3 +235,114 @@ test('posts a comment on the page shown, and after a reload opens that page from
   await vi.waitFor(() => expect(framePage()).toBe('12'))
   await expect.element(label(12)).toBeVisible()
 })
+
+function holdPdfPosts() {
+  stubApi()
+  const fetch = globalThis.fetch
+  const finishes: Array<(response: Response) => void> = []
+  const requests: Array<{ body: string; intent: string; anchor?: unknown }> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'POST') return fetch(input, init)
+      requests.push(JSON.parse(String(init.body)))
+      return new Promise<Response>((resolve) => finishes.push(resolve))
+    }),
+  )
+  const settle = async () => {
+    for (const finish of finishes) finish(Response.json({ threads: [] }))
+    await vi.waitFor(() =>
+      expect(hasPendingCommentMutation('abc123def4')).toBe(false),
+    )
+  }
+  return { requests, settle }
+}
+
+test.each(['body', 'attachment intent'] as const)(
+  'critical draft: PDF preserves changed %s and resets only after unchanged success',
+  async (change) => {
+    const held = holdPdfPosts()
+    try {
+      await mount()
+      const remove = page.getByRole('button', {
+        name: 'Remove page 1 and comment on the whole file',
+        exact: true,
+      })
+      await expect.element(remove).toBeVisible()
+      const draft = page.getByRole('textbox', { name: 'New comment' })
+      const post = page.getByRole('button', { name: 'Post', exact: true })
+      const a = '  PDF draft A  '
+      const b = change === 'body' ? a + '[UNSENT ADDITION]' : a
+      if (change === 'body') await remove.click()
+      await draft.fill(a)
+      await post.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(1))
+      expect(held.requests[0]).toMatchObject({
+        intent: 'create-thread',
+        body: a,
+      })
+      expect(held.requests[0].anchor).toEqual(
+        change === 'body'
+          ? undefined
+          : { kind: 'pdf-page', pageNumber: 1, versionId: 'v1' },
+      )
+      if (change === 'body') await draft.fill(b)
+      else await remove.click()
+      await held.settle()
+      await expect.element(draft).toHaveValue(b)
+      await expect.element(remove).not.toBeInTheDocument()
+      await expect.element(post).not.toHaveAttribute('aria-busy')
+      await post.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(2))
+      expect(held.requests[1]).toMatchObject({
+        intent: 'create-thread',
+        body: b,
+      })
+      expect(held.requests[1].anchor).toBeUndefined()
+      await held.settle()
+      await expect.element(draft).toHaveValue('')
+      await expect.element(remove).toBeVisible()
+    } finally {
+      await held.settle()
+    }
+  },
+)
+
+test.each([false, true])(
+  'critical draft: panel keyboard success respects moved focus (%s)',
+  async (moveFocus) => {
+    const held = holdPdfPosts()
+    try {
+      await mount()
+      const draft = page.getByRole('textbox', { name: 'New comment' })
+      await draft.fill('  Keyboard post  ')
+      const post = page.getByRole('button', { name: 'Post', exact: true })
+      // Focus the submission target explicitly: macOS WebKit skips buttons
+      // with ordinary Tab. Activation and post-success navigation use keys.
+      const postButton = post.element() as HTMLButtonElement
+      postButton.focus()
+      await expect.element(post).toHaveFocus()
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => expect(held.requests).toHaveLength(1))
+      const other = page.getByRole('tab', { name: 'All', exact: true })
+      if (moveFocus) (other.element() as HTMLElement).focus()
+      await held.settle()
+      await expect.element(draft).toHaveValue('')
+      if (moveFocus) await expect.element(other).toHaveFocus()
+      else {
+        await expect.element(draft).toHaveFocus()
+        await userEvent.keyboard('{Tab}')
+        await expect
+          .element(
+            page.getByRole('link', {
+              name: 'Artifact Share home',
+              exact: true,
+            }),
+          )
+          .toHaveFocus()
+      }
+    } finally {
+      await held.settle()
+    }
+  },
+)

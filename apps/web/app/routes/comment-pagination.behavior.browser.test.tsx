@@ -377,6 +377,113 @@ test.each(['new-thread panel', 'text-selection popover'] as const)(
   },
 )
 
+function holdSuccessfulPosts() {
+  const finishes: Array<(response: Response) => void> = []
+  const requests: Array<{ intent: string; body: string; anchor?: unknown }> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe('POST')
+      requests.push(JSON.parse(String(init?.body)))
+      return new Promise<Response>((resolve) => finishes.push(resolve))
+    }),
+  )
+  const release = () => {
+    for (const finish of finishes) finish(Response.json({ threads: [initial] }))
+  }
+  const settle = async () => {
+    release()
+    await vi.waitFor(() =>
+      expect(hasPendingCommentMutation('synthetic-artifact')).toBe(false),
+    )
+  }
+  return { requests, release, settle }
+}
+
+test.each([
+  ['panel', '[UNSENT ADDITION]'],
+  ['popover', '[UNSENT ADDITION]'],
+  ['panel', ' '],
+  ['popover', ' '],
+] as const)(
+  'critical draft: %s retains raw edit %j after success and can submit again on the same anchor',
+  async (surface, addition) => {
+    const held = holdSuccessfulPosts()
+    const anchor = {
+      quotedText: 'Selected words',
+      prefixText: '',
+      suffixText: '',
+      textStart: 0,
+      textEnd: 14,
+      cssPath: null,
+    }
+    function PopoverHarness() {
+      const [open, setOpen] = useState(true)
+      const [, setThreads] = useState<ReadonlyArray<CommentThreadView>>([])
+      return open ? (
+        <TooltipProvider>
+          <TextSelectionCommentPopover
+            shareableId="synthetic-artifact"
+            anchor={{
+              ...anchor,
+              rect: { top: 100, left: 100, width: 100, height: 20 },
+            }}
+            isCurrentShareableId={() => true}
+            onThreadsChange={setThreads}
+            onClose={() => setOpen(false)}
+          />
+        </TooltipProvider>
+      ) : null
+    }
+    try {
+      if (surface === 'panel') await mount()
+      else {
+        const host = document.createElement('div')
+        document.body.appendChild(host)
+        root = createRoot(host)
+        root.render(<PopoverHarness />)
+      }
+      const draft = page.getByRole('textbox', { name: 'New comment' })
+      const submit = page.getByRole('button', {
+        name: surface === 'panel' ? 'Post' : 'Comment',
+        exact: true,
+      })
+      const a = '  Submitted A  '
+      // A whitespace-only edit must also survive: server trimming is not draft identity.
+      const b = a + addition
+      await draft.fill(a)
+      const input = draft.element()
+      await submit.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(1))
+      expect(held.requests[0]).toMatchObject({
+        intent: 'create-thread',
+        body: a,
+      })
+      expect(held.requests[0].anchor).toEqual(
+        surface === 'popover' ? anchor : undefined,
+      )
+      await draft.fill(b)
+      await held.settle()
+      await expect.element(draft).toHaveValue(b)
+      expect(draft.element()).toBe(input)
+      await expect.element(submit).not.toHaveAttribute('aria-busy')
+      await expect.element(draft).toHaveFocus()
+      await submit.click()
+      await vi.waitFor(() => expect(held.requests).toHaveLength(2))
+      expect(held.requests[1]).toMatchObject({
+        intent: 'create-thread',
+        body: b,
+      })
+      expect(held.requests[1].anchor).toEqual(held.requests[0].anchor)
+      await held.settle()
+      if (surface === 'panel') await expect.element(draft).toHaveValue('')
+      else await expect.element(draft).not.toBeInTheDocument()
+    } finally {
+      await held.settle()
+    }
+  },
+)
+
 test('a held reply blocks repeat Enter and retains keyboard focus and draft after failure', async () => {
   let finish!: (response: Response) => void
   const fetch = vi.fn(
