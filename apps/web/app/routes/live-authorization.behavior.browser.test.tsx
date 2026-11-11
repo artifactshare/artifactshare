@@ -1,3 +1,4 @@
+import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 // Browser mode cannot load a test module from the route directory whose name
 // contains `$`, so this behavior test lives one level above the component.
 import { act, useState } from 'react'
@@ -8,7 +9,6 @@ import { useViewerComments } from './a.$id/+components/viewer-shell'
 import type { CommentThreadView } from '~/lib/comments'
 import { VIEWER_FETCH_TIMEOUT_MS } from '~/lib/viewer-network'
 import {
-  COMMENT_MUTATION_SETTLED_EVENT,
   useCommentMutations,
   type CommentMutationPayload,
 } from './a.$id/+components/use-comment-mutations'
@@ -164,16 +164,12 @@ function Harness({
         <button
           onClick={() => {
             comments.replaceThreads([localThread])
-            window.dispatchEvent(
-              new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-                detail: {
-                  shareableId: artifactId,
-                  clientMutationId: 'local-mutation',
-                  appliedThreads: true,
-                  requiresReconcile: mutation.requiresReconcile,
-                },
-              }),
-            )
+            settleCommentRuntimeMutation({
+              shareableId: artifactId,
+              clientMutationId: 'local-mutation',
+              appliedThreads: true,
+              requiresReconcile: mutation.requiresReconcile,
+            })
           }}
         >
           Settle local mutation
@@ -1336,11 +1332,7 @@ describe('bounded live authorization browser lifecycle', () => {
 
       // A later explicit trigger gets a fresh, complete three-attempt budget.
       await act(async () =>
-        window.dispatchEvent(
-          new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-            detail: { shareableId: 'artifact-1' },
-          }),
-        ),
+        settleCommentRuntimeMutation({ shareableId: 'artifact-1' }),
       )
       await settleAuthorizedResponses()
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -1669,11 +1661,7 @@ describe('bounded live authorization browser lifecycle', () => {
 
     fetchMock.mockImplementationOnce(() => authorizedResponse([]))
     await act(async () => {
-      window.dispatchEvent(
-        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-          detail: { shareableId: 'artifact-1' },
-        }),
-      )
+      settleCommentRuntimeMutation({ shareableId: 'artifact-1' })
     })
     await settleAuthorizedResponses()
 
@@ -1865,11 +1853,7 @@ describe('bounded live authorization browser lifecycle', () => {
       expect(ControlledWebSocket.instances).toHaveLength(4)
       expect(fetchMock).toHaveBeenCalledTimes(1)
       await act(async () =>
-        window.dispatchEvent(
-          new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-            detail: { shareableId: 'artifact-1' },
-          }),
-        ),
+        settleCommentRuntimeMutation({ shareableId: 'artifact-1' }),
       )
       await settleAuthorizedResponses()
       expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -2039,11 +2023,7 @@ describe('bounded live authorization browser lifecycle', () => {
     expect(host.querySelector('output')?.dataset.threads).toBe('')
     // Indeterminate at the boundary stops the episode, allowing explicit recovery.
     await act(async () =>
-      window.dispatchEvent(
-        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-          detail: { shareableId: 'artifact-1' },
-        }),
-      ),
+      settleCommentRuntimeMutation({ shareableId: 'artifact-1' }),
     )
     await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -2113,11 +2093,7 @@ describe('bounded live authorization browser lifecycle', () => {
         await setVisibility('visible')
       } else {
         await act(async () =>
-          window.dispatchEvent(
-            new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-              detail: { shareableId: 'artifact-1' },
-            }),
-          ),
+          settleCommentRuntimeMutation({ shareableId: 'artifact-1' }),
         )
         await settleAuthorizedResponses()
       }
@@ -2216,11 +2192,7 @@ describe('bounded live authorization browser lifecycle', () => {
 
     fetchMock.mockImplementationOnce(() => authorizedResponse([]))
     await act(async () =>
-      window.dispatchEvent(
-        new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-          detail: { shareableId: 'artifact-1' },
-        }),
-      ),
+      settleCommentRuntimeMutation({ shareableId: 'artifact-1' }),
     )
     await settleAuthorizedResponses()
     expect(fetchMock).toHaveBeenCalledTimes(2)

@@ -1,3 +1,5 @@
+import { acquireCommentRuntime } from './comment-runtime-browser'
+import type { CommentMutationSettlement } from './comment-runtime'
 import { DELIVERY_UNAVAILABLE_PATH } from '~/lib/hosts'
 import { createCommentRefreshScope } from './comment-refresh-scope'
 import { commentPageUrl } from '~/lib/comment-page'
@@ -68,10 +70,8 @@ import { TextSelectionCommentPopover } from './text-selection-comment-popover'
 import { getActiveElement } from './viewer-dom'
 import { type PendingTextAnchor } from './viewer-comment-types'
 import {
-  COMMENT_MUTATION_SETTLED_EVENT,
   hasPendingCommentMutation,
   hasPendingCommentMutationId,
-  type CommentMutationSettledDetail,
 } from './use-comment-mutations'
 import {
   useReplaceVersion,
@@ -292,16 +292,21 @@ export async function runCommentRefreshWithAuthRecovery({
   return 'keep-connection'
 }
 
-function fetchCommentThreads<T>(
+async function fetchCommentThreads<T>(
   artifactId: string,
   signal: AbortSignal,
   options: { requireJson?: boolean } = {},
 ) {
-  return fetchJsonWithViewerTimeout<T>(
-    `/api/shareables/${encodeURIComponent(artifactId)}/comments`,
-    { headers: { accept: 'application/json' }, signal },
-    options,
-  )
+  const lease = acquireCommentRuntime(artifactId)
+  try {
+    return await fetchJsonWithViewerTimeout<T>(
+      `/api/shareables/${encodeURIComponent(artifactId)}/comments`,
+      { headers: { accept: 'application/json' }, signal },
+      options,
+    )
+  } finally {
+    lease.release()
+  }
 }
 
 type LiveRecoveryCheckResult =
@@ -879,6 +884,7 @@ export function useViewerComments({
 
   const fetchLatestThreadsOnce = useCallback(async () => {
     const requestArtifactId = artifactId
+    const readLease = acquireCommentRuntime(requestArtifactId)
     const refreshScope = commentRefreshScope.snapshot()
     const seq = fetchSeqRef.current + 1
     fetchSeqRef.current = seq
@@ -1154,6 +1160,7 @@ export function useViewerComments({
         waitBeforeRetry,
       })
     } finally {
+      readLease.release()
       if (fetchAbortRef.current === controller) fetchAbortRef.current = null
     }
   }, [
@@ -1892,11 +1899,7 @@ export function useViewerComments({
       if (!socket) explicitRecovery()
     }
 
-    const onMutationSettled = (event: Event) => {
-      const detail = (
-        event as CustomEvent<Partial<CommentMutationSettledDetail>>
-      ).detail
-      if (detail?.shareableId !== artifactId) return
+    const onMutationSettled = (detail: CommentMutationSettlement) => {
       // A lost response can hide a committed edit or deletion in any retained
       // page. Without a confirmed thread identity, reconcile all loaded ranges.
       commentRefreshScope.mark(detail.threadId)
@@ -1936,7 +1939,8 @@ export function useViewerComments({
     } else {
       onLiveConnectionChangedRef.current?.(false)
     }
-    window.addEventListener(COMMENT_MUTATION_SETTLED_EVENT, onMutationSettled)
+    const runtime = acquireCommentRuntime(artifactId)
+    runtime.subscribe(onMutationSettled)
     return () => {
       disposed = true
       clearRetryTimer()
@@ -1945,10 +1949,7 @@ export function useViewerComments({
       cancelRecoveryCheck()
       abortLatestThreadFetch()
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener(
-        COMMENT_MUTATION_SETTLED_EVENT,
-        onMutationSettled,
-      )
+      runtime.release()
       releaseSocket(true)
       clearDisplay()
     }

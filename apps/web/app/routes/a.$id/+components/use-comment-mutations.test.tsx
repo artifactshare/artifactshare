@@ -1,3 +1,4 @@
+import { acquireCommentRuntime } from './comment-runtime-browser'
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -197,7 +198,8 @@ test.each(['reply', 'update-message', 'delete-message', 'resolve'] as const)(
       return null
     }
     const settled = vi.fn()
-    window.addEventListener('artifactshare:comment-mutation-settled', settled)
+    const runtime = acquireCommentRuntime('synthetic-artifact')
+    runtime.subscribe(settled)
     const root = createRoot(document.createElement('div'))
     try {
       await act(async () => root.render(<Harness />))
@@ -214,12 +216,9 @@ test.each(['reply', 'update-message', 'delete-message', 'resolve'] as const)(
         await waitForRealTaskCondition(() => done, 'refusal settled')
       })
       expect(settled).toHaveBeenCalledOnce()
-      expect(settled.mock.calls[0][0].detail.threadId).toBe('thread-a')
+      expect(settled.mock.calls[0][0].threadId).toBe('thread-a')
     } finally {
-      window.removeEventListener(
-        'artifactshare:comment-mutation-settled',
-        settled,
-      )
+      runtime.release()
       await act(async () => root.unmount())
     }
   },

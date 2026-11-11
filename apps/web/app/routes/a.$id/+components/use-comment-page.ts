@@ -1,13 +1,9 @@
+import { acquireCommentRuntime } from './comment-runtime-browser'
 import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
 import { useCallback, useEffect, useRef, useState, useReducer } from 'react'
 import type { CommentThreadView } from '~/lib/comments'
 import { fetchJsonWithViewerTimeout } from '~/lib/viewer-network'
-import {
-  COMMENT_MUTATION_SETTLED_EVENT,
-  type CommentMutationSettledDetail,
-  getCommentMutationEpoch,
-  hasPendingCommentMutation,
-} from './use-comment-mutations'
+import { hasPendingCommentMutation } from './use-comment-mutations'
 import type {
   ChangeCommentThreads,
   CommentPageRequest,
@@ -36,16 +32,12 @@ export function useCommentPage(
   }, [targetMessageId])
   const [settled, notifySettled] = useReducer((value: number) => value + 1, 0)
   useEffect(() => {
-    const onSettled = (event: Event) => {
-      if (
-        (event as CustomEvent<CommentMutationSettledDetail>).detail
-          .shareableId === shareableId
-      )
-        notifySettled()
+    const runtime = acquireCommentRuntime(shareableId)
+    const unsubscribe = runtime.subscribe(() => notifySettled())
+    return () => {
+      unsubscribe()
+      runtime.release()
     }
-    window.addEventListener(COMMENT_MUTATION_SETTLED_EVENT, onSettled)
-    return () =>
-      window.removeEventListener(COMMENT_MUTATION_SETTLED_EVENT, onSettled)
   }, [shareableId])
   useEffect(
     () => () => {
@@ -68,7 +60,8 @@ export function useCommentPage(
       const controller = new AbortController()
       active.current = controller
       activeTarget.current = page.aroundMessageId
-      const epoch = getCommentMutationEpoch(shareableId, threadId)
+      const readLease = acquireCommentRuntime(shareableId)
+      const epoch = readLease.getEpoch(threadId)
       setStatus({ kind: 'loading' })
       let outcome: 'idle' | 'failed' = 'failed'
       try {
@@ -108,7 +101,7 @@ export function useCommentPage(
             thread.body?.threads.some((item) => item.id === threadId)
           ) {
             onTargetMissing(page.aroundMessageId)
-            if (epoch !== getCommentMutationEpoch(shareableId, threadId))
+            if (epoch !== readLease.getEpoch(threadId))
               onThreadsChange([], { threadId, revalidate: true })
             outcome = 'idle'
             return true
@@ -120,7 +113,7 @@ export function useCommentPage(
           throw new Error('Comment page needs retry')
         onThreadsChange(result.body.threads, {
           threadId,
-          ...(epoch !== getCommentMutationEpoch(shareableId, threadId)
+          ...(epoch !== readLease.getEpoch(threadId)
             ? { revalidate: true }
             : {}),
           page:
@@ -139,6 +132,7 @@ export function useCommentPage(
       } catch {
         return false
       } finally {
+        readLease.release()
         if (active.current === controller) {
           active.current = null
           activeTarget.current = undefined
