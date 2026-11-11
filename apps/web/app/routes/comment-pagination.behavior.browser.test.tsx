@@ -1,3 +1,4 @@
+import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -11,7 +12,6 @@ import ja from '~/i18n/ja.json'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPanel } from './a.$id/+components/comment-panel'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
-import { COMMENT_MUTATION_SETTLED_EVENT } from './a.$id/+components/use-comment-mutations'
 import {
   patchCommentThreads,
   type CommentThreadPatch,
@@ -414,17 +414,13 @@ async function mountReconciliation() {
     .toBeVisible()
 }
 function requestReconciliation(threadId = 'other') {
-  window.dispatchEvent(
-    new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-      detail: {
-        shareableId: 'synthetic-artifact',
-        threadId,
-        clientMutationId: 'synthetic-mutation',
-        appliedThreads: true,
-        requiresReconcile: true,
-      },
-    }),
-  )
+  settleCommentRuntimeMutation({
+    shareableId: 'synthetic-artifact',
+    threadId,
+    clientMutationId: 'synthetic-mutation',
+    appliedThreads: true,
+    requiresReconcile: true,
+  })
 }
 const otherUpdated = {
   ...otherThread,

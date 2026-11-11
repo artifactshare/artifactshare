@@ -1,3 +1,7 @@
+import {
+  acquireCommentRuntime,
+  withCommentRuntime,
+} from './comment-runtime-browser'
 import type {
   ChangeCommentThreads,
   CommentThreadPatch,
@@ -46,50 +50,14 @@ export type CommentMutationPayload =
   | { intent: 'delete-message'; messageId: string; threadId?: string }
   | { intent: 'delete-thread'; threadId: string }
 
-const mutationEpochs = new Map<string, number>()
-const threadMutationEpochs = new Map<string, Map<string, number>>()
-let mutationEpoch = 0
 export function advanceCommentEpoch(id: string, threadId?: string) {
-  mutationEpoch += 1
-  if (!threadId) mutationEpochs.set(id, mutationEpoch)
-  else {
-    const threads = threadMutationEpochs.get(id) ?? new Map<string, number>()
-    threads.set(threadId, mutationEpoch)
-    threadMutationEpochs.set(id, threads)
-  }
+  withCommentRuntime(id, (lease) => lease.invalidate(threadId))
 }
-export function getCommentMutationEpoch(id: string, threadId: string): number {
-  return Math.max(
-    mutationEpochs.get(id) ?? 0,
-    threadMutationEpochs.get(id)?.get(threadId) ?? 0,
-  )
+export function hasPendingCommentMutation(id: string) {
+  return withCommentRuntime(id, (lease) => lease.hasPending())
 }
-
-const activeMutationsByShareable = new Map<string, number>()
-const activeMutationIdsByShareable = new Map<string, Set<string>>()
-const overlappingMutationsByShareable = new Set<string>()
-export const COMMENT_MUTATION_SETTLED_EVENT =
-  'artifactshare:comment-mutation-settled'
-
-export type CommentMutationSettledDetail = {
-  shareableId: string
-  clientMutationId: string
-  appliedThreads: boolean
-  threadId?: string
-}
-
-export function hasPendingCommentMutation(shareableId: string): boolean {
-  return (activeMutationsByShareable.get(shareableId) ?? 0) > 0
-}
-
-export function hasPendingCommentMutationId(
-  shareableId: string,
-  clientMutationId: string,
-): boolean {
-  return (
-    activeMutationIdsByShareable.get(shareableId)?.has(clientMutationId) ??
-    false
-  )
+export function hasPendingCommentMutationId(id: string, mutationId: string) {
+  return withCommentRuntime(id, (lease) => lease.hasPending(mutationId))
 }
 
 export function useCommentMutations({
@@ -117,12 +85,13 @@ export function useCommentMutations({
     const clientMutationId = createClientMutationId()
     let appliedThreads = false
     let threadId = 'threadId' in payload ? payload.threadId : undefined
-    advanceCommentEpoch(requestShareableId, threadId)
-    incrementActiveMutation(requestShareableId, clientMutationId)
+    const runtime = acquireCommentRuntime(requestShareableId)
+    let job: ReturnType<typeof runtime.beginMutation> | undefined
     if (pendingKey) {
       setPendingKeys((current) => new Set(current).add(pendingKey))
     }
     try {
+      job = runtime.beginMutation(clientMutationId, threadId)
       const result = await fetchJsonWithViewerTimeout<
         CommentThreadPatch & {
           refreshRequired?: boolean
@@ -205,11 +174,8 @@ export function useCommentMutations({
         body?.threads?.[0]?.id ??
         threadId
       if (body?.threads) {
-        if (!overlappingMutationsByShareable.has(requestShareableId))
-          onThreadsChange(body.threads, body)
-        appliedThreads =
-          !body.refreshRequired &&
-          !overlappingMutationsByShareable.has(requestShareableId)
+        if (!runtime.hasOverlap()) onThreadsChange(body.threads, body)
+        appliedThreads = !body.refreshRequired && !runtime.hasOverlap()
       }
       return true
     } catch (error) {
@@ -226,12 +192,11 @@ export function useCommentMutations({
       toast.error(t('comments.errorSave'))
       return false
     } finally {
-      advanceCommentEpoch(requestShareableId, threadId)
-      decrementActiveMutation(requestShareableId, {
-        clientMutationId,
+      job?.settle({
         appliedThreads,
         threadId,
       })
+      runtime.release()
       if (pendingKey) {
         setPendingKeys((current) => {
           const next = new Set(current)
@@ -243,44 +208,6 @@ export function useCommentMutations({
   }
 
   return { mutate, pendingKeys }
-}
-
-function incrementActiveMutation(
-  shareableId: string,
-  clientMutationId: string,
-) {
-  if ((activeMutationsByShareable.get(shareableId) ?? 0) > 0) {
-    overlappingMutationsByShareable.add(shareableId)
-  }
-  activeMutationsByShareable.set(
-    shareableId,
-    (activeMutationsByShareable.get(shareableId) ?? 0) + 1,
-  )
-  const ids = activeMutationIdsByShareable.get(shareableId) ?? new Set()
-  ids.add(clientMutationId)
-  activeMutationIdsByShareable.set(shareableId, ids)
-}
-
-function decrementActiveMutation(
-  shareableId: string,
-  detail: Omit<CommentMutationSettledDetail, 'shareableId'>,
-) {
-  const ids = activeMutationIdsByShareable.get(shareableId)
-  ids?.delete(detail.clientMutationId)
-  if (ids?.size === 0) activeMutationIdsByShareable.delete(shareableId)
-
-  const next = (activeMutationsByShareable.get(shareableId) ?? 0) - 1
-  if (next > 0) {
-    activeMutationsByShareable.set(shareableId, next)
-  } else {
-    activeMutationsByShareable.delete(shareableId)
-    overlappingMutationsByShareable.delete(shareableId)
-  }
-  window.dispatchEvent(
-    new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-      detail: { shareableId, ...detail },
-    }),
-  )
 }
 
 function createClientMutationId(): string {

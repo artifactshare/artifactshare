@@ -1,3 +1,4 @@
+import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 import { messageCursor } from '~/lib/comment-cursor'
 // @vitest-environment happy-dom
 import { act, StrictMode, Suspense } from 'react'
@@ -8,10 +9,7 @@ import type { CommentThreadView } from '~/lib/comments'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { useViewerComments } from './viewer-shell'
 import { useCommentPage } from './use-comment-page'
-import {
-  COMMENT_MUTATION_SETTLED_EVENT,
-  useCommentMutations,
-} from './use-comment-mutations'
+import { useCommentMutations } from './use-comment-mutations'
 
 vi.mock('react-router', async (original) => ({
   ...(await original<typeof import('react-router')>()),
@@ -112,16 +110,12 @@ async function until(condition: () => boolean) {
   }, 'comment reconciliation completed')
 }
 function reconcile(threadId = 'other') {
-  window.dispatchEvent(
-    new CustomEvent(COMMENT_MUTATION_SETTLED_EVENT, {
-      detail: {
-        shareableId: 'synthetic-artifact',
-        clientMutationId: 'synthetic-mutation',
-        appliedThreads: true,
-        threadId,
-      },
-    }),
-  )
+  settleCommentRuntimeMutation({
+    shareableId: 'synthetic-artifact',
+    clientMutationId: 'synthetic-mutation',
+    appliedThreads: true,
+    threadId,
+  })
 }
 afterEach(async () => {
   if (root) await act(async () => root!.unmount())
