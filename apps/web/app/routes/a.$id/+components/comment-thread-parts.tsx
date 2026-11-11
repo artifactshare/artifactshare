@@ -198,6 +198,7 @@ export function CommentReplyComposer({
   variant,
   value,
   pending,
+  disabled = false,
   inputRef,
   onChange,
   onSubmit,
@@ -206,6 +207,7 @@ export function CommentReplyComposer({
   variant: 'inline' | 'panel'
   value: string
   pending: boolean
+  disabled?: boolean
   inputRef?: Ref<HTMLTextAreaElement>
   onChange: (value: string) => void
   onSubmit: () => void
@@ -214,7 +216,7 @@ export function CommentReplyComposer({
   const { t } = useT()
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!value.trim()) return
+    if (!value.trim() || pending || disabled) return
     onSubmit()
   }
   return (
@@ -247,6 +249,9 @@ export function CommentReplyComposer({
           onChange={(event) => onChange(event.currentTarget.value)}
         />
       )}
+      <span role="status" className="sr-only">
+        {pending ? t('comments.sending') : ''}
+      </span>
       <div
         className={
           variant === 'inline'
@@ -263,9 +268,10 @@ export function CommentReplyComposer({
           type="submit"
           variant="default"
           size="sm"
-          disabled={!value.trim() || pending}
+          disabled={!value.trim() || pending || disabled}
+          aria-busy={pending || undefined}
         >
-          {t('comments.reply')}
+          {t(pending ? 'comments.sending' : 'comments.reply')}
         </Button>
       </div>
     </form>

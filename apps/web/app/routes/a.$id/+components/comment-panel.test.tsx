@@ -1158,3 +1158,104 @@ test('an empty PDF panel with a page shown says new comments go on that page', (
   expect(html).toContain(en['comments.emptyBodyPdfPage'])
   expect(html).not.toContain(en['comments.emptyBodyArtifact'])
 })
+
+test.each(['en', 'ja'] as const)(
+  'inline resolve disables Reply without sending feedback; only a reply announces sending (%s)',
+  async (language) => {
+    locale.value = language
+    const text = language === 'en' ? en : ja
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const { InlineCommentPopover } = await import('./inline-comment-popover')
+    let finish!: (response: Response) => void
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve
+        }),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const onThreadsChange = vi.fn()
+    try {
+      await act(async () =>
+        root.render(
+          <InlineCommentPopover
+            shareableId="inline-feedback-artifact"
+            thread={{ ...textThread('attached'), canResolve: true }}
+            rect={{ top: 0, left: 0, width: 20, height: 10 }}
+            isCurrentShareableId={() => true}
+            onThreadsChange={onThreadsChange}
+            onClose={() => {}}
+            onOpenConversation={() => {}}
+          />,
+        ),
+      )
+      const form = host.querySelector('form')!
+      const button = form.querySelector<HTMLButtonElement>(
+        'button[type="submit"]',
+      )!
+      const status = form.querySelector('[role="status"]')!
+      expect(status.textContent).toBe('')
+      expect(status.classList.contains('sr-only')).toBe(true)
+      expect(button.contains(status)).toBe(false)
+      await act(async () => {
+        const textarea = form.querySelector('textarea')!
+        Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          'value',
+        )!.set!.call(textarea, 'Review')
+        textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        ;[...host.querySelectorAll('button')]
+          .find((item) => item.textContent === text['comments.resolve'])!
+          .click()
+      })
+      expect(button.disabled).toBe(true)
+      expect(button.textContent).toBe(text['comments.reply'])
+      expect(button.hasAttribute('aria-busy')).toBe(false)
+      expect(status.textContent).toBe('')
+      // Exercise the submit handler directly, as a keyboard submission would.
+      await act(async () =>
+        form.dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true }),
+        ),
+      )
+      expect(fetch).toHaveBeenCalledTimes(1)
+      finish(Response.json({ threads: [] }))
+      await waitForRealTaskCondition(async () => {
+        await act(async () => {})
+        return !button.disabled
+      }, 'resolve settled')
+      await act(async () => button.click())
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(button.disabled).toBe(true)
+      expect(button.textContent).toBe(text['comments.sending'])
+      expect(button.getAttribute('aria-busy')).toBe('true')
+      expect(form.querySelector('[role="status"]')).toBe(status)
+      expect(status.textContent).toBe(text['comments.sending'])
+      await act(async () =>
+        form.dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true }),
+        ),
+      )
+      expect(fetch).toHaveBeenCalledTimes(2)
+      finish(Response.json({ threads: [] }))
+      await waitForRealTaskCondition(async () => {
+        await act(async () => {})
+        return !button.hasAttribute('aria-busy')
+      }, 'reply settled')
+      expect(form.querySelector('[role="status"]')).toBe(status)
+      expect(status.textContent).toBe('')
+      expect(button.textContent).toBe(text['comments.reply'])
+      expect(form.querySelector('textarea')!.value).toBe('')
+      expect(onThreadsChange).toHaveBeenCalledTimes(2)
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      fetch.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  },
+)

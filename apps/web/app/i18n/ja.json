@@ -697,6 +697,7 @@
   "comments.post": "投稿",
   "comments.comment": "コメント",
   "comments.reply": "返信",
+  "comments.sending": "送信中…",
   "comments.copyLink": "リンクをコピー",
   "comments.resolve": "解決",
   "comments.reopen": "未解決に戻す",
