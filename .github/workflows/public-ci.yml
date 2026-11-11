@@ -212,8 +212,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ github.run_id }}
-          restore-keys: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-
+          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
+          restore-keys: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-
       - id: browser-cache-copy
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.plan.outputs.has_pairs == 'true' && steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
         continue-on-error: true
@@ -513,8 +513,8 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ github.run_id }}
-          restore-keys: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-
+          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
+          restore-keys: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-
       - id: browser-cache-copy
         if: ${{ steps.browser-cache-image.outcome == 'success' && env.ImageOS != '' }}
         continue-on-error: true

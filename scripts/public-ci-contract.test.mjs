@@ -1134,7 +1134,7 @@ const browserCacheIds = [
   'browser-cache-copy',
 ]
 const archivePrefix =
-  'browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-'
+  'browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-'
 const archivePath = '${{ runner.temp }}/browser-system-packages'
 const imageGuard =
   "steps.browser-cache-image.outcome == 'success' && env.ImageOS != ''"

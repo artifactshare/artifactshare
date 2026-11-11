@@ -83,7 +83,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/browser-system-packages
-          key: browser-system-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ github.run_id }}
+          key: browser-system-packages-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ matrix.project }}-${{ github.run_id }}
       - name: Repeat the whole suite
         env:
           SHARD: ${{ toJSON(matrix) }}
