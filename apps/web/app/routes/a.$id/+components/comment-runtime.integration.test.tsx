@@ -437,3 +437,163 @@ test('a throwing React cleanup still drains the held post before restoring fetch
   }
   await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
 })
+
+test.each(['legacy', 'session'] as const)(
+  'assignment freezes %s across revalidation/version changes and changes on committed navigation',
+  async (mode) => {
+    await runCommentSyncScenario(useViewerComments, async (driver) => {
+      const original = { mode, build: 'initial-build' }
+      const rollback = {
+        mode: mode === 'session' ? ('legacy' as const) : ('session' as const),
+        build: 'new-build',
+      }
+      await driver.mount('a', null, original, 'v1')
+      const owner = driver.owner()
+      await driver.draft('retained draft')
+      await driver.mount('a', null, rollback, 'v2')
+      expect(driver.assignment()).toEqual(original)
+      expect(driver.owner()).toBe(owner)
+      expect(driver.snapshot().drafts).toEqual({ selected: 'retained draft' })
+      expect(driver.trace).toEqual([])
+      await driver.mount('b', null, rollback, 'v2')
+      expect(driver.assignment()).toEqual(rollback)
+      expect(Boolean(driver.owner())).toBe(rollback.mode === 'session')
+      await driver.mount('a', null, rollback, 'v2')
+      expect(driver.assignment()).toEqual(rollback)
+      expect(driver.trace).toEqual([])
+    })
+  },
+)
+
+test('pending posts survive cross-engine A → B → A, adopt before failed GET, and keep their starting diagnostics', async () => {
+  async function scenario(startMode: 'legacy' | 'session') {
+    const events: Array<Record<string, unknown>> = []
+    const log = vi.spyOn(console, 'info').mockImplementation((name, event) => {
+      if (
+        name === 'artifactshare_viewer_network' &&
+        event.channel === 'comment-sync'
+      )
+        events.push(event)
+    })
+    try {
+      return await runCommentSyncScenario(useViewerComments, async (driver) => {
+        const original = { mode: startMode, build: 'initial-build' }
+        const next = {
+          mode:
+            startMode === 'session'
+              ? ('legacy' as const)
+              : ('session' as const),
+          build: 'new-build',
+        }
+        await driver.mount('a', null, original)
+        await driver.draft('submitted')
+        const post = await driver.post()
+        await driver.waitForRequests(1)
+        await driver.mount('b', null, next)
+        expect(driver.snapshot().threads).toEqual([
+          { id: 'b-only', bodies: ['B original'] },
+        ])
+        expect(driver.snapshot().pending).toEqual([[], []])
+        await driver.mount('a', null, next)
+        await driver.draft('submitted')
+        expect(driver.pending()).toBe(true)
+        await driver.respond(0, {
+          threadId: 'selected',
+          threads: rows('posted immediately'),
+        })
+        await act(async () => expect(await post.done).toBe(true))
+        expect(driver.snapshot().threads).toEqual(
+          expectedRows('posted immediately'),
+        )
+        expect(driver.snapshot().drafts).toEqual({ selected: 'submitted' })
+        await driver.waitForRequests(2)
+        await driver.respond(1, {}, 503)
+        expect(driver.snapshot().threads).toEqual(
+          expectedRows('posted immediately'),
+        )
+        expect(driver.pending()).toBe(false)
+        expect(driver.snapshot().pending).toEqual([[], []])
+        expect(driver.trace).toEqual([
+          'POST /api/shareables/a/comments',
+          'GET /api/shareables/a/comments',
+        ])
+        expect(
+          events.map(
+            ({ mode, build, operation, state, result, fetchCount }) => ({
+              mode,
+              build,
+              operation,
+              state,
+              result,
+              fetchCount,
+            }),
+          ),
+        ).toEqual([
+          {
+            ...original,
+            operation: 'reply',
+            state: 'started',
+            result: 'pending',
+            fetchCount: 1,
+          },
+          {
+            ...original,
+            operation: 'reply',
+            state: 'completed',
+            result: 'success',
+            fetchCount: 0,
+          },
+          {
+            ...next,
+            operation: 'summary',
+            state: 'started',
+            result: 'pending',
+            fetchCount: 1,
+          },
+          {
+            ...next,
+            operation: 'summary',
+            state: 'completed',
+            result: 'http-error',
+            fetchCount: 0,
+          },
+        ])
+        for (const event of events)
+          expect(event.elapsedMs).toEqual(expect.any(Number))
+        expect(JSON.stringify(events)).not.toMatch(
+          /submitted|selected|posted immediately|\/api\/|token/,
+        )
+        return { snapshot: driver.snapshot(), trace: [...driver.trace] }
+      })
+    } finally {
+      log.mockRestore()
+    }
+  }
+  expect(await scenario('legacy')).toEqual(await scenario('session'))
+})
+
+test('a new rollback display reconciles an old Session post without claiming the old producer draft', async () => {
+  await runCommentSyncScenario(useViewerComments, async (driver) => {
+    await driver.mount('a', null, { mode: 'session', build: 'initial-build' })
+    const post = await driver.post()
+    await driver.waitForRequests(1)
+    await driver.unmount()
+    await driver.mount('a', null, { mode: 'legacy', build: 'new-build' })
+    await driver.draft('submitted')
+    expect(driver.assignment().mode).toBe('legacy')
+    expect(driver.pending()).toBe(true)
+    await driver.respond(0, { threadId: 'selected', threads: rows('old post') })
+    await act(async () => {
+      await post.done
+    })
+    expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
+    await driver.waitForRequests(2)
+    await driver.respond(1, { threads: rows('reconciled') })
+    expect(driver.snapshot().threads).toEqual(expectedRows('reconciled'))
+    expect(driver.snapshot().drafts).toEqual({ selected: 'submitted' })
+    expect(driver.trace).toEqual([
+      'POST /api/shareables/a/comments',
+      'GET /api/shareables/a/comments',
+    ])
+  })
+})

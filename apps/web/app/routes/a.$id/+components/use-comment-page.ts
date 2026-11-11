@@ -1,3 +1,4 @@
+import { CommentSyncContext } from './comment-sync-context'
 import { acquireCommentRuntime } from './comment-runtime-browser'
 import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
 import {
@@ -30,6 +31,7 @@ function useLegacyCommentPage(
   onTargetMissing?: (messageId: string) => void,
   enabled = true,
 ) {
+  const assignment = useContext(CommentSyncContext)
   const [status, setStatus] = useState<
     | { kind: 'idle' | 'loading' }
     | { kind: 'failed'; request: CommentPageRequest }
@@ -86,7 +88,10 @@ function useLegacyCommentPage(
         }>(
           commentPageUrl(shareableId, threadId, page),
           { signal: controller.signal },
-          { requireJson: true },
+          {
+            requireJson: true,
+            commentDiagnostic: { assignment, operation: 'page' },
+          },
         )
         if (controller.signal.aborted) return false
         const removed = (code: number) => code === 404 || code === 410
@@ -107,7 +112,10 @@ function useLegacyCommentPage(
           }>(
             commentPageUrl(shareableId, threadId),
             { signal: controller.signal },
-            { requireJson: true },
+            {
+              requireJson: true,
+              commentDiagnostic: { assignment, operation: 'page' },
+            },
           )
           if (controller.signal.aborted) return false
           if (removed(thread.response.status)) return removeThread()
@@ -159,7 +167,14 @@ function useLegacyCommentPage(
         }
       }
     },
-    [shareableId, threadId, onThreadsChange, onTargetMissing, enabled],
+    [
+      shareableId,
+      threadId,
+      onThreadsChange,
+      onTargetMissing,
+      enabled,
+      assignment,
+    ],
   )
   useEffect(() => {
     if (

@@ -1,3 +1,8 @@
+import {
+  legacyCommentSync,
+  type CommentSyncAssignment,
+} from '~/lib/comment-sync'
+import { CommentSyncContext } from '~/routes/a.$id/+components/comment-sync-context'
 import { commentFixture } from './comment-fixtures'
 export { commentFixture } from './comment-fixtures'
 import { act, createElement, useReducer } from 'react'
@@ -71,15 +76,20 @@ function createDriver(useEngine: CommentSyncEngine) {
   function Harness({
     artifact,
     target,
+    assignment,
+    version,
   }: {
     artifact: string
     target: string | null
+    assignment: CommentSyncAssignment
+    version: string | null
   }) {
     display = useEngine({
       framePresent: false,
       artifactId: artifact,
       currentUserId: 'reviewer',
-      currentVersionId: null,
+      currentVersionId: version,
+      commentSync: assignment,
       initialThreads:
         artifact === 'b'
           ? [commentFixture('b-only', 'B original')]
@@ -87,11 +97,15 @@ function createDriver(useEngine: CommentSyncEngine) {
       targetCommentId: target,
       liveEnabled: false,
     })
-    return createElement(Writers, {
-      key: artifact,
-      artifact,
-      comments: display,
-    })
+    return createElement(
+      CommentSyncContext,
+      { value: display.assignment },
+      createElement(Writers, {
+        key: artifact,
+        artifact,
+        comments: display,
+      }),
+    )
   }
   function Writers({
     artifact,
@@ -165,11 +179,18 @@ function createDriver(useEngine: CommentSyncEngine) {
         if (init?.signal?.aborted) abort()
       })
     },
-    async mount(artifact = 'a', target: string | null = null) {
+    async mount(
+      artifact = 'a',
+      target: string | null = null,
+      assignment = legacyCommentSync,
+      version: string | null = null,
+    ) {
       artifacts.add(artifact)
       root ??= createRoot(document.createElement('div'))
       await act(() =>
-        root!.render(createElement(Harness, { artifact, target })),
+        root!.render(
+          createElement(Harness, { artifact, target, assignment, version }),
+        ),
       )
     },
     unmount,
@@ -211,6 +232,8 @@ function createDriver(useEngine: CommentSyncEngine) {
       }, `${count} comment requests`)
       expect(requests).toHaveLength(count)
     },
+    assignment: () => display.assignment,
+    owner: () => display.pageSession,
     snapshot() {
       return {
         artifact: display.state.artifactId,

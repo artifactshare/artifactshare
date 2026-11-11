@@ -1,3 +1,4 @@
+import { CommentSyncContext } from './comment-sync-context'
 import {
   acquireCommentRuntime,
   withCommentRuntime,
@@ -6,7 +7,7 @@ import type {
   ChangeCommentThreads,
   CommentThreadPatch,
 } from './comment-history'
-import { useId, useRef, useState } from 'react'
+import { useContext, useId, useRef, useState } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -71,6 +72,7 @@ export function useCommentMutations({
   onThreadsChange: ChangeCommentThreads
   showNewThreadComposer?: boolean
 }) {
+  const assignment = useContext(CommentSyncContext)
   const { t } = useT()
   const revalidator = useRevalidator()
   const toastPrefix = useId()
@@ -128,7 +130,11 @@ export function useCommentMutations({
           },
           body: JSON.stringify({ ...payload, clientMutationId }),
         },
-        { requireJson: true, parseErrorJson: true },
+        {
+          requireJson: true,
+          parseErrorJson: true,
+          commentDiagnostic: { assignment, operation: payload.intent },
+        },
       )
       const response = result.response
       if (!response.ok) {

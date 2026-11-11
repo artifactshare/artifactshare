@@ -1,3 +1,8 @@
+import { CommentSyncContext } from './comment-sync-context'
+import {
+  legacyCommentSync,
+  type CommentSyncAssignment,
+} from '~/lib/comment-sync'
 import { createCommentSession } from './comment-session'
 import {
   withRetainedRecovery,
@@ -132,12 +137,14 @@ import {
   fetchJsonWithViewerTimeout,
   VIEWER_FETCH_TIMEOUT_MS,
   logViewerNetworkEvent,
+  startCommentNetworkOperation,
   viewerFetchFailureReason,
 } from '~/lib/viewer-network'
 import { cn } from '~/lib/utils'
 import { Link } from 'react-router'
 
 export type ViewerShellArtifact = {
+  commentSync?: CommentSyncAssignment
   id: string
   name: string
   derivedTitle: string | null
@@ -232,7 +239,7 @@ type ViewerCommentAction =
 async function fetchCommentThreads<T>(
   artifactId: string,
   signal: AbortSignal,
-  options: { requireJson?: boolean } = {},
+  options: Parameters<typeof fetchJsonWithViewerTimeout>[2] = {},
 ) {
   const lease = acquireCommentRuntime(artifactId)
   try {
@@ -486,7 +493,9 @@ function useViewerCommentsWithMode(
     onLiveConnectionChanged,
     onPanelOpened,
     commentLocation,
+    commentSync = legacyCommentSync,
   }: {
+    commentSync?: CommentSyncAssignment
     /** Static sites: the displayed location; other locations are not checked here. */
     commentLocation?: string | null
     framePresent: boolean
@@ -503,8 +512,9 @@ function useViewerCommentsWithMode(
     onLiveConnectionChanged?: (connected: boolean) => void
     onPanelOpened?: () => void
   },
-  mode: 'legacy' | 'session',
+  comparisonMode?: 'legacy' | 'session',
 ) {
+  const committedDataPort = useRef<CommentDataPort | null>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const requestedFilterRef = useRef<'all' | undefined>(undefined)
   const artifactIdRef = useLatestRef(artifactId)
@@ -767,6 +777,8 @@ function useViewerCommentsWithMode(
   }
 
   const fetchLatestThreadsOnce = useCallback(async () => {
+    const assignment =
+      committedDataPort.current?.assignment ?? legacyCommentSync
     const requestArtifactId = artifactId
     const readLease = acquireCommentRuntime(requestArtifactId)
     const refreshScope = commentRefreshScope.snapshot()
@@ -782,7 +794,9 @@ function useViewerCommentsWithMode(
       const requestThreads = () =>
         fetchCommentThreads<{
           threads?: ReadonlyArray<CommentThreadView>
-        }>(requestArtifactId, controller.signal)
+        }>(requestArtifactId, controller.signal, {
+          commentDiagnostic: { assignment, operation: 'summary' },
+        })
       const result = await requestThreads().catch((error: unknown) => {
         if (seq !== fetchSeqRef.current) return null
         logViewerNetworkEvent({
@@ -856,9 +870,13 @@ function useViewerCommentsWithMode(
         ) {
           const selected = await fetchJsonWithViewerTimeout<{
             threads: CommentThreadView[]
-          }>(commentPageUrl(requestArtifactId, selectedId), {
-            signal: controller.signal,
-          }).catch(() => null)
+          }>(
+            commentPageUrl(requestArtifactId, selectedId),
+            {
+              signal: controller.signal,
+            },
+            { commentDiagnostic: { assignment, operation: 'selected' } },
+          ).catch(() => null)
           if (
             seq !== fetchSeqRef.current ||
             !isCurrentArtifactId(requestArtifactId)
@@ -933,9 +951,13 @@ function useViewerCommentsWithMode(
                     throw new Error('Comment refresh superseded')
                   const pageResult = await fetchJsonWithViewerTimeout<{
                     threads?: CommentThreadView[]
-                  }>(commentPageUrl(requestArtifactId, thread.id, request), {
-                    signal: controller.signal,
-                  })
+                  }>(
+                    commentPageUrl(requestArtifactId, thread.id, request),
+                    {
+                      signal: controller.signal,
+                    },
+                    { commentDiagnostic: { assignment, operation: 'page' } },
+                  )
                   if (
                     pageResult.response.status === 401 ||
                     pageResult.response.status === 403
@@ -1070,6 +1092,10 @@ function useViewerCommentsWithMode(
 
   // Construct read-only owners during render; attach only for the committed artifact.
   const createDataPort = (): CommentDataPort => {
+    const assignment = {
+      ...commentSync,
+      mode: comparisonMode ?? commentSync.mode,
+    }
     let settlementListener: (() => void) | null = null
     let attached = false
     let pendingSettlement = false
@@ -1089,6 +1115,7 @@ function useViewerCommentsWithMode(
     }
     let pageAuthListener: (() => void) | null = null
     const contacts = {
+      assignment,
       subscribeSettlement(listener: () => void) {
         settlementListener = listener
         // Layout attachment can observe settlement before socket policy registers.
@@ -1108,8 +1135,9 @@ function useViewerCommentsWithMode(
         }
       },
     }
-    if (mode === 'session') {
+    if (assignment.mode === 'session') {
       const session = createCommentSession({
+        assignment,
         artifactId,
         initialThreads,
         currentUserId,
@@ -1240,6 +1268,8 @@ function useViewerCommentsWithMode(
       },
     })
   }
+  // Revalidation and version props must not replace a committed assignment.
+  // Render-local state is rolled back with an abandoned navigation render.
   const [owner, setOwner] = useState(() => ({
     artifactId,
     port: createDataPort(),
@@ -1247,7 +1277,6 @@ function useViewerCommentsWithMode(
   if (owner.artifactId !== artifactId)
     setOwner({ artifactId, port: createDataPort() })
   const dataPort = owner.port
-  const committedDataPort = useRef<CommentDataPort | null>(null)
   useLayoutEffect(() => {
     committedDataPort.current = dataPort
     const unsubscribe = dataPort.session?.subscribe((replaced) => {
@@ -1310,6 +1339,9 @@ function useViewerCommentsWithMode(
 
     let disposed = false
     let socket: WebSocket | null = null
+    let finishSocketAttempt: ReturnType<
+      typeof startCommentNetworkOperation
+    > | null = null
     let hasOpenedSocket = false
     let retryTimer: number | null = null
     let preOpenTimer: number | null = null
@@ -1363,6 +1395,8 @@ function useViewerCommentsWithMode(
       dispatchComment({ type: 'presence-replaced', presence: emptyPresence })
     }
     const releaseSocket = (close = false) => {
+      finishSocketAttempt?.(close ? 'abort' : 'network-error')
+      finishSocketAttempt = null
       const current = socket
       socket = null
       clearPreOpenTimer()
@@ -1434,7 +1468,13 @@ function useViewerCommentsWithMode(
           const result = await fetchCommentThreads<unknown>(
             artifactId,
             controller.signal,
-            { requireJson: true },
+            {
+              requireJson: true,
+              commentDiagnostic: {
+                assignment: dataPort.assignment,
+                operation: 'recovery',
+              },
+            },
           )
           completion = classifyLiveRecoveryResponse(
             result.response,
@@ -1479,6 +1519,8 @@ function useViewerCommentsWithMode(
         currentSocket.send('ping')
       } catch {
         logViewerNetworkEvent({
+          mode: dataPort.assignment.mode,
+          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'ping-send-failed',
           shareableId: artifactId,
@@ -1489,6 +1531,8 @@ function useViewerCommentsWithMode(
       pongTimer = window.setTimeout(() => {
         if (socket !== currentSocket) return
         logViewerNetworkEvent({
+          mode: dataPort.assignment.mode,
+          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'heartbeat-timeout',
           shareableId: artifactId,
@@ -1507,6 +1551,8 @@ function useViewerCommentsWithMode(
       const attempt =
         kind === 'renewal' ? renewalAttempts + 1 : boundedAttempts + 1
       logViewerNetworkEvent({
+        mode: dataPort.assignment.mode,
+        build: dataPort.assignment.build,
         channel: 'websocket',
         state: 'reconnect-scheduled',
         shareableId: artifactId,
@@ -1586,6 +1632,8 @@ function useViewerCommentsWithMode(
         delay = Math.min(delay, Math.max(0, boundary - Date.now()))
       }
       logViewerNetworkEvent({
+        mode: dataPort.assignment.mode,
+        build: dataPort.assignment.build,
         channel: 'websocket',
         state: 'reconnect-scheduled',
         shareableId: artifactId,
@@ -1709,10 +1757,16 @@ function useViewerCommentsWithMode(
       )
       url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 
+      const finishAttempt = startCommentNetworkOperation({
+        assignment: dataPort.assignment,
+        operation: 'socket',
+      })
+      finishSocketAttempt = finishAttempt
       let currentSocket: WebSocket
       try {
         currentSocket = new WebSocket(url)
       } catch {
+        finishAttempt('network-error')
         handlePreOpenFailure(kind)
         return
       }
@@ -1723,6 +1777,7 @@ function useViewerCommentsWithMode(
       const failBeforeOpen = () => {
         if (socket !== currentSocket || settled) return
         settled = true
+        finishAttempt('network-error')
         releaseSocket(true)
         handlePreOpenFailure(kind)
       }
@@ -1756,6 +1811,7 @@ function useViewerCommentsWithMode(
         // Later connections reconcile changes missed while the socket was down.
         if (hasOpenedSocket) dataPort.invalidatePages()
         hasOpenedSocket = true
+        finishAttempt('success')
         opened = true
         ordinaryStartedAt = null
         ordinaryCheckUsed = false
@@ -1768,6 +1824,8 @@ function useViewerCommentsWithMode(
         hiddenInterrupted = false
         onLiveConnectionChangedRef.current?.(true)
         logViewerNetworkEvent({
+          mode: dataPort.assignment.mode,
+          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'open',
           shareableId: artifactId,
@@ -1820,6 +1878,8 @@ function useViewerCommentsWithMode(
         const recognizedExpiry =
           event.code === EXPIRY_CODE && event.reason === EXPIRY_REASON
         logViewerNetworkEvent({
+          mode: dataPort.assignment.mode,
+          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'close',
           shareableId: artifactId,
@@ -1853,6 +1913,8 @@ function useViewerCommentsWithMode(
       currentSocket.addEventListener('error', () => {
         if (socket !== currentSocket || settled) return
         logViewerNetworkEvent({
+          mode: dataPort.assignment.mode,
+          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'error',
           shareableId: artifactId,
@@ -1970,6 +2032,7 @@ function useViewerCommentsWithMode(
     requestedFilter: requestedFilterRef.current,
     focusTargetOnOpen: state.focusTargetOnOpen,
     pageSession: dataPort.session,
+    assignment: dataPort.assignment,
     targetFetchFailed: dataPort.session
       ? dataPort.session.getSnapshot().failedThreadIds.length > 0
       : targetFetchError?.artifactId === artifactId,
@@ -1995,10 +2058,10 @@ function useViewerCommentsWithMode(
 export function useViewerComments(
   options: Parameters<typeof useViewerCommentsWithMode>[0],
 ) {
-  return useViewerCommentsWithMode(options, 'legacy')
+  return useViewerCommentsWithMode(options)
 }
 
-/** Independently runnable migration engine; production keeps useViewerComments. */
+/** Independent Session comparison seam. */
 export function useSessionViewerComments(
   options: Parameters<typeof useViewerCommentsWithMode>[0],
 ) {
@@ -2366,7 +2429,9 @@ export function ViewerShell(props: ViewerShellProps) {
   return (
     <PdfPageContext value={controller.pdfPageBridge}>
       <CommentPageSessionContext value={controller.comments.pageSession}>
-        <ViewerShellView {...controller} />
+        <CommentSyncContext value={controller.comments.assignment}>
+          <ViewerShellView {...controller} />
+        </CommentSyncContext>
       </CommentPageSessionContext>
     </PdfPageContext>
   )
@@ -2547,6 +2612,7 @@ function useViewerShellController({
     [renderType, commentPage, pdfOpenRequest, artifact.currentVersionId],
   )
   const comments = useViewerComments({
+    commentSync: artifact.commentSync,
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
     currentUserId: user?.id ?? null,

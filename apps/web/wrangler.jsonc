@@ -3,6 +3,7 @@
   "name": "artifactshare-public-preview",
   "compatibility_date": "2026-06-03",
   "compatibility_flags": ["nodejs_compat"],
+  "version_metadata": { "binding": "WORKER_VERSION" },
   "main": "./workers/app.ts",
   "workers_dev": false,
   "preview_urls": false,

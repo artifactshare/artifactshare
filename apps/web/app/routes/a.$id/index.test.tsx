@@ -1,3 +1,4 @@
+import * as artifactTypes from '~/lib/artifact-type'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { ViewerShell } from './+components/viewer-shell'
 import { createViewerRevisitFixture } from '~/test/viewer-revisit-fixture'
@@ -16,6 +17,8 @@ import {
   userContext,
 } from '~/middleware/context'
 
+const commentFlagMock = vi.hoisted(() => ({ getStringValue: vi.fn() }))
+
 const commentLiveMock = vi.hoisted(() => ({
   getByName: vi.fn(),
 }))
@@ -23,6 +26,7 @@ const commentLiveMock = vi.hoisted(() => ({
 vi.mock('cloudflare:workers', () => ({
   env: {
     APP_ENV: 'production',
+    FLAGS: commentFlagMock,
     ARTIFACT_DELIVERY_STAGE: 'usercontent',
     BETTER_AUTH_SECRET: 'test-secret-with-enough-entropy-for-hmac',
     BETTER_AUTH_URL: 'https://artifactshare.com',
@@ -132,6 +136,7 @@ import {
 describe('/a/:id loader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    commentFlagMock.getStringValue.mockResolvedValue('legacy')
     viewerLocale.value = null
     isWorkspaceAccessRevokedMock.mockResolvedValue(false)
     canUpdateShareableVersionMock.mockResolvedValue(false)
@@ -145,6 +150,78 @@ describe('/a/:id loader', () => {
       cookieHeader: null,
     })
     recordAnonymousViewSignalAndMaybeJudgeMock.mockResolvedValue(undefined)
+  })
+
+  test('a format classified as unsupported does not evaluate the comment flag', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: {
+        version_artifact_kind: 'unknown',
+        artifact_kind: 'unknown',
+        name: 'archive.zip',
+        entrypoint_path: '/archive.zip',
+      },
+    })
+    // All currently persisted kinds are supported; exercise the loader's existing
+    // fallback classifier branch without expanding its format/access policy.
+    const classify = vi
+      .spyOn(artifactTypes, 'detectArtifactType')
+      .mockReturnValue(null)
+    commentFlagMock.getStringValue.mockResolvedValue('session')
+    try {
+      const result = await loader({
+        params: { id: 'html123abc' },
+        request: new Request('https://artifactshare.com/a/html123abc'),
+        context,
+      } as never)
+      expect(result.kind).toBe('unsupported')
+      if (result.kind !== 'unsupported')
+        throw new Error('Expected unsupported viewer')
+      expect(result.artifact.commentSync).toEqual({
+        mode: 'legacy',
+        build: 'unknown',
+      })
+      expect(commentFlagMock.getStringValue).not.toHaveBeenCalled()
+    } finally {
+      classify.mockRestore()
+    }
+  })
+
+  test('comment engine targets the owner workspace only after access is granted', async () => {
+    const { context } = setupHtmlShareable({
+      shareable: { workspace_id: 'owner-workspace' },
+    })
+    context.set(userContext, {
+      id: 'external-viewer',
+      email: 'viewer@example.com',
+      name: 'Viewer',
+      image: null,
+      workspaceId: 'viewer-workspace',
+      hd: 'example.com',
+      locale: 'en',
+    })
+    commentFlagMock.getStringValue.mockImplementation(async () => {
+      expect(accessFactsResultMock).toHaveBeenCalledTimes(1)
+      return 'session'
+    })
+    const result = await loader({
+      params: { id: 'html123abc' },
+      request: new Request('https://artifactshare.com/a/html123abc'),
+      context,
+    } as never)
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') throw new Error('Expected viewer')
+    expect(result.artifact.commentSync).toEqual({
+      mode: 'session',
+      build: 'unknown',
+    })
+    expect(commentFlagMock.getStringValue).toHaveBeenCalledExactlyOnceWith(
+      'comment-sync-engine',
+      'legacy',
+      { targetingKey: 'owner-workspace', workspaceId: 'owner-workspace' },
+    )
+    expect(JSON.stringify(result.artifact.commentSync)).not.toContain(
+      'workspace',
+    )
   })
 
   test.each(
@@ -163,6 +240,7 @@ describe('/a/:id loader', () => {
   )(
     'published viewer omits freshness: %j',
     async ({ locale, scheduled, anonymous, historical }) => {
+      commentFlagMock.getStringValue.mockResolvedValue('session')
       viewerLocale.value = locale
       recordViewAndNotifyViewCountMock.mockResolvedValue({ counted: true })
       const { context } = setupHtmlShareable({
@@ -210,6 +288,13 @@ describe('/a/:id loader', () => {
       if (result.kind !== 'ok') throw new Error('Expected published viewer')
       expect(result.artifact.displayedVersionId).toBe(historical ? 'v1' : 'v2')
       expect(result.artifact.isHistoricalVersion).toBe(historical)
+      expect(result.artifact.commentSync).toEqual({
+        mode: anonymous || historical ? 'legacy' : 'session',
+        build: 'unknown',
+      })
+      expect(commentFlagMock.getStringValue).toHaveBeenCalledTimes(
+        anonymous || historical ? 0 : 1,
+      )
       expect(result.artifact.canViewHistory).toBe(!anonymous)
       const router = createMemoryRouter([
         {
@@ -294,6 +379,7 @@ describe('/a/:id loader', () => {
       },
     })
     expect(accessFactsResultMock).not.toHaveBeenCalled()
+    expect(commentFlagMock.getStringValue).not.toHaveBeenCalled()
   })
 
   test('returns unavailable for non-link visibility on the link domain', async () => {
@@ -325,6 +411,7 @@ describe('/a/:id loader', () => {
       appOrigin: 'https://artifactshare.com',
     })
     expect(accessFactsResultMock).not.toHaveBeenCalled()
+    expect(commentFlagMock.getStringValue).not.toHaveBeenCalled()
   })
 
   test('redirects an allowed anonymous link without caching the redirect', async () => {
@@ -1126,6 +1213,7 @@ describe('/a/:id loader', () => {
   })
 
   test('returns static_site loader data with a signed sandbox URL', async () => {
+    commentFlagMock.getStringValue.mockResolvedValue('session')
     const shareable = {
       id: 'abc123def4',
       workspace_id: 'ws1',
@@ -1188,7 +1276,8 @@ describe('/a/:id loader', () => {
     } as never)
 
     expect(result.kind).toBe('static_site')
-    if (result.kind !== 'static_site') return
+    if (result.kind !== 'static_site') throw new Error('Expected static site')
+    expect(result.artifact.commentSync?.mode).toBe('session')
     expect(result.artifact.canReplaceFile).toBe(true)
     expect(result.sandboxUrl).toMatch(
       /^https:\/\/a-abc123def4--v-7631\.artifactshareusercontent\.com\/index\.md\?__as_token=/,
@@ -2305,6 +2394,7 @@ describe('removed-version nondisclosure', () => {
       context,
       request: new Request('https://artifactshare.com/a/html123abc?version=v1'),
     } as never).catch((error) => error)
+    expect(commentFlagMock.getStringValue).not.toHaveBeenCalled()
     if (state === 'missing-file') expect(result).toMatchObject({ status: 404 })
     else if (state === 'preauth')
       expect(result).toMatchObject({ kind: 'preauth' })
