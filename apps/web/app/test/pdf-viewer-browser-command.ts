@@ -1422,6 +1422,14 @@ export const pdfViewerScenario = defineBrowserCommand(
     // does; the fixture lets that page be a frame ancestor of the viewer.
     const framed = scenario === 'preferences' || options.app !== undefined
     let parentPage = ''
+    let markOriginalRequested!: () => void
+    let releaseOriginalResponse!: () => void
+    const originalRequested = new Promise<void>((resolve) => {
+      markOriginalRequested = resolve
+    })
+    const originalResponse = new Promise<void>((resolve) => {
+      releaseOriginalResponse = resolve
+    })
     const server = createServer(async (request, response) => {
       try {
         const url = new URL(request.url ?? '/', origin)
@@ -1441,14 +1449,16 @@ export const pdfViewerScenario = defineBrowserCommand(
           response.writeHead(scenario === 'transport' ? 500 : 404).end()
           return
         }
-        // The viewer's own fetch of the original is slow; the download
-        // link's request is not.
+        // Hold the viewer's original until the download has completed. The
+        // download request must remain independent of this loading response.
         if (
           scenario === 'slow-original' &&
           url.pathname === PDF_ORIGINAL_PATH &&
           !url.searchParams.has('download')
-        )
-          await new Promise((resolve) => setTimeout(resolve, 4000))
+        ) {
+          markOriginalRequested()
+          await originalResponse
+        }
         const headers: Record<string, string> = {}
         for (const [name, value] of Object.entries(request.headers))
           if (
@@ -1561,6 +1571,23 @@ export const pdfViewerScenario = defineBrowserCommand(
       // viewer stays on its document.
       let earlyDownload = null
       if (scenario === 'slow-original') {
+        let requestTimeout: ReturnType<typeof setTimeout> | undefined
+        try {
+          await requiredWait(
+            'PDF original request held',
+            Promise.race([
+              originalRequested,
+              new Promise<never>((_resolve, reject) => {
+                requestTimeout = setTimeout(
+                  () => reject(new Error('Original request did not arrive')),
+                  10000,
+                )
+              }),
+            ]),
+          )
+        } finally {
+          clearTimeout(requestTimeout)
+        }
         await frame.waitForSelector('#download', { timeout: 10000 })
         await frame.evaluate(() => {
           ;(window as unknown as { stayed: boolean }).stayed = true
@@ -1584,6 +1611,7 @@ export const pdfViewerScenario = defineBrowserCommand(
             () => (window as unknown as { stayed?: boolean }).stayed === true,
           ),
         }
+        releaseOriginalResponse()
       }
       await frame.waitForFunction(
         () => document.documentElement.dataset.pdfState !== 'loading',
@@ -1954,6 +1982,9 @@ export const pdfViewerScenario = defineBrowserCommand(
         afterBackForward,
       }
     } finally {
+      // Also release on navigation, download, or assertion failure so no
+      // request handler remains parked while its server and Worker close.
+      releaseOriginalResponse()
       await context?.close()
       if (server.listening) {
         server.closeAllConnections()
