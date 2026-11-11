@@ -157,6 +157,7 @@ test.each([
       } else {
         expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance, {
           id: expect.any(String),
+          action: undefined,
         })
         expect(revalidate).not.toHaveBeenCalled()
       }
@@ -230,6 +231,7 @@ test.each([
       )
       expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance, {
         id: expect.any(String),
+        action: undefined,
       })
     } finally {
       await act(async () => root.unmount())
@@ -283,3 +285,119 @@ test.each(['reply', 'update-message', 'delete-message', 'resolve'] as const)(
     }
   },
 )
+
+test.each([
+  ['rate-limited', 429, 'comments.rateLimited'],
+  ['thread-capacity', 409, 'comments.threadCapacity'],
+  ['generic', 503, 'comments.errorSave'],
+] as const)(
+  'a %s failure replaces the same version-conflict toast and clears Reload',
+  async (code, status, guidance) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ error: { code: 'version_conflict' } }, { status: 409 }),
+      )
+      .mockResolvedValueOnce(Response.json({ error: { code } }, { status }))
+    vi.stubGlobal('fetch', fetch)
+    let mutate!: ReturnType<typeof useCommentMutations>['mutate']
+    function Harness() {
+      mutate = useCommentMutations({
+        shareableId: 'retry-action-artifact',
+        isCurrentShareableId: () => true,
+        onThreadsChange: vi.fn(),
+      }).mutate
+      return null
+    }
+    const root = createRoot(document.createElement('div'))
+    const payload = {
+      intent: 'reply',
+      threadId: 'thread',
+      body: 'Draft',
+    } as const
+    try {
+      await act(async () => root.render(<Harness />))
+      await act(async () => {
+        expect(await mutate(payload)).toBe(false)
+      })
+      const first = vi.mocked(toast.error).mock.calls[0]![1]!
+      expect(first.action).toEqual({
+        label: 'home.reload',
+        onClick: expect.any(Function),
+      })
+      await act(async () => {
+        expect(await mutate(payload)).toBe(false)
+      })
+      expect(toast.error).toHaveBeenLastCalledWith(guidance, {
+        id: first.id,
+        action: undefined,
+      })
+      expect(vi.mocked(toast.error).mock.calls[1]![1]).toHaveProperty(
+        'action',
+        undefined,
+      )
+      expect(fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      await act(async () => root.unmount())
+    }
+  },
+)
+
+test('a retry succeeding after an artifact switch clears only its captured error without adopting threads', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let finish!: (response: Response) => void
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json({ error: {} }, { status: 503 }))
+    .mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve
+        }),
+    )
+  vi.stubGlobal('fetch', fetch)
+  let currentArtifact = 'original-artifact'
+  let mutate!: ReturnType<typeof useCommentMutations>['mutate']
+  const onThreadsChange = vi.fn()
+  function Harness({ shareableId }: { shareableId: string }) {
+    mutate = useCommentMutations({
+      shareableId,
+      isCurrentShareableId: (id) => id === currentArtifact,
+      onThreadsChange,
+    }).mutate
+    return null
+  }
+  const root = createRoot(document.createElement('div'))
+  const payload = {
+    intent: 'reply',
+    threadId: 'thread',
+    body: 'Draft',
+  } as const
+  try {
+    await act(async () =>
+      root.render(<Harness shareableId={currentArtifact} />),
+    )
+    await act(async () => {
+      expect(await mutate(payload)).toBe(false)
+    })
+    const errorId = vi.mocked(toast.error).mock.calls[0]![1]!.id
+    let retry!: Promise<boolean>
+    await act(async () => {
+      retry = mutate(payload)
+    })
+    currentArtifact = 'next-artifact'
+    await act(async () =>
+      root.render(<Harness shareableId={currentArtifact} />),
+    )
+    await act(async () => {
+      finish(Response.json({ threads: [] }))
+      expect(await retry).toBe(false)
+    })
+    expect(toast.dismiss).toHaveBeenCalledExactlyOnceWith(errorId)
+    expect(onThreadsChange).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(2)
+  } finally {
+    await act(async () => root.unmount())
+  }
+})

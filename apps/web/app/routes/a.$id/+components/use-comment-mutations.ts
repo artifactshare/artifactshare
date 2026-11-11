@@ -127,7 +127,7 @@ export function useCommentMutations({
                 ? 'comments.threadCapacityArtifact'
                 : 'comments.threadCapacity',
             ),
-            { id: errorToastId },
+            { id: errorToastId, action: undefined },
           )
           return false
         }
@@ -136,7 +136,7 @@ export function useCommentMutations({
             t('comments.rateLimited', {
               seconds: result.body.error.details?.retry_after_seconds ?? 60,
             }),
-            { id: errorToastId },
+            { id: errorToastId, action: undefined },
           )
           return false
         }
@@ -177,6 +177,7 @@ export function useCommentMutations({
         })
         throw new Error('comment mutation failed')
       }
+      toast.dismiss(errorToastId)
       if (!isCurrentShareableId(requestShareableId)) return false
       const body = result.body
       threadId =
@@ -188,7 +189,6 @@ export function useCommentMutations({
         if (!runtime.hasOverlap()) onThreadsChange(body.threads, body)
         appliedThreads = !body.refreshRequired && !runtime.hasOverlap()
       }
-      toast.dismiss(errorToastId)
       return true
     } catch (error) {
       if (
@@ -201,7 +201,10 @@ export function useCommentMutations({
           reason: viewerFetchFailureReason(error),
         })
       }
-      toast.error(t('comments.errorSave'), { id: errorToastId })
+      toast.error(t('comments.errorSave'), {
+        id: errorToastId,
+        action: undefined,
+      })
       return false
     } finally {
       job?.settle({

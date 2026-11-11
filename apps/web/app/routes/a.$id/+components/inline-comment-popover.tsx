@@ -228,7 +228,8 @@ export function InlineCommentPopover({
         <CommentReplyComposer
           variant="inline"
           value={replyBody}
-          pending={hasPendingMutation}
+          pending={pendingKeys.has(`reply:${thread.id}`)}
+          disabled={hasPendingMutation}
           inputRef={replyRef}
           onChange={setReplyBody}
           onSubmit={() => void reply()}
