@@ -14,6 +14,12 @@ on:
 permissions:
   contents: read
 
+# Preserve an in-progress detector; a newer pending run replaces an older
+# pending run. Serializing entire runs keeps the worker cap global here.
+concurrency:
+  group: flaky-detector
+  cancel-in-progress: false
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -41,6 +47,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,7 +65,7 @@ jobs:
       - if: matrix.suite == 'behavior-browser' || matrix.suite == 'web-unit'
         run: pnpm --filter @artifactshare/contract build
       - if: matrix.suite == 'behavior-browser'
-        run: pnpm --filter @artifactshare/web exec playwright install --with-deps chromium firefox webkit
+        run: pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}
       - id: browser-cache-image
         if: ${{ matrix.suite == 'behavior-browser' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch != '' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
         continue-on-error: true

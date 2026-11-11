@@ -471,16 +471,23 @@ jobs:
       - run: pnpm --filter @artifactshare/cli exec vitest run src/upload-boundary.test.ts src/upload-boundary-commands.test.ts
 
   browser-validation:
-    name: Public browser and local-state validation (${{ matrix.project }})
+    name: Public browser and local-state validation (${{ matrix.project }}, ${{ matrix.shard }}/${{ matrix.total }})
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # One browser per runner, like the nightly flaky detector. Sharing one
-    # runner across all three browsers made timing-sensitive tests flaky.
+    # Keep one serial browser per runner. Historical file durations balance
+    # independent runners without adding resource contention inside a browser.
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit]
+        include:
+          - { project: chromium, shard: 1, total: 3 }
+          - { project: chromium, shard: 2, total: 3 }
+          - { project: chromium, shard: 3, total: 3 }
+          - { project: firefox, shard: 1, total: 2 }
+          - { project: firefox, shard: 2, total: 2 }
+          - { project: webkit, shard: 1, total: 2 }
+          - { project: webkit, shard: 2, total: 2 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -513,15 +520,15 @@ jobs:
         continue-on-error: true
         run: sudo bash scripts/ci/browser-system-packages.sh "$RUNNER_TEMP/browser-system-packages" /var/cache/apt/archives
       - run: pnpm --filter @artifactshare/web exec playwright install --with-deps ${{ matrix.project }}
-      - run: pnpm test:behavior-browser --project=${{ matrix.project }}
+      - run: pnpm test:behavior-browser --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}
         env:
           DEBUG: pw:browser
       - name: Verify native browser waits and popup cancellation
-        if: matrix.project == 'chromium'
+        if: matrix.project == 'chromium' && matrix.shard == 1
         timeout-minutes: 2
         run: node --test scripts/browser-waits.integration.mjs
       - name: Verify scenario routes and in-app navigation
-        if: matrix.project == 'chromium'
+        if: matrix.project == 'chromium' && matrix.shard == 1
         run: pnpm check:browser-local-state
 
   visual-validation:

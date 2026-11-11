@@ -815,10 +815,20 @@ test('standalone CLI validation builds contracts and CI/release smoke-test the p
 
 test('browser installation precedes execution and retains browser stderr', () => {
   const browser = parsedWorkflow.jobs['browser-validation']
-  // One runner per browser, matching the nightly flaky-detector lanes.
+  // One serial browser per runner; all seven shards remain required.
   assert.deepEqual(browser.strategy, {
     'fail-fast': false,
-    matrix: { project: ['chromium', 'firefox', 'webkit'] },
+    matrix: {
+      include: [
+        { project: 'chromium', shard: 1, total: 3 },
+        { project: 'chromium', shard: 2, total: 3 },
+        { project: 'chromium', shard: 3, total: 3 },
+        { project: 'firefox', shard: 1, total: 2 },
+        { project: 'firefox', shard: 2, total: 2 },
+        { project: 'webkit', shard: 1, total: 2 },
+        { project: 'webkit', shard: 2, total: 2 },
+      ],
+    },
   })
   const index = browser.steps.findIndex(
     (step) =>
@@ -828,13 +838,16 @@ test('browser installation precedes execution and retains browser stderr', () =>
   assert.ok(index > 0)
   assert.equal(
     browser.steps[index + 1].run,
-    'pnpm test:behavior-browser --project=${{ matrix.project }}',
+    'pnpm test:behavior-browser --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}',
   )
   const localState = browser.steps.find(
     (step) => step.run === 'pnpm check:browser-local-state',
   )
   // The local-state harness launches Chromium only, so it runs once.
-  assert.equal(localState.if, "matrix.project == 'chromium'")
+  assert.equal(
+    localState.if,
+    "matrix.project == 'chromium' && matrix.shard == 1",
+  )
   assert.deepEqual(browser.steps[index + 1].env, { DEBUG: 'pw:browser' })
   for (const step of browser.steps.slice(index, index + 2)) {
     assert.equal(step['continue-on-error'], undefined)
@@ -1288,7 +1301,7 @@ test('native browser wait proof runs in the existing required Chromium lane for 
   const checks = lane.steps.filter((step) => step.run === command)
   assert.equal(checks.length, 1)
   const check = checks[0]
-  assert.equal(check.if, "matrix.project == 'chromium'")
+  assert.equal(check.if, "matrix.project == 'chromium' && matrix.shard == 1")
   assert.equal(check['continue-on-error'], undefined)
   assert.equal(check['timeout-minutes'], 2)
   assert.ok(
