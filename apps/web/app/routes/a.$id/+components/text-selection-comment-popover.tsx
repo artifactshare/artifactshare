@@ -98,15 +98,19 @@ export function TextSelectionCommentPopover({
           placeholder={t('comments.newTextPlaceholder')}
           onChange={(event) => setBody(event.currentTarget.value)}
         />
+        <span role="status" className="sr-only">
+          {pending ? t('comments.sending') : ''}
+        </span>
         <div className="flex justify-end">
           <Button
             type="button"
             variant="default"
             size="sm"
             disabled={!body.trim() || pending}
+            aria-busy={pending || undefined}
             onClick={submit}
           >
-            {t('comments.comment')}
+            {t(pending ? 'comments.sending' : 'comments.comment')}
           </Button>
         </div>
       </div>

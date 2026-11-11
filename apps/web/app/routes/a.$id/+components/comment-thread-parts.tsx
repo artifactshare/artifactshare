@@ -268,7 +268,9 @@ export function CommentReplyComposer({
           type="submit"
           variant="default"
           size="sm"
-          disabled={!value.trim() || pending || disabled}
+          className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+          disabled={!value.trim() || disabled}
+          aria-disabled={pending || undefined}
           aria-busy={pending || undefined}
         >
           {t(pending ? 'comments.sending' : 'comments.reply')}

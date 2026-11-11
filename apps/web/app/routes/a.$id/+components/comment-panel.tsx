@@ -579,14 +579,18 @@ function NewThreadComposer({
         )}
         onChange={(event) => setBody(event.currentTarget.value)}
       />
+      <span role="status" className="sr-only">
+        {pending ? t('comments.sending') : ''}
+      </span>
       <div className="mt-2 flex justify-end gap-2">
         <Button
           type="submit"
           variant="default"
           size="sm"
           disabled={!body.trim() || pending}
+          aria-busy={pending || undefined}
         >
-          {t('comments.post')}
+          {t(pending ? 'comments.sending' : 'comments.post')}
         </Button>
       </div>
     </form>

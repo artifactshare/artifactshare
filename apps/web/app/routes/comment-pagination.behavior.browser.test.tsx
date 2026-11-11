@@ -1,8 +1,8 @@
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
-import { page } from 'vitest/browser'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { page, userEvent } from 'vitest/browser'
 import { toast, Toaster } from 'sonner'
 import '~/app.css'
 import { TooltipProvider } from '~/components/ui/tooltip'
@@ -11,8 +11,12 @@ import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
 import { useCommentMutations } from './a.$id/+components/use-comment-mutations'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
+import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { CommentPanel } from './a.$id/+components/comment-panel'
-import { useViewerComments } from './a.$id/+components/viewer-shell'
+import {
+  useViewerComments,
+  useSessionViewerComments,
+} from './a.$id/+components/viewer-shell'
 import {
   patchCommentThreads,
   type CommentThreadPatch,
@@ -280,6 +284,45 @@ test('a failed comment retry stays visible when its prior notification is exitin
   expect(current.querySelector('[data-button]')).toBeNull()
 })
 
+test('a held reply blocks repeat Enter and retains keyboard focus and draft after failure', async () => {
+  let finish!: (response: Response) => void
+  const fetch = vi.fn(
+    (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Promise<Response>((resolve) => {
+        finish = resolve
+      }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  await mount(false)
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  const draft = page.getByRole('textbox', { name: 'Reply', exact: true })
+  await draft.fill('Retained reply draft')
+  await userEvent.keyboard('{Tab}{Tab}')
+  const reply = page.getByRole('button', { name: 'Reply', exact: true })
+  await expect.element(reply).toHaveFocus()
+  const submitButton = document.activeElement
+  await userEvent.keyboard('{Enter}')
+  const sending = page.getByRole('button', {
+    name: en['comments.sending'],
+    exact: true,
+  })
+  await expect.element(sending).toHaveFocus()
+  await expect.element(sending).toHaveAttribute('aria-busy', 'true')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+  await userEvent.keyboard('{Enter}')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  finish(new Response(null, { status: 503 }))
+  await expect.element(reply).toHaveFocus()
+  expect(document.activeElement).toBe(submitButton)
+  await expect.element(draft).toHaveValue('Retained reply draft')
+  await expect
+    .element(page.getByText(en['comments.errorSave'], { exact: true }))
+    .toBeVisible()
+  await expect.element(reply).not.toHaveAttribute('aria-busy')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
 test.each([
   ['en', false],
   ['en', true],
@@ -450,177 +493,6 @@ const otherThread: CommentThreadView = {
   olderCursor: null,
 }
 const controllerThreads = [initial, otherThread]
-function ReconciliationHarness() {
-  const comments = useViewerComments({
-    artifactId: 'synthetic-artifact',
-    currentUserId: 'reviewer',
-    currentVersionId: null,
-    initialThreads: controllerThreads,
-    targetCommentId: 'thread',
-    liveEnabled: false,
-    framePresent: false,
-  })
-  return (
-    <TooltipProvider>
-      <CommentPanel
-        shareableId="synthetic-artifact"
-        viewerUserId="reviewer"
-        threads={comments.panelThreads}
-        onThreadsChange={comments.replaceThreads}
-        isCurrentShareableId={comments.isCurrentArtifactId}
-        open
-        onOpenChange={comments.changePanelOpen}
-        targetThreadId={comments.state.targetThreadId}
-        targetThreadScroll="start"
-        targetFetchFailed={comments.targetFetchFailed}
-        onRetryTarget={comments.retryTargetFetch}
-        onThreadNavigate={(thread) => comments.targetThread(thread.id)}
-      />
-    </TooltipProvider>
-  )
-}
-async function mountReconciliation() {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  root = createRoot(host)
-  root.render(<ReconciliationHarness />)
-  await expect
-    .element(page.getByText('Review message 9', { exact: true }))
-    .toBeVisible()
-}
-function requestReconciliation(threadId = 'other') {
-  settleCommentRuntimeMutation({
-    shareableId: 'synthetic-artifact',
-    threadId,
-    clientMutationId: 'synthetic-mutation',
-    appliedThreads: true,
-    requiresReconcile: true,
-  })
-}
-const otherUpdated = {
-  ...otherThread,
-  messages: [{ ...otherThread.messages[0], body: 'Other updated' }],
-}
-
-test.each(['selected read', 'loaded range'])(
-  '%s failure preserves drafts and independent updates; explicit retry removes a remote deletion',
-  async (mode) => {
-    let failing = false
-    let deleted = false
-    let rangeReads = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input), 'https://example.com')
-        if (url.searchParams.has('before')) {
-          rangeReads++
-          if (failing) throw new TypeError('Synthetic offline')
-          return Response.json({
-            threads: [
-              {
-                ...older,
-                messages: older.messages.filter(
-                  (row) => !deleted || row.id !== 'message-1',
-                ),
-              },
-            ],
-          })
-        }
-        if (url.searchParams.has('thread_id')) {
-          if (failing) throw new TypeError('Synthetic offline')
-          return Response.json({ threads: [initial] })
-        }
-        return Response.json({
-          threads: [
-            otherUpdated,
-            ...(mode === 'loaded range' ? [initial] : []),
-          ],
-        })
-      }),
-    )
-    await mountReconciliation()
-    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .toBeVisible()
-    const card = page
-      .getByRole('article')
-      .filter({ hasText: 'Review message 9' })
-    await card.getByRole('button', { name: 'Reply', exact: true }).click()
-    const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
-    await draft.fill('Retained draft')
-    failing = true
-    requestReconciliation('thread')
-    await expect
-      .element(page.getByText('Other updated', { exact: true }))
-      .toBeVisible()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained draft')
-    await expect
-      .element(page.getByRole('button', { name: 'Retry comment refresh' }))
-      .toBeVisible()
-    failing = false
-    deleted = true
-    const previousReads = rangeReads
-    await page.getByRole('button', { name: 'Retry comment refresh' }).click()
-    await expect
-      .element(page.getByText('Review message 1', { exact: true }))
-      .not.toBeInTheDocument()
-    await expect
-      .element(page.getByRole('button', { name: 'Retry comment refresh' }))
-      .not.toBeInTheDocument()
-    await expect
-      .element(page.getByText('Review message 2', { exact: true }))
-      .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained draft')
-    expect(rangeReads).toBeGreaterThan(previousReads)
-  },
-)
-
-test('an older page winning reconciliation retains the draft and still applies another thread update', async () => {
-  let resolveList!: (value: Response) => void
-  let listCalls = 0
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://example.com')
-      if (url.searchParams.has('before'))
-        return Response.json({ threads: [older] })
-      listCalls++
-      if (listCalls === 1)
-        return new Promise<Response>((done) => {
-          resolveList = done
-        })
-      return Response.json({ threads: [initial, otherUpdated] })
-    }),
-  )
-  await mountReconciliation()
-  const card = page.getByRole('article').filter({ hasText: 'Review message 9' })
-  await card.getByRole('button', { name: 'Reply', exact: true }).click()
-  await card
-    .getByRole('textbox', { name: 'Reply', exact: true })
-    .fill('Retained draft')
-  requestReconciliation()
-  await vi.waitFor(() => expect(listCalls).toBe(1))
-  await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
-  await expect
-    .element(page.getByText('Review message 1', { exact: true }))
-    .toBeVisible()
-  resolveList(Response.json({ threads: controllerThreads }))
-  await expect
-    .element(page.getByText('Other updated', { exact: true }))
-    .toBeVisible()
-  await expect
-    .element(page.getByText('Review message 1', { exact: true }))
-    .toBeVisible()
-  await expect
-    .element(card.getByRole('textbox', { name: 'Reply', exact: true }))
-    .toHaveValue('Retained draft')
-  expect(listCalls).toBe(2)
-})
-
 test('a failed selected-message lookup offers retry and keeps the loaded tail', async () => {
   let attempts = 0
   vi.stubGlobal(
@@ -719,52 +591,232 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-test.each([401, 403])(
-  'range %i recovers authorization without unmounting the reply draft',
-  async (status) => {
-    let recovering = false
-    let refused = false
-    let finishRecovery!: (response: Response) => void
-    const fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://example.com')
-      if (url.searchParams.has('before')) {
-        if (recovering && !refused) {
-          refused = true
-          return new Response(null, { status })
-        }
-        return Response.json({ threads: [older] })
-      }
-      if (refused)
-        return new Promise<Response>((resolve) => {
-          finishRecovery = resolve
-        })
-      return Response.json({ threads: controllerThreads })
+describe.each([
+  ['legacy', useViewerComments],
+  ['session', useSessionViewerComments],
+] as const)('comment pagination reconciliation (%s)', (_owner, useComments) => {
+  function ReconciliationHarness() {
+    const comments = useComments({
+      artifactId: 'synthetic-artifact',
+      currentUserId: 'reviewer',
+      currentVersionId: null,
+      initialThreads: controllerThreads,
+      targetCommentId: 'thread',
+      liveEnabled: false,
+      framePresent: false,
     })
-    vi.stubGlobal('fetch', fetch)
-    await mountReconciliation()
-    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+    return (
+      <CommentPageSessionContext value={comments.pageSession}>
+        <TooltipProvider>
+          <CommentPanel
+            shareableId="synthetic-artifact"
+            viewerUserId="reviewer"
+            threads={comments.panelThreads}
+            onThreadsChange={comments.replaceThreads}
+            isCurrentShareableId={comments.isCurrentArtifactId}
+            open
+            onOpenChange={comments.changePanelOpen}
+            targetThreadId={comments.state.targetThreadId}
+            targetThreadScroll="start"
+            targetFetchFailed={comments.targetFetchFailed}
+            onRetryTarget={comments.retryTargetFetch}
+            onThreadNavigate={(thread) => comments.targetThread(thread.id)}
+          />
+        </TooltipProvider>
+      </CommentPageSessionContext>
+    )
+  }
+  async function mountReconciliation() {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    root.render(<ReconciliationHarness />)
     await expect
-      .element(page.getByText('Review message 1', { exact: true }))
+      .element(page.getByText('Review message 9', { exact: true }))
       .toBeVisible()
+  }
+  function requestReconciliation(threadId = 'other') {
+    settleCommentRuntimeMutation({
+      shareableId: 'synthetic-artifact',
+      threadId,
+      clientMutationId: 'synthetic-mutation',
+      appliedThreads: true,
+      requiresReconcile: true,
+    })
+  }
+  const otherUpdated = {
+    ...otherThread,
+    messages: [{ ...otherThread.messages[0], body: 'Other updated' }],
+  }
+
+  test.each(['selected read', 'loaded range'])(
+    '%s failure preserves drafts and independent updates; explicit retry removes a remote deletion',
+    async (mode) => {
+      let failing = false
+      let deleted = false
+      let rangeReads = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = new URL(String(input), 'https://example.com')
+          if (url.searchParams.has('before')) {
+            rangeReads++
+            if (failing) throw new TypeError('Synthetic offline')
+            return Response.json({
+              threads: [
+                {
+                  ...older,
+                  messages: older.messages.filter(
+                    (row) => !deleted || row.id !== 'message-1',
+                  ),
+                },
+              ],
+            })
+          }
+          if (url.searchParams.has('thread_id')) {
+            if (failing) throw new TypeError('Synthetic offline')
+            return Response.json({ threads: [initial] })
+          }
+          return Response.json({
+            threads: [
+              otherUpdated,
+              ...(mode === 'loaded range' ? [initial] : []),
+            ],
+          })
+        }),
+      )
+      await mountReconciliation()
+      await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      const card = page
+        .getByRole('article')
+        .filter({ hasText: 'Review message 9' })
+      await card.getByRole('button', { name: 'Reply', exact: true }).click()
+      const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
+      await draft.fill('Retained draft')
+      failing = true
+      requestReconciliation('thread')
+      await expect
+        .element(page.getByText('Other updated', { exact: true }))
+        .toBeVisible()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained draft')
+      await expect
+        .element(page.getByRole('button', { name: 'Retry comment refresh' }))
+        .toBeVisible()
+      failing = false
+      deleted = true
+      const previousReads = rangeReads
+      await page.getByRole('button', { name: 'Retry comment refresh' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .not.toBeInTheDocument()
+      await expect
+        .element(page.getByRole('button', { name: 'Retry comment refresh' }))
+        .not.toBeInTheDocument()
+      await expect
+        .element(page.getByText('Review message 2', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained draft')
+      expect(rangeReads).toBeGreaterThan(previousReads)
+    },
+  )
+
+  test('an older page winning reconciliation retains the draft and still applies another thread update', async () => {
+    let resolveList!: (value: Response) => void
+    let listCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'https://example.com')
+        if (url.searchParams.has('before'))
+          return Response.json({ threads: [older] })
+        listCalls++
+        if (listCalls === 1)
+          return new Promise<Response>((done) => {
+            resolveList = done
+          })
+        return Response.json({ threads: [initial, otherUpdated] })
+      }),
+    )
+    await mountReconciliation()
     const card = page
       .getByRole('article')
       .filter({ hasText: 'Review message 9' })
     await card.getByRole('button', { name: 'Reply', exact: true }).click()
-    const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
-    await draft.fill('Retained authorization draft')
-    recovering = true
-    requestReconciliation('thread')
-    await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'), {
-      timeout: 5000,
-    })
+    await card
+      .getByRole('textbox', { name: 'Reply', exact: true })
+      .fill('Retained draft')
+    requestReconciliation()
+    await vi.waitFor(() => expect(listCalls).toBe(1))
+    await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
     await expect
       .element(page.getByText('Review message 1', { exact: true }))
       .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained authorization draft')
-    finishRecovery(Response.json({ threads: [initial, otherUpdated] }))
+    resolveList(Response.json({ threads: controllerThreads }))
     await expect
       .element(page.getByText('Other updated', { exact: true }))
       .toBeVisible()
-    await expect.element(draft).toHaveValue('Retained authorization draft')
-  },
-)
+    await expect
+      .element(page.getByText('Review message 1', { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(card.getByRole('textbox', { name: 'Reply', exact: true }))
+      .toHaveValue('Retained draft')
+    expect(listCalls).toBe(2)
+  })
+
+  test.each([401, 403])(
+    'range %i recovers authorization without unmounting the reply draft',
+    async (status) => {
+      let recovering = false
+      let refused = false
+      let finishRecovery!: (response: Response) => void
+      const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'https://example.com')
+        if (url.searchParams.has('before')) {
+          if (recovering && !refused) {
+            refused = true
+            return new Response(null, { status })
+          }
+          return Response.json({ threads: [older] })
+        }
+        if (refused)
+          return new Promise<Response>((resolve) => {
+            finishRecovery = resolve
+          })
+        return Response.json({ threads: controllerThreads })
+      })
+      vi.stubGlobal('fetch', fetch)
+      await mountReconciliation()
+      await page.getByRole('button', { name: 'Show 6 earlier replies' }).click()
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      const card = page
+        .getByRole('article')
+        .filter({ hasText: 'Review message 9' })
+      await card.getByRole('button', { name: 'Reply', exact: true }).click()
+      const draft = card.getByRole('textbox', { name: 'Reply', exact: true })
+      await draft.fill('Retained authorization draft')
+      recovering = true
+      requestReconciliation('thread')
+      await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'), {
+        timeout: 5000,
+      })
+      await expect
+        .element(page.getByText('Review message 1', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained authorization draft')
+      finishRecovery(Response.json({ threads: [initial, otherUpdated] }))
+      await expect
+        .element(page.getByText('Other updated', { exact: true }))
+        .toBeVisible()
+      await expect.element(draft).toHaveValue('Retained authorization draft')
+    },
+  )
+})

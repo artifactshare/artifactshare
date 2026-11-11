@@ -7,6 +7,7 @@ export type CommentMutationSettlement = {
 type ArtifactRecord = {
   leases: number
   epoch: number
+  settlementRevision: number
   threads: Map<string, number>
   pending: Set<string>
   overlapping: boolean
@@ -43,6 +44,7 @@ export function createCommentRuntime(
         record = {
           leases: 0,
           epoch: 0,
+          settlementRevision: 0,
           threads: new Map(),
           pending: new Set(),
           overlapping: false,
@@ -63,6 +65,11 @@ export function createCommentRuntime(
         getEpoch(threadId: string) {
           assertActive()
           return Math.max(captured.epoch, captured.threads.get(threadId) ?? 0)
+        },
+        /** Client-side settlement token, not a server revision or request ID. */
+        getSettlementRevision() {
+          assertActive()
+          return captured.settlementRevision
         },
         invalidate(threadId?: string) {
           assertActive()
@@ -107,6 +114,7 @@ export function createCommentRuntime(
               captured.pending.delete(clientMutationId)
               if (captured.pending.size === 0) captured.overlapping = false
               advance(captured, result.threadId ?? threadId)
+              captured.settlementRevision = epoch
               // Subscribers added during delivery wait for the next settlement.
               const listeners = [...captured.listeners]
               try {
