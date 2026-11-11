@@ -9,7 +9,11 @@ import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
-import { useCommentMutations } from './a.$id/+components/use-comment-mutations'
+import {
+  hasPendingCommentMutation,
+  useCommentMutations,
+} from './a.$id/+components/use-comment-mutations'
+import { TextSelectionCommentPopover } from './a.$id/+components/text-selection-comment-popover'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { CommentPanel } from './a.$id/+components/comment-panel'
@@ -283,6 +287,95 @@ test('a failed comment retry stays visible when its prior notification is exitin
   expect(current.dataset.removed).toBe('false')
   expect(current.querySelector('[data-button]')).toBeNull()
 })
+
+test.each(['new-thread panel', 'text-selection popover'] as const)(
+  'a held %s blocks repeat Enter and retains keyboard focus and draft after failure',
+  async (surface) => {
+    const finishes: Array<(response: Response) => void> = []
+    const fetch = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          finishes.push(resolve)
+        }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const onClose = vi.fn()
+    try {
+      if (surface === 'new-thread panel') {
+        await mount()
+      } else {
+        const host = document.createElement('div')
+        document.body.appendChild(host)
+        root = createRoot(host)
+        root.render(
+          <TooltipProvider>
+            <TextSelectionCommentPopover
+              shareableId="synthetic-artifact"
+              anchor={{
+                quotedText: 'Selected words',
+                prefixText: '',
+                suffixText: '',
+                textStart: 0,
+                textEnd: 14,
+                cssPath: null,
+                rect: { top: 100, left: 100, width: 100, height: 20 },
+              }}
+              isCurrentShareableId={() => true}
+              onThreadsChange={() => {}}
+              onClose={onClose}
+            />
+            <Toaster />
+          </TooltipProvider>,
+        )
+      }
+      const draft = page.getByRole('textbox', { name: en['comments.newLabel'] })
+      await draft.fill('Retained new thread draft')
+      await userEvent.keyboard('{Tab}')
+      const submit = page.getByRole('button', {
+        name: en[
+          surface === 'new-thread panel' ? 'comments.post' : 'comments.comment'
+        ],
+        exact: true,
+      })
+      await expect.element(submit).toHaveFocus()
+      const submitButton = document.activeElement
+      await userEvent.keyboard('{Enter}')
+      const sending = page.getByRole('button', {
+        name: en['comments.sending'],
+        exact: true,
+      })
+      await expect.element(sending).toHaveAttribute('aria-busy', 'true')
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch.mock.calls[0]?.[0]).toBe(
+        '/api/shareables/synthetic-artifact/comments',
+      )
+      expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      const retainedPendingFocus = document.activeElement === submitButton
+      await userEvent.keyboard('{Enter}')
+      expect(fetch).toHaveBeenCalledTimes(1)
+      for (const finish of finishes) finish(new Response(null, { status: 503 }))
+      await expect.element(submit).not.toHaveAttribute('aria-busy')
+      await expect.element(draft).toHaveValue('Retained new thread draft')
+      await expect
+        .element(page.getByText(en['comments.errorSave'], { exact: true }))
+        .toBeVisible()
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(onClose).not.toHaveBeenCalled()
+      expect(
+        retainedPendingFocus,
+        'submit button keeps focus while POST is pending',
+      ).toBe(true)
+      await expect.element(submit).toHaveFocus()
+      expect(document.activeElement).toBe(submitButton)
+    } finally {
+      // Drain every intercepted POST even when a baseline focus assertion fails.
+      for (const finish of finishes) finish(new Response(null, { status: 503 }))
+      await vi.waitFor(() =>
+        expect(hasPendingCommentMutation('synthetic-artifact')).toBe(false),
+      )
+    }
+  },
+)
 
 test('a held reply blocks repeat Enter and retains keyboard focus and draft after failure', async () => {
   let finish!: (response: Response) => void

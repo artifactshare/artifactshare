@@ -50,7 +50,7 @@ export function TextSelectionCommentPopover({
   )
 
   const submit = async () => {
-    if (!body.trim()) return
+    if (!body.trim() || pending) return
     const ok = await mutate(
       { intent: 'create-thread', body, anchor: withoutRect(anchor) },
       'create-thread',
@@ -106,7 +106,9 @@ export function TextSelectionCommentPopover({
             type="button"
             variant="default"
             size="sm"
-            disabled={!body.trim() || pending}
+            className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            disabled={!body.trim()}
+            aria-disabled={pending || undefined}
             aria-busy={pending || undefined}
             onClick={submit}
           >

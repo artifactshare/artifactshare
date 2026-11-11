@@ -531,7 +531,7 @@ function NewThreadComposer({
   const attachedPage = pageRemoved ? null : pdfPage
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!body.trim()) return
+    if (!body.trim() || pending) return
     // The page is taken when the comment is sent, not when it is saved.
     const anchor = attachedPage
       ? { kind: 'pdf-page' as const, ...attachedPage }
@@ -587,7 +587,9 @@ function NewThreadComposer({
           type="submit"
           variant="default"
           size="sm"
-          disabled={!body.trim() || pending}
+          className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+          disabled={!body.trim()}
+          aria-disabled={pending || undefined}
           aria-busy={pending || undefined}
         >
           {t(pending ? 'comments.sending' : 'comments.post')}
