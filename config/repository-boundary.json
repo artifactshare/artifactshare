@@ -68,6 +68,7 @@
     "scripts/test-reliability-lint-plugin.mjs",
     "scripts/test-reliability-lint-plugin.test.mjs",
     "scripts/browser-local-state.mjs",
+    "scripts/browser-local-state.test.mjs",
     "scripts/copy-glossary-lint-plugin.mjs",
     "scripts/copy-glossary-lint-plugin.test.mjs",
     "scripts/check-design-tokens.mjs",

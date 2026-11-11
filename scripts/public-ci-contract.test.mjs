@@ -507,6 +507,15 @@ test('browser lane shares one topology after behavior validation', () => {
     /if \(process\.env\.APP_BASE_URL && process\.env\.APP_BASE_URL !== baseUrl\)/u,
   )
   assert.match(harness, /await assertPortAvailable\(\)/u)
+  const guardIndex = harness.indexOf('await assertPortAvailable()')
+  for (const preparation of [
+    'await mkdtemp(',
+    "await import('./dev-setup.mjs')",
+    'prepareDevEnvironment(',
+    'server = spawn(',
+  ]) {
+    assert.ok(harness.indexOf(preparation) > guardIndex, preparation)
+  }
 })
 
 test('static, CLI, and build lanes preserve complete nonvisual coverage', () => {

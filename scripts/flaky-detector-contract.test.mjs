@@ -179,7 +179,7 @@ test('only behavior-browser entries get a container without splitting the global
       steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@')),
   )
   assert.deepEqual(
-    steps.filter((step) => /safe.directory|HOME=/.test(step.run ?? '')),
+    steps.filter((step) => /safe\.directory|HOME=/.test(step.run ?? '')),
     [home],
   )
   assert.equal(worker['continue-on-error'], undefined)
