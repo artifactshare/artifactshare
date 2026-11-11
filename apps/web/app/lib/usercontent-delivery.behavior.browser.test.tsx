@@ -2,7 +2,8 @@ import { expect, test } from 'vitest'
 import { server } from 'vitest/browser'
 
 test('real cross-site Worker delivery preserves identity and uploads with third-party cookies blocked', async () => {
-  const evidence = await server.commands.usercontentDelivery()
+  const { ordinary: evidence, restricted } =
+    await server.commands.usercontentDelivery()
   console.info('usercontent browser measurement', evidence)
   expect(evidence.ordinaryThirdPartyCookie).toBe(
     evidence.engine === 'firefox' ? 'partitioned' : 'blocked',
@@ -65,7 +66,7 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
   expect(evidence.identity).toBe('victim')
   expect(evidence.uploadOwner).toBe('victim')
   if (evidence.engine === 'firefox') {
-    const restricted = await server.commands.usercontentDelivery(true)
+    if (!restricted) throw new Error('Missing Firefox block-all evidence')
     console.info('usercontent block-all-cookies measurement', restricted)
     expect(restricted.ordinaryThirdPartyCookie).toBe('blocked')
     expect(restricted.partitionedThirdPartyCookie).toBe('blocked')
@@ -79,5 +80,7 @@ test('real cross-site Worker delivery preserves identity and uploads with third-
     ])
     expect(restricted.identity).toBe('victim')
     expect(restricted.uploadOwner).toBe('victim')
+  } else {
+    expect(restricted).toBeNull()
   }
 }, 480_000)

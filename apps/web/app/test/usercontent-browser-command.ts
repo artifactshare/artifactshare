@@ -76,7 +76,7 @@ function sessionCookie(token: string): string {
   return encodeURIComponent(`${token}.${signature}`)
 }
 
-const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
+async function delivery(page: Page, buildDirectory: string, blockAll = false) {
   const directory = await mkdtemp(join(tmpdir(), 'usercontent-browser-'))
   let downloadCount = 0
   // saveAs also works when the browser runs on a Playwright server.
@@ -86,14 +86,12 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
     await download.saveAs(path)
     return path
   }
-  let build: Awaited<ReturnType<typeof acquireUsercontentBuild>> | undefined
   try {
-    build = await acquireUsercontentBuild()
     const { createTestHarness, unstable_splitSqlQuery } =
       await import('wrangler')
     const sourceConfig = JSON.parse(
       await readFile(
-        join(build.directory, 'build/server/wrangler.json'),
+        join(buildDirectory, 'build/server/wrangler.json'),
         'utf8',
       ),
     )
@@ -102,9 +100,9 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
     delete sourceConfig.configPath
     delete sourceConfig.userConfigPath
     // This config belongs to one harness; its immutable build can be shared.
-    sourceConfig.main = join(build.directory, 'build/server/index.js')
-    sourceConfig.base_dir = join(build.directory, 'build/server')
-    sourceConfig.assets.directory = join(build.directory, 'build/client')
+    sourceConfig.main = join(buildDirectory, 'build/server/index.js')
+    sourceConfig.base_dir = join(buildDirectory, 'build/server')
+    sourceConfig.assets.directory = join(buildDirectory, 'build/client')
     const configFile = join(directory, 'wrangler.usercontent-browser.json')
     await writeFile(configFile, JSON.stringify(localBindings(sourceConfig)))
     const harness = createTestHarness({
@@ -1337,37 +1335,31 @@ const delivery = defineBrowserCommand(async ({ page }, blockAll = false) => {
       )
     }
   } finally {
-    try {
-      await build?.release()
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+// Keep the immutable app output for both Firefox policies, while delivery()
+// owns fresh Workers, storage, browser contexts and observations per policy.
+export const usercontentDelivery = defineBrowserCommand(async ({ page }) => {
+  const build = await acquireUsercontentBuild()
+  try {
+    const ordinary = await delivery(page, build.directory)
+    const restricted =
+      ordinary.engine === 'firefox'
+        ? await delivery(page, build.directory, true)
+        : null
+    return { ordinary, restricted }
+  } finally {
+    await build.release()
   }
 })
 
-export { delivery as usercontentDelivery }
-
 declare module 'vitest/browser' {
   interface BrowserCommands {
-    usercontentDelivery: (blockAll?: boolean) => Promise<{
-      engine: string
-      version: string
-      settings: string
-      ordinaryThirdPartyCookie: string
-      partitionedThirdPartyCookie: string
-      assetPreflights: number
-      navigationEvidence: Array<{
-        stage: string
-        sandboxStates: (string | null)[]
-        executionUrls: string[]
-        reports: Array<{
-          origin: string
-          state: { nonce: string; heading: string | null }
-        }>
-      }>
-      results: string[]
-      identity: string
-      uploadOwner: unknown
+    usercontentDelivery: () => Promise<{
+      ordinary: Awaited<ReturnType<typeof delivery>>
+      restricted: Awaited<ReturnType<typeof delivery>> | null
     }>
   }
 }
