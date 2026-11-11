@@ -17,6 +17,7 @@ import {
   setReducedMotion,
 } from './app/test/mermaid-browser-command'
 import { selectAnchorText } from './app/test/anchor-browser-command'
+import { anchorLifecycleScenario } from './app/test/anchor-clock-browser-command'
 import {
   staticSiteCommentSite,
   staticSiteFrame,
@@ -79,6 +80,7 @@ export default defineConfig({
         projectPlacementDestinations,
         projectPlacementCandidates,
         selectAnchorText,
+        anchorLifecycleScenario,
         staticSiteCommentSite,
         staticSiteFrame,
         setMermaidColorScheme,
