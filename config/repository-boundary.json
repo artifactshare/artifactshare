@@ -183,8 +183,6 @@
     ".claude/skills/controlled-review/SKILL.md",
     "scripts/controlled-review-runner.mjs",
     "scripts/controlled-review-runner.test.mjs",
-    "scripts/ci/browser-system-packages.sh",
-    "scripts/browser-system-packages.test.mjs",
     "scripts/ci/flaky-runs.mjs",
     "scripts/ci/node-test-json-reporter.mjs",
     "scripts/ci/vitest-flaky-reporter.mjs",
