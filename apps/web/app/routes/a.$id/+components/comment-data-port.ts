@@ -1,3 +1,4 @@
+import type { CommentSyncAssignment } from '~/lib/comment-sync'
 import type { CommentThreadView } from '~/lib/comments'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import type { CommentThreadPatch } from './comment-history'
@@ -10,6 +11,7 @@ export type RecoveryCapture = {
   adopt: (rows: ReadonlyArray<CommentThreadView>) => boolean
 }
 export type CommentDataPort = {
+  assignment: CommentSyncAssignment
   session: CommentSession | null
   attach: () => () => void
   subscribeSettlement: (listener: () => void) => () => void

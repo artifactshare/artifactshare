@@ -1,3 +1,7 @@
+import {
+  legacyCommentSync,
+  type CommentSyncAssignment,
+} from '~/lib/comment-sync'
 import type { CommentThreadView } from '~/lib/comments'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
@@ -56,6 +60,7 @@ export type CommentRecoveryAdoption =
 /** Display-owned data and adoption. Socket authorization and UI state stay outside.
  * Construction is read-only: only attach/operations acquire browser resources. */
 export function createCommentSession(options: {
+  assignment?: CommentSyncAssignment
   artifactId: string
   initialThreads: ReadonlyArray<CommentThreadView>
   currentUserId: string | null
@@ -71,6 +76,10 @@ export function createCommentSession(options: {
   ) => void
 }) {
   const { artifactId, getSelectedThreadId } = options
+  const assignment = options.assignment ?? {
+    ...legacyCommentSync,
+    mode: 'session' as const,
+  }
   const acquireRuntime =
     options.acquireRuntime ?? (() => acquireCommentRuntime(artifactId))
   const owner = Symbol('comment-session')
@@ -127,6 +136,7 @@ export function createCommentSession(options: {
         headers: { accept: 'application/json' },
         signal,
       },
+      { commentDiagnostic: { assignment, operation: 'summary' } },
     )
 
   const refreshOnce = async (): Promise<CommentRefreshResult> => {
@@ -210,9 +220,13 @@ export function createCommentSession(options: {
         ) {
           const selected = await fetchJsonWithViewerTimeout<{
             threads: CommentThreadView[]
-          }>(commentPageUrl(requestArtifactId, selectedId), {
-            signal: controller.signal,
-          }).catch(() => null)
+          }>(
+            commentPageUrl(requestArtifactId, selectedId),
+            {
+              signal: controller.signal,
+            },
+            { commentDiagnostic: { assignment, operation: 'selected' } },
+          ).catch(() => null)
           if (seq !== generation || !active) return 'transient-error'
           if (selectedId !== getSelectedThreadId()) {
             // Selection-specific data is obsolete; the independent summary is not.
@@ -283,9 +297,13 @@ export function createCommentSession(options: {
                     throw new Error('Comment refresh superseded')
                   const pageResult = await fetchJsonWithViewerTimeout<{
                     threads?: CommentThreadView[]
-                  }>(commentPageUrl(requestArtifactId, thread.id, request), {
-                    signal: controller.signal,
-                  })
+                  }>(
+                    commentPageUrl(requestArtifactId, thread.id, request),
+                    {
+                      signal: controller.signal,
+                    },
+                    { commentDiagnostic: { assignment, operation: 'page' } },
+                  )
                   if (
                     pageResult.response.status === 401 ||
                     pageResult.response.status === 403
@@ -483,7 +501,10 @@ export function createCommentSession(options: {
         }>(
           commentPageUrl(artifactId, threadId, page),
           { signal: controller.signal },
-          { requireJson: true },
+          {
+            requireJson: true,
+            commentDiagnostic: { assignment, operation: 'page' },
+          },
         )
         if (!owns()) return false
         const removed = (status: number) => status === 404 || status === 410
@@ -497,7 +518,10 @@ export function createCommentSession(options: {
           }>(
             commentPageUrl(artifactId, threadId),
             { signal: controller.signal },
-            { requireJson: true },
+            {
+              requireJson: true,
+              commentDiagnostic: { assignment, operation: 'page' },
+            },
           )
           if (!owns()) return false
           if (removed(confirmation.response.status)) return remove()

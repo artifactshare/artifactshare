@@ -1,3 +1,4 @@
+import { CommentSyncContext } from './a.$id/+components/comment-sync-context'
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 // Browser mode cannot load a test module from the route directory whose name
 // contains `$`, so this behavior test lives one level above the component.
@@ -5,10 +6,7 @@ import { act, useState } from 'react'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import {
-  useViewerComments,
-  useSessionViewerComments,
-} from './a.$id/+components/viewer-shell'
+import { useViewerComments } from './a.$id/+components/viewer-shell'
 import type { CommentThreadView } from '~/lib/comments'
 import { VIEWER_FETCH_TIMEOUT_MS } from '~/lib/viewer-network'
 import {
@@ -204,12 +202,9 @@ async function flush() {
   })
 }
 
-describe.each([
-  ['legacy', useViewerComments],
-  ['session', useSessionViewerComments],
-] as const)(
+describe.each(['legacy', 'session'] as const)(
   'bounded live authorization browser lifecycle (%s)',
-  (_owner, useComments) => {
+  (engineMode) => {
     function Harness({
       artifactId = 'artifact-1',
       initialThreads = [],
@@ -226,7 +221,8 @@ describe.each([
       showDraft?: boolean
     }) {
       const [connected, setConnected] = useState(false)
-      const comments = useComments({
+      const comments = useViewerComments({
+        commentSync: { mode: engineMode, build: 'unknown' },
         framePresent: false,
         artifactId,
         currentUserId: 'user-1',
@@ -237,7 +233,7 @@ describe.each([
         onLiveConnectionChanged: setConnected,
       })
       return (
-        <>
+        <CommentSyncContext value={comments.assignment}>
           <output
             data-messages={JSON.stringify(
               comments.state.threads.flatMap((thread) => thread.messages),
@@ -276,7 +272,7 @@ describe.each([
               Settle local mutation
             </button>
           )}
-        </>
+        </CommentSyncContext>
       )
     }
 
@@ -1334,7 +1330,20 @@ describe.each([
           localThread.id,
         )
         expect(oldSignal.aborted).toBe(true)
-        expect(log).not.toHaveBeenCalled()
+        // The cancelled transport now reports one content-free terminal event.
+        // It must not emit a stale response error or another socket lifecycle event.
+        expect(log).toHaveBeenCalledExactlyOnceWith(
+          'artifactshare_viewer_network',
+          expect.objectContaining({
+            channel: 'comment-sync',
+            operation: 'summary',
+            mode: engineMode,
+            build: 'unknown',
+            state: 'completed',
+            result: 'abort',
+            fetchCount: 0,
+          }),
+        )
         expect(fetchMock).toHaveBeenCalledTimes(2)
         expect(recovered.readyState).toBe(ControlledWebSocket.OPEN)
         expect(host.querySelector('output')?.dataset.connected).toBe('true')

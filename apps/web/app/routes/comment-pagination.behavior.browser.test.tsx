@@ -1,3 +1,4 @@
+import { CommentSyncContext } from './a.$id/+components/comment-sync-context'
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
 import { useCallback, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -17,10 +18,7 @@ import { TextSelectionCommentPopover } from './a.$id/+components/text-selection-
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { CommentPanel } from './a.$id/+components/comment-panel'
-import {
-  useViewerComments,
-  useSessionViewerComments,
-} from './a.$id/+components/viewer-shell'
+import { useViewerComments } from './a.$id/+components/viewer-shell'
 import {
   patchCommentThreads,
   type CommentThreadPatch,
@@ -791,12 +789,11 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-describe.each([
-  ['legacy', useViewerComments],
-  ['session', useSessionViewerComments],
-] as const)('comment pagination reconciliation (%s)', (_owner, useComments) => {
+const engines = ['legacy', 'session'] as const
+describe.each(engines)('comment pagination reconciliation (%s)', (engine) => {
   function ReconciliationHarness() {
-    const comments = useComments({
+    const comments = useViewerComments({
+      commentSync: { mode: engine, build: 'unknown' },
       artifactId: 'synthetic-artifact',
       currentUserId: 'reviewer',
       currentVersionId: null,
@@ -806,24 +803,26 @@ describe.each([
       framePresent: false,
     })
     return (
-      <CommentPageSessionContext value={comments.pageSession}>
-        <TooltipProvider>
-          <CommentPanel
-            shareableId="synthetic-artifact"
-            viewerUserId="reviewer"
-            threads={comments.panelThreads}
-            onThreadsChange={comments.replaceThreads}
-            isCurrentShareableId={comments.isCurrentArtifactId}
-            open
-            onOpenChange={comments.changePanelOpen}
-            targetThreadId={comments.state.targetThreadId}
-            targetThreadScroll="start"
-            targetFetchFailed={comments.targetFetchFailed}
-            onRetryTarget={comments.retryTargetFetch}
-            onThreadNavigate={(thread) => comments.targetThread(thread.id)}
-          />
-        </TooltipProvider>
-      </CommentPageSessionContext>
+      <CommentSyncContext value={comments.assignment}>
+        <CommentPageSessionContext value={comments.pageSession}>
+          <TooltipProvider>
+            <CommentPanel
+              shareableId="synthetic-artifact"
+              viewerUserId="reviewer"
+              threads={comments.panelThreads}
+              onThreadsChange={comments.replaceThreads}
+              isCurrentShareableId={comments.isCurrentArtifactId}
+              open
+              onOpenChange={comments.changePanelOpen}
+              targetThreadId={comments.state.targetThreadId}
+              targetThreadScroll="start"
+              targetFetchFailed={comments.targetFetchFailed}
+              onRetryTarget={comments.retryTargetFetch}
+              onThreadNavigate={(thread) => comments.targetThread(thread.id)}
+            />
+          </TooltipProvider>
+        </CommentPageSessionContext>
+      </CommentSyncContext>
     )
   }
   async function mountReconciliation() {

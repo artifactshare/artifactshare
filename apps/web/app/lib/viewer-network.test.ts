@@ -186,3 +186,181 @@ function stubAbortableFetch() {
     ),
   )
 }
+
+describe('comment comparison diagnostics', () => {
+  test('retains status 200 when required JSON is malformed', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const assignment = { mode: 'session' as const, build: 'unknown' }
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('not json', { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      await expect(
+        fetchJsonWithViewerTimeout(
+          '/comments',
+          {},
+          {
+            requireJson: true,
+            commentDiagnostic: { assignment, operation: 'summary' },
+          },
+        ),
+      ).rejects.toMatchObject({ name: 'ViewerFetchInvalidJsonError' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(log).toHaveBeenCalledTimes(2)
+      expect(log.mock.calls.map(([, event]) => event)).toEqual([
+        {
+          channel: 'comment-sync',
+          ...assignment,
+          operation: 'summary',
+          state: 'started',
+          result: 'pending',
+          elapsedMs: 0,
+          fetchCount: 1,
+          socketCount: 0,
+        },
+        {
+          channel: 'comment-sync',
+          ...assignment,
+          operation: 'summary',
+          state: 'completed',
+          result: 'invalid-json',
+          status: 200,
+          elapsedMs: expect.any(Number),
+          fetchCount: 0,
+          socketCount: 0,
+        },
+      ])
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test.each([
+    ['success', 200, { threads: [] }],
+    ['http-error', 403, { error: 'must not be logged' }],
+  ] as const)(
+    'counts successful and failed attempts alike: %s',
+    async (result, status, body) => {
+      const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const assignment = {
+        mode: 'session' as const,
+        build: '12345678-1234-1234-1234-123456789abc',
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(Response.json(body, { status })),
+      )
+      try {
+        await fetchJsonWithViewerTimeout(
+          '/sensitive-url?token=private',
+          {},
+          { commentDiagnostic: { assignment, operation: 'selected' } },
+        )
+        expect(log).toHaveBeenCalledTimes(2)
+        expect(log.mock.calls.map(([, event]) => event)).toEqual([
+          {
+            channel: 'comment-sync',
+            ...assignment,
+            operation: 'selected',
+            state: 'started',
+            result: 'pending',
+            elapsedMs: 0,
+            fetchCount: 1,
+            socketCount: 0,
+          },
+          {
+            channel: 'comment-sync',
+            ...assignment,
+            operation: 'selected',
+            state: 'completed',
+            result,
+            status,
+            elapsedMs: expect.any(Number),
+            fetchCount: 0,
+            socketCount: 0,
+          },
+        ])
+        expect(JSON.stringify(log.mock.calls)).not.toMatch(
+          /private|sensitive|must not be logged/,
+        )
+      } finally {
+        log.mockRestore()
+      }
+    },
+  )
+
+  test('captures the assignment at start and reports a sanitized network failure', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    let reject!: (error: Error) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((_resolve, fail) => {
+            reject = fail
+          }),
+      ),
+    )
+    const assignment = {
+      mode: 'legacy' as 'legacy' | 'session',
+      build: 'unknown',
+    }
+    const request = fetchJsonWithViewerTimeout(
+      '/private-url',
+      {},
+      { commentDiagnostic: { assignment, operation: 'reply' } },
+    )
+    const rejected = expect(request).rejects.toThrow('raw error')
+    try {
+      assignment.mode = 'session'
+      assignment.build = 'new-build'
+      reject(new Error('raw error containing token'))
+      await rejected
+      expect(log.mock.calls.at(-1)?.[1]).toEqual({
+        channel: 'comment-sync',
+        mode: 'legacy',
+        build: 'unknown',
+        operation: 'reply',
+        state: 'completed',
+        result: 'network-error',
+        elapsedMs: expect.any(Number),
+        fetchCount: 0,
+        socketCount: 0,
+      })
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(
+        /private-url|raw error|token|new-build/,
+      )
+    } finally {
+      reject(new Error('cleanup'))
+      await request.catch(() => {})
+      log.mockRestore()
+    }
+  })
+
+  test('an already cancelled read does not inflate fetch counts', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const controller = new AbortController()
+    controller.abort()
+    try {
+      await expect(
+        fetchJsonWithViewerTimeout(
+          '/unused',
+          { signal: controller.signal },
+          {
+            commentDiagnostic: {
+              assignment: { mode: 'legacy', build: 'unknown' },
+              operation: 'page',
+            },
+          },
+        ),
+      ).rejects.toSatisfy(isViewerFetchAbort)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(log).not.toHaveBeenCalled()
+    } finally {
+      log.mockRestore()
+    }
+  })
+})

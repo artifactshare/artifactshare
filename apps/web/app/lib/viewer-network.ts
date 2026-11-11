@@ -1,3 +1,22 @@
+import type { CommentSyncAssignment } from './comment-sync'
+
+export type CommentNetworkDiagnostic = {
+  assignment: CommentSyncAssignment
+  operation:
+    | 'summary'
+    | 'page'
+    | 'selected'
+    | 'recovery'
+    | 'create-thread'
+    | 'reply'
+    | 'resolve'
+    | 'reopen'
+    | 'update-message'
+    | 'delete-message'
+    | 'delete-thread'
+    | 'socket'
+}
+
 export const VIEWER_FETCH_TIMEOUT_MS = 15_000
 
 class ViewerFetchTimeoutError extends Error {
@@ -24,8 +43,14 @@ class ViewerFetchInvalidJsonError extends Error {
 export async function fetchJsonWithViewerTimeout<T>(
   input: RequestInfo | URL,
   init: RequestInit = {},
-  options: { requireJson?: boolean; parseErrorJson?: boolean } = {},
+  options: {
+    requireJson?: boolean
+    parseErrorJson?: boolean
+    commentDiagnostic?: CommentNetworkDiagnostic
+  } = {},
 ): Promise<{ response: Response; body: T | null }> {
+  let result: CommentNetworkResult = 'abort'
+  let status: number | undefined
   const timeoutController = new AbortController()
   const callerSignal = init.signal
   let timedOut = false
@@ -44,11 +69,15 @@ export async function fetchJsonWithViewerTimeout<T>(
     callerSignal.addEventListener('abort', abortFromCaller, { once: true })
   }
 
+  const finishDiagnostic = options.commentDiagnostic
+    ? startCommentNetworkOperation(options.commentDiagnostic)
+    : undefined
   try {
     const response = await fetch(input, {
       ...init,
       signal: timeoutController.signal,
     })
+    status = response.status
     let body: T | null = null
     if (response.ok || options.parseErrorJson) {
       try {
@@ -61,12 +90,25 @@ export async function fetchJsonWithViewerTimeout<T>(
         body = null
       }
     }
+    result = callerSignal?.aborted
+      ? 'abort'
+      : response.ok
+        ? body === null
+          ? 'invalid-json'
+          : 'success'
+        : 'http-error'
     return { response, body }
   } catch (error) {
+    result = timedOut
+      ? 'timeout'
+      : callerSignal?.aborted
+        ? 'abort'
+        : viewerFetchFailureReason(error)
     if (timedOut) throw new ViewerFetchTimeoutError()
     if (callerSignal?.aborted) throw new ViewerFetchAbortError()
     throw error
   } finally {
+    finishDiagnostic?.(result, status)
     globalThis.clearTimeout(timeoutId)
     callerSignal?.removeEventListener('abort', abortFromCaller)
   }
@@ -80,7 +122,7 @@ export function isViewerFetchTimeout(error: unknown): boolean {
   return error instanceof ViewerFetchTimeoutError
 }
 
-export function viewerFetchFailureReason(error: unknown): string {
+export function viewerFetchFailureReason(error: unknown): CommentNetworkResult {
   if (error instanceof ViewerFetchTimeoutError) return 'timeout'
   if (error instanceof ViewerFetchAbortError) return 'abort'
   if (error instanceof ViewerFetchInvalidJsonError) return 'invalid-json'
@@ -106,4 +148,48 @@ function stripUndefined(
         entry[1] !== undefined,
     ),
   )
+}
+
+export type CommentNetworkResult =
+  | 'success'
+  | 'http-error'
+  | 'timeout'
+  | 'abort'
+  | 'invalid-json'
+  | 'network-error'
+
+/** One start and one terminal event per attempt, without URLs, IDs or content.
+ * The caller captures the committed owner's assignment before beginning work. */
+export function startCommentNetworkOperation(
+  diagnostic: CommentNetworkDiagnostic,
+) {
+  const started = performance.now()
+  const fields = {
+    channel: 'comment-sync',
+    mode: diagnostic.assignment.mode,
+    build: diagnostic.assignment.build,
+    operation: diagnostic.operation,
+  }
+  logViewerNetworkEvent({
+    ...fields,
+    state: 'started',
+    result: 'pending',
+    elapsedMs: 0,
+    fetchCount: diagnostic.operation === 'socket' ? 0 : 1,
+    socketCount: diagnostic.operation === 'socket' ? 1 : 0,
+  })
+  let completed = false
+  return (result: CommentNetworkResult, status?: number) => {
+    if (completed) return
+    completed = true
+    logViewerNetworkEvent({
+      ...fields,
+      state: 'completed',
+      result,
+      status,
+      elapsedMs: Math.round(performance.now() - started),
+      fetchCount: 0,
+      socketCount: 0,
+    })
+  }
 }
