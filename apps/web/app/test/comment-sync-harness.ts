@@ -157,8 +157,9 @@ function createDriver(useEngine: CommentSyncEngine) {
     return null
   }
   async function unmount() {
-    if (root) await act(() => root!.unmount())
+    const currentRoot = root
     root = null
+    if (currentRoot) await act(() => currentRoot.unmount())
   }
   return {
     trace,
@@ -261,18 +262,6 @@ function createDriver(useEngine: CommentSyncEngine) {
       return withCommentRuntime(artifact, (lease) => lease.getEpoch('selected'))
     },
     async dispose() {
-      // A zero-epoch leaked lease is otherwise indistinguishable from a fresh
-      // record. Mark before unmount, then require a newly acquired clean record.
-      for (const artifact of artifacts)
-        withCommentRuntime(artifact, (lease) => lease.invalidate('selected'))
-      disposing = true
-      await unmount()
-      const unfinished = requests.filter((request) => !request.settled)
-      await act(async () => {
-        for (const request of unfinished) request.respond({}, 500)
-        await Promise.allSettled(posts)
-      })
-      await act(async () => {})
       const failures: unknown[] = []
       const verify = (check: () => void) => {
         try {
@@ -281,6 +270,24 @@ function createDriver(useEngine: CommentSyncEngine) {
           failures.push(error)
         }
       }
+      // A zero-epoch leaked lease is otherwise indistinguishable from a fresh
+      // record. Mark before unmount, then require a newly acquired clean record.
+      for (const artifact of artifacts)
+        verify(() =>
+          withCommentRuntime(artifact, (lease) => lease.invalidate('selected')),
+        )
+      disposing = true
+      try {
+        await unmount()
+      } catch (error) {
+        failures.push(error)
+      }
+      const unfinished = requests.filter((request) => !request.settled)
+      await act(async () => {
+        for (const request of unfinished) request.respond({}, 500)
+        await Promise.allSettled(posts)
+      })
+      await act(async () => {})
       verify(() => expect(unfinished).toEqual([]))
       verify(() => expect(lateRequests).toEqual([]))
       verify(() => expect(posts.size).toBe(0))

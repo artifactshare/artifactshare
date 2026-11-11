@@ -95,6 +95,9 @@ Failure cleanup drains unresolved HTTP gates before restoring the original
 fetch, then fails the test; it does not accept unfinished work as success. If
 both the scenario and cleanup fail, the aggregate error preserves both causes.
 All cleanup assertions run and report their failures together. An engine-owned
+React cleanup exception is also recorded while driver-owned HTTP gates and
+POSTs are still drained; a controlled throwing-cleanup case verifies that path.
+An engine-owned
 leaked lease is a failing run, not a successful comparison: the harness cannot
 forcibly release an unknown owner's lease or promise isolation after a broken
 engine without a reset API. The intentional leak fixture releases its own

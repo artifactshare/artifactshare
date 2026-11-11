@@ -112,6 +112,7 @@ test('an A response arriving while B is displayed cannot replace B data', async 
       })
       await act(async () => expect(await post.done).toBe(false))
       expect(driver.pending('a')).toBe(false)
+      expect(driver.epoch('a')).toBe(0)
       const snapshot = driver.snapshot()
       expect(snapshot.artifact).toBe('b')
       expect(snapshot.threads).toEqual([
@@ -292,6 +293,13 @@ test('the driver observes target failure, explicit recovery and request cancella
       await driver.mount('a', 'another-target')
       await driver.waitForRequests(4)
       await driver.mount('b')
+      expect(driver.snapshot()).toEqual({
+        artifact: 'b',
+        threads: [{ id: 'b-only', bodies: ['B original'] }],
+        drafts: {},
+        pending: [[], []],
+        failed: false,
+      })
       expect(driver.trace).toEqual([
         'GET /api/shareables/a/comments',
         'GET /api/shareables/a/comments',
@@ -303,4 +311,48 @@ test('the driver observes target failure, explicit recovery and request cancella
     })
   }
   expect(await scenario()).toEqual(await scenario())
+})
+
+test('a throwing React cleanup still drains the held post before restoring fetch', async () => {
+  const cleanupError = new Error('Synthetic React cleanup failure')
+  const useThrowingEngine: CommentSyncEngine = (options) => {
+    const comments = useViewerComments(options)
+    useEffect(
+      () => () => {
+        throw cleanupError
+      },
+      [],
+    )
+    return comments
+  }
+  let held:
+    | { settled: boolean; respond: (body: unknown, status?: number) => void }
+    | undefined
+  let done: Promise<boolean> | undefined
+  let failure: unknown
+  const leafErrors = (error: unknown): unknown[] =>
+    error instanceof AggregateError ? error.errors.flatMap(leafErrors) : [error]
+  try {
+    try {
+      await runCommentSyncScenario(useThrowingEngine, async (driver) => {
+        await driver.mount()
+        done = (await driver.post()).done
+        await driver.waitForRequests(1)
+        held = driver.requests[0]
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(leafErrors(failure)).toContain(cleanupError)
+    expect(held?.settled).toBe(true)
+    expect(await done).toBe(false)
+  } finally {
+    // The red control must not leave its deliberately held POST in this process.
+    if (held && !held.settled)
+      await act(async () => {
+        held!.respond({}, 500)
+        await done
+      })
+  }
+  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
 })
