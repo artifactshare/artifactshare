@@ -2456,7 +2456,7 @@ describe('Markdown outline viewer', () => {
     await frames(doc)
     expect(top(doc, 'short-ending')).toBeGreaterThan(150 + 12)
     expect(current(doc)).toEqual(['#short-ending'])
-    win.scrollBy({ top: -400, behavior: 'instant' })
+    win.scrollBy({ top: -200, behavior: 'instant' })
     await frames(doc)
     expect(current(doc)).toEqual([`#section-12`])
 
