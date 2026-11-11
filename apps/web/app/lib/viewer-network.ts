@@ -77,6 +77,7 @@ export async function fetchJsonWithViewerTimeout<T>(
       ...init,
       signal: timeoutController.signal,
     })
+    status = response.status
     let body: T | null = null
     if (response.ok || options.parseErrorJson) {
       try {
@@ -89,7 +90,6 @@ export async function fetchJsonWithViewerTimeout<T>(
         body = null
       }
     }
-    status = response.status
     result = callerSignal?.aborted
       ? 'abort'
       : response.ok

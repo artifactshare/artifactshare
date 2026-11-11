@@ -266,9 +266,11 @@ independent runs. No sleep, retry or timeout was added to make these checks pass
 The registration in `app/lib/comment-sync.server.ts` expires on **2026-12-10**,
 four weeks after the 2026-11-12 migration start. This permits bounded comparison,
 a controlled cohort expansion and a recovery exercise without making the flag a
-permanent setting. The existing registration-expiry helper validates the deadline
-in tests/tooling; it is deliberately not called on live requests. Passing that
-date must not crash a viewer or silently flip an already open display. By the
+permanent setting. Fixed-clock registration tests exercise the existing expiry
+helper; there is no current-date monitoring tool. The operator owns checking the
+actual 2026-12-10 removal deadline. The helper is deliberately not called on live
+requests; there is no runtime flip or CI time bomb. Passing that date must not
+crash a viewer or silently flip an already open display. By the
 deadline, remove the flag and legacy owner after the evidence below is confirmed,
 or make an explicit, reviewed short extension with the missing evidence and new
 deadline. Do not leave an unowned expired registration running indefinitely.
@@ -277,8 +279,12 @@ This source change does **not** authorize live Flagship operations. Before each
 provider change, an operator must explicitly approve the environment, exact target
 workspace or cohort, the flag key, intended value/default and rollback value.
 Keep real target identifiers and operator records out of this public repository.
-Production writes follow the protected GitHub `production` Environment and staged
-deployment workflow; an ordinary development shell is not an operations channel.
+Production code deployments follow the protected GitHub `production` Environment
+and staged deployment workflow. Flag administration is a separately, explicitly
+approved operator action through its approved administrative channel, with the
+exact target, key, value and rollback recorded outside this public repository.
+`deploy-production.yml` has no Flagship administration job. An ordinary
+development shell is not an operations channel for either action.
 Production verification uses only explicitly approved targets, normal synthetic
 actions and naturally observed transitions. Do not inject faults, force HTTP
 errors or expiry, intercept/hold requests, or change provider faults in production.
@@ -331,7 +337,9 @@ mode/build, so reconnect and auth recovery can be interpreted together.
 
 Operations distinguish summary, retained/page reads, selected-thread reads,
 recovery authorization reads and each mutation intent. Around-message reads are
-page reads. Results describe transport completion, **not** proof of data adoption;
+page reads. Success describes protocol completion (for sockets, an open accepted
+by the existing socket policy), **not** proof of data adoption or a raw TCP
+connection accepted after the policy deadline;
 state assertions and the exact request trace provide that proof. Cancelled late
 responses are reported as aborts and cannot act as successful adoption evidence.
 Compute error/abort counts over starts, completion coverage over starts, and
@@ -350,8 +358,10 @@ deployment and begin each run with a fresh top-level load of its current bundle.
 If the deployment changes during a run, separate that observation from the pinned
 comparison. Do not aggregate `build` alone as proof of client code identity.
 Tags, timestamps and dev screen-capture revision parameters are not exported.
-Missing, local zero UUID or malformed metadata is `unknown`; exclude unknown
-builds from deployment comparisons. There is no automatic analytics upload,
+Missing, zero UUID or malformed metadata is `unknown`. Local emulators may also
+provide syntactically valid nonzero Worker version UUIDs; these are local/emulated
+identities, never evidence of a deployed production build. Exclude emulator runs
+and unknown builds from deployment comparisons. There is no automatic analytics upload,
 new backend or durable collection. Operators can inspect/capture these existing
 browser diagnostics for an approved synthetic test session; console observations
 are not a population-wide production health claim. New fields contain no artifact

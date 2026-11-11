@@ -188,6 +188,54 @@ function stubAbortableFetch() {
 }
 
 describe('comment comparison diagnostics', () => {
+  test('retains status 200 when required JSON is malformed', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const assignment = { mode: 'session' as const, build: 'unknown' }
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('not json', { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      await expect(
+        fetchJsonWithViewerTimeout(
+          '/comments',
+          {},
+          {
+            requireJson: true,
+            commentDiagnostic: { assignment, operation: 'summary' },
+          },
+        ),
+      ).rejects.toMatchObject({ name: 'ViewerFetchInvalidJsonError' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(log).toHaveBeenCalledTimes(2)
+      expect(log.mock.calls.map(([, event]) => event)).toEqual([
+        {
+          channel: 'comment-sync',
+          ...assignment,
+          operation: 'summary',
+          state: 'started',
+          result: 'pending',
+          elapsedMs: 0,
+          fetchCount: 1,
+          socketCount: 0,
+        },
+        {
+          channel: 'comment-sync',
+          ...assignment,
+          operation: 'summary',
+          state: 'completed',
+          result: 'invalid-json',
+          status: 200,
+          elapsedMs: expect.any(Number),
+          fetchCount: 0,
+          socketCount: 0,
+        },
+      ])
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   test.each([
     ['success', 200, { threads: [] }],
     ['http-error', 403, { error: 'must not be logged' }],
