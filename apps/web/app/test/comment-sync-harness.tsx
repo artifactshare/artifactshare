@@ -62,15 +62,29 @@ export async function runCommentSyncScenario<T>(
   const previousFetch = globalThis.fetch
   const driver = createDriver(useEngine)
   vi.stubGlobal('fetch', driver.fetch)
+  let result!: T
+  let scenarioFailure: { error: unknown } | undefined
   try {
-    return await scenario(driver)
-  } finally {
-    try {
-      await driver.dispose()
-    } finally {
-      vi.stubGlobal('fetch', previousFetch)
-    }
+    result = await scenario(driver)
+  } catch (error) {
+    scenarioFailure = { error }
   }
+  let cleanupFailure: { error: unknown } | undefined
+  try {
+    await driver.dispose()
+  } catch (error) {
+    cleanupFailure = { error }
+  } finally {
+    vi.stubGlobal('fetch', previousFetch)
+  }
+  if (scenarioFailure && cleanupFailure)
+    throw new AggregateError(
+      [scenarioFailure.error, cleanupFailure.error],
+      'Comment scenario and cleanup failed',
+    )
+  if (scenarioFailure) throw scenarioFailure.error
+  if (cleanupFailure) throw cleanupFailure.error
+  return result
 }
 
 function createDriver(useEngine: CommentSyncEngine) {
@@ -84,6 +98,8 @@ function createDriver(useEngine: CommentSyncEngine) {
   const trace: string[] = []
   const artifacts = new Set<string>()
   const posts = new Set<Promise<boolean>>()
+  let disposing = false
+  const lateRequests: string[] = []
   function Harness({
     artifact,
     target,
@@ -138,6 +154,12 @@ function createDriver(useEngine: CommentSyncEngine) {
       const path = String(input)
       const method = init?.method ?? 'GET'
       trace.push(`${method} ${path}`)
+      if (disposing) {
+        lateRequests.push(`${method} ${path}`)
+        return Promise.reject(
+          new Error('Comment request after scenario disposal'),
+        )
+      }
       return new Promise<Response>((resolve, reject) => {
         const abort = () => {
           if (request.settled) return
@@ -185,11 +207,14 @@ function createDriver(useEngine: CommentSyncEngine) {
             'reply:selected',
           )
           .then((success) => {
-            onSettled(body, success)
+            if (writer === 0) onSettled(body, success)
             return success
           })
         posts.add(pending)
-        void pending.finally(() => posts.delete(pending))
+        void pending.then(
+          () => posts.delete(pending),
+          () => posts.delete(pending),
+        )
       })
       // Return an object so the driver does not await the deliberately held POST.
       return { done: pending }
@@ -220,13 +245,23 @@ function createDriver(useEngine: CommentSyncEngine) {
       return withCommentRuntime(artifact, (lease) => lease.hasPending())
     },
     async dispose() {
+      // A zero-epoch leaked lease is otherwise indistinguishable from a fresh
+      // record. Mark before unmount, then require a newly acquired clean record.
+      for (const artifact of artifacts)
+        withCommentRuntime(artifact, (lease) => lease.invalidate('selected'))
+      disposing = true
+      const countBeforeUnmount = requests.length
       await unmount()
       const unfinished = requests.filter((request) => !request.settled)
       await act(async () => {
         for (const request of unfinished) request.respond({}, 500)
         await Promise.allSettled(posts)
       })
+      await act(async () => {})
       expect(unfinished).toEqual([])
+      expect(lateRequests).toEqual([])
+      expect(requests).toHaveLength(countBeforeUnmount)
+      expect(requests.filter((request) => !request.settled)).toEqual([])
       expect(posts.size).toBe(0)
       for (const artifact of artifacts) {
         withCommentRuntime(artifact, (lease) => {

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useEffect } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useViewerComments } from './viewer-shell'
+import { acquireCommentRuntime } from './comment-runtime-browser'
 import {
   commentFixture,
   runCommentSyncScenario,
@@ -101,6 +102,7 @@ test('an A response arriving while B is displayed cannot replace B data', async 
 async function overlappingScenario(engine: CommentSyncEngine) {
   return runCommentSyncScenario(engine, async (driver) => {
     await driver.mount()
+    await driver.draft('popover')
     const panelPost = await driver.post(0, 'panel')
     const popoverPost = await driver.post(1, 'popover')
     await driver.waitForRequests(2)
@@ -130,6 +132,7 @@ async function overlappingScenario(engine: CommentSyncEngine) {
     const snapshot = driver.snapshot()
     expect(snapshot.threads).toEqual(expectedRows('both committed'))
     expect(snapshot.pending).toEqual([[], []])
+    expect(snapshot.drafts).toEqual({ selected: 'popover' })
     expect(driver.trace).toEqual([
       'POST /api/shareables/a/comments',
       'POST /api/shareables/a/comments',
@@ -145,7 +148,7 @@ test('independent panel and popover posts share overlap tracking until reconcili
   )
 })
 
-test('a post can finish after every display unmounts without notifying a later display', async () => {
+test('a detached post releases its record before a fresh display opens', async () => {
   async function scenario() {
     return runCommentSyncScenario(useViewerComments, async (driver) => {
       await driver.mount()
@@ -170,6 +173,75 @@ test('a post can finish after every display unmounts without notifying a later d
   expect(await scenario()).toEqual(await scenario())
 })
 
+test('a fresh display reconciles a detached post without adopting its old display response or clearing its draft', async () => {
+  async function scenario() {
+    return runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount()
+      const post = await driver.post()
+      await driver.waitForRequests(1)
+      await driver.unmount()
+      await driver.mount()
+      await driver.draft('fresh display draft')
+      await driver.respond(0, {
+        threadId: 'selected',
+        threads: rows('old display response'),
+      })
+      await act(async () => expect(await post.done).toBe(true))
+      expect(driver.snapshot().threads).toEqual(expectedRows('selected'))
+      expect(driver.snapshot().drafts).toEqual({
+        selected: 'fresh display draft',
+      })
+      await driver.waitForRequests(2)
+      await driver.respond(1, { threads: rows('current server result') })
+      const snapshot = driver.snapshot()
+      expect(snapshot.threads).toEqual(expectedRows('current server result'))
+      expect(snapshot.drafts).toEqual({ selected: 'fresh display draft' })
+      expect(snapshot.pending).toEqual([[], []])
+      expect(driver.trace).toEqual([
+        'POST /api/shareables/a/comments',
+        'GET /api/shareables/a/comments',
+      ])
+      return { snapshot, trace: [...driver.trace] }
+    })
+  }
+  expect(await scenario()).toEqual(await scenario())
+})
+
+test('the isolation oracle detects an injected lease leak even when no mutation advanced its epoch', async () => {
+  const leases: ReturnType<typeof acquireCommentRuntime>[] = []
+  const useLeakingEngine: CommentSyncEngine = (options) => {
+    const comments = useViewerComments(options)
+    useEffect(() => {
+      leases.push(acquireCommentRuntime(options.artifactId))
+    }, [options.artifactId])
+    return comments
+  }
+  try {
+    await expect(
+      runCommentSyncScenario(useLeakingEngine, (driver) => driver.mount()),
+    ).rejects.toMatchObject({ name: 'AssertionError' })
+  } finally {
+    for (const lease of leases) lease.release()
+  }
+  // The intentionally faulty run must not contaminate a later valid one.
+  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
+})
+
+test('a failed scenario keeps the original error when unfinished HTTP cleanup also fails its oracle', async () => {
+  const original = new Error('Synthetic snapshot mismatch')
+  await expect(
+    runCommentSyncScenario(useViewerComments, async (driver) => {
+      await driver.mount()
+      await driver.post()
+      throw original
+    }),
+  ).rejects.toMatchObject({
+    name: 'AggregateError',
+    errors: [original, expect.objectContaining({ name: 'AssertionError' })],
+  })
+  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
+})
+
 test('the driver observes target failure, explicit recovery and request cancellation', async () => {
   async function scenario() {
     return runCommentSyncScenario(useViewerComments, async (driver) => {
@@ -186,10 +258,10 @@ test('the driver observes target failure, explicit recovery and request cancella
         threads: [commentFixture('outside', 'Recovered target')],
       })
       expect(driver.snapshot().failed).toBe(false)
-      expect(driver.snapshot().threads).toContainEqual({
-        id: 'outside',
-        bodies: ['Recovered target'],
-      })
+      expect(driver.snapshot().threads).toEqual([
+        ...expectedRows('summary'),
+        { id: 'outside', bodies: ['Recovered target'] },
+      ])
       const recovered = driver.snapshot()
       await driver.mount('a', 'another-target')
       await driver.waitForRequests(4)

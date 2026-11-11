@@ -86,8 +86,14 @@ cross-run equality check, so two equally wrong results do not constitute a pass.
 
 Disposal unmounts every display, requires all HTTP gates and mutations to have
 finished, and verifies that the touched Runtime records have been collected.
+Before unmounting it marks the records with a probe epoch, so a leaked lease
+with no prior mutation cannot masquerade as a fresh zero-epoch record. A
+deliberately leaking engine verifies this oracle's detection power.
 Failure cleanup drains unresolved HTTP gates before restoring the original
-fetch, then fails the test; it does not accept unfinished work as success.
+fetch, then fails the test; it does not accept unfinished work as success. If
+both the scenario and cleanup fail, the aggregate error preserves both causes.
+Requests made during disposal are rejected and recorded rather than opening
+another unresolved HTTP gate.
 There is no production reset function. The harness currently exercises the
 legacy engine twice. This proves repeatability, not equivalence to an engine
 that has not yet been implemented.
@@ -99,20 +105,21 @@ HTTP method/path and cancellation. Socket authorization/reconnect tests remain
 real hook/browser integration tests; the target-retry scenario does not replace
 or claim to cover that state machine.
 
-| Contract                                                                        | Executable evidence                                                                                                         |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| A post → B → A → settlement preserves a newer draft                             | `comment-runtime.integration.test.tsx`: navigation and new draft scenario                                                   |
-| Independent panel/popover posts suppress partial responses until both settle    | `comment-runtime.integration.test.tsx`: independent panel and popover posts                                                 |
-| Completion after every display unmounts does not notify the next display        | `comment-runtime.integration.test.tsx`: post can finish after every display unmounts                                        |
-| Failed target fetch can recover explicitly; artifact switch cancels its request | `comment-runtime.integration.test.tsx`: target failure, explicit recovery and request cancellation                          |
-| Same-thread dirtiness during a page requires revalidation                       | `comment-reconciliation.test.tsx`: `same-thread change` / `socket reopen` delayed page cases                                |
-| A late page cannot restore removed membership                                   | `comment-reconciliation.test.tsx`: late page cannot restore a thread dropped from the unselected panel                      |
-| A selected thread can survive URL cleanup outside the summary window            | `comment-reconciliation.test.tsx`: accepted outside-window navigation survives URL cleanup                                  |
-| Missing target/range errors retain accessible history and expose retry          | `comment-reconciliation.test.tsx`: invalid range keeps accessible cached replies; missing target exposes retry              |
-| A newer generation supersedes an older refresh                                  | `comment-reconciliation.test.tsx`: page winning the mutation reconciliation race; selection changing during a delayed range |
-| Render attempts cannot mutate committed scope                                   | `comment-reconciliation.test.tsx`: committed artifact changes, StrictMode and suspended renders                             |
-| Thread/all epochs preserve page retry scope                                     | `use-comment-page.test.tsx`: thread/all/other invalidation cases                                                            |
-| Runtime records survive pending reads/jobs and are released afterwards          | `comment-runtime.test.ts`: read leases; reacquiring during settlement                                                       |
+| Contract                                                                                  | Executable evidence                                                                                                         |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| A post → B → A → settlement preserves a newer draft                                       | `comment-runtime.integration.test.tsx`: navigation and new draft scenario                                                   |
+| Independent panel/popover posts suppress partial responses until both settle              | `comment-runtime.integration.test.tsx`: independent panel and popover posts                                                 |
+| Detached completion releases its record before the next display opens                     | `comment-runtime.integration.test.tsx`: detached post releases its record before a fresh display                            |
+| A new display opened during a pending post reconciles without old-response/draft adoption | `comment-runtime.integration.test.tsx`: fresh display reconciles a detached post                                            |
+| Failed target fetch can recover explicitly; artifact switch cancels its request           | `comment-runtime.integration.test.tsx`: target failure, explicit recovery and request cancellation                          |
+| Same-thread dirtiness during a page requires revalidation                                 | `comment-reconciliation.test.tsx`: `same-thread change` / `socket reopen` delayed page cases                                |
+| A late page cannot restore removed membership                                             | `comment-reconciliation.test.tsx`: late page cannot restore a thread dropped from the unselected panel                      |
+| A selected thread can survive URL cleanup outside the summary window                      | `comment-reconciliation.test.tsx`: accepted outside-window navigation survives URL cleanup                                  |
+| Missing target/range errors retain accessible history and expose retry                    | `comment-reconciliation.test.tsx`: invalid range keeps accessible cached replies; missing target exposes retry              |
+| A newer generation supersedes an older refresh                                            | `comment-reconciliation.test.tsx`: page winning the mutation reconciliation race; selection changing during a delayed range |
+| Render attempts cannot mutate committed scope                                             | `comment-reconciliation.test.tsx`: committed artifact changes, StrictMode and suspended renders                             |
+| Thread/all epochs preserve page retry scope                                               | `use-comment-page.test.tsx`: thread/all/other invalidation cases                                                            |
+| Runtime records survive pending reads/jobs and are released afterwards                    | `comment-runtime.test.ts`: read leases; reacquiring during settlement                                                       |
 
 The comparison harness tests externally observable hook operations. Existing
 scope/epoch and scheduler unit tests additionally inspect internal contracts;
