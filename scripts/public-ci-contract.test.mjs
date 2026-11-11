@@ -1222,6 +1222,36 @@ test('only browser jobs use the canonical image with matching locked Playwright'
     })
     assert.deepEqual(job.defaults, { run: { shell: 'bash' } })
     assert.equal(job.env.HOME, '/root')
+    const checkoutIndex = job.steps.findIndex((step) =>
+      step.uses?.startsWith('actions/checkout@'),
+    )
+    const trustCommand =
+      'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+    const trustSteps = job.steps.filter((step) =>
+      step.run?.includes('safe.directory'),
+    )
+    assert.equal(trustSteps.length, 1, name)
+    const [trust] = trustSteps
+    const trustIndex = job.steps.indexOf(trust)
+    assert.equal(trustIndex, checkoutIndex + 1, name)
+    const commands = trust.run
+      .split('\n')
+      .filter((line) => line && !line.startsWith('#'))
+    assert.equal(commands[0], trustCommand, name)
+    assert.equal(trust.if, job.steps[checkoutIndex].if, name)
+    assert.equal(trust.env?.HOME, undefined, name)
+    if (name === 'browser-validation') {
+      assert.deepEqual(commands, [trustCommand])
+      assert.ok(
+        trustIndex <
+          job.steps.findIndex(
+            (step) => step.run === 'pnpm check:browser-local-state',
+          ),
+      )
+    } else {
+      assert.equal(trust.id, 'select')
+      assert.match(commands[1], /^git cat-file /)
+    }
     assert.equal(job['continue-on-error'], undefined)
     assert.equal(job.permissions, undefined)
     assert.ok(

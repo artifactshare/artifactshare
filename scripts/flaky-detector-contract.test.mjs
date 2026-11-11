@@ -165,12 +165,22 @@ test('only behavior-browser entries get a container without splitting the global
   }
   const home = steps.find((step) => step.name === 'Set browser container home')
   assert.equal(home.if, "matrix.suite == 'behavior-browser'")
-  assert.equal(home.run, `echo 'HOME=/root' >> "$GITHUB_ENV"`)
+  assert.deepEqual(home.run.trim().split('\n'), [
+    'export HOME=/root',
+    `echo 'HOME=/root' >> "$GITHUB_ENV"`,
+    'git config --global --add safe.directory "$GITHUB_WORKSPACE"',
+  ])
+  const checkoutIndex = steps.findIndex((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(steps.indexOf(home), checkoutIndex + 1)
   assert.ok(
     steps.indexOf(home) <
-      steps.findIndex(
-        (step) => step.run === 'node scripts/ci/flaky-runs.mjs run',
-      ),
+      steps.findIndex((step) => step.uses?.startsWith('pnpm/action-setup@')),
+  )
+  assert.deepEqual(
+    steps.filter((step) => /safe.directory|HOME=/.test(step.run ?? '')),
+    [home],
   )
   assert.equal(worker['continue-on-error'], undefined)
   for (const step of steps) assert.equal(step['continue-on-error'], undefined)

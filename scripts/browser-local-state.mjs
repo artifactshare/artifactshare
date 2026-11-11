@@ -123,15 +123,20 @@ async function main() {
       persistTo: isolatedState,
     })
     if (!prepared.ok) throw new Error(`Dev setup failed: ${prepared.reason}`)
-    server = spawn('pnpm', ['--filter', '@artifactshare/web', 'dev:app'], {
-      cwd: ROOT,
-      stdio: ['ignore', 'inherit', 'inherit'],
-      detached: true,
-      env: {
-        ...process.env,
-        ARTIFACTSHARE_DEV_PERSIST_PATH: isolatedState,
+    // Match appFetch's IPv4 loopback connection in browser containers.
+    server = spawn(
+      'pnpm',
+      ['--filter', '@artifactshare/web', 'dev:app', '--host', '127.0.0.1'],
+      {
+        cwd: ROOT,
+        stdio: ['ignore', 'inherit', 'inherit'],
+        detached: true,
+        env: {
+          ...process.env,
+          ARTIFACTSHARE_DEV_PERSIST_PATH: isolatedState,
+        },
       },
-    })
+    )
     await waitForServer(server)
 
     // Keep the anonymous route proof ahead of the navigation proof, which
