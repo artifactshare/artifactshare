@@ -12,6 +12,8 @@ import {
   verifyContentCutover,
 } from './verify-content-cutover.mjs'
 import test from 'node:test'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 import { unstable_readConfig } from 'wrangler'
 import YAML from 'yaml'
 
@@ -133,7 +135,14 @@ test('app and sandbox logs redact credential query strings in every environment'
 })
 
 test('production deployment keeps migration and Workers in one order', () => {
-  const command = webPackage.scripts['deploy:production']
+  assert.equal(
+    webPackage.scripts['deploy:production'],
+    'pnpm build:production:topology && pnpm deploy:production:built',
+  )
+  const command =
+    webPackage.scripts['build:production:topology'] +
+    ' && ' +
+    webPackage.scripts['deploy:production:built']
   const expectedOrder = [
     'build:production',
     'build:alerts:production',
@@ -165,6 +174,13 @@ test('production workflow deploys only production inputs from main', () => {
       'package.json',
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
+      'packages/contract/**',
+      'packages/viewer-kit/**',
+      '.github/workflows/deploy-production.yml',
+      'scripts/verify-validated-sha.mjs',
+      'scripts/deploy-content-cutover.mjs',
+      'scripts/verify-content-cutover.mjs',
+      'scripts/verify-production-origin.mjs',
     ],
   })
   assert.equal(workflow.on.pull_request, undefined)
@@ -211,7 +227,11 @@ test('production writes require the protected environment', () => {
     name: 'production',
     url: 'https://artifactshare.com',
   })
-  assert.equal(workflow.jobs.deploy.needs, 'shadow')
+  assert.equal(workflow.jobs.deploy.needs, undefined)
+  assert.equal(
+    workflow.jobs.shadow.if,
+    "github.event_name == 'workflow_dispatch' && inputs.mode == 'shadow'",
+  )
   assert.equal(
     workflow.jobs.deploy.if,
     "github.event_name == 'push' || inputs.mode == 'deploy'",
@@ -227,6 +247,120 @@ test('production writes require the protected environment', () => {
     ['CLOUDFLARE_API_TOKEN'],
   )
   assert.equal(workflow.concurrency['cancel-in-progress'], false)
+})
+
+test('both modes verify SHA before one token-free prebuild and only the production write step gets credentials', () => {
+  const buildCommand =
+    'pnpm --filter @artifactshare/web build:production:topology'
+  const writeCommand =
+    'pnpm --filter @artifactshare/web deploy:production:built'
+  for (const name of ['shadow', 'deploy']) {
+    const job = workflow.jobs[name]
+    const steps = job.steps
+    const buildIndex = steps.findIndex((step) => step.run === buildCommand)
+    const shaIndex = steps.findIndex((step) =>
+      step.run?.includes('verify-validated-sha.mjs'),
+    )
+    const expectedIndex = steps.findIndex((step) => step.env?.EXPECTED_SHA)
+    assert.ok(
+      expectedIndex >= 0 && shaIndex > expectedIndex && buildIndex > shaIndex,
+    )
+    assert.equal(
+      steps[expectedIndex].if,
+      "github.event_name == 'workflow_dispatch'",
+    )
+    assert.equal(
+      steps[expectedIndex].env.EXPECTED_SHA,
+      '${{ inputs.expected_sha }}',
+    )
+    assert.equal(
+      steps[expectedIndex].run,
+      'test "$EXPECTED_SHA" = "$GITHUB_SHA"',
+    )
+    assert.equal(steps[shaIndex].env.GITHUB_TOKEN, '${{ github.token }}')
+    assert.equal(steps.filter((step) => step.run === buildCommand).length, 1)
+    assert.doesNotMatch(JSON.stringify(job.env ?? {}), /CLOUDFLARE|secrets\./u)
+    for (const step of steps) {
+      if (step.run === writeCommand) continue
+      assert.doesNotMatch(
+        JSON.stringify(step.env ?? {}),
+        /CLOUDFLARE|secrets\./u,
+      )
+      assert.equal(step['continue-on-error'], undefined)
+    }
+    const writeIndex = steps.findIndex((step) => step.run === writeCommand)
+    if (name === 'shadow') {
+      assert.equal(writeIndex, -1)
+      assert.equal(job.environment, undefined)
+    } else {
+      assert.ok(writeIndex > buildIndex)
+      assert.equal(steps[writeIndex].if, undefined)
+      assert.equal(steps[writeIndex]['continue-on-error'], undefined)
+      assert.equal(
+        steps[writeIndex].env.CLOUDFLARE_API_TOKEN,
+        '${{ secrets.CLOUDFLARE_API_TOKEN }}',
+      )
+    }
+    assert.equal(steps[buildIndex].if, undefined)
+  }
+})
+
+test('a failure of any prebuild prevents the following write command', () => {
+  const directory = fs.mkdtempSync(join(tmpdir(), 'production-prebuild-test-'))
+  const trace = join(directory, 'trace.jsonl')
+  const commands = [
+    'build:production',
+    'build:alerts:production',
+    'build:og-image:production',
+    'build:sandbox:production',
+  ]
+  try {
+    const stub = join(directory, 'pnpm')
+    fs.writeFileSync(
+      stub,
+      `#!/usr/bin/env node
+const fs = require('node:fs')
+const command = process.argv[2]
+fs.appendFileSync(process.env.PRODUCTION_TEST_TRACE, JSON.stringify(command) + '\\n')
+if (command === process.env.PRODUCTION_TEST_FAIL) process.exit(7)
+`,
+    )
+    fs.chmodSync(stub, 0o755)
+    for (const failure of [null, ...commands]) {
+      fs.writeFileSync(trace, '')
+      const result = childProcess.spawnSync(
+        'bash',
+        [
+          '-c',
+          webPackage.scripts['build:production:topology'] +
+            ' && pnpm __write_marker__',
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: directory + delimiter + process.env.PATH,
+            PRODUCTION_TEST_TRACE: trace,
+            PRODUCTION_TEST_FAIL: failure ?? '',
+          },
+        },
+      )
+      const calls = fs
+        .readFileSync(trace, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      assert.equal(result.status, failure === null ? 0 : 7, result.stderr)
+      assert.deepEqual(
+        calls,
+        failure === null
+          ? [...commands, '__write_marker__']
+          : commands.slice(0, commands.indexOf(failure) + 1),
+      )
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('workflow dispatch exposes only build and deploy modes', () => {

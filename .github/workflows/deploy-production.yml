@@ -9,6 +9,13 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'packages/contract/**'
+      - 'packages/viewer-kit/**'
+      - '.github/workflows/deploy-production.yml'
+      - 'scripts/verify-validated-sha.mjs'
+      - 'scripts/deploy-content-cutover.mjs'
+      - 'scripts/verify-content-cutover.mjs'
+      - 'scripts/verify-production-origin.mjs'
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -35,6 +42,7 @@ concurrency:
 jobs:
   shadow:
     name: Validate production build
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'shadow'
     runs-on: ubuntu-latest
     steps:
       - name: Check out validated source
@@ -62,11 +70,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build the production topology without writing to Cloudflare
-        run: |
-          pnpm --filter @artifactshare/web build:production
-          pnpm --filter @artifactshare/web build:alerts:production
-          pnpm --filter @artifactshare/web build:og-image:production
-          pnpm --filter @artifactshare/web build:sandbox:production
+        run: pnpm --filter @artifactshare/web build:production:topology
       - name: Summarize validation
         run: |
           {
@@ -80,7 +84,6 @@ jobs:
   deploy:
     name: Deploy and verify production
     if: github.event_name == 'push' || inputs.mode == 'deploy'
-    needs: shadow
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -99,12 +102,23 @@ jobs:
         with:
           node-version: 24.21.0
           cache: pnpm
+      - name: Bind a manual run to the explicitly approved SHA
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$EXPECTED_SHA" = "$GITHUB_SHA"
+      - name: Verify the exact merge-queue validated SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-validated-sha.mjs "${{ github.sha }}"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build the production topology without writing to Cloudflare
+        run: pnpm --filter @artifactshare/web build:production:topology
       - name: Refuse legacy content, verify sandbox, then enable delivery
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm --filter @artifactshare/web deploy:production
+        run: pnpm --filter @artifactshare/web deploy:production:built
       - name: Smoke test production
         run: node scripts/verify-production-origin.mjs --retries 2 --retry-delay-ms 15000
       - name: Summarize deployment

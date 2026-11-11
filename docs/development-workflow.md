@@ -219,8 +219,16 @@ If a required local tool (`codex`, `claude`, `python3`, `gh`, the platform's `lo
 
 ## Production content-origin cutover
 
-The protected `production` Environment runs `deploy:production`. Its content
-orchestrator first reads the uncached app delivery-stage endpoint in a single
+Normal production deployments use one job in the protected `production`
+Environment. It verifies the exact merge-queue validated SHA (and the explicit
+expected SHA on manual deploys), installs dependencies, and runs
+`build:production:topology` once before `deploy:production:built`. The build
+step receives no Cloudflare token; only the write step receives it. The existing
+build scripts and route-manifest check must all pass before migration or
+Worker writes. `deploy:production` remains the build-plus-write wrapper; the
+workflow uses the two steps to keep credentials out of the build.
+
+The content orchestrator first reads the uncached app delivery-stage endpoint in a single
 fail-closed request with a 10-second timeout; discovery is never polled. Confirmed
 `usercontent` deployments deploy the sandbox, verify readiness, then deploy the
 final app and verify readiness again without an intervening refusal window. Only a confirmed `refuse` stage or a legacy endpoint 404 uses the
@@ -263,7 +271,14 @@ failure fails the job without further writes. When an operator reruns the protec
 deploy job, its initial single request discovers the deployed stage again.
 Job reruns and recovery retain refusal code;
 do not restore old content handlers or URL generators. Users recover an open viewer by reloading the same public URL.
-The production build/shadow lane performs no deploy or readiness fetch.
+The manual-only shadow job verifies the exact SHA and runs the same topology
+build without a production Environment, Cloudflare token, deploy or readiness
+fetch. Normal pushes do not run shadow first. Rerunning the production job
+rechecks and rebuilds its original SHA before writes and current-stage discovery.
+The existing workflow-wide `production-deployment` concurrency group is
+unchanged, including pending-run replacement; manual shadow runs share it.
+Production inputs include app sources, the contract and viewer-kit packages,
+the workflow, its direct deployment/verification scripts and root package inputs.
 
 Before enabling delivery, record real browser versions, third-party-cookie
 blocking settings, and outcomes for the cross-site viewer matrix. Unmeasured
