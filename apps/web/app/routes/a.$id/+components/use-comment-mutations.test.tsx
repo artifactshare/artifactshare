@@ -14,12 +14,67 @@ vi.mock('react-router', async (importOriginal) => ({
   useRevalidator: () => ({ revalidate }),
 }))
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), dismiss: vi.fn() } }))
 vi.mock('~/hooks/use-t', () => ({ useT: () => ({ t: (key: string) => key }) }))
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.clearAllMocks()
+})
+
+test('a successful retry dismisses only the error of its producer and operation', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  let failing = true
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      failing
+        ? Response.json({ error: {} }, { status: 503 })
+        : Response.json({ threads: [] }),
+    ),
+  )
+  let writers: ReturnType<typeof useCommentMutations>[] = []
+  function Harness() {
+    const options = {
+      shareableId: 'retry-artifact',
+      isCurrentShareableId: () => true,
+      onThreadsChange: vi.fn(),
+    }
+    writers = [useCommentMutations(options), useCommentMutations(options)]
+    return null
+  }
+  const root = createRoot(document.createElement('div'))
+  async function post(writer: number, threadId: string) {
+    let success = false
+    await act(async () => {
+      success = await writers[writer].mutate({
+        intent: 'reply',
+        threadId,
+        body: 'Review',
+      })
+    })
+    return success
+  }
+  try {
+    await act(async () => root.render(<Harness />))
+    expect(await post(0, 'a')).toBe(false)
+    const firstError = vi.mocked(toast.error).mock.calls.at(-1)![1]!.id
+    expect(toast.dismiss).not.toHaveBeenCalled()
+    expect(await post(0, 'b')).toBe(false)
+    const otherOperation = vi.mocked(toast.error).mock.calls.at(-1)![1]!.id
+    expect(otherOperation).not.toBe(firstError)
+    expect(await post(1, 'a')).toBe(false)
+    const otherProducer = vi.mocked(toast.error).mock.calls.at(-1)![1]!.id
+    expect(otherProducer).not.toBe(firstError)
+    failing = false
+    expect(await post(0, 'a')).toBe(true)
+    expect(toast.dismiss).toHaveBeenCalledExactlyOnceWith(firstError)
+    expect(await post(1, 'a')).toBe(true)
+    expect(toast.dismiss).toHaveBeenLastCalledWith(otherProducer)
+    expect(toast.dismiss).not.toHaveBeenCalledWith(otherOperation)
+  } finally {
+    await act(async () => root.unmount())
+  }
 })
 
 test.each([
@@ -91,6 +146,7 @@ test.each([
       expect(host.textContent).toContain('quote')
       if (code === 'version_conflict') {
         expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance, {
+          id: expect.any(String),
           action: { label: 'home.reload', onClick: expect.any(Function) },
         })
         const action = vi.mocked(toast.error).mock.calls[0]![1]!
@@ -99,7 +155,9 @@ test.each([
         await act(async () => action.onClick())
         expect(revalidate).toHaveBeenCalledOnce()
       } else {
-        expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance)
+        expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance, {
+          id: expect.any(String),
+        })
         expect(revalidate).not.toHaveBeenCalled()
       }
       expect(reload).not.toHaveBeenCalled()
@@ -170,7 +228,9 @@ test.each([
           'capacity refusal consumed',
         ),
       )
-      expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance)
+      expect(toast.error).toHaveBeenCalledExactlyOnceWith(guidance, {
+        id: expect.any(String),
+      })
     } finally {
       await act(async () => root.unmount())
       host.remove()

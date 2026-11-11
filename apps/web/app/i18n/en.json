@@ -697,6 +697,7 @@
   "comments.post": "Post",
   "comments.comment": "Comment",
   "comments.reply": "Reply",
+  "comments.sending": "Sending…",
   "comments.copyLink": "Copy link",
   "comments.resolve": "Resolve",
   "comments.reopen": "Reopen",

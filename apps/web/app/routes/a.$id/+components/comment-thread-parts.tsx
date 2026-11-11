@@ -264,8 +264,9 @@ export function CommentReplyComposer({
           variant="default"
           size="sm"
           disabled={!value.trim() || pending}
+          aria-busy={pending || undefined}
         >
-          {t('comments.reply')}
+          {t(pending ? 'comments.sending' : 'comments.reply')}
         </Button>
       </div>
     </form>

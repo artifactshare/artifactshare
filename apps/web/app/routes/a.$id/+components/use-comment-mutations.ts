@@ -6,7 +6,7 @@ import type {
   ChangeCommentThreads,
   CommentThreadPatch,
 } from './comment-history'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -73,6 +73,7 @@ export function useCommentMutations({
 }) {
   const { t } = useT()
   const revalidator = useRevalidator()
+  const toastPrefix = useId()
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -82,6 +83,13 @@ export function useCommentMutations({
     pendingKey?: string,
   ): Promise<boolean> => {
     const requestShareableId = shareableId
+    const target =
+      'messageId' in payload
+        ? payload.messageId
+        : 'threadId' in payload
+          ? payload.threadId
+          : 'new-thread'
+    const errorToastId = `comment-save:${toastPrefix}:${requestShareableId}:${payload.intent}:${target}`
     const clientMutationId = createClientMutationId()
     let appliedThreads = false
     let threadId = 'threadId' in payload ? payload.threadId : undefined
@@ -119,6 +127,7 @@ export function useCommentMutations({
                 ? 'comments.threadCapacityArtifact'
                 : 'comments.threadCapacity',
             ),
+            { id: errorToastId },
           )
           return false
         }
@@ -127,6 +136,7 @@ export function useCommentMutations({
             t('comments.rateLimited', {
               seconds: result.body.error.details?.retry_after_seconds ?? 60,
             }),
+            { id: errorToastId },
           )
           return false
         }
@@ -145,6 +155,7 @@ export function useCommentMutations({
                 : 'comments.versionConflict',
             ),
             {
+              id: errorToastId,
               action: {
                 label: t('home.reload'),
                 onClick: () => {
@@ -177,6 +188,7 @@ export function useCommentMutations({
         if (!runtime.hasOverlap()) onThreadsChange(body.threads, body)
         appliedThreads = !body.refreshRequired && !runtime.hasOverlap()
       }
+      toast.dismiss(errorToastId)
       return true
     } catch (error) {
       if (
@@ -189,7 +201,7 @@ export function useCommentMutations({
           reason: viewerFetchFailureReason(error),
         })
       }
-      toast.error(t('comments.errorSave'))
+      toast.error(t('comments.errorSave'), { id: errorToastId })
       return false
     } finally {
       job?.settle({
