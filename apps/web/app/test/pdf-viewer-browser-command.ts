@@ -454,48 +454,35 @@ async function downloadBytes(saved: Download): Promise<Buffer> {
   return Buffer.concat(chunks)
 }
 
-// The page list of a 100-page PDF: what is drawn before and after opening,
-// while the viewer page is hidden, and every way of leaving the list.
-async function pageListFlow(
-  page: Page,
-  frame: Frame,
-  width: number,
-  clearCookies: () => Promise<void>,
-  originalFetches: () => number,
-  original: Uint8Array<ArrayBuffer>,
-) {
-  const thumbnails = () =>
-    frame.evaluate(() => ({
-      items: document.querySelectorAll('#page-list button').length,
-      drawn: [
-        ...document.querySelectorAll<HTMLElement>(
-          '#page-list button[data-rendered]',
+function pageListThumbnails(frame: Frame) {
+  return frame.evaluate(() => ({
+    items: document.querySelectorAll('#page-list button').length,
+    drawn: [
+      ...document.querySelectorAll<HTMLElement>(
+        '#page-list button[data-rendered]',
+      ),
+    ].map((item) => Number(item.dataset.page)),
+  }))
+}
+
+function waitForThumbnail(frame: Frame, n: number) {
+  return frame
+    .waitForFunction(
+      (expected) =>
+        !!document.querySelector(
+          `#page-list button[data-page="${expected}"][data-rendered]`,
         ),
-      ].map((item) => Number(item.dataset.page)),
-    }))
-  const waitDrawn = (n: number) =>
-    frame
-      .waitForFunction(
-        (expected) =>
-          !!document.querySelector(
-            `#page-list button[data-page="${expected}"][data-rendered]`,
-          ),
-        n,
-        { timeout: 10000 },
-      )
-      .then(() => true)
-  // A closed list has left the document and returned focus.
-  const dialogState = async () => {
-    await waitForPagesClosed(frame)
-    return frame.evaluate(() => ({
-      open: !!document.querySelector('[data-pdf-pages][data-state="open"]'),
-      focusedId: document.activeElement?.id ?? null,
-    }))
-  }
-  const beforeOpen = await thumbnails()
+      n,
+      { timeout: 10000 },
+    )
+    .then(() => true)
+}
+
+async function observePageListOpening(frame: Frame) {
+  const beforeOpen = await pageListThumbnails(frame)
   await goToPage(frame, 40)
   await frame.click('#pages')
-  const currentDrawn = await waitDrawn(40)
+  const currentDrawn = await waitForThumbnail(frame, 40)
   const opened = await frame.evaluate(() => {
     const dialog = document.querySelector('[data-pdf-pages]')!
     const list = document.getElementById('page-list')!
@@ -525,6 +512,31 @@ async function pageListFlow(
       )!.width,
     }
   })
+  return { beforeOpen, currentDrawn, opened }
+}
+
+// The page list of a 100-page PDF: what is drawn before and after opening,
+// while the viewer page is hidden, and every way of leaving the list.
+async function pageListFlow(
+  page: Page,
+  frame: Frame,
+  width: number,
+  clearCookies: () => Promise<void>,
+  originalFetches: () => number,
+  original: Uint8Array<ArrayBuffer>,
+) {
+  const thumbnails = () => pageListThumbnails(frame)
+  const waitDrawn = (n: number) => waitForThumbnail(frame, n)
+  // A closed list has left the document and returned focus.
+  const dialogState = async () => {
+    await waitForPagesClosed(frame)
+    return frame.evaluate(() => ({
+      open: !!document.querySelector('[data-pdf-pages][data-state="open"]'),
+      focusedId: document.activeElement?.id ?? null,
+    }))
+  }
+  const { beforeOpen, currentDrawn, opened } =
+    await observePageListOpening(frame)
   // Keys that turn pages leave the page alone behind the open list.
   await page.keyboard.press('ArrowRight')
   const pageAfterArrowRight = await pageNumber(frame)
@@ -1691,8 +1703,14 @@ export const pdfViewerScenario = defineBrowserCommand(
         }
         // Toolbar checks still use the 100-page fixture and exercise resizing,
         // but do not need the separate page-list interaction walk.
-        if (options.pageListInteractions === false)
+        if (options.pageListObservation === 'none')
           return await finish({ initial, widened })
+        if (options.pageListObservation === 'opened')
+          return await finish({
+            initial,
+            widened,
+            pageListOpened: await observePageListOpening(frame),
+          })
         const pageList = await pageListFlow(
           artifact,
           frame,
@@ -2023,8 +2041,8 @@ type Layout = {
 }
 
 export type PdfScenarioOptions = {
-  // Only the pages scenario: omit the interaction walk for toolbar checks.
-  pageListInteractions?: boolean
+  // Only the pages scenario: defaults to the full interaction walk.
+  pageListObservation?: 'none' | 'opened' | 'full'
   // The browser's own language and color scheme.
   locale?: 'en-US' | 'ja-JP'
   colorScheme?: 'light' | 'dark'
@@ -2054,6 +2072,7 @@ declare module 'vitest/browser' {
       labels: ReturnType<typeof viewerLabels>
       preferences?: Awaited<ReturnType<typeof preferencesFlow>>['result']
       pageList?: Awaited<ReturnType<typeof pageListFlow>>
+      pageListOpened?: Awaited<ReturnType<typeof observePageListOpening>>
       search?: Awaited<ReturnType<typeof searchFlow>>
       searchOnce?: Awaited<ReturnType<typeof searchState>>
       settingsFlow?: Awaited<ReturnType<typeof settingsFlow>>

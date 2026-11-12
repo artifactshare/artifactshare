@@ -66,7 +66,7 @@ test('keeps the controls in one row on a 320px phone', async () => {
   const { initial, widened } = await server.commands.pdfViewerScenario(
     'pages',
     320,
-    { pageListInteractions: false },
+    { pageListObservation: 'none' },
   )
 
   expectOneToolbarRow(initial!, 320)
@@ -78,7 +78,7 @@ test('keeps the controls in one row on a 320px phone', async () => {
 // breakpoint, not only on the narrowest phones.
 test('keeps phone-sized touch targets on a 600px frame', async () => {
   const { initial } = await server.commands.pdfViewerScenario('pages', 600, {
-    pageListInteractions: false,
+    pageListObservation: 'none',
   })
 
   expectOneToolbarRow(initial!, 600)
@@ -496,7 +496,10 @@ describe('PDF viewer in the app language', () => {
   } as const
 
   test('labels the page list items and fits the row on a phone', async () => {
-    const result = await server.commands.pdfViewerScenario('pages', 390, ja)
+    const result = await server.commands.pdfViewerScenario('pages', 390, {
+      ...ja,
+      pageListObservation: 'opened',
+    })
 
     expect(result.labels).toEqual({
       lang: 'ja',
@@ -507,7 +510,7 @@ describe('PDF viewer in the app language', () => {
       contentLang: '',
     })
     expectOneToolbarRow(result.initial!, 390)
-    expect(result.pageList!.opened).toMatchObject({
+    expect(result.pageListOpened!.opened).toMatchObject({
       heading: 'ページ一覧',
       current: [{ page: 40, marker: 'page', label: '40ページへ移動' }],
     })
