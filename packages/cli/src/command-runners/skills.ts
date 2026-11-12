@@ -672,7 +672,7 @@ async function applyAction(item: PlannedAction): Promise<void> {
         item.legacy = {
           path: item.legacy.path,
           action: 'remove_failed',
-          hint: 'Retry skills update --tool cursor --scope project --json to remove the legacy rule.',
+          hint: `Retry skills ${item.removeLegacy ? 'remove' : 'update'} --tool cursor --scope project --json to remove the legacy rule.`,
         }
       }
     }
