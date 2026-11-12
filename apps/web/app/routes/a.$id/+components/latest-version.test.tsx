@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+// CI selection control: keep this change within the viewer unit scope.
 import { loadPublishedViewer } from '../+published-viewer-loader-fixture'
 import { bindI18n as viewerI18n } from '~/lib/i18n'
 import { act, useState } from 'react'

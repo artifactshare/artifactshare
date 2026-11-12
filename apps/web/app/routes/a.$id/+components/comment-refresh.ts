@@ -93,7 +93,7 @@ export async function runCommentRefreshWithAuthRecovery({
 }
 
 export function isCommentAuthErrorStatus(status: number): boolean {
-  return status === 403 || status === 401 || status === 404
+  return status === 401 || status === 403 || status === 404
 }
 
 export function waitForCommentAuthRecheck(
