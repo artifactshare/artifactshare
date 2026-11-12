@@ -104,7 +104,7 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare share ./site-dir --
   Posting to a project delivers to the audience defined by that project.
   Without any destination it posts to home.
 - Choose `home_audience` by purpose: use `config set home_audience private
---scope user --json` for a personal safe default in this CLI environment,
+  --scope user --json` for a personal safe default in this CLI environment,
   use `--scope repository` only for a policy agreed by all participants, and
   use `--visibility private|workspace|link` for one home post.
 - Inspect the home audience policy before posting with

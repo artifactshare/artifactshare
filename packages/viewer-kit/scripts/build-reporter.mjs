@@ -680,6 +680,7 @@ export async function renderReporter({ entry = entryPath } = {}) {
     input: entry,
     cwd: repository,
     platform: 'browser',
+    experimental: { attachDebugInfo: 'none' },
     transform: { target: 'es2022' },
     treeshake: false,
     onwarn(warning) {
