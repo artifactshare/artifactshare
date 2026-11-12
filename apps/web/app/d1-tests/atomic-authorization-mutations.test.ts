@@ -718,12 +718,11 @@ async function placementSnapshot(workspaceId: string) {
     'SELECT * FROM link_publication_attempts WHERE workspace_id = ?',
     'SELECT * FROM link_publications WHERE workspace_id = ?',
   ]
-  return await Promise.all(
-    selects.map(
-      async (query) =>
-        (await database.prepare(query).bind(workspaceId).all()).results,
-    ),
-  )
+  return (
+    await database.batch(
+      selects.map((query) => database.prepare(query).bind(workspaceId)),
+    )
+  ).map((result) => result.results)
 }
 
 // Each case owns a fresh interceptor. Setup uses the original database so it
