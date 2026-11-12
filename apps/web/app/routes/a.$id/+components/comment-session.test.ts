@@ -29,6 +29,55 @@ function setup() {
   }
 }
 
+test('retained recovery is consumed once and cannot survive detach/reattach', () => {
+  const { session, detach } = setup()
+  const recovered = [commentFixture('one', 'recovered')]
+  const accepted = [{ ...recovered[0], latestReplyIds: [], loadedPages: [] }]
+  let detachAgain: (() => void) | undefined
+  try {
+    session.retainRecovery(session.captureRecovery(), recovered)
+    expect(session.hasStaleRecovery()).toBe(false)
+    expect(session.applyRecovery()).toBe(true)
+    expect(session.getSnapshot().threads).toEqual(accepted)
+    expect(session.applyRecovery()).toBe(false)
+    session.retainRecovery(session.captureRecovery(), initial)
+    detach()
+    detachAgain = session.attach()
+    expect(session.applyRecovery()).toBe(false)
+    expect(session.getSnapshot().threads).toEqual(accepted)
+  } finally {
+    detach()
+    detachAgain?.()
+  }
+})
+
+test('retained recovery defers to pending settlement and rejects rows captured before settlement', () => {
+  const { session, runtime, detach } = setup()
+  const writer = runtime.acquire('a')
+  const job = writer.beginMutation('pending', 'one')
+  try {
+    session.retainRecovery(session.captureRecovery(), [
+      commentFixture('one', 'before post'),
+    ])
+    // The authorized connection can continue without publishing these rows.
+    expect(session.applyRecovery()).toBe(true)
+    expect(session.getSnapshot().threads).toEqual(initial)
+    session.retainRecovery(session.captureRecovery(), [
+      commentFixture('one', 'stale'),
+    ])
+    session.applyMutation([commentFixture('one', 'posted')])
+    job.settle({ appliedThreads: true, threadId: 'one' })
+    expect(session.hasStaleRecovery()).toBe(true)
+    expect(session.applyRecovery()).toBe(false)
+    expect(session.getSnapshot().threads[0].messages[0].body).toBe('posted')
+    expect(session.hasStaleRecovery()).toBe(false)
+  } finally {
+    job.settle({ appliedThreads: false, threadId: 'one' })
+    writer.release()
+    detach()
+  }
+})
+
 test('construction exposes only initial data and does not acquire a browser owner or fetch', () => {
   const acquire = vi.fn()
   const fetch = vi.fn()

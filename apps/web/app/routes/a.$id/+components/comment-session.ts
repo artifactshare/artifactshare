@@ -1,7 +1,3 @@
-import {
-  legacyCommentSync,
-  type CommentSyncAssignment,
-} from '~/lib/comment-sync'
 import type { CommentThreadView } from '~/lib/comments'
 import type { AnchorResolutionMessage } from '~/lib/csp-reporter'
 import { COMMENT_REPLY_PAGE_LIMIT, commentPageUrl } from '~/lib/comment-page'
@@ -60,7 +56,6 @@ export type CommentRecoveryAdoption =
 /** Display-owned data and adoption. Socket authorization and UI state stay outside.
  * Construction is read-only: only attach/operations acquire browser resources. */
 export function createCommentSession(options: {
-  assignment?: CommentSyncAssignment
   artifactId: string
   initialThreads: ReadonlyArray<CommentThreadView>
   currentUserId: string | null
@@ -76,10 +71,6 @@ export function createCommentSession(options: {
   ) => void
 }) {
   const { artifactId, getSelectedThreadId } = options
-  const assignment = options.assignment ?? {
-    ...legacyCommentSync,
-    mode: 'session' as const,
-  }
   const acquireRuntime =
     options.acquireRuntime ?? (() => acquireCommentRuntime(artifactId))
   const owner = Symbol('comment-session')
@@ -136,7 +127,7 @@ export function createCommentSession(options: {
         headers: { accept: 'application/json' },
         signal,
       },
-      { commentDiagnostic: { assignment, operation: 'summary' } },
+      { commentDiagnostic: { operation: 'summary' } },
     )
 
   const refreshOnce = async (): Promise<CommentRefreshResult> => {
@@ -225,7 +216,7 @@ export function createCommentSession(options: {
             {
               signal: controller.signal,
             },
-            { commentDiagnostic: { assignment, operation: 'selected' } },
+            { commentDiagnostic: { operation: 'selected' } },
           ).catch(() => null)
           if (seq !== generation || !active) return 'transient-error'
           if (selectedId !== getSelectedThreadId()) {
@@ -302,7 +293,7 @@ export function createCommentSession(options: {
                     {
                       signal: controller.signal,
                     },
-                    { commentDiagnostic: { assignment, operation: 'page' } },
+                    { commentDiagnostic: { operation: 'page' } },
                   )
                   if (
                     pageResult.response.status === 401 ||
@@ -407,7 +398,7 @@ export function createCommentSession(options: {
     threadId: string
     targetMessageId?: string
     onTargetMissing?: (messageId: string) => void
-    // React consumers resume queued work after their settlement render, as legacy did.
+    // React consumers resume queued work after their settlement render.
     onReady?: () => void
   }) {
     let enabled = false
@@ -503,7 +494,7 @@ export function createCommentSession(options: {
           { signal: controller.signal },
           {
             requireJson: true,
-            commentDiagnostic: { assignment, operation: 'page' },
+            commentDiagnostic: { operation: 'page' },
           },
         )
         if (!owns()) return false
@@ -520,7 +511,7 @@ export function createCommentSession(options: {
             { signal: controller.signal },
             {
               requireJson: true,
-              commentDiagnostic: { assignment, operation: 'page' },
+              commentDiagnostic: { operation: 'page' },
             },
           )
           if (!owns()) return false
@@ -636,6 +627,38 @@ export function createCommentSession(options: {
       runtime!.getSettlementRevision() === ticket.settlementRevision
     )
   }
+  let retainedRecovery: {
+    ticket: CommentRecoveryTicket
+    rows: ReadonlyArray<CommentThreadView>
+  } | null = null
+  function offerRecovery(
+    ticket: CommentRecoveryTicket,
+    rows: ReadonlyArray<CommentThreadView>,
+  ): CommentRecoveryAdoption {
+    if (!ownsRecovery(ticket)) return { kind: 'detached' }
+    if (!isRecoveryCurrent(ticket))
+      return { kind: 'mutation-invalidated', pending: runtime!.hasPending() }
+    runtime!.invalidate()
+    abortRefresh()
+    const current = new Map(
+      snapshot.threads.map((thread) => [thread.id, thread]),
+    )
+    const threads = rows.map((thread) =>
+      mergeCommentWindow(current.get(thread.id), thread),
+    )
+    const selected = getSelectedThreadId()
+    if (
+      threads.some((thread) => thread.loadedPages?.length) ||
+      (selected && !threads.some((thread) => thread.id === selected))
+    ) {
+      scope.mark()
+      return { kind: 'needs-revalidation' }
+    }
+    if (runtime!.hasPending())
+      return { kind: 'mutation-invalidated', pending: true }
+    publish(threads)
+    return { kind: 'applied' }
+  }
   return {
     createPageConsumer,
     hasPending: () => active && runtime!.hasPending(),
@@ -669,6 +692,7 @@ export function createCommentSession(options: {
         if (committed !== attachment) return
         attachment += 1
         active = false
+        retainedRecovery = null
         abortRefresh()
         const currentConsumers = [...consumers]
         for (const consumer of currentConsumers) consumer.cleanup()
@@ -748,33 +772,29 @@ export function createCommentSession(options: {
     },
     captureRecovery,
     isRecoveryCurrent,
-    offerRecovery(
+    offerRecovery,
+    retainRecovery(
       ticket: CommentRecoveryTicket,
       rows: ReadonlyArray<CommentThreadView>,
-    ): CommentRecoveryAdoption {
-      if (!ownsRecovery(ticket)) return { kind: 'detached' }
-      if (!isRecoveryCurrent(ticket))
-        return { kind: 'mutation-invalidated', pending: runtime!.hasPending() }
-      runtime!.invalidate()
-      abortRefresh()
-      const current = new Map(
-        snapshot.threads.map((thread) => [thread.id, thread]),
+    ) {
+      retainedRecovery = { ticket, rows }
+    },
+    clearRecovery() {
+      retainedRecovery = null
+    },
+    hasStaleRecovery: () =>
+      retainedRecovery !== null && !isRecoveryCurrent(retainedRecovery.ticket),
+    applyRecovery() {
+      const retained = retainedRecovery
+      retainedRecovery = null
+      if (!retained) return false
+      const result = offerRecovery(retained.ticket, retained.rows)
+      return (
+        result.kind === 'applied' ||
+        (result.kind === 'mutation-invalidated' &&
+          result.pending &&
+          isRecoveryCurrent(retained.ticket))
       )
-      const threads = rows.map((thread) =>
-        mergeCommentWindow(current.get(thread.id), thread),
-      )
-      const selected = getSelectedThreadId()
-      if (
-        threads.some((thread) => thread.loadedPages?.length) ||
-        (selected && !threads.some((thread) => thread.id === selected))
-      ) {
-        scope.mark()
-        return { kind: 'needs-revalidation' }
-      }
-      if (runtime!.hasPending())
-        return { kind: 'mutation-invalidated', pending: true }
-      publish(threads)
-      return { kind: 'applied' }
     },
     applyAnchorResults(results: AnchorResolutionMessage['results']) {
       if (!active) return
@@ -801,3 +821,5 @@ export function createCommentSession(options: {
     },
   }
 }
+
+export type CommentSession = ReturnType<typeof createCommentSession>

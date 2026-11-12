@@ -3,12 +3,11 @@ import { act, createElement, useEffect } from 'react'
 import { renderToString } from 'react-dom/server'
 import * as runtimeBrowser from './comment-runtime-browser'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { useViewerComments, useSessionViewerComments } from './viewer-shell'
+import { useViewerComments } from './viewer-shell'
 import { acquireCommentRuntime } from './comment-runtime-browser'
 import {
   commentFixture,
   runCommentSyncScenario,
-  type CommentSyncEngine,
 } from '~/test/comment-sync-harness'
 
 vi.mock('react-router', async (original) => ({
@@ -31,10 +30,9 @@ const expectedRows = (body: string) => [
   { id: 'other', bodies: ['other'] },
 ]
 
-// The same input script can be run with the future engine hook. Each execution
-// owns its React root and HTTP gates, and disposal proves shared records empty.
-async function navigationScenario(engine: CommentSyncEngine) {
-  return runCommentSyncScenario(engine, async (driver) => {
+// Each scenario owns its React root and HTTP gates; disposal proves shared records empty.
+async function navigationScenario() {
+  return runCommentSyncScenario(async (driver) => {
     await driver.mount('a')
     await driver.draft('submitted')
     const post = await driver.post()
@@ -73,15 +71,13 @@ async function navigationScenario(engine: CommentSyncEngine) {
   })
 }
 
-test('the navigation and new draft scenario has independently verified sequential runs', async () => {
-  const first = await navigationScenario(useViewerComments)
-  const second = await navigationScenario(useSessionViewerComments)
-  expect(second).toEqual(first)
+test('navigation retains the newer draft through pending post settlement', async () => {
+  await navigationScenario()
 })
 
 test('a successful panel post clears its own unchanged submitted draft', async () => {
-  async function scenario(engine: CommentSyncEngine) {
-    return runCommentSyncScenario(engine, async (driver) => {
+  async function scenario() {
+    return runCommentSyncScenario(async (driver) => {
       await driver.mount()
       await driver.draft('submitted')
       const post = await driver.post()
@@ -99,14 +95,12 @@ test('a successful panel post clears its own unchanged submitted draft', async (
       return result
     })
   }
-  expect(await scenario(useViewerComments)).toEqual(
-    await scenario(useSessionViewerComments),
-  )
+  await scenario()
 })
 
 test('an A response arriving while B is displayed cannot replace B data', async () => {
-  async function scenario(engine: CommentSyncEngine) {
-    return runCommentSyncScenario(engine, async (driver) => {
+  async function scenario() {
+    return runCommentSyncScenario(async (driver) => {
       await driver.mount('a')
       const post = await driver.post()
       await driver.waitForRequests(1)
@@ -127,13 +121,11 @@ test('an A response arriving while B is displayed cannot replace B data', async 
       return snapshot
     })
   }
-  expect(await scenario(useViewerComments)).toEqual(
-    await scenario(useSessionViewerComments),
-  )
+  await scenario()
 })
 
-async function overlappingScenario(engine: CommentSyncEngine) {
-  return runCommentSyncScenario(engine, async (driver) => {
+async function overlappingScenario() {
+  return runCommentSyncScenario(async (driver) => {
     await driver.mount()
     await driver.draft('popover')
     const panelPost = await driver.post(0, 'panel')
@@ -176,14 +168,12 @@ async function overlappingScenario(engine: CommentSyncEngine) {
 }
 
 test('independent panel and popover posts share overlap tracking until reconciliation', async () => {
-  expect(await overlappingScenario(useViewerComments)).toEqual(
-    await overlappingScenario(useSessionViewerComments),
-  )
+  await overlappingScenario()
 })
 
 test('a detached post releases its record before a fresh display opens', async () => {
-  async function scenario(engine: CommentSyncEngine) {
-    return runCommentSyncScenario(engine, async (driver) => {
+  async function scenario() {
+    return runCommentSyncScenario(async (driver) => {
       await driver.mount()
       const post = await driver.post()
       await driver.waitForRequests(1)
@@ -204,14 +194,12 @@ test('a detached post releases its record before a fresh display opens', async (
       return { snapshot: driver.snapshot(), trace: [...driver.trace] }
     })
   }
-  expect(await scenario(useViewerComments)).toEqual(
-    await scenario(useSessionViewerComments),
-  )
+  await scenario()
 })
 
 test('a fresh display reconciles a detached post without adopting its old display response or clearing its draft', async () => {
-  async function scenario(engine: CommentSyncEngine) {
-    return runCommentSyncScenario(engine, async (driver) => {
+  async function scenario() {
+    return runCommentSyncScenario(async (driver) => {
       await driver.mount()
       const post = await driver.post()
       await driver.waitForRequests(1)
@@ -240,14 +228,12 @@ test('a fresh display reconciles a detached post without adopting its old displa
       return { snapshot, trace: [...driver.trace] }
     })
   }
-  expect(await scenario(useViewerComments)).toEqual(
-    await scenario(useSessionViewerComments),
-  )
+  await scenario()
 })
 
 test('A post returning after an earlier GET is visible even when the settlement GET fails', async () => {
-  const scenario = (engine: CommentSyncEngine) =>
-    runCommentSyncScenario(engine, async (driver) => {
+  const scenario = () =>
+    runCommentSyncScenario(async (driver) => {
       await driver.mount('a')
       const post = await driver.post()
       await driver.mount('b')
@@ -277,15 +263,13 @@ test('A post returning after an earlier GET is visible even when the settlement 
       ])
       return { snapshot, trace: [...driver.trace] }
     })
-  expect(await scenario(useSessionViewerComments)).toEqual(
-    await scenario(useViewerComments),
-  )
+  await scenario()
 })
 
-test('rendering either engine on the server acquires no browser Runtime', () => {
+test('server rendering acquires no browser Runtime', () => {
   const acquire = vi.spyOn(runtimeBrowser, 'acquireCommentRuntime')
-  function View({ useEngine }: { useEngine: CommentSyncEngine }) {
-    const comments = useEngine({
+  function View() {
+    const comments = useViewerComments({
       framePresent: false,
       artifactId: 'ssr',
       currentUserId: null,
@@ -297,14 +281,7 @@ test('rendering either engine on the server acquires no browser Runtime', () => 
     return createElement('span', null, comments.totalCount)
   }
   try {
-    expect(
-      renderToString(createElement(View, { useEngine: useViewerComments })),
-    ).toBe('<span>2</span>')
-    expect(
-      renderToString(
-        createElement(View, { useEngine: useSessionViewerComments }),
-      ),
-    ).toBe('<span>2</span>')
+    expect(renderToString(createElement(View))).toBe('<span>2</span>')
     expect(acquire).not.toHaveBeenCalled()
   } finally {
     acquire.mockRestore()
@@ -313,28 +290,27 @@ test('rendering either engine on the server acquires no browser Runtime', () => 
 
 test('the isolation oracle detects an injected lease leak even when no mutation advanced its epoch', async () => {
   const leases: ReturnType<typeof acquireCommentRuntime>[] = []
-  const useLeakingEngine: CommentSyncEngine = (options) => {
-    const comments = useViewerComments(options)
+  function LeakingLease({ artifactId }: { artifactId: string }) {
     useEffect(() => {
-      leases.push(acquireCommentRuntime(options.artifactId))
-    }, [options.artifactId])
-    return comments
+      leases.push(acquireCommentRuntime(artifactId))
+    }, [artifactId])
+    return null
   }
   try {
     await expect(
-      runCommentSyncScenario(useLeakingEngine, (driver) => driver.mount()),
+      runCommentSyncScenario((driver) => driver.mount(), LeakingLease),
     ).rejects.toMatchObject({ name: 'AssertionError' })
   } finally {
     for (const lease of leases) lease.release()
   }
   // The intentionally faulty run must not contaminate a later valid one.
-  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
+  await runCommentSyncScenario((driver) => driver.mount())
 })
 
 test('a failed scenario keeps the original error when unfinished HTTP cleanup also fails its oracle', async () => {
   const original = new Error('Synthetic snapshot mismatch')
   await expect(
-    runCommentSyncScenario(useViewerComments, async (driver) => {
+    runCommentSyncScenario(async (driver) => {
       await driver.mount()
       await driver.post()
       throw original
@@ -343,12 +319,12 @@ test('a failed scenario keeps the original error when unfinished HTTP cleanup al
     name: 'AggregateError',
     errors: [original, expect.objectContaining({ name: 'AssertionError' })],
   })
-  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
+  await runCommentSyncScenario((driver) => driver.mount())
 })
 
 test('the driver observes target failure, explicit recovery and request cancellation', async () => {
-  async function scenario(engine: CommentSyncEngine) {
-    return runCommentSyncScenario(engine, async (driver) => {
+  async function scenario() {
+    return runCommentSyncScenario(async (driver) => {
       await driver.mount('a', 'outside')
       await driver.waitForRequests(1)
       expect(driver.requests[0].path).toBe('/api/shareables/a/comments')
@@ -389,22 +365,19 @@ test('the driver observes target failure, explicit recovery and request cancella
       return { recovered, trace: [...driver.trace] }
     })
   }
-  expect(await scenario(useViewerComments)).toEqual(
-    await scenario(useSessionViewerComments),
-  )
+  await scenario()
 })
 
 test('a throwing React cleanup still drains the held post before restoring fetch', async () => {
   const cleanupError = new Error('Synthetic React cleanup failure')
-  const useThrowingEngine: CommentSyncEngine = (options) => {
-    const comments = useViewerComments(options)
+  function ThrowingCleanup() {
     useEffect(
       () => () => {
         throw cleanupError
       },
       [],
     )
-    return comments
+    return null
   }
   let held:
     | { settled: boolean; respond: (body: unknown, status?: number) => void }
@@ -415,12 +388,12 @@ test('a throwing React cleanup still drains the held post before restoring fetch
     error instanceof AggregateError ? error.errors.flatMap(leafErrors) : [error]
   try {
     try {
-      await runCommentSyncScenario(useThrowingEngine, async (driver) => {
+      await runCommentSyncScenario(async (driver) => {
         await driver.mount()
         done = (await driver.post()).done
         await driver.waitForRequests(1)
         held = driver.requests[0]
-      })
+      }, ThrowingCleanup)
     } catch (error) {
       failure = error
     }
@@ -435,38 +408,28 @@ test('a throwing React cleanup still drains the held post before restoring fetch
         await done
       })
   }
-  await runCommentSyncScenario(useViewerComments, (driver) => driver.mount())
+  await runCommentSyncScenario((driver) => driver.mount())
 })
 
-test.each(['legacy', 'session'] as const)(
-  'assignment freezes %s across revalidation/version changes and changes on committed navigation',
-  async (mode) => {
-    await runCommentSyncScenario(useViewerComments, async (driver) => {
-      const original = { mode, build: 'initial-build' }
-      const rollback = {
-        mode: mode === 'session' ? ('legacy' as const) : ('session' as const),
-        build: 'new-build',
-      }
-      await driver.mount('a', null, original, 'v1')
-      const owner = driver.owner()
-      await driver.draft('retained draft')
-      await driver.mount('a', null, rollback, 'v2')
-      expect(driver.assignment()).toEqual(original)
-      expect(driver.owner()).toBe(owner)
-      expect(driver.snapshot().drafts).toEqual({ selected: 'retained draft' })
-      expect(driver.trace).toEqual([])
-      await driver.mount('b', null, rollback, 'v2')
-      expect(driver.assignment()).toEqual(rollback)
-      expect(Boolean(driver.owner())).toBe(rollback.mode === 'session')
-      await driver.mount('a', null, rollback, 'v2')
-      expect(driver.assignment()).toEqual(rollback)
-      expect(driver.trace).toEqual([])
-    })
-  },
-)
+test('the committed Session survives revalidation/version changes and changes on navigation', async () => {
+  await runCommentSyncScenario(async (driver) => {
+    await driver.mount('a', null, 'v1')
+    const owner = driver.owner()
+    await driver.draft('retained draft')
+    await driver.mount('a', null, 'v2')
+    expect(driver.owner()).toBe(owner)
+    expect(driver.snapshot().drafts).toEqual({ selected: 'retained draft' })
+    expect(driver.trace).toEqual([])
+    await driver.mount('b', null, 'v2')
+    expect(driver.owner()).not.toBe(owner)
+    await driver.mount('a', null, 'v2')
+    expect(driver.owner()).not.toBe(owner)
+    expect(driver.trace).toEqual([])
+  })
+})
 
-test('pending posts survive cross-engine A → B → A, adopt before failed GET, and keep their starting diagnostics', async () => {
-  async function scenario(startMode: 'legacy' | 'session') {
+test('pending posts survive A → B → A and adopt before failed GET', async () => {
+  async function scenario() {
     const events: Array<Record<string, unknown>> = []
     const log = vi.spyOn(console, 'info').mockImplementation((name, event) => {
       if (
@@ -476,25 +439,17 @@ test('pending posts survive cross-engine A → B → A, adopt before failed GET,
         events.push(event)
     })
     try {
-      return await runCommentSyncScenario(useViewerComments, async (driver) => {
-        const original = { mode: startMode, build: 'initial-build' }
-        const next = {
-          mode:
-            startMode === 'session'
-              ? ('legacy' as const)
-              : ('session' as const),
-          build: 'new-build',
-        }
-        await driver.mount('a', null, original)
+      return await runCommentSyncScenario(async (driver) => {
+        await driver.mount('a')
         await driver.draft('submitted')
         const post = await driver.post()
         await driver.waitForRequests(1)
-        await driver.mount('b', null, next)
+        await driver.mount('b')
         expect(driver.snapshot().threads).toEqual([
           { id: 'b-only', bodies: ['B original'] },
         ])
         expect(driver.snapshot().pending).toEqual([[], []])
-        await driver.mount('a', null, next)
+        await driver.mount('a')
         await driver.draft('submitted')
         expect(driver.pending()).toBe(true)
         await driver.respond(0, {
@@ -518,40 +473,32 @@ test('pending posts survive cross-engine A → B → A, adopt before failed GET,
           'GET /api/shareables/a/comments',
         ])
         expect(
-          events.map(
-            ({ mode, build, operation, state, result, fetchCount }) => ({
-              mode,
-              build,
-              operation,
-              state,
-              result,
-              fetchCount,
-            }),
-          ),
+          events.map(({ operation, state, result, fetchCount }) => ({
+            operation,
+            state,
+            result,
+            fetchCount,
+          })),
         ).toEqual([
           {
-            ...original,
             operation: 'reply',
             state: 'started',
             result: 'pending',
             fetchCount: 1,
           },
           {
-            ...original,
             operation: 'reply',
             state: 'completed',
             result: 'success',
             fetchCount: 0,
           },
           {
-            ...next,
             operation: 'summary',
             state: 'started',
             result: 'pending',
             fetchCount: 1,
           },
           {
-            ...next,
             operation: 'summary',
             state: 'completed',
             result: 'http-error',
@@ -569,18 +516,17 @@ test('pending posts survive cross-engine A → B → A, adopt before failed GET,
       log.mockRestore()
     }
   }
-  expect(await scenario('legacy')).toEqual(await scenario('session'))
+  await scenario()
 })
 
-test('a new rollback display reconciles an old Session post without claiming the old producer draft', async () => {
-  await runCommentSyncScenario(useViewerComments, async (driver) => {
-    await driver.mount('a', null, { mode: 'session', build: 'initial-build' })
+test('a new display reconciles a detached post without claiming the old producer draft', async () => {
+  await runCommentSyncScenario(async (driver) => {
+    await driver.mount('a')
     const post = await driver.post()
     await driver.waitForRequests(1)
     await driver.unmount()
-    await driver.mount('a', null, { mode: 'legacy', build: 'new-build' })
+    await driver.mount('a')
     await driver.draft('submitted')
-    expect(driver.assignment().mode).toBe('legacy')
     expect(driver.pending()).toBe(true)
     await driver.respond(0, { threadId: 'selected', threads: rows('old post') })
     await act(async () => {

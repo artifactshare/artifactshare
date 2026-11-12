@@ -1,3 +1,4 @@
+import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -104,18 +105,20 @@ function Harness({
           />
         ) : null}
       </div>
-      <CommentPanel
-        shareableId="abc123def4"
-        viewerUserId="viewer"
-        threads={comments.panelThreads}
-        onThreadsChange={comments.replaceThreads}
-        isCurrentShareableId={comments.isCurrentArtifactId}
-        open
-        onOpenChange={comments.changePanelOpen}
-        targetThreadId={null}
-        targetThreadScroll="center"
-        onThreadNavigate={() => {}}
-      />
+      <CommentPageSessionContext value={comments.pageSession}>
+        <CommentPanel
+          shareableId="abc123def4"
+          viewerUserId="viewer"
+          threads={comments.panelThreads}
+          onThreadsChange={comments.replaceThreads}
+          isCurrentShareableId={comments.isCurrentArtifactId}
+          open
+          onOpenChange={comments.changePanelOpen}
+          targetThreadId={null}
+          targetThreadScroll="center"
+          onThreadNavigate={() => {}}
+        />
+      </CommentPageSessionContext>
       <output
         hidden
         data-panel-subject={JSON.stringify(comments.panelThreads[0].subject)}

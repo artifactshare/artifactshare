@@ -1,15 +1,10 @@
-import {
-  legacyCommentSync,
-  type CommentSyncAssignment,
-} from '~/lib/comment-sync'
-import { CommentSyncContext } from '~/routes/a.$id/+components/comment-sync-context'
 import { commentFixture } from './comment-fixtures'
 export { commentFixture } from './comment-fixtures'
-import { act, createElement, useReducer } from 'react'
+import { act, createElement, useReducer, type ComponentType } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { expect, vi } from 'vitest'
 import { waitForRealTaskCondition } from './wait-for-real-task-condition'
-import type { useViewerComments } from '~/routes/a.$id/+components/viewer-shell'
+import { useViewerComments } from '~/routes/a.$id/+components/viewer-shell'
 import { useCommentMutations } from '~/routes/a.$id/+components/use-comment-mutations'
 import { withCommentRuntime } from '~/routes/a.$id/+components/comment-runtime-browser'
 import {
@@ -17,9 +12,7 @@ import {
   createCommentReplyState,
 } from '~/routes/a.$id/+components/comment-reply-state'
 
-/** Both engines implement the public viewer hook; never mount them together. */
-export type CommentSyncEngine = typeof useViewerComments
-type Display = ReturnType<CommentSyncEngine>
+type Display = ReturnType<typeof useViewerComments>
 type Writer = ReturnType<typeof useCommentMutations>
 type Request = {
   method: string
@@ -29,11 +22,11 @@ type Request = {
 }
 /** Per-run React roots, HTTP gates and traces. No production reset API. */
 export async function runCommentSyncScenario<T>(
-  useEngine: CommentSyncEngine,
   scenario: (driver: ReturnType<typeof createDriver>) => Promise<T>,
+  CleanupFault?: ComponentType<{ artifactId: string }>,
 ): Promise<T> {
   const previousFetch = globalThis.fetch
-  const driver = createDriver(useEngine)
+  const driver = createDriver(CleanupFault)
   vi.stubGlobal('fetch', driver.fetch)
   let result!: T
   let scenarioFailure: { error: unknown } | undefined
@@ -60,7 +53,7 @@ export async function runCommentSyncScenario<T>(
   return result
 }
 
-function createDriver(useEngine: CommentSyncEngine) {
+function createDriver(CleanupFault?: ComponentType<{ artifactId: string }>) {
   let root: Root | null = null
   let display: Display
   let writers: Writer[]
@@ -76,20 +69,17 @@ function createDriver(useEngine: CommentSyncEngine) {
   function Harness({
     artifact,
     target,
-    assignment,
     version,
   }: {
     artifact: string
     target: string | null
-    assignment: CommentSyncAssignment
     version: string | null
   }) {
-    display = useEngine({
+    display = useViewerComments({
       framePresent: false,
       artifactId: artifact,
       currentUserId: 'reviewer',
       currentVersionId: version,
-      commentSync: assignment,
       initialThreads:
         artifact === 'b'
           ? [commentFixture('b-only', 'B original')]
@@ -98,13 +88,12 @@ function createDriver(useEngine: CommentSyncEngine) {
       liveEnabled: false,
     })
     return createElement(
-      CommentSyncContext,
-      { value: display.assignment },
-      createElement(Writers, {
-        key: artifact,
-        artifact,
-        comments: display,
-      }),
+      'div',
+      null,
+      CleanupFault
+        ? createElement(CleanupFault, { artifactId: artifact })
+        : null,
+      createElement(Writers, { key: artifact, artifact, comments: display }),
     )
   }
   function Writers({
@@ -182,15 +171,12 @@ function createDriver(useEngine: CommentSyncEngine) {
     async mount(
       artifact = 'a',
       target: string | null = null,
-      assignment = legacyCommentSync,
       version: string | null = null,
     ) {
       artifacts.add(artifact)
       root ??= createRoot(document.createElement('div'))
       await act(() =>
-        root!.render(
-          createElement(Harness, { artifact, target, assignment, version }),
-        ),
+        root!.render(createElement(Harness, { artifact, target, version })),
       )
     },
     unmount,
@@ -232,7 +218,6 @@ function createDriver(useEngine: CommentSyncEngine) {
       }, `${count} comment requests`)
       expect(requests).toHaveLength(count)
     },
-    assignment: () => display.assignment,
     owner: () => display.pageSession,
     snapshot() {
       return {

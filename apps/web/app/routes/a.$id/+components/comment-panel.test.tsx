@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import { act, useState, type ReactNode } from 'react'
+import { act, useState, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
@@ -44,10 +44,46 @@ vi.mock('~/components/app/app-side-panel', async () => {
 })
 import { CommentLocationsContext } from './comment-locations-context'
 import { PdfPageContext, type PdfPageBridge } from './pdf-page-context'
-import { CommentPanel } from './comment-panel'
+import { CommentPanel as CommentPanelView } from './comment-panel'
+import { CommentPageSessionContext } from './use-comment-page'
 import { useViewerComments } from './viewer-shell'
-import { mergeCommentWindow } from './comment-history'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
+
+/** Standalone panel fixtures still use the production data owner. Explicit row
+ * prop edits model external accepted replacements; page results stay in Session. */
+function PanelFixture(
+  props: Omit<
+    Parameters<typeof CommentPanelView>[0],
+    'onThreadsChange' | 'isCurrentShareableId'
+  >,
+) {
+  const comments = useViewerComments({
+    artifactId: props.shareableId,
+    currentUserId: props.viewerUserId,
+    currentVersionId: null,
+    framePresent: true,
+    initialThreads: props.threads,
+    targetCommentId: props.targetThreadId,
+    liveEnabled: false,
+  })
+  const inputRows = JSON.stringify(props.threads)
+  const previousInput = useRef(inputRows)
+  useLayoutEffect(() => {
+    if (previousInput.current === inputRows) return
+    previousInput.current = inputRows
+    comments.replaceThreads(props.threads)
+  }, [inputRows, props.threads, comments.replaceThreads])
+  return (
+    <CommentPageSessionContext value={comments.pageSession}>
+      <CommentPanelView
+        {...props}
+        threads={comments.state.threads}
+        onThreadsChange={comments.replaceThreads}
+        isCurrentShareableId={comments.isCurrentArtifactId}
+      />
+    </CommentPageSessionContext>
+  )
+}
 
 type PositionState = 'attached' | 'needs-check' | 'unchecked'
 
@@ -89,13 +125,11 @@ function render(positionState: PositionState) {
 
 function renderThreadsElement(threads: CommentThreadView[]) {
   return (
-    <CommentPanel
+    <PanelFixture
       shareableId="artifact"
       viewerUserId="viewer"
       threads={threads}
       newCommentMessages={[]}
-      onThreadsChange={() => {}}
-      isCurrentShareableId={() => true}
       open
       onOpenChange={() => {}}
       targetThreadId={null}
@@ -112,13 +146,11 @@ function renderThreads(
   requestedFilter?: 'all',
 ) {
   return renderToStaticMarkup(
-    <CommentPanel
+    <PanelFixture
       shareableId="artifact"
       viewerUserId="viewer"
       threads={threads}
       newCommentMessages={newCommentMessages}
-      onThreadsChange={() => {}}
-      isCurrentShareableId={() => true}
       open
       onOpenChange={() => {}}
       targetThreadId={targetThreadId}
@@ -199,18 +231,20 @@ test('the first panel render checks an unchecked thread only when a frame is pre
     })
     expect(comments.state.threads[0].subject).toEqual(initialThreads[0].subject)
     return (
-      <CommentPanel
-        shareableId="abc123def4"
-        viewerUserId="viewer"
-        threads={comments.panelThreads}
-        onThreadsChange={comments.replaceThreads}
-        isCurrentShareableId={comments.isCurrentArtifactId}
-        open
-        onOpenChange={comments.changePanelOpen}
-        targetThreadId={null}
-        targetThreadScroll="center"
-        onThreadNavigate={() => {}}
-      />
+      <CommentPageSessionContext value={comments.pageSession}>
+        <CommentPanelView
+          shareableId="abc123def4"
+          viewerUserId="viewer"
+          threads={comments.panelThreads}
+          onThreadsChange={comments.replaceThreads}
+          isCurrentShareableId={comments.isCurrentArtifactId}
+          open
+          onOpenChange={comments.changePanelOpen}
+          targetThreadId={null}
+          targetThreadScroll="center"
+          onThreadNavigate={() => {}}
+        />
+      </CommentPageSessionContext>
     )
   }
   // No passive effects or availability setter run during server rendering.
@@ -484,12 +518,10 @@ test('expansion reveals cached replies without fetching and retains all 53 when 
   document.body.appendChild(host)
   const root = createRoot(host)
   const panel = (target: boolean, resolved = false) => (
-    <CommentPanel
+    <PanelFixture
       shareableId="artifact"
       viewerUserId="viewer"
       threads={[{ ...thread, status: resolved ? 'resolved' : 'open' }]}
-      onThreadsChange={() => {}}
-      isCurrentShareableId={() => true}
       open
       onOpenChange={() => {}}
       targetThreadId={target ? thread.id : null}
@@ -553,9 +585,9 @@ test('a deleted unread target advances to the next surviving unloaded reply with
       return Response.json({ threads: [initial] })
     })
   function Harness() {
-    const [thread, setThread] = useState<CommentThreadView>(initial)
+    const thread = initial
     return (
-      <CommentPanel
+      <PanelFixture
         shareableId="artifact"
         viewerUserId="viewer"
         threads={[thread]}
@@ -563,10 +595,6 @@ test('a deleted unread target advances to the next surviving unloaded reply with
           threadId: 'thread',
           messageId: `message-${String(id).padStart(3, '0')}`,
         }))}
-        onThreadsChange={(rows) =>
-          setThread((current) => mergeCommentWindow(current, rows[0]))
-        }
-        isCurrentShareableId={() => true}
         open
         onOpenChange={() => {}}
         targetThreadId="thread"
@@ -623,9 +651,9 @@ test.each([100, 201])(
         })
       })
     function Harness() {
-      const [thread, setThread] = useState<CommentThreadView>(initial)
+      const thread = initial
       return (
-        <CommentPanel
+        <PanelFixture
           shareableId="synthetic-artifact"
           viewerUserId="viewer"
           threads={[thread]}
@@ -633,12 +661,6 @@ test.each([100, 201])(
             threadId: 'thread',
             messageId: `message-${firstUnread + i}`,
           }))}
-          onThreadsChange={(rows, patch) =>
-            setThread((current) =>
-              mergeCommentWindow(current, rows[0], patch?.page),
-            )
-          }
-          isCurrentShareableId={() => true}
           open
           onOpenChange={() => {}}
           targetThreadId="thread"
@@ -701,18 +723,12 @@ test('a failed interior gap keeps the older control normal and retries the same 
     .mockResolvedValueOnce(Response.json({}, { status: 503 }))
     .mockResolvedValueOnce(Response.json({ threads: [pagedThread(248, 297)] }))
   function Harness() {
-    const [thread, setThread] = useState(initial)
+    const thread = initial
     return (
-      <CommentPanel
+      <PanelFixture
         shareableId="synthetic-artifact"
         viewerUserId="viewer"
         threads={[thread]}
-        onThreadsChange={(rows, patch) =>
-          setThread((current) =>
-            mergeCommentWindow(current, rows[0], patch?.page),
-          )
-        }
-        isCurrentShareableId={() => true}
         open
         onOpenChange={() => {}}
         targetThreadId="thread"
@@ -796,18 +812,12 @@ test('a failed older page retains its normal expand label and offers an exact re
     )
     .mockResolvedValueOnce(Response.json({ threads: [pagedThread(198, 247)] }))
   function Harness() {
-    const [thread, setThread] = useState(initial)
+    const thread = initial
     return (
-      <CommentPanel
+      <PanelFixture
         shareableId="synthetic-artifact"
         viewerUserId="viewer"
         threads={[thread]}
-        onThreadsChange={(rows, patch) =>
-          setThread((current) =>
-            mergeCommentWindow(current, rows[0], patch?.page),
-          )
-        }
-        isCurrentShareableId={() => true}
         open
         onOpenChange={() => {}}
         targetThreadId="thread"
@@ -874,13 +884,11 @@ test('static-site threads name their page and the general composer names the sit
   locale.value = 'en'
   const site = renderToStaticMarkup(
     <CommentLocationsContext value>
-      <CommentPanel
+      <PanelFixture
         shareableId="artifact"
         viewerUserId="viewer"
         threads={[textThread('attached')]}
         newCommentMessages={[]}
-        onThreadsChange={() => {}}
-        isCurrentShareableId={() => true}
         open
         onOpenChange={() => {}}
         targetThreadId={null}
@@ -946,6 +954,7 @@ test.each(['en', 'ja'] as const)(
     const fetchComment = vi
       .spyOn(globalThis, 'fetch')
       .mockImplementation(async (_url, init) => {
+        if (init?.method !== 'POST') return Response.json({ threads: [] })
         posted.push(JSON.parse(String(init?.body)))
         return posted.length === 2
           ? Response.json({}, { status: 503 })
@@ -961,12 +970,10 @@ test.each(['en', 'ja'] as const)(
             page: page === null ? null : { versionId: 'v1', pageNumber: page },
           })}
         >
-          <CommentPanel
+          <PanelFixture
             shareableId="synthetic-artifact"
             viewerUserId="viewer"
             threads={[]}
-            onThreadsChange={() => {}}
-            isCurrentShareableId={() => true}
             open
             onOpenChange={() => {}}
             targetThreadId={null}
@@ -1072,12 +1079,10 @@ test.each(['en', 'ja'] as const)(
       act(async () =>
         root.render(
           <PdfPageContext value={bridge}>
-            <CommentPanel
+            <PanelFixture
               shareableId="synthetic-artifact"
               viewerUserId="viewer"
               threads={[thread]}
-              onThreadsChange={() => {}}
-              isCurrentShareableId={() => true}
               open
               onOpenChange={() => {}}
               targetThreadId={null}
@@ -1139,13 +1144,11 @@ test('an empty PDF panel with a page shown says new comments go on that page', (
     <PdfPageContext
       value={pdfBridge({ page: { versionId: 'v1', pageNumber: 5 } })}
     >
-      <CommentPanel
+      <PanelFixture
         shareableId="artifact"
         viewerUserId="viewer"
         threads={[]}
         newCommentMessages={[]}
-        onThreadsChange={() => {}}
-        isCurrentShareableId={() => true}
         open
         onOpenChange={() => {}}
         targetThreadId={null}

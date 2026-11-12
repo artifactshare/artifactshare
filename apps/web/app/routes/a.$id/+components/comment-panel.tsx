@@ -236,8 +236,6 @@ export function CommentPanel({
             <ThreadCard
               key={thread.id}
               thread={thread}
-              shareableId={shareableId}
-              onThreadsChange={onThreadsChange}
               newCommentMessages={newCommentMessages}
               locale={locale}
               target={thread.id === targetThreadId}
@@ -623,8 +621,6 @@ function NewThreadComposer({
 
 function ThreadCard({
   thread,
-  shareableId,
-  onThreadsChange,
   newCommentMessages,
   locale,
   target,
@@ -643,8 +639,6 @@ function ThreadCard({
   onReplyCancel,
 }: {
   thread: CommentThreadView
-  shareableId: string
-  onThreadsChange: ChangeCommentThreads
   newCommentMessages: ReadonlyArray<NewCommentMessage>
   locale: Parameters<typeof formatRelative>[1]
   target: boolean
@@ -698,13 +692,7 @@ function ThreadCard({
     target && !thread.messages.some((message) => message.id === firstUnreadId)
       ? firstUnreadId
       : undefined
-  const page = useCommentPage(
-    shareableId,
-    thread.id,
-    onThreadsChange,
-    missingSelectedId,
-    onTargetMissing,
-  )
+  const page = useCommentPage(thread.id, missingSelectedId, onTargetMissing)
   const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)

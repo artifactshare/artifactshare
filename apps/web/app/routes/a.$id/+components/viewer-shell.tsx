@@ -1,48 +1,23 @@
-import { CommentSyncContext } from './comment-sync-context'
+import { acquireCommentRuntime } from './comment-runtime-browser'
+import { isCommentAuthErrorStatus } from './comment-refresh'
 import {
-  legacyCommentSync,
-  type CommentSyncAssignment,
-} from '~/lib/comment-sync'
-import { createCommentSession } from './comment-session'
-import {
-  withRetainedRecovery,
-  type CommentDataPort,
-  type RecoveryCapture,
-} from './comment-data-port'
+  createCommentSession,
+  type CommentSession,
+  type CommentRecoveryTicket,
+} from './comment-session'
 import { CommentPageSessionContext } from './use-comment-page'
-import {
-  rememberAppliedCommentMutationEcho,
-  consumeAppliedCommentMutationEcho,
-  type AppliedCommentMutationEchoes,
-} from './comment-mutation-echo'
+import { type AppliedCommentMutationEchoes } from './comment-mutation-echo'
 export {
   rememberAppliedCommentMutationEcho,
   consumeAppliedCommentMutationEcho,
 } from './comment-mutation-echo'
-import {
-  createCommentRefreshScheduler,
-  runCommentRefreshWithAuthRecovery,
-  isCommentAuthErrorStatus,
-  waitForCommentAuthRecheck,
-  type CommentRefreshResult,
-  type CommentRefreshAttemptOutcome,
-} from './comment-refresh'
 export {
   createCommentRefreshScheduler,
   runCommentRefreshWithAuthRecovery,
   shouldDeferCommentRefreshDuringMutation,
 } from './comment-refresh'
-import { acquireCommentRuntime } from './comment-runtime-browser'
 import { DELIVERY_UNAVAILABLE_PATH } from '~/lib/hosts'
-import { createCommentRefreshScope } from './comment-refresh-scope'
-import { commentPageUrl } from '~/lib/comment-page'
-import { advanceCommentEpoch } from './use-comment-mutations'
-import {
-  mergeCommentWindow,
-  revalidateCommentPage,
-  patchCommentThreads,
-  type CommentThreadPatch,
-} from './comment-history'
+import { type CommentThreadPatch } from './comment-history'
 import { firstNewCommentThread } from './comment-order'
 import type {
   NewCommentMessage,
@@ -103,10 +78,6 @@ import { TextSelectionCommentPopover } from './text-selection-comment-popover'
 import { getActiveElement } from './viewer-dom'
 import { type PendingTextAnchor } from './viewer-comment-types'
 import {
-  hasPendingCommentMutation,
-  hasPendingCommentMutationId,
-} from './use-comment-mutations'
-import {
   useReplaceVersion,
   type ReplaceVersionInput,
 } from '../+hooks/use-replace-version'
@@ -144,7 +115,6 @@ import { cn } from '~/lib/utils'
 import { Link } from 'react-router'
 
 export type ViewerShellArtifact = {
-  commentSync?: CommentSyncAssignment
   id: string
   name: string
   derivedTitle: string | null
@@ -477,44 +447,39 @@ export function viewerCommentReducer(
   }
 }
 
-function useViewerCommentsWithMode(
-  {
-    framePresent,
-    artifactId,
-    currentUserId,
-    currentVersionId,
-    initialThreads,
-    entryNewCommentMessages,
-    targetCommentId,
-    liveEnabled,
-    onViewCountChanged,
-    onVersionChanged,
-    onVersionReconcile,
-    onLiveConnectionChanged,
-    onPanelOpened,
-    commentLocation,
-    commentSync = legacyCommentSync,
-  }: {
-    commentSync?: CommentSyncAssignment
-    /** Static sites: the displayed location; other locations are not checked here. */
-    commentLocation?: string | null
-    framePresent: boolean
-    artifactId: string
-    currentUserId: string | null
-    currentVersionId: string | null
-    initialThreads: ReadonlyArray<CommentThreadView>
-    entryNewCommentMessages?: ReadonlyArray<NewCommentMessage>
-    targetCommentId: string | null
-    liveEnabled: boolean
-    onViewCountChanged?: (viewCount: number) => void
-    onVersionChanged?: (currentVersionId: string) => void
-    onVersionReconcile?: () => void
-    onLiveConnectionChanged?: (connected: boolean) => void
-    onPanelOpened?: () => void
-  },
-  comparisonMode?: 'legacy' | 'session',
-) {
-  const committedDataPort = useRef<CommentDataPort | null>(null)
+export function useViewerComments({
+  framePresent,
+  artifactId,
+  currentUserId,
+  currentVersionId,
+  initialThreads,
+  entryNewCommentMessages,
+  targetCommentId,
+  liveEnabled,
+  onViewCountChanged,
+  onVersionChanged,
+  onVersionReconcile,
+  onLiveConnectionChanged,
+  onPanelOpened,
+  commentLocation,
+}: {
+  /** Static sites: the displayed location; other locations are not checked here. */
+  commentLocation?: string | null
+  framePresent: boolean
+  artifactId: string
+  currentUserId: string | null
+  currentVersionId: string | null
+  initialThreads: ReadonlyArray<CommentThreadView>
+  entryNewCommentMessages?: ReadonlyArray<NewCommentMessage>
+  targetCommentId: string | null
+  liveEnabled: boolean
+  onViewCountChanged?: (viewCount: number) => void
+  onVersionChanged?: (currentVersionId: string) => void
+  onVersionReconcile?: () => void
+  onLiveConnectionChanged?: (connected: boolean) => void
+  onPanelOpened?: () => void
+}) {
+  const committedSession = useRef<CommentSession | null>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const requestedFilterRef = useRef<'all' | undefined>(undefined)
   const artifactIdRef = useLatestRef(artifactId)
@@ -527,16 +492,6 @@ function useViewerCommentsWithMode(
   const [appliedCommentMutationEchoes] = useState<AppliedCommentMutationEchoes>(
     () => new Map(),
   )
-  const [commentRefreshScope] = useState(createCommentRefreshScope)
-  const schedulerRef = useRef<ReturnType<
-    typeof createCommentRefreshScheduler
-  > | null>(null)
-  const [targetFetchError, setTargetFetchError] = useState<{
-    artifactId: string
-    threadIds: string[]
-  } | null>(null)
-  const fetchSeqRef = useRef(0)
-  const fetchAbortRef = useRef<AbortController | null>(null)
   const [state, dispatchComment] = useReducer(viewerCommentReducer, null, () =>
     createViewerCommentState(
       artifactId,
@@ -546,18 +501,7 @@ function useViewerCommentsWithMode(
     ),
   )
   const totalCount = state.threads.length
-  const threadsRef = useLatestRef(state.threads)
   const selectedThreadIdRef = useLatestRef(state.targetThreadId)
-
-  const committedCommentArtifactRef = useRef(artifactId)
-  useEffect(() => {
-    if (committedCommentArtifactRef.current === artifactId) return
-    committedCommentArtifactRef.current = artifactId
-    // Error visibility is already artifact-scoped; discard retained errors only on commit.
-    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
-    setTargetFetchError(null)
-    commentRefreshScope.mark()
-  }, [artifactId, commentRefreshScope])
 
   if (state.artifactId !== artifactId) {
     dispatchComment({
@@ -582,29 +526,6 @@ function useViewerCommentsWithMode(
     dispatchComment({ type: 'thread-targeted', threadId: targetCommentId })
   }, [onPanelOpenedRef, targetCommentId])
 
-  const legacyReplaceThreads = useCallback(
-    (threads: ReadonlyArray<CommentThreadView>, patch?: CommentThreadPatch) => {
-      if (!patch) setTargetFetchError(null)
-      const interruptedRefresh =
-        (patch?.page || patch?.deletedThreadId) &&
-        fetchAbortRef.current !== null
-      fetchSeqRef.current += 1
-      fetchAbortRef.current?.abort()
-      const next = patch
-        ? patchCommentThreads(threadsRef.current, threads, patch)
-        : threads
-      threadsRef.current = next
-      dispatchComment({
-        type: 'threads-replaced',
-        threads: next,
-        deletedThreadId: patch?.deletedThreadId,
-      })
-      if (patch?.revalidate) commentRefreshScope.mark(patch.threadId)
-      if (interruptedRefresh || patch?.revalidate)
-        void schedulerRef.current?.request()
-    },
-    [threadsRef, commentRefreshScope],
-  )
   const isCurrentArtifactId = useCallback(
     (requestArtifactId: string) => artifactIdRef.current === requestArtifactId,
     [artifactIdRef],
@@ -668,24 +589,6 @@ function useViewerCommentsWithMode(
     dispatchComment({ type: 'comment-location-changed' })
   }, [])
 
-  const replaceThreadsIfChanged = useCallback(
-    (
-      threads: ReadonlyArray<CommentThreadView>,
-      deletedThreadId?: string,
-      authoritative = true,
-    ) => {
-      if (authoritative) setTargetFetchError(null)
-      if (
-        !deletedThreadId &&
-        JSON.stringify(threadsRef.current) === JSON.stringify(threads)
-      )
-        return
-      threadsRef.current = threads
-      dispatchComment({ type: 'threads-replaced', threads, deletedThreadId })
-    },
-    [threadsRef],
-  )
-
   const [reportedAnchorCheckingAvailable, setAnchorCheckingAvailable] =
     useState(true)
   const anchorCheckingAvailable =
@@ -741,361 +644,8 @@ function useViewerCommentsWithMode(
     ],
   )
 
-  const legacyApplyAnchorResolutions = useCallback(
-    (results: AnchorResolutionMessage['results']) => {
-      const next = threadsRef.current.map((thread) => {
-        const verdict = results.find(
-          (candidate) => candidate.threadId === thread.id,
-        )
-        if (!verdict || thread.subject.kind !== 'text') return thread
-        return {
-          ...thread,
-          subject: {
-            ...thread.subject,
-            state:
-              verdict.state === 'attached'
-                ? ('attached' as const)
-                : ('orphaned' as const),
-            positionState:
-              verdict.state === 'checking'
-                ? ('unchecked' as const)
-                : verdict.state,
-            checking: verdict.state === 'checking',
-          },
-        }
-      })
-      replaceThreadsIfChanged(next, undefined, false)
-    },
-    [threadsRef, replaceThreadsIfChanged],
-  )
-
-  const abortLatestThreadFetch = () => {
-    fetchSeqRef.current += 1
-    fetchScheduler.cancelPending()
-    fetchAbortRef.current?.abort()
-    fetchAbortRef.current = null
-  }
-
-  const fetchLatestThreadsOnce = useCallback(async () => {
-    const assignment =
-      committedDataPort.current?.assignment ?? legacyCommentSync
-    const requestArtifactId = artifactId
-    const readLease = acquireCommentRuntime(requestArtifactId)
-    const refreshScope = commentRefreshScope.snapshot()
-    const seq = fetchSeqRef.current + 1
-    fetchSeqRef.current = seq
-    fetchAbortRef.current?.abort()
-    const controller = new AbortController()
-    fetchAbortRef.current = controller
-
-    const fetchThreads = async (): Promise<CommentRefreshAttemptOutcome> => {
-      // Every mutation can change the server's open-first selected membership.
-      // Reconcile bounded windows, but revalidate history only for dirty threads.
-      const requestThreads = () =>
-        fetchCommentThreads<{
-          threads?: ReadonlyArray<CommentThreadView>
-        }>(requestArtifactId, controller.signal, {
-          commentDiagnostic: { assignment, operation: 'summary' },
-        })
-      const result = await requestThreads().catch((error: unknown) => {
-        if (seq !== fetchSeqRef.current) return null
-        logViewerNetworkEvent({
-          channel: 'fetch',
-          purpose: 'comments',
-          state: 'failed',
-          reason: viewerFetchFailureReason(error),
-        })
-        return null
-      })
-      if (
-        seq !== fetchSeqRef.current ||
-        !isCurrentArtifactId(requestArtifactId)
-      )
-        return 'transient-error'
-      const missingTarget = selectedThreadIdRef.current
-      if (
-        (!result?.response.ok || !result.body) &&
-        missingTarget &&
-        !threadsRef.current.some((thread) => thread.id === missingTarget)
-      ) {
-        commentRefreshScope.mark(missingTarget)
-        setTargetFetchError({
-          artifactId: requestArtifactId,
-          threadIds: [missingTarget],
-        })
-      }
-      const response = result?.response
-      if (!response) {
-        return 'transient-error'
-      }
-      if (!response.ok) {
-        logViewerNetworkEvent({
-          channel: 'fetch',
-          purpose: 'comments',
-          state: 'response-error',
-          status: response.status,
-          cfRay: cfRayFrom(response),
-        })
-      }
-      if (!isCurrentArtifactId(requestArtifactId)) {
-        return 'transient-error'
-      }
-      if (isCommentAuthErrorStatus(response.status)) return 'auth-error'
-      if (!response.ok) {
-        return 'transient-error'
-      }
-      if (hasPendingCommentMutation(requestArtifactId)) {
-        return 'transient-error'
-      }
-      const body = result?.body ?? null
-      if (!body) {
-        return 'transient-error'
-      }
-      if (
-        seq !== fetchSeqRef.current ||
-        !isCurrentArtifactId(requestArtifactId) ||
-        hasPendingCommentMutation(requestArtifactId)
-      ) {
-        return 'transient-error'
-      }
-      if (body.threads) {
-        const incoming = [...body.threads]
-        const failedIds = new Set<string>()
-        let retainedSelectedId: string | undefined
-        let deletedSelectedId: string | undefined
-        const selectedId = selectedThreadIdRef.current
-        if (
-          selectedId &&
-          !incoming.some((thread) => thread.id === selectedId)
-        ) {
-          const selected = await fetchJsonWithViewerTimeout<{
-            threads: CommentThreadView[]
-          }>(
-            commentPageUrl(requestArtifactId, selectedId),
-            {
-              signal: controller.signal,
-            },
-            { commentDiagnostic: { assignment, operation: 'selected' } },
-          ).catch(() => null)
-          if (
-            seq !== fetchSeqRef.current ||
-            !isCurrentArtifactId(requestArtifactId)
-          )
-            return 'transient-error'
-          if (selectedId !== selectedThreadIdRef.current) {
-            // Selection-specific data is obsolete; the independent summary is not.
-            const currentSelected = threadsRef.current.find(
-              (thread) => thread.id === selectedThreadIdRef.current,
-            )
-            if (
-              currentSelected &&
-              !incoming.some((thread) => thread.id === currentSelected.id)
-            ) {
-              incoming.push(currentSelected)
-              retainedSelectedId = currentSelected.id
-            }
-            if (
-              (selectedThreadIdRef.current &&
-                !incoming.some(
-                  (thread) => thread.id === selectedThreadIdRef.current,
-                )) ||
-              retainedSelectedId
-            )
-              void schedulerRef.current?.request()
-          } else if (
-            selected?.response.status === 401 ||
-            selected?.response.status === 403
-          ) {
-            return 'auth-error'
-          } else if (selected?.response.ok && selected.body) {
-            incoming.push(...selected.body.threads)
-          } else if (
-            selected &&
-            (selected.response.status === 404 ||
-              selected.response.status === 410)
-          ) {
-            deletedSelectedId = selectedId
-          } else {
-            // A targeted read is independent of the valid panel summary. Keep
-            // its cached pages and draft mounted while offering an explicit retry.
-            const retained = threadsRef.current.find(
-              (thread) => thread.id === selectedId,
-            )
-            if (retained) incoming.push(retained)
-            retainedSelectedId = selectedId
-            failedIds.add(selectedId)
-          }
-        }
-        const refreshed: CommentThreadView[] = []
-        const currentById = new Map(
-          threadsRef.current.map((thread) => [thread.id, thread]),
-        )
-        for (const thread of incoming) {
-          if (thread.id === retainedSelectedId) {
-            refreshed.push(thread)
-            continue
-          }
-          let merged = mergeCommentWindow(currentById.get(thread.id), thread)
-          const pages = refreshScope.has(thread.id)
-            ? (merged.loadedPages ?? [])
-            : []
-          let removed = false
-          let authError = false
-          for (const page of pages) {
-            try {
-              merged = await revalidateCommentPage(
-                merged,
-                page,
-                async (request) => {
-                  if (seq !== fetchSeqRef.current || controller.signal.aborted)
-                    throw new Error('Comment refresh superseded')
-                  const pageResult = await fetchJsonWithViewerTimeout<{
-                    threads?: CommentThreadView[]
-                  }>(
-                    commentPageUrl(requestArtifactId, thread.id, request),
-                    {
-                      signal: controller.signal,
-                    },
-                    { commentDiagnostic: { assignment, operation: 'page' } },
-                  )
-                  if (
-                    pageResult.response.status === 401 ||
-                    pageResult.response.status === 403
-                  ) {
-                    authError = true
-                    throw new Error('Comment session needs recovery')
-                  }
-                  if (
-                    pageResult.response.status === 404 ||
-                    pageResult.response.status === 410
-                  ) {
-                    removed = true
-                    throw new Error('Comment thread removed')
-                  }
-                  if (!pageResult.response.ok || !pageResult.body?.threads?.[0])
-                    throw new Error('Comment page needs retry')
-                  return pageResult.body.threads[0]
-                },
-              )
-            } catch {
-              if (seq !== fetchSeqRef.current || controller.signal.aborted)
-                return 'transient-error'
-              if (authError) return 'auth-error'
-              if (removed) {
-                failedIds.delete(thread.id)
-                if (thread.id === selectedThreadIdRef.current)
-                  deletedSelectedId = thread.id
-                break
-              }
-              // Retain this range and its retry intent, while applying independent
-              // summary updates and any ranges that were successfully refreshed.
-              failedIds.add(thread.id)
-            }
-          }
-          if (!removed) refreshed.push(merged)
-        }
-        if (
-          seq !== fetchSeqRef.current ||
-          hasPendingCommentMutation(requestArtifactId)
-        )
-          return 'transient-error'
-        // A selection can change during any retained-range request, after the
-        // selected read above. Keep a newly selected cache omitted by the summary
-        // until the scheduler can authoritatively fetch it. Threads present in
-        // incoming already had their result handled, including definitive removal.
-        const currentSelectedId = selectedThreadIdRef.current
-        if (
-          currentSelectedId &&
-          currentSelectedId !== selectedId &&
-          !incoming.some((thread) => thread.id === currentSelectedId)
-        ) {
-          const retained = threadsRef.current.find(
-            (thread) => thread.id === currentSelectedId,
-          )
-          if (retained) {
-            refreshed.push(retained)
-            retainedSelectedId = currentSelectedId
-          }
-          void schedulerRef.current?.request()
-        }
-        if (failedIds.size === 0) refreshScope.complete()
-        if (retainedSelectedId) commentRefreshScope.mark(retainedSelectedId)
-        for (const id of failedIds) commentRefreshScope.mark(id)
-        replaceThreadsIfChanged(refreshed, deletedSelectedId)
-        setTargetFetchError(
-          failedIds.size
-            ? {
-                artifactId: requestArtifactId,
-                threadIds: [...failedIds],
-              }
-            : null,
-        )
-      }
-      return 'success'
-    }
-
-    const waitBeforeRetry = () =>
-      waitForCommentAuthRecheck(controller.signal, () => {
-        if (seq !== fetchSeqRef.current) return false
-        return isCurrentArtifactId(requestArtifactId)
-      })
-
-    try {
-      return await runCommentRefreshWithAuthRecovery({
-        runAttempt: fetchThreads,
-        waitBeforeRetry,
-      })
-    } finally {
-      readLease.release()
-      if (fetchAbortRef.current === controller) fetchAbortRef.current = null
-    }
-  }, [
-    artifactId,
-    isCurrentArtifactId,
-    replaceThreadsIfChanged,
-    commentRefreshScope,
-    selectedThreadIdRef,
-    threadsRef,
-  ])
-
-  const fetchLatestThreadsOnceRef = useLatestRef(fetchLatestThreadsOnce)
-  const [fetchScheduler] = useState(() =>
-    createCommentRefreshScheduler(() => fetchLatestThreadsOnceRef.current()),
-  )
-
-  useEffect(() => {
-    schedulerRef.current = fetchScheduler
-    return () => {
-      schedulerRef.current = null
-    }
-  }, [fetchScheduler])
-
-  const fetchLatestThreads = useCallback(() => {
-    return fetchScheduler.request()
-  }, [fetchScheduler])
-
-  const legacyRetryTargetFetch = useCallback(() => {
-    if (targetFetchError?.artifactId === artifactId)
-      for (const id of targetFetchError.threadIds) commentRefreshScope.mark(id)
-    if (selectedThreadIdRef.current)
-      commentRefreshScope.mark(selectedThreadIdRef.current)
-    void fetchLatestThreads()
-  }, [
-    artifactId,
-    targetFetchError,
-    selectedThreadIdRef,
-    fetchLatestThreads,
-    commentRefreshScope,
-  ])
-
-  const legacyRetryRef = useLatestRef(legacyRetryTargetFetch)
-
   // Construct read-only owners during render; attach only for the committed artifact.
-  const createDataPort = (): CommentDataPort => {
-    const assignment = {
-      ...commentSync,
-      mode: comparisonMode ?? commentSync.mode,
-    }
+  const createDisplay = () => {
     let settlementListener: (() => void) | null = null
     let attached = false
     let pendingSettlement = false
@@ -1104,18 +654,8 @@ function useViewerCommentsWithMode(
       if (settlementListener) settlementListener()
       else pendingSettlement = true
     }
-    const attachWithContinuation = (attach: () => () => void) => () => {
-      attached = true
-      const detach = attach()
-      return () => {
-        attached = false
-        pendingSettlement = false
-        detach()
-      }
-    }
     let pageAuthListener: (() => void) | null = null
     const contacts = {
-      assignment,
       subscribeSettlement(listener: () => void) {
         settlementListener = listener
         // Layout attachment can observe settlement before socket policy registers.
@@ -1135,190 +675,80 @@ function useViewerCommentsWithMode(
         }
       },
     }
-    if (assignment.mode === 'session') {
-      const session = createCommentSession({
-        assignment,
-        artifactId,
-        initialThreads,
-        currentUserId,
-        getSelectedThreadId: () => selectedThreadIdRef.current,
-        getCurrentUserId: () => currentUserIdRef.current,
-        appliedEchoes: appliedCommentMutationEchoes,
-        onMutationSettled: notifySettlement,
-        onPageAuthError: () => pageAuthListener?.(),
-      })
-      return withRetainedRecovery({
-        ...contacts,
-        session,
-        attach: attachWithContinuation(session.attach),
-        requestRefresh: session.requestRefresh,
-        abortRefresh: session.abortRefresh,
-        markAllDirty: session.markAllDirty,
-        invalidatePages: session.invalidatePages,
-        hasPending: session.hasPending,
-        applyMutation: session.applyMutation,
-        applyAnchorResults: session.applyAnchorResults,
-        retryTarget: session.retryTarget,
-        ensureTarget: session.ensureTarget,
-        remoteChanged: session.remoteChanged,
-        captureRecovery() {
-          const ticket = session.captureRecovery()
-          return {
-            isCurrent: () => session.isRecoveryCurrent(ticket),
-            adopt(rows) {
-              const result = session.offerRecovery(ticket, rows)
-              return (
-                result.kind === 'applied' ||
-                (result.kind === 'mutation-invalidated' &&
-                  result.pending &&
-                  session.isRecoveryCurrent(ticket))
-              )
-            },
-          }
-        },
-      })
-    }
-    // Independent legacy data implementation: no Session methods or state.
-    let mutationEpoch = 0
-    return withRetainedRecovery({
-      ...contacts,
-      session: null,
-      attach: attachWithContinuation(() => {
-        const runtime = acquireCommentRuntime(artifactId)
-        runtime.subscribe((detail) => {
-          commentRefreshScope.mark(detail.threadId)
-          abortLatestThreadFetch()
-          mutationEpoch += 1
-          if (detail.appliedThreads && detail.clientMutationId.length > 0)
-            rememberAppliedCommentMutationEcho(
-              appliedCommentMutationEchoes,
-              detail.clientMutationId,
-            )
-          notifySettlement()
-        })
-        return () => {
-          abortLatestThreadFetch()
-          runtime.release()
-        }
-      }),
-      requestRefresh: fetchLatestThreads,
-      abortRefresh: abortLatestThreadFetch,
-      markAllDirty: () => commentRefreshScope.mark(),
-      invalidatePages: () => advanceCommentEpoch(artifactId),
-      hasPending: () => hasPendingCommentMutation(artifactId),
-      applyMutation: legacyReplaceThreads,
-      applyAnchorResults: legacyApplyAnchorResolutions,
-      retryTarget: () => legacyRetryRef.current(),
-      ensureTarget() {
-        const selected = selectedThreadIdRef.current
-        if (
-          !selected ||
-          threadsRef.current.some((thread) => thread.id === selected)
-        )
-          return
-        commentRefreshScope.mark(selected)
-        void fetchLatestThreads()
-      },
-      remoteChanged(message) {
-        if (
-          message.originMutationId &&
-          message.originUserId === currentUserIdRef.current &&
-          (hasPendingCommentMutationId(artifactId, message.originMutationId) ||
-            consumeAppliedCommentMutationEcho(
-              appliedCommentMutationEchoes,
-              message.originMutationId,
-            ))
-        )
-          return false
-        advanceCommentEpoch(artifactId, message.threadId)
-        fetchSeqRef.current += 1
-        fetchAbortRef.current?.abort()
-        commentRefreshScope.mark(message.threadId)
-        return true
-      },
-      captureRecovery() {
-        const captured = mutationEpoch
-        return {
-          isCurrent: () => captured === mutationEpoch,
-          adopt(rows) {
-            if (captured !== mutationEpoch) return false
-            advanceCommentEpoch(artifactId)
-            abortLatestThreadFetch()
-            const currentById = new Map(
-              threadsRef.current.map((thread) => [thread.id, thread]),
-            )
-            const threads = rows.map((thread) =>
-              mergeCommentWindow(currentById.get(thread.id), thread),
-            )
-            if (
-              threads.some((thread) => thread.loadedPages?.length) ||
-              (selectedThreadIdRef.current &&
-                !threads.some(
-                  (thread) => thread.id === selectedThreadIdRef.current,
-                ))
-            ) {
-              commentRefreshScope.mark()
-              return false
-            }
-            if (!hasPendingCommentMutation(artifactId))
-              replaceThreadsIfChanged(threads)
-            return true
-          },
-        }
-      },
+    const session = createCommentSession({
+      artifactId,
+      initialThreads,
+      currentUserId,
+      getSelectedThreadId: () => selectedThreadIdRef.current,
+      getCurrentUserId: () => currentUserIdRef.current,
+      appliedEchoes: appliedCommentMutationEchoes,
+      onMutationSettled: notifySettlement,
+      onPageAuthError: () => pageAuthListener?.(),
     })
+    return {
+      ...contacts,
+      session,
+      attach() {
+        attached = true
+        const detach = session.attach()
+        return () => {
+          attached = false
+          pendingSettlement = false
+          detach()
+        }
+      },
+    }
   }
-  // Revalidation and version props must not replace a committed assignment.
+  // Revalidation and version props must not replace a committed owner.
   // Render-local state is rolled back with an abandoned navigation render.
   const [owner, setOwner] = useState(() => ({
     artifactId,
-    port: createDataPort(),
+    display: createDisplay(),
   }))
   if (owner.artifactId !== artifactId)
-    setOwner({ artifactId, port: createDataPort() })
-  const dataPort = owner.port
+    setOwner({ artifactId, display: createDisplay() })
+  const display = owner.display
+  const session = display.session
   useLayoutEffect(() => {
-    committedDataPort.current = dataPort
-    const unsubscribe = dataPort.session?.subscribe((replaced) => {
+    committedSession.current = session
+    const unsubscribe = session.subscribe((replaced) => {
       if (!replaced) {
         dispatchComment({ type: 'data-status-changed' })
         return
       }
-      const snapshot = dataPort.session!.getSnapshot()
-      threadsRef.current = snapshot.threads
+      const snapshot = session.getSnapshot()
       dispatchComment({
         type: 'threads-replaced',
         threads: snapshot.threads,
         deletedThreadId: snapshot.deletedThreadId,
       })
     })
-    const detach = dataPort.attach()
+    const detach = display.attach()
     return () => {
-      if (committedDataPort.current === dataPort)
-        committedDataPort.current = null
-      unsubscribe?.()
+      if (committedSession.current === session) committedSession.current = null
+      unsubscribe()
       detach()
     }
-  }, [dataPort, threadsRef])
+  }, [display, session])
   const replaceThreads = useCallback(
     (rows: ReadonlyArray<CommentThreadView>, patch?: CommentThreadPatch) => {
-      committedDataPort.current?.applyMutation(rows, patch)
+      committedSession.current?.applyMutation(rows, patch)
     },
     [],
   )
   const applyAnchorResolutions = useCallback(
     (results: AnchorResolutionMessage['results']) => {
-      committedDataPort.current?.applyAnchorResults(results)
+      committedSession.current?.applyAnchorResults(results)
     },
     [],
   )
   const retryTargetFetch = useCallback(() => {
-    committedDataPort.current?.retryTarget()
+    committedSession.current?.retryTarget()
   }, [])
   const acceptedTargetId = state.targetThreadId
   useEffect(() => {
-    dataPort.ensureTarget()
-  }, [dataPort, acceptedTargetId])
+    session.ensureTarget()
+  }, [session, acceptedTargetId])
 
   // The socket lifecycle keeps authorization recovery independent from the
   // ordinary comments refresh scheduler.
@@ -1329,7 +759,7 @@ function useViewerCommentsWithMode(
       | {
           outcome: 'authorized'
           threads: ReadonlyArray<CommentThreadView>
-          capture: RecoveryCapture
+          capture: CommentRecoveryTicket
         }
       | { outcome: 'denied' | 'indeterminate' | 'cancelled' }
     const ORDINARY_CHECK_AFTER_MS = 60_000
@@ -1426,7 +856,7 @@ function useViewerCommentsWithMode(
       clearDisplay()
     }
     const requestCommentRefresh = (ownerSocket: WebSocket | null) => {
-      void dataPort.requestRefresh().then((result) => {
+      void session.requestRefresh().then((result) => {
         if (
           result !== 'close-connection' ||
           disposed ||
@@ -1445,13 +875,13 @@ function useViewerCommentsWithMode(
     ): Promise<RecoveryCheckCompletion> => {
       if (
         disposed ||
-        committedDataPort.current !== dataPort ||
+        committedSession.current !== session ||
         !isCurrentArtifactId(artifactId)
       )
         return Promise.resolve({ outcome: 'cancelled' })
       if (recoveryPromise) return recoveryPromise
       const controller = new AbortController()
-      const capture = dataPort.captureRecovery()
+      const capture = session.captureRecovery()
       const sequence = recoverySequence + 1
       recoverySequence = sequence
       recoveryController = controller
@@ -1471,7 +901,6 @@ function useViewerCommentsWithMode(
             {
               requireJson: true,
               commentDiagnostic: {
-                assignment: dataPort.assignment,
                 operation: 'recovery',
               },
             },
@@ -1491,7 +920,7 @@ function useViewerCommentsWithMode(
         }
         if (
           disposed ||
-          committedDataPort.current !== dataPort ||
+          committedSession.current !== session ||
           sequence !== recoverySequence ||
           !isCurrentArtifactId(artifactId)
         ) {
@@ -1519,8 +948,6 @@ function useViewerCommentsWithMode(
         currentSocket.send('ping')
       } catch {
         logViewerNetworkEvent({
-          mode: dataPort.assignment.mode,
-          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'ping-send-failed',
           shareableId: artifactId,
@@ -1531,8 +958,6 @@ function useViewerCommentsWithMode(
       pongTimer = window.setTimeout(() => {
         if (socket !== currentSocket) return
         logViewerNetworkEvent({
-          mode: dataPort.assignment.mode,
-          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'heartbeat-timeout',
           shareableId: artifactId,
@@ -1551,8 +976,6 @@ function useViewerCommentsWithMode(
       const attempt =
         kind === 'renewal' ? renewalAttempts + 1 : boundedAttempts + 1
       logViewerNetworkEvent({
-        mode: dataPort.assignment.mode,
-        build: dataPort.assignment.build,
         channel: 'websocket',
         state: 'reconnect-scheduled',
         shareableId: artifactId,
@@ -1589,7 +1012,7 @@ function useViewerCommentsWithMode(
           stopRecovery()
           return
         }
-        dataPort.retainRecovery(result.capture, result.threads)
+        session.retainRecovery(result.capture, result.threads)
         scheduleBoundedAttempt('renewal', 2_000)
         return
       }
@@ -1632,8 +1055,6 @@ function useViewerCommentsWithMode(
         delay = Math.min(delay, Math.max(0, boundary - Date.now()))
       }
       logViewerNetworkEvent({
-        mode: dataPort.assignment.mode,
-        build: dataPort.assignment.build,
         channel: 'websocket',
         state: 'reconnect-scheduled',
         shareableId: artifactId,
@@ -1682,7 +1103,7 @@ function useViewerCommentsWithMode(
               return
             }
             if (result.outcome === 'authorized') {
-              dataPort.retainRecovery(result.capture, result.threads)
+              session.retainRecovery(result.capture, result.threads)
               boundedAttempts = 0
               startSocket('bounded')
               return
@@ -1758,7 +1179,6 @@ function useViewerCommentsWithMode(
       url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 
       const finishAttempt = startCommentNetworkOperation({
-        assignment: dataPort.assignment,
         operation: 'socket',
       })
       finishSocketAttempt = finishAttempt
@@ -1809,7 +1229,7 @@ function useViewerCommentsWithMode(
         }
         // The first connection's summary must not cancel initial navigation.
         // Later connections reconcile changes missed while the socket was down.
-        if (hasOpenedSocket) dataPort.invalidatePages()
+        if (hasOpenedSocket) session.invalidatePages()
         hasOpenedSocket = true
         finishAttempt('success')
         opened = true
@@ -1824,8 +1244,6 @@ function useViewerCommentsWithMode(
         hiddenInterrupted = false
         onLiveConnectionChangedRef.current?.(true)
         logViewerNetworkEvent({
-          mode: dataPort.assignment.mode,
-          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'open',
           shareableId: artifactId,
@@ -1842,10 +1260,10 @@ function useViewerCommentsWithMode(
         )
         onVersionReconcileRef.current?.()
 
-        const reusedRecovery = dataPort.applyRecovery()
+        const reusedRecovery = session.applyRecovery()
         if (!reusedRecovery) {
-          dataPort.markAllDirty()
-          dataPort.abortRefresh()
+          session.markAllDirty()
+          session.abortRefresh()
           requestCommentRefresh(currentSocket)
         }
       })
@@ -1862,7 +1280,7 @@ function useViewerCommentsWithMode(
             presence: message.users,
           })
         } else if (message.type === 'comments-changed') {
-          if (!dataPort.remoteChanged(message)) return
+          if (!session.remoteChanged(message)) return
           requestCommentRefresh(currentSocket)
         } else if (message.type === 'view-count-changed') {
           onViewCountChangedRef.current?.(message.viewCount)
@@ -1878,8 +1296,6 @@ function useViewerCommentsWithMode(
         const recognizedExpiry =
           event.code === EXPIRY_CODE && event.reason === EXPIRY_REASON
         logViewerNetworkEvent({
-          mode: dataPort.assignment.mode,
-          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'close',
           shareableId: artifactId,
@@ -1890,9 +1306,9 @@ function useViewerCommentsWithMode(
         if (opened && recognizedExpiry) {
           renewalActive = true
           renewalAttempts = 0
-          dataPort.clearRecovery()
+          session.clearRecovery()
           clearRetryTimer()
-          dataPort.abortRefresh()
+          session.abortRefresh()
           startSocket('renewal')
           return
         }
@@ -1913,8 +1329,6 @@ function useViewerCommentsWithMode(
       currentSocket.addEventListener('error', () => {
         if (socket !== currentSocket || settled) return
         logViewerNetworkEvent({
-          mode: dataPort.assignment.mode,
-          build: dataPort.assignment.build,
           channel: 'websocket',
           state: 'error',
           shareableId: artifactId,
@@ -1948,14 +1362,14 @@ function useViewerCommentsWithMode(
           if (result.outcome !== 'authorized') stopRecovery()
           return
         }
-        dataPort.retainRecovery(result.capture, result.threads)
+        session.retainRecovery(result.capture, result.threads)
         // HTTP authorization and reconciliation must not depend on WebSocket
         // availability. Reuse the same bounded windows/ranges as socket open.
         if (reconcileAfterRecovery) {
           reconcileAfterRecovery = false
-          if (!dataPort.applyRecovery()) {
-            dataPort.invalidatePages()
-            dataPort.markAllDirty()
+          if (!session.applyRecovery()) {
+            session.invalidatePages()
+            session.markAllDirty()
             requestCommentRefresh(null)
           }
         }
@@ -1970,7 +1384,7 @@ function useViewerCommentsWithMode(
         if (!reconnectStopped) hiddenInterrupted = true
         clearRetryTimer()
         cancelRecoveryCheck()
-        dataPort.abortRefresh()
+        session.abortRefresh()
         releaseSocket(true)
         clearDisplay()
         return
@@ -1983,8 +1397,8 @@ function useViewerCommentsWithMode(
         explicitRecovery(true)
         return
       }
-      if (recoveryPromise || dataPort.hasStaleRecovery()) return
-      if (dataPort.hasPending()) return
+      if (recoveryPromise || session.hasStaleRecovery()) return
+      if (session.hasPending()) return
       requestCommentRefresh(socket)
     }
 
@@ -1994,8 +1408,8 @@ function useViewerCommentsWithMode(
     } else {
       onLiveConnectionChangedRef.current?.(false)
     }
-    const unsubscribe = dataPort.subscribeSettlement(onMutationSettled)
-    const unsubscribePageAuth = dataPort.onPageAuthError(() =>
+    const unsubscribe = display.subscribeSettlement(onMutationSettled)
+    const unsubscribePageAuth = display.onPageAuthError(() =>
       requestCommentRefresh(socket),
     )
     return () => {
@@ -2004,16 +1418,17 @@ function useViewerCommentsWithMode(
       clearStableTimer()
       clearHeartbeat()
       cancelRecoveryCheck()
-      dataPort.abortRefresh()
+      session.abortRefresh()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       unsubscribe()
       unsubscribePageAuth()
-      dataPort.clearRecovery()
+      session.clearRecovery()
       releaseSocket(true)
       clearDisplay()
     }
   }, [
-    dataPort,
+    display,
+    session,
     artifactId,
     currentUserId,
     isCurrentArtifactId,
@@ -2031,11 +1446,8 @@ function useViewerCommentsWithMode(
     returnFocusRef,
     requestedFilter: requestedFilterRef.current,
     focusTargetOnOpen: state.focusTargetOnOpen,
-    pageSession: dataPort.session,
-    assignment: dataPort.assignment,
-    targetFetchFailed: dataPort.session
-      ? dataPort.session.getSnapshot().failedThreadIds.length > 0
-      : targetFetchError?.artifactId === artifactId,
+    pageSession: session,
+    targetFetchFailed: session.getSnapshot().failedThreadIds.length > 0,
     retryTargetFetch,
     consumeTargetFocus,
     isCurrentArtifactId,
@@ -2053,19 +1465,6 @@ function useViewerCommentsWithMode(
     clearPendingTextAnchor,
     clearLocationComments,
   }
-}
-
-export function useViewerComments(
-  options: Parameters<typeof useViewerCommentsWithMode>[0],
-) {
-  return useViewerCommentsWithMode(options)
-}
-
-/** Independent Session comparison seam. */
-export function useSessionViewerComments(
-  options: Parameters<typeof useViewerCommentsWithMode>[0],
-) {
-  return useViewerCommentsWithMode(options, 'session')
 }
 
 type LiveMessage =
@@ -2429,9 +1828,7 @@ export function ViewerShell(props: ViewerShellProps) {
   return (
     <PdfPageContext value={controller.pdfPageBridge}>
       <CommentPageSessionContext value={controller.comments.pageSession}>
-        <CommentSyncContext value={controller.comments.assignment}>
-          <ViewerShellView {...controller} />
-        </CommentSyncContext>
+        <ViewerShellView {...controller} />
       </CommentPageSessionContext>
     </PdfPageContext>
   )
@@ -2612,7 +2009,6 @@ function useViewerShellController({
     [renderType, commentPage, pdfOpenRequest, artifact.currentVersionId],
   )
   const comments = useViewerComments({
-    commentSync: artifact.commentSync,
     framePresent: Boolean(sandboxUrl),
     artifactId: artifact.id,
     currentUserId: user?.id ?? null,

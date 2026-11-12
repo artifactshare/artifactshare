@@ -3,7 +3,6 @@
   "name": "artifactshare",
   "compatibility_date": "2026-06-03",
   "compatibility_flags": ["nodejs_compat"],
-  "version_metadata": { "binding": "WORKER_VERSION" },
   "main": "./workers/app.ts",
   "routes": [
     { "pattern": "artifactshare.com", "custom_domain": true },

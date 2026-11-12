@@ -1,7 +1,4 @@
-import type { CommentSyncAssignment } from './comment-sync'
-
 export type CommentNetworkDiagnostic = {
-  assignment: CommentSyncAssignment
   operation:
     | 'summary'
     | 'page'
@@ -158,16 +155,13 @@ export type CommentNetworkResult =
   | 'invalid-json'
   | 'network-error'
 
-/** One start and one terminal event per attempt, without URLs, IDs or content.
- * The caller captures the committed owner's assignment before beginning work. */
+/** One start and one terminal event per attempt, without URLs, IDs or content. */
 export function startCommentNetworkOperation(
   diagnostic: CommentNetworkDiagnostic,
 ) {
   const started = performance.now()
   const fields = {
     channel: 'comment-sync',
-    mode: diagnostic.assignment.mode,
-    build: diagnostic.assignment.build,
     operation: diagnostic.operation,
   }
   logViewerNetworkEvent({

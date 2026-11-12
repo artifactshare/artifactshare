@@ -187,10 +187,9 @@ function stubAbortableFetch() {
   )
 }
 
-describe('comment comparison diagnostics', () => {
+describe('comment operation diagnostics', () => {
   test('retains status 200 when required JSON is malformed', async () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => {})
-    const assignment = { mode: 'session' as const, build: 'unknown' }
     const fetch = vi
       .fn()
       .mockResolvedValue(new Response('not json', { status: 200 }))
@@ -202,7 +201,7 @@ describe('comment comparison diagnostics', () => {
           {},
           {
             requireJson: true,
-            commentDiagnostic: { assignment, operation: 'summary' },
+            commentDiagnostic: { operation: 'summary' },
           },
         ),
       ).rejects.toMatchObject({ name: 'ViewerFetchInvalidJsonError' })
@@ -211,7 +210,6 @@ describe('comment comparison diagnostics', () => {
       expect(log.mock.calls.map(([, event]) => event)).toEqual([
         {
           channel: 'comment-sync',
-          ...assignment,
           operation: 'summary',
           state: 'started',
           result: 'pending',
@@ -221,7 +219,6 @@ describe('comment comparison diagnostics', () => {
         },
         {
           channel: 'comment-sync',
-          ...assignment,
           operation: 'summary',
           state: 'completed',
           result: 'invalid-json',
@@ -243,10 +240,6 @@ describe('comment comparison diagnostics', () => {
     'counts successful and failed attempts alike: %s',
     async (result, status, body) => {
       const log = vi.spyOn(console, 'info').mockImplementation(() => {})
-      const assignment = {
-        mode: 'session' as const,
-        build: '12345678-1234-1234-1234-123456789abc',
-      }
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue(Response.json(body, { status })),
@@ -255,13 +248,12 @@ describe('comment comparison diagnostics', () => {
         await fetchJsonWithViewerTimeout(
           '/sensitive-url?token=private',
           {},
-          { commentDiagnostic: { assignment, operation: 'selected' } },
+          { commentDiagnostic: { operation: 'selected' } },
         )
         expect(log).toHaveBeenCalledTimes(2)
         expect(log.mock.calls.map(([, event]) => event)).toEqual([
           {
             channel: 'comment-sync',
-            ...assignment,
             operation: 'selected',
             state: 'started',
             result: 'pending',
@@ -271,7 +263,6 @@ describe('comment comparison diagnostics', () => {
           },
           {
             channel: 'comment-sync',
-            ...assignment,
             operation: 'selected',
             state: 'completed',
             result,
@@ -290,7 +281,7 @@ describe('comment comparison diagnostics', () => {
     },
   )
 
-  test('captures the assignment at start and reports a sanitized network failure', async () => {
+  test('reports a sanitized network failure', async () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => {})
     let reject!: (error: Error) => void
     vi.stubGlobal(
@@ -302,25 +293,17 @@ describe('comment comparison diagnostics', () => {
           }),
       ),
     )
-    const assignment = {
-      mode: 'legacy' as 'legacy' | 'session',
-      build: 'unknown',
-    }
     const request = fetchJsonWithViewerTimeout(
       '/private-url',
       {},
-      { commentDiagnostic: { assignment, operation: 'reply' } },
+      { commentDiagnostic: { operation: 'reply' } },
     )
     const rejected = expect(request).rejects.toThrow('raw error')
     try {
-      assignment.mode = 'session'
-      assignment.build = 'new-build'
       reject(new Error('raw error containing token'))
       await rejected
       expect(log.mock.calls.at(-1)?.[1]).toEqual({
         channel: 'comment-sync',
-        mode: 'legacy',
-        build: 'unknown',
         operation: 'reply',
         state: 'completed',
         result: 'network-error',
@@ -329,7 +312,7 @@ describe('comment comparison diagnostics', () => {
         socketCount: 0,
       })
       expect(JSON.stringify(log.mock.calls)).not.toMatch(
-        /private-url|raw error|token|new-build/,
+        /private-url|raw error|token/,
       )
     } finally {
       reject(new Error('cleanup'))
@@ -351,7 +334,6 @@ describe('comment comparison diagnostics', () => {
           { signal: controller.signal },
           {
             commentDiagnostic: {
-              assignment: { mode: 'legacy', build: 'unknown' },
               operation: 'page',
             },
           },
