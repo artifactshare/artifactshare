@@ -545,6 +545,14 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
             calls.push('context')
             let url = 'https://localhost/'
             let returned = false
+            const listeners = {}
+            const request = (name) => ({
+              url: () => `https://localhost/${name}?t=secret`,
+              method: () => 'POST',
+              failure: () => ({ errorText: 'aborted' }),
+            })
+            const lateSuccess = request('late-success')
+            const homeRequest = request('home-return')
             const locator = (selector) => ({
               first() {
                 return this
@@ -587,6 +595,9 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                     },
               click: () => {
                 calls.push('app-home')
+                listeners.requestfailed(lateSuccess)
+                listeners.request(homeRequest)
+                listeners.requestfailed(homeRequest)
                 returned = true
                 url = 'https://localhost/'
               },
@@ -601,7 +612,15 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               },
               newPage: () => ({
                 locator,
-                on: () => {},
+                on: (event, listener) => {
+                  listeners[event] = listener
+                },
+                startSuccessRequests: () => {
+                  const failed = request('success')
+                  listeners.request(failed)
+                  listeners.requestfailed(failed)
+                  listeners.request(lateSuccess)
+                },
                 frames: () => [],
                 url: () => url,
                 evaluate: () => true,
@@ -653,8 +672,10 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
             calls.push(phase)
             if (phase === 'failure' && walkthrough.continuousHomeReturn)
               page.setUrl(`https://localhost${action.path}`)
-            if (phase === 'success' && walkthrough.continuousHomeReturn)
+            if (phase === 'success' && walkthrough.continuousHomeReturn) {
               page.setUrl('https://localhost/a/target')
+              page.startSuccessRequests()
+            }
             await writeFile(screenshot.path, 'png')
             return phase === 'success'
               ? { inspected: { selector: action.selector, visible: true } }
@@ -677,6 +698,13 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               'utf8',
             ),
           )
+          assert.deepEqual(diagnostic.evidence.failedRequests, [
+            {
+              url: 'https://localhost/home-return?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
           assert.equal(diagnostic.status, 'failed')
           assert.equal(diagnostic.final.visible, fault !== 'missing')
           if (fault !== 'missing') assert.equal(diagnostic.final.unread, true)
@@ -736,6 +764,22 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
         if (walkthrough.continuousHomeReturn) {
           assert.ok(calls.indexOf('success') < calls.indexOf('app-home'))
           assert.ok(calls.indexOf('home-png') < calls.indexOf('close'))
+          // Navigation failures belong to their initiation phase. A late
+          // success abort must neither mutate its saved PNG facts nor move Home.
+          assert.deepEqual(record.steps[3].evidence.failedRequests, [
+            {
+              url: 'https://localhost/success?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
+          assert.deepEqual(record.supplements[0].evidence.failedRequests, [
+            {
+              url: 'https://localhost/home-return?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
           assert.equal(record.supplements[0].result.final.unread, false)
           assert.equal(
             record.supplements[0].result.inspection.body,

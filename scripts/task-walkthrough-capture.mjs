@@ -228,7 +228,7 @@ async function collectPageEvidence(page, failedRequests) {
         loaded: Boolean(frame.url() && frame.url() !== 'about:blank'),
       })),
   )
-  return { notifications, frames, failedRequests }
+  return { notifications, frames, failedRequests: [...failedRequests] }
 }
 
 export async function writeTaskIndex(outDir, record) {
@@ -1084,6 +1084,7 @@ export async function captureRun({
         },
       })
       if (walkthrough.continuousHomeReturn && step.phase === 'success') {
+        activePhase = 'home-read'
         let result
         try {
           result = await returnHomeAndObserve(
@@ -1106,6 +1107,7 @@ export async function captureRun({
             url: redactEvidenceUrl(branch.page.url()),
             error: redactEvidenceText(error.message),
             file: null,
+            evidence: { failedRequests: [...branch.phaseFailures(activePhase)] },
           }
           try {
             await branch.page.screenshot({
@@ -1139,6 +1141,10 @@ export async function captureRun({
           purpose: 'home-read',
           description: 'Continuous return to Home',
           file: supplementFile,
+          evidence: await collectPageEvidence(
+            branch.page,
+            branch.phaseFailures(activePhase),
+          ),
           result: {
             ...result,
             inspectionStepId: steps.at(-1).id,
