@@ -1049,7 +1049,7 @@ test('screen-only main launches one visual reviewer with validated source and al
       assert.match(prompt, /viewer-mobile.png/)
       assert.doesNotMatch(
         prompt,
-        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding/,
+        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding|Inspect per-image boundaries|Boundary and continuous-result observations/,
       )
       if (provider === 'codex')
         assert.deepEqual(

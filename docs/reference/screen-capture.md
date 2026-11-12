@@ -251,7 +251,6 @@ Do not bypass the dirty-checkout or server-HEAD guards.
 
 ```sh
 pnpm dev:setup
-pnpm db:apply:local
 pnpm --filter @artifactshare/cli build
 # In a separate terminal at the same clean candidate:
 pnpm dev
@@ -260,6 +259,17 @@ pnpm walkthroughs:capture -- --champion-loop --label boundary-healthy
 capture_output_root="$(node --input-type=module -e 'import { screenCaptureOutputRoot } from "./scripts/screen-capture-output.mjs"; console.log(screenCaptureOutputRoot())')"
 pnpm critique:tasks -- --walkthrough-root "$capture_output_root/boundary-healthy" --task review-new-reactions --source scripts/task-walkthrough-capture.mjs --source scripts/task-walkthroughs.mjs --source scripts/task-critique.mjs --dry-run
 ```
+
+`pnpm dev:setup` initializes the local schema. Do not follow it with
+`pnpm db:apply:local` on a fresh checkout: replaying migrations against that
+schema fails with existing-table errors.
+
+A failed continuous Home return writes `failed-home-return-<viewport>.json`
+and, when screenshot capture succeeds, `failed-home-return-<viewport>.png`.
+The diagnostic is explicitly failed and includes the observed target state,
+body inspection and branch/video identity; it is not successful walkthrough
+evidence. Diagnostic write failures do not replace the journey error. The
+original success-body PNG remains available for diagnosis.
 
 Repeat the last command with `--provider codex` to inspect attached image
 arguments. Confirm both default prompts and combined input contain the

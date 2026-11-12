@@ -533,7 +533,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
     for (const walkthrough of taskWalkthroughs) {
       for (const [viewport, fault] of ['desktop', 'mobile'].flatMap((size) =>
         (walkthrough.continuousHomeReturn
-          ? [null, 'unread', 'missing']
+          ? [null, 'unread', 'missing', 'diagnostic-write']
           : [null]
         ).map((problem) => [size, problem]),
       )) {
@@ -561,21 +561,29 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               innerText: () =>
                 selector.includes('data-new-comment')
                   ? 'A new body'
-                  : returned && fault !== 'unread'
+                  : returned && !['unread', 'diagnostic-write'].includes(fault)
                     ? 'Target'
                     : '1 new comment',
               getAttribute: () =>
-                returned && fault !== 'unread' ? 'Target' : 'Target Unread',
+                returned && !['unread', 'diagnostic-write'].includes(fault)
+                  ? 'Target'
+                  : 'Target Unread',
               allInnerTexts: () => Promise.resolve([]),
-              locator: () => ({
-                all: () => [
-                  {
-                    innerText: () =>
-                      !returned || fault === 'unread' ? 'New comment' : '',
-                    isVisible: () => true,
-                  },
-                ],
-              }),
+              locator: (nested) =>
+                nested.startsWith('xpath=')
+                  ? locator('main row')
+                  : {
+                      all: () => [
+                        {
+                          innerText: () =>
+                            !returned ||
+                            ['unread', 'diagnostic-write'].includes(fault)
+                              ? 'New comment'
+                              : '',
+                          isVisible: () => true,
+                        },
+                      ],
+                    },
               click: () => {
                 calls.push('app-home')
                 returned = true
@@ -598,6 +606,8 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                 evaluate: () => true,
                 screenshot: async ({ path }) => {
                   calls.push('home-png')
+                  if (fault === 'diagnostic-write')
+                    throw new Error('diagnostic write failed')
                   await writeFile(path, 'png')
                 },
                 waitForURL: async () => {},
@@ -651,13 +661,33 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
         if (fault) {
           await assert.rejects(
             capturing,
-            fault === 'unread' ? /remains unread/ : /target row absent/,
+            fault === 'missing' ? /target row absent/ : /remains unread/,
           )
           assert.ok(calls.includes('success'))
           assert.ok(calls.includes('app-home'))
           assert.equal(calls.at(-1), 'close')
           assert.ok(!calls.includes('initialize'))
-          assert.ok(!calls.includes('home-png'))
+          assert.ok(calls.includes('home-png'))
+          const diagnostic = JSON.parse(
+            await readFile(
+              join(root, `failed-home-return-${viewport}.json`),
+              'utf8',
+            ),
+          )
+          assert.equal(diagnostic.status, 'failed')
+          assert.equal(diagnostic.final.visible, fault !== 'missing')
+          if (fault !== 'missing') assert.equal(diagnostic.final.unread, true)
+          assert.equal(diagnostic.inspection.body, 'A new body')
+          assert.equal(
+            diagnostic.file,
+            fault === 'diagnostic-write'
+              ? null
+              : `failed-home-return-${viewport}.png`,
+          )
+          assert.equal(
+            await readFile(join(root, `04-success-${viewport}.png`), 'utf8'),
+            'png',
+          )
           continue
         }
         const record = await capturing
@@ -727,11 +757,13 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
           assert.ok(html.includes(step.video))
         }
         assert.ok(html.includes('Reset: independent failure initialization'))
-        if (walkthrough.continuousHomeReturn)
+        if (walkthrough.continuousHomeReturn) {
+          assert.equal(html.split('&quot;inspectionStepId&quot;').length - 1, 1)
           assert.ok(
             html.indexOf('Continuous Home return:') <
               html.indexOf('<h2>failure'),
           )
+        }
       }
     }
   } finally {
@@ -769,4 +801,67 @@ test('reaction action opens the target already observed on Home', async () => {
   })
   assert.equal(result.clicked.destination, '/a/observed-target')
   assert.ok(clicked[0].includes('/a/observed-target'))
+})
+
+test('reaction row reads sibling content, combined segments and visible mobile previews', async () => {
+  const { createRequire } = await import('node:module')
+  const { Window } = createRequire(
+    new URL('../apps/web/package.json', import.meta.url),
+  )('happy-dom')
+  const { observeReactionRow } = await import('./task-walkthrough-capture.mjs')
+  const document = new Window().document
+  for (const [markup, expected] of [
+    ['<span>v2 · 2 new comments</span>', true],
+    [
+      '<span><span aria-hidden="true"> · </span>v2 · 新着コメント 2件</span>',
+      true,
+    ],
+    [
+      '<span hidden>v2 · 2 new comments</span><span><span>New comment</span><span>Preview body</span></span>',
+      true,
+    ],
+    ['<span hidden>2 new comments</span><span>v2</span>', false],
+    ['<span title="New comment">New comment</span><span>v2</span>', false],
+  ]) {
+    document.body.innerHTML = `<main><div data-slot="file-row"><a href="/a/target" aria-label="Target · Unread updates"></a><div>${markup}</div></div><div data-slot="file-row"><a href="/a/other"></a><span>New comment</span></div></main>`
+    const link = document.querySelector('a')
+    const row = link.closest('[data-slot="file-row"]')
+    const page = {
+      locator(selector) {
+        assert.equal(document.querySelector(selector), link)
+        return {
+          first: () => ({
+            waitFor: async () => {},
+            innerText: () => link.textContent,
+            getAttribute: (name) => link.getAttribute(name),
+            locator: (relation) =>
+              relation.startsWith('xpath=')
+                ? {
+                    waitFor: async () => {},
+                    innerText: () => row.textContent,
+                    locator: (spans) => ({
+                      all: () =>
+                        [...row.querySelectorAll(spans)].map((element) => ({
+                          innerText: () => element.textContent,
+                          isVisible: () => !element.closest('[hidden]'),
+                        })),
+                    }),
+                  }
+                : { all: () => [] },
+          }),
+        }
+      },
+    }
+    if (expected) {
+      const observation = await observeReactionRow(page, 'target', true)
+      assert.equal(observation.newComments, true)
+      assert.equal(observation.href, '/a/target')
+      assert.ok(observation.text.length > 0)
+    } else {
+      await assert.rejects(
+        observeReactionRow(page, 'target', true),
+        /Initial target must show unread comments/,
+      )
+    }
+  }
 })

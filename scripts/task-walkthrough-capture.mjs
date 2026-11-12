@@ -251,7 +251,7 @@ ${htmlEscape(step.continues ? 'Continues from ' + step.predecessorId : 'Reset: '
 <a href="${htmlEscape(step.video)}">Matching branch video</a></p>
 ${step.result ? `<pre>Continuous Home return: ${htmlEscape(JSON.stringify(step.result, null, 2))}</pre>` : ''}
 ${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.phase ?? step.purpose} ${step.viewport}`)}">` : ''}
-<details><summary>裏取りデータ</summary><pre>${htmlEscape(JSON.stringify(step.evidence ?? step.result, null, 2))}</pre></details></article>`,
+${step.evidence ? `<details><summary>裏取りデータ</summary><pre>${htmlEscape(JSON.stringify(step.evidence, null, 2))}</pre></details>` : ''}</article>`,
     )
     .join('\n')
   const videos = record.runs
@@ -777,34 +777,38 @@ async function applyAction({
 
 export async function observeReactionRow(page, artifactId, expectedUnread) {
   const href = `/a/${artifactId}`
-  const row = page.locator(`main a[href="${href}"]`).first()
-  await row.waitFor({ state: 'visible' })
+  const link = page.locator(`main a[href="${href}"]`).first()
+  const row = link.locator('xpath=ancestor::*[@data-slot="file-row"][1]')
+  try {
+    await row.waitFor({ state: 'visible' })
+  } catch (error) {
+    error.observation = { artifactId, href, visible: false }
+    throw error
+  }
   const text = await row.innerText()
-  const label = (await row.getAttribute('aria-label')) ?? ''
+  const label = (await link.getAttribute('aria-label')) ?? ''
   const unread = /Unread|未読/u.test(label)
   const commentIndicators = []
   // Exclude the artifact title and composite containers: observe the actual
   // translated comment badge/preview label, including the mobile preview.
   for (const indicator of await row
-    .locator('span:not([title]):not(:has(*))')
+    .locator('span:not([title]):not(:has(:not([aria-hidden="true"])))')
     .all()) {
     const content = (await indicator.innerText()).trim()
     if (
-      /^(?:New comment|[0-9]+\+? new comments?|新着コメント(?: [0-9]+\+?件)?)$/iu.test(
-        content,
-      ) &&
+      content
+        .split(' · ')
+        .some((segment) =>
+          /^(?:New comment|[0-9]+\+? new comments?|新着コメント(?: [0-9]+\+?件)?)$/iu.test(
+            segment.trim(),
+          ),
+        ) &&
       (await indicator.isVisible())
     )
       commentIndicators.push(content)
   }
   const newComments = commentIndicators.length > 0
-  if (expectedUnread ? !unread || !newComments : unread || newComments)
-    throw new Error(
-      expectedUnread
-        ? 'Initial target must show unread comments'
-        : 'Returned Home target remains unread',
-    )
-  return {
+  const observation = {
     artifactId,
     href,
     visible: true,
@@ -814,6 +818,16 @@ export async function observeReactionRow(page, artifactId, expectedUnread) {
     text: redactEvidenceText(text),
     label,
   }
+  if (expectedUnread ? !unread || !newComments : unread || newComments) {
+    const error = new Error(
+      expectedUnread
+        ? 'Initial target must show unread comments'
+        : 'Returned Home target remains unread',
+    )
+    error.observation = observation
+    throw error
+  }
+  return observation
 }
 
 export async function returnHomeAndObserve(page, baseUrl, initial) {
@@ -1038,11 +1052,48 @@ export async function captureRun({
         },
       })
       if (walkthrough.continuousHomeReturn && step.phase === 'success') {
-        const result = await returnHomeAndObserve(
-          branch.page,
-          baseUrl,
-          runState.initial,
-        )
+        let result
+        try {
+          result = await returnHomeAndObserve(
+            branch.page,
+            baseUrl,
+            runState.initial,
+          )
+        } catch (error) {
+          // Diagnostic output is best-effort; it must never replace the assertion.
+          const diagnosticFile = `failed-home-return-${viewport}.png`
+          const diagnostic = {
+            ...branch.identity,
+            viewport,
+            purpose: 'failed-home-return',
+            status: 'failed',
+            initial: runState.initial,
+            final: error.observation ?? null,
+            inspectionStepId: steps.at(-1).id,
+            inspection: actionEvidence.inspected,
+            url: redactEvidenceUrl(branch.page.url()),
+            error: redactEvidenceText(error.message),
+            file: null,
+          }
+          try {
+            await branch.page.screenshot({
+              path: join(outDir, diagnosticFile),
+              fullPage: true,
+            })
+            diagnostic.file = diagnosticFile
+          } catch {
+            /* Preserve the original journey failure. */
+          }
+          try {
+            await writeFile(
+              join(outDir, `failed-home-return-${viewport}.json`),
+              JSON.stringify(diagnostic, null, 2),
+            )
+          } catch {
+            /* Preserve the original journey failure. */
+          }
+          throw error
+        }
         const supplementFile = `supplement-home-read-${viewport}.png`
         const animation = await waitForSheetAnimations(branch.page)
         if (animation.status !== 'completed')
