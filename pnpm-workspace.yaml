@@ -7,12 +7,12 @@ packages:
   - 'tools/*'
 
 overrides:
-  # The previous Rolldown 1.2.15 graph failed Vite sourcemapPathTransform.
-  # Keep matching JS/native bindings; remove after an upgrade passes the D1 suite.
-  'vite@8.3.3>rolldown': 1.2.14
+  # Keep the Vite Rolldown graph explicit and verify it with the D1 suite.
+  # Rolldown 1.2.15 previously failed Vite sourcemapPathTransform.
+  'vite@8.3.8>rolldown': 1.3.2
   'lodash-es@>=4.0.0 <5.0.0': 4.18.1
-  'undici@>=7.0.0 <8.0.0': 7.29.1
-  'postcss@>=8.0.0 <9.0.0': 8.5.28
+  'undici@>=7.0.0 <8.0.0': 7.30.2
+  'postcss@>=8.0.0 <9.0.0': 8.5.32
   'miniflare>sharp@>=0.34.0 <0.35.5': 0.35.5
 
 allowBuilds:
@@ -23,19 +23,22 @@ allowBuilds:
   sharp: true
   workerd: true
 
-# Only exceptions for versions still resolved in the lockfile are retained.
+# Explicitly requested current releases that pass the install supply-chain checks.
+# Keep exceptions exact and remove versions no longer resolved in the lockfile.
 minimumReleaseAgeExclude:
-  - better-auth@1.7.16
-  - '@better-auth/core@1.7.16'
-  - '@better-auth/oauth-provider@1.7.16'
-  - '@better-auth/drizzle-adapter@1.7.16'
-  - '@better-auth/kysely-adapter@1.7.16'
-  - '@better-auth/memory-adapter@1.7.16'
-  - '@better-auth/mongo-adapter@1.7.16'
-  - '@better-auth/prisma-adapter@1.7.16'
-  - '@better-auth/telemetry@1.7.16'
-  - '@tanstack/highlight@0.1.0'
-  - '@tanstack/markdown@0.0.14'
-  - happy-dom@20.14.5
-  - yaml@2.9.1
-  - better-call@1.4.5
+  - 'better-auth@1.7.22'
+  - '@better-auth/core@1.7.22'
+  - '@better-auth/oauth-provider@1.7.22'
+  - '@better-auth/drizzle-adapter@1.7.22'
+  - '@better-auth/kysely-adapter@1.7.22'
+  - '@better-auth/memory-adapter@1.7.22'
+  - '@better-auth/mongo-adapter@1.7.22'
+  - '@better-auth/prisma-adapter@1.7.22'
+  - '@better-auth/telemetry@1.7.22'
+  - 'yaml@2.9.1'
+  - 'better-call@1.4.5'
+  - '@cloudflare/vite-plugin@1.69.1'
+  - '@cloudflare/workers-types@5.20261112.1'
+  - 'kysely@0.29.9'
+  - 'miniflare@5.20261110.2-beta'
+  - 'wrangler@4.161.0'

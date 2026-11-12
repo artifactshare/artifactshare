@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// @vitest-environment-options {"settings":{"enableJavaScriptEvaluation":true}}
+// @vitest-environment-options {"settings":{"enableJavaScriptEvaluation":true,"enableIframePageLoading":true}}
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

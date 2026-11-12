@@ -125,7 +125,7 @@ test('PR guard has an exact trusted six-step topology', () => {
   const [runtime, classify, trusted, head, boundary, summary] = guard.steps
   assert.match(runtime.uses, /^actions\/setup-node@[a-f0-9]{40}$/u)
   assert.deepEqual(runtime.with, {
-    'node-version': '24.21.0',
+    'node-version': '24.22.2',
     'package-manager-cache': false,
   })
   assert.equal(runtime.run, undefined)
@@ -705,13 +705,13 @@ test('visual gate uses exact Linux Compose baselines', () => {
   const webPackage = JSON.parse(
     fs.readFileSync('apps/web/package.json', 'utf8'),
   )
-  assert.equal(webPackage.devDependencies.playwright, '1.64.0')
+  assert.equal(webPackage.devDependencies.playwright, '1.65.0')
   const compose = YAML.parse(visualCompose, { merge: true })
   assert.deepEqual(Object.keys(compose.services), ['visual', 'visual-update'])
   for (const service of Object.values(compose.services)) {
     assert.equal(
       service.image,
-      `mcr.microsoft.com/playwright:v${webPackage.devDependencies.playwright}-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f`,
+      `mcr.microsoft.com/playwright:v${webPackage.devDependencies.playwright}-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe`,
     )
     assert.equal(service.platform, 'linux/amd64')
     assert.equal(service.ipc, 'host')
@@ -737,7 +737,7 @@ test('visual gate uses exact Linux Compose baselines', () => {
       ].map(([source, target]) => ({ type: 'volume', source, target })),
     ])
     assert.deepEqual(service.command, [
-      'npm install --global --prefix /opt/toolchain node@24.21.0 pnpm@12.4.1 && ' +
+      'npm install --global --prefix /opt/toolchain node@24.22.2 pnpm@12.18.0 && ' +
         'export PATH=/opt/toolchain/bin:$$PATH && node --version && pnpm --version && ' +
         'pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile --ignore-scripts && ' +
         'pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run ' +
@@ -1105,7 +1105,7 @@ test('upload boundary suite runs with a CLI build on all supported operating sys
     job.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with[
       'node-version'
     ],
-    '24.21.0',
+    '24.22.2',
   )
   assert.equal(
     parsedWorkflow.jobs.validate.steps[0].env.UPLOAD_BOUNDARY_RESULT,
@@ -1234,7 +1234,7 @@ test('only browser jobs use the canonical image with matching locked Playwright'
   assert.ok(lock.packages[`playwright-core@${version}`])
   assert.equal(
     JSON.parse(fs.readFileSync('package.json', 'utf8')).packageManager,
-    'pnpm@12.4.1',
+    'pnpm@12.18.0',
   )
   for (const [name, job] of Object.entries(parsedWorkflow.jobs)) {
     if (!browserJobNames.includes(name)) {
@@ -1298,7 +1298,7 @@ test('only browser jobs use the canonical image with matching locked Playwright'
     for (const step of job.steps) {
       assert.equal(step['continue-on-error'], undefined)
       if (step.uses?.startsWith('actions/setup-node@'))
-        assert.equal(step.with['node-version'], '24.21.0')
+        assert.equal(step.with['node-version'], '24.22.2')
     }
   }
 })

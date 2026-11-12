@@ -38,6 +38,7 @@ const INITIAL_ALIASES = {
   'js-vue': 'js',
   json5: 'json',
   jsonc: 'json',
+  jsonl: 'json',
   md: 'markdown',
   mjs: 'js',
   patch: 'diff',

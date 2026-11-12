@@ -279,11 +279,11 @@ test('surviving exports preserve Markdown, HTML extraction and nested assets', a
   })
   vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   const downloads: string[] = []
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
-    function (this: HTMLAnchorElement) {
-      downloads.push(this.download)
-    },
-  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    downloads.push(this.download)
+  })
   downloadText(
     markdownDownloadFileName(nested.fileName),
     extracted!,

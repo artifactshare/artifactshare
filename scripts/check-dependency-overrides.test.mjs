@@ -54,7 +54,7 @@ function fixture() {
 function sources({ workspace, lock }) {
   return [
     stringify(workspace),
-    `lockfileVersion: '9.0'\npackages:\n  pnpm@12.4.1: {}\n---\n${stringify(lock)}`,
+    `lockfileVersion: '9.0'\npackages:\n  pnpm@12.18.0: {}\n---\n${stringify(lock)}`,
   ]
 }
 function rejects(data, diagnostic) {
