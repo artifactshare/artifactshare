@@ -319,10 +319,73 @@ syncBuiltinESMExports();
     } else {
       const data = expectSuccess(result).data
       assert.equal(data.targets[0].legacy_rule.action, 'remove_failed')
-      assert.match(data.targets[0].legacy_rule.hint, /Retry/)
+      const advice = data.targets[0].legacy_rule.hint.match(
+        /^Retry (skills update .* --json) to remove the legacy rule\.$/,
+      )
+      assert.ok(advice)
       assert.equal(
         await readFile(join(target(), 'SKILL.md'), 'utf8'),
         initial['SKILL.md'],
+      )
+      // The next process has no failure preload, so cleanup is healthy again.
+      expectSuccess(run(advice[1].split(' ')))
+      await assert.rejects(lstat(legacy()), /ENOENT/)
+      for (const [path, content] of Object.entries(initial))
+        assert.equal(await readFile(join(target(), path), 'utf8'), content)
+    }
+  })
+
+for (const folder of ['managed', 'absent', 'unmanaged'])
+  test(`removal cleanup advice preserves removal intent with ${folder} folder`, async () => {
+    if (folder === 'managed')
+      expectSuccess(skills('install', '--tool', 'cursor', '--scope', 'project'))
+    if (folder === 'unmanaged')
+      await put(join(target(), 'SKILL.md'), 'personal skill')
+    await put(legacy(), marker(1))
+    const preload = join(root, 'inject.mjs')
+    await put(
+      preload,
+      `import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+const unlink = fs.unlink;
+fs.unlink = async (...args) => {
+  if (String(args[0]).endsWith('artifactshare.mdc')) throw new Error('synthetic cleanup failure');
+  return unlink(...args);
+};
+syncBuiltinESMExports();
+`,
+    )
+    const data = SkillsActionDataSchema.parse(
+      expectSuccess(
+        run(
+          ['skills', 'remove', '--tool', 'cursor', '--scope', 'project'],
+          preload,
+        ),
+      ).data,
+    )
+    const row = data.targets[0]
+    assert.ok(row)
+    assert.equal(row.legacy_rule?.action, 'remove_failed')
+    assert.equal(await readFile(legacy(), 'utf8'), marker(1))
+    if (folder !== 'unmanaged') await assert.rejects(lstat(target()), /ENOENT/)
+    const advice = row.legacy_rule?.hint?.match(
+      /^Retry (skills .* --json) to remove the legacy rule\.$/,
+    )
+    assert.ok(advice?.[1])
+    // Execute the actual advice without the fault, through the isolated CLI.
+    expectSuccess(run(advice[1].split(' ')))
+    await assert.rejects(lstat(legacy()), /ENOENT/)
+    if (folder === 'unmanaged') {
+      assert.equal(
+        await readFile(join(target(), 'SKILL.md'), 'utf8'),
+        'personal skill',
+      )
+      assert.deepEqual(await readdir(target()), ['SKILL.md'])
+    } else {
+      await assert.rejects(
+        lstat(target()),
+        /ENOENT/,
+        'removal advice must not install a folder',
       )
     }
   })
