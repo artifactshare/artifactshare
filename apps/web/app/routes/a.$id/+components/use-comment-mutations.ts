@@ -1,7 +1,4 @@
-import {
-  acquireCommentRuntime,
-  withCommentRuntime,
-} from './comment-runtime-browser'
+import { acquireCommentRuntime } from './comment-runtime-browser'
 import type {
   ChangeCommentThreads,
   CommentThreadPatch,
@@ -50,9 +47,6 @@ export type CommentMutationPayload =
   | { intent: 'delete-message'; messageId: string; threadId?: string }
   | { intent: 'delete-thread'; threadId: string }
 
-export function hasPendingCommentMutation(id: string) {
-  return withCommentRuntime(id, (lease) => lease.hasPending())
-}
 export function useCommentMutations({
   shareableId,
   isCurrentShareableId,

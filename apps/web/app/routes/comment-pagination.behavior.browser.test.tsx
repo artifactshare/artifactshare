@@ -1,4 +1,7 @@
-import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
+import {
+  hasPendingCommentMutation,
+  settleCommentRuntimeMutation,
+} from '~/test/comment-runtime-driver'
 import { useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -9,10 +12,7 @@ import { TooltipProvider } from '~/components/ui/tooltip'
 import type { CommentMessageView, CommentThreadView } from '~/lib/comments'
 import en from '~/i18n/en.json'
 import ja from '~/i18n/ja.json'
-import {
-  hasPendingCommentMutation,
-  useCommentMutations,
-} from './a.$id/+components/use-comment-mutations'
+import { useCommentMutations } from './a.$id/+components/use-comment-mutations'
 import { TextSelectionCommentPopover } from './a.$id/+components/text-selection-comment-popover'
 import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover'
 import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'

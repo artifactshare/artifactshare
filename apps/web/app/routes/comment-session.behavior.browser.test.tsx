@@ -19,7 +19,7 @@ import {
   useViewerComments,
   type ViewerShellArtifact,
 } from './a.$id/+components/viewer-shell'
-import { hasPendingCommentMutation } from './a.$id/+components/use-comment-mutations'
+import { hasPendingCommentMutation } from '~/test/comment-runtime-driver'
 
 vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
