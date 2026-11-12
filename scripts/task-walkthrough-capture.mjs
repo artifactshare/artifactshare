@@ -1107,7 +1107,9 @@ export async function captureRun({
             url: redactEvidenceUrl(branch.page.url()),
             error: redactEvidenceText(error.message),
             file: null,
-            evidence: { failedRequests: [...branch.phaseFailures(activePhase)] },
+            evidence: {
+              failedRequests: [...branch.phaseFailures(activePhase)],
+            },
           }
           try {
             await branch.page.screenshot({
