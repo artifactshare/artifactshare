@@ -7,9 +7,11 @@ packages:
   - 'tools/*'
 
 overrides:
-  # Keep the Vite Rolldown graph explicit and verify it with the D1 suite.
+  'vite-plus@<1.1.0': 1.6.0
+  '@vitest/mocker@4.1.11': 4.1.12
+  # Keep Vite within its ~1.2.18 Rolldown range; 1.3 produces invalid imports.
   # Rolldown 1.2.15 previously failed Vite sourcemapPathTransform.
-  'vite@8.3.8>rolldown': 1.3.2
+  'vite@8.3.8>rolldown': 1.2.19
   'lodash-es@>=4.0.0 <5.0.0': 4.18.1
   'undici@>=7.0.0 <8.0.0': 7.30.2
   'postcss@>=8.0.0 <9.0.0': 8.5.32

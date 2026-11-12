@@ -84,6 +84,14 @@ test('accepts only one self-contained script and one stylesheet', () => {
   }
   const style = { type: 'asset', fileName: 'viewer.css', source: 'a{}' }
 
+  assert.throws(
+    () =>
+      pickBundle([
+        { ...chunk, code: 'preload(() => import("./pdf.mjs"), []bd0785)' },
+        style,
+      ]),
+    /script contains invalid JavaScript/,
+  )
   assert.deepEqual(pickBundle([chunk, style]), {
     script: 'void 0',
     style: 'a{}',

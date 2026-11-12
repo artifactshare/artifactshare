@@ -108,7 +108,7 @@
     "tailwindcss": "4.3.5",
     "typescript": "7.0.2",
     "vite": "8.3.8",
-    "vite-plus": "0.3.3",
+    "vite-plus": "1.6.0",
     "vitest": "4.1.12",
     "wrangler": "4.161.0"
   }

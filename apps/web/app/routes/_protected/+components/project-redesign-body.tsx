@@ -183,9 +183,11 @@ export function ProjectRedesignBody({
                           id={pinned.latestAuthorEmail ?? pinned.shareableId}
                           image={pinned.latestAuthorImage}
                           initial={
-                            (pinned.latestAuthorName ??
+                            (
+                              pinned.latestAuthorName ??
                               pinned.latestAuthorEmail ??
-                              '')[0]
+                              ''
+                            )[0]
                           }
                           size="xs"
                         />

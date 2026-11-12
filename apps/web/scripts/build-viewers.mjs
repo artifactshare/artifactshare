@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
+import { parseSync } from 'oxc-parser'
 
 const webRoot = fileURLToPath(new URL('..', import.meta.url))
 const appRoot = resolve(webRoot, 'app')
@@ -84,6 +85,11 @@ export function pickBundle(outputs, label = 'viewer') {
     )
   if (chunk.imports.length || chunk.dynamicImports.length)
     throw new Error(`the ${label} script must not import other chunks`)
+  const parsed = parseSync('viewer.mjs', chunk.code)
+  if (parsed.errors.length)
+    throw new Error(
+      `the ${label} script contains invalid JavaScript: ${parsed.errors[0].message}`,
+    )
   const style = String(asset.source)
   if (/@import|url\((?!\s*["']?data:)/i.test(style))
     throw new Error(`the ${label} stylesheet must not load other files`)
