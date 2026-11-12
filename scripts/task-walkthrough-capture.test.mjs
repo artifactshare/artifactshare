@@ -520,3 +520,253 @@ test('navigation context replacement is diagnostic and still permits the PNG', a
   })
   assert.equal(fake.events.at(-1), 'screenshot:50')
 })
+
+test('branch orchestration preserves phases, isolation, videos and continuous Home observations', async () => {
+  const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { captureRun, writeTaskIndex } =
+    await import('./task-walkthrough-capture.mjs')
+  const { taskWalkthroughs } = await import('./task-walkthroughs.mjs')
+  const root = await mkdtemp(join(tmpdir(), 'walkthrough-branches-'))
+  try {
+    for (const walkthrough of taskWalkthroughs) {
+      for (const [viewport, fault] of ['desktop', 'mobile'].flatMap((size) =>
+        (walkthrough.continuousHomeReturn
+          ? [null, 'unread', 'missing']
+          : [null]
+        ).map((problem) => [size, problem]),
+      )) {
+        const calls = []
+        let serial = 0
+        const browser = {
+          newContext: async () => {
+            const contextNumber = ++serial
+            calls.push('context')
+            let url = 'https://localhost/'
+            let returned = false
+            const locator = (selector) => ({
+              first() {
+                return this
+              },
+              count: () => 0,
+              waitFor: () => {
+                if (
+                  returned &&
+                  fault === 'missing' &&
+                  selector.startsWith('main')
+                )
+                  throw new Error('target row absent')
+              },
+              innerText: () =>
+                selector.includes('data-new-comment')
+                  ? 'A new body'
+                  : returned && fault !== 'unread'
+                    ? 'Target'
+                    : '1 new comment',
+              getAttribute: () =>
+                returned && fault !== 'unread' ? 'Target' : 'Target Unread',
+              allInnerTexts: () => Promise.resolve([]),
+              locator: () => ({
+                all: () => [
+                  {
+                    innerText: () =>
+                      !returned || fault === 'unread' ? 'New comment' : '',
+                    isVisible: () => true,
+                  },
+                ],
+              }),
+              click: () => {
+                calls.push('app-home')
+                returned = true
+                url = 'https://localhost/'
+              },
+            })
+            const videoPath = join(root, `raw-${contextNumber}.webm`)
+            await writeFile(videoPath, 'video')
+            return {
+              addCookies: async () => {},
+              addInitScript: async () => {},
+              close: () => {
+                calls.push('close')
+              },
+              newPage: () => ({
+                locator,
+                on: () => {},
+                frames: () => [],
+                url: () => url,
+                evaluate: () => true,
+                screenshot: async ({ path }) => {
+                  calls.push('home-png')
+                  await writeFile(path, 'png')
+                },
+                waitForURL: async () => {},
+                video: () => ({ path: () => videoPath }),
+                setUrl: (value) => {
+                  url = value
+                },
+              }),
+            }
+          },
+        }
+        const session = {
+          cookies: [],
+          initializationId: `${viewport}-init`,
+          workspaceId: 'fixture',
+          userId: 'fixture',
+        }
+        const capturing = captureRun({
+          browser,
+          walkthrough,
+          persona: { auth: 'fixture' },
+          viewport,
+          baseUrl: 'https://localhost',
+          outDir: root,
+          outputRoot: root,
+          session,
+          sharedState: {
+            artifactIndex: walkthrough.artifactIndex,
+            cliArtifactIds: [],
+          },
+          initialize: () => {
+            calls.push('initialize')
+            return { ...session, initializationId: `${viewport}-failure-init` }
+          },
+          apply: () => {
+            calls.push('failure-setup')
+          },
+          capture: async ({ action, page, screenshot }) => {
+            const phase = walkthrough.steps.find(
+              (s) => s.action === action,
+            ).phase
+            calls.push(phase)
+            if (phase === 'success' && walkthrough.continuousHomeReturn)
+              page.setUrl('https://localhost/a/target')
+            await writeFile(screenshot.path, 'png')
+            return phase === 'success'
+              ? { inspected: { selector: action.selector, visible: true } }
+              : {}
+          },
+        })
+        if (fault) {
+          await assert.rejects(
+            capturing,
+            fault === 'unread' ? /remains unread/ : /target row absent/,
+          )
+          assert.ok(calls.includes('success'))
+          assert.ok(calls.includes('app-home'))
+          assert.equal(calls.at(-1), 'close')
+          assert.ok(!calls.includes('initialize'))
+          assert.ok(!calls.includes('home-png'))
+          continue
+        }
+        const record = await capturing
+        assert.deepEqual(
+          record.steps.map((s) => s.phase),
+          [
+            'start',
+            'action',
+            'pending',
+            'success',
+            'failure',
+            'recovery',
+            'next',
+          ],
+        )
+        assert.equal(calls.filter((c) => c === 'context').length, 2)
+        assert.equal(calls.filter((c) => c === 'initialize').length, 1)
+        assert.ok(calls.indexOf('success') < calls.indexOf('close'))
+        assert.ok(calls.indexOf('close') < calls.indexOf('initialize'))
+        assert.ok(calls.indexOf('initialize') < calls.indexOf('failure'))
+        assert.notEqual(record.steps[3].contextId, record.steps[4].contextId)
+        assert.notEqual(
+          record.steps[3].initializationId,
+          record.steps[4].initializationId,
+        )
+        assert.equal(record.steps[4].continues, false)
+        const ordered = record.steps.flatMap((s) => [
+          s,
+          ...(s.phase === 'success' ? record.supplements : []),
+        ])
+        for (const video of record.videos) {
+          assert.deepEqual(
+            video.stepIds,
+            ordered
+              .filter((s) => s.branchId === video.branchId)
+              .map((s) => s.id),
+          )
+          for (const step of ordered.filter(
+            (s) => s.branchId === video.branchId,
+          ))
+            assert.equal(step.video, video.file)
+        }
+        if (walkthrough.continuousHomeReturn) {
+          assert.ok(calls.indexOf('success') < calls.indexOf('app-home'))
+          assert.ok(calls.indexOf('home-png') < calls.indexOf('close'))
+          assert.equal(record.supplements[0].result.final.unread, false)
+          assert.equal(
+            record.supplements[0].result.inspection.body,
+            'A new body',
+          )
+          assert.equal(record.supplements[0].predecessorId, record.steps[3].id)
+          assert.notEqual(record.supplements[0].file, record.steps[3].file)
+        }
+        const serialized = JSON.parse(JSON.stringify(record))
+        await writeTaskIndex(root, {
+          task: { title: '<unsafe>', goal: 'Review' },
+          runs: [serialized],
+        })
+        const html = await readFile(join(root, 'index.html'), 'utf8')
+        assert.ok(html.includes('&lt;unsafe&gt;'))
+        assert.ok(html.includes('overflow-wrap:anywhere'))
+        for (const step of ordered) {
+          assert.ok(html.includes(step.file))
+          assert.ok(html.includes(step.contextId))
+          assert.ok(html.includes(step.branchId))
+          assert.ok(html.includes(step.initializationId))
+          assert.ok(html.includes(step.video))
+        }
+        assert.ok(html.includes('Reset: independent failure initialization'))
+        if (walkthrough.continuousHomeReturn)
+          assert.ok(
+            html.indexOf('Continuous Home return:') <
+              html.indexOf('<h2>failure'),
+          )
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('reaction action opens the target already observed on Home', async () => {
+  let url = 'https://localhost/'
+  const clicked = []
+  const page = {
+    url: () => url,
+    waitForLoadState: () => Promise.resolve(),
+    waitForURL: () => Promise.resolve(),
+    evaluate: () => Promise.resolve(true),
+    screenshot: () => Promise.resolve(),
+    locator: (selector) => ({
+      first() {
+        return this
+      },
+      waitFor: () => Promise.resolve(),
+      click: () => {
+        clicked.push(selector)
+        url = 'https://localhost/a/observed-target'
+      },
+    }),
+  }
+  const result = await captureStep({
+    page,
+    action: { kind: 'clickUnreadArtifact' },
+    baseUrl: 'https://localhost',
+    session: {},
+    state: { initial: { artifactId: 'observed-target' } },
+    screenshot: {},
+  })
+  assert.equal(result.clicked.destination, '/a/observed-target')
+  assert.ok(clicked[0].includes('/a/observed-target'))
+})

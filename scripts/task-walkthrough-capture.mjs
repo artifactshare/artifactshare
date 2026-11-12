@@ -1,3 +1,5 @@
+import { evidenceVersion } from './walkthrough-evidence.mjs'
+import { randomUUID } from 'node:crypto'
 import { walkthroughCliEnvironment } from './lib/walkthrough-cli-environment.mjs'
 export { walkthroughCliEnvironment } from './lib/walkthrough-cli-environment.mjs'
 import { execFile } from 'node:child_process'
@@ -170,7 +172,12 @@ async function signIn(baseUrl, persona, scenario) {
     throw new Error(
       `dev sign-in failed for ${persona}/${scenario}: HTTP ${response.status}`,
     )
-  return { ...body, cookies, cookieHeader: cookieHeader(cookies) }
+  return {
+    ...body,
+    cookies,
+    cookieHeader: cookieHeader(cookies),
+    initializationId: randomUUID(),
+  }
 }
 
 function artifactIdFor(session, index) {
@@ -224,18 +231,27 @@ async function collectPageEvidence(page, failedRequests) {
   return { notifications, frames, failedRequests }
 }
 
-async function writeTaskIndex(outDir, record) {
+export async function writeTaskIndex(outDir, record) {
   const rows = record.runs
     .flatMap((run) =>
-      run.steps.map((step) => ({ ...step, viewport: run.viewport })),
+      run.steps
+        .flatMap((step) => [
+          step,
+          ...(step.phase === 'success' ? (run.supplements ?? []) : []),
+        ])
+        .map((step) => ({ ...step, viewport: run.viewport })),
     )
     .map(
       (
         step,
-      ) => `<article><h2>${htmlEscape(step.phase)} · ${htmlEscape(step.viewport)}</h2>
+      ) => `<article><h2>${htmlEscape(step.phase ?? step.purpose)} · ${htmlEscape(step.viewport)}</h2>
 <p>${htmlEscape(step.description)}</p>
-${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.phase} ${step.viewport}`)}">` : ''}
-<details><summary>裏取りデータ</summary><pre>${htmlEscape(JSON.stringify(step.evidence, null, 2))}</pre></details></article>`,
+<p>Branch: ${htmlEscape(step.branch)} (${htmlEscape(step.branchId)}) · Context: ${htmlEscape(step.contextId)} · Initialization: ${htmlEscape(step.initializationId)}<br>
+${htmlEscape(step.continues ? 'Continues from ' + step.predecessorId : 'Reset: ' + step.resetReason)} · Step: ${htmlEscape(step.id)}
+<a href="${htmlEscape(step.video)}">Matching branch video</a></p>
+${step.result ? `<pre>Continuous Home return: ${htmlEscape(JSON.stringify(step.result, null, 2))}</pre>` : ''}
+${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.phase ?? step.purpose} ${step.viewport}`)}">` : ''}
+<details><summary>裏取りデータ</summary><pre>${htmlEscape(JSON.stringify(step.evidence ?? step.result, null, 2))}</pre></details></article>`,
     )
     .join('\n')
   const videos = record.runs
@@ -246,7 +262,7 @@ ${step.file ? `<img src="${htmlEscape(step.file)}" alt="${htmlEscape(`${step.pha
       ),
     )
     .join('')
-  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p><h2>動画</h2><ul>${videos}</ul>${rows}</html>`
+  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p><p>Capture: ${htmlEscape(record.captureId)} · Evidence version: ${htmlEscape(record.evidenceVersion)}<br>Setup initialization: ${htmlEscape(record.setup?.initializationId)} · ${htmlEscape(record.setup?.reason)} · Scenario: ${htmlEscape(record.scenario)}</p><h2>動画</h2><ul>${videos}</ul>${rows}</html>`
   await writeFile(join(outDir, 'index.html'), html)
 }
 
@@ -657,7 +673,8 @@ async function applyAction({
     action.kind === 'clickArtifact' ||
     action.kind === 'clickUnreadArtifact'
   ) {
-    const artifactId = artifactIdFor(session, state.artifactIndex)
+    const artifactId =
+      state.initial?.artifactId ?? artifactIdFor(session, state.artifactIndex)
     const baseSelector = `main a[href="/a/${artifactId}"]`
     const selector =
       action.kind === 'clickUnreadArtifact'
@@ -758,7 +775,72 @@ async function applyAction({
   return cliEvidence ? { cli: cliEvidence } : {}
 }
 
-async function captureRun({
+export async function observeReactionRow(page, artifactId, expectedUnread) {
+  const href = `/a/${artifactId}`
+  const row = page.locator(`main a[href="${href}"]`).first()
+  await row.waitFor({ state: 'visible' })
+  const text = await row.innerText()
+  const label = (await row.getAttribute('aria-label')) ?? ''
+  const unread = /Unread|未読/u.test(label)
+  const commentIndicators = []
+  // Exclude the artifact title and composite containers: observe the actual
+  // translated comment badge/preview label, including the mobile preview.
+  for (const indicator of await row
+    .locator('span:not([title]):not(:has(*))')
+    .all()) {
+    const content = (await indicator.innerText()).trim()
+    if (
+      /^(?:New comment|[0-9]+\+? new comments?|新着コメント(?: [0-9]+\+?件)?)$/iu.test(
+        content,
+      ) &&
+      (await indicator.isVisible())
+    )
+      commentIndicators.push(content)
+  }
+  const newComments = commentIndicators.length > 0
+  if (expectedUnread ? !unread || !newComments : unread || newComments)
+    throw new Error(
+      expectedUnread
+        ? 'Initial target must show unread comments'
+        : 'Returned Home target remains unread',
+    )
+  return {
+    artifactId,
+    href,
+    visible: true,
+    unread,
+    newComments,
+    commentIndicators,
+    text: redactEvidenceText(text),
+    label,
+  }
+}
+
+export async function returnHomeAndObserve(page, baseUrl, initial) {
+  if (await isSheetVisible(page)) await page.keyboard.press('Escape')
+  const selector =
+    'a[href="/"][aria-label="Artifact Share home"], a[href="/"][aria-label="Artifact Share のホーム"]'
+  const link = page.locator(selector).first()
+  await link.waitFor({ state: 'visible' })
+  await Promise.all([
+    page.waitForURL(new URL('/', baseUrl).toString()),
+    link.click(),
+  ])
+  // The old Viewer has no Home row. Its visible row is rendered by the new Home loader.
+  const final = await observeReactionRow(page, initial.artifactId, false)
+  return {
+    initial,
+    final,
+    navigation: {
+      selector,
+      url: redactEvidenceUrl(page.url()),
+      kind: 'app-link',
+    },
+    status: 'passed',
+  }
+}
+
+export async function captureRun({
   browser,
   walkthrough,
   task,
@@ -770,11 +852,17 @@ async function captureRun({
   session,
   tempDir,
   sharedState,
+  initialize = signIn,
+  capture = captureStep,
+  apply = applyAction,
 }) {
   const videoDir = join(outDir, 'video')
   await createCaptureOutput(outputRoot, videoDir)
   let activePhase = null
   const videos = []
+  const boundaries = []
+  const supplements = []
+  let previous = null
   const openBranch = async (branchSession, branchName) => {
     const context = await browser.newContext({
       viewport: VIEWPORTS[viewport],
@@ -785,6 +873,21 @@ async function captureRun({
         'X-ArtifactShare-Dev-Screen-State': walkthrough.scenario,
       },
       permissions: ['clipboard-read', 'clipboard-write'],
+    })
+    const identity = {
+      branch: branchName,
+      branchId: randomUUID(),
+      contextId: randomUUID(),
+      initializationId: branchSession.initializationId,
+      video: `video/${viewport}-${branchName}.webm`,
+    }
+    boundaries.push({
+      ...identity,
+      reason:
+        branchName === 'success'
+          ? 'viewport initialization'
+          : 'independent failure initialization',
+      scenario: walkthrough.scenario,
     })
     await context.addCookies(
       branchSession.cookies.map((cookie) => ({ ...cookie, url: baseUrl })),
@@ -831,7 +934,15 @@ async function captureRun({
           status: response.status(),
         })
     })
-    return { branchName, closed: false, context, page, phaseFailures }
+    return {
+      branchName,
+      identity,
+      stepIds: [],
+      closed: false,
+      context,
+      page,
+      phaseFailures,
+    }
   }
   const closeBranch = async (branch) => {
     if (branch.closed) return
@@ -840,7 +951,7 @@ async function captureRun({
     branch.closed = true
     const file = `video/${viewport}-${branch.branchName}.webm`
     await rename(await video.path(), join(outDir, file))
-    videos.push({ branch: branch.branchName, file })
+    videos.push({ ...branch.identity, file, stepIds: branch.stepIds })
   }
 
   let activeSession = session
@@ -853,7 +964,7 @@ async function captureRun({
       activePhase = step.phase
       if (step.phase === 'failure') {
         await closeBranch(branch)
-        activeSession = await signIn(
+        activeSession = await initialize(
           baseUrl,
           persona.auth,
           walkthrough.scenario,
@@ -862,7 +973,7 @@ async function captureRun({
         runState.artifactIndex =
           walkthrough.failureArtifactIndex ?? sharedState.artifactIndex
         if (walkthrough.failureStart)
-          await applyAction({
+          await apply({
             action: walkthrough.failureStart,
             page: branch.page,
             baseUrl,
@@ -872,7 +983,7 @@ async function captureRun({
           })
       }
       const file = `${String(index + 1).padStart(2, '0')}-${step.phase}-${viewport}.png`
-      const actionEvidence = await captureStep({
+      const actionEvidence = await capture({
         action: step.action,
         page: branch.page,
         baseUrl,
@@ -881,7 +992,39 @@ async function captureRun({
         tempDir,
         screenshot: { path: join(outDir, file), fullPage: true },
       })
+      if (walkthrough.continuousHomeReturn && step.phase === 'start')
+        runState.initial = await observeReactionRow(
+          branch.page,
+          artifactIdFor(activeSession, runState.artifactIndex),
+          true,
+        )
+      if (walkthrough.continuousHomeReturn && step.phase === 'start')
+        actionEvidence.initial = runState.initial
+      if (walkthrough.continuousHomeReturn && step.phase === 'success') {
+        const body = await branch.page
+          .locator(step.action.selector)
+          .first()
+          .innerText()
+        if (!body.trim()) throw new Error('New comment body is empty')
+        actionEvidence.inspected.body = redactEvidenceText(body)
+      }
+      const lineage = () => {
+        const item = {
+          ...branch.identity,
+          id: randomUUID(),
+          predecessorId: previous?.id ?? null,
+          continues: previous?.branchId === branch.identity.branchId,
+          resetReason:
+            previous?.branchId === branch.identity.branchId
+              ? null
+              : boundaries.at(-1).reason,
+        }
+        previous = item
+        branch.stepIds.push(item.id)
+        return item
+      }
       steps.push({
+        ...lineage(),
         phase: step.phase,
         description: step.description,
         file,
@@ -894,8 +1037,42 @@ async function captureRun({
           )),
         },
       })
+      if (walkthrough.continuousHomeReturn && step.phase === 'success') {
+        const result = await returnHomeAndObserve(
+          branch.page,
+          baseUrl,
+          runState.initial,
+        )
+        const supplementFile = `supplement-home-read-${viewport}.png`
+        const animation = await waitForSheetAnimations(branch.page)
+        if (animation.status !== 'completed')
+          throw new Error('Home screenshot animations did not settle')
+        await branch.page.screenshot({
+          path: join(outDir, supplementFile),
+          fullPage: true,
+        })
+        supplements.push({
+          ...lineage(),
+          purpose: 'home-read',
+          description: 'Continuous return to Home',
+          file: supplementFile,
+          result: {
+            ...result,
+            inspectionStepId: steps.at(-1).id,
+            inspection: actionEvidence.inspected,
+          },
+        })
+      }
     }
-    return { viewport, status: 'success', videos, steps }
+    // Supplements are ordered after the success PNG, before the failure reset.
+    return {
+      viewport,
+      status: 'success',
+      videos,
+      boundaries,
+      steps,
+      supplements,
+    }
   } finally {
     await closeBranch(branch)
   }
@@ -948,6 +1125,7 @@ async function captureTaskWalkthroughsLocked({
   await createCaptureOutput(outputRoot, rootDir)
   await createCaptureOutput(outputRoot, tempDir)
   const manifest = []
+  const captureId = randomUUID()
   try {
     for (const taskId of selected) {
       const walkthrough = taskWalkthroughs.find(
@@ -958,7 +1136,19 @@ async function captureTaskWalkthroughsLocked({
       const session = await signIn(baseUrl, persona.auth, walkthrough.scenario)
       const outDir = join(rootDir, taskId)
       await createCaptureOutput(outputRoot, outDir)
-      const record = { task, persona, scenario: walkthrough.scenario, runs: [] }
+      const record = {
+        captureId,
+        evidenceVersion,
+        setup: {
+          initializationId: session.initializationId,
+          reason: 'setup sign-in',
+          scenario: walkthrough.scenario,
+        },
+        task,
+        persona,
+        scenario: walkthrough.scenario,
+        runs: [],
+      }
       const sharedState = {
         artifactIndex: walkthrough.artifactIndex,
         cliArtifactIds: [],
@@ -1036,7 +1226,14 @@ async function captureTaskWalkthroughsLocked({
   await writeFile(
     join(rootDir, 'manifest.json'),
     JSON.stringify(
-      { generatedAt: new Date().toISOString(), baseUrl, head, tasks: manifest },
+      {
+        evidenceVersion,
+        captureId,
+        generatedAt: new Date().toISOString(),
+        baseUrl,
+        head,
+        tasks: manifest,
+      },
       null,
       2,
     ),

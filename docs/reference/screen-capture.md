@@ -13,7 +13,7 @@ The task data also owns its selection criteria and update procedure. Run `pnpm c
 ## Task walkthroughs
 
 Start the full development topology, then capture one registered task or the
-four champion-loop tasks. The command refuses to create output unless the app,
+five champion-loop tasks. The command refuses to create output unless the app,
 sandbox, built CLI, and dependency-optimization convergence checks all pass.
 
 ```sh
@@ -197,3 +197,105 @@ done
 ## Retries
 
 A capture that fails only because the screen's ready condition timed out before any interaction ran (`readiness_timeout`) is retried up to `SCREEN_CAPTURE_RETRIES` times (an integer from 0 to 10; default 2; `0` disables). Each retry starts a new browser context and is logged to stderr as `capture retry n/m: <screen>/<state>/<viewport>/<theme>/<locale> [readiness_timeout]: <message>`. A capture that needed retries records `attempts` in `manifest.json` (on success and on final failure), and the end-of-run summary counts captures that were retried (once per capture, whatever the number of attempts). A readiness timeout after an interaction, and every other failure kind, is reported at once.
+
+## Walkthrough provenance and continuous reactions
+
+Fresh walkthrough manifests and evidence use `evidenceVersion: 1` and the same
+opaque capture-local `captureId`. A successful scenario sign-in creates an
+initialization identity; a scenario header alone does not establish a reset.
+Setup sign-in is recorded separately. Each viewport has ordered success and
+independent failure/recovery boundaries, each with its own initialization,
+browser context and branch identity. These are random local identifiers, never
+authentication session identifiers or credentials.
+
+The seven phases remain unchanged. Every phase PNG and supplemental PNG records
+its step identity, predecessor, continuity or reset reason, and matching branch
+video. Videos list their steps. The review HTML displays these fields beside each
+image. The first step in each viewport has no predecessor and explicitly starts
+a newly initialized viewport. The failure step follows the successful branch's
+last observation but explicitly resets context and initialization.
+
+Only `review-new-reactions` adds a supplemental Home result after the original
+comment-body success PNG. It observes a visible target row with both unread and
+new-comment indicators, inspects nonempty marked comment content, clicks the
+Viewer's own Home link, and observes the same visible target row without either
+indicator. The new Home route and its target row rendered from the Home loader
+are readiness conditions; no delay or retry stands in for them. A missing row,
+remaining unread indicator, or missing comment body fails capture. A target
+disappearing from an unread-only list would not count as read: this journey uses
+unfiltered Home. Failure/recovery still signs in and reseeds independently.
+
+All selected walkthroughs require fresh provenance, not only reactions. Old
+captures remain historical evidence; do not fill unknown fields or overwrite an
+archive. The validator rejects old evidence with this recapture instruction:
+
+```sh
+pnpm walkthroughs:capture -- --task <task-id> --label <fresh-label>
+```
+
+The validator checks lineage, observations, image purposes and containment,
+video references, and fixed HEAD before either critique layer runs. Supplemental
+images receive containment checks even when copy-only selection excludes them.
+Both default layers and combined mode receive labeled observations, PNGs and
+branch/video associations. Reviewers must inspect the actual Home/body result
+and boundaries; a newly seeded unread failure fixture is independent evidence.
+Schema equality does not authenticate pixels or prove a DOM assertion ran.
+Copy-only input without walkthrough images cannot support continuous success.
+
+### Coordinator acceptance after factory completion
+
+Fixed checks use synthetic Node page doubles and temporary files; they do not
+start the app or invoke models. Before Ready, the coordinator must independently
+complete the following real-app and display checks at the clean fixed candidate.
+Do not bypass the dirty-checkout or server-HEAD guards.
+
+```sh
+pnpm dev:setup
+pnpm db:apply:local
+pnpm --filter @artifactshare/cli build
+# In a separate terminal at the same clean candidate:
+pnpm dev
+# With that topology running:
+pnpm walkthroughs:capture -- --champion-loop --label boundary-healthy
+capture_output_root="$(node --input-type=module -e 'import { screenCaptureOutputRoot } from "./scripts/screen-capture-output.mjs"; console.log(screenCaptureOutputRoot())')"
+pnpm critique:tasks -- --walkthrough-root "$capture_output_root/boundary-healthy" --task review-new-reactions --source scripts/task-walkthrough-capture.mjs --source scripts/task-walkthroughs.mjs --source scripts/task-critique.mjs --dry-run
+```
+
+Repeat the last command with `--provider codex` to inspect attached image
+arguments. Confirm both default prompts and combined input contain the
+supplemental observations/images and video boundaries. Run the normal default
+critique by removing `--dry-run`; models are coordinator work only.
+
+Inspect all five tasks' generated HTML at 1440×900 and 390×844. Verify readable
+per-image identities/reset reasons, the supplemental Home result before failure,
+the preserved body success image, and usable matching video links. Provide
+desktop/mobile captures of this generated display as additional review material.
+This surface has no product screen-ledger ID. No unrelated product recapture is
+required; markup tests alone cannot establish readability.
+
+For the negative control, use a disposable local checkout derived from the
+candidate. Temporarily change only product source to preserve the existing
+comment seen-through boundary in the shared recency upsert. Both
+`recordViewerRecency` and subsequent view recording can advance it; disabling
+only one caller is not sufficient evidence. Record the local-only fault diff
+and clean fault commit SHA, restart topology there, and run:
+
+```sh
+pnpm walkthroughs:capture -- --task review-new-reactions --label boundary-fault
+```
+
+Through existing local storage tooling, record the target/user comment boundary
+and latest relevant non-self comment timestamp before and after the visit.
+Correlate those values with the same artifact's Home row. The fault must retain
+a boundary behind that comment, successfully inspect its body, then exit
+nonzero on the remaining-unread assertion. Startup, fixture, navigation and
+revision failures do not qualify. Record reached viewports; when desktop fails
+first, mobile was not reached.
+
+Stop fault topology, restore the healthy candidate (never merge or publish the
+fault), restart and recapture reactions with a fresh label. Record candidate
+and fault SHAs, exact commands, exit statuses, before/after boundaries, unread
+observations, fault diff and restoration, clean healthy HEAD, display/input
+inspection results and limitations. Healthy evidence must cover both viewports.
+The harness's self-reported result alone is insufficient acceptance evidence;
+do not claim guaranteed reviewer conclusions or unmeasured time savings.

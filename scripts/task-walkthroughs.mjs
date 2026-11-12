@@ -187,6 +187,7 @@ export const taskWalkthroughs = [
   },
   {
     taskId: 'review-new-reactions',
+    continuousHomeReturn: true,
     scenario: 'recent/content-rich',
     artifactIndex: 1,
     steps: [
