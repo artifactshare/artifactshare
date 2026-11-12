@@ -549,10 +549,14 @@ test.each(['First', 'Second'])(
 )
 
 test('resolution messages are chunked for more than 100 comments', async () => {
-  await fixture('<p>Unique words</p>')
+  const doc = await fixture('<p>Unique words</p>')
+  // All 205 comments resolve; the first open thread covers the 204 resolved
+  // threads, so wrapRange retains their real ranges but skips visible paint.
+  // Dedicated overlap and large-document/SVG tests retain rendering coverage.
   send('comment-highlights', {
     highlights: Array.from({ length: 205 }, (_, index) => ({
       threadId: `thread-${index}`,
+      status: index === 0 ? 'open' : 'resolved',
       quotedText: 'Unique words',
       prefixText: '',
       suffixText: '',
@@ -565,10 +569,21 @@ test('resolution messages are chunked for more than 100 comments', async () => {
       ) as AnchorResolutionMessage[]
       expect(batches.map((m) => m.results.length)).toEqual([100, 100, 5])
       expect(new Set(batches.map((m) => m.generation)).size).toBe(3)
+      const resolved = batches.flatMap((m) => m.results)
+      expect(resolved.map((r) => r.threadId)).toEqual(
+        Array.from({ length: 205 }, (_, index) => `thread-${index}`),
+      )
+      expect(resolved.every((r) => r.state === 'attached')).toBe(true)
     },
-    // 205 highlights take about 9 s locally and roughly twice that on CI runners.
     { timeout: 25000 },
   )
+  expect(doc.querySelectorAll('.ash-comment-highlight-badge')).toHaveLength(1)
+  expect(
+    doc
+      .querySelector('.ash-comment-highlight-badge')
+      ?.getAttribute('data-thread-id'),
+  ).toBe('thread-0')
+  expect(registry(doc).size).toBe(1)
 }, 30000)
 
 test.each([false, true])(
