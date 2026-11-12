@@ -705,6 +705,15 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               failure: 'aborted',
             },
           ])
+          assert.deepEqual(diagnostic.evidence.lateOriginFailures, {
+            success: [
+              {
+                url: 'https://localhost/late-success?t=%5Bredacted%5D',
+                method: 'POST',
+                failure: 'aborted',
+              },
+            ],
+          })
           assert.equal(diagnostic.status, 'failed')
           assert.equal(diagnostic.final.visible, fault !== 'missing')
           if (fault !== 'missing') assert.equal(diagnostic.final.unread, true)
@@ -789,6 +798,26 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
           assert.notEqual(record.supplements[0].file, record.steps[3].file)
         }
         const serialized = JSON.parse(JSON.stringify(record))
+        if (walkthrough.continuousHomeReturn) {
+          assert.deepEqual(serialized.supplements[0].evidence, {
+            failedRequests: [
+              {
+                url: 'https://localhost/home-return?t=%5Bredacted%5D',
+                method: 'POST',
+                failure: 'aborted',
+              },
+            ],
+            lateOriginFailures: {
+              success: [
+                {
+                  url: 'https://localhost/late-success?t=%5Bredacted%5D',
+                  method: 'POST',
+                  failure: 'aborted',
+                },
+              ],
+            },
+          })
+        }
         await writeTaskIndex(root, {
           task: { title: '<unsafe>', goal: 'Review' },
           runs: [serialized],

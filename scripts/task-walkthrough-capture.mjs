@@ -1085,6 +1085,20 @@ export async function captureRun({
       })
       if (walkthrough.continuousHomeReturn && step.phase === 'success') {
         activePhase = 'home-read'
+        const requestEvidence = () => ({
+          failedRequests: [...branch.phaseFailures(activePhase)],
+          lateOriginFailures: Object.fromEntries(
+            steps
+              .filter((prior) => prior.branchId === branch.identity.branchId)
+              .map((prior) => [
+                prior.phase,
+                branch
+                  .phaseFailures(prior.phase)
+                  .slice(prior.evidence.failedRequests.length),
+              ])
+              .filter(([, failures]) => failures.length > 0),
+          ),
+        })
         let result
         try {
           result = await returnHomeAndObserve(
@@ -1107,9 +1121,7 @@ export async function captureRun({
             url: redactEvidenceUrl(branch.page.url()),
             error: redactEvidenceText(error.message),
             file: null,
-            evidence: {
-              failedRequests: [...branch.phaseFailures(activePhase)],
-            },
+            evidence: requestEvidence(),
           }
           try {
             await branch.page.screenshot({
@@ -1143,10 +1155,7 @@ export async function captureRun({
           purpose: 'home-read',
           description: 'Continuous return to Home',
           file: supplementFile,
-          evidence: await collectPageEvidence(
-            branch.page,
-            branch.phaseFailures(activePhase),
-          ),
+          evidence: requestEvidence(),
           result: {
             ...result,
             inspectionStepId: steps.at(-1).id,

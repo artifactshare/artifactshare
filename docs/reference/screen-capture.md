@@ -233,6 +233,12 @@ visible and the owned target must be absent from recent file rows. Capture rejec
 a mismatched setup and records these observations in the failure evidence. A plain
 sidebar title is not a recent-reaction cue. Recovery uses the ordinary Comments button.
 
+Request failures are attributed to the phase that initiated the request. Each
+screenshot's `failedRequests` snapshot stays unchanged after collection. The Home
+supplement and failed-return diagnostic retain failures received since those
+snapshots in `lateOriginFailures`, grouped by their original phase; these are not
+Home-origin requests or evidence that the earlier screenshot already showed a failure.
+
 All selected walkthroughs require fresh provenance, not only reactions. Old
 captures remain historical evidence; do not fill unknown fields or overwrite an
 archive. The validator rejects old evidence with this recapture instruction:
