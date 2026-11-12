@@ -1,6 +1,5 @@
-import { CommentSyncContext } from './a.$id/+components/comment-sync-context'
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
-import { useCallback, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
@@ -19,10 +18,6 @@ import { InlineCommentPopover } from './a.$id/+components/inline-comment-popover
 import { CommentPageSessionContext } from './a.$id/+components/use-comment-page'
 import { CommentPanel } from './a.$id/+components/comment-panel'
 import { useViewerComments } from './a.$id/+components/viewer-shell'
-import {
-  patchCommentThreads,
-  type CommentThreadPatch,
-} from './a.$id/+components/comment-history'
 
 const locale = vi.hoisted(() => ({ value: 'en' as 'en' | 'ja' }))
 vi.mock('~/hooks/use-t', async () => {
@@ -79,38 +74,41 @@ function Harness({
   initialThreads?: CommentThreadView[]
   selectedMessageId?: string
 }) {
-  const [threads, setThreads] = useState(initialThreads)
+  const comments = useViewerComments({
+    artifactId: 'synthetic-artifact',
+    currentUserId: 'reviewer',
+    currentVersionId: null,
+    framePresent: false,
+    initialThreads,
+    targetCommentId: selectedMessageId ? 'thread' : null,
+    liveEnabled: false,
+  })
   const returnFocus = useRef<HTMLElement | null>(null)
-  const change = useCallback(
-    (incoming: ReadonlyArray<CommentThreadView>, patch?: CommentThreadPatch) =>
-      setThreads((current) =>
-        patchCommentThreads(current, incoming, patch ?? {}),
-      ),
-    [],
-  )
   return (
     <TooltipProvider>
-      <CommentPanel
-        shareableId="synthetic-artifact"
-        viewerUserId="reviewer"
-        threads={threads}
-        onThreadsChange={change}
-        isCurrentShareableId={() => true}
-        open
-        showNewThreadComposer={showNewThreadComposer}
-        onOpenChange={() => {}}
-        targetThreadId={selectedMessageId ? 'thread' : null}
-        newCommentMessages={
-          selectedMessageId
-            ? [{ threadId: 'thread', messageId: selectedMessageId }]
-            : []
-        }
-        targetThreadScroll="start"
-        focusTargetOnOpen={false}
-        onTargetFocusConsumed={() => {}}
-        onThreadNavigate={() => {}}
-        returnFocusRef={returnFocus}
-      />
+      <CommentPageSessionContext value={comments.pageSession}>
+        <CommentPanel
+          shareableId="synthetic-artifact"
+          viewerUserId="reviewer"
+          threads={comments.panelThreads}
+          onThreadsChange={comments.replaceThreads}
+          isCurrentShareableId={() => true}
+          open
+          showNewThreadComposer={showNewThreadComposer}
+          onOpenChange={() => {}}
+          targetThreadId={selectedMessageId ? 'thread' : null}
+          newCommentMessages={
+            selectedMessageId
+              ? [{ threadId: 'thread', messageId: selectedMessageId }]
+              : []
+          }
+          targetThreadScroll="start"
+          focusTargetOnOpen={false}
+          onTargetFocusConsumed={() => {}}
+          onThreadNavigate={() => {}}
+          returnFocusRef={returnFocus}
+        />
+      </CommentPageSessionContext>
       <Toaster />
     </TooltipProvider>
   )
@@ -290,12 +288,13 @@ test.each(['new-thread panel', 'text-selection popover'] as const)(
   'a held %s blocks repeat Enter and retains keyboard focus and draft after failure',
   async (surface) => {
     const finishes: Array<(response: Response) => void> = []
-    const fetch = vi.fn(
-      (_input: RequestInfo | URL, _init?: RequestInit) =>
-        new Promise<Response>((resolve) => {
-          finishes.push(resolve)
-        }),
-    )
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'POST')
+        return Promise.resolve(Response.json({ threads: [initial] }))
+      return new Promise<Response>((resolve) => {
+        finishes.push(resolve)
+      })
+    })
     vi.stubGlobal('fetch', fetch)
     const onClose = vi.fn()
     try {
@@ -357,7 +356,12 @@ test.each(['new-thread panel', 'text-selection popover'] as const)(
       await expect
         .element(page.getByText(en['comments.errorSave'], { exact: true }))
         .toBeVisible()
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch).toHaveBeenCalledTimes(
+        surface === 'new-thread panel' ? 2 : 1,
+      )
+      expect(
+        fetch.mock.calls.filter(([, init]) => init?.method === 'POST'),
+      ).toHaveLength(1)
       expect(onClose).not.toHaveBeenCalled()
       expect(
         retainedPendingFocus,
@@ -376,11 +380,16 @@ test.each(['new-thread panel', 'text-selection popover'] as const)(
 )
 
 function holdSuccessfulPosts() {
+  const reads: string[] = []
   const finishes: Array<(response: Response) => void> = []
   const requests: Array<{ intent: string; body: string; anchor?: unknown }> = []
   vi.stubGlobal(
     'fetch',
-    vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        reads.push(String(input))
+        return Promise.resolve(Response.json({ threads: [initial] }))
+      }
       expect(init?.method).toBe('POST')
       requests.push(JSON.parse(String(init?.body)))
       return new Promise<Response>((resolve) => finishes.push(resolve))
@@ -395,7 +404,7 @@ function holdSuccessfulPosts() {
       expect(hasPendingCommentMutation('synthetic-artifact')).toBe(false),
     )
   }
-  return { requests, release, settle }
+  return { requests, reads, release, settle }
 }
 
 test.each([
@@ -476,6 +485,14 @@ test.each([
       await held.settle()
       if (surface === 'panel') await expect.element(draft).toHaveValue('')
       else await expect.element(draft).not.toBeInTheDocument()
+      expect(held.reads).toEqual(
+        surface === 'panel'
+          ? [
+              '/api/shareables/synthetic-artifact/comments',
+              '/api/shareables/synthetic-artifact/comments',
+            ]
+          : [],
+      )
     } finally {
       await held.settle()
     }
@@ -484,12 +501,13 @@ test.each([
 
 test('a held reply blocks repeat Enter and retains keyboard focus and draft after failure', async () => {
   let finish!: (response: Response) => void
-  const fetch = vi.fn(
-    (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Promise<Response>((resolve) => {
-        finish = resolve
-      }),
-  )
+  const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method !== 'POST')
+      return Promise.resolve(Response.json({ threads: [initial] }))
+    return new Promise<Response>((resolve) => {
+      finish = resolve
+    })
+  })
   vi.stubGlobal('fetch', fetch)
   await mount(false)
   await page.getByRole('button', { name: 'Reply', exact: true }).click()
@@ -518,7 +536,10 @@ test('a held reply blocks repeat Enter and retains keyboard focus and draft afte
     .element(page.getByText(en['comments.errorSave'], { exact: true }))
     .toBeVisible()
   await expect.element(reply).not.toHaveAttribute('aria-busy')
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(
+    fetch.mock.calls.filter(([, init]) => init?.method === 'POST'),
+  ).toHaveLength(1)
 })
 
 test.each([
@@ -789,11 +810,9 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-const engines = ['legacy', 'session'] as const
-describe.each(engines)('comment pagination reconciliation (%s)', (engine) => {
+describe('comment pagination reconciliation', () => {
   function ReconciliationHarness() {
     const comments = useViewerComments({
-      commentSync: { mode: engine, build: 'unknown' },
       artifactId: 'synthetic-artifact',
       currentUserId: 'reviewer',
       currentVersionId: null,
@@ -803,26 +822,24 @@ describe.each(engines)('comment pagination reconciliation (%s)', (engine) => {
       framePresent: false,
     })
     return (
-      <CommentSyncContext value={comments.assignment}>
-        <CommentPageSessionContext value={comments.pageSession}>
-          <TooltipProvider>
-            <CommentPanel
-              shareableId="synthetic-artifact"
-              viewerUserId="reviewer"
-              threads={comments.panelThreads}
-              onThreadsChange={comments.replaceThreads}
-              isCurrentShareableId={comments.isCurrentArtifactId}
-              open
-              onOpenChange={comments.changePanelOpen}
-              targetThreadId={comments.state.targetThreadId}
-              targetThreadScroll="start"
-              targetFetchFailed={comments.targetFetchFailed}
-              onRetryTarget={comments.retryTargetFetch}
-              onThreadNavigate={(thread) => comments.targetThread(thread.id)}
-            />
-          </TooltipProvider>
-        </CommentPageSessionContext>
-      </CommentSyncContext>
+      <CommentPageSessionContext value={comments.pageSession}>
+        <TooltipProvider>
+          <CommentPanel
+            shareableId="synthetic-artifact"
+            viewerUserId="reviewer"
+            threads={comments.panelThreads}
+            onThreadsChange={comments.replaceThreads}
+            isCurrentShareableId={comments.isCurrentArtifactId}
+            open
+            onOpenChange={comments.changePanelOpen}
+            targetThreadId={comments.state.targetThreadId}
+            targetThreadScroll="start"
+            targetFetchFailed={comments.targetFetchFailed}
+            onRetryTarget={comments.retryTargetFetch}
+            onThreadNavigate={(thread) => comments.targetThread(thread.id)}
+          />
+        </TooltipProvider>
+      </CommentPageSessionContext>
     )
   }
   async function mountReconciliation() {
@@ -840,7 +857,6 @@ describe.each(engines)('comment pagination reconciliation (%s)', (engine) => {
       threadId,
       clientMutationId: 'synthetic-mutation',
       appliedThreads: true,
-      requiresReconcile: true,
     })
   }
   const otherUpdated = {

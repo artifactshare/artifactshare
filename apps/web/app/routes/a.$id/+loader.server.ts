@@ -1,5 +1,3 @@
-import { commentSyncAssignment } from '~/lib/comment-sync.server'
-import type { CommentSyncAssignment } from '~/lib/comment-sync'
 import {
   selectArtifactVersion,
   isRemovedArtifactVersion,
@@ -80,7 +78,6 @@ import { isDevScreenStateRequest } from '~/services/dev-screen-state.server'
 import type { Route } from './+types/index'
 
 interface ArtifactSummary {
-  commentSync?: CommentSyncAssignment
   entrypointPath?: string | null
   id: string
   storageKey: string
@@ -209,7 +206,6 @@ export type LoaderData =
       kind: 'unsupported'
       user: UserInfo | null
       artifact: {
-        commentSync?: CommentSyncAssignment
         id: string
         storageKey: string
         name: string
@@ -630,7 +626,6 @@ export async function loader({
     revisitContext,
     viewerListStats,
     bridgeAttribution,
-    commentSync,
   ] = await Promise.all([
     isHistoricalVersion
       ? Promise.resolve([] as ReadonlyArray<CommentThreadView>)
@@ -669,12 +664,6 @@ export async function loader({
       : shareable.owner_kind === 'bot'
         ? loadBridgeAttributionOrNull(db, displayedVersion.id)
         : Promise.resolve(null),
-    commentSyncAssignment(env, {
-      ownerWorkspaceId: shareable.workspace_id,
-      authenticated: true,
-      historical: isHistoricalVersion,
-      renderType: detectedRenderType,
-    }),
   ])
   // When the gate fails, the query fails, or the requester is outside the
   // audience, the serialized fields collapse to { false, 0 } so the loader
@@ -821,7 +810,6 @@ export async function loader({
         grants,
         hasDirectGrants,
         comments,
-        commentSync,
         revisitContext,
         showViewerListMetaEntry,
         viewerListCount,
@@ -860,7 +848,6 @@ export async function loader({
         grants,
         hasDirectGrants,
         comments,
-        commentSync,
         ownerEmail: ownerEmail ?? shareable.owner_email,
         availableVisibilities,
       },
@@ -928,7 +915,6 @@ export async function loader({
       grants,
       hasDirectGrants,
       comments,
-      commentSync,
       revisitContext,
       showViewerListMetaEntry,
       viewerListCount,
@@ -1119,12 +1105,6 @@ async function buildLinkAnonymousResponse(
     versions: [] as ReadonlyArray<VersionRow>,
     grants: [] as ReadonlyArray<GrantEntry>,
     comments: [] as ReadonlyArray<CommentThreadView>,
-    commentSync: await commentSyncAssignment(env, {
-      ownerWorkspaceId: shareable.workspace_id,
-      authenticated: false,
-      historical: false,
-      renderType: null,
-    }),
     linkExpiresAt: null,
     linkExpired: false,
     linkSuspended: false,

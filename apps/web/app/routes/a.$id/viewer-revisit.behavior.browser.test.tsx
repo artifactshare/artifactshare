@@ -1,3 +1,4 @@
+import { CommentPageSessionContext } from './+components/use-comment-page'
 import { useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -179,24 +180,26 @@ function Harness({
         data-target-scroll={comments.state.targetThreadScroll}
         data-focus-request={String(comments.focusTargetOnOpen)}
       />
-      <CommentPanel
-        key={artifactId}
-        shareableId={artifactId}
-        viewerUserId="u1"
-        threads={comments.panelThreads}
-        onThreadsChange={comments.replaceThreads}
-        isCurrentShareableId={comments.isCurrentArtifactId}
-        open={comments.state.panelOpen}
-        onOpenChange={comments.changePanelOpen}
-        targetThreadId={comments.state.targetThreadId}
-        targetThreadScroll={comments.state.targetThreadScroll}
-        requestedFilter={comments.requestedFilter}
-        focusTargetOnOpen={comments.focusTargetOnOpen}
-        onTargetFocusConsumed={comments.consumeTargetFocus}
-        newCommentMessages={context.newCommentMessages}
-        onThreadNavigate={(item) => comments.targetThread(item.id)}
-        returnFocusRef={comments.returnFocusRef}
-      />
+      <CommentPageSessionContext value={comments.pageSession}>
+        <CommentPanel
+          key={artifactId}
+          shareableId={artifactId}
+          viewerUserId="u1"
+          threads={comments.panelThreads}
+          onThreadsChange={comments.replaceThreads}
+          isCurrentShareableId={comments.isCurrentArtifactId}
+          open={comments.state.panelOpen}
+          onOpenChange={comments.changePanelOpen}
+          targetThreadId={comments.state.targetThreadId}
+          targetThreadScroll={comments.state.targetThreadScroll}
+          requestedFilter={comments.requestedFilter}
+          focusTargetOnOpen={comments.focusTargetOnOpen}
+          onTargetFocusConsumed={comments.consumeTargetFocus}
+          newCommentMessages={context.newCommentMessages}
+          onThreadNavigate={(item) => comments.targetThread(item.id)}
+          returnFocusRef={comments.returnFocusRef}
+        />
+      </CommentPageSessionContext>
     </TooltipProvider>
   )
 }

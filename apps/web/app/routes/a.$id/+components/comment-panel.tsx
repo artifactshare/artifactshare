@@ -698,13 +698,7 @@ function ThreadCard({
     target && !thread.messages.some((message) => message.id === firstUnreadId)
       ? firstUnreadId
       : undefined
-  const page = useCommentPage(
-    shareableId,
-    thread.id,
-    onThreadsChange,
-    missingSelectedId,
-    onTargetMissing,
-  )
+  const page = useCommentPage(thread.id, missingSelectedId, onTargetMissing)
   const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
   const replyMessages = thread.messages.slice(1)

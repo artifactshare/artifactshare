@@ -6,7 +6,6 @@ export function settleCommentRuntimeMutation(input: {
   clientMutationId?: string
   appliedThreads?: boolean
   threadId?: string
-  requiresReconcile?: boolean
 }) {
   const lease = acquireCommentRuntime(input.shareableId)
   try {

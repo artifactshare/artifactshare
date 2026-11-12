@@ -1,4 +1,3 @@
-import { CommentSyncContext } from './comment-sync-context'
 import {
   acquireCommentRuntime,
   withCommentRuntime,
@@ -7,7 +6,7 @@ import type {
   ChangeCommentThreads,
   CommentThreadPatch,
 } from './comment-history'
-import { useContext, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useRevalidator } from 'react-router'
 import { toast } from 'sonner'
 import { useT } from '~/hooks/use-t'
@@ -51,16 +50,9 @@ export type CommentMutationPayload =
   | { intent: 'delete-message'; messageId: string; threadId?: string }
   | { intent: 'delete-thread'; threadId: string }
 
-export function advanceCommentEpoch(id: string, threadId?: string) {
-  withCommentRuntime(id, (lease) => lease.invalidate(threadId))
-}
 export function hasPendingCommentMutation(id: string) {
   return withCommentRuntime(id, (lease) => lease.hasPending())
 }
-export function hasPendingCommentMutationId(id: string, mutationId: string) {
-  return withCommentRuntime(id, (lease) => lease.hasPending(mutationId))
-}
-
 export function useCommentMutations({
   shareableId,
   isCurrentShareableId,
@@ -72,7 +64,6 @@ export function useCommentMutations({
   onThreadsChange: ChangeCommentThreads
   showNewThreadComposer?: boolean
 }) {
-  const assignment = useContext(CommentSyncContext)
   const { t } = useT()
   const revalidator = useRevalidator()
   const toastPrefix = useId()
@@ -133,7 +124,7 @@ export function useCommentMutations({
         {
           requireJson: true,
           parseErrorJson: true,
-          commentDiagnostic: { assignment, operation: payload.intent },
+          commentDiagnostic: { operation: payload.intent },
         },
       )
       const response = result.response

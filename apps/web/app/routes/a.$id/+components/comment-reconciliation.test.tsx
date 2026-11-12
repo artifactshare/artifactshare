@@ -7,10 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { CommentThreadView } from '~/lib/comments'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
-import {
-  useViewerComments as useLegacyViewerComments,
-  useSessionViewerComments,
-} from './viewer-shell'
+import { useViewerComments } from './viewer-shell'
 import { useCommentPage, CommentPageSessionContext } from './use-comment-page'
 import { useCommentMutations } from './use-comment-mutations'
 
@@ -22,10 +19,7 @@ vi.mock('~/hooks/use-t', async () => {
   const { bindI18n } = await import('~/lib/i18n')
   return { useT: () => bindI18n('en') }
 })
-describe.each([
-  ['legacy', useLegacyViewerComments],
-  ['session', useSessionViewerComments],
-] as const)('%s data owner', (_name, useViewerComments) => {
+describe('comment Session', () => {
   const at = '2026-05-01T00:00:00.000Z'
   function thread(id: string, body = id): CommentThreadView {
     return {
@@ -102,12 +96,7 @@ describe.each([
     )
   }
   function Page({ artifact, target }: { artifact: string; target?: string }) {
-    paging = useCommentPage(
-      artifact,
-      'selected',
-      comments.replaceThreads,
-      target,
-    )
+    paging = useCommentPage('selected', target)
     return null
   }
   let root: Root | undefined
@@ -1796,7 +1785,7 @@ describe.each([
     expect(comments.state.targetThreadId).toBeNull()
   })
 
-  test('only committed artifact changes invalidate refresh scope, including StrictMode and suspended renders', async () => {
+  test('committed navigation creates isolated Session state across StrictMode and suspended renders', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal(
       'fetch',
@@ -1806,11 +1795,6 @@ describe.each([
           : Response.json({ threads: [initial[1]] }),
       ),
     )
-    const scope = refreshScopes.createCommentRefreshScope()
-    const factory = vi
-      .spyOn(refreshScopes, 'createCommentRefreshScope')
-      .mockReturnValue(scope)
-    const mark = vi.spyOn(scope, 'mark')
     const pending = new Promise<never>(() => {})
     root = createRoot(document.createElement('div'))
     const view = (artifact: string, suspend?: Promise<never>) => (
@@ -1826,32 +1810,29 @@ describe.each([
         </Suspense>
       </StrictMode>
     )
-    try {
-      await act(async () => root!.render(view('synthetic-artifact')))
-      await act(async () => reconcile())
-      await until(() => comments.targetFetchFailed)
-      expect(fetch).toHaveBeenCalledTimes(2)
-      mark.mockClear()
-      scope.snapshot().complete()
-      await act(async () => root!.render(view('abandoned-artifact', pending)))
-      expect(mark).not.toHaveBeenCalled()
-      expect(scope.snapshot().has('thread-a')).toBe(false)
-      await act(async () => root!.render(view('synthetic-artifact')))
-      expect(comments.targetFetchFailed).toBe(true)
-      expect(mark).not.toHaveBeenCalled()
-      await act(async () => root!.render(view('different-artifact')))
-      expect(mark).toHaveBeenCalledTimes(1)
-      expect(scope.snapshot().has('thread-a')).toBe(true)
-      expect(comments.state.artifactId).toBe('different-artifact')
-      expect(comments.targetFetchFailed).toBe(false)
-      await act(async () => root!.render(view('different-artifact')))
-      expect(mark).toHaveBeenCalledTimes(1)
-      await act(async () => root!.render(view('synthetic-artifact')))
-      expect(comments.targetFetchFailed).toBe(false)
-      expect(mark).toHaveBeenCalledTimes(2)
-    } finally {
-      mark.mockRestore()
-      factory.mockRestore()
-    }
+    await act(async () => root!.render(view('synthetic-artifact')))
+    await act(async () => reconcile())
+    await until(() => comments.targetFetchFailed)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const committed = comments.pageSession
+    const failed = committed.getSnapshot()
+    await act(async () => root!.render(view('abandoned-artifact', pending)))
+    expect(committed.getSnapshot()).toBe(failed)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    await act(async () => root!.render(view('synthetic-artifact')))
+    expect(comments.targetFetchFailed).toBe(true)
+    expect(comments.pageSession).toBe(committed)
+    await act(async () => root!.render(view('different-artifact')))
+    expect(comments.pageSession).not.toBe(committed)
+    const next = comments.pageSession
+    expect(comments.state.artifactId).toBe('different-artifact')
+    expect(comments.targetFetchFailed).toBe(false)
+    await act(async () => root!.render(view('different-artifact')))
+    expect(comments.pageSession).toBe(next)
+    await act(async () => root!.render(view('synthetic-artifact')))
+    expect(comments.targetFetchFailed).toBe(false)
+    expect(comments.pageSession).not.toBe(committed)
+    expect(comments.pageSession).not.toBe(next)
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 })
