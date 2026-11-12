@@ -1,3 +1,7 @@
+import {
+  evidenceVersion,
+  validateWalkthroughEvidence,
+} from './walkthrough-evidence.mjs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
@@ -167,6 +171,7 @@ function validateInputs(
   let root
   let selected = []
   let entries = []
+  let manifest
   if (options.walkthroughRoot) {
     const rootCandidate = resolve(canonicalRepo, options.walkthroughRoot)
     root = existsSync(rootCandidate)
@@ -187,7 +192,7 @@ function validateInputs(
       resolve(root, 'manifest.json'),
       'Walkthrough manifest.json is required inside the capture root.',
     )
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
     if (!head || manifest.head !== head)
       throw new Error('Walkthrough capture HEAD must match the reviewed HEAD.')
     entries = Array.isArray(manifest.tasks) ? manifest.tasks : []
@@ -214,6 +219,7 @@ function validateInputs(
   const evidencePaths = []
   const imagePaths = []
   const acceptedBehavior = []
+  const walkthroughSummaries = []
   for (const taskId of selected) {
     const currentTask = tasks.find((item) => item.id === taskId)
     const entry = entries.find((item) => item.taskId === taskId)
@@ -226,6 +232,13 @@ function validateInputs(
       `${taskId}: evidence.json required inside the capture root.`,
     )
     const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'))
+    if (
+      manifest.evidenceVersion !== evidenceVersion ||
+      evidence.evidenceVersion !== evidenceVersion
+    )
+      throw new Error(
+        `${taskId}: fresh versioned evidence required. Recapture: pnpm walkthroughs:capture -- --task ${taskId} --label <fresh-label>`,
+      )
     const currentPersona = personas.find(
       (item) => item.id === currentTask.persona,
     )
@@ -264,6 +277,39 @@ function validateInputs(
         )
       }
     }
+    validateWalkthroughEvidence(
+      evidence,
+      manifest,
+      (file) => {
+        const path = validateImagePath(resolve(root, taskId), file, taskId)
+        if (imagePaths.includes(path))
+          throw new Error(
+            `${taskId}: supplemental PNG must be a distinct image.`,
+          )
+        imagePaths.push(path)
+      },
+      (file) => {
+        const path = validatedFilePath(
+          resolve(root, taskId),
+          resolve(root, taskId, file ?? ''),
+          `${taskId}: branch video required inside task root.`,
+        )
+        if (!path.endsWith('.webm'))
+          throw new Error(`${taskId}: branch video must be a webm file.`)
+      },
+    )
+    walkthroughSummaries.push({
+      taskId,
+      runs: evidence.runs.map((run) => ({
+        viewport: run.viewport,
+        boundaries: run.boundaries,
+        videos: run.videos,
+        steps: run.steps.map(
+          ({ evidence: _evidence, description: _description, ...step }) => step,
+        ),
+        supplements: run.supplements,
+      })),
+    })
     evidencePaths.push(evidencePath)
     for (const choice of currentTask.acceptedBehavior ?? [])
       acceptedBehavior.push(`${taskId}: ${choice}`)
@@ -342,6 +388,8 @@ function validateInputs(
     scopeJudgment: options.scopeJudgment,
     selected,
     acceptedBehavior,
+    walkthroughSummaries:
+      options.copyOnly && hasSections ? [] : walkthroughSummaries,
     sourcePaths,
     evidencePaths,
     imagePaths: options.copyOnly && hasSections ? [] : imagePaths,
@@ -400,6 +448,8 @@ function commonPrompt(input) {
           `Tasks: ${input.selected.join(', ')}`,
           `Accepted behavior: ${(input.acceptedBehavior ?? []).join(' | ') || 'none recorded'}`,
           `Evidence JSON: ${input.evidencePaths.join(', ')}`,
+          'Inspect per-image boundaries and matching videos. Failure/recovery is independently initialized. Never infer a reset from display headers. Inspect continuous Home results and supplemental PNGs alongside the original comment-body success; remaining unread state requires investigation. When walkthrough images are excluded, make no continuous-success claim.',
+          `Boundary and continuous-result observations: ${JSON.stringify(input.walkthroughSummaries ?? [])}`,
           ...(input.imagePaths.length
             ? [`Walkthrough PNG files: ${input.imagePaths.join(', ')}`]
             : []),

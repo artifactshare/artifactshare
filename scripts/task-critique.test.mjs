@@ -40,7 +40,12 @@ function fixture({ external = false, taskId = tasks[0].id } = {}) {
   writeFileSync(join(repo, 'source.tsx'), 'export const screen = true\n')
   writeFileSync(
     join(root, 'manifest.json'),
-    JSON.stringify({ head, tasks: [{ taskId: task.id, status: 'success' }] }),
+    JSON.stringify({
+      evidenceVersion: 1,
+      captureId: 'capture',
+      head,
+      tasks: [{ taskId: task.id, status: 'success' }],
+    }),
   )
   const runs = ['desktop', 'mobile'].map((viewport) => ({
     viewport,
@@ -51,9 +56,114 @@ function fixture({ external = false, taskId = tasks[0].id } = {}) {
       return { phase, file, evidence: { url: `https://localhost/${phase}` } }
     }),
   }))
+  for (const run of runs) {
+    run.boundaries = ['success', 'failure-recovery'].map((branch, index) => ({
+      branch,
+      branchId: `${run.viewport}-${branch}`,
+      contextId: `${run.viewport}-context-${index}`,
+      initializationId: `${run.viewport}-init-${index}`,
+      video: `video/${run.viewport}-${branch}.webm`,
+      reason:
+        index === 0
+          ? 'viewport initialization'
+          : 'independent failure initialization',
+      scenario: 'fixture',
+    }))
+    let previous = null
+    for (const [index, step] of run.steps.entries()) {
+      const boundary = run.boundaries[index < 4 ? 0 : 1]
+      Object.assign(step, boundary, {
+        id: `${run.viewport}-step-${index}`,
+        predecessorId: previous?.id ?? null,
+        continues: previous?.branchId === boundary.branchId,
+        resetReason:
+          previous?.branchId === boundary.branchId ? null : boundary.reason,
+      })
+      previous = step
+    }
+    run.supplements = []
+    if (task.id === 'review-new-reactions') {
+      const initial = {
+        artifactId: 'target',
+        href: '/a/target',
+        visible: true,
+        unread: true,
+        newComments: true,
+        commentIndicators: ['New comment'],
+        text: '1 new comment',
+      }
+      const inspection = {
+        selector: '[data-new-comment-thread] [data-new-comment-message]',
+        visible: true,
+        body: 'New comment body',
+      }
+      run.steps[0].evidence.initial = initial
+      run.steps[1].evidence.clicked = { destination: '/a/target' }
+      run.steps[3].evidence = {
+        url: 'https://localhost/a/target',
+        inspected: inspection,
+      }
+      const supplement = {
+        ...run.steps[3],
+        phase: undefined,
+        purpose: 'home-read',
+        id: `${run.viewport}-home`,
+        predecessorId: run.steps[3].id,
+        file: `supplement-home-read-${run.viewport}.png`,
+        result: {
+          initial,
+          final: {
+            ...initial,
+            unread: false,
+            newComments: false,
+            commentIndicators: [],
+            text: 'Target',
+          },
+          inspection,
+          inspectionStepId: run.steps[3].id,
+          status: 'passed',
+          navigation: {
+            kind: 'app-link',
+            selector: 'a[href="/"]',
+            url: 'https://localhost/',
+          },
+        },
+      }
+      run.supplements.push(supplement)
+      run.steps[4].predecessorId = supplement.id
+      writeFileSync(join(root, task.id, supplement.file), 'png')
+    }
+    mkdirSync(join(root, task.id, 'video'), { recursive: true })
+    const ordered = run.steps.flatMap((step) => [
+      step,
+      ...(step.phase === 'success' ? run.supplements : []),
+    ])
+    run.videos = run.boundaries.map((boundary) => {
+      writeFileSync(join(root, task.id, boundary.video), 'video')
+      return {
+        ...boundary,
+        file: boundary.video,
+        stepIds: ordered
+          .filter((s) => s.branchId === boundary.branchId)
+          .map((s) => s.id),
+      }
+    })
+  }
   writeFileSync(
     join(root, task.id, 'evidence.json'),
-    JSON.stringify({ task, persona, runs }),
+    JSON.stringify({
+      evidenceVersion: 1,
+      captureId: 'capture',
+      setup: {
+        initializationId: 'setup',
+        reason: 'setup sign-in',
+        scenario: 'fixture',
+      },
+      scenario: 'fixture',
+      task,
+      persona,
+      runs,
+    }),
   )
   return { repo, root, task, head }
 }
@@ -160,7 +270,12 @@ test('accepts the old external root after moving a checkout with the same HEAD',
   renameSync(root, oldRoot)
   writeFileSync(
     join(oldRoot, 'manifest.json'),
-    JSON.stringify({ head, tasks: [{ taskId: task.id, status: 'success' }] }),
+    JSON.stringify({
+      evidenceVersion: 1,
+      captureId: 'capture',
+      head,
+      tasks: [{ taskId: task.id, status: 'success' }],
+    }),
   )
   const screenRoot = join(outputRoot, 'screens')
   mkdirSync(screenRoot)
@@ -934,7 +1049,7 @@ test('screen-only main launches one visual reviewer with validated source and al
       assert.match(prompt, /viewer-mobile.png/)
       assert.doesNotMatch(
         prompt,
-        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding/,
+        /Task layer:|eight task dimensions|Evidence JSON:|Walkthrough PNG files:|Every task finding|Inspect per-image boundaries|Boundary and continuous-result observations/,
       )
       if (provider === 'codex')
         assert.deepEqual(
@@ -1157,10 +1272,10 @@ test('walkthrough prompts match the clear-improvement contract for every reviewe
   }
   const expected = {
     visual:
-      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.',
-    task: 'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.',
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nInspect per-image boundaries and matching videos. Failure/recovery is independently initialized. Never infer a reset from display headers. Inspect continuous Home results and supplemental PNGs alongside the original comment-body success; remaining unread state requires investigation. When walkthrough images are excluded, make no continuous-success claim.\nBoundary and continuous-result observations: []\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nVisual layer: inspect every walkthrough and standalone screen PNG plus relevant source. Evaluate screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. A visual finding may be blocker only when the screen responsibility, primary action, or loop progression is broken; otherwise classify proportionally.',
+    task: 'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nInspect per-image boundaries and matching videos. Failure/recovery is independently initialized. Never infer a reset from display headers. Inspect continuous Home results and supplemental PNGs alongside the original comment-body success; remaining unread state requires investigation. When walkthrough images are excluded, make no continuous-success claim.\nBoundary and continuous-result observations: []\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\n\nTask layer: use the task and persona snapshots plus notification, frame/load, failed-request, clipboard, and CLI evidence. Cover all eight dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test the task ledger completion and confirmation claims.',
     combined:
-      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.',
+      'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.\nFirst report capture/environment defects separately from product defects. If the evidence cannot distinguish them, use needs-verification.\nAllowed finding classifications: product-defect, capture-environment-defect, seed-artificial, aesthetic, needs-verification.\nGive every resolved finding one disposition: fix-now or do-not-pursue. Classification identifies the cause; disposition identifies the next action.\nUse fix-now for a reproducible task failure, or a correctness, safety, accessibility, or data-loss problem supported by evidence. For these findings, state the problem and its evidence. Also use fix-now for a change that clearly improves the user experience or UI with a proportional fix; for this case, state the concrete improvement and its evidence: what the user sees or can do differently. Never use do-not-pursue for the task-failure, correctness, safety, accessibility, or data-loss categories: an unverified claim in these categories is needs-verification.\nIf a finding is needs-verification, return NEEDS INPUT without a disposition and state the evidence that must be recaptured or supplied. A capture/environment defect may be do-not-pursue only when the remaining evidence is sufficient to complete the critique.\nUse do-not-pursue for everything else, including verified capture/environment or artificial-seed defects, unsupported preferences, and plausible problems whose improvement is not clear. Record the reason in one sentence. Do not create product remediation work for do-not-pursue findings.\nCheck the task goal and confirmation against accepted product behavior before proposing a finding. An accepted choice is not immune to criticism: report a contradiction, reproducible failure, or new evidence of user harm. Without such evidence, do not reintroduce the same alternative as a new finding.\nWhen only part of a proposed remediation clearly improves the experience, report that part as fix-now and the rest as do-not-pursue, as separate findings with their own evidence.\nEvery task finding must use this causal form: "The user needs to decide X at this moment; therefore information Y exists/is missing." Surface description alone is not a finding.\nReturn NEEDS INPUT instead of guessing when a required file cannot be read or evidence is contradictory.\nTasks: review-new-reactions\nAccepted behavior: Accepted behavior fixture.\nEvidence JSON: captures/evidence.json\nInspect per-image boundaries and matching videos. Failure/recovery is independently initialized. Never infer a reset from display headers. Inspect continuous Home results and supplemental PNGs alongside the original comment-body success; remaining unread state requires investigation. When walkthrough images are excluded, make no continuous-success claim.\nBoundary and continuous-result observations: []\nWalkthrough PNG files: captures/phase.png\nRelevant source: source.tsx\nDispositions of earlier critique rounds follow. Do not re-raise a dispositioned finding, and do not report the reversal of an accepted fix, unless you supply new evidence of user harm or a failure the disposition did not consider. Text or code added by an earlier fix is in scope like any other change.\nDispositions:\nfix-now: repaired the visible label.\nOutput Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes task, viewport, phase, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.\nStandalone screen PNG files: screens/viewer.png\n\nCombined visual and task critique: inspect every attached walkthrough and standalone screen PNG plus relevant source. Cover screen-ledger responsibility, role, primary action, loop progression, vocabulary, hierarchy/density, representative states, next action, and mock drift. Then cover all eight task dimensions for every selected task: user/persona and mediation; purpose; states; cues; feedback; constraints; recovery; proficiency (first-use clarity and routine speed). For agent-mediated work, evaluate the human owner reviewing the result, not the agent executing the command. Explicitly test task-ledger completion and confirmation claims. Keep capture/environment defects separate from product defects and classify each finding with its evidence and disposition.',
   }
   for (const [id, prompt] of Object.entries(expected)) {
     assert.equal(promptFor({ id }, input), prompt)
@@ -1578,4 +1693,215 @@ test('label errors locate an invalid entry in the second capture root', (t) => {
       return true
     },
   )
+})
+
+test('continuous evidence accepts a healthy fixture and rejects individual contract faults before providers', async (t) => {
+  const cases = [
+    [
+      'legacy',
+      (r) => delete r.evidenceVersion,
+      /fresh versioned evidence.*Recapture/i,
+    ],
+    [
+      'capture identity',
+      (r) => (r.captureId = 'other'),
+      /Fresh versioned provenance/,
+    ],
+    [
+      'missing supplement',
+      (r) => (r.runs[0].supplements = []),
+      /supplement required/,
+    ],
+    [
+      'result',
+      (r) => delete r.runs[0].supplements[0].result,
+      /body observation/,
+    ],
+    [
+      'body',
+      (r) => {
+        r.runs[0].steps[3].evidence.inspected.body = ''
+        r.runs[0].supplements[0].result.inspection.body = ''
+      },
+      /body observation/,
+    ],
+    [
+      'wrong artifact',
+      (r) => (r.runs[0].supplements[0].result.final.artifactId = 'other'),
+      /artifact mismatch/,
+    ],
+    [
+      'unread',
+      (r) => (r.runs[0].supplements[0].result.final.unread = true),
+      /DOM observations/,
+    ],
+    [
+      'absent',
+      (r) => (r.runs[0].supplements[0].result.final.visible = false),
+      /DOM observations/,
+    ],
+    [
+      'context',
+      (r) => (r.runs[0].supplements[0].contextId = 'other'),
+      /provenance mismatch/,
+    ],
+    [
+      'initialization',
+      (r) => (r.runs[0].supplements[0].initializationId = 'other'),
+      /provenance mismatch/,
+    ],
+    [
+      'branch',
+      (r) => (r.runs[0].supplements[0].branchId = 'other'),
+      /provenance mismatch/,
+    ],
+    [
+      'predecessor',
+      (r) => (r.runs[0].supplements[0].predecessorId = r.runs[0].steps[0].id),
+      /continuity mismatch/,
+    ],
+    [
+      'reset',
+      (r) => (r.runs[0].supplements[0].continues = false),
+      /continuity mismatch/,
+    ],
+    ['video', (r) => r.runs[0].videos.pop(), /boundaries and videos/],
+    ['video steps', (r) => r.runs[0].videos[0].stepIds.pop(), /Video step/],
+    [
+      'wrong viewport image',
+      (r) => (r.runs[0].supplements[0].file = r.runs[1].supplements[0].file),
+      /image purpose/,
+    ],
+    [
+      'phase image',
+      (r) => (r.runs[0].supplements[0].file = r.runs[0].steps[0].file),
+      /distinct image/,
+    ],
+    [
+      'missing PNG',
+      (r, f) =>
+        unlinkSync(join(f.root, f.task.id, r.runs[0].supplements[0].file)),
+      /PNG required/,
+    ],
+    [
+      'traversal',
+      (r, f) => {
+        writeFileSync(join(f.repo, 'outside.png'), 'png')
+        r.runs[0].supplements[0].file = '../../outside.png'
+      },
+      /PNG required/,
+    ],
+    [
+      'escaping symlink',
+      (r, f) => {
+        const file = join(f.root, f.task.id, r.runs[0].supplements[0].file)
+        writeFileSync(join(f.repo, 'outside.png'), 'png')
+        unlinkSync(file)
+        symlinkSync(join(f.repo, 'outside.png'), file)
+      },
+      /PNG required/,
+    ],
+    [
+      'phase symlink',
+      (r, f) => {
+        const file = join(f.root, f.task.id, r.runs[0].supplements[0].file)
+        unlinkSync(file)
+        symlinkSync(join(f.root, f.task.id, r.runs[0].steps[0].file), file)
+      },
+      /distinct image/,
+    ],
+  ]
+  for (const [name, change, pattern] of cases)
+    await t.test(name, async () => {
+      const f = fixture({ taskId: 'review-new-reactions' })
+      try {
+        const options = {
+          walkthroughRoot: 'captures',
+          sources: ['source.tsx'],
+          taskIds: [f.task.id],
+        }
+        const healthy = validateInputs(options, f)
+        assert.equal(healthy.imagePaths.length, 16)
+        const path = join(f.root, f.task.id, 'evidence.json')
+        const record = JSON.parse(readFileSync(path, 'utf8'))
+        change(record, f)
+        writeFileSync(path, JSON.stringify(record))
+        await assert.rejects(
+          main({
+            argv: ['--walkthrough-root', 'captures', '--source', 'source.tsx'],
+            repo: f.repo,
+            exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+            run: () => assert.fail('invalid evidence reached provider'),
+          }),
+          pattern,
+        )
+      } finally {
+        rmSync(f.repo, { recursive: true, force: true })
+      }
+    })
+})
+
+test('actual default and combined provider inputs include continuous observations, PNGs and branch videos', async () => {
+  const f = fixture({ taskId: 'review-new-reactions' })
+  try {
+    for (const provider of ['claude', 'codex']) {
+      const calls = []
+      await main({
+        argv: [
+          '--walkthrough-root',
+          'captures',
+          '--source',
+          'source.tsx',
+          '--provider',
+          provider,
+        ],
+        repo: f.repo,
+        exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
+        stdout: { write: () => {} },
+        run: (_command, args, options) => {
+          const prompt =
+            provider === 'claude' ? args[args.indexOf('-p') + 1] : options.input
+          calls.push(prompt)
+          for (const viewport of ['desktop', 'mobile']) {
+            assert.match(
+              prompt,
+              new RegExp(`supplement-home-read-${viewport}.png`),
+            )
+            assert.match(
+              prompt,
+              new RegExp(`video/${viewport}-failure-recovery.webm`),
+            )
+            if (provider === 'codex')
+              assert.ok(
+                args.includes(
+                  join(
+                    realpathSync(f.root),
+                    f.task.id,
+                    `supplement-home-read-${viewport}.png`,
+                  ),
+                ),
+              )
+          }
+          assert.match(prompt, /"unread":false/)
+          assert.match(prompt, /New comment body/)
+          assert.match(prompt, /independent failure initialization/)
+          return {
+            status: 0,
+            stdout:
+              provider === 'codex'
+                ? 'Complete'
+                : JSON.stringify({
+                    is_error: false,
+                    subtype: 'success',
+                    result: 'Complete',
+                    permission_denials: [],
+                  }),
+          }
+        },
+      })
+      assert.equal(calls.length, provider === 'claude' ? 2 : 1)
+    }
+  } finally {
+    rmSync(f.repo, { recursive: true, force: true })
+  }
 })

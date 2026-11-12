@@ -187,6 +187,7 @@ export const taskWalkthroughs = [
   },
   {
     taskId: 'review-new-reactions',
+    continuousHomeReturn: true,
     scenario: 'recent/content-rich',
     artifactIndex: 1,
     steps: [
@@ -206,10 +207,14 @@ export const taskWalkthroughs = [
         kind: 'inspect',
         selector: '[data-new-comment-thread] [data-new-comment-message]',
       }),
-      phase('failure', 'Home だけでは反応の対象を特定できない状態を残す', {
-        kind: 'goto',
-        path: '/',
-      }),
+      phase(
+        'failure',
+        'Home のプロジェクト絞り込みで反応の手がかりが見えない状態を残す',
+        {
+          kind: 'goto',
+          path: '/?relation=project',
+        },
+      ),
       phase('recovery', '再訪して通常のコメントボタンから確認し直す', {
         kind: 'gotoArtifactAndClick',
         selector:

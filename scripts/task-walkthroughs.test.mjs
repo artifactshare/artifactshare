@@ -71,7 +71,22 @@ test('new reactions open the count hint and inspect marked content; later steps 
     phase('success').selector,
     '[data-new-comment-thread] [data-new-comment-message]',
   )
+  assert.equal(phase('failure').path, '/?relation=project')
   assert.equal(phase('recovery').kind, 'gotoArtifactAndClick')
   assert.match(phase('recovery').selector, /aria-label="Comments"/)
   assert.match(phase('next').selector, /aria-label="Comments"/)
+})
+
+test('only reactions supplements the original comment-body success before failure', () => {
+  const selected = taskWalkthroughs.filter((item) => item.continuousHomeReturn)
+  assert.deepEqual(
+    selected.map((item) => item.taskId),
+    ['review-new-reactions'],
+  )
+  assert.equal(selected[0].steps[3].phase, 'success')
+  assert.equal(
+    selected[0].steps[3].action.selector,
+    '[data-new-comment-thread] [data-new-comment-message]',
+  )
+  assert.equal(selected[0].steps[4].phase, 'failure')
 })

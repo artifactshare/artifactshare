@@ -520,3 +520,486 @@ test('navigation context replacement is diagnostic and still permits the PNG', a
   })
   assert.equal(fake.events.at(-1), 'screenshot:50')
 })
+
+test('branch orchestration preserves phases, isolation, videos and continuous Home observations', async () => {
+  const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { captureRun, writeTaskIndex } =
+    await import('./task-walkthrough-capture.mjs')
+  const { taskWalkthroughs } = await import('./task-walkthroughs.mjs')
+  const root = await mkdtemp(join(tmpdir(), 'walkthrough-branches-'))
+  try {
+    for (const walkthrough of taskWalkthroughs) {
+      for (const [viewport, fault] of ['desktop', 'mobile'].flatMap((size) =>
+        (walkthrough.continuousHomeReturn
+          ? [null, 'unread', 'missing', 'diagnostic-write']
+          : [null]
+        ).map((problem) => [size, problem]),
+      )) {
+        const calls = []
+        let serial = 0
+        const browser = {
+          newContext: async () => {
+            const contextNumber = ++serial
+            calls.push('context')
+            let url = 'https://localhost/'
+            let returned = false
+            const listeners = {}
+            const request = (name) => ({
+              url: () => `https://localhost/${name}?t=secret`,
+              method: () => 'POST',
+              failure: () => ({ errorText: 'aborted' }),
+            })
+            const lateSuccess = request('late-success')
+            const homeRequest = request('home-return')
+            const locator = (selector) => ({
+              first() {
+                return this
+              },
+              count: () => 0,
+              all: () => [],
+              waitFor: () => {
+                if (
+                  returned &&
+                  fault === 'missing' &&
+                  selector.startsWith('main')
+                )
+                  throw new Error('target row absent')
+              },
+              innerText: () =>
+                selector.includes('data-new-comment')
+                  ? 'A new body'
+                  : returned && !['unread', 'diagnostic-write'].includes(fault)
+                    ? 'Target'
+                    : '1 new comment',
+              getAttribute: () =>
+                returned && !['unread', 'diagnostic-write'].includes(fault)
+                  ? 'Target'
+                  : 'Target Unread',
+              allInnerTexts: () => Promise.resolve([]),
+              locator: (nested) =>
+                nested.startsWith('xpath=')
+                  ? locator('main row')
+                  : {
+                      all: () => [
+                        {
+                          innerText: () =>
+                            !returned ||
+                            ['unread', 'diagnostic-write'].includes(fault)
+                              ? 'New comment'
+                              : '',
+                          isVisible: () => true,
+                        },
+                      ],
+                    },
+              click: () => {
+                calls.push('app-home')
+                listeners.requestfailed(lateSuccess)
+                listeners.request(homeRequest)
+                listeners.requestfailed(homeRequest)
+                returned = true
+                url = 'https://localhost/'
+              },
+            })
+            const videoPath = join(root, `raw-${contextNumber}.webm`)
+            await writeFile(videoPath, 'video')
+            return {
+              addCookies: async () => {},
+              addInitScript: async () => {},
+              close: () => {
+                calls.push('close')
+              },
+              newPage: () => ({
+                locator,
+                on: (event, listener) => {
+                  listeners[event] = listener
+                },
+                startSuccessRequests: () => {
+                  const failed = request('success')
+                  listeners.request(failed)
+                  listeners.requestfailed(failed)
+                  listeners.request(lateSuccess)
+                },
+                frames: () => [],
+                url: () => url,
+                evaluate: () => true,
+                screenshot: async ({ path }) => {
+                  calls.push('home-png')
+                  if (fault === 'diagnostic-write')
+                    throw new Error('diagnostic write failed')
+                  await writeFile(path, 'png')
+                },
+                waitForURL: async () => {},
+                video: () => ({ path: () => videoPath }),
+                setUrl: (value) => {
+                  url = value
+                },
+              }),
+            }
+          },
+        }
+        const session = {
+          cookies: [],
+          initializationId: `${viewport}-init`,
+          workspaceId: 'fixture',
+          userId: 'fixture',
+        }
+        const capturing = captureRun({
+          browser,
+          walkthrough,
+          persona: { auth: 'fixture' },
+          viewport,
+          baseUrl: 'https://localhost',
+          outDir: root,
+          outputRoot: root,
+          session,
+          sharedState: {
+            artifactIndex: walkthrough.artifactIndex,
+            cliArtifactIds: [],
+          },
+          initialize: () => {
+            calls.push('initialize')
+            return { ...session, initializationId: `${viewport}-failure-init` }
+          },
+          apply: () => {
+            calls.push('failure-setup')
+          },
+          capture: async ({ action, page, screenshot }) => {
+            const phase = walkthrough.steps.find(
+              (s) => s.action === action,
+            ).phase
+            calls.push(phase)
+            if (phase === 'failure' && walkthrough.continuousHomeReturn)
+              page.setUrl(`https://localhost${action.path}`)
+            if (phase === 'success' && walkthrough.continuousHomeReturn) {
+              page.setUrl('https://localhost/a/target')
+              page.startSuccessRequests()
+            }
+            await writeFile(screenshot.path, 'png')
+            return phase === 'success'
+              ? { inspected: { selector: action.selector, visible: true } }
+              : {}
+          },
+        })
+        if (fault) {
+          await assert.rejects(
+            capturing,
+            fault === 'missing' ? /target row absent/ : /remains unread/,
+          )
+          assert.ok(calls.includes('success'))
+          assert.ok(calls.includes('app-home'))
+          assert.equal(calls.at(-1), 'close')
+          assert.ok(!calls.includes('initialize'))
+          assert.ok(calls.includes('home-png'))
+          const diagnostic = JSON.parse(
+            await readFile(
+              join(root, `failed-home-return-${viewport}.json`),
+              'utf8',
+            ),
+          )
+          assert.deepEqual(diagnostic.evidence.failedRequests, [
+            {
+              url: 'https://localhost/home-return?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
+          assert.deepEqual(diagnostic.evidence.lateOriginFailures, {
+            success: [
+              {
+                url: 'https://localhost/late-success?t=%5Bredacted%5D',
+                method: 'POST',
+                failure: 'aborted',
+              },
+            ],
+          })
+          assert.equal(diagnostic.status, 'failed')
+          assert.equal(diagnostic.final.visible, fault !== 'missing')
+          if (fault !== 'missing') assert.equal(diagnostic.final.unread, true)
+          assert.equal(diagnostic.inspection.body, 'A new body')
+          assert.equal(
+            diagnostic.file,
+            fault === 'diagnostic-write'
+              ? null
+              : `failed-home-return-${viewport}.png`,
+          )
+          assert.equal(
+            await readFile(join(root, `04-success-${viewport}.png`), 'utf8'),
+            'png',
+          )
+          continue
+        }
+        const record = await capturing
+        assert.deepEqual(
+          record.steps.map((s) => s.phase),
+          [
+            'start',
+            'action',
+            'pending',
+            'success',
+            'failure',
+            'recovery',
+            'next',
+          ],
+        )
+        assert.equal(calls.filter((c) => c === 'context').length, 2)
+        assert.equal(calls.filter((c) => c === 'initialize').length, 1)
+        assert.ok(calls.indexOf('success') < calls.indexOf('close'))
+        assert.ok(calls.indexOf('close') < calls.indexOf('initialize'))
+        assert.ok(calls.indexOf('initialize') < calls.indexOf('failure'))
+        assert.notEqual(record.steps[3].contextId, record.steps[4].contextId)
+        assert.notEqual(
+          record.steps[3].initializationId,
+          record.steps[4].initializationId,
+        )
+        assert.equal(record.steps[4].continues, false)
+        const ordered = record.steps.flatMap((s) => [
+          s,
+          ...(s.phase === 'success' ? record.supplements : []),
+        ])
+        for (const video of record.videos) {
+          assert.deepEqual(
+            video.stepIds,
+            ordered
+              .filter((s) => s.branchId === video.branchId)
+              .map((s) => s.id),
+          )
+          for (const step of ordered.filter(
+            (s) => s.branchId === video.branchId,
+          ))
+            assert.equal(step.video, video.file)
+        }
+        if (walkthrough.continuousHomeReturn) {
+          assert.ok(calls.indexOf('success') < calls.indexOf('app-home'))
+          assert.ok(calls.indexOf('home-png') < calls.indexOf('close'))
+          // Navigation failures belong to their initiation phase. A late
+          // success abort must neither mutate its saved PNG facts nor move Home.
+          assert.deepEqual(record.steps[3].evidence.failedRequests, [
+            {
+              url: 'https://localhost/success?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
+          assert.deepEqual(record.supplements[0].evidence.failedRequests, [
+            {
+              url: 'https://localhost/home-return?t=%5Bredacted%5D',
+              method: 'POST',
+              failure: 'aborted',
+            },
+          ])
+          assert.equal(record.supplements[0].result.final.unread, false)
+          assert.equal(
+            record.supplements[0].result.inspection.body,
+            'A new body',
+          )
+          assert.equal(record.supplements[0].predecessorId, record.steps[3].id)
+          assert.notEqual(record.supplements[0].file, record.steps[3].file)
+        }
+        const serialized = JSON.parse(JSON.stringify(record))
+        if (walkthrough.continuousHomeReturn) {
+          assert.deepEqual(serialized.supplements[0].evidence, {
+            failedRequests: [
+              {
+                url: 'https://localhost/home-return?t=%5Bredacted%5D',
+                method: 'POST',
+                failure: 'aborted',
+              },
+            ],
+            lateOriginFailures: {
+              success: [
+                {
+                  url: 'https://localhost/late-success?t=%5Bredacted%5D',
+                  method: 'POST',
+                  failure: 'aborted',
+                },
+              ],
+            },
+          })
+        }
+        await writeTaskIndex(root, {
+          task: { title: '<unsafe>', goal: 'Review' },
+          runs: [serialized],
+        })
+        const html = await readFile(join(root, 'index.html'), 'utf8')
+        assert.ok(html.includes('&lt;unsafe&gt;'))
+        assert.ok(html.includes('overflow-wrap:anywhere'))
+        for (const step of ordered) {
+          assert.ok(html.includes(step.file))
+          assert.ok(html.includes(step.contextId))
+          assert.ok(html.includes(step.branchId))
+          assert.ok(html.includes(step.initializationId))
+          assert.ok(html.includes(step.video))
+        }
+        assert.ok(html.includes('Reset: independent failure initialization'))
+        assert.ok(html.includes('field-specific fixture refresh'))
+        if (walkthrough.continuousHomeReturn)
+          assert.equal(
+            record.steps[4].evidence.reactionFailure.recentReactionCueVisible,
+            false,
+          )
+        if (walkthrough.continuousHomeReturn) {
+          assert.equal(html.split('&quot;inspectionStepId&quot;').length - 1, 1)
+          assert.ok(
+            html.indexOf('Continuous Home return:') <
+              html.indexOf('<h2>failure'),
+          )
+        }
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('reaction action opens the target already observed on Home', async () => {
+  let url = 'https://localhost/'
+  const clicked = []
+  const page = {
+    url: () => url,
+    waitForLoadState: () => Promise.resolve(),
+    waitForURL: () => Promise.resolve(),
+    evaluate: () => Promise.resolve(true),
+    screenshot: () => Promise.resolve(),
+    locator: (selector) => ({
+      first() {
+        return this
+      },
+      waitFor: () => Promise.resolve(),
+      click: () => {
+        clicked.push(selector)
+        url = 'https://localhost/a/observed-target'
+      },
+    }),
+  }
+  const result = await captureStep({
+    page,
+    action: { kind: 'clickUnreadArtifact' },
+    baseUrl: 'https://localhost',
+    session: {},
+    state: { initial: { artifactId: 'observed-target' } },
+    screenshot: {},
+  })
+  assert.equal(result.clicked.destination, '/a/observed-target')
+  assert.ok(clicked[0].includes('/a/observed-target'))
+})
+
+test('reaction row reads sibling content, combined segments and visible mobile previews', async () => {
+  const { createRequire } = await import('node:module')
+  const { Window } = createRequire(
+    new URL('../apps/web/package.json', import.meta.url),
+  )('happy-dom')
+  const { observeReactionRow } = await import('./task-walkthrough-capture.mjs')
+  const document = new Window().document
+  for (const [markup, expected] of [
+    ['<span>v2 · 2 new comments</span>', true],
+    ['<span><span aria-hidden="true"> · </span>1 new comment</span>', true],
+    [
+      '<span><span aria-hidden="true"> · </span>v2 · 新着コメント 2件</span>',
+      true,
+    ],
+    [
+      '<span hidden>v2 · 2 new comments</span><span><span>New comment</span><span>Preview body</span></span>',
+      true,
+    ],
+    ['<span hidden>2 new comments</span><span>v2</span>', false],
+    ['<span title="New comment">New comment</span><span>v2</span>', false],
+  ]) {
+    document.body.innerHTML = `<main><div data-slot="file-row"><a href="/a/target" aria-label="Target · Unread updates"></a><div>${markup}</div></div><div data-slot="file-row"><a href="/a/other"></a><span>New comment</span></div></main>`
+    const link = document.querySelector('a')
+    const row = link.closest('[data-slot="file-row"]')
+    const page = {
+      locator(selector) {
+        assert.equal(document.querySelector(selector), link)
+        return {
+          first: () => ({
+            waitFor: async () => {},
+            innerText: () => link.textContent,
+            getAttribute: (name) => link.getAttribute(name),
+            locator: (relation) =>
+              relation.startsWith('xpath=')
+                ? {
+                    waitFor: async () => {},
+                    innerText: () => row.textContent,
+                    locator: (spans) => ({
+                      all: () =>
+                        [...row.querySelectorAll(spans)].map((element) => ({
+                          innerText: () => element.textContent,
+                          isVisible: () => !element.closest('[hidden]'),
+                        })),
+                    }),
+                  }
+                : { all: () => [] },
+          }),
+        }
+      },
+    }
+    if (expected) {
+      const observation = await observeReactionRow(page, 'target', true)
+      assert.equal(observation.newComments, true)
+      assert.equal(observation.href, '/a/target')
+      assert.ok(observation.text.length > 0)
+    } else {
+      await assert.rejects(
+        observeReactionRow(page, 'target', true),
+        /Initial target must show unread comments/,
+      )
+    }
+  }
+})
+
+test('reaction failure requires visible selected project filter and no target recent row', async () => {
+  const { observeReactionFailure } =
+    await import('./task-walkthrough-capture.mjs')
+  for (const fault of [null, 'unfiltered', 'hidden-filter', 'target-present']) {
+    const page = {
+      url: () =>
+        `https://localhost/${fault === 'unfiltered' ? '' : '?relation=project'}`,
+      locator: (selector) => {
+        if (selector.startsWith('main nav')) {
+          assert.match(selector, /aria-current="page"/)
+          assert.match(selector, /href="\/\?relation=project"/)
+          return {
+            first: () => ({
+              waitFor: () => {
+                if (fault === 'hidden-filter')
+                  throw new Error('selected filter not visible')
+              },
+              innerText: () => 'Project',
+            }),
+          }
+        }
+        assert.equal(
+          selector,
+          'main [data-slot="file-row"] a[href="/a/target"]',
+        )
+        return {
+          all: () =>
+            fault === 'target-present' ? [{ isVisible: () => true }] : [],
+        }
+      },
+    }
+    const observation = observeReactionFailure(page, 'target')
+    if (fault) {
+      await assert.rejects(
+        observation,
+        fault === 'unfiltered'
+          ? /project-filtered Home/
+          : fault === 'hidden-filter'
+            ? /selected filter not visible/
+            : /target remains in recent rows/,
+      )
+    } else {
+      assert.deepEqual(await observation, {
+        artifactId: 'target',
+        href: '/a/target',
+        filter: 'project',
+        filterLabel: 'Project',
+        filterVisible: true,
+        targetRecentRowVisible: false,
+        recentReactionCueVisible: false,
+      })
+    }
+  }
+})
