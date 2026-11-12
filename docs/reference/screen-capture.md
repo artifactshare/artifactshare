@@ -203,6 +203,10 @@ A capture that fails only because the screen's ready condition timed out before 
 Fresh walkthrough manifests and evidence use `evidenceVersion: 1` and the same
 opaque capture-local `captureId`. A successful scenario sign-in creates an
 initialization identity; a scenario header alone does not establish a reset.
+Initialization means a field-specific scenario refresh, not recreation of the database.
+`auth.server.ts` invokes the seed in `dev-screen-state.server.ts`, which restores
+the recent fixture’s `comment_seen_through_at`; other data, including view counts,
+can survive. Inspect observed unread state alongside these invocation boundaries.
 Setup sign-in is recorded separately. Each viewport has ordered success and
 independent failure/recovery boundaries, each with its own initialization,
 browser context and branch identity. These are random local identifiers, never
@@ -224,6 +228,10 @@ are readiness conditions; no delay or retry stands in for them. A missing row,
 remaining unread indicator, or missing comment body fails capture. A target
 disappearing from an unread-only list would not count as read: this journey uses
 unfiltered Home. Failure/recovery still signs in and reseeds independently.
+Its Home uses the existing project relation filter: the selected filter must be
+visible and the owned target must be absent from recent file rows. Capture rejects
+a mismatched setup and records these observations in the failure evidence. A plain
+sidebar title is not a recent-reaction cue. Recovery uses the ordinary Comments button.
 
 All selected walkthroughs require fresh provenance, not only reactions. Old
 captures remain historical evidence; do not fill unknown fields or overwrite an
@@ -257,7 +265,7 @@ pnpm dev
 # With that topology running:
 pnpm walkthroughs:capture -- --champion-loop --label boundary-healthy
 capture_output_root="$(node --input-type=module -e 'import { screenCaptureOutputRoot } from "./scripts/screen-capture-output.mjs"; console.log(screenCaptureOutputRoot())')"
-pnpm critique:tasks -- --walkthrough-root "$capture_output_root/boundary-healthy" --task review-new-reactions --source scripts/task-walkthrough-capture.mjs --source scripts/task-walkthroughs.mjs --source scripts/task-critique.mjs --dry-run
+pnpm critique:tasks -- --walkthrough-root "$capture_output_root/boundary-healthy" --task review-new-reactions --source scripts/task-walkthrough-capture.mjs --source scripts/task-walkthroughs.mjs --source scripts/task-critique.mjs --source apps/web/app/services/auth.server.ts --source apps/web/app/services/dev-screen-state.server.ts --dry-run
 ```
 
 `pnpm dev:setup` initializes the local schema. Do not follow it with

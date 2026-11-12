@@ -71,6 +71,7 @@ test('new reactions open the count hint and inspect marked content; later steps 
     phase('success').selector,
     '[data-new-comment-thread] [data-new-comment-message]',
   )
+  assert.equal(phase('failure').path, '/?relation=project')
   assert.equal(phase('recovery').kind, 'gotoArtifactAndClick')
   assert.match(phase('recovery').selector, /aria-label="Comments"/)
   assert.match(phase('next').selector, /aria-label="Comments"/)

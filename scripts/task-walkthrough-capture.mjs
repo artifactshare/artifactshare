@@ -262,7 +262,7 @@ ${step.evidence ? `<details><summary>裏取りデータ</summary><pre>${htmlEsca
       ),
     )
     .join('')
-  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p><p>Capture: ${htmlEscape(record.captureId)} · Evidence version: ${htmlEscape(record.evidenceVersion)}<br>Setup initialization: ${htmlEscape(record.setup?.initializationId)} · ${htmlEscape(record.setup?.reason)} · Scenario: ${htmlEscape(record.scenario)}</p><h2>動画</h2><ul>${videos}</ul>${rows}</html>`
+  const html = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(record.task.title)}</title><style>body{font-family:system-ui;max-width:1100px;margin:auto;padding:24px}img{max-width:100%;border:1px solid #ccc}article{margin:32px 0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style><h1>${htmlEscape(record.task.title)}</h1><p>${htmlEscape(record.task.goal)}</p><p>Capture: ${htmlEscape(record.captureId)} · Evidence version: ${htmlEscape(record.evidenceVersion)}<br>Setup initialization: ${htmlEscape(record.setup?.initializationId)} · ${htmlEscape(record.setup?.reason)} · Scenario: ${htmlEscape(record.scenario)}</p><p>Initialization records a scenario sign-in and field-specific fixture refresh, not recreation of the database. The seed restores the recent fixture’s comment seen-through boundary; other data, including view counts, can survive. Inspect the observed unread state and branch boundaries together.</p><h2>動画</h2><ul>${videos}</ul>${rows}</html>`
   await writeFile(join(outDir, 'index.html'), html)
 }
 
@@ -775,6 +775,33 @@ async function applyAction({
   return cliEvidence ? { cli: cliEvidence } : {}
 }
 
+export async function observeReactionFailure(page, artifactId) {
+  const url = new URL(page.url())
+  if (url.pathname !== '/' || url.searchParams.get('relation') !== 'project')
+    throw new Error('Reaction failure requires project-filtered Home')
+  const filter = page
+    .locator('main nav a[aria-current="page"][href="/?relation=project"]')
+    .first()
+  await filter.waitFor({ state: 'visible' })
+  const filterLabel = (await filter.innerText()).trim()
+  if (!filterLabel) throw new Error('Reaction failure filter label is empty')
+  const href = `/a/${artifactId}`
+  const rows = page.locator(`main [data-slot="file-row"] a[href="${href}"]`)
+  for (const row of await rows.all()) {
+    if (await row.isVisible())
+      throw new Error('Reaction failure target remains in recent rows')
+  }
+  return {
+    artifactId,
+    href,
+    filter: 'project',
+    filterLabel,
+    filterVisible: true,
+    targetRecentRowVisible: false,
+    recentReactionCueVisible: false,
+  }
+}
+
 export async function observeReactionRow(page, artifactId, expectedUnread) {
   const href = `/a/${artifactId}`
   const link = page.locator(`main a[href="${href}"]`).first()
@@ -797,7 +824,7 @@ export async function observeReactionRow(page, artifactId, expectedUnread) {
     const content = (await indicator.innerText()).trim()
     if (
       content
-        .split(' · ')
+        .split(/\s*·\s*/u)
         .some((segment) =>
           /^(?:New comment|[0-9]+\+? new comments?|新着コメント(?: [0-9]+\+?件)?)$/iu.test(
             segment.trim(),
@@ -1006,6 +1033,11 @@ export async function captureRun({
         tempDir,
         screenshot: { path: join(outDir, file), fullPage: true },
       })
+      if (walkthrough.continuousHomeReturn && step.phase === 'failure')
+        actionEvidence.reactionFailure = await observeReactionFailure(
+          branch.page,
+          artifactIdFor(activeSession, runState.artifactIndex),
+        )
       if (walkthrough.continuousHomeReturn && step.phase === 'start')
         runState.initial = await observeReactionRow(
           branch.page,

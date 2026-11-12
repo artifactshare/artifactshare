@@ -550,6 +550,7 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
                 return this
               },
               count: () => 0,
+              all: () => [],
               waitFor: () => {
                 if (
                   returned &&
@@ -650,6 +651,8 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
               (s) => s.action === action,
             ).phase
             calls.push(phase)
+            if (phase === 'failure' && walkthrough.continuousHomeReturn)
+              page.setUrl(`https://localhost${action.path}`)
             if (phase === 'success' && walkthrough.continuousHomeReturn)
               page.setUrl('https://localhost/a/target')
             await writeFile(screenshot.path, 'png')
@@ -757,6 +760,12 @@ test('branch orchestration preserves phases, isolation, videos and continuous Ho
           assert.ok(html.includes(step.video))
         }
         assert.ok(html.includes('Reset: independent failure initialization'))
+        assert.ok(html.includes('field-specific fixture refresh'))
+        if (walkthrough.continuousHomeReturn)
+          assert.equal(
+            record.steps[4].evidence.reactionFailure.recentReactionCueVisible,
+            false,
+          )
         if (walkthrough.continuousHomeReturn) {
           assert.equal(html.split('&quot;inspectionStepId&quot;').length - 1, 1)
           assert.ok(
@@ -812,6 +821,7 @@ test('reaction row reads sibling content, combined segments and visible mobile p
   const document = new Window().document
   for (const [markup, expected] of [
     ['<span>v2 · 2 new comments</span>', true],
+    ['<span><span aria-hidden="true"> · </span>1 new comment</span>', true],
     [
       '<span><span aria-hidden="true"> · </span>v2 · 新着コメント 2件</span>',
       true,
@@ -862,6 +872,61 @@ test('reaction row reads sibling content, combined segments and visible mobile p
         observeReactionRow(page, 'target', true),
         /Initial target must show unread comments/,
       )
+    }
+  }
+})
+
+test('reaction failure requires visible selected project filter and no target recent row', async () => {
+  const { observeReactionFailure } =
+    await import('./task-walkthrough-capture.mjs')
+  for (const fault of [null, 'unfiltered', 'hidden-filter', 'target-present']) {
+    const page = {
+      url: () =>
+        `https://localhost/${fault === 'unfiltered' ? '' : '?relation=project'}`,
+      locator: (selector) => {
+        if (selector.startsWith('main nav')) {
+          assert.match(selector, /aria-current="page"/)
+          assert.match(selector, /href="\/\?relation=project"/)
+          return {
+            first: () => ({
+              waitFor: () => {
+                if (fault === 'hidden-filter')
+                  throw new Error('selected filter not visible')
+              },
+              innerText: () => 'Project',
+            }),
+          }
+        }
+        assert.equal(
+          selector,
+          'main [data-slot="file-row"] a[href="/a/target"]',
+        )
+        return {
+          all: () =>
+            fault === 'target-present' ? [{ isVisible: () => true }] : [],
+        }
+      },
+    }
+    const observation = observeReactionFailure(page, 'target')
+    if (fault) {
+      await assert.rejects(
+        observation,
+        fault === 'unfiltered'
+          ? /project-filtered Home/
+          : fault === 'hidden-filter'
+            ? /selected filter not visible/
+            : /target remains in recent rows/,
+      )
+    } else {
+      assert.deepEqual(await observation, {
+        artifactId: 'target',
+        href: '/a/target',
+        filter: 'project',
+        filterLabel: 'Project',
+        filterVisible: true,
+        targetRecentRowVisible: false,
+        recentReactionCueVisible: false,
+      })
     }
   }
 })
