@@ -247,7 +247,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       # Actions overrides HOME; Firefox requires the root-owned home.
       HOME: /root
@@ -298,15 +298,29 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
         timeout-minutes: 5
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
-      - run: pnpm --filter @artifactshare/contract build
-        timeout-minutes: 2
+      - name: Prepare viewer unit inputs
+        id: prepare
+        timeout-minutes: 4
         if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        run: |
+          started=$SECONDS
+          pnpm --filter @artifactshare/contract build
+          pnpm fixtures:build
+          echo "elapsed_ms=$(((SECONDS - started) * 1000))" >> "$GITHUB_OUTPUT"
+      - name: Run viewer controller units
+        id: units
+        timeout-minutes: 11
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        env:
+          PREPARATION_ELAPSED_MS: ${{ steps.prepare.outputs.elapsed_ms }}
+          RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
+        run: node scripts/ci/changed-browser-repetitions.mjs source-units
       - name: Discover and prioritize Chromium candidates
         id: plan
         timeout-minutes: 5
         env:
           RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
-        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' }}
+        if: ${{ steps.classify.outputs.is_maintainer == 'true' && steps.select.outputs.has_files == 'true' && steps.units.outputs.passed == 'true' }}
         run: node scripts/ci/changed-browser-repetitions.mjs source-plan
       - name: Run admitted Chromium files
         id: repeat
@@ -321,7 +335,7 @@ jobs:
         env:
           RESULTS_DIR: ${{ runner.temp }}/chromium-source-feedback
           INTERRUPTED: ${{ job.status == 'cancelled' }}
-          SETUP_FAILED: ${{ job.status == 'failure' && steps.repeat.outcome != 'failure' }}
+          SETUP_FAILED: ${{ job.status == 'failure' && steps.repeat.outcome != 'failure' && steps.units.outcome != 'failure' }}
         run: |
           if [ -f scripts/ci/changed-browser-repetitions.mjs ]; then
             node scripts/ci/changed-browser-repetitions.mjs source-report

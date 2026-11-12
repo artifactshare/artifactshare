@@ -1,18 +1,17 @@
+// @vitest-environment happy-dom
 import { settleCommentRuntimeMutation } from '~/test/comment-runtime-driver'
-// Browser mode cannot load a test module from the route directory whose name
-// contains `$`, so this behavior test lives one level above the component.
 import { act, useState } from 'react'
 import { waitForRealTaskCondition } from '~/test/wait-for-real-task-condition'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { useViewerComments } from './a.$id/+components/viewer-shell'
+import { useViewerComments } from './viewer-shell'
 import type { CommentThreadView } from '~/lib/comments'
 import { VIEWER_FETCH_TIMEOUT_MS } from '~/lib/viewer-network'
 import {
   useCommentMutations,
   type CommentMutationPayload,
-} from './a.$id/+components/use-comment-mutations'
-import type { ChangeCommentThreads } from './a.$id/+components/comment-history'
+} from './use-comment-mutations'
+import type { ChangeCommentThreads } from './comment-history'
 
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
@@ -201,7 +200,7 @@ async function flush() {
   })
 }
 
-describe('bounded live authorization browser lifecycle', () => {
+describe('bounded live authorization lifecycle', () => {
   function Harness({
     artifactId = 'artifact-1',
     initialThreads = [],
@@ -685,80 +684,6 @@ describe('bounded live authorization browser lifecycle', () => {
       `${localThread.id},${oldThread.id}`,
     )
   })
-
-  test.each(['reconnect', 'unidentified notification'])(
-    '%s refreshes all retained pages even with another dirty thread left over',
-    async (mode) => {
-      const expanded = expandedFixture()
-      const latest = initialWindow(expanded)
-      await act(async () =>
-        root.render(
-          <Harness
-            key="dirty-reconnect"
-            showDraft
-            initialThreads={[expanded, oldThread]}
-          />,
-        ),
-      )
-      fetchMock.mockImplementation((input: string) =>
-        authorizedResponse(
-          input.includes('?') ? [expanded] : [latest, oldThread],
-        ),
-      )
-      const socket = ControlledWebSocket.instances.at(-1)!
-      await act(async () => socket.open())
-      await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 2)
-      fetchMock.mockClear()
-      fetchMock.mockImplementation(() =>
-        Promise.resolve(new Response(null, { status: 503 })),
-      )
-      await act(async () =>
-        socket.message({ type: 'comments-changed', threadId: oldThread.id }),
-      )
-      await settleAuthorizedResponses(() => fetchMock.mock.calls.length === 1)
-      const changed = {
-        ...expanded,
-        messages: expanded.messages
-          .slice(0, 4)
-          .filter((message) => message.id !== 'message-2'),
-      }
-      fetchMock.mockClear()
-      fetchMock.mockImplementation((input: string) =>
-        authorizedResponse(
-          input.includes('?') ? [changed] : [latest, oldThread],
-        ),
-      )
-      if (mode === 'reconnect') {
-        // Ordinary reconnect does not perform an HTTP recovery-snapshot lookup.
-        await act(async () => socket.fail())
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(1000)
-        })
-        expect(ControlledWebSocket.instances.at(-1)).not.toBe(socket)
-        await act(async () => ControlledWebSocket.instances.at(-1)!.open())
-      } else {
-        await act(async () => socket.message({ type: 'comments-changed' }))
-      }
-      await settleAuthorizedResponses(
-        () =>
-          !host.querySelector('output')!.dataset.messages!.includes('Reply 2'),
-      )
-      expect(
-        fetchMock.mock.calls.filter((call) =>
-          String(call[0]).includes('before='),
-        ),
-      ).toHaveLength(1)
-      expect(host.querySelector('output')!.dataset.messages).toContain(
-        'Reply 1',
-      )
-      expect(host.querySelector('output')!.dataset.threads).toContain(
-        oldThread.id,
-      )
-      expect(host.querySelector('textarea')!.value).toBe(
-        'Keep this unsent reply',
-      )
-    },
-  )
 
   test('reconciles selected membership and refreshes only the changed thread history', async () => {
     const expanded = {

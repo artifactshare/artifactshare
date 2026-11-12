@@ -436,8 +436,8 @@ test('Windows credential validation runs in the merge queue and by manual dispat
   const installIndex = job.steps.findIndex(
     (step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts',
   )
-  const buildIndex = job.steps.findIndex(
-    (step) => step.run === 'pnpm --filter @artifactshare/contract build',
+  const buildIndex = job.steps.findIndex((step) =>
+    step.run?.includes('pnpm --filter @artifactshare/contract build'),
   )
   assert.ok(installIndex >= 0)
   assert.ok(buildIndex > installIndex)
@@ -547,7 +547,7 @@ test('static, CLI, and build lanes preserve complete nonvisual coverage', () => 
     .flatMap((job) => job.steps ?? [])
     .map((step) => step.run ?? '')
     .join('\n')
-  assert.doesNotMatch(validationRuns, /pnpm fixtures:build/u)
+  assert.equal((validationRuns.match(/pnpm fixtures:build/gu) ?? []).length, 1)
   assert.doesNotMatch(buildRuns, /pnpm fixtures:build/u)
   assert.match(buildRuns, /pnpm db:apply:local/u)
   assert.match(buildRuns, /pnpm check:dev-setup/u)
@@ -1134,7 +1134,26 @@ test('source feedback selects before install, delegates before execution and res
   const install = lane.steps.findIndex((step) =>
     step.run?.startsWith('pnpm install'),
   )
-  assert.ok(index('select') < install && install < index('plan'))
+  assert.ok(
+    index('select') < install &&
+      install < index('units') &&
+      index('units') < index('plan'),
+  )
+  assert.match(
+    lane.steps[index('plan')].if,
+    /steps.units.outputs.passed == 'true'/,
+  )
+  assert.equal(
+    lane.steps.filter((step) => step.run?.includes('pnpm fixtures:build'))
+      .length,
+    1,
+  )
+  assert.equal(
+    lane.steps.filter((step) =>
+      step.run?.includes('pnpm --filter @artifactshare/contract build'),
+    ).length,
+    1,
+  )
   for (const step of lane.steps.slice(index('select') + 1, index('plan') + 1))
     assert.match(step.if, /steps.select.outputs.has_files == 'true'/)
   assert.equal(index('repeat'), index('plan') + 1)
@@ -1149,7 +1168,7 @@ test('source feedback selects before install, delegates before execution and res
   const setupMinutes = lane.steps
     .slice(0, index('repeat'))
     .reduce((sum, step) => sum + step['timeout-minutes'], 0)
-  assert.equal(setupMinutes, 21)
+  assert.equal(setupMinutes, 34)
   assert.ok(
     lane['timeout-minutes'] >= setupMinutes + run['timeout-minutes'] + 4,
   )
@@ -1157,6 +1176,7 @@ test('source feedback selects before install, delegates before execution and res
   assert.match(report.if, /always\(\)/)
   assert.equal(report.env.INTERRUPTED, "${{ job.status == 'cancelled' }}")
   assert.match(report.env.SETUP_FAILED, /job.status == 'failure'/)
+  assert.match(report.env.SETUP_FAILED, /steps.units.outcome != 'failure'/)
   assert.match(report.run, /source-report/)
   assert.doesNotMatch(JSON.stringify(lane), /continue-on-error/)
   assert.ok(

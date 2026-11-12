@@ -1,6 +1,21 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  plugins: [
+    {
+      // Happy DOM uses Vite import analysis; allow the loader fixture's existing
+      // explicit mock to resolve the Workers-only external module.
+      name: 'unit-cloudflare-workers',
+      resolveId(id) {
+        return id === 'cloudflare:workers' ? `\0${id}` : null
+      },
+      load(id) {
+        return id === '\0cloudflare:workers'
+          ? 'throw new Error("cloudflare:workers requires an explicit mock in unit tests"); export const env = undefined'
+          : null
+      },
+    },
+  ],
   resolve: {
     alias: {
       '~': new URL('./app', import.meta.url).pathname,

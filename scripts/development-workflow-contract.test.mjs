@@ -155,3 +155,18 @@ test('browser guidance retains stderr without obsolete library replacement instr
     /contract tests require equality with Compose and the exact Playwright version/u,
   )
 })
+
+test('viewer units precede browser discovery with separate timing and honest failure reporting', () => {
+  for (const phrase of [
+    'Before browser discovery',
+    'test:unit:viewer',
+    'app/routes/a.$id/+components',
+    'viewer-controller-testing.md',
+    'source-only and unit-only',
+    'No browser discovery runs after unit assertion failure',
+    '55-minute job timeout',
+    'total of 34 minutes',
+    'leaving six minutes',
+  ])
+    assert.ok(workflow.includes(phrase), phrase)
+})

@@ -45,7 +45,8 @@
     "deploy:production:built": "pnpm db:apply:remote:production && WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler deploy -c wrangler.alerts.jsonc --env production && WRANGLER_LOG_PATH=../../.wrangler/logs pnpm exec wrangler deploy -c wrangler.og-image.jsonc --env production && node ../../scripts/deploy-content-cutover.mjs",
     "deploy:production": "pnpm build:production:topology && pnpm deploy:production:built",
     "integration:test:run": "PUBLIC_INTEGRATION=1 vitest --config vitest.integration.config.ts --run",
-    "doctor": "react-doctor"
+    "doctor": "react-doctor",
+    "test:unit:viewer": "PUBLIC_TEST=1 vitest --config vitest.config.ts --run 'app/routes/a.$id/+components'"
   },
   "dependencies": {
     "@artifactshare/contract": "workspace:*",
