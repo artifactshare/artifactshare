@@ -26,6 +26,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Threads reduce full-suite runtime while retaining per-file isolation.
+    pool: 'threads',
     include: [
       'app/**/*.test.ts',
       'app/**/*.test.tsx',
