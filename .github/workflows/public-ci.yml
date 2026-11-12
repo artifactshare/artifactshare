@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --init --ipc=host
       env:
         PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
@@ -240,7 +240,7 @@ jobs:
     runs-on: ubuntu-latest
     # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --init --ipc=host
       env:
         PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
@@ -488,7 +488,7 @@ jobs:
     runs-on: ubuntu-latest
     # Mirror compose.playwright.yml; contract tests enforce the immutable pin.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --init --ipc=host
       env:
         PLAYWRIGHT_BROWSERS_PATH: /ms-playwright

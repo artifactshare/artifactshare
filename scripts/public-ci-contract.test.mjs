@@ -705,13 +705,13 @@ test('visual gate uses exact Linux Compose baselines', () => {
   const webPackage = JSON.parse(
     fs.readFileSync('apps/web/package.json', 'utf8'),
   )
-  assert.equal(webPackage.devDependencies.playwright, '1.65.0')
+  assert.equal(webPackage.devDependencies.playwright, '1.64.0')
   const compose = YAML.parse(visualCompose, { merge: true })
   assert.deepEqual(Object.keys(compose.services), ['visual', 'visual-update'])
   for (const service of Object.values(compose.services)) {
     assert.equal(
       service.image,
-      `mcr.microsoft.com/playwright:v${webPackage.devDependencies.playwright}-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe`,
+      `mcr.microsoft.com/playwright:v${webPackage.devDependencies.playwright}-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f`,
     )
     assert.equal(service.platform, 'linux/amd64')
     assert.equal(service.ipc, 'host')
