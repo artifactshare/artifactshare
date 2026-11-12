@@ -148,7 +148,7 @@ production reset API and no retry-until-pass loop.
 | Record retention, mutation overlap and subscription cleanup                        | `comment-runtime.test.ts`, `comment-runtime-browser.test.ts`                                                                 |
 | Actual panel posting/navigation, SSR/hydration and abandoned navigation            | `comment-session.behavior.browser.test.tsx`                                                                                  |
 | Page/delete/history/unread interaction and anchor recovery                         | `comment-pagination.behavior.browser.test.tsx`, `comment-panel.test.tsx`, `comment-frame-recovery.behavior.browser.test.tsx` |
-| Socket reconnect, renewal, bounded authorization and page auth recovery            | `live-authorization.behavior.browser.test.tsx`                                                                               |
+| Socket reconnect, renewal, bounded authorization and page auth recovery            | `live-authorization.test.tsx`                                                                                                |
 
 Focused unit integration can run from the repository root:
 

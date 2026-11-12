@@ -81,7 +81,11 @@ export function selectChanges(options) {
   return { ...selectFiles(diff), base, head }
 }
 
-export async function discoverProjects(root, exclude = []) {
+export async function discoverProjects(
+  root,
+  exclude = [],
+  configFile = 'vitest.behavior.browser.config.ts',
+) {
   const workspace = path.join(root, 'apps/web')
   const require = createRequire(path.join(workspace, 'package.json'))
   const { createVitest } = await import(
@@ -94,7 +98,7 @@ export async function discoverProjects(root, exclude = []) {
     'test',
     {
       root: workspace,
-      config: path.join(workspace, 'vitest.behavior.browser.config.ts'),
+      config: path.join(workspace, configFile),
       watch: false,
       cliExclude: exclude,
       // Discovery needs project configuration and globs, not an API listener.
@@ -119,7 +123,7 @@ export async function discoverProjects(root, exclude = []) {
   return {
     async specifications(filters = [], exclusions = []) {
       if (exclusions.length) {
-        const filtered = await discoverProjects(root, exclusions)
+        const filtered = await discoverProjects(root, exclusions, configFile)
         try {
           return await filtered.specifications(filters)
         } finally {
@@ -488,6 +492,168 @@ export function summarize(plan, { results, setupError } = {}) {
   return { failed, markdown: [...lines, ''].join('\n') }
 }
 
+export const VIEWER_UNIT_SCOPE = 'app/routes/a.$id/+components'
+
+export async function discoverViewerUnits(root) {
+  const discovery = await discoverProjects(root, [], 'vitest.config.ts')
+  try {
+    const specs = await discovery.specifications([VIEWER_UNIT_SCOPE])
+    if (
+      !specs.length ||
+      specs.some(
+        (spec) =>
+          spec.project ||
+          !spec.file.startsWith(`apps/web/${VIEWER_UNIT_SCOPE}/`) ||
+          !/\.test\.tsx?$/.test(spec.file) ||
+          spec.file.includes('.browser.'),
+      )
+    )
+      throw new Error('Invalid or empty viewer unit discovery')
+    return specs.map((spec) => spec.file).sort()
+  } finally {
+    await discovery.close()
+  }
+}
+
+export function viewerUnitResult(selection, results) {
+  try {
+    const directory = path.join(results, 'viewer-unit')
+    const status = readJson(path.join(directory, 'status.json'))
+    if (
+      status.head !== selection.head ||
+      status.scope !== VIEWER_UNIT_SCOPE ||
+      status.suite !== 'web-unit' ||
+      status.format !== 'vitest-structured' ||
+      (status.project ?? null) !== null
+    )
+      throw new Error('Viewer unit identity mismatch')
+    if (!status.completed || status.signal || status.timedOut || status.error)
+      throw new Error(
+        status.error || 'Viewer unit process interrupted or incomplete',
+      )
+    if (
+      !selection.units?.files?.length ||
+      JSON.stringify(status.files) !== JSON.stringify(selection.units.files)
+    )
+      throw new Error('Viewer unit identity mismatch')
+    const text = fs.readFileSync(path.join(directory, 'report.json'), 'utf8')
+    const rows = normalizeReport(text, status)
+    const report = JSON.parse(text)
+    const files = report.modules
+      .map((module) => normalizeFile(module.moduleId, status))
+      .sort()
+    if (JSON.stringify(files) !== JSON.stringify(selection.units.files))
+      throw new Error('Missing, duplicate or unexpected viewer unit modules')
+    const failure = rows.find(
+      (row) => row.status === 'failed' || row.status === 'absent' || row.error,
+    )
+    if (failure)
+      return {
+        passed: false,
+        phase:
+          failure.diagnosticKind || failure.status === 'absent'
+            ? 'setup'
+            : 'assertion',
+        error: `${failure.file}: ${failure.testName}: ${firstLine(failure.error || 'Incomplete assertion')}`,
+      }
+    if (
+      status.exitCode !== 0 ||
+      report.reason !== 'passed' ||
+      report.modules.some(
+        (module) =>
+          module.state !== 'passed' ||
+          module.errors.length > 0 ||
+          module.tests.some((test) => test.errors.length > 0) ||
+          module.suites.some(
+            (suite) => !['passed', 'skipped'].includes(suite.state),
+          ),
+      ) ||
+      !rows.some((row) => row.status === 'passed' && !row.diagnosticKind)
+    )
+      throw new Error('No completed passing viewer assertions')
+    return { passed: true, phase: 'unit' }
+  } catch (error) {
+    return { passed: false, phase: 'setup', error: firstLine(error.message) }
+  }
+}
+
+export async function runViewerUnits(
+  selection,
+  {
+    results,
+    root = process.cwd(),
+    discover = discoverViewerUnits,
+    executor = execute,
+    clock = () => performance.now(),
+    save = () => {},
+    preparationMs,
+    head = () =>
+      execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8',
+      }).trim(),
+  } = {},
+) {
+  if (!selection.inputs.length) return { passed: true, skipped: true }
+  const start = clock()
+  const directory = path.join(results, 'viewer-unit')
+  fs.mkdirSync(directory, { recursive: true })
+  const report = path.resolve(directory, 'report.json')
+  fs.rmSync(report, { force: true })
+  const invocation = suiteCommand({ suite: 'web-unit' }, report, root)
+  invocation.args.push(VIEWER_UNIT_SCOPE)
+  const status = {
+    head: selection.head,
+    scope: VIEWER_UNIT_SCOPE,
+    files: [],
+    repositoryRoot: root,
+    workspaceRoot: path.join(root, 'apps/web'),
+    suite: 'web-unit',
+    format: invocation.format,
+    completed: false,
+    exitCode: null,
+    signal: null,
+  }
+  const statusPath = path.join(directory, 'status.json')
+  writeJson(statusPath, status)
+  selection.units = { files: [], elapsedMs: 0, preparationMs }
+  save(selection)
+  fs.writeFileSync(path.join(directory, 'diagnostic.log'), '')
+  try {
+    if (head() !== selection.head)
+      throw new Error('Fixed head mismatch before viewer units')
+    status.files = await discover(root)
+    selection.units.files = status.files
+    save(selection)
+    Object.assign(
+      status,
+      await executor(
+        invocation.command,
+        invocation.args,
+        {
+          cwd: root,
+          timeoutMs: REPETITION_TIMEOUT_MS,
+          env: { ...process.env, ...invocation.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+        (chunk) => {
+          fs.appendFileSync(path.join(directory, 'diagnostic.log'), chunk)
+          process.stdout.write(chunk)
+        },
+      ),
+    )
+    if (head() !== selection.head)
+      throw new Error('Fixed head mismatch after viewer units')
+    status.completed = true
+  } catch (error) {
+    status.error = error.message
+  }
+  writeJson(statusPath, status)
+  selection.units.elapsedMs = clock() - start
+  save(selection)
+  return viewerUnitResult(selection, results)
+}
+
 export const SOURCE_BUDGET_MS = 180_000
 
 // Known documentation and A/M behavior-browser tests do not trigger this lane.
@@ -714,6 +880,25 @@ export function summarizeSource(plan, { results, setupError } = {}) {
     )
     return { failed, markdown: lines.join('\n') }
   }
+  const unit = viewerUnitResult(plan, results)
+  lines.push(
+    `Viewer unit phase: ${unit.passed ? 'passed' : unit.phase + ' failed'}. Unit discovery/execution wall time: ${plan.units?.elapsedMs ?? 'unknown'} ms (outside browser admission clock).`,
+    `Contract/static fixture preparation: ${plan.units?.preparationMs ?? 'unknown'} ms; dependency setup has separate Actions step timings.`,
+    '',
+  )
+  if (!unit.passed)
+    return {
+      failed: true,
+      markdown: [
+        ...lines,
+        cell(unit.error),
+        '',
+        plan.execution
+          ? 'Viewer unit evidence invalid; browser execution cannot establish success.'
+          : 'Browser discovery/execution not executed after unsuccessful viewer units.',
+        '',
+      ].join('\n'),
+    }
   if (!plan.candidates)
     return {
       failed: true,
@@ -808,7 +993,30 @@ export async function main(command, env = process.env) {
         : selection.selected.length > 0
       output('has_files', hasFiles)
       if (!hasFiles) summary(render(selection).markdown)
+    } else if (source && command === 'units') {
+      const selection = readJson(selectionPath)
+      const result = await runViewerUnits(selection, {
+        results: env.RESULTS_DIR,
+        preparationMs: /^\d+$/.test(env.PREPARATION_ELAPSED_MS ?? '')
+          ? Number(env.PREPARATION_ELAPSED_MS)
+          : undefined,
+        save: (value) => writeJson(selectionPath, value),
+      })
+      output('passed', result.passed)
+      if (!result.passed)
+        summary(
+          `Viewer unit ${result.phase}: ${cell(result.error)}\nBrowser discovery/execution not executed.\n`,
+        )
+      return result.passed ? 0 : 1
     } else if (command === 'plan') {
+      if (
+        source &&
+        readJson(selectionPath).inputs.length &&
+        !viewerUnitResult(readJson(selectionPath), env.RESULTS_DIR).passed
+      )
+        throw new Error(
+          'Viewer unit phase has not passed; browser discovery not executed',
+        )
       const plan = source
         ? await buildSourcePlan(readJson(selectionPath))
         : planForProject(
@@ -830,6 +1038,14 @@ export async function main(command, env = process.env) {
       output('has_webkit', source ? false : plan.projects.includes('webkit'))
     } else if (command === 'run') {
       const plan = readJson(planPath)
+      if (
+        source &&
+        plan.inputs.length &&
+        !viewerUnitResult(plan, env.RESULTS_DIR).passed
+      )
+        throw new Error(
+          'Viewer unit phase has not passed; browser execution not executed',
+        )
       if (source)
         await runSourcePlan(plan, {
           results: env.RESULTS_DIR,

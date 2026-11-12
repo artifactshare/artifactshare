@@ -99,3 +99,9 @@ describe('original hostname plugin', () => {
     expect(preset.headers['mf-original-hostname']).toBe('preset.localhost')
   })
 })
+
+test('unit tests reject an unmocked Workers runtime import', async () => {
+  await expect(vi.importActual('cloudflare:workers')).rejects.toThrow(
+    'cloudflare:workers requires an explicit mock in unit tests',
+  )
+})

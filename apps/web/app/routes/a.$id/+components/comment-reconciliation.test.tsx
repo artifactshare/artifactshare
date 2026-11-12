@@ -64,6 +64,7 @@ describe('comment Session', () => {
     currentUserId = 'reviewer',
     onLayout,
     suspend,
+    draft = false,
   }: {
     target?: string
     artifact?: string
@@ -72,6 +73,7 @@ describe('comment Session', () => {
     currentUserId?: string
     onLayout?: () => void | (() => void)
     suspend?: Promise<never>
+    draft?: boolean
   }) {
     comments = useViewerComments({
       framePresent: false,
@@ -92,6 +94,7 @@ describe('comment Session', () => {
     return (
       <CommentPageSessionContext value={comments.pageSession}>
         <Page artifact={artifact} target={target} />
+        {draft && <textarea aria-label="Reply draft" />}
       </CommentPageSessionContext>
     )
   }
@@ -1041,6 +1044,7 @@ describe('comment Session', () => {
       vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
       vi.stubGlobal('WebSocket', ReconnectSocket)
       vi.useFakeTimers()
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0)
       ReconnectSocket.instances = []
       let failing = false
       let deleted = false
@@ -1072,8 +1076,11 @@ describe('comment Session', () => {
         }),
       )
       try {
-        root = createRoot(document.createElement('div'))
-        await act(async () => root!.render(<Harness liveEnabled />))
+        const container = document.createElement('div')
+        root = createRoot(container)
+        await act(async () => root!.render(<Harness liveEnabled draft />))
+        const draft = container.querySelector('textarea')!
+        draft.value = 'Keep this unsent reply'
         await act(async () =>
           comments.replaceThreads([expandedThread, initial[1]]),
         )
@@ -1092,7 +1099,7 @@ describe('comment Session', () => {
         if (mode === 'reconnect') {
           await act(async () => socket.close())
           await act(async () => {
-            await vi.advanceTimersByTimeAsync(2000)
+            await vi.advanceTimersByTimeAsync(1000)
           })
           expect(ReconnectSocket.instances.at(-1)).not.toBe(socket)
           await act(async () => ReconnectSocket.instances.at(-1)!.open())
@@ -1103,6 +1110,9 @@ describe('comment Session', () => {
           () =>
             !comments.state.threads[0].messages.some((row) => row.id === 'z1'),
         )
+        expect(container.querySelector('textarea')!.value).toBe(
+          'Keep this unsent reply',
+        )
         expect(ranges).toBe(2)
         expect(
           comments.state.threads[0].messages.some((row) => row.id === 'z2'),
@@ -1112,6 +1122,7 @@ describe('comment Session', () => {
           'other',
         ])
       } finally {
+        random.mockRestore()
         vi.useRealTimers()
       }
     },

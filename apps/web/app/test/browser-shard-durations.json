@@ -36,7 +36,6 @@
     "app/routes/comment-pagination.behavior.browser.test.tsx": 11284,
     "app/routes/device-approval.behavior.browser.test.tsx": 1083,
     "app/routes/device-publisher.behavior.browser.test.tsx": 517,
-    "app/routes/live-authorization.behavior.browser.test.tsx": 387,
     "app/routes/pdf-page-comments.behavior.browser.test.tsx": 998,
     "app/routes/project-placement.behavior.browser.test.tsx": 1115,
     "app/routes/sandbox-frame-recovery.behavior.browser.test.tsx": 2794,

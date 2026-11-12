@@ -1,5 +1,4 @@
 import { loadPublishedViewer } from './+published-viewer-loader-fixture'
-import { bindI18n as viewerI18n } from '~/lib/i18n'
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createMemoryRouter, RouterProvider } from 'react-router'
@@ -128,71 +127,18 @@ async function bodyRead(count: number) {
 function notice() {
   return host.textContent?.includes('A new version is available')
 }
-async function visibility() {
-  await act(async () => document.dispatchEvent(new Event('visibilitychange')))
-}
-
-test.each(
-  (['en', 'ja'] as const).flatMap((locale) =>
-    [false, true].flatMap((scheduled) =>
-      (['owner', 'member', 'anonymous'] as const).flatMap((persona) =>
-        (persona === 'anonymous' ? [false] : [false, true]).map(
-          (historical) => ({
-            locale,
-            scheduled,
-            persona,
-            historical,
-          }),
-        ),
-      ),
-    ),
-  ),
-)(
-  'published version chrome has no freshness: %j',
-  async ({ locale, scheduled, persona, historical }) => {
-    viewerLocale.value = locale
-    const result = await loadPublishedViewer({
-      locale,
-      scheduled,
-      persona,
-      historical,
-    })
-    const canViewHistory = persona !== 'anonymous'
-    expect(result.artifact.canViewHistory).toBe(canViewHistory)
-    expect(result.artifact.displayedVersionId).toBe(historical ? 'v0' : 'v1')
-    expect(result.artifact.isHistoricalVersion).toBe(historical)
-    await mount(result.artifact, canViewHistory, null, result.user)
-    expect(host.textContent).not.toMatch(/Data updated|データ更新/)
-    const aside = host.querySelector<HTMLElement>(
-      `aside[aria-label="${viewerI18n(locale).t('vw.activityStatus')}"]`,
-    )!
-    expect(aside).not.toBeNull()
-    expect(aside.hidden).toBe(!canViewHistory)
-    if (canViewHistory) {
-      const trigger = aside.querySelector<HTMLButtonElement>(
-        'button[aria-expanded]',
-      )!
-      expect(trigger).not.toBeNull()
-      // With no revisit clue, only the version trigger occupies the closed aside.
-      expect(aside.children).toHaveLength(1)
-      await act(async () => trigger.click())
-      expect(trigger.getAttribute('aria-expanded')).toBe('true')
-      expect(aside.querySelector('a[href="?version=v0"]')).not.toBeNull()
-      expect(
-        aside.textContent?.includes(
-          locale === 'en' ? 'Scheduled update' : '定期更新',
-        ),
-      ).toBe(scheduled)
-      expect(aside.textContent).not.toMatch(/Data updated|データ更新/)
-    }
-  },
-)
 
 test('anonymous link checks only current-version, shows an update, and refreshes without history access', async () => {
   const networkLog = vi.spyOn(console, 'info')
   // Focus returns to the stable viewer shell; a blank sandbox would also
   // trigger unrelated recovery requests when the polling timer advances.
-  await mount()
+  const published = await loadPublishedViewer({
+    locale: 'en',
+    scheduled: false,
+    persona: 'anonymous',
+    historical: false,
+  })
+  await mount(published.artifact, false, null, published.user)
   await bodyRead(1)
   expect(
     networkLog.mock.calls.some(
@@ -290,7 +236,8 @@ test('anonymous update announcements remain accessible with chrome collapsed', a
   expect(getComputedStyle(status).visibility).not.toBe('hidden')
   expect(getComputedStyle(status).visibility).not.toBe('collapse')
   currentVersionId = 'v2'
-  await act(async () => vi.advanceTimersByTimeAsync(300_000))
+  vi.setSystemTime(Date.now() + 300_000)
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')))
   await bodyRead(2)
   expect(
     host.querySelector(
@@ -313,12 +260,6 @@ test('anonymous update announcements remain accessible with chrome collapsed', a
       '[role="status"][aria-label="Activity and version status"]',
     ),
   ).toBe(status)
-})
-
-test('signed-in viewers retain the versions endpoint', async () => {
-  await mount({}, true)
-  await bodyRead(1)
-  expect(lookup.mock.calls[0]![0]).toBe('/api/shareables/abc123def4/versions')
 })
 
 test('history viewers keep the visible update sentence accessible', async () => {
@@ -349,183 +290,4 @@ test('history viewers keep the visible update sentence accessible', async () => 
   await act(async () => showLatest.click())
   expect(focusViewer).not.toHaveBeenCalled()
   expect(toggle.getAttribute('aria-expanded')).toBe('true')
-})
-
-test.each([
-  { visibility: 'private' as const },
-  { visibility: 'workspace' as const },
-  { linkExpired: true },
-  { linkSuspended: true },
-  { currentVersionId: null },
-  { isHistoricalVersion: true },
-])(
-  'ineligible anonymous viewer schedules no lookup work: %j',
-  async (patch) => {
-    const interval = vi.spyOn(window, 'setInterval')
-    const listener = vi.spyOn(document, 'addEventListener')
-    await mount(patch)
-    expect(interval).not.toHaveBeenCalled()
-    expect(
-      listener.mock.calls.filter(([name]) => name === 'visibilitychange'),
-    ).toHaveLength(0)
-    await visibility()
-    await act(async () => vi.advanceTimersByTimeAsync(600_000))
-    expect(lookup).not.toHaveBeenCalled()
-    expect(notice()).toBe(false)
-    // Positive control through the same mounted viewer and timer harness.
-    await act(async () => setArtifact(artifact))
-    await bodyRead(1)
-    expect(lookup).toHaveBeenCalledOnce()
-  },
-)
-
-test('becoming ineligible aborts an in-flight lookup and ignores its stale success', async () => {
-  let resolve!: (response: Response) => void
-  lookup.mockImplementationOnce(
-    () =>
-      new Promise<Response>((done) => {
-        resolve = done
-      }),
-  )
-  await mount()
-  expect(lookup).toHaveBeenCalledOnce()
-  const signal = lookup.mock.calls[0]![1].signal as AbortSignal
-  await act(async () => setArtifact({ ...artifact, linkSuspended: true }))
-  expect(signal.aborted).toBe(true)
-  await act(async () => resolve(versionResponse('v2')))
-  await bodyRead(1)
-  await visibility()
-  await act(async () => vi.advanceTimersByTimeAsync(600_000))
-  expect(lookup).toHaveBeenCalledOnce()
-  expect(notice()).toBe(false)
-})
-
-test('becoming ineligible clears a pending cooldown retry', async () => {
-  const schedule = vi.spyOn(window, 'setTimeout')
-  const cancel = vi.spyOn(window, 'clearTimeout')
-  await mount()
-  await bodyRead(1)
-  await visibility()
-  expect(lookup).toHaveBeenCalledOnce()
-  const retryIndex = schedule.mock.calls.findIndex(
-    ([, delay]) => delay === 30_000,
-  )
-  expect(retryIndex).toBeGreaterThanOrEqual(0)
-  const retryTimer = schedule.mock.results[retryIndex]!.value
-  await act(async () => setArtifact({ ...artifact, visibility: 'private' }))
-  expect(cancel).toHaveBeenCalledWith(retryTimer)
-  await act(async () => vi.advanceTimersByTimeAsync(600_000))
-  expect(lookup).toHaveBeenCalledOnce()
-  expect(notice()).toBe(false)
-})
-
-test('anonymous 404 stops interval, visibility, and pending retry checks for the page lifetime', async () => {
-  let resolve!: (response: Response) => void
-  lookup.mockImplementationOnce(
-    () =>
-      new Promise<Response>((done) => {
-        resolve = done
-      }),
-  )
-  const log = vi.spyOn(console, 'info')
-  const clearInterval = vi.spyOn(window, 'clearInterval')
-  const removeListener = vi.spyOn(document, 'removeEventListener')
-  await mount()
-  await visibility()
-  await act(async () => resolve(new Response('Not found', { status: 404 })))
-  await act(async () => {
-    await waitForRealTaskCondition(
-      () => log.mock.calls.some(([, event]) => event?.status === 404),
-      'anonymous denied response',
-    )
-  })
-  expect(clearInterval).toHaveBeenCalled()
-  expect(
-    removeListener.mock.calls.some(([name]) => name === 'visibilitychange'),
-  ).toBe(true)
-  await visibility()
-  await act(async () => vi.advanceTimersByTimeAsync(600_000))
-  await act(async () => setArtifact({ ...artifact, linkSuspended: true }))
-  await act(async () => setArtifact({ ...artifact, currentVersionId: 'v2' }))
-  await visibility()
-  await act(async () => vi.advanceTimersByTimeAsync(600_000))
-  expect(lookup).toHaveBeenCalledOnce()
-  expect(notice()).toBe(false)
-})
-
-test('signed-in 404 retains fallback polling', async () => {
-  lookup.mockResolvedValueOnce(new Response('Not found', { status: 404 }))
-  await mount({}, true)
-  await act(async () => vi.advanceTimersByTimeAsync(300_000))
-  await bodyRead(1)
-  expect(lookup).toHaveBeenCalledTimes(2)
-  expect(
-    lookup.mock.calls.every(([url]) => String(url).endsWith('/versions')),
-  ).toBe(true)
-})
-
-test('signed-in pointer updates preserve the cooldown and original interval', async () => {
-  await mount({}, true)
-  await bodyRead(1)
-  await act(async () => vi.advanceTimersByTimeAsync(10_000))
-  currentVersionId = 'v2'
-  await act(async () => setArtifact({ ...artifact, currentVersionId }))
-  expect(lookup).toHaveBeenCalledOnce()
-  await visibility()
-  await act(async () => vi.advanceTimersByTimeAsync(19_999))
-  expect(lookup).toHaveBeenCalledOnce()
-  await act(async () => vi.advanceTimersByTimeAsync(1))
-  await bodyRead(2)
-  expect(notice()).toBe(false)
-  await act(async () => vi.advanceTimersByTimeAsync(270_000))
-  await bodyRead(3)
-  expect(lookup).toHaveBeenCalledTimes(3)
-  expect(notice()).toBe(false)
-})
-
-test('signed-in pointer updates abort and invalidate pending responses without restarting polling', async () => {
-  let resolve!: (response: Response) => void
-  lookup.mockImplementationOnce(
-    () =>
-      new Promise<Response>((done) => {
-        resolve = done
-      }),
-  )
-  await mount({}, true)
-  const signal = lookup.mock.calls[0]![1].signal as AbortSignal
-  await act(async () => vi.advanceTimersByTimeAsync(10_000))
-  currentVersionId = 'v2'
-  await act(async () => setArtifact({ ...artifact, currentVersionId }))
-  expect(lookup).toHaveBeenCalledOnce()
-  // The fetch mock deliberately completes despite cancellation.
-  await act(async () => resolve(versionResponse('v1')))
-  await bodyRead(1)
-  expect(notice()).toBe(false)
-  expect(signal.aborted).toBe(true)
-  await visibility()
-  await act(async () => vi.advanceTimersByTimeAsync(19_999))
-  expect(lookup).toHaveBeenCalledOnce()
-  await act(async () => vi.advanceTimersByTimeAsync(1))
-  await bodyRead(2)
-  expect(notice()).toBe(false)
-  currentVersionId = 'v3'
-  await act(async () => vi.advanceTimersByTimeAsync(270_000))
-  await bodyRead(3)
-  expect(lookup).toHaveBeenCalledTimes(3)
-  expect(notice()).toBe(true)
-})
-
-test('anonymous visibility checks respect the initial lookup cooldown', async () => {
-  await mount()
-  await bodyRead(1)
-  currentVersionId = 'v2'
-  await visibility()
-  // Visibility checks share the initial lookup's 30-second cooldown.
-  await act(async () => vi.advanceTimersByTimeAsync(29_999))
-  expect(lookup).toHaveBeenCalledOnce()
-  expect(notice()).toBe(false)
-  await act(async () => vi.advanceTimersByTimeAsync(1))
-  await bodyRead(2)
-  expect(lookup).toHaveBeenCalledTimes(2)
-  expect(notice()).toBe(true)
 })

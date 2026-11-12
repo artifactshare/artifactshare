@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import {
   main,
+  VIEWER_UNIT_SCOPE,
+  discoverViewerUnits,
+  runViewerUnits,
   selectSourceFiles,
   selectSourceChanges,
   buildSourcePlan,
@@ -953,12 +956,41 @@ test('report fails interrupted jobs even with passing completed reports', async 
   assert.match(fs.readFileSync(summary, 'utf8'), /cancelled or interrupted/)
 })
 
-const sourceSelection = (inputs = ['apps/web/app/lib/viewer-hash.ts']) => ({
-  ...selectSourceFiles(inputs.map((name) => `M\0${name}\0`).join('')),
-  changed: selectFiles(inputs.map((name) => `M\0${name}\0`).join('')),
-  base: 'base',
-  head: 'head',
-})
+const sourceSelection = (
+  inputs = ['apps/web/app/lib/viewer-hash.ts'],
+  results,
+) => {
+  const selection = {
+    ...selectSourceFiles(inputs.map((name) => `M\0${name}\0`).join('')),
+    changed: selectFiles(inputs.map((name) => `M\0${name}\0`).join('')),
+    base: 'base',
+    head: 'head',
+  }
+  // Existing browser-phase tests start from a completed native unit phase.
+  if (results) {
+    const unitFile = `apps/web/${VIEWER_UNIT_SCOPE}/example.test.ts`
+    selection.units = { files: [unitFile], elapsedMs: 1 }
+    const directory = path.join(results, 'viewer-unit')
+    fs.mkdirSync(directory, { recursive: true })
+    fs.writeFileSync(
+      path.join(directory, 'status.json'),
+      JSON.stringify({
+        head: selection.head,
+        scope: VIEWER_UNIT_SCOPE,
+        files: [unitFile],
+        suite: 'web-unit',
+        format: 'vitest-structured',
+        completed: true,
+        exitCode: 0,
+      }),
+    )
+    fs.writeFileSync(
+      path.join(directory, 'report.json'),
+      JSON.stringify(passing({ file: unitFile, project: null })),
+    )
+  }
+  return selection
+}
 const sourceDiscovery =
   (specs, related = []) =>
   () => ({
@@ -1151,7 +1183,7 @@ for (const outcome of [
     const specs = [file, anchor]
       .sort()
       .map((name) => ({ file: name, project: 'chromium' }))
-    const plan = await buildSourcePlan(sourceSelection(), {
+    const plan = await buildSourcePlan(sourceSelection(undefined, results), {
       discover: sourceDiscovery(specs),
     })
     let now = 0
@@ -1196,7 +1228,7 @@ for (const outcome of [
 
 test('source failures continue within budget and incomplete admission cannot succeed', async (t) => {
   const results = temporary(t)
-  const plan = await buildSourcePlan(sourceSelection(), {
+  const plan = await buildSourcePlan(sourceSelection(undefined, results), {
     discover: sourceDiscovery(
       [file, anchor].map((name) => ({ file: name, project: 'chromium' })),
     ),
@@ -1414,7 +1446,7 @@ test('Vitest related imports prioritize without execution and preserve effective
 
 test('source report cannot pass cancellation even after all admitted assertions pass', async (t) => {
   const results = temporary(t)
-  const plan = await buildSourcePlan(sourceSelection(), {
+  const plan = await buildSourcePlan(sourceSelection(undefined, results), {
     discover: sourceDiscovery([{ file, project: 'chromium' }]),
   })
   await runSourcePlan(plan, {
@@ -1458,6 +1490,8 @@ test('repetition and source summaries retain native recovered retries and unknow
       undefined,
     ]) {
       const results = temporary(t)
+      if (candidate === source)
+        Object.assign(candidate, sourceSelection(undefined, results))
       await execute(candidate, {
         results,
         clock: () => 0,
@@ -1497,4 +1531,413 @@ test('resolved dependency and harness configuration inputs retain conservative s
     selectSourceFiles(inputs.map((input) => `M\0${input}\0`).join('')).inputs,
     inputs.toSorted(),
   )
+})
+
+test('viewer placement uses effective unit discovery and a directory command', async (t) => {
+  const root = path.resolve(import.meta.dirname, '..')
+  const directory = path.join(root, 'apps/web', VIEWER_UNIT_SCOPE)
+  const fixtureRoot = fs.realpathSync(temporary(t))
+  const workspace = path.join(fixtureRoot, 'apps/web')
+  const fixtureDirectory = path.join(workspace, VIEWER_UNIT_SCOPE)
+  fs.mkdirSync(fixtureDirectory, { recursive: true })
+  fs.symlinkSync(
+    path.join(root, 'apps/web/node_modules'),
+    path.join(workspace, 'node_modules'),
+    'dir',
+  )
+  fs.copyFileSync(
+    path.join(root, 'apps/web/vitest.config.ts'),
+    path.join(workspace, 'vitest.config.ts'),
+  )
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"module"}')
+  for (const name of [
+    `${VIEWER_UNIT_SCOPE}/discovery-example.test.ts`,
+    `${VIEWER_UNIT_SCOPE}/excluded.browser.test.tsx`,
+    'app/outside.test.ts',
+  ]) {
+    fs.writeFileSync(path.join(workspace, name), '')
+  }
+  assert.deepEqual(await discoverViewerUnits(fixtureRoot), [
+    `apps/web/${VIEWER_UNIT_SCOPE}/discovery-example.test.ts`,
+  ])
+  const files = await discoverViewerUnits(root)
+  for (const name of ['live-authorization', 'latest-version']) {
+    assert.ok(files.includes(`apps/web/${VIEWER_UNIT_SCOPE}/${name}.test.tsx`))
+    assert.match(
+      fs.readFileSync(path.join(directory, `${name}.test.tsx`), 'utf8'),
+      /^\/\/ @vitest-environment happy-dom/,
+    )
+  }
+  assert.ok(
+    files.every(
+      (unit) =>
+        !unit.includes('.browser.') &&
+        unit.startsWith(`apps/web/${VIEWER_UNIT_SCOPE}/`),
+    ),
+  )
+  assert.equal(
+    fs.existsSync(
+      path.join(
+        root,
+        'apps/web/app/routes/live-authorization.behavior.browser.test.tsx',
+      ),
+    ),
+    false,
+  )
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(root, 'apps/web/package.json'), 'utf8'),
+  )
+  assert.equal(
+    pkg.scripts['test:unit:viewer'],
+    `PUBLIC_TEST=1 vitest --config vitest.config.ts --run '${VIEWER_UNIT_SCOPE}'`,
+  )
+})
+
+test('viewer gate validates native outcomes before browser discovery', async (t) => {
+  const unitFile = `apps/web/${VIEWER_UNIT_SCOPE}/example.test.ts`
+  const healthy = () => ({
+    schemaVersion: 1,
+    reason: 'passed',
+    unhandledErrors: [],
+    modules: [
+      {
+        moduleId: unitFile,
+        project: null,
+        state: 'passed',
+        errors: [],
+        suites: [],
+        tests: [
+          { namePath: ['healthy behavior'], state: 'passed', errors: [] },
+        ],
+      },
+    ],
+  })
+  const cases = [
+    ['success', () => {}, true],
+    [
+      'assertion',
+      (report) => {
+        report.reason = 'failed'
+        report.modules[0].state = 'failed'
+        report.modules[0].tests[0].state = 'failed'
+        report.modules[0].tests[0].errors = [
+          { message: 'Expected current snapshot' },
+        ]
+      },
+      false,
+    ],
+    ['missing', () => null, false],
+    ['malformed', () => '{', false],
+    [
+      'zero',
+      (report) => {
+        report.modules = []
+      },
+      false,
+    ],
+    [
+      'all skipped',
+      (report) => {
+        report.modules[0].tests[0].state = 'skipped'
+      },
+      false,
+    ],
+    [
+      'incomplete',
+      (report) => {
+        report.modules[0].tests[0].state = 'pending'
+      },
+      false,
+    ],
+    [
+      'wrong project',
+      (report) => {
+        report.modules[0].project = 'chromium'
+      },
+      false,
+    ],
+    [
+      'extra module',
+      (report) => {
+        report.modules.push(report.modules[0])
+      },
+      false,
+    ],
+    [
+      'wrong module',
+      (report) => {
+        report.modules[0].moduleId = 'app/example.test.ts'
+      },
+      false,
+    ],
+    [
+      'suite error',
+      (report) => {
+        report.modules[0].suites = [
+          {
+            namePath: ['setup'],
+            state: 'failed',
+            errors: [{ message: 'hook failed' }],
+          },
+        ]
+      },
+      false,
+    ],
+    [
+      'unhandled',
+      (report) => {
+        report.unhandledErrors = [
+          { moduleId: null, error: { message: 'unhandled' } },
+        ]
+      },
+      false,
+    ],
+    [
+      'zero assertions',
+      (report) => {
+        report.modules[0].tests = []
+      },
+      false,
+    ],
+    [
+      'cancelled report',
+      (report) => {
+        report.reason = 'interrupted'
+      },
+      false,
+    ],
+    ['cancelled before assertions', () => {}, false],
+    ['cancelled after assertions', () => {}, false],
+    ['nonzero after assertions', () => {}, false],
+    ['head mismatch', () => {}, false],
+    ['setup exception', () => {}, false],
+  ]
+  for (const [name, mutate, passed] of cases)
+    await t.test(name, async (subtest) => {
+      const results = temporary(subtest)
+      const selection = {
+        head: 'abc123def4',
+        inputs: ['apps/web/app/example.ts'],
+        changes: [],
+        base: 'base',
+      }
+      let calls = 0
+      const result = await runViewerUnits(selection, {
+        results,
+        head: () => (name === 'head mismatch' ? 'different' : selection.head),
+        discover: () => {
+          if (name === 'setup exception') throw new Error('Discovery failed')
+          return [unitFile]
+        },
+        executor: (_command, args) => {
+          calls++
+          if (name === 'cancelled before assertions')
+            throw new Error('Viewer unit interrupted')
+          assert.equal(args.at(-1), VIEWER_UNIT_SCOPE)
+          assert.ok(args.includes('vitest.config.ts'))
+          const report = healthy()
+          const replacement = mutate(report)
+          if (replacement !== null)
+            fs.writeFileSync(
+              args
+                .find((arg) => arg.startsWith('--outputFile='))
+                .slice('--outputFile='.length),
+              typeof replacement === 'string'
+                ? replacement
+                : JSON.stringify(report),
+            )
+          return {
+            exitCode:
+              name === 'nonzero after assertions' || name === 'assertion'
+                ? 1
+                : 0,
+            signal: name === 'cancelled after assertions' ? 'SIGTERM' : null,
+          }
+        },
+      })
+      assert.equal(result.passed, passed)
+      if (name === 'assertion') {
+        assert.equal(result.phase, 'assertion')
+        assert.match(
+          result.error,
+          /healthy behavior: Expected current snapshot/,
+        )
+      }
+      if (name === 'setup exception')
+        assert.match(result.error, /Discovery failed/)
+      if (name === 'head mismatch' || name === 'setup exception')
+        assert.equal(calls, 0)
+      if (!passed) {
+        const summary = summarizeSource(selection, { results })
+        assert.equal(summary.failed, true)
+        assert.match(
+          summary.markdown,
+          /Browser discovery\/execution not executed/,
+        )
+        fs.writeFileSync(
+          path.join(results, 'selection.json'),
+          JSON.stringify(selection),
+        )
+        assert.equal(
+          await main('source-plan', {
+            RESULTS_DIR: results,
+            GITHUB_STEP_SUMMARY: path.join(results, 'summary.md'),
+          }),
+          1,
+        )
+        assert.equal(fs.existsSync(path.join(results, 'plan.json')), false)
+        fs.writeFileSync(
+          path.join(results, 'plan.json'),
+          JSON.stringify({
+            ...selection,
+            pairs: [{ file, project: 'chromium' }],
+          }),
+        )
+        assert.equal(
+          await main('source-run', {
+            RESULTS_DIR: results,
+            GITHUB_STEP_SUMMARY: path.join(results, 'summary.md'),
+          }),
+          1,
+        )
+        assert.equal(fs.existsSync(path.join(results, '0')), false)
+      }
+    })
+  const result = await runViewerUnits(
+    { inputs: [] },
+    {
+      discover: () => {
+        throw new Error('must not discover')
+      },
+      executor: () => {
+        throw new Error('must not execute')
+      },
+    },
+  )
+  assert.deepEqual(result, { passed: true, skipped: true })
+})
+
+test('real Vitest assertion diagnostics pass through the viewer unit gate', async (t) => {
+  // A subprocess proves the native reporter/process boundary; no browser or service.
+  const directory = temporary(t)
+  const root = path.resolve(import.meta.dirname, '..')
+  const fixture = path.join(fs.realpathSync(directory), 'behavior.test.mjs')
+  const config = path.join(directory, 'vitest.config.mjs')
+  const vitest = path.join(root, 'apps/web/node_modules/vitest/dist/index.js')
+  fs.writeFileSync(
+    config,
+    `export default { test: { include: ['**/*.test.mjs'] } }`,
+  )
+  for (const current of ['new', 'old']) {
+    fs.writeFileSync(
+      fixture,
+      `import { test, expect } from ${JSON.stringify(vitest)};
+let snapshot = { sequence: 0, body: 'initial' };
+function apply(next) { ${current === 'new' ? 'if (next.sequence <= snapshot.sequence) return;' : ''} snapshot = next; }
+test('newer snapshot survives', () => {
+  apply({ sequence: 2, body: 'new' });
+  apply({ sequence: 1, body: 'old' });
+  expect(snapshot.body).toBe('new');
+});`,
+    )
+    const selection = { head: 'abc123def4', inputs: ['example.ts'] }
+    const result = await runViewerUnits(selection, {
+      root,
+      results: directory,
+      head: () => selection.head,
+      discover: () => [fixture],
+      executor: (command, args, options, output) => {
+        const actual = [...args]
+        actual[actual.indexOf('--config') + 1] = config
+        actual.pop()
+        actual.push('--root', directory)
+        const child = spawnSync(command, actual, {
+          cwd: options.cwd,
+          env: options.env,
+          encoding: 'utf8',
+          timeout: options.timeoutMs,
+        })
+        output(child.stdout ?? '')
+        output(child.stderr ?? '')
+        if (child.error) throw child.error
+        return { exitCode: child.status, signal: child.signal }
+      },
+    })
+    assert.equal(result.passed, current === 'new', JSON.stringify(result))
+    if (current === 'old') {
+      assert.equal(result.phase, 'assertion')
+      assert.match(
+        result.error,
+        /newer snapshot survives.*expected 'old' to be 'new'/i,
+      )
+    }
+  }
+})
+
+test('source-only and migrated-unit-only feedback runs units before browser planning and starts a fresh admission clock', async (t) => {
+  for (const input of [
+    'apps/web/app/source.ts',
+    `apps/web/${VIEWER_UNIT_SCOPE}/latest-version.test.tsx`,
+  ]) {
+    const results = temporary(t)
+    const selection = sourceSelection([input])
+    const unitFile = `apps/web/${VIEWER_UNIT_SCOPE}/example.test.ts`
+    const events = []
+    let now = 0
+    const result = await runViewerUnits(selection, {
+      results,
+      head: () => selection.head,
+      clock: () => now,
+      preparationMs: 1000,
+      discover: () => {
+        events.push('unit discovery')
+        return [unitFile]
+      },
+      executor: (_command, args) => {
+        events.push('units')
+        now = 190_000
+        const report = passing({ file: unitFile, project: null })
+        fs.writeFileSync(
+          args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+          JSON.stringify(report),
+        )
+        return { exitCode: 0 }
+      },
+    })
+    assert.equal(result.passed, true)
+    assert.equal(selection.units.elapsedMs, 190_000)
+    assert.equal(selection.units.preparationMs, 1000)
+    const plan = await buildSourcePlan(selection, {
+      discover: () => {
+        events.push('browser discovery')
+        return sourceDiscovery([{ file, project: 'chromium' }])()
+      },
+    })
+    await runSourcePlan(plan, {
+      results,
+      clock: () => now,
+      executor: (_command, args) => {
+        events.push('browser execution')
+        fs.writeFileSync(
+          args.find((arg) => arg.startsWith('--outputFile=')).slice(13),
+          JSON.stringify(passing(plan.pairs[0])),
+        )
+        now += 10
+        return { exitCode: 0 }
+      },
+    })
+    assert.deepEqual(events, [
+      'unit discovery',
+      'units',
+      'browser discovery',
+      'browser execution',
+    ])
+    assert.equal(plan.execution.elapsedMs, 10)
+    assert.equal(plan.execution.budgetMs, 180_000)
+    assert.equal(summarizeSource(plan, { results }).failed, false)
+    assert.equal(
+      summarizeSource(plan, { results, setupError: 'Job cancelled' }).failed,
+      true,
+    )
+  }
 })
