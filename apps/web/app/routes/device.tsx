@@ -135,6 +135,21 @@ export const screen = {
       },
     },
     {
+      id: 'publisher-expired',
+      description:
+        'An expired publisher request keeps its expiration explanation after reload',
+      setup: {
+        auth: 'team-owner',
+        seedAuth: 'team-owner',
+        scenario: 'device/publisher-expired',
+        query: '?user_code=60ACE175',
+        ready: {
+          selector: '#device-code-error',
+          description: 'Authoritative expired-code error loaded',
+        },
+      },
+    },
+    {
       id: 'publisher-long-name',
       description: 'Long requested name and existing client picker',
       setup: {
@@ -197,7 +212,7 @@ type VerifyState =
   | { kind: 'ready'; code: string; notice: boolean }
   | { kind: 'done'; code: string; decision: 'approved' | 'denied' }
   | { kind: 'already'; code: string }
-  | { kind: 'invalid' | 'expired' | 'not_found'; code: string }
+  | { kind: 'invalid' | 'expired' | 'not_found' | 'unavailable'; code: string }
   | { kind: 'missing' }
 
 type DeviceMessageKeys = { title: TKey; body: TKey }
@@ -622,8 +637,13 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       .then(async (res) => {
         const next = verifyStateFrom(res, verificationCode)
         if (next.kind === 'ready') {
-          const verifiedApproval =
-            await loadDeviceAgentApproval(verificationCode)
+          let verifiedApproval
+          try {
+            verifiedApproval = await loadDeviceAgentApproval(verificationCode)
+          } catch {
+            dispatchIfCurrent(await reverifyMissingApproval(verificationCode))
+            return
+          }
           if (!cancelled && currentCleanCode.current === verificationCode) {
             setVerifiedAgentApproval({
               code: verificationCode,
@@ -642,7 +662,7 @@ export default function Device({ loaderData }: Route.ComponentProps) {
         dispatchIfCurrent(next)
       })
       .catch(() => {
-        dispatchIfCurrent({ kind: 'invalid', code: verificationCode })
+        dispatchIfCurrent({ kind: 'unavailable', code: verificationCode })
       })
     return () => {
       cancelled = true
@@ -692,11 +712,31 @@ export default function Device({ loaderData }: Route.ComponentProps) {
           dispatch({ kind: 'done', code: decisionCode, decision })
         } else if (status === 401) {
           signInToCurrentPage()
-        } else if (publisherApproval && status === 400) {
-          const refreshed = await loadDeviceAgentApproval(decisionCode)
+        } else if (
+          publisherApproval &&
+          (status === 400 || status === 403 || status === 410)
+        ) {
+          const verified = verifyStateFrom(
+            await deviceVerify(decisionCode),
+            decisionCode,
+          )
+          if (currentCleanCode.current !== decisionCode) return
+          if (verified.kind !== 'ready') {
+            dispatch(verified)
+            return
+          }
+          let refreshed
+          try {
+            refreshed = await loadDeviceAgentApproval(decisionCode)
+          } catch {
+            const next = await reverifyMissingApproval(decisionCode)
+            if (currentCleanCode.current === decisionCode) dispatch(next)
+            return
+          }
           if (currentCleanCode.current !== decisionCode) return
           if (refreshed?.preset !== 'publisher') {
-            dispatch({ kind: 'expired', code: decisionCode })
+            const next = await reverifyMissingApproval(decisionCode)
+            if (currentCleanCode.current === decisionCode) dispatch(next)
             return
           }
           setVerifiedAgentApproval({ code: decisionCode, approval: refreshed })
@@ -711,7 +751,11 @@ export default function Device({ loaderData }: Route.ComponentProps) {
       }
     } catch {
       if (currentCleanCode.current === decisionCode) {
-        dispatch({ kind: 'ready', code: decisionCode, notice: true })
+        dispatch(
+          publisherApproval
+            ? { kind: 'unavailable', code: decisionCode }
+            : { kind: 'ready', code: decisionCode, notice: true },
+        )
       }
     }
   }
@@ -794,6 +838,17 @@ export default function Device({ loaderData }: Route.ComponentProps) {
   )
 }
 
+// Context can disappear after verification when another tab handles the code.
+async function reverifyMissingApproval(code: string): Promise<VerifyState> {
+  try {
+    const next = verifyStateFrom(await deviceVerify(code), code)
+    if (next.kind !== 'ready') return next
+  } catch {
+    // Neither a missing context nor a failed status read establishes expiration.
+  }
+  return { kind: 'unavailable', code }
+}
+
 export function verifyStateFrom(
   res: unknown,
   verificationCode: string,
@@ -801,7 +856,11 @@ export function verifyStateFrom(
   const statusCode = errorStatusOf(res)
   if (statusCode === 410) return { kind: 'expired', code: verificationCode }
   if (statusCode === 404) return { kind: 'not_found', code: verificationCode }
-  if (statusCode !== null) return { kind: 'invalid', code: verificationCode }
+  if (statusCode !== null)
+    return {
+      kind: statusCode === 400 ? 'invalid' : 'unavailable',
+      code: verificationCode,
+    }
   const data = (res as { data?: unknown } | null)?.data
   const status =
     data && typeof data === 'object' && 'status' in data
@@ -821,6 +880,11 @@ export function deviceErrorMessageKeys(
   kind: VerifyState['kind'],
 ): DeviceMessageKeys | null {
   switch (kind) {
+    case 'unavailable':
+      return {
+        title: 'device.unavailable.title',
+        body: 'device.unavailable.body',
+      }
     case 'invalid':
       return { title: 'device.invalid.title', body: 'device.invalid.body' }
     case 'missing':

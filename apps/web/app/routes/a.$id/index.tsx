@@ -1,3 +1,4 @@
+import type { HeadersFunction } from 'react-router'
 import ViewerRoute, { ErrorBoundary as ViewerErrorBoundary } from './+viewer'
 import type { ScreenSpec } from '~/types/screen'
 
@@ -416,9 +417,24 @@ export const screen = {
       },
     },
     {
+      id: 'retention-managed-older-current',
+      description:
+        'An older current scheduled version is protected in addition to the latest scheduled version',
+      setup: {
+        auth: 'team-owner',
+        scenario: 'viewer/retention-managed-older-current',
+        reseedBeforeCapture: true,
+        scenarioArtifactIndex: 21,
+        interactions: [
+          { action: 'click', selector: '[data-viewer-more-menu-trigger]' },
+          { action: 'click', selector: '[data-viewer-history-menu-item]' },
+        ],
+      },
+    },
+    {
       id: 'retention-managed-version-menu',
       description:
-        'Read-only version menu explains scheduled retention and human preservation',
+        'Read-only version menu shows versions without retention management details',
       setup: {
         auth: 'team-owner',
         scenario: 'viewer/retention-managed-readonly',
@@ -634,3 +650,19 @@ export { meta, AgentHelpContent, buildPreauthCliOpenCommand } from './+viewer'
 // Direct component exports let React Router inject loader and error props.
 export default ViewerRoute
 export const ErrorBoundary = ViewerErrorBoundary
+
+export const headers: HeadersFunction = ({
+  parentHeaders,
+  loaderHeaders,
+  errorHeaders,
+}) => {
+  const responseHeaders = new Headers(parentHeaders)
+  const cacheControl =
+    errorHeaders?.get('Cache-Control') ?? loaderHeaders.get('Cache-Control')
+  if (cacheControl) responseHeaders.set('Cache-Control', cacheControl)
+  for (const source of [loaderHeaders, errorHeaders]) {
+    for (const cookie of source?.getSetCookie() ?? [])
+      responseHeaders.append('Set-Cookie', cookie)
+  }
+  return responseHeaders
+}

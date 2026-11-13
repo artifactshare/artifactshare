@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { VersionWidget } from './+components/version-widget'
-import { HistoryPanelBody } from './+components/history-panel'
+import { HistoryPanel, HistoryPanelBody } from './+components/history-panel'
 import { bindI18n as bindTestI18n } from '~/lib/i18n'
 import { RetentionEditor } from './+components/retention-editor'
 import ViewerRoute from './+viewer'
@@ -620,13 +620,74 @@ test.each([
   'managed %s editor wraps protection on mobile and confirms %s scheduled removals',
   async (locale, count) => {
     state.locale = locale
-    await page.viewport(390, 844)
-    await mount(2, true, true)
+    await page.viewport(390, count === 1 ? 600 : 844)
+    await act(async () =>
+      root.render(
+        <HistoryPanel
+          open
+          onOpenChange={() => {}}
+          artifactId="abc123def4"
+          canChangeRetention
+          retainVersions={2}
+          publisherManaged
+          versions={[
+            {
+              id: 'v1',
+              ordinal: 1,
+              createdAt: '2026-05-29T00:00:00.000Z',
+              sizeBytes: 10,
+              isCurrent: true,
+            },
+          ]}
+        />,
+      ),
+    )
+    await expect
+      .element(
+        page.getByRole('button', {
+          name: locale === 'en' ? 'Change' : '変更',
+          exact: true,
+        }),
+      )
+      .toBeVisible()
+    expect(
+      page.getByRole('link', { name: /v1/ }).element().getBoundingClientRect()
+        .height,
+    ).toBeGreaterThan(0)
+    await page
+      .getByRole('button', {
+        name: locale === 'en' ? 'Change' : '変更',
+        exact: true,
+      })
+      .click()
+    await waitForBrowserLayout()
+    // Observe before any field/click helper can scroll the save action into view.
+    const panel = document.querySelector('[data-slot="sheet-content"]')!
+    const save = panel.querySelector<HTMLButtonElement>(
+      '[data-retention-save]',
+    )!
+    // The save action must precede the fields even when both fit on screen.
+    const fields = panel.querySelector('[role="radiogroup"]')!
+    expect(
+      save.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    const bounds = save.getBoundingClientRect()
+    expect(bounds.width).toBeGreaterThan(0)
+    expect(bounds.height).toBeGreaterThan(0)
+    expect(bounds.top).toBeGreaterThanOrEqual(panel.getBoundingClientRect().top)
+    expect(bounds.bottom).toBeLessThanOrEqual(
+      Math.min(window.innerHeight, panel.getBoundingClientRect().bottom),
+    )
+    await expect
+      .element(page.getByRole('radiogroup'))
+      .toHaveAccessibleDescription(
+        bindTestI18n(locale).t('vw.retentionManagedProtection'),
+      )
     const protection =
       locale === 'en'
         ? 'All versions people added are kept'
         : '人が追加した版はすべて残します'
-    expect(host.textContent).toContain(protection)
+    expect(panel.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
     fetchMock.mockResolvedValueOnce(preview(count))
@@ -653,6 +714,11 @@ test.each([
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       retain_versions: 1,
     })
+    await userEvent.keyboard('{Escape}')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+    )
+    await vi.waitFor(() => expect(document.activeElement).toBe(save))
     expect(host.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     )
@@ -660,7 +726,7 @@ test.each([
 )
 
 test.each(['en', 'ja'] as const)(
-  'managed %s read-only version menu preserves the protection note',
+  'managed %s version menu withholds retention from nonmanagers',
   async (locale) => {
     state.locale = locale
     for (const publisherManaged of [false, true]) {
@@ -678,7 +744,7 @@ test.each(['en', 'ja'] as const)(
               },
             ]}
             onOpenHistory={() => {}}
-            retention={{ limit: 1, editable: false, publisherManaged }}
+            retention={{ limit: 1, editable: false }}
           />,
         ),
       )
@@ -696,7 +762,11 @@ test.each(['en', 'ja'] as const)(
             ? 'All versions people added are kept.'
             : '人が追加した版はすべて残します。',
         ),
-      ).toBe(publisherManaged)
+      ).toBe(false)
+      expect(host.textContent).toContain('v1')
+      expect(host.textContent).not.toContain(
+        locale === 'en' ? 'Keeping' : '残しています',
+      )
     }
   },
 )

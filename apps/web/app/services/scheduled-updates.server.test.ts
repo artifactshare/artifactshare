@@ -105,7 +105,7 @@ test('publisher versions preserve interleaved list order and cursor boundaries w
   ).toEqual(['abc123def4', 'second'])
 })
 
-test('pins and badges use only non-publisher updates, including equal timestamps and pruned history', async () => {
+test('badges follow current versions while pins use only non-publisher updates, including equal timestamps and pruned history', async () => {
   await publish('machine1', 1, true)
   expect(await pin()).toMatchObject({
     latestVersionNumber: 0,
@@ -122,13 +122,13 @@ test('pins and badges use only non-publisher updates, including equal timestamps
   })
   expect(await file()).toMatchObject({
     versionCount: 3,
-    badgeVersionNumber: 2,
+    badgeVersionNumber: 3,
     latestPublishedAt: humanTime,
   })
   expect(versionBadgeLabel(await file(), machineTime, String)).toBeNull()
   expect(
     versionBadgeLabel(await file(), '2026-06-03T00:00:00.000Z', String),
-  ).toBe('2')
+  ).toBe('3')
   await publish('human4', 4, false)
   expect(versionBadgeLabel(await file(), machineTime, String)).toBe('4')
   await publish('machine5', 5, true)

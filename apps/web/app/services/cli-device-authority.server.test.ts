@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
+import { RouterContextProvider } from 'react-router'
+import { userContext } from '~/middleware/context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { seedUser, seedWorkspace } from '~/test/db-seed-fixture'
 import {
@@ -39,6 +41,7 @@ vi.mock('cloudflare:workers', () => {
 })
 
 const {
+  isPublisherDeviceApproval,
   attachAgentBootstrapAuthority,
   attachPublisherBootstrapAuthority,
   loadPublisherApprovalContext,
@@ -51,6 +54,8 @@ const {
 } = await import('./cli-device-authority.server')
 
 const { action, loader } = await import('../routes/api.auth.$')
+const { loader: approvalContextLoader } =
+  await import('../routes/api.cli.device-approval')
 
 describe('CLI device authorization intent', () => {
   let sqlite: DatabaseSync
@@ -517,6 +522,69 @@ describe('CLI device authorization intent', () => {
     expect(
       sqlite.prepare('SELECT * FROM cli_session_authorities').all(),
     ).toEqual([])
+  })
+
+  test.each([null, 'unrestricted', 'publisher', 'agent'])(
+    'approval context requires a live owned request after verification (%s)',
+    async (preset) => {
+      sqlite
+        .prepare('UPDATE deviceCode SET preset = ?, deviceName = ?')
+        .run(preset, 'Dashboard')
+      const context = new RouterContextProvider()
+      context.set(userContext, {
+        id: 'u1',
+        workspaceId: 'ws1',
+        email: 'u1@example.com',
+      } as never)
+      const request = new Request(
+        'https://example.test/api/cli/device-approval?user_code=ABCD1234',
+      )
+      const readContext = () =>
+        approvalContextLoader({ context, request } as never)
+      const healthy = await readContext()
+      expect(healthy.status).toBe(200)
+      const body = await healthy.json()
+      if (preset === 'publisher')
+        expect(body).toMatchObject({
+          publisherApproval: { preset: 'publisher' },
+        })
+      else if (preset === 'agent')
+        expect(body).toMatchObject({ agentApproval: { preset: 'agent' } })
+      else expect(body).toEqual({ agentApproval: null })
+
+      // Verification succeeded before the row was consumed or removed.
+      authHandlerMock.mockResolvedValue(Response.json({ status: 'pending' }))
+      const verified = await loader({
+        request,
+        url: new URL('https://example.test/api/auth/device?user_code=ABCD1234'),
+      } as never)
+      expect(await verified.json()).toEqual({ status: 'pending' })
+      for (const change of [
+        'UPDATE deviceCode SET userId = NULL',
+        "UPDATE deviceCode SET userId = 'u1', status = 'approved'",
+        "UPDATE deviceCode SET status = 'pending', expiresAt = '2000-01-01T00:00:00.000Z'",
+        'DELETE FROM deviceCode',
+      ]) {
+        sqlite.exec(change)
+        const unavailable = await readContext()
+        expect(unavailable.status).toBe(503)
+        expect(unavailable.headers.get('Cache-Control')).toBe(
+          'private, no-store',
+        )
+        expect(await unavailable.text()).toBe('')
+      }
+    },
+  )
+
+  test('publisher context fallback recognizes only the requesting owner', async () => {
+    await storeDeviceAuthorizationIntent('device-1', {
+      preset: 'publisher',
+      deviceName: 'Dashboard',
+      projectSelector: null,
+    })
+    expect(await isPublisherDeviceApproval('ABCD1234', 'u1')).toBe(true)
+    expect(await isPublisherDeviceApproval('ABCD1234', 'u2')).toBe(false)
+    expect(await isPublisherDeviceApproval('UNKNOWN1', 'u2')).toBe(false)
   })
 
   test('publisher approval creates a stable owned identity and only explicit continuation reuses it', async () => {

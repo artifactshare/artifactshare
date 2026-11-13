@@ -2,11 +2,16 @@ import { previewRetention, saveRetention } from './retention-settings.server'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createD1BatchFixture } from '~/test/d1-batch-mock'
 import { loadViewerRevisitContext } from './viewer-revisit.server'
-import { versionCountSelect } from './home.server'
+import {
+  currentVersionNumberSelect,
+  latestPublishedAtSelect,
+  versionCountSelect,
+} from './home.server'
 import { projectFileRowsQuery } from '~/routes/_protected/+lib/project-subpage.server'
 import { loadCommentThreads } from './comments.server'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import {
+  hasExtraProtectedCurrentVersion,
   pruneVersions,
   pruneVersionsAfterPublish,
 } from './version-retention.server'
@@ -652,6 +657,8 @@ test('managed history crosses publisher-guarded batches without releasing human 
       n % 2 ? 'key1' : 'shared-publisher',
       n % 2 ? null : 'client1',
     )
+  // v4 is outside the visible recent history page, but remains current.
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(true)
   const file =
     sqlite.prepare(`INSERT INTO version_files (id, version_id, path, r2_key, size_bytes, sha256, mime_type, created_at)
     VALUES (?, ?, ?, ?, 10, 'hash', 'application/json', '2026-09-01')`)
@@ -875,4 +882,26 @@ test('snapshot preserves ordered duplicate managed references and empty arrays',
     references: [],
     eligible: [],
   })
+})
+
+test('current badges and protected-current evidence follow restored scheduled current without changing human recency', async () => {
+  managedHistory()
+  sqlite.exec(
+    "UPDATE shareables SET retain_versions = 1, current_version_id = 'v2'",
+  )
+  const row = await db
+    .selectFrom('shareables')
+    .select([currentVersionNumberSelect, latestPublishedAtSelect])
+    .executeTakeFirstOrThrow()
+  expect(row.badge_version_number).toBe(2)
+  expect(row.latest_published_at).toBe('2026-09-03')
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(true)
+  sqlite.exec("UPDATE shareables SET current_version_id = 'v4'")
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(false)
+  sqlite.exec(
+    "UPDATE shareables SET current_version_id = 'v2', retain_versions = 2",
+  )
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(false)
+  sqlite.exec('UPDATE shareables SET retain_versions = NULL')
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(false)
 })

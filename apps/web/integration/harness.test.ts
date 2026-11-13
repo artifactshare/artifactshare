@@ -559,6 +559,102 @@ describe('Worker integration harness', () => {
     expect(missing.status).toBe(404)
     const missingHtml = await missing.text()
     expect(missingHtml).toContain('This file is no longer available')
+
+    const replaced = await worker.fetch(
+      `/api/shareables/${uploaded.id}/versions`,
+      {
+        method: 'POST',
+        headers: {
+          Cookie: sessionCookie(owner.sessionToken),
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        },
+        body: form,
+      },
+    )
+    expect(replaced.status).toBe(200)
+    // Exercise the built React Router document and data paths: loader init
+    // headers alone do not establish the document response's cache policy.
+    await env.DB.prepare(
+      'INSERT INTO version_retention_tombstones (version_id, shareable_id, version_number, removed_at) VALUES (?, ?, ?, ?)',
+    )
+      .bind(
+        'removed-runtime-version',
+        uploaded.id,
+        3,
+        '2026-07-30T00:00:00.000Z',
+      )
+      .run()
+    for (const suffix of ['', '.data']) {
+      const removed = await worker.fetch(
+        `/a/${uploaded.id}${suffix}?version=removed-runtime-version`,
+        {
+          headers: { Cookie: sessionCookie(owner.sessionToken) },
+        },
+      )
+      expect(removed.status).toBe(410)
+      expect(removed.headers.get('Cache-Control')).toContain('private')
+      expect(removed.headers.get('Cache-Control')).toContain('no-store')
+      const body = await removed.text()
+      expect(body).not.toContain('secret-runtime-body')
+      expect(body).not.toContain('__as_token')
+    }
+    // A real shared reader can open content but cannot learn removal history
+    // or retention management evidence.
+    await env.DB.prepare(
+      'INSERT INTO shareable_grants (shareable_id, granted_email, granted_at, granted_by) VALUES (?, ?, ?, ?)',
+    )
+      .bind(
+        uploaded.id,
+        outsider.email,
+        '2026-07-30T00:00:00.000Z',
+        owner.userId,
+      )
+      .run()
+    for (const query of ['', `?version=${uploaded.versionId}`]) {
+      const allowed = await worker.fetch(`/a/${uploaded.id}.data${query}`, {
+        headers: { Cookie: sessionCookie(outsider.sessionToken) },
+      })
+      expect(allowed.status).toBe(200)
+      const allowedData = await allowed.text()
+      expect(allowedData).toContain('sandboxUrl')
+      expect(allowedData).not.toContain('publisherManaged')
+      expect(allowedData).not.toContain('extraProtectedCurrentVersion')
+    }
+    for (const version of [
+      'removed-runtime-version',
+      'unknown-runtime-version',
+    ]) {
+      const unavailable = await worker.fetch(
+        `/a/${uploaded.id}?version=${version}`,
+        { headers: { Cookie: sessionCookie(outsider.sessionToken) } },
+      )
+      expect(unavailable.status).toBe(404)
+      expect(await unavailable.text()).not.toContain('version-removed')
+    }
+    await env.DB.prepare(
+      "UPDATE shareables SET visibility = 'link', link_expires_at = NULL WHERE id = ?",
+    )
+      .bind(uploaded.id)
+      .run()
+    await env.DB.prepare(
+      'UPDATE workspaces SET link_sharing_enabled = 1 WHERE id = ?',
+    )
+      .bind(owner.workspaceId)
+      .run()
+    for (const version of [
+      'removed-runtime-version',
+      'unknown-runtime-version',
+    ]) {
+      const redirected = await worker.fetch(
+        `/a/${uploaded.id}?version=${version}`,
+        { redirect: 'manual' },
+      )
+      expect(redirected.status).toBe(301)
+      expect(redirected.headers.get('Location')).toBe(
+        `https://${uploaded.id}.localhost:5173/`,
+      )
+      expect(await redirected.text()).toBe('')
+    }
   })
 
   test('verifies Stripe webhook signatures with the runtime Web Crypto provider', async () => {

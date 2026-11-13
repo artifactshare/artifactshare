@@ -44,8 +44,8 @@ export function versionCountSelect(eb: ExpressionBuilder<DB, 'shareables'>) {
     .as('version_count')
 }
 
-// Both badge subqueries use the same deterministic eligible publication order.
-export function latestHumanVersionNumberSelect(
+// Badges follow the current pointer; human activity keeps its own ordering.
+export function currentVersionNumberSelect(
   eb: ExpressionBuilder<DB, 'shareables'>,
 ) {
   return eb
@@ -53,7 +53,8 @@ export function latestHumanVersionNumberSelect(
     .select('versions.number')
     .whereRef('versions.shareable_id', '=', 'shareables.id')
     .where('versions.status', '=', 'published')
-    .where('versions.created_by_publisher_client_id', 'is', null)
+    .where('versions.published_at', 'is not', null)
+    .whereRef('versions.id', '=', 'shareables.current_version_id')
     .orderBy('versions.number', 'desc')
     .orderBy('versions.id', 'desc')
     .limit(1)
@@ -225,7 +226,7 @@ export function recentRowActivitySelects(
   return [
     versionCountSelect(eb),
     latestPublishedAtSelect(eb),
-    latestHumanVersionNumberSelect(eb),
+    currentVersionNumberSelect(eb),
     unreadVersionCountSelect(eb, userId),
     unreadCommentSummarySelect(eb, userId),
     ...(user ? [recentAttributeSelect(user, containerAlias)] : []),

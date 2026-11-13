@@ -97,6 +97,7 @@ function recentContentRichBody(
 
 const managedRetentionScenarios = new Set([
   'viewer/retention-managed-owner',
+  'viewer/retention-managed-older-current',
   'viewer/retention-managed-readonly',
   'viewer/retention-managed-unlimited',
 ])
@@ -382,11 +383,15 @@ export async function seedDevScreenState(
     await db
       .updateTable('shareables')
       .set({
-        current_version_id: `${shareableId}-v4`,
+        current_version_id: `${shareableId}-v${scenario === 'viewer/retention-managed-older-current' ? 3 : 4}`,
         created_by_publisher_client_id: clientId,
         assigned_publisher_client_id: null,
         retain_versions:
-          scenario === 'viewer/retention-managed-unlimited' ? null : 2,
+          scenario === 'viewer/retention-managed-unlimited'
+            ? null
+            : scenario === 'viewer/retention-managed-older-current'
+              ? 1
+              : 2,
         updated_at: now,
       })
       .where('id', '=', shareableId)
@@ -571,6 +576,10 @@ export async function seedDevScreenState(
       .execute()
   }
   if (scenario.startsWith('device/publisher-')) {
+    const expiresAt =
+      scenario === 'device/publisher-expired'
+        ? '2000-01-01T00:00:00.000Z'
+        : '2099-01-01T00:00:00.000Z'
     const name =
       scenario === 'device/publisher-long-name'
         ? 'Dashboard '.repeat(10).trim()
@@ -582,7 +591,7 @@ export async function seedDevScreenState(
         deviceCode: `${workspaceId}-publisher-token`,
         userCode: devPublisherUserCode(workspaceId),
         userId,
-        expiresAt: '2099-01-01T00:00:00.000Z',
+        expiresAt,
         status: 'pending',
         lastPolledAt: null,
         pollingInterval: 5,
@@ -597,7 +606,7 @@ export async function seedDevScreenState(
       .onConflict((oc) =>
         oc.column('id').doUpdateSet({
           userCode: devPublisherUserCode(workspaceId),
-          expiresAt: '2099-01-01T00:00:00.000Z',
+          expiresAt,
         }),
       )
       .execute()

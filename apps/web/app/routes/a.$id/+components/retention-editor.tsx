@@ -22,9 +22,11 @@ export function RetentionEditor({
   artifactId,
   retainVersions,
   publisherManaged,
+  extraProtectedCurrentVersion,
 }: {
   artifactId: string
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   retainVersions: number | null
 }) {
   const { t } = useT()
@@ -41,8 +43,9 @@ export function RetentionEditor({
   const [expanded, setExpanded] = useState(false)
   const [saved, setSaved] = useState(false)
   const changeButton = useRef<HTMLButtonElement>(null)
-  const [pending, setPending] = useState(false)
-  const busy = useRef(false)
+  const [pendingRequest, setPendingRequest] = useState<symbol | null>(null)
+  const pending = pendingRequest !== null
+  const busy = useRef<symbol | null>(null)
   const saveButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState<'failed' | 'changed' | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -55,9 +58,10 @@ export function RetentionEditor({
   }
   async function save(confirmed?: Preview) {
     if (busy.current || !valid || unchanged) return
-    busy.current = true
+    const request = Symbol()
+    busy.current = request
     setDraft({ limited, count })
-    setPending(true)
+    setPendingRequest(request)
     setError(null)
     setSaved(false)
     try {
@@ -75,12 +79,15 @@ export function RetentionEditor({
       )
       if (response.status === 409) {
         const result = (await response.json()) as Preview & { kind: string }
+        if (busy.current !== request) return
         if (result.kind !== 'preview') throw new Error('invalid preview')
         if (result.count > 0) {
           setPreview(result)
           if (confirmed) setError('changed')
         } else {
-          setPreview(null)
+          setPreview((current) =>
+            current === (confirmed ?? null) ? null : current,
+          )
           setError('changed')
         }
         return
@@ -89,14 +96,17 @@ export function RetentionEditor({
       const result = (await response.json()) as { kind: string }
       if (result.kind !== 'saved') throw new Error('invalid save response')
       await revalidator.revalidate()
+      if (busy.current !== request) return
       setDraft(null)
-      setPreview(null)
+      setPreview((current) =>
+        current === (confirmed ?? null) ? null : current,
+      )
       setSaved(true)
     } catch {
       setError('failed')
     } finally {
-      busy.current = false
-      setPending(false)
+      if (busy.current === request) busy.current = null
+      setPendingRequest((current) => (current === request ? null : current))
     }
   }
   return (
@@ -108,7 +118,12 @@ export function RetentionEditor({
             !publisherManaged && 'truncate',
           )}
         >
-          {retentionSummary(retainVersions, publisherManaged, t)}
+          {retentionSummary(
+            retainVersions,
+            publisherManaged,
+            t,
+            extraProtectedCurrentVersion,
+          )}
         </p>
         <Button
           data-retention-change
@@ -134,15 +149,6 @@ export function RetentionEditor({
           void save()
         }}
       >
-        <RetentionFields
-          id={id}
-          pending={pending}
-          publisherManaged={publisherManaged}
-          limited={limited}
-          count={count}
-          valid={valid}
-          onEdit={editDraft}
-        />
         <Button
           data-retention-save
           ref={saveButton}
@@ -152,6 +158,15 @@ export function RetentionEditor({
         >
           {t('vw.retentionSave')}
         </Button>
+        <RetentionFields
+          id={id}
+          pending={pending}
+          publisherManaged={publisherManaged}
+          limited={limited}
+          count={count}
+          valid={valid}
+          onEdit={editDraft}
+        />
         <div
           role="status"
           data-retention-saved={saved || undefined}
@@ -190,7 +205,7 @@ function RetentionConfirmation({
   pending: boolean
   error: 'failed' | 'changed' | null
   publisherManaged?: boolean
-  busy: RefObject<boolean>
+  busy: RefObject<symbol | null>
   saveButton: RefObject<HTMLButtonElement | null>
   changeButton: RefObject<HTMLButtonElement | null>
   onPreviewChange: (preview: Preview | null) => void
@@ -295,15 +310,18 @@ function RetentionFields({
 }) {
   const { t } = useT()
   return (
-    <fieldset disabled={pending} className="flex flex-col gap-2">
-      <legend className="text-sm font-medium">{t('vw.retentionTitle')}</legend>
+    <div className="flex flex-col gap-2">
+      <p id={`${id}-title`} className="text-sm font-medium">
+        {t('vw.retentionTitle')}
+      </p>
       {publisherManaged ? (
-        <p className="text-muted-foreground text-sm">
+        <p id={`${id}-protection`} className="text-muted-foreground text-sm">
           {t('vw.retentionManagedProtection')}
         </p>
       ) : null}
       <RadioGroup
-        aria-label={t('vw.retentionTitle')}
+        aria-labelledby={`${id}-title`}
+        aria-describedby={publisherManaged ? `${id}-protection` : undefined}
         value={limited ? 'limited' : 'all'}
         onValueChange={(value) =>
           onEdit({ limited: value === 'limited', count })
@@ -335,12 +353,20 @@ function RetentionFields({
           <Input
             id={`${id}-count`}
             type="number"
+            disabled={pending}
             min="1"
             step="1"
             required
             value={count}
             aria-invalid={!valid}
-            aria-describedby={!valid ? `${id}-error` : undefined}
+            aria-describedby={
+              [
+                publisherManaged ? `${id}-protection` : '',
+                !valid ? `${id}-error` : '',
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
             onChange={(event) => onEdit({ limited, count: event.target.value })}
           />
           {!valid ? (
@@ -350,7 +376,7 @@ function RetentionFields({
           ) : null}
         </div>
       ) : null}
-    </fieldset>
+    </div>
   )
 }
 

@@ -1,7 +1,7 @@
 import {
   directGrantsSelect,
   latestPublishedAtSelect,
-  latestHumanVersionNumberSelect,
+  currentVersionNumberSelect,
 } from '~/services/home.server'
 import type { Kysely } from 'kysely'
 import type { DB } from '~/types/db'
@@ -56,7 +56,7 @@ export function projectFileRowsQuery(
         .where('versions.status', '=', 'published')
         .as('version_count'),
       latestPublishedAtSelect(eb),
-      latestHumanVersionNumberSelect(eb),
+      currentVersionNumberSelect(eb),
       eb
         .selectFrom('comment_threads')
         .select((sqb) => sqb.fn.count<number>('comment_threads.id').as('count'))

@@ -1,4 +1,3 @@
-import { retentionSummary } from './retention-copy'
 import { RetentionEditor } from './retention-editor'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import { useRef, useState, type RefObject } from 'react'
@@ -21,6 +20,7 @@ interface HistoryPanelProps {
   artifactId?: string
   canChangeRetention?: boolean
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
@@ -39,6 +39,7 @@ export function HistoryPanel({
   versions,
   retainVersions,
   publisherManaged,
+  extraProtectedCurrentVersion,
   artifactId,
   canChangeRetention,
   open,
@@ -104,6 +105,7 @@ export function HistoryPanel({
         canChangeRetention={canChangeRetention}
         retainVersions={retainVersions}
         publisherManaged={publisherManaged}
+        extraProtectedCurrentVersion={extraProtectedCurrentVersion}
         versions={versions}
         canReplaceFile={canReplaceFile}
         active={active}
@@ -123,6 +125,7 @@ export function HistoryPanelBody({
   versions,
   retainVersions,
   publisherManaged,
+  extraProtectedCurrentVersion,
   artifactId,
   canChangeRetention,
   canReplaceFile,
@@ -138,6 +141,7 @@ export function HistoryPanelBody({
   artifactId?: string
   canChangeRetention?: boolean
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
@@ -159,11 +163,8 @@ export function HistoryPanelBody({
             artifactId={artifactId}
             retainVersions={retainVersions ?? null}
             publisherManaged={publisherManaged}
+            extraProtectedCurrentVersion={extraProtectedCurrentVersion}
           />
-        ) : retainVersions != null ? (
-          <p className="text-muted-foreground m-0 text-xs">
-            {retentionSummary(retainVersions, publisherManaged, t)}
-          </p>
         ) : null}
         <VersionRows versions={versions} locale={locale} t={t} />
       </div>

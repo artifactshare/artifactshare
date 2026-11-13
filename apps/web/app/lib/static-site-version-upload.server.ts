@@ -127,14 +127,17 @@ export async function runStaticSiteVersionUpload(
   if (result.kind !== 'ok') {
     return staticSiteBundleResponse(request, result, options.extraOkFields)
   }
-  const shareable = await db
-    .selectFrom('shareables')
-    .select('visibility')
-    .where('id', '=', shareableId)
-    .executeTakeFirstOrThrow()
+  const shareable =
+    options.authority?.kind === 'publisher'
+      ? null
+      : await db
+          .selectFrom('shareables')
+          .select('visibility')
+          .where('id', '=', shareableId)
+          .executeTakeFirstOrThrow()
   return staticSiteBundleResponse(request, result, {
     ...options.extraOkFields,
-    shareUrlVisibility: shareable.visibility,
+    shareUrlVisibility: shareable?.visibility ?? 'private',
   })
 }
 

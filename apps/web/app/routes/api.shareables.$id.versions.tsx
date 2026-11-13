@@ -283,11 +283,13 @@ export async function action({ request, context, params }: Route.ActionArgs) {
     )
   }
   if (result.kind === 'ok') {
-    const shareable = await db
-      .selectFrom('shareables')
-      .select('visibility')
-      .where('id', '=', id)
-      .executeTakeFirstOrThrow()
+    const shareable = publisher
+      ? null
+      : await db
+          .selectFrom('shareables')
+          .select('visibility')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
     return Response.json(
       ArtifactVersionUpdateResponseSchema.parse({
         id,
@@ -297,7 +299,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
         shareUrl: shareableUrl(
           new URL(request.url).origin,
           id,
-          shareable.visibility,
+          shareable?.visibility ?? 'private',
           isProduction(env),
         ),
       }),

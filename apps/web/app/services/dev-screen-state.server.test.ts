@@ -121,7 +121,13 @@ describe('dev screen state requests', () => {
     const now = '2026-09-09T00:00:00.000Z'
     try {
       for (const plan of ['free', 'plus', 'team'] as const) {
-        for (const state of ['new', 'continue', 'invalid', 'long-name']) {
+        for (const state of [
+          'new',
+          'continue',
+          'invalid',
+          'long-name',
+          'expired',
+        ]) {
           const scenario = `device/publisher-${state}`
           const { workspaceId } = await ensureDevScreenState(
             db,
@@ -148,7 +154,11 @@ describe('dev screen state requests', () => {
             .selectAll()
             .where('userId', '=', userId)
             .executeTakeFirstOrThrow()
-          expect(before.expiresAt).toBe('2099-01-01T00:00:00.000Z')
+          expect(before.expiresAt).toBe(
+            state === 'expired'
+              ? '2000-01-01T00:00:00.000Z'
+              : '2099-01-01T00:00:00.000Z',
+          )
           const clients = await db
             .selectFrom('publisher_clients')
             .selectAll()
@@ -179,8 +189,8 @@ describe('dev screen state requests', () => {
         .selectFrom('deviceCode')
         .select('userCode')
         .execute()
-      expect(codes).toHaveLength(12)
-      expect(new Set(codes.map((row) => row.userCode)).size).toBe(12)
+      expect(codes).toHaveLength(15)
+      expect(new Set(codes.map((row) => row.userCode)).size).toBe(15)
     } finally {
       await db.destroy()
     }
@@ -1891,7 +1901,7 @@ test.each(['with-pins', 'scheduled-pins'] as const)(
   },
 )
 
-test.each(['owner', 'readonly', 'unlimited'])(
+test.each(['owner', 'readonly', 'unlimited', 'older-current'])(
   'managed retention %s scenario resets history, attribution, access and bodies',
   async (kind) => {
     const sqliteRef: D1BatchSqliteRef = { current: null }
@@ -1936,8 +1946,12 @@ test.each(['owner', 'readonly', 'unlimited'])(
           `${workspaceId}-scheduled`,
         )
         expect(artifact.assigned_publisher_client_id).toBeNull()
-        expect(artifact.current_version_id).toBe(`${id}-v4`)
-        expect(artifact.retain_versions).toBe(kind === 'unlimited' ? null : 2)
+        expect(artifact.current_version_id).toBe(
+          `${id}-v${kind === 'older-current' ? 3 : 4}`,
+        )
+        expect(artifact.retain_versions).toBe(
+          kind === 'unlimited' ? null : kind === 'older-current' ? 1 : 2,
+        )
         expect(artifact.owner_user_id === userId).toBe(kind !== 'readonly')
         if (kind === 'readonly') expect(artifact.visibility).toBe('workspace')
         const versions = await db
@@ -1959,8 +1973,15 @@ test.each(['owner', 'readonly', 'unlimited'])(
           artifact.owner_user_id,
           1,
         )
-        expect(preview!.count).toBe(1)
-        expect(JSON.parse(preview!.snapshot).eligible).toEqual([`${id}-v3`])
+        expect(preview!.count).toBe(kind === 'older-current' ? 0 : 1)
+        expect(JSON.parse(preview!.snapshot).eligible).toEqual(
+          kind === 'older-current' ? [] : [`${id}-v3`],
+        )
+        const { hasExtraProtectedCurrentVersion } =
+          await import('./version-retention.server')
+        expect(await hasExtraProtectedCurrentVersion(db, id)).toBe(
+          kind === 'older-current',
+        )
         const put = vi.fn().mockResolvedValue(undefined)
         await seedDevScreenArtifactBodies(
           { put } as unknown as Pick<R2Bucket, 'put'>,
@@ -2005,7 +2026,10 @@ test.each(['owner', 'readonly', 'unlimited'])(
             1,
             preview!.snapshot,
           ),
-        ).toEqual({ retain_versions: 1, deleted_versions: 1 })
+        ).toEqual({
+          retain_versions: 1,
+          deleted_versions: kind === 'older-current' ? 0 : 1,
+        })
         expect(
           (
             await db
@@ -2015,7 +2039,11 @@ test.each(['owner', 'readonly', 'unlimited'])(
               .orderBy('number')
               .execute()
           ).map((version) => version.id),
-        ).toEqual([`${id}-v1`, `${id}-v2`, `${id}-v4`])
+        ).toEqual(
+          kind === 'older-current'
+            ? [1, 2, 3, 4].map((n) => `${id}-v${n}`)
+            : [`${id}-v1`, `${id}-v2`, `${id}-v4`],
+        )
         await db
           .updateTable('shareables')
           .set({

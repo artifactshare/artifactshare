@@ -305,7 +305,7 @@ describe('project files subpage loader', () => {
     expect(page2.files.find((file) => file.id === 's00')).toMatchObject({
       modifiedTime: '2026-07-10T00:00:00Z',
       versionCount: 1,
-      badgeVersionNumber: null,
+      badgeVersionNumber: 1,
       latestPublishedAt: null,
       commentCount: 0,
     })

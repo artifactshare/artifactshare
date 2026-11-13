@@ -78,3 +78,28 @@ test.each(['en', 'ja'] as const)(
     )
   },
 )
+
+test.each(['en', 'ja'] as const)(
+  'managed %s controls describe protection and the extra current version',
+  (locale) => {
+    routeData.locale = locale
+    const html = renderToStaticMarkup(
+      <RetentionEditor
+        artifactId="s1"
+        retainVersions={1}
+        publisherManaged
+        extraProtectedCurrentVersion
+      />,
+    )
+    expect(html).toContain(
+      locale === 'en'
+        ? 'The older current scheduled version is also kept.'
+        : 'ファイルの現在の版に設定されている古い定期更新の版も残しています。',
+    )
+    expect(html).toMatch(
+      /role="radiogroup"[^>]*aria-describedby="[^"]+-protection"/,
+    )
+    expect(html).toMatch(/<input[^>]*aria-describedby="[^"]+-protection"/)
+    expect(html).toMatch(/role="radiogroup"[^>]*aria-labelledby="[^"]+-title"/)
+  },
+)

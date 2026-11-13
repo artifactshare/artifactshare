@@ -32,7 +32,7 @@ import {
   unopenedOwnedPredicate,
   versionCountSelect,
   latestPublishedAtSelect,
-  latestHumanVersionNumberSelect,
+  currentVersionNumberSelect,
 } from '~/services/home.server'
 import { createDb } from '~/services/db.server'
 import { workspaceAccessRevokedSql } from '~/modules/access'
@@ -140,7 +140,7 @@ export async function loader({
       unopenedOwnedPredicate(user.id).as('is_unopened'),
       versionCountSelect(eb),
       latestPublishedAtSelect(eb),
-      latestHumanVersionNumberSelect(eb),
+      currentVersionNumberSelect(eb),
       'shareables.id',
       'shareables.name',
       'shareables.derived_title',
