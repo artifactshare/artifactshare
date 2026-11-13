@@ -61,7 +61,7 @@ test('setup pins, immutable SHA, permissions, explicit timeouts match CI', () =>
         assert.equal(step.with['persist-credentials'], false)
       }
       if (step.uses.startsWith('actions/setup-node@'))
-        assert.equal(step.with['node-version'], '24.22.2')
+        assert.equal(step.with['node-version'], '24.22.3')
     }
   }
   assert.ok(

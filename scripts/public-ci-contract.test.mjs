@@ -125,7 +125,7 @@ test('PR guard has an exact trusted six-step topology', () => {
   const [runtime, classify, trusted, head, boundary, summary] = guard.steps
   assert.match(runtime.uses, /^actions\/setup-node@[a-f0-9]{40}$/u)
   assert.deepEqual(runtime.with, {
-    'node-version': '24.22.2',
+    'node-version': '24.22.3',
     'package-manager-cache': false,
   })
   assert.equal(runtime.run, undefined)
@@ -737,7 +737,7 @@ test('visual gate uses exact Linux Compose baselines', () => {
       ].map(([source, target]) => ({ type: 'volume', source, target })),
     ])
     assert.deepEqual(service.command, [
-      'npm install --global --prefix /opt/toolchain node@24.22.2 pnpm@12.18.0 && ' +
+      'npm install --global --prefix /opt/toolchain node@24.22.3 pnpm@12.18.0 && ' +
         'export PATH=/opt/toolchain/bin:$$PATH && node --version && pnpm --version && ' +
         'pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile --ignore-scripts && ' +
         'pnpm --filter @artifactshare/web exec vitest --config vitest.visual.browser.config.ts --run ' +
@@ -1105,7 +1105,7 @@ test('upload boundary suite runs with a CLI build on all supported operating sys
     job.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with[
       'node-version'
     ],
-    '24.22.2',
+    '24.22.3',
   )
   assert.equal(
     parsedWorkflow.jobs.validate.steps[0].env.UPLOAD_BOUNDARY_RESULT,
@@ -1298,7 +1298,7 @@ test('only browser jobs use the canonical image with matching locked Playwright'
     for (const step of job.steps) {
       assert.equal(step['continue-on-error'], undefined)
       if (step.uses?.startsWith('actions/setup-node@'))
-        assert.equal(step.with['node-version'], '24.22.2')
+        assert.equal(step.with['node-version'], '24.22.3')
     }
   }
 })

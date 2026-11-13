@@ -34,7 +34,7 @@ services:
     <<: *visual
     command:
       - >-
-        npm install --global --prefix /opt/toolchain node@24.22.2 pnpm@12.18.0 &&
+        npm install --global --prefix /opt/toolchain node@24.22.3 pnpm@12.18.0 &&
         export PATH=/opt/toolchain/bin:$$PATH &&
         node --version &&
         pnpm --version &&
@@ -46,7 +46,7 @@ services:
     <<: *visual
     command:
       - >-
-        npm install --global --prefix /opt/toolchain node@24.22.2 pnpm@12.18.0 &&
+        npm install --global --prefix /opt/toolchain node@24.22.3 pnpm@12.18.0 &&
         export PATH=/opt/toolchain/bin:$$PATH &&
         node --version &&
         pnpm --version &&

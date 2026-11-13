@@ -202,6 +202,16 @@ test('D1 managed preview, save and tombstones agree on publisher-only removals',
   const db = createDb(database)
   const preview = await previewRetention(db, 's1', 'u1', 1)
   expect(preview!.count).toBe(1)
+  expect(JSON.parse(preview!.snapshot)).toMatchObject({
+    versions: [
+      ['v1', 1, 'published', '2026-09-01', null],
+      ['v2', 2, 'published', '2026-09-01', 'client1'],
+      ['v3', 3, 'published', '2026-09-01', null],
+      ['v4', 4, 'published', '2026-09-01', 'client1'],
+    ],
+    references: ['v4'],
+    eligible: ['v2'],
+  })
   expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
     retain_versions: 1,
     deleted_versions: 1,
@@ -316,6 +326,14 @@ test('D1 accepts unmanaged confirmation when a new foreign current reference lea
   const db = createDb(database)
   const preview = await previewRetention(db, 's1', 'u1', 1)
   expect(preview!.count).toBe(1)
+  expect(JSON.parse(preview!.snapshot)).toMatchObject({
+    versions: [
+      ['v1', 1, 'published', '2026-09-01', null],
+      ['v2', 2, 'published', '2026-09-01', null],
+    ],
+    references: null,
+    eligible: ['v1'],
+  })
   await database
     .prepare(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
     VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v2')`)
@@ -332,4 +350,26 @@ test('D1 accepts unmanaged confirmation when a new foreign current reference lea
       .prepare('SELECT version_id FROM version_retention_tombstones')
       .all(),
   ).toMatchObject({ results: [{ version_id: 'v1' }] })
+})
+
+test('snapshot preserves ordered duplicate managed references and empty arrays', async () => {
+  await seedManaged()
+  const db = createDb(database)
+  await database
+    .prepare(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+    VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v4'),
+      ('s3', 'ws1', 'u1', 'Earlier', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v1')`)
+    .run()
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  expect(JSON.parse(preview!.snapshot).references).toEqual(['v1', 'v4', 'v4'])
+  await database.batch([
+    database.prepare('UPDATE shareables SET current_version_id = NULL'),
+    database.prepare('DELETE FROM versions'),
+  ])
+  const empty = await previewRetention(db, 's1', 'u1', 1)
+  expect(JSON.parse(empty!.snapshot)).toMatchObject({
+    versions: [],
+    references: [],
+    eligible: [],
+  })
 })
