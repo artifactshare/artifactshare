@@ -26,7 +26,7 @@ function executionDiagnostic(test) {
   }
 }
 
-// Vitest 4.1.11 exposes VITEST_TEST_PATH on runtime errors and wraps browser
+// Vitest 4.1.11 and 5.1.0 expose VITEST_TEST_PATH on runtime errors and wrap browser
 // failures with this exact message, even when collection never created a module.
 // Read the structured error, never the human console rendering.
 function errorModule(error, seen = new Set()) {

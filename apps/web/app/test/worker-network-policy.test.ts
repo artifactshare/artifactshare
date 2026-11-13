@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import type { Duplex } from 'node:stream'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { http, HttpResponse } from 'msw/http'
@@ -65,5 +67,100 @@ test.each([
     const rejected = await fetch('https://undeclared.invalid/request')
     expect(rejected.status).toBe(500)
     expect(await rejected.text()).toContain(diagnostic)
+  },
+)
+
+// A real Node handshake distinguishes physical delivery from MSW's synthetic open.
+test.each([
+  ['bypass control', 'bypass', null],
+  [
+    'usercontent',
+    usercontentUnhandledFrame,
+    'Unexpected Worker non-HTTP network frame',
+  ],
+  [
+    'integration',
+    integrationUnhandledFrame,
+    'Unhandled outbound non-HTTP network frame',
+  ],
+] as const)(
+  '%s non-HTTP boundary observes physical WebSocket delivery',
+  async (_name, policy, diagnostic) => {
+    const local = createServer()
+    const sockets = new Set<Duplex>()
+    const network = setupServer()
+    let client: WebSocket | undefined
+    let upgrades = 0
+    const listeners = new AbortController()
+    onTestFinished(async () => {
+      listeners.abort()
+      client?.close()
+      for (const socket of sockets) socket.destroy()
+      network.close()
+      await new Promise<void>((resolve, reject) =>
+        local.close((error) => (error ? reject(error) : resolve())),
+      )
+      local.removeAllListeners()
+    })
+    local.on('connection', (socket) => {
+      sockets.add(socket)
+      socket.once('close', () => sockets.delete(socket))
+    })
+    local.on('upgrade', (request, socket) => {
+      upgrades++
+      const accept = createHash('sha1')
+        .update(
+          `${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`,
+        )
+        .digest('base64')
+      socket.write(
+        [
+          'HTTP/1.1 101 Switching Protocols',
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          `Sec-WebSocket-Accept: ${accept}`,
+          '',
+          '',
+        ].join('\r\n'),
+      )
+      // A text frame received through the native connection proves a valid upgrade.
+      const payload = Buffer.from('network-upgrade')
+      socket.write(
+        Buffer.concat([Buffer.from([0x81, payload.length]), payload]),
+      )
+    })
+    local.listen(0, '127.0.0.1')
+    await once(local, 'listening')
+    const address = local.address()
+    if (!address || typeof address === 'string')
+      throw new Error('Missing TCP address')
+    network.listen({ onUnhandledFrame: policy })
+    const outcome = await new Promise<{ kind: string; detail: unknown }>(
+      (resolve) => {
+        client = new WebSocket(`ws://127.0.0.1:${address.port}/`)
+        client.addEventListener(
+          'message',
+          (event) => resolve({ kind: 'network-upgrade', detail: event.data }),
+          { signal: listeners.signal },
+        )
+        client.addEventListener(
+          'error',
+          (event) =>
+            resolve({
+              kind: 'rejected',
+              detail: 'cause' in event ? event.cause : undefined,
+            }),
+          { signal: listeners.signal },
+        )
+      },
+    )
+    expect(
+      outcome.kind,
+      'undeclared WebSocket must be rejected before physical delivery',
+    ).toBe(diagnostic ? 'rejected' : 'network-upgrade')
+    expect(upgrades).toBe(diagnostic ? 0 : 1)
+    if (diagnostic)
+      expect(outcome.detail).toMatchObject({ message: diagnostic })
+    else expect(outcome.detail).toBe('network-upgrade')
   },
 )
