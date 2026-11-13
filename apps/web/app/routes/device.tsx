@@ -574,37 +574,23 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     code: string
     approval: Awaited<ReturnType<typeof loadDeviceAgentApproval>>
   } | null>(null)
-  const initialCleanCode = cleanUserCode(initialCode)
-  const approval =
-    verifiedAgentApproval?.code === cleanUserCode(userCode)
-      ? verifiedAgentApproval.approval
-      : cleanUserCode(userCode) === initialCleanCode
-        ? loaderData.agentApproval
-        : null
-  const agentApproval = approval?.preset === 'agent' ? approval : null
-  const publisherApproval = approval?.preset === 'publisher' ? approval : null
+  const { agentApproval, publisherApproval } = deviceApprovalForCode(
+    userCode,
+    initialCode,
+    verifiedAgentApproval,
+    loaderData.agentApproval,
+  )
   const [publisherMode, setPublisherMode] = useState('')
   const [publisherClientId, setPublisherClientId] = useState('')
-  const publisherDuplicate =
-    publisherApproval?.clients.some(
-      (client) => client.name === publisherApproval.requestedName,
-    ) ?? false
-  const publisherChoiceValid =
-    publisherMode === 'create-new'
-      ? !publisherDuplicate
-      : publisherMode === 'continue-existing' &&
-        Boolean(
-          publisherApproval?.clients.some(
-            (client) => client.id === publisherClientId,
-          ),
-        )
+  const { publisherDuplicate, publisherChoiceValid } = publisherChoiceState(
+    publisherApproval,
+    publisherMode,
+    publisherClientId,
+  )
   const [selectedProject, setSelectedProject] =
     useState<ProjectCandidateOption | null>(null)
-  const fixedProject = agentApproval?.fixedProject ?? null
-  const effectiveProject = agentApproval?.projectSelector
-    ? fixedProject
-    : selectedProject
-  const effectiveProjectId = effectiveProject?.id ?? ''
+  const { fixedProject, effectiveProject, effectiveProjectId } =
+    deviceProjectSelection(agentApproval, selectedProject)
   const cleanCode = useMemo(() => cleanUserCode(userCode), [userCode])
   const currentCleanCode = useRef(cleanCode)
   const complete = cleanCode.length === USER_CODE_LENGTH
@@ -663,10 +649,17 @@ export default function Device({ loaderData }: Route.ComponentProps) {
     }
   }, [loaderData.signedIn, cleanCode, complete, hasInitialCode])
 
-  const approvalBlocked =
-    confirmationMissing ||
-    (Boolean(agentApproval) && !effectiveProjectId) ||
-    (Boolean(publisherApproval) && !publisherChoiceValid)
+  const approvalSafety = deviceApprovalSafety({
+    confirmationMissing,
+    agentApproval,
+    publisherApproval,
+    effectiveProjectId,
+    publisherChoiceValid,
+    requiresConfirmation,
+    fixedProject,
+    effectiveProject,
+  })
+  const approvalBlocked = approvalSafety.blocked
 
   const decide = async (decision: 'approved' | 'denied') => {
     if (!complete || state.kind !== 'ready') return
@@ -772,64 +765,25 @@ export default function Device({ loaderData }: Route.ComponentProps) {
               />
             ) : null}
             {agentApproval ? (
-              <Field className="mt-4 max-w-80">
-                <FieldLabel
-                  id="agent-project-label"
-                  onClick={() =>
-                    document.getElementById('agent-project')?.focus()
-                  }
-                >
-                  {t('device.agent_project')}
-                </FieldLabel>
-                {agentApproval.projectSelector ? (
-                  fixedProject ? (
-                    <div
-                      id="agent-project"
-                      aria-labelledby="agent-project-label"
-                      className="border-border bg-muted/30 rounded-md border px-3 py-2 text-sm"
-                    >
-                      {fixedProject.name}
-                    </div>
-                  ) : (
-                    <ConsentErrorAlert id="agent-project">
-                      {t('device.agent_project_unavailable')}
-                    </ConsentErrorAlert>
-                  )
-                ) : (
-                  <ProjectCandidatePicker
-                    id="agent-project"
-                    ariaLabelledBy="agent-project-label"
-                    purpose="agent-approval"
-                    userCode={cleanCode}
-                    value={selectedProject}
-                    onChange={setSelectedProject}
-                  />
-                )}
-                {effectiveProject ? (
-                  <p
-                    id="agent-project-consequence"
-                    className="text-muted-foreground text-sm"
-                  >
-                    {t('device.agent_project_consequence', {
-                      project: effectiveProject.name,
-                    })}
-                  </p>
-                ) : null}
-              </Field>
+              <AgentProjectField
+                agentApproval={agentApproval}
+                fixedProject={fixedProject}
+                effectiveProject={effectiveProject}
+                selectedProject={selectedProject}
+                cleanCode={cleanCode}
+                onSelect={setSelectedProject}
+              />
             ) : null}
             {state.notice ? (
               <ConsentErrorAlert>{t('device.retry')}</ConsentErrorAlert>
             ) : null}
             <DeviceApprovalActions
-              unrestricted={!agentApproval && !publisherApproval}
-              requiresConfirmation={
-                requiresConfirmation &&
-                !(agentApproval?.projectSelector && !fixedProject)
-              }
+              unrestricted={approvalSafety.unrestricted}
+              requiresConfirmation={approvalSafety.requiresConfirmation}
               confirmed={codeConfirmed}
               onConfirm={confirmCode}
               blocked={approvalBlocked}
-              hasProjectConsequence={Boolean(agentApproval && effectiveProject)}
+              hasProjectConsequence={approvalSafety.hasProjectConsequence}
               onDecision={decide}
             />
           </>
@@ -894,4 +848,171 @@ function cleanUserCode(value: string): string {
 function formatUserCode(value: string): string {
   const clean = cleanUserCode(value).slice(0, USER_CODE_LENGTH)
   return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
+}
+
+type DeviceApproval = Awaited<ReturnType<typeof loadDeviceAgentApproval>>
+type AgentApproval = Extract<DeviceApproval, { preset: 'agent' }>
+type PublisherApproval = Extract<DeviceApproval, { preset: 'publisher' }>
+
+function deviceApprovalForCode(
+  userCode: string,
+  initialCode: string,
+  verifiedAgentApproval: { code: string; approval: DeviceApproval } | null,
+  initialApproval: DeviceApproval,
+) {
+  const initialCleanCode = cleanUserCode(initialCode)
+  const approval =
+    verifiedAgentApproval?.code === cleanUserCode(userCode)
+      ? verifiedAgentApproval.approval
+      : cleanUserCode(userCode) === initialCleanCode
+        ? initialApproval
+        : null
+  const agentApproval = approval?.preset === 'agent' ? approval : null
+  const publisherApproval = approval?.preset === 'publisher' ? approval : null
+  return { agentApproval, publisherApproval }
+}
+
+function publisherChoiceState(
+  publisherApproval: PublisherApproval | null,
+  publisherMode: string,
+  publisherClientId: string,
+) {
+  const publisherDuplicate =
+    publisherApproval?.clients.some(
+      (client) => client.name === publisherApproval.requestedName,
+    ) ?? false
+  const publisherChoiceValid =
+    publisherMode === 'create-new'
+      ? !publisherDuplicate
+      : publisherMode === 'continue-existing' &&
+        Boolean(
+          publisherApproval?.clients.some(
+            (client) => client.id === publisherClientId,
+          ),
+        )
+  return { publisherDuplicate, publisherChoiceValid }
+}
+
+function isDeviceApprovalBlocked(
+  confirmationMissing: boolean,
+  agent: boolean,
+  effectiveProjectId: string,
+  publisher: boolean,
+  publisherChoiceValid: boolean,
+) {
+  const approvalBlocked =
+    confirmationMissing ||
+    (agent && !effectiveProjectId) ||
+    (publisher && !publisherChoiceValid)
+
+  return approvalBlocked
+}
+
+function AgentProjectField({
+  agentApproval,
+  fixedProject,
+  effectiveProject,
+  selectedProject,
+  cleanCode,
+  onSelect,
+}: {
+  agentApproval: AgentApproval
+  fixedProject: ProjectCandidateOption | null
+  effectiveProject: ProjectCandidateOption | null
+  selectedProject: ProjectCandidateOption | null
+  cleanCode: string
+  onSelect: (project: ProjectCandidateOption | null) => void
+}) {
+  const { t } = useT()
+  return (
+    <Field className="mt-4 max-w-80">
+      <FieldLabel
+        id="agent-project-label"
+        onClick={() => document.getElementById('agent-project')?.focus()}
+      >
+        {t('device.agent_project')}
+      </FieldLabel>
+      {agentApproval.projectSelector ? (
+        fixedProject ? (
+          <div
+            id="agent-project"
+            aria-labelledby="agent-project-label"
+            className="border-border bg-muted/30 rounded-md border px-3 py-2 text-sm"
+          >
+            {fixedProject.name}
+          </div>
+        ) : (
+          <ConsentErrorAlert id="agent-project">
+            {t('device.agent_project_unavailable')}
+          </ConsentErrorAlert>
+        )
+      ) : (
+        <ProjectCandidatePicker
+          id="agent-project"
+          ariaLabelledBy="agent-project-label"
+          purpose="agent-approval"
+          userCode={cleanCode}
+          value={selectedProject}
+          onChange={onSelect}
+        />
+      )}
+      {effectiveProject ? (
+        <p
+          id="agent-project-consequence"
+          className="text-muted-foreground text-sm"
+        >
+          {t('device.agent_project_consequence', {
+            project: effectiveProject.name,
+          })}
+        </p>
+      ) : null}
+    </Field>
+  )
+}
+
+function deviceApprovalSafety({
+  confirmationMissing,
+  agentApproval,
+  publisherApproval,
+  effectiveProjectId,
+  publisherChoiceValid,
+  requiresConfirmation,
+  fixedProject,
+  effectiveProject,
+}: {
+  confirmationMissing: boolean
+  agentApproval: AgentApproval | null
+  publisherApproval: PublisherApproval | null
+  effectiveProjectId: string
+  publisherChoiceValid: boolean
+  requiresConfirmation: boolean
+  fixedProject: ProjectCandidateOption | null
+  effectiveProject: ProjectCandidateOption | null
+}) {
+  return {
+    blocked: isDeviceApprovalBlocked(
+      confirmationMissing,
+      Boolean(agentApproval),
+      effectiveProjectId,
+      Boolean(publisherApproval),
+      publisherChoiceValid,
+    ),
+    unrestricted: !agentApproval && !publisherApproval,
+    requiresConfirmation:
+      requiresConfirmation &&
+      !(agentApproval?.projectSelector && !fixedProject),
+    hasProjectConsequence: Boolean(agentApproval && effectiveProject),
+  }
+}
+
+function deviceProjectSelection(
+  agentApproval: AgentApproval | null,
+  selectedProject: ProjectCandidateOption | null,
+) {
+  const fixedProject = agentApproval?.fixedProject ?? null
+  const effectiveProject = agentApproval?.projectSelector
+    ? fixedProject
+    : selectedProject
+  const effectiveProjectId = effectiveProject?.id ?? ''
+  return { fixedProject, effectiveProject, effectiveProjectId }
 }

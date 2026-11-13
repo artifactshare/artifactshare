@@ -27,6 +27,7 @@ import {
   getMoveAudienceNote,
   getSelectableMoveValues,
   isMoveDestinations,
+  type MoveDestinations,
   moveShareableDialogReducer,
 } from './move-shareable-dialog-state'
 
@@ -68,7 +69,7 @@ export function MoveShareableDialog({
   onReviewVisibility,
   onMoved,
 }: MoveShareableDialogProps) {
-  const { tPlural, t } = useT()
+  const { t } = useT()
   const navigate = useNavigate()
   const destinationsFetcher = useFetcher()
   const fetcherLoad = destinationsFetcher.load
@@ -117,11 +118,7 @@ export function MoveShareableDialog({
 
   const { destinations, query, selected, loadFailed, submitting } = state
 
-  const currentName = destinations
-    ? destinations.inbox?.isCurrent
-      ? homeLabel
-      : (destinations.projects.find((p) => p.isCurrent)?.name ?? null)
-    : null
+  const currentName = currentMoveName(destinations, homeLabel)
 
   const filteredProjects = getFilteredMoveProjects(destinations, query)
 
@@ -252,76 +249,18 @@ export function MoveShareableDialog({
           </div>
         </div>
 
-        {loadFailed ? (
-          <MoveDestinationsLoadFailure />
-        ) : destinations ? (
-          <>
-            {destinations.projects.length > 0 ? (
-              <div
-                className={searchFieldClassName}
-                style={{ maxWidth: 'none', marginLeft: 0 }}
-              >
-                <IconSearch size={14} strokeWidth={2} aria-hidden="true" />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) =>
-                    dispatch({
-                      type: 'set-query',
-                      value: e.currentTarget.value,
-                    })
-                  }
-                  placeholder={t('move.search')}
-                  aria-label={t('move.search')}
-                />
-              </div>
-            ) : null}
-
-            <div
-              role="radiogroup"
-              aria-label={t('move.destinations')}
-              className="-mx-1 max-h-72 overflow-y-auto px-1"
-            >
-              {destinations.inbox !== null ? (
-                <DestinationRow
-                  {...rovingProps(INBOX_VALUE)}
-                  icon={<IconHome className="size-4" aria-hidden="true" />}
-                  name={homeLabel}
-                  hint={t('move.inboxHint')}
-                  isCurrent={destinations.inbox.isCurrent}
-                  isSelected={selected === INBOX_VALUE}
-                  onSelect={() =>
-                    dispatch({ type: 'select', value: INBOX_VALUE })
-                  }
-                />
-              ) : null}
-              {filteredProjects.map((p) => (
-                <DestinationRow
-                  {...rovingProps(p.containerId)}
-                  key={p.containerId}
-                  icon={<Layers size={16} aria-hidden="true" />}
-                  name={p.name}
-                  hint={tPlural('move.fileCount', p.fileCount)}
-                  isCurrent={p.isCurrent}
-                  isSelected={selected === p.containerId}
-                  onSelect={() =>
-                    dispatch({ type: 'select', value: p.containerId })
-                  }
-                />
-              ))}
-              {query.trim() && filteredProjects.length === 0 ? (
-                <p className="text-muted-foreground px-2 py-7 text-center text-sm">
-                  {t('move.noHits')}
-                </p>
-              ) : null}
-            </div>
-            {!query.trim() && selectableValues.length === 0 ? (
-              <NoMoveDestinations />
-            ) : null}
-          </>
-        ) : (
-          <div className="h-40" aria-hidden="true" />
-        )}
+        <MoveDestinationOptions
+          destinations={destinations}
+          query={query}
+          loadFailed={loadFailed}
+          homeLabel={homeLabel}
+          selected={selected}
+          filteredProjects={filteredProjects}
+          selectableValues={selectableValues}
+          rovingProps={rovingProps}
+          onQueryChange={(value) => dispatch({ type: 'set-query', value })}
+          onSelect={(value) => dispatch({ type: 'select', value })}
+        />
 
         {audienceNoteText ? (
           <p
@@ -450,4 +389,102 @@ function DestinationRow({
       ) : null}
     </button>
   )
+}
+
+function MoveDestinationOptions({
+  destinations,
+  query,
+  loadFailed,
+  homeLabel,
+  selected,
+  filteredProjects,
+  selectableValues,
+  rovingProps,
+  onQueryChange,
+  onSelect,
+}: {
+  destinations: MoveDestinations | null
+  query: string
+  loadFailed: boolean
+  homeLabel: string
+  selected: string | null
+  filteredProjects: MoveDestinations['projects']
+  selectableValues: string[]
+  rovingProps: (
+    value: string,
+  ) => Pick<DestinationRowProps, 'tabIndex' | 'buttonRef' | 'onKeyDown'>
+  onQueryChange: (value: string) => void
+  onSelect: (value: string) => void
+}) {
+  const { t, tPlural } = useT()
+  if (loadFailed) return <MoveDestinationsLoadFailure />
+  if (!destinations) return <div className="h-40" aria-hidden="true" />
+  return (
+    <>
+      {destinations.projects.length > 0 ? (
+        <div
+          className={searchFieldClassName}
+          style={{ maxWidth: 'none', marginLeft: 0 }}
+        >
+          <IconSearch size={14} strokeWidth={2} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => onQueryChange(e.currentTarget.value)}
+            placeholder={t('move.search')}
+            aria-label={t('move.search')}
+          />
+        </div>
+      ) : null}
+
+      <div
+        role="radiogroup"
+        aria-label={t('move.destinations')}
+        className="-mx-1 max-h-72 overflow-y-auto px-1"
+      >
+        {destinations.inbox !== null ? (
+          <DestinationRow
+            {...rovingProps(INBOX_VALUE)}
+            icon={<IconHome className="size-4" aria-hidden="true" />}
+            name={homeLabel}
+            hint={t('move.inboxHint')}
+            isCurrent={destinations.inbox.isCurrent}
+            isSelected={selected === INBOX_VALUE}
+            onSelect={() => onSelect(INBOX_VALUE)}
+          />
+        ) : null}
+        {filteredProjects.map((p) => (
+          <DestinationRow
+            {...rovingProps(p.containerId)}
+            key={p.containerId}
+            icon={<Layers size={16} aria-hidden="true" />}
+            name={p.name}
+            hint={tPlural('move.fileCount', p.fileCount)}
+            isCurrent={p.isCurrent}
+            isSelected={selected === p.containerId}
+            onSelect={() => onSelect(p.containerId)}
+          />
+        ))}
+        {query.trim() && filteredProjects.length === 0 ? (
+          <p className="text-muted-foreground px-2 py-7 text-center text-sm">
+            {t('move.noHits')}
+          </p>
+        ) : null}
+      </div>
+      {!query.trim() && selectableValues.length === 0 ? (
+        <NoMoveDestinations />
+      ) : null}
+    </>
+  )
+}
+
+function currentMoveName(
+  destinations: MoveDestinations | null,
+  homeLabel: string,
+) {
+  return destinations
+    ? destinations.inbox?.isCurrent
+      ? homeLabel
+      : (destinations.projects.find((p) => p.isCurrent)?.name ?? null)
+    : null
 }

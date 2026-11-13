@@ -296,25 +296,14 @@ export function ViewerChrome({
   const { requestId: accessRequestId, dismiss: dismissAccessRequest } =
     useViewerAccessRequest(location)
 
-  const currentVisibility = isVisibility(artifact.visibility)
-    ? artifact.visibility
-    : null
-  const visibilityState = {
-    current: currentVisibility,
-    hasDirectGrants:
-      user?.id === artifact.ownerId ? artifact.hasDirectGrants : undefined,
-    linkSuspended: artifact.linkSuspended === true,
-  }
-  const commentsAvailable =
-    artifactSupportsComments(renderType) && onCommentsOpen !== undefined
-  const canChangeVisibility =
-    user !== null &&
-    artifact.canChangeVisibility === true &&
-    currentVisibility !== null
-  // title 編集は visibility 編集の可否とは独立して owner のみ許可。
-  // 将来 editableVisibility が無い visibility が増えても owner なら編集可。
-  const canEditTitle = user !== null && artifact.canChangeVisibility === true
-  const canMove = user !== null && artifact.canMove === true
+  const {
+    currentVisibility,
+    visibilityState,
+    commentsAvailable,
+    canChangeVisibility,
+    canEditTitle,
+    canMove,
+  } = viewerChromeCapabilities(artifact, user, renderType, onCommentsOpen)
   const {
     bridgeRequesterLabel,
     ownerLabel,
@@ -380,56 +369,13 @@ export function ViewerChrome({
         <div data-gap-audit-exempt className={titleClassName}>
           <div className={titleRowClassName}>
             <FileTypeIcon renderType={renderType} size="sm" />
-            {canEditTitle ? (
-              editTitle.isEditing ? (
-                <h1 id="viewer-heading" className={headingClassName}>
-                  <input
-                    ref={titleInputRef}
-                    className={titleInputClassName}
-                    type="text"
-                    value={editTitle.value}
-                    maxLength={200}
-                    aria-label={t('vw.editTitleInputLabel')}
-                    placeholder={t('vw.titleEditPlaceholder')}
-                    onChange={(event) =>
-                      editTitle.change(event.currentTarget.value)
-                    }
-                    onBlur={() => {
-                      void editTitle.submit()
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        void editTitle.submit()
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault()
-                        editTitle.cancel()
-                      }
-                    }}
-                  />
-                </h1>
-              ) : (
-                <h1 id="viewer-heading" className={headingClassName}>
-                  <Button
-                    ref={titleButtonRef}
-                    type="button"
-                    variant="ghost"
-                    className={cn(nameClassName, editableNameClassName)}
-                    title={title}
-                    aria-label={t('vw.editTitleLabel', { title })}
-                    onClick={editTitle.start}
-                  >
-                    {title}
-                  </Button>
-                </h1>
-              )
-            ) : (
-              <h1 id="viewer-heading" className={headingClassName}>
-                <span className={nameClassName} title={title}>
-                  {title}
-                </span>
-              </h1>
-            )}
+            <ViewerTitle
+              canEditTitle={canEditTitle}
+              editTitle={editTitle}
+              titleInputRef={titleInputRef}
+              titleButtonRef={titleButtonRef}
+              title={title}
+            />
           </div>
           <ViewerMeta
             linkOrigin={linkOrigin}
@@ -503,51 +449,28 @@ export function ViewerChrome({
           </div>
         ) : null}
 
-        {user ? (
-          <>
-            <RemoveConfirmDialog
-              open={confirmOpen}
-              onOpenChange={setConfirmOpen}
-              onConfirm={remove}
-            />
-          </>
-        ) : null}
-        {canChangeVisibility ? (
-          <ViewerVisibilityDialog
-            artifact={artifact}
-            open={visibilityOpen}
-            onOpenChange={setVisibilityOpen}
-            currentVisibility={currentVisibility}
-          />
-        ) : null}
-        {canMove ? (
-          <MoveShareableDialog
-            open={moveOpen}
-            onOpenChange={setMoveOpen}
-            shareableId={artifact.id}
-            shareableTitle={title}
-            homeOwnerName={artifact.ownerName ?? artifact.ownerEmail ?? ''}
-            isProjectAudience={currentVisibility === 'project'}
-            onReviewVisibility={
-              canChangeVisibility ? () => setVisibilityOpen(true) : undefined
-            }
-          />
-        ) : null}
+        <ViewerDialogs
+          user={user}
+          artifact={artifact}
+          title={title}
+          currentVisibility={currentVisibility}
+          canChangeVisibility={canChangeVisibility}
+          canMove={canMove}
+          confirmOpen={confirmOpen}
+          visibilityOpen={visibilityOpen}
+          moveOpen={moveOpen}
+          onConfirmChange={setConfirmOpen}
+          onVisibilityChange={setVisibilityOpen}
+          onMoveChange={setMoveOpen}
+          onRemove={remove}
+        />
       </AppTopbar>
-      {user && artifact.linkSuspended && artifact.canAppealLinkSuspension ? (
-        <SuspendedLinkBanner
-          shareableId={artifact.id}
-          reason={artifact.linkSuspendedReason ?? null}
-        />
-      ) : null}
-      {user && artifact.linkExpired && !artifact.linkSuspended ? (
-        <ExpiredLinkBanner
-          shareableId={artifact.id}
-          canReopen={artifact.canReopenExpiredLink === true}
-          canOpenDialog={canChangeVisibility}
-          onOpenDialog={() => setVisibilityOpen(true)}
-        />
-      ) : null}
+      <ViewerLinkBanners
+        user={user}
+        artifact={artifact}
+        canChangeVisibility={canChangeVisibility}
+        onOpenDialog={() => setVisibilityOpen(true)}
+      />
       {collapsible ? (
         <ViewerChromeCollapseToggle
           buttonRef={collapseToggleRef}
@@ -700,19 +623,6 @@ function ViewerMeta({
 }) {
   const bridgeRequesterLabel = artifact.bridgeRequesterLabel
   const botLabel = artifact.ownerName ?? artifact.ownerEmail ?? '—'
-  const locationLabel = artifact.projectName ?? t('home.inboxLabel')
-  const moveLabel = `${locationLabel} · ${t('vw.move')}`
-  const locationIcon = artifact.projectName ? (
-    <Layers size={13} aria-hidden="true" />
-  ) : (
-    <IconHome size={13} aria-hidden="true" />
-  )
-  const locationContent = (
-    <>
-      {locationIcon}
-      <span>{locationLabel}</span>
-    </>
-  )
 
   return (
     <span className={metaClassName}>
@@ -749,57 +659,13 @@ function ViewerMeta({
       {/* Link recipients cannot act on the owner's filing location; give the
           width to the author instead. */}
       {linkOrigin ? null : (
-        <>
-          <span className="max-phone:hidden" aria-hidden="true">
-            ·
-          </span>
-          {canMove ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              data-viewer-move-entry
-              className={cn(
-                projectClassName,
-                'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
-              )}
-              title={moveLabel}
-              aria-label={moveLabel}
-              aria-haspopup="dialog"
-              aria-expanded={moveOpen}
-              onClick={onMoveOpen}
-            >
-              {locationContent}
-              <IconChevronDown size={13} aria-hidden="true" />
-            </Button>
-          ) : artifact.projectName ? (
-            <Link
-              to={
-                artifact.projectId
-                  ? `/projects/${artifact.projectId}`
-                  : returnTo
-              }
-              className={cn(projectClassName, 'max-phone:order-first')}
-              title={artifact.projectName}
-              viewTransition
-            >
-              {locationContent}
-            </Link>
-          ) : (
-            <span
-              className={cn(projectClassName, 'max-phone:order-first')}
-              title={locationLabel}
-            >
-              {locationContent}
-            </span>
-          )}
-          <span
-            className="max-phone:order-first max-phone:inline hidden"
-            aria-hidden="true"
-          >
-            ·
-          </span>
-        </>
+        <ViewerFilingLocation
+          artifact={artifact}
+          canMove={canMove}
+          moveOpen={moveOpen}
+          onMoveOpen={onMoveOpen}
+          returnTo={returnTo}
+        />
       )}
       {/* Separator and owner segment share one collapsing container so the
           separator never remains as an orphan when the owner segment is
@@ -1160,43 +1026,44 @@ interface ViewerActionsProps {
   user: UserInfo | null
 }
 
-function ViewerActions({
-  bodyHref,
-  visibility: { current: currentVisibility, hasDirectGrants, linkSuspended },
-  appOrigin,
-  analyticsMode,
-  artifactId,
-  accessRequestId,
-  artifactCanViewHistory,
-  canChangeVisibility,
-  canMove,
-  commentCount,
-  commentsAvailable,
-  commentsButtonRef,
-  historyLabel,
-  moreButtonRef,
-  onCommentsOpen,
-  showViewerListMenuItem,
-  onViewerListEntrySelect,
-  onHistoryOpenChange,
-  onMoveOpen,
-  onRemoveOpen,
-  onVisibilityOpen,
-  onCopyMarkdown,
-  onDownloadHtml,
-  onDownloadMarkdown,
-  onAccessRequestsOpen,
-  accessRequestsOpen,
-  onAccessRequestsOpenChange,
-  onAccessRequestDismiss,
-  presence,
-  translator,
-  topbarCollapsed,
-  user,
-}: ViewerActionsProps) {
+function ViewerActions(props: ViewerActionsProps) {
+  const {
+    bodyHref,
+    visibility: { current: currentVisibility, hasDirectGrants, linkSuspended },
+    appOrigin,
+    analyticsMode,
+    artifactId,
+    accessRequestId,
+    artifactCanViewHistory,
+    canChangeVisibility,
+    canMove,
+    commentCount,
+    commentsAvailable,
+    commentsButtonRef,
+    historyLabel,
+    moreButtonRef,
+    onCommentsOpen,
+    showViewerListMenuItem,
+    onViewerListEntrySelect,
+    onHistoryOpenChange,
+    onMoveOpen,
+    onRemoveOpen,
+    onVisibilityOpen,
+    onCopyMarkdown,
+    onDownloadHtml,
+    onDownloadMarkdown,
+    onAccessRequestsOpen,
+    accessRequestsOpen,
+    onAccessRequestsOpenChange,
+    onAccessRequestDismiss,
+    presence,
+    translator,
+    topbarCollapsed,
+    user,
+  } = props
+
   const { openBanner } = useAnalyticsConsent()
   const { t } = translator
-  const historyOpeningRef = useRef(false)
   const sharingRecoverySignal = useSharingRecoverySignal(
     canChangeVisibility ? artifactId : null,
   )
@@ -1316,109 +1183,7 @@ function ViewerActions({
         </TooltipTrigger>
         <TooltipContent>{t('vw.copyUrl')}</TooltipContent>
       </Tooltip>
-      {user || bodyHref ? (
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <IconButton
-                  ref={moreButtonRef}
-                  type="button"
-                  icon={Ellipsis}
-                  size="md"
-                  className={compactActionClassName}
-                  data-viewer-more-menu-trigger
-                  aria-label={t('vw.more')}
-                />
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent sideOffset={24}>{t('vw.more')}</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent
-            align="end"
-            className="w-60"
-            onCloseAutoFocus={(event) => {
-              if (!historyOpeningRef.current) return
-              historyOpeningRef.current = false
-              event.preventDefault()
-            }}
-          >
-            {bodyHref ? (
-              <DropdownMenuItem asChild>
-                <a href={bodyHref} target="_blank" rel="noopener">
-                  <IconExternalLink size={16} aria-hidden="true" />
-                  {t('vw.openBody')}
-                </a>
-              </DropdownMenuItem>
-            ) : null}
-            {user ? (
-              <>
-                {onCopyMarkdown || onDownloadHtml || onDownloadMarkdown ? (
-                  <>
-                    <DropdownMenuLabel>{t('vw.exportGroup')}</DropdownMenuLabel>
-                    {onCopyMarkdown ? (
-                      <DropdownMenuItem onSelect={() => onCopyMarkdown()}>
-                        {t('vw.copyMarkdown')}
-                      </DropdownMenuItem>
-                    ) : null}
-                    {onDownloadHtml ? (
-                      <DropdownMenuItem onSelect={() => onDownloadHtml()}>
-                        {t('vw.downloadHtml')}
-                      </DropdownMenuItem>
-                    ) : null}
-                    {onDownloadMarkdown ? (
-                      <DropdownMenuItem onSelect={() => onDownloadMarkdown()}>
-                        {t('vw.downloadMarkdown')}
-                      </DropdownMenuItem>
-                    ) : null}
-                    <DropdownMenuSeparator />
-                  </>
-                ) : null}
-                {canChangeVisibility ? (
-                  <DropdownMenuItem onSelect={() => onVisibilityOpen()}>
-                    {t('vw.changeVisibility')}
-                  </DropdownMenuItem>
-                ) : null}
-                {artifactCanViewHistory ? (
-                  <DropdownMenuItem
-                    data-viewer-history-menu-item
-                    onSelect={() => {
-                      historyOpeningRef.current = true
-                      onHistoryOpenChange?.(true, {
-                        returnFocusTo: moreButtonRef.current,
-                      })
-                    }}
-                  >
-                    {historyLabel}
-                  </DropdownMenuItem>
-                ) : null}
-                {showViewerListMenuItem ? (
-                  <DropdownMenuItem
-                    data-viewer-list-menu-item
-                    onSelect={() =>
-                      onViewerListEntrySelect?.('menu', moreButtonRef.current)
-                    }
-                  >
-                    {t('vw.viewerListMenuItem')}
-                  </DropdownMenuItem>
-                ) : null}
-                {canMove ? (
-                  <DropdownMenuItem onSelect={() => onMoveOpen()}>
-                    {t('vw.move')}
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => onRemoveOpen()}
-                  className="text-destructive focus:text-destructive"
-                >
-                  {t('menu.remove')}
-                </DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+      <ViewerOverflowMenu {...props} />
       {user ? (
         <AvatarMenu
           key={accessRequestId ?? 'account'}
@@ -1447,5 +1212,421 @@ function ViewerActions({
         </>
       )}
     </div>
+  )
+}
+
+function viewerChromeCapabilities(
+  artifact: ViewerChromeProps['artifact'],
+  user: ViewerChromeProps['user'],
+  renderType: ViewerChromeProps['renderType'],
+  onCommentsOpen: ViewerChromeProps['onCommentsOpen'],
+) {
+  const currentVisibility = isVisibility(artifact.visibility)
+    ? artifact.visibility
+    : null
+  const visibilityState = {
+    current: currentVisibility,
+    hasDirectGrants:
+      user?.id === artifact.ownerId ? artifact.hasDirectGrants : undefined,
+    linkSuspended: artifact.linkSuspended === true,
+  }
+  const commentsAvailable =
+    artifactSupportsComments(renderType) && onCommentsOpen !== undefined
+  const canChangeVisibility =
+    user !== null &&
+    artifact.canChangeVisibility === true &&
+    currentVisibility !== null
+  // title 編集は visibility 編集の可否とは独立して owner のみ許可。
+  // 将来 editableVisibility が無い visibility が増えても owner なら編集可。
+  const canEditTitle = user !== null && artifact.canChangeVisibility === true
+  const canMove = user !== null && artifact.canMove === true
+  return {
+    currentVisibility,
+    visibilityState,
+    commentsAvailable,
+    canChangeVisibility,
+    canEditTitle,
+    canMove,
+  }
+}
+
+function ViewerTitle({
+  canEditTitle,
+  editTitle,
+  titleInputRef,
+  titleButtonRef,
+  title,
+}: {
+  canEditTitle: boolean
+  editTitle: ReturnType<typeof useEditTitle>
+  titleInputRef: RefObject<HTMLInputElement | null>
+  titleButtonRef: RefObject<HTMLButtonElement | null>
+  title: string
+}) {
+  const { t } = useT()
+  return canEditTitle ? (
+    editTitle.isEditing ? (
+      <h1 id="viewer-heading" className={headingClassName}>
+        <input
+          ref={titleInputRef}
+          className={titleInputClassName}
+          type="text"
+          value={editTitle.value}
+          maxLength={200}
+          aria-label={t('vw.editTitleInputLabel')}
+          placeholder={t('vw.titleEditPlaceholder')}
+          onChange={(event) => editTitle.change(event.currentTarget.value)}
+          onBlur={() => {
+            void editTitle.submit()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void editTitle.submit()
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              editTitle.cancel()
+            }
+          }}
+        />
+      </h1>
+    ) : (
+      <h1 id="viewer-heading" className={headingClassName}>
+        <Button
+          ref={titleButtonRef}
+          type="button"
+          variant="ghost"
+          className={cn(nameClassName, editableNameClassName)}
+          title={title}
+          aria-label={t('vw.editTitleLabel', { title })}
+          onClick={editTitle.start}
+        >
+          {title}
+        </Button>
+      </h1>
+    )
+  ) : (
+    <h1 id="viewer-heading" className={headingClassName}>
+      <span className={nameClassName} title={title}>
+        {title}
+      </span>
+    </h1>
+  )
+}
+
+function ViewerLinkBanners({
+  user,
+  artifact,
+  canChangeVisibility,
+  onOpenDialog,
+}: Pick<ViewerChromeProps, 'user' | 'artifact'> & {
+  canChangeVisibility: boolean
+  onOpenDialog: () => void
+}) {
+  return (
+    <>
+      {user && artifact.linkSuspended && artifact.canAppealLinkSuspension ? (
+        <SuspendedLinkBanner
+          shareableId={artifact.id}
+          reason={artifact.linkSuspendedReason ?? null}
+        />
+      ) : null}
+      {user && artifact.linkExpired && !artifact.linkSuspended ? (
+        <ExpiredLinkBanner
+          shareableId={artifact.id}
+          canReopen={artifact.canReopenExpiredLink === true}
+          canOpenDialog={canChangeVisibility}
+          onOpenDialog={onOpenDialog}
+        />
+      ) : null}
+    </>
+  )
+}
+
+function ViewerFilingLocation({
+  artifact,
+  canMove,
+  moveOpen,
+  onMoveOpen,
+  returnTo,
+}: {
+  artifact: ViewerChromeProps['artifact']
+  canMove: boolean
+  moveOpen: boolean
+  onMoveOpen: () => void
+  returnTo: string
+}) {
+  const { t } = useT()
+  const locationLabel = artifact.projectName ?? t('home.inboxLabel')
+  const moveLabel = `${locationLabel} · ${t('vw.move')}`
+  const locationIcon = artifact.projectName ? (
+    <Layers size={13} aria-hidden="true" />
+  ) : (
+    <IconHome size={13} aria-hidden="true" />
+  )
+  const locationContent = (
+    <>
+      {locationIcon}
+      <span>{locationLabel}</span>
+    </>
+  )
+  return (
+    <>
+      <span className="max-phone:hidden" aria-hidden="true">
+        ·
+      </span>
+      {canMove ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          data-viewer-move-entry
+          className={cn(
+            projectClassName,
+            'max-phone:order-first max-phone:shrink-0 -mx-1.5 shrink px-1.5 font-normal',
+          )}
+          title={moveLabel}
+          aria-label={moveLabel}
+          aria-haspopup="dialog"
+          aria-expanded={moveOpen}
+          onClick={onMoveOpen}
+        >
+          {locationContent}
+          <IconChevronDown size={13} aria-hidden="true" />
+        </Button>
+      ) : artifact.projectName ? (
+        <Link
+          to={artifact.projectId ? `/projects/${artifact.projectId}` : returnTo}
+          className={cn(projectClassName, 'max-phone:order-first')}
+          title={artifact.projectName}
+          viewTransition
+        >
+          {locationContent}
+        </Link>
+      ) : (
+        <span
+          className={cn(projectClassName, 'max-phone:order-first')}
+          title={locationLabel}
+        >
+          {locationContent}
+        </span>
+      )}
+      <span
+        className="max-phone:order-first max-phone:inline hidden"
+        aria-hidden="true"
+      >
+        ·
+      </span>
+    </>
+  )
+}
+
+function ViewerOverflowMenu({
+  user,
+  bodyHref,
+  moreButtonRef,
+  onCopyMarkdown,
+  onDownloadHtml,
+  onDownloadMarkdown,
+  canChangeVisibility,
+  onVisibilityOpen,
+  artifactCanViewHistory,
+  historyLabel,
+  onHistoryOpenChange,
+  showViewerListMenuItem,
+  onViewerListEntrySelect,
+  canMove,
+  onMoveOpen,
+  onRemoveOpen,
+  translator,
+}: ViewerActionsProps) {
+  const { t } = translator
+  const historyOpeningRef = useRef(false)
+  if (!user && !bodyHref) return null
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              ref={moreButtonRef}
+              type="button"
+              icon={Ellipsis}
+              size="md"
+              className={compactActionClassName}
+              data-viewer-more-menu-trigger
+              aria-label={t('vw.more')}
+            />
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent sideOffset={24}>{t('vw.more')}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent
+        align="end"
+        className="w-60"
+        onCloseAutoFocus={(event) => {
+          if (!historyOpeningRef.current) return
+          historyOpeningRef.current = false
+          event.preventDefault()
+        }}
+      >
+        {bodyHref ? (
+          <DropdownMenuItem asChild>
+            <a href={bodyHref} target="_blank" rel="noopener">
+              <IconExternalLink size={16} aria-hidden="true" />
+              {t('vw.openBody')}
+            </a>
+          </DropdownMenuItem>
+        ) : null}
+        {user ? (
+          <>
+            <ViewerExportItems
+              onCopyMarkdown={onCopyMarkdown}
+              onDownloadHtml={onDownloadHtml}
+              onDownloadMarkdown={onDownloadMarkdown}
+              translator={translator}
+            />
+            {canChangeVisibility ? (
+              <DropdownMenuItem onSelect={() => onVisibilityOpen()}>
+                {t('vw.changeVisibility')}
+              </DropdownMenuItem>
+            ) : null}
+            {artifactCanViewHistory ? (
+              <DropdownMenuItem
+                data-viewer-history-menu-item
+                onSelect={() => {
+                  historyOpeningRef.current = true
+                  onHistoryOpenChange?.(true, {
+                    returnFocusTo: moreButtonRef.current,
+                  })
+                }}
+              >
+                {historyLabel}
+              </DropdownMenuItem>
+            ) : null}
+            {showViewerListMenuItem ? (
+              <DropdownMenuItem
+                data-viewer-list-menu-item
+                onSelect={() =>
+                  onViewerListEntrySelect?.('menu', moreButtonRef.current)
+                }
+              >
+                {t('vw.viewerListMenuItem')}
+              </DropdownMenuItem>
+            ) : null}
+            {canMove ? (
+              <DropdownMenuItem onSelect={() => onMoveOpen()}>
+                {t('vw.move')}
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => onRemoveOpen()}
+              className="text-destructive focus:text-destructive"
+            >
+              {t('menu.remove')}
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function ViewerExportItems({
+  onCopyMarkdown,
+  onDownloadHtml,
+  onDownloadMarkdown,
+  translator,
+}: Pick<
+  ViewerActionsProps,
+  'onCopyMarkdown' | 'onDownloadHtml' | 'onDownloadMarkdown' | 'translator'
+>) {
+  const { t } = translator
+  return onCopyMarkdown || onDownloadHtml || onDownloadMarkdown ? (
+    <>
+      <DropdownMenuLabel>{t('vw.exportGroup')}</DropdownMenuLabel>
+      {onCopyMarkdown ? (
+        <DropdownMenuItem onSelect={() => onCopyMarkdown()}>
+          {t('vw.copyMarkdown')}
+        </DropdownMenuItem>
+      ) : null}
+      {onDownloadHtml ? (
+        <DropdownMenuItem onSelect={() => onDownloadHtml()}>
+          {t('vw.downloadHtml')}
+        </DropdownMenuItem>
+      ) : null}
+      {onDownloadMarkdown ? (
+        <DropdownMenuItem onSelect={() => onDownloadMarkdown()}>
+          {t('vw.downloadMarkdown')}
+        </DropdownMenuItem>
+      ) : null}
+      <DropdownMenuSeparator />
+    </>
+  ) : null
+}
+
+function ViewerDialogs({
+  user,
+  artifact,
+  title,
+  currentVisibility,
+  canChangeVisibility,
+  canMove,
+  confirmOpen,
+  visibilityOpen,
+  moveOpen,
+  onConfirmChange,
+  onVisibilityChange,
+  onMoveChange,
+  onRemove,
+}: Pick<ViewerChromeProps, 'user' | 'artifact'> & {
+  title: string
+  currentVisibility: ReturnType<
+    typeof viewerChromeCapabilities
+  >['currentVisibility']
+  canChangeVisibility: boolean
+  canMove: boolean
+  confirmOpen: boolean
+  visibilityOpen: boolean
+  moveOpen: boolean
+  onConfirmChange: (open: boolean) => void
+  onVisibilityChange: (open: boolean) => void
+  onMoveChange: (open: boolean) => void
+  onRemove: ReturnType<typeof useRemoveArtifact>
+}) {
+  return (
+    <>
+      {user ? (
+        <>
+          <RemoveConfirmDialog
+            open={confirmOpen}
+            onOpenChange={onConfirmChange}
+            onConfirm={onRemove}
+          />
+        </>
+      ) : null}
+      {canChangeVisibility && currentVisibility ? (
+        <ViewerVisibilityDialog
+          artifact={artifact}
+          open={visibilityOpen}
+          onOpenChange={onVisibilityChange}
+          currentVisibility={currentVisibility}
+        />
+      ) : null}
+      {canMove ? (
+        <MoveShareableDialog
+          open={moveOpen}
+          onOpenChange={onMoveChange}
+          shareableId={artifact.id}
+          shareableTitle={title}
+          homeOwnerName={artifact.ownerName ?? artifact.ownerEmail ?? ''}
+          isProjectAudience={currentVisibility === 'project'}
+          onReviewVisibility={
+            canChangeVisibility ? () => onVisibilityChange(true) : undefined
+          }
+        />
+      ) : null}
+    </>
   )
 }

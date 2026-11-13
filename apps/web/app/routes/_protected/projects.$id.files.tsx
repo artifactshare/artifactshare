@@ -2,14 +2,7 @@ import { useState } from 'react'
 import { Link, useFetcher } from 'react-router'
 import { IconStack2 as Layers } from '@tabler/icons-react'
 import type { Route } from './+types/projects.$id.files'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
+import { ProjectPageBreadcrumb } from '~/components/app/project-page-breadcrumb'
 import { Button } from '~/components/ui/button'
 import { Topbar } from '../_home/+components/topbar'
 import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
@@ -189,15 +182,7 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
     }))
   }
   const pages = acc.base === loaderData ? acc.pages : EMPTY_PAGES
-  const seen = new Set<string>()
-  const files: FileRowData[] = []
-  for (const page of [loaderData, ...pages]) {
-    for (const file of page.files) {
-      if (seen.has(file.id)) continue
-      seen.add(file.id)
-      files.push(file)
-    }
-  }
+  const files = mergeProjectFilePages([loaderData, ...pages])
   const bulk = useBulkActions(files.map((f) => f.id))
   const selectedIds = new Set(bulk.selected)
   const lastPage = pages.at(-1)
@@ -227,31 +212,10 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
         tabIndex={-1}
         aria-busy={busy}
       >
-        <PageBreadcrumb aria-label={t('project.location')}>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/">{t('tb.home')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/projects">{t('project.projects')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to={`/projects/${ctx.projectId}`}>{ctx.projectName}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{t('project.filesPageTitle')}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </PageBreadcrumb>
+        <ProjectPageBreadcrumb
+          title={t('project.filesPageTitle')}
+          project={{ id: ctx.projectId, name: ctx.projectName }}
+        />
         <AppPageHeader>
           <AppPageHeaderMain>
             <AppPageHeaderTitleRow>
@@ -352,4 +316,17 @@ export default function ProjectFiles({ loaderData }: Route.ComponentProps) {
       <BottomTabBar />
     </>
   )
+}
+
+function mergeProjectFilePages(pages: LoaderData[]) {
+  const seen = new Set<string>()
+  const files: FileRowData[] = []
+  for (const page of pages) {
+    for (const file of page.files) {
+      if (seen.has(file.id)) continue
+      seen.add(file.id)
+      files.push(file)
+    }
+  }
+  return files
 }

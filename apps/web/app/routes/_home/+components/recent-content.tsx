@@ -17,14 +17,7 @@ import {
   dateRailRestrictedColumns,
   projectMetaClassName,
 } from './file-list-styles'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
+import { HomeListBreadcrumb } from '~/components/app/home-list-breadcrumb'
 import { useT } from '~/hooks/use-t'
 import {
   AppPageHeader,
@@ -124,40 +117,24 @@ export function RecentListBody({
         timeZone,
       )
     : null
-  const rowDates = new Map<RecentRow, RecentDatePresentation>()
-  let previousDayKey = ''
-  if (dateRail && hydrated && now) {
-    for (const row of rows) {
-      const timestamp =
-        row.kind === 'file' ? row.file.modifiedTime : row.lastViewedAt
-      const dayKey =
-        timestamp && isUtcZTimestamp(timestamp)
-          ? localDayKeyFromTimezone(timestamp, timeZone)
-          : ''
-      const formatted = dayKey
-        ? recentDatePresentation(dayKey, locale, new Date(now), timeZone)
-        : null
-      if (!formatted) {
-        rowDates.set(row, { label: null, compactLabel: null, fullDate: null })
-        continue
-      }
-      const firstOfDay = dayKey !== previousDayKey
-      previousDayKey = dayKey
-      rowDates.set(row, {
-        ...formatted,
-        label: firstOfDay ? formatted.label : null,
-        compactLabel: firstOfDay ? formatted.compactLabel : null,
-      })
-    }
-  }
+  const rowDates = recentRowDates(
+    rows,
+    dateRail,
+    hydrated,
+    now,
+    locale,
+    timeZone,
+  )
   const resetUrl = recentUrl({
     pathname: location.pathname,
     hash: location.hash,
   })
-  const isFiltered = relation !== 'all' || unread
-  const cardinality =
-    historyCardinality ?? (files.length > 1 ? 2 : files.length)
-  const showOneItemHint = !isFiltered && cardinality === 1
+  const { isFiltered, showOneItemHint } = recentHistoryHint(
+    relation,
+    unread,
+    historyCardinality,
+    files.length,
+  )
   const emptyState = isFiltered ? (
     <div>
       <EmptyState variant="recent" filtered />
@@ -170,203 +147,69 @@ export function RecentListBody({
   ) : (
     <EmptyState variant="recent" hasHiddenHistory={false} />
   )
-  return (
-    <div
-      aria-busy={isBusy}
-      data-recent-hydrated={dateRail && hydrated ? '' : undefined}
-    >
-      <nav
-        aria-label={t('recent.filters')}
-        className="mb-4 flex flex-wrap items-center gap-2"
+  if (error)
+    return (
+      <div
+        aria-busy={isBusy}
+        data-recent-hydrated={dateRail && hydrated ? '' : undefined}
       >
-        <div className="max-phone:w-full max-phone:overflow-x-auto max-phone:flex-nowrap flex min-w-0 gap-2">
-          {(['all', 'own', 'project', 'shared'] as const).map((value) => (
-            <Link
-              key={value}
-              to={recentUrl({
-                pathname: location.pathname,
-                relation: value,
-                unread,
-                hash: location.hash,
-              })}
-              aria-current={relation === value ? 'page' : undefined}
-              className={cn(
-                'rounded-full border px-3 py-1 text-sm whitespace-nowrap no-underline',
-                relation === value
-                  ? 'border-link bg-link-soft text-link font-medium'
-                  : 'border-divider text-muted-foreground hover:bg-accent',
-              )}
-            >
-              {t(`recent.relation.${value}`)}
-            </Link>
-          ))}
-        </div>
-        <Link
-          to={recentUrl({
-            pathname: location.pathname,
-            relation,
-            unread: !unread,
-            hash: location.hash,
-          })}
-          role="switch"
-          aria-checked={unread}
-          className="max-phone:basis-full max-phone:ml-0 border-divider hover:bg-accent ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm whitespace-nowrap no-underline"
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              'bg-muted relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors',
-              unread && 'bg-link',
-            )}
-          >
-            <span
-              className={cn(
-                'bg-background absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
-                unread && 'translate-x-3',
-              )}
-            />
-          </span>
-          {t('recent.unread')}
-        </Link>
-      </nav>
-      {error ? (
+        <RecentFilters
+          relation={relation}
+          unread={unread}
+          pathname={location.pathname}
+          hash={location.hash}
+        />
         <p className="text-muted-foreground text-sm">
           {t('recent.failure')}{' '}
           <a href="." className="underline">
             {t('home.reload')}
           </a>
         </p>
-      ) : null}
-      {!error && showOneItemHint ? (
+      </div>
+    )
+  return (
+    <div
+      aria-busy={isBusy}
+      data-recent-hydrated={dateRail && hydrated ? '' : undefined}
+    >
+      <RecentFilters
+        relation={relation}
+        unread={unread}
+        pathname={location.pathname}
+        hash={location.hash}
+      />
+
+      {showOneItemHint ? (
         <p className="text-muted-foreground mb-4 text-sm">
           {t('recent.oneItemHint')}
         </p>
       ) : null}
-      {!error &&
-        (files.length === 0 ? (
-          emptyState
-        ) : (
-          <AppDividerList
-            className={cn(
-              fileTableListClassName,
-              homeCompact && '@container',
-              dateRail && 'gap-0',
-            )}
-          >
-            {(dateRail
-              ? [{ key: 'rail', heading: '', items: rows }]
-              : (groups ?? [{ key: 'ssr', heading: '', items: rows }])
-            ).map((group) => (
-              <div key={group.key}>
-                {group.heading ? (
-                  <div
-                    data-recent-date-heading
-                    className={cn(
-                      fileDateHeadingClassName,
-                      homeCompact && 'max-stack:px-0',
-                    )}
-                  >
-                    <h2>{group.heading}</h2>
-                  </div>
-                ) : null}
-                {group.items.map((row) =>
-                  row.kind === 'file' ? (
-                    <FileRow
-                      key={row.file.id}
-                      data={row.file}
-                      menuEnabled
-                      richStats={unreadEnabled}
-                      unreadBadges={unreadEnabled}
-                      recencyPresentation={
-                        unreadEnabled ? 'grouped-with-preview' : 'grouped'
-                      }
-                      inlineOwner
-                      hideMobileVisibility
-                      now={now}
-                      homeCompact={homeCompact}
-                      singleLineTitle={singleLineTitle}
-                      dateRail={
-                        dateRail
-                          ? (rowDates.get(row) ?? {
-                              label: null,
-                              compactLabel: null,
-                              fullDate: null,
-                            })
-                          : undefined
-                      }
-                      onAction={(action) => rowActions.open(action, row.file)}
-                    />
-                  ) : (
-                    <RestrictedRow
-                      key={row.shareableId}
-                      row={row}
-                      homeCompact={homeCompact}
-                      dateRail={
-                        dateRail
-                          ? (rowDates.get(row) ?? {
-                              label: null,
-                              compactLabel: null,
-                              fullDate: null,
-                            })
-                          : undefined
-                      }
-                    />
-                  ),
-                )}
-              </div>
-            ))}
-          </AppDividerList>
-        ))}
-      {!error ? (
-        <FileRowDialogs active={rowActions.active} onClose={rowActions.close} />
+      {files.length === 0 ? (
+        emptyState
+      ) : (
+        <RecentFileGroups
+          rows={rows}
+          groups={groups}
+          rowDates={rowDates}
+          dateRail={dateRail}
+          homeCompact={homeCompact}
+          unreadEnabled={unreadEnabled}
+          now={now}
+          singleLineTitle={singleLineTitle}
+          onAction={rowActions.open}
+        />
+      )}
+      <FileRowDialogs active={rowActions.active} onClose={rowActions.close} />
+      {pagination && total > 20 ? (
+        <RecentPagination
+          page={page}
+          total={total}
+          relation={relation}
+          unread={unread}
+          hash={location.hash}
+        />
       ) : null}
-      {!error && pagination && total > 20 ? (
-        <nav
-          aria-label={t('recent.pagination')}
-          className="mt-5 flex items-center justify-between text-sm"
-        >
-          <Button variant="outline" size="sm" asChild>
-            <Link
-              to={
-                page <= 1
-                  ? recentUrl({ page, relation, unread, hash: location.hash })
-                  : recentUrl({
-                      page: page - 1,
-                      relation,
-                      unread,
-                      hash: location.hash,
-                    })
-              }
-              aria-disabled={page <= 1}
-              tabIndex={page <= 1 ? -1 : undefined}
-            >
-              {t('recent.previous')}
-            </Link>
-          </Button>
-          <span>
-            {t('recent.page', { page, totalPages: Math.ceil(total / 20) })}
-          </span>
-          <Button variant="outline" size="sm" asChild>
-            <Link
-              to={
-                page * 20 >= total
-                  ? recentUrl({ page, relation, unread, hash: location.hash })
-                  : recentUrl({
-                      page: page + 1,
-                      relation,
-                      unread,
-                      hash: location.hash,
-                    })
-              }
-              aria-disabled={page * 20 >= total}
-              tabIndex={page * 20 >= total ? -1 : undefined}
-            >
-              {t('recent.next')}
-            </Link>
-          </Button>
-        </nav>
-      ) : null}
-      {!error && olderHistoryLink && total > 20 ? (
+      {olderHistoryLink && total > 20 ? (
         <div className="border-divider mt-5 border-t pt-4 text-sm">
           <AppMoreLink
             className="text-link whitespace-nowrap underline underline-offset-4"
@@ -425,17 +268,7 @@ export function RecentContent({
       tabIndex={-1}
       aria-busy={isBusy}
     >
-      <PageBreadcrumb aria-label={t('project.location')}>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">{t('tb.home')}</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{t('home.recentViewed')}</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </PageBreadcrumb>
+      <HomeListBreadcrumb title={t('home.recentViewed')} />
       <section className={homeSectionClassName}>
         <AppPageHeader>
           <AppPageHeaderMain>
@@ -566,4 +399,280 @@ function RestrictedDateCell({
       ) : null}
     </span>
   )
+}
+
+function recentRowDates(
+  rows: RecentRow[],
+  dateRail: boolean,
+  hydrated: boolean,
+  now: string | undefined,
+  locale: Parameters<typeof recentDatePresentation>[1],
+  timeZone: string,
+) {
+  const rowDates = new Map<RecentRow, RecentDatePresentation>()
+  let previousDayKey = ''
+  if (dateRail && hydrated && now) {
+    for (const row of rows) {
+      const timestamp =
+        row.kind === 'file' ? row.file.modifiedTime : row.lastViewedAt
+      const dayKey =
+        timestamp && isUtcZTimestamp(timestamp)
+          ? localDayKeyFromTimezone(timestamp, timeZone)
+          : ''
+      const formatted = dayKey
+        ? recentDatePresentation(dayKey, locale, new Date(now), timeZone)
+        : null
+      if (!formatted) {
+        rowDates.set(row, { label: null, compactLabel: null, fullDate: null })
+        continue
+      }
+      const firstOfDay = dayKey !== previousDayKey
+      previousDayKey = dayKey
+      rowDates.set(row, {
+        ...formatted,
+        label: firstOfDay ? formatted.label : null,
+        compactLabel: firstOfDay ? formatted.compactLabel : null,
+      })
+    }
+  }
+  return rowDates
+}
+
+function RecentPagination({
+  page,
+  total,
+  relation,
+  unread,
+  hash,
+}: {
+  page: number
+  total: number
+  relation: RecentContentProps['relation']
+  unread: boolean
+  hash: string
+}) {
+  const { t } = useT()
+  return (
+    <nav
+      aria-label={t('recent.pagination')}
+      className="mt-5 flex items-center justify-between text-sm"
+    >
+      <Button variant="outline" size="sm" asChild>
+        <Link
+          to={
+            page <= 1
+              ? recentUrl({ page, relation, unread, hash: hash })
+              : recentUrl({
+                  page: page - 1,
+                  relation,
+                  unread,
+                  hash: hash,
+                })
+          }
+          aria-disabled={page <= 1}
+          tabIndex={page <= 1 ? -1 : undefined}
+        >
+          {t('recent.previous')}
+        </Link>
+      </Button>
+      <span>
+        {t('recent.page', { page, totalPages: Math.ceil(total / 20) })}
+      </span>
+      <Button variant="outline" size="sm" asChild>
+        <Link
+          to={
+            page * 20 >= total
+              ? recentUrl({ page, relation, unread, hash: hash })
+              : recentUrl({
+                  page: page + 1,
+                  relation,
+                  unread,
+                  hash: hash,
+                })
+          }
+          aria-disabled={page * 20 >= total}
+          tabIndex={page * 20 >= total ? -1 : undefined}
+        >
+          {t('recent.next')}
+        </Link>
+      </Button>
+    </nav>
+  )
+}
+
+function RecentFileGroups({
+  rows,
+  groups,
+  rowDates,
+  dateRail,
+  homeCompact,
+  unreadEnabled,
+  now,
+  singleLineTitle,
+  onAction,
+}: {
+  rows: RecentRow[]
+  groups: ReturnType<typeof groupByDay<RecentRow>> | null
+  rowDates: Map<RecentRow, RecentDatePresentation>
+  dateRail: boolean
+  homeCompact: boolean
+  unreadEnabled: boolean
+  now?: string
+  singleLineTitle: boolean
+  onAction: ReturnType<typeof useFileRowActions>['open']
+}) {
+  return (
+    <AppDividerList
+      className={cn(
+        fileTableListClassName,
+        homeCompact && '@container',
+        dateRail && 'gap-0',
+      )}
+    >
+      {(dateRail
+        ? [{ key: 'rail', heading: '', items: rows }]
+        : (groups ?? [{ key: 'ssr', heading: '', items: rows }])
+      ).map((group) => (
+        <div key={group.key}>
+          {group.heading ? (
+            <div
+              data-recent-date-heading
+              className={cn(
+                fileDateHeadingClassName,
+                homeCompact && 'max-stack:px-0',
+              )}
+            >
+              <h2>{group.heading}</h2>
+            </div>
+          ) : null}
+          {group.items.map((row) =>
+            row.kind === 'file' ? (
+              <FileRow
+                key={row.file.id}
+                data={row.file}
+                menuEnabled
+                richStats={unreadEnabled}
+                unreadBadges={unreadEnabled}
+                recencyPresentation={
+                  unreadEnabled ? 'grouped-with-preview' : 'grouped'
+                }
+                inlineOwner
+                hideMobileVisibility
+                now={now}
+                homeCompact={homeCompact}
+                singleLineTitle={singleLineTitle}
+                dateRail={
+                  dateRail
+                    ? (rowDates.get(row) ?? {
+                        label: null,
+                        compactLabel: null,
+                        fullDate: null,
+                      })
+                    : undefined
+                }
+                onAction={(action) => onAction(action, row.file)}
+              />
+            ) : (
+              <RestrictedRow
+                key={row.shareableId}
+                row={row}
+                homeCompact={homeCompact}
+                dateRail={
+                  dateRail
+                    ? (rowDates.get(row) ?? {
+                        label: null,
+                        compactLabel: null,
+                        fullDate: null,
+                      })
+                    : undefined
+                }
+              />
+            ),
+          )}
+        </div>
+      ))}
+    </AppDividerList>
+  )
+}
+
+function RecentFilters({
+  relation,
+  unread,
+  pathname,
+  hash,
+}: {
+  relation: RecentContentProps['relation']
+  unread: boolean
+  pathname: string
+  hash: string
+}) {
+  const { t } = useT()
+  return (
+    <nav
+      aria-label={t('recent.filters')}
+      className="mb-4 flex flex-wrap items-center gap-2"
+    >
+      <div className="max-phone:w-full max-phone:overflow-x-auto max-phone:flex-nowrap flex min-w-0 gap-2">
+        {(['all', 'own', 'project', 'shared'] as const).map((value) => (
+          <Link
+            key={value}
+            to={recentUrl({
+              pathname: pathname,
+              relation: value,
+              unread,
+              hash: hash,
+            })}
+            aria-current={relation === value ? 'page' : undefined}
+            className={cn(
+              'rounded-full border px-3 py-1 text-sm whitespace-nowrap no-underline',
+              relation === value
+                ? 'border-link bg-link-soft text-link font-medium'
+                : 'border-divider text-muted-foreground hover:bg-accent',
+            )}
+          >
+            {t(`recent.relation.${value}`)}
+          </Link>
+        ))}
+      </div>
+      <Link
+        to={recentUrl({
+          pathname: pathname,
+          relation,
+          unread: !unread,
+          hash: hash,
+        })}
+        role="switch"
+        aria-checked={unread}
+        className="max-phone:basis-full max-phone:ml-0 border-divider hover:bg-accent ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm whitespace-nowrap no-underline"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            'bg-muted relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors',
+            unread && 'bg-link',
+          )}
+        >
+          <span
+            className={cn(
+              'bg-background absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+              unread && 'translate-x-3',
+            )}
+          />
+        </span>
+        {t('recent.unread')}
+      </Link>
+    </nav>
+  )
+}
+
+function recentHistoryHint(
+  relation: RecentContentProps['relation'],
+  unread: boolean,
+  historyCardinality: number | undefined,
+  fileCount: number,
+) {
+  const isFiltered = relation !== 'all' || unread
+  const cardinality = historyCardinality ?? (fileCount > 1 ? 2 : fileCount)
+  const showOneItemHint = !isFiltered && cardinality === 1
+  return { isFiltered, showOneItemHint }
 }

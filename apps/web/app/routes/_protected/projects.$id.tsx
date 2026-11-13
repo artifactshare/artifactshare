@@ -32,14 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
+import { ProjectPageBreadcrumb } from '~/components/app/project-page-breadcrumb'
 import { Alert, AlertDescription } from '~/components/ui/alert'
 import { Button } from '~/components/ui/button'
 import {
@@ -744,36 +737,17 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
   const { t, locale } = useT()
   const { project, files } = loaderData
   const shareDefaults = loaderData.shareDefaults
-  const externalShareDefaultCount = shareDefaults.filter(
-    (entry) => entry.isExternal,
-  ).length
-  // いま誰がこのプロジェクトを見られるかを文章で示す。組織内では社内全員 (＋社外
-  // の関係者)、プライベートでは関係者のみ (関係者ゼロなら自分だけ)。
-  const audienceSummary =
-    project.baseVisibility === 'workspace'
-      ? externalShareDefaultCount > 0
-        ? t('project.audience.workspacePlusExternal', {
-            count: externalShareDefaultCount,
-          })
-        : t('project.audience.workspaceAll')
-      : shareDefaults.length === 0
-        ? t('project.audience.ownerOnly')
-        : externalShareDefaultCount > 0
-          ? t('project.audience.privateMembers', {
-              count: shareDefaults.length,
-              external: externalShareDefaultCount,
-            })
-          : t('project.audience.privateMembersInternal', {
-              count: shareDefaults.length,
-            })
+  const audienceSummary = memberProjectAudienceSummary(
+    project,
+    shareDefaults,
+    t,
+  )
   const showShareDefaultsAction =
     shareDefaults.length > 0 || loaderData.canEditProject
-  const shareDefaultsActionLabel =
-    shareDefaults.length > 0
-      ? t('projectShareDefaults.actionWithCount', {
-          count: shareDefaults.length,
-        })
-      : t('projectShareDefaults.actionEmpty')
+  const shareDefaultsActionLabel = projectShareDefaultsLabel(
+    shareDefaults.length,
+    t,
+  )
   const title = project.name
   const isTransitioning = useViewTransitionState(`/projects/${project.id}`)
   const fileUpdatedAt = files[0]?.modifiedTime ?? null
@@ -832,25 +806,7 @@ function MemberProjectDetail({ loaderData }: { loaderData: MemberLoaderData }) {
         joinedProjects={loaderData.joinedNav}
       />
       <main className={listMainClassName}>
-        <PageBreadcrumb aria-label={t('project.location')}>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/">{t('tb.home')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/projects">{t('project.projects')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{title}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </PageBreadcrumb>
+        <ProjectPageBreadcrumb title={title} />
         <section
           className={projectContextClassName}
           style={{
@@ -1050,59 +1006,11 @@ export function MemberDetailActions({
           {t('tb.addFile')}
         </Button>
       ) : null}
-      {loaderData.canEditProject || loaderData.projectActivity.joined ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <IconButton
-              type="button"
-              icon={IconDots}
-              size="md"
-              className="max-stack:absolute max-stack:top-2.5 max-stack:right-2.5"
-              aria-label={t('project.menu')}
-            />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {!loaderData.project.archivedAt ? (
-              <DropdownMenuItem onSelect={() => setOpenDialog('slack')}>
-                {t('project.slack.title')}
-              </DropdownMenuItem>
-            ) : null}
-            {loaderData.canEditProject ? (
-              <DropdownMenuItem onSelect={() => setOpenDialog('edit')}>
-                {t('project.edit')}
-              </DropdownMenuItem>
-            ) : null}
-            {loaderData.projectActivity.joined ? (
-              <DropdownMenuItem
-                onSelect={() =>
-                  leaveFetcher.submit(
-                    { intent: 'leave-project' },
-                    { method: 'post' },
-                  )
-                }
-              >
-                {t('project.leave')}
-              </DropdownMenuItem>
-            ) : null}
-            {loaderData.canEditProject ? (
-              <DropdownMenuItem onSelect={() => setOpenDialog('archive')}>
-                {t('project.archive')}
-              </DropdownMenuItem>
-            ) : null}
-            {loaderData.canEditProject ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setOpenDialog('delete')}
-                >
-                  {t('project.delete')}
-                </DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+      <MemberProjectMenu
+        loaderData={loaderData}
+        leaveFetcher={leaveFetcher}
+        setOpenDialog={setOpenDialog}
+      />
     </>
   )
 
@@ -1218,25 +1126,7 @@ function SharedProjectDetail({ loaderData }: { loaderData: SharedLoaderData }) {
         joinedProjects={loaderData.joinedNav}
       />
       <main className={listMainClassName}>
-        <PageBreadcrumb aria-label={t('project.location')}>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/">{t('tb.home')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/projects">{t('project.projects')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{title}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </PageBreadcrumb>
+        <ProjectPageBreadcrumb title={title} />
         <section className={projectContextClassName}>
           <AppPageHeader>
             <AppPageHeaderMain>
@@ -1437,4 +1327,108 @@ function EditProjectDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function memberProjectAudienceSummary(
+  project: MemberLoaderData['project'],
+  shareDefaults: MemberLoaderData['shareDefaults'],
+  t: ReturnType<typeof useT>['t'],
+) {
+  const externalShareDefaultCount = shareDefaults.filter(
+    (entry) => entry.isExternal,
+  ).length
+  // いま誰がこのプロジェクトを見られるかを文章で示す。組織内では社内全員 (＋社外
+  // の関係者)、プライベートでは関係者のみ (関係者ゼロなら自分だけ)。
+  const audienceSummary =
+    project.baseVisibility === 'workspace'
+      ? externalShareDefaultCount > 0
+        ? t('project.audience.workspacePlusExternal', {
+            count: externalShareDefaultCount,
+          })
+        : t('project.audience.workspaceAll')
+      : shareDefaults.length === 0
+        ? t('project.audience.ownerOnly')
+        : externalShareDefaultCount > 0
+          ? t('project.audience.privateMembers', {
+              count: shareDefaults.length,
+              external: externalShareDefaultCount,
+            })
+          : t('project.audience.privateMembersInternal', {
+              count: shareDefaults.length,
+            })
+  return audienceSummary
+}
+
+function MemberProjectMenu({
+  loaderData,
+  leaveFetcher,
+  setOpenDialog,
+}: {
+  loaderData: MemberLoaderData
+  leaveFetcher: ReturnType<typeof useFetcher>
+  setOpenDialog: (dialog: DialogKind | null) => void
+}) {
+  const { t } = useT()
+  return loaderData.canEditProject || loaderData.projectActivity.joined ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <IconButton
+          type="button"
+          icon={IconDots}
+          size="md"
+          className="max-stack:absolute max-stack:top-2.5 max-stack:right-2.5"
+          aria-label={t('project.menu')}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {!loaderData.project.archivedAt ? (
+          <DropdownMenuItem onSelect={() => setOpenDialog('slack')}>
+            {t('project.slack.title')}
+          </DropdownMenuItem>
+        ) : null}
+        {loaderData.canEditProject ? (
+          <DropdownMenuItem onSelect={() => setOpenDialog('edit')}>
+            {t('project.edit')}
+          </DropdownMenuItem>
+        ) : null}
+        {loaderData.projectActivity.joined ? (
+          <DropdownMenuItem
+            onSelect={() =>
+              leaveFetcher.submit(
+                { intent: 'leave-project' },
+                { method: 'post' },
+              )
+            }
+          >
+            {t('project.leave')}
+          </DropdownMenuItem>
+        ) : null}
+        {loaderData.canEditProject ? (
+          <DropdownMenuItem onSelect={() => setOpenDialog('archive')}>
+            {t('project.archive')}
+          </DropdownMenuItem>
+        ) : null}
+        {loaderData.canEditProject ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => setOpenDialog('delete')}
+            >
+              {t('project.delete')}
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null
+}
+
+function projectShareDefaultsLabel(
+  count: number,
+  t: ReturnType<typeof useT>['t'],
+) {
+  return count > 0
+    ? t('projectShareDefaults.actionWithCount', { count })
+    : t('projectShareDefaults.actionEmpty')
 }

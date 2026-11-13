@@ -14,14 +14,7 @@ import { toast } from 'sonner'
 import { IconPlus, IconStack2 as Layers } from '@tabler/icons-react'
 import type { Route } from './+types/projects'
 import { ProjectScopeField } from '~/components/app/project-scope-field'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
+import { HomeListBreadcrumb } from '~/components/app/home-list-breadcrumb'
 import {
   UpgradeRequestPanel,
   type UpgradeRequestView,
@@ -282,17 +275,7 @@ export default function ProjectsIndex({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <PageBreadcrumb aria-label={t('project.location')}>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">{t('tb.home')}</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{t('project.projects')}</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </PageBreadcrumb>
+      <HomeListBreadcrumb title={t('project.projects')} />
       <AppPageHeader as="section">
         <AppPageHeaderMain>
           <AppPageHeaderTitleRow>

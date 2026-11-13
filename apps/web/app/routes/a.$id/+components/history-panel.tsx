@@ -1,3 +1,4 @@
+import { retentionSummary } from './retention-copy'
 import { RetentionEditor } from './retention-editor'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import { useRef, useState, type RefObject } from 'react'
@@ -161,16 +162,7 @@ export function HistoryPanelBody({
           />
         ) : retainVersions != null ? (
           <p className="text-muted-foreground m-0 text-xs">
-            {t(
-              retainVersions === 1
-                ? publisherManaged
-                  ? 'vw.retentionManagedNoteOne'
-                  : 'vw.retentionNoteOne'
-                : publisherManaged
-                  ? 'vw.retentionManagedNoteOther'
-                  : 'vw.retentionNoteOther',
-              { count: retainVersions },
-            )}
+            {retentionSummary(retainVersions, publisherManaged, t)}
           </p>
         ) : null}
         <VersionRows versions={versions} locale={locale} t={t} />

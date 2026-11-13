@@ -49,19 +49,12 @@ function AccessRequestDetail({
   onDecide: (decision: 'approve' | 'reject') => void
 }) {
   const { t } = useT()
-  const lacksDecisionCapability =
-    !request.canGrantArtifact && !request.canGrantProject
-  const displayedError = error ?? (lacksDecisionCapability ? 'changed' : null)
-  const decisionBlocked =
-    submitting ||
-    loading ||
-    displayedError === 'load' ||
-    lacksDecisionCapability
-  const approvalBlocked =
-    decisionBlocked ||
-    displayedError === 'changed' ||
-    displayedError === 'limit' ||
-    lacksDecisionCapability
+  const {
+    lacksDecisionCapability,
+    displayedError,
+    decisionBlocked,
+    approvalBlocked,
+  } = accessRequestDecisionState(request, error, loading, submitting)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -127,13 +120,7 @@ function AccessRequestDetail({
       ) : displayedError ? (
         <div className="space-y-3">
           <p className="text-destructive text-sm">
-            {lacksDecisionCapability
-              ? t('accessRequests.permissionChangedError')
-              : displayedError === 'changed'
-                ? t('accessRequests.changedError')
-                : displayedError === 'limit'
-                  ? t('accessRequests.limitError')
-                  : t('accessRequests.actionError')}
+            {accessRequestErrorText(displayedError, lacksDecisionCapability, t)}
           </p>
           {(lacksDecisionCapability ||
             displayedError === 'changed' ||
@@ -187,6 +174,13 @@ function AccessRequestLists({
 }) {
   const { t } = useT()
 
+  const receivedFailed =
+    error === 'changed' || error === 'unavailable' || error === 'load'
+  const sentStatusKeys = {
+    pending: 'accessRequests.status.pending',
+    approved: 'accessRequests.status.approved',
+    rejected: 'accessRequests.status.rejected',
+  } as const
   return (
     <Tabs defaultValue="received" className="min-h-0 flex-1 gap-0">
       <TabsList variant="line" className="mx-4 mt-2">
@@ -199,9 +193,7 @@ function AccessRequestLists({
         <TabsTrigger value="sent">{t('accessRequests.sent')}</TabsTrigger>
       </TabsList>
       <TabsContent value="received" className="overflow-y-auto p-3">
-        {(error === 'changed' ||
-          error === 'unavailable' ||
-          error === 'load') && (
+        {receivedFailed && (
           <div className="space-y-3 p-4 text-center">
             <p className="text-destructive text-sm">
               {error === 'changed'
@@ -240,26 +232,18 @@ function AccessRequestLists({
             </span>
           </button>
         ))}
-        {data &&
-          data.received.length === 0 &&
-          error !== 'changed' &&
-          error !== 'unavailable' &&
-          error !== 'load' && (
-            <p className="text-muted-foreground p-4 text-center text-sm">
-              {t('accessRequests.receivedEmpty')}
-            </p>
-          )}
+        {data && data.received.length === 0 && !receivedFailed && (
+          <p className="text-muted-foreground p-4 text-center text-sm">
+            {t('accessRequests.receivedEmpty')}
+          </p>
+        )}
       </TabsContent>
       <TabsContent value="sent" className="overflow-y-auto p-3">
         {data?.sent.map((item) => (
           <div key={item.id} className="flex items-center gap-2 p-3 text-sm">
             <span>{t('accessRequests.sentItem')}</span>
             <span className="text-muted-foreground ml-auto">
-              {item.status === 'pending'
-                ? t('accessRequests.status.pending')
-                : item.status === 'approved'
-                  ? t('accessRequests.status.approved')
-                  : t('accessRequests.status.rejected')}
+              {t(sentStatusKeys[item.status])}
             </span>
           </div>
         ))}
@@ -521,4 +505,43 @@ export function AccessRequestsSheet({
       )}
     </AppSidePanel>
   )
+}
+
+function accessRequestDecisionState(
+  request: ReceivedAccessRequest,
+  error: AccessRequestError,
+  loading: boolean,
+  submitting: boolean,
+) {
+  const lacksDecisionCapability =
+    !request.canGrantArtifact && !request.canGrantProject
+  const displayedError = error ?? (lacksDecisionCapability ? 'changed' : null)
+  const decisionBlocked =
+    submitting ||
+    loading ||
+    displayedError === 'load' ||
+    lacksDecisionCapability
+  const approvalBlocked =
+    decisionBlocked ||
+    displayedError === 'changed' ||
+    displayedError === 'limit' ||
+    lacksDecisionCapability
+
+  return {
+    lacksDecisionCapability,
+    displayedError,
+    decisionBlocked,
+    approvalBlocked,
+  }
+}
+
+function accessRequestErrorText(
+  error: AccessRequestError,
+  lacksCapability: boolean,
+  t: ReturnType<typeof useT>['t'],
+) {
+  if (lacksCapability) return t('accessRequests.permissionChangedError')
+  if (error === 'changed') return t('accessRequests.changedError')
+  if (error === 'limit') return t('accessRequests.limitError')
+  return t('accessRequests.actionError')
 }
