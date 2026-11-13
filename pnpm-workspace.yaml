@@ -7,7 +7,7 @@ packages:
   - 'tools/*'
 
 overrides:
-  # Patched deslop-js removes makeRe(); other consumers use the retained match API.
+  # Keep transitive tooling dependencies on the patched minimatch major.
   'minimatch@>=10.0.0 <11.0.0': 11.0.8
   'vite-plus@<1.1.0': 1.6.0
   '@vitest/mocker@4.1.11': 4.1.12
@@ -46,9 +46,3 @@ minimumReleaseAgeExclude:
   - 'kysely@0.29.9'
   - 'miniflare@5.20261110.2-beta'
   - 'wrangler@4.161.0'
-
-# Remove this patch when React Doctor drops deslop-js 0.9.12 or its cache
-# supports minimatch 11 without the removed makeRe() API.
-patchesDir: apps/web/scripts/patches
-patchedDependencies:
-  deslop-js@0.9.12: apps/web/scripts/patches/deslop-js-0.9.12.patch

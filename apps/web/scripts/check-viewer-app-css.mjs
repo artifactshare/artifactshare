@@ -106,8 +106,10 @@ export async function withCommitApp(commit, use) {
 // Compares the app CSS built from the base commit with the one built from
 // the current sources (by default the working tree's apps/web/app).
 export async function compareAppCss({ base, currentRoot = currentAppRoot }) {
-  const baseCss = await withCommitApp(base, buildAppCss)
-  const currentCss = await buildAppCss(currentRoot)
+  const [baseCss, currentCss] = await Promise.all([
+    withCommitApp(base, buildAppCss),
+    buildAppCss(currentRoot),
+  ])
   return { same: baseCss === currentCss, baseCss, currentCss }
 }
 
