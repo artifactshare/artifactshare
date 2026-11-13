@@ -402,6 +402,16 @@ test.each(['INSERT ON version_retention_tombstones', 'DELETE ON versions'])(
 test('preview is nonmutating, uses full eligibility, and a confirmed save matches pruning', async () => {
   const preview = await previewRetention(db, 's1', 'u1', 2)
   expect(preview).toMatchObject({ stored: null, proposed: 2, count: 2 })
+  expect(JSON.parse(preview!.snapshot)).toMatchObject({
+    versions: [
+      ['v1', 1, 'published', '2026-09-01', null],
+      ['v2', 2, 'published', '2026-09-02', null],
+      ['v3', 3, 'published', '2026-09-03', null],
+      ['v4', 4, 'published', '2026-09-04', null],
+    ],
+    references: null,
+    eligible: ['v1', 'v2'],
+  })
   expect(await db.selectFrom('versions').select('id').execute()).toHaveLength(4)
   expect(await saveRetention(db, 's1', 'u1', 2, preview!.snapshot)).toEqual({
     retain_versions: 2,
@@ -519,6 +529,16 @@ test.each(['created_by_publisher_client_id', 'assigned_publisher_client_id'])(
     expect((await previewRetention(db, 's1', 'u1', null))!.count).toBe(0)
     const preview = await previewRetention(db, 's1', 'u1', 1)
     expect(preview!.count).toBe(1)
+    expect(JSON.parse(preview!.snapshot)).toMatchObject({
+      versions: [
+        ['v1', 1, 'published', '2026-09-01', null],
+        ['v2', 2, 'published', '2026-09-02', 'client2'],
+        ['v3', 3, 'published', '2026-09-03', null],
+        ['v4', 4, 'published', '2026-09-04', 'client1'],
+      ],
+      references: ['v4'],
+      eligible: ['v2'],
+    })
     expect(await saveRetention(db, 's1', 'u1', 1, preview!.snapshot)).toEqual({
       retain_versions: 1,
       deleted_versions: 1,
@@ -838,3 +858,21 @@ for (const kind of ['html_page', 'static_site'])
     ])
     expect(result.data.total_size_bytes).toBe(30)
   })
+
+test('snapshot preserves ordered duplicate managed references and empty arrays', async () => {
+  managedHistory()
+  sqlite.exec(`INSERT INTO shareables (id, workspace_id, owner_user_id, name, artifact_kind, visibility, created_at, updated_at, container_id, current_version_id)
+    VALUES ('s2', 'ws1', 'u1', 'Other', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v4'),
+      ('s3', 'ws1', 'u1', 'Earlier', 'html_page', 'private', '2026-09-01', '2026-09-01', 'c1', 'v1')`)
+  const preview = await previewRetention(db, 's1', 'u1', 1)
+  expect(JSON.parse(preview!.snapshot).references).toEqual(['v1', 'v4', 'v4'])
+  sqlite.exec(
+    'UPDATE shareables SET current_version_id = NULL; DELETE FROM versions',
+  )
+  const empty = await previewRetention(db, 's1', 'u1', 1)
+  expect(JSON.parse(empty!.snapshot)).toMatchObject({
+    versions: [],
+    references: [],
+    eligible: [],
+  })
+})
