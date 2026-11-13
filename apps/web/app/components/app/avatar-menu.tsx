@@ -1,3 +1,4 @@
+import { AvatarMenuTrigger } from './avatar-menu-trigger'
 import { useFetcher, useNavigate, useRouteLoaderData } from 'react-router'
 import { useEffect, useRef, useState } from 'react'
 import { Badge } from '~/components/ui/badge'
@@ -12,16 +13,8 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from '~/components/ui/dropdown-menu'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '~/components/ui/tooltip'
-import { AuthorAvatar } from '~/components/app/author-avatar'
 import { useAnalyticsConsent } from '~/components/app/analytics-consent-provider'
-import { guideFocusRingClassName } from '~/components/app/guide-styles'
 import { useT } from '~/hooks/use-t'
 import {
   isSupportedLocale,
@@ -32,7 +25,6 @@ import { signOut } from '~/lib/auth-client'
 import { withLang } from '~/lib/connect-link'
 import type { UserInfo } from '~/lib/user'
 import { DEFAULT_APP_THEME, isAppTheme, type AppTheme } from '~/lib/app-theme'
-import { cn } from '~/lib/utils'
 import { AccessRequestsSheet } from '~/components/app/access-requests-sheet'
 import type { SidePanelTopbar } from '~/components/app/app-side-panel'
 
@@ -48,11 +40,6 @@ interface AvatarMenuProps {
   topbarCollapsed?: boolean
   accessRequestsTopbar?: SidePanelTopbar
 }
-
-const triggerClassName = cn(
-  'relative inline-flex size-6.5 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 p-0 text-xs font-medium text-white shadow-[var(--shadow-inset-hairline)]',
-  guideFocusRingClassName,
-)
 
 async function handleSignOut() {
   await signOut()
@@ -184,52 +171,13 @@ export function AvatarMenu({
           }
         }}
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                data-avatar-menu-trigger
-                className={cn(
-                  triggerClassName,
-                  variant === 'viewer' && 'max-phone:size-7.5',
-                  className,
-                )}
-                aria-label={
-                  accessRequestCount > 0
-                    ? t('accessRequests.pendingAccessible', {
-                        count: accessRequestCount,
-                        email: user.email,
-                      })
-                    : showDot
-                      ? t('updates.newAccessible', { email: user.email })
-                      : user.email
-                }
-              >
-                <AuthorAvatar
-                  id={user.id}
-                  image={user.image}
-                  initial={user.initial}
-                  size="menu"
-                  loading="eager"
-                  className={cn(
-                    'text-white',
-                    variant === 'viewer' && 'max-phone:size-7.5',
-                  )}
-                />
-                {(showDot || accessRequestCount > 0) && (
-                  <span
-                    aria-hidden="true"
-                    className="border-background bg-link absolute top-0 right-0 size-2.5 rounded-full border-2"
-                  />
-                )}
-              </button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent sideOffset={variant === 'viewer' ? 24 : 0}>
-            {user.email}
-          </TooltipContent>
-        </Tooltip>
+        <AvatarMenuTrigger
+          user={user}
+          variant={variant}
+          className={className}
+          accessRequestCount={accessRequestCount}
+          showDot={showDot}
+        />
         <DropdownMenuContent
           align="end"
           className="w-56"

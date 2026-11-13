@@ -41,9 +41,8 @@ export function RecipientPicker({
     return () => clearTimeout(timer)
   }, [trimmed, excludeUserId, load])
 
-  // 前の検索語の結果を選択可能なまま残さない: 現在の検索語と一致する応答だけ使う。
-  const data = fetcher.data?.query === trimmed ? fetcher.data : undefined
-  const results = data?.recipients ?? []
+  const { data, results, failed, loading, noResults, truncated } =
+    recipientSearchState(fetcher.data, fetcher.state, trimmed)
   const [picked, setPicked] = useState<{ id: string; label: string } | null>(
     null,
   )
@@ -53,12 +52,6 @@ export function RecipientPicker({
     !results.some((recipient) => recipient.id === picked.id)
       ? picked
       : null
-  const failed = data?.failed === true
-  const loading = !failed && (data === undefined || fetcher.state !== 'idle')
-  const noResults =
-    !loading && !failed && trimmed !== '' && results.length === 0
-  const truncated =
-    !failed && data !== undefined && data.total > data.recipients.length
 
   return (
     <Field>
@@ -167,4 +160,20 @@ function RecipientOption({
       </Label>
     </div>
   )
+}
+
+// Only the current query can supply selectable results or search status.
+function recipientSearchState(
+  response: RecipientSearchData | undefined,
+  state: string,
+  query: string,
+) {
+  const data = response?.query === query ? response : undefined
+  const results = data?.recipients ?? []
+  const failed = data?.failed === true
+  const loading = !failed && (data === undefined || state !== 'idle')
+  const noResults = !loading && !failed && query !== '' && results.length === 0
+  const truncated =
+    !failed && data !== undefined && data.total > data.recipients.length
+  return { data, results, failed, loading, noResults, truncated }
 }

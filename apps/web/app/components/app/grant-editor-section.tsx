@@ -172,6 +172,7 @@ export function GrantEditorRow({
 }: GrantEditorRowProps) {
   const { t } = useT()
   const pendingRemove = status === 'pending-remove'
+  const identity = grantIdentity(entry, showRole, t)
   return (
     <li
       className={cn(
@@ -180,9 +181,9 @@ export function GrantEditorRow({
       )}
     >
       <AuthorAvatar
-        id={entry.user?.id ?? entry.email}
-        image={entry.user?.image ?? null}
-        initial={getOwnerInitial(entry.user?.name ?? null, entry.email)}
+        id={identity.id}
+        image={identity.image}
+        initial={identity.initial}
       />
       <div className={grantsRowBodyClassName}>
         <div
@@ -192,7 +193,7 @@ export function GrantEditorRow({
             pendingRemove && 'text-faint line-through',
           )}
         >
-          {entry.user?.name ?? entry.email}
+          {identity.name}
         </div>
         <div
           className={cn(
@@ -201,13 +202,7 @@ export function GrantEditorRow({
             pendingRemove && 'text-faint line-through',
           )}
         >
-          {showRole
-            ? entry.user
-              ? entry.email
-              : t('visibilityDialog.grants.pending')
-            : entry.user
-              ? `${entry.email} · ${t('visibilityDialog.grants.viewer')}`
-              : t('visibilityDialog.grants.pending')}
+          {identity.description}
         </div>
       </div>
       {showRole ? (
@@ -239,4 +234,23 @@ export function GrantEditorRow({
       ) : null}
     </li>
   )
+}
+
+function grantIdentity(
+  entry: GrantEditorRowProps['entry'],
+  showRole: boolean | undefined,
+  t: ReturnType<typeof useT>['t'],
+) {
+  const description = !entry.user
+    ? t('visibilityDialog.grants.pending')
+    : showRole
+      ? entry.email
+      : `${entry.email} · ${t('visibilityDialog.grants.viewer')}`
+  return {
+    id: entry.user?.id ?? entry.email,
+    image: entry.user?.image ?? null,
+    initial: getOwnerInitial(entry.user?.name ?? null, entry.email),
+    name: entry.user?.name ?? entry.email,
+    description,
+  }
 }

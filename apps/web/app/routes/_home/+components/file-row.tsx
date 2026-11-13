@@ -183,28 +183,16 @@ export function FileRow({
     : unreadBadges && fileHasUnread(data)
       ? `${title} · ${t('row.unread')}`
       : title
-  const groupedRecency = recencyPresentation !== 'row'
-  const columnsClassName = dateRail
-    ? dateRailFilesColumns
-    : homeCompact
-      ? data.lostAccess
-        ? homeCompactLostAccessColumns
-        : homeCompactFilesColumns
-      : showOwner
-        ? groupedRecency
-          ? menuEnabled
-            ? groupedFileTableColumnsActions
-            : groupedFileTableColumns
-          : menuEnabled
-            ? fileTableColumnsActions
-            : fileTableColumns
-        : groupedRecency
-          ? menuEnabled
-            ? groupedFilesTableColumnsActions
-            : groupedFilesTableColumns
-          : menuEnabled
-            ? filesTableColumnsActions
-            : filesTableColumns
+  const layout = fileRowLayout({
+    data,
+    dateRail,
+    homeCompact,
+    showOwner,
+    recencyPresentation,
+    menuEnabled,
+    variant,
+    selected,
+  })
 
   useEffect(() => {
     if (wasTransitioningRef.current && !isTransitioning) {
@@ -219,21 +207,7 @@ export function FileRow({
       // Divide rows intentionally touch at their upper border; row contents
       // remain visible to the gap audit.
       data-gap-audit-allow-touch
-      className={cn(
-        variant === 'project'
-          ? cn(rowClassName, projectFileColumns)
-          : cn(
-              columnsClassName,
-              rowClassName,
-              homeCompact
-                ? ''
-                : menuEnabled
-                  ? mobileColsActionsClassName
-                  : mobileColsClassName,
-            ),
-        selected && 'bg-link-soft/50 hover:bg-link-soft/50',
-        homeCompact && 'max-stack:px-0',
-      )}
+      className={layout.row}
       style={{
         viewTransitionName: isTransitioning
           ? `artifact-${data.id}-surface`
@@ -269,14 +243,7 @@ export function FileRow({
         to={to}
         state={{ galleryReturnTo: currentGalleryReturnTo(location) }}
         viewTransition
-        className={cn(
-          menuEnabled || variant === 'project'
-            ? rowLinkActionsClassName
-            : rowLinkClassName,
-          homeCompact && !data.lostAccess && homeCompactRowLinkClassName,
-          homeCompact && data.lostAccess && '!right-0',
-          dateRail && dateRailRowLinkClassName,
-        )}
+        className={layout.link}
         aria-label={rowLinkLabel}
       />
       {selectable && !data.lostAccess && data.isOwner ? (
@@ -297,49 +264,19 @@ export function FileRow({
           />
         </label>
       ) : null}
-      {data.lostAccess ? null : (
-        <span className="relative z-2 inline-flex items-center gap-1 justify-self-end">
-          {variant === 'project' && onPinToggle ? (
-            <IconButton
-              type="button"
-              icon={pinned ? IconPinFilled : IconPin}
-              size="sm"
-              className={cn(rowCopyClassName, 'max-wide:hidden')}
-              aria-label={t(pinned ? 'project.unpin' : 'project.pin')}
-              onClick={onPinToggle}
-            />
-          ) : null}
-          <CopyUrlButton
-            shareableId={data.id}
-            visibility={data.visibility}
-            onOpenSharing={onOpenSharing}
-            sharingActionSignal={sharingRecoverySignal}
-            className={cn(
-              rowCopyClassName,
-              menuEnabled && 'max-wide:hidden',
-              homeCompact &&
-                '@max-[theme(--breakpoint-stack)]:hidden @min-[theme(--breakpoint-stack)]:inline-flex',
-              dateRail &&
-                '@max-recent-rail-wide:hidden @min-recent-rail-wide:inline-flex',
-            )}
-          />
-          {menu ??
-            (menuEnabled ? (
-              <FileRowMenu
-                onCopyUrl={() =>
-                  void copyShareableUrl(data.id, data.visibility, translator, {
-                    onOpenSharing,
-                    sharingActionSignal: sharingRecoverySignal,
-                  })
-                }
-                onAction={data.isOwner ? onAction : undefined}
-                // ピンはプロジェクト側の権限 (canPin) で決まり、行のオーナーかは問わない
-                onPinToggle={variant === 'project' ? onPinToggle : undefined}
-                pinned={pinned}
-              />
-            ) : null)}
-        </span>
-      )}
+      <FileRowActions
+        data={data}
+        variant={variant}
+        menu={menu}
+        menuEnabled={menuEnabled}
+        onAction={onAction}
+        onPinToggle={onPinToggle}
+        pinned={pinned}
+        homeCompact={homeCompact}
+        dateRail={dateRail}
+        onOpenSharing={onOpenSharing}
+        sharingRecoverySignal={sharingRecoverySignal}
+      />
     </div>
   )
 }
@@ -447,37 +384,23 @@ const FileRowSurface = memo(function FileRowSurface({
   const { owner, modified, activity, visibility } = useFileLabels(data)
   const { t, tPlural } = useT()
 
-  const versionMotionLabel =
-    (unreadBadges || versionDisplay === 'recent') && now
-      ? versionBadgeLabel(data, now, (version) =>
-          t('project.versionBadge', { version }),
-        )
-      : null
-  const unreadCommentLabel = unreadBadges
-    ? unreadNewCommentLabel(data.unreadCommentCount ?? 0, t, tPlural)
-    : null
-  const motionSubline = versionMotionLabel || unreadCommentLabel
-  const showUnreadDot = unreadBadges && fileHasUnread(data)
+  const { motionSubline, motionSegments, projectSublineTitle, showUnreadDot } =
+    fileMotionLabels({
+      data,
+      unreadBadges,
+      versionDisplay,
+      now,
+      inlineOwner,
+      owner,
+      t,
+      tPlural,
+    })
 
-  const motionSegments = [versionMotionLabel, unreadCommentLabel].filter(
-    (segment): segment is string => Boolean(segment),
+  const compactOnly = compactFileColumnVisibility(
+    Boolean(dateRail),
+    homeCompact,
+    data.lostAccess,
   )
-  const projectSublineTitle = [
-    inlineOwner ? owner : null,
-    ...motionSegments,
-    data.projectName,
-    data.contextualWorkspaceLabel,
-  ]
-    .filter((segment): segment is string => Boolean(segment))
-    .join(' · ')
-
-  const compactOnly = dateRail
-    ? '@max-recent-rail-wide:hidden'
-    : homeCompact
-      ? data.lostAccess
-        ? 'hidden'
-        : '@max-[theme(--breakpoint-stack)]:hidden'
-      : ''
   return (
     <>
       <span
@@ -525,200 +448,52 @@ const FileRowSurface = memo(function FileRowSurface({
                 {t('row.unopened')}
               </span>
             ) : null}
-            {data.projectName || motionSubline || inlineOwner ? (
-              <span className={projectClassName} title={projectSublineTitle}>
-                {inlineOwner ? (
-                  <>
-                    <FileOwner data={data} owner={owner} />
-                  </>
-                ) : null}
-                {motionSubline ? (
-                  <span
-                    className={cn(
-                      'min-w-0 truncate',
-                      inlineOwner && dateRail
-                        ? '@max-recent-rail-wide:hidden'
-                        : inlineOwner && homeCompact
-                          ? '@max-[theme(--breakpoint-stack)]:hidden'
-                          : 'max-wide:hidden',
-                    )}
-                  >
-                    {inlineOwner ? <span aria-hidden="true"> · </span> : null}
-                    {motionSegments.join(' · ')}
-                  </span>
-                ) : null}
-                {data.projectName ? (
-                  <>
-                    {inlineOwner || motionSubline ? (
-                      <span
-                        className={cn(
-                          !inlineOwner && motionSubline && 'max-wide:hidden',
-                        )}
-                        aria-hidden="true"
-                      >
-                        {' '}
-                        ·{' '}
-                      </span>
-                    ) : null}
-                    <Layers
-                      size={13}
-                      className="text-link flex-none"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{data.projectName}</span>
-                    {data.contextualWorkspaceLabel ? (
-                      <>
-                        <span aria-hidden="true"> · </span>
-                        <span className="text-faint min-w-0 truncate">
-                          {data.contextualWorkspaceLabel}
-                        </span>
-                      </>
-                    ) : null}
-                  </>
-                ) : null}
-              </span>
-            ) : null}
-            {recencyPresentation === 'grouped-with-preview' &&
-            data.latestUnreadComment?.body ? (
-              <span className={commentPreviewClassName}>
-                <span className="text-link inline-flex shrink-0 items-center gap-1">
-                  <IconMessage size={13} aria-hidden="true" />
-                  <span>{t('row.newComment')}</span>
-                </span>
-                <span className="grid min-w-0 gap-0.5">
-                  <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] break-words">
-                    {data.latestUnreadComment.authorName ? (
-                      <span className="max-wide:max-w-1/3 inline-block truncate align-bottom">
-                        {data.latestUnreadComment.authorName}
-                      </span>
-                    ) : null}
-                    {data.latestUnreadComment.authorName ? ': ' : null}
-                    {data.latestUnreadComment.body}
-                  </span>
-                  {(data.unreadCommentRemainingCount ?? 0) > 0 ? (
-                    <span className="text-link whitespace-nowrap">
-                      {t('row.moreComments', {
-                        count: data.unreadCommentRemainingCount ?? 0,
-                      })}
-                    </span>
-                  ) : null}
-                </span>
-              </span>
-            ) : null}
-            <span
-              className={cn(
-                mobileMetaClassName,
-                dateRail
-                  ? '@max-recent-rail-wide:grid @min-recent-rail-wide:hidden'
-                  : homeCompact &&
-                      '@max-[theme(--breakpoint-stack)]:grid @min-[theme(--breakpoint-stack)]:hidden',
-              )}
-              data-regression-responsive="mobile-only"
-            >
-              {dateRail?.compactLabel ? (
-                <span
-                  aria-hidden="true"
-                  className="@min-recent-rail-collapse:hidden col-span-2 min-w-0 text-xs whitespace-pre-line"
-                >
-                  {dateRail.compactLabel}
-                </span>
-              ) : null}
-              <VisibilityChip
-                visibility={data.visibility}
-                label={visibility}
-                className={hideMobileVisibility ? 'max-wide:hidden' : undefined}
-              />
-              {recencyPresentation === 'row' ? (
-                <span className="min-w-0 flex-none truncate">
-                  {modified ?? '—'}
-                </span>
-              ) : null}
-              {richStats ? (
-                <span
-                  className="inline-flex flex-none items-center gap-1"
-                  aria-label={tPlural('card.viewCount', data.viewCount)}
-                >
-                  <IconEye size={13} aria-hidden="true" />
-                  {data.viewCount}
-                </span>
-              ) : null}
-              {!inlineOwner && !hideMobileOwner ? (
-                <span className={cn(mobileOwnerClassName, 'col-span-2')}>
-                  <FileOwner
-                    data={data}
-                    owner={owner}
-                    ownerNameClassName="min-w-0 truncate"
-                  />
-                </span>
-              ) : null}
-              {(versionDisplay === 'recent' ||
-                ((inlineOwner || !hideMobileOwner) && unreadBadges)) &&
-              motionSegments.length > 0 ? (
-                // 既存セルの列位置を動かさないよう、動きは 2 列ぶんの独立行にする
-                <span className="col-span-2 min-w-0 truncate">
-                  {motionSegments.join(' · ')}
-                </span>
-              ) : null}
-            </span>
+            <FileProjectSubline
+              data={data}
+              owner={owner}
+              inlineOwner={inlineOwner}
+              motionSubline={motionSubline}
+              projectSublineTitle={projectSublineTitle}
+              motionSegments={motionSegments}
+              dateRail={dateRail}
+              homeCompact={homeCompact}
+            />
+            <FileCommentPreview
+              data={data}
+              recencyPresentation={recencyPresentation}
+            />
+            <FileMobileMetadata
+              data={data}
+              dateRail={dateRail}
+              homeCompact={homeCompact}
+              hideMobileVisibility={hideMobileVisibility}
+              recencyPresentation={recencyPresentation}
+              richStats={richStats}
+              inlineOwner={inlineOwner}
+              hideMobileOwner={hideMobileOwner}
+              versionDisplay={versionDisplay}
+              unreadBadges={unreadBadges}
+              motionSegments={motionSegments}
+              visibility={visibility}
+              modified={modified}
+              owner={owner}
+            />
           </span>
         </span>
       </span>
-      <VisibilityChip
-        visibility={data.visibility}
-        label={visibility}
-        className={cn(
-          'max-wide:hidden pointer-events-none relative z-0 justify-self-start',
-          compactOnly,
-        )}
-        data-regression-responsive="desktop-only"
+      <FileDesktopMetadata
+        data={data}
+        visibility={visibility}
+        recencyPresentation={recencyPresentation}
+        modified={modified}
+        activity={activity}
+        richStats={richStats}
+        showOwner={showOwner}
+        homeCompact={homeCompact}
+        inlineOwner={inlineOwner}
+        owner={owner}
+        compactOnly={compactOnly}
       />
-      {recencyPresentation === 'row' ? (
-        <span
-          className={cn(desktopCellClassName, 'text-left', compactOnly)}
-          data-regression-responsive="desktop-only"
-        >
-          {modified ?? '—'}
-        </span>
-      ) : null}
-      <span
-        className={cn(desktopCellClassName, compactOnly)}
-        data-regression-responsive="desktop-only"
-      >
-        {richStats ? (
-          <span className="inline-flex items-center gap-3">
-            <span
-              className="inline-flex items-center gap-1"
-              aria-label={tPlural('card.viewCount', data.viewCount)}
-            >
-              <IconEye size={13} aria-hidden="true" />
-              {data.viewCount}
-            </span>
-            {data.commentCount > 0 ? (
-              <span
-                className="inline-flex items-center gap-1"
-                aria-label={tPlural('card.commentCount', data.commentCount)}
-              >
-                <IconMessage size={13} aria-hidden="true" />
-                {data.commentCount}
-              </span>
-            ) : null}
-          </span>
-        ) : (
-          activity
-        )}
-      </span>
-      {showOwner && !(homeCompact && inlineOwner) ? (
-        <span
-          className={cn(authorClassName, compactOnly)}
-          data-regression-responsive="desktop-only"
-        >
-          <FileOwner
-            data={data}
-            owner={owner}
-            ownerNameClassName="min-w-0 truncate"
-          />
-        </span>
-      ) : null}
     </>
   )
 })
@@ -794,4 +569,496 @@ function DateRailCell({
       ) : null}
     </span>
   )
+}
+
+function fileRowLayout({
+  data,
+  dateRail,
+  homeCompact,
+  showOwner,
+  recencyPresentation,
+  menuEnabled,
+  variant,
+  selected,
+}: Pick<
+  FileRowProps,
+  | 'data'
+  | 'dateRail'
+  | 'homeCompact'
+  | 'showOwner'
+  | 'recencyPresentation'
+  | 'menuEnabled'
+  | 'variant'
+  | 'selected'
+>) {
+  const groupedRecency = recencyPresentation !== 'row'
+  const columnsClassName = dateRail
+    ? dateRailFilesColumns
+    : homeCompact
+      ? data.lostAccess
+        ? homeCompactLostAccessColumns
+        : homeCompactFilesColumns
+      : showOwner
+        ? groupedRecency
+          ? menuEnabled
+            ? groupedFileTableColumnsActions
+            : groupedFileTableColumns
+          : menuEnabled
+            ? fileTableColumnsActions
+            : fileTableColumns
+        : groupedRecency
+          ? menuEnabled
+            ? groupedFilesTableColumnsActions
+            : groupedFilesTableColumns
+          : menuEnabled
+            ? filesTableColumnsActions
+            : filesTableColumns
+
+  return {
+    row: cn(
+      variant === 'project'
+        ? cn(rowClassName, projectFileColumns)
+        : cn(
+            columnsClassName,
+            rowClassName,
+            homeCompact
+              ? ''
+              : menuEnabled
+                ? mobileColsActionsClassName
+                : mobileColsClassName,
+          ),
+      selected && 'bg-link-soft/50 hover:bg-link-soft/50',
+      homeCompact && 'max-stack:px-0',
+    ),
+    link: cn(
+      menuEnabled || variant === 'project'
+        ? rowLinkActionsClassName
+        : rowLinkClassName,
+      homeCompact && !data.lostAccess && homeCompactRowLinkClassName,
+      homeCompact && data.lostAccess && '!right-0',
+      dateRail && dateRailRowLinkClassName,
+    ),
+  }
+}
+
+function FileRowActions({
+  data,
+  variant,
+  menu,
+  menuEnabled,
+  onAction,
+  onPinToggle,
+  pinned,
+  homeCompact,
+  dateRail,
+  onOpenSharing,
+  sharingRecoverySignal,
+}: Pick<
+  FileRowProps,
+  | 'data'
+  | 'variant'
+  | 'menu'
+  | 'menuEnabled'
+  | 'onAction'
+  | 'onPinToggle'
+  | 'pinned'
+  | 'homeCompact'
+  | 'dateRail'
+> & {
+  onOpenSharing?: () => void
+  sharingRecoverySignal: ReturnType<typeof useSharingRecoverySignal>
+}) {
+  const translator = useT()
+  const { t } = translator
+  if (data.lostAccess) return null
+  const defaultMenu = menuEnabled ? (
+    <FileRowMenu
+      onCopyUrl={() =>
+        void copyShareableUrl(data.id, data.visibility, translator, {
+          onOpenSharing,
+          sharingActionSignal: sharingRecoverySignal,
+        })
+      }
+      onAction={data.isOwner ? onAction : undefined}
+      // ピンはプロジェクト側の権限 (canPin) で決まり、行のオーナーかは問わない
+      onPinToggle={variant === 'project' ? onPinToggle : undefined}
+      pinned={pinned}
+    />
+  ) : null
+  const pinAction = pinned
+    ? { icon: IconPinFilled, label: t('project.unpin') }
+    : { icon: IconPin, label: t('project.pin') }
+  return (
+    <span className="relative z-2 inline-flex items-center gap-1 justify-self-end">
+      {variant === 'project' && onPinToggle ? (
+        <IconButton
+          type="button"
+          icon={pinAction.icon}
+          size="sm"
+          className={cn(rowCopyClassName, 'max-wide:hidden')}
+          aria-label={pinAction.label}
+          onClick={onPinToggle}
+        />
+      ) : null}
+      <CopyUrlButton
+        shareableId={data.id}
+        visibility={data.visibility}
+        onOpenSharing={onOpenSharing}
+        sharingActionSignal={sharingRecoverySignal}
+        className={cn(
+          rowCopyClassName,
+          menuEnabled && 'max-wide:hidden',
+          homeCompact &&
+            '@max-[theme(--breakpoint-stack)]:hidden @min-[theme(--breakpoint-stack)]:inline-flex',
+          dateRail &&
+            '@max-recent-rail-wide:hidden @min-recent-rail-wide:inline-flex',
+        )}
+      />
+      {menu ?? defaultMenu}
+    </span>
+  )
+}
+
+function FileProjectSubline({
+  data,
+  owner,
+  inlineOwner,
+  motionSubline,
+  projectSublineTitle,
+  motionSegments,
+  dateRail,
+  homeCompact,
+}: Pick<
+  FileRowSurfaceProps,
+  'data' | 'inlineOwner' | 'dateRail' | 'homeCompact'
+> & {
+  owner: string
+  motionSubline: string | null
+  projectSublineTitle: string
+  motionSegments: string[]
+}) {
+  if (!data.projectName && !motionSubline && !inlineOwner) return null
+  return (
+    <span className={projectClassName} title={projectSublineTitle}>
+      {inlineOwner ? (
+        <>
+          <FileOwner data={data} owner={owner} />
+        </>
+      ) : null}
+      {motionSubline ? (
+        <span
+          className={cn(
+            'min-w-0 truncate',
+            motionSublineVisibility(
+              inlineOwner,
+              Boolean(dateRail),
+              homeCompact,
+            ),
+          )}
+        >
+          {inlineOwner ? <span aria-hidden="true"> · </span> : null}
+          {motionSegments.join(' · ')}
+        </span>
+      ) : null}
+      {data.projectName ? (
+        <>
+          {inlineOwner || motionSubline ? (
+            <span
+              className={cn(!inlineOwner && motionSubline && 'max-wide:hidden')}
+              aria-hidden="true"
+            >
+              {' '}
+              ·{' '}
+            </span>
+          ) : null}
+          <Layers
+            size={13}
+            className="text-link flex-none"
+            aria-hidden="true"
+          />
+          <span className="truncate">{data.projectName}</span>
+          {data.contextualWorkspaceLabel ? (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span className="text-faint min-w-0 truncate">
+                {data.contextualWorkspaceLabel}
+              </span>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </span>
+  )
+}
+
+function FileCommentPreview({
+  data,
+  recencyPresentation,
+}: Pick<FileRowSurfaceProps, 'data' | 'recencyPresentation'>) {
+  const { t } = useT()
+  return recencyPresentation === 'grouped-with-preview' &&
+    data.latestUnreadComment?.body ? (
+    <span className={commentPreviewClassName}>
+      <span className="text-link inline-flex shrink-0 items-center gap-1">
+        <IconMessage size={13} aria-hidden="true" />
+        <span>{t('row.newComment')}</span>
+      </span>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere] break-words">
+          {data.latestUnreadComment.authorName ? (
+            <span className="max-wide:max-w-1/3 inline-block truncate align-bottom">
+              {data.latestUnreadComment.authorName}
+            </span>
+          ) : null}
+          {data.latestUnreadComment.authorName ? ': ' : null}
+          {data.latestUnreadComment.body}
+        </span>
+        {(data.unreadCommentRemainingCount ?? 0) > 0 ? (
+          <span className="text-link whitespace-nowrap">
+            {t('row.moreComments', {
+              count: data.unreadCommentRemainingCount ?? 0,
+            })}
+          </span>
+        ) : null}
+      </span>
+    </span>
+  ) : null
+}
+
+function FileMobileMetadata({
+  data,
+  dateRail,
+  homeCompact,
+  hideMobileVisibility,
+  recencyPresentation,
+  richStats,
+  inlineOwner,
+  hideMobileOwner,
+  versionDisplay,
+  unreadBadges,
+  motionSegments,
+  visibility,
+  modified,
+  owner,
+}: Omit<FileRowSurfaceProps, 'title' | 'showOwner' | 'singleLineTitle'> & {
+  motionSegments: string[]
+  visibility: string
+  modified: string | null
+  owner: string
+}) {
+  const { tPlural } = useT()
+  return (
+    <span
+      className={cn(
+        mobileMetaClassName,
+        dateRail
+          ? '@max-recent-rail-wide:grid @min-recent-rail-wide:hidden'
+          : homeCompact &&
+              '@max-[theme(--breakpoint-stack)]:grid @min-[theme(--breakpoint-stack)]:hidden',
+      )}
+      data-regression-responsive="mobile-only"
+    >
+      {dateRail?.compactLabel ? (
+        <span
+          aria-hidden="true"
+          className="@min-recent-rail-collapse:hidden col-span-2 min-w-0 text-xs whitespace-pre-line"
+        >
+          {dateRail.compactLabel}
+        </span>
+      ) : null}
+      <VisibilityChip
+        visibility={data.visibility}
+        label={visibility}
+        className={hideMobileVisibility ? 'max-wide:hidden' : undefined}
+      />
+      {recencyPresentation === 'row' ? (
+        <span className="min-w-0 flex-none truncate">{modified ?? '—'}</span>
+      ) : null}
+      {richStats ? (
+        <span
+          className="inline-flex flex-none items-center gap-1"
+          aria-label={tPlural('card.viewCount', data.viewCount)}
+        >
+          <IconEye size={13} aria-hidden="true" />
+          {data.viewCount}
+        </span>
+      ) : null}
+      {!inlineOwner && !hideMobileOwner ? (
+        <span className={cn(mobileOwnerClassName, 'col-span-2')}>
+          <FileOwner
+            data={data}
+            owner={owner}
+            ownerNameClassName="min-w-0 truncate"
+          />
+        </span>
+      ) : null}
+      {(versionDisplay === 'recent' ||
+        ((inlineOwner || !hideMobileOwner) && unreadBadges)) &&
+      motionSegments.length > 0 ? (
+        // 既存セルの列位置を動かさないよう、動きは 2 列ぶんの独立行にする
+        <span className="col-span-2 min-w-0 truncate">
+          {motionSegments.join(' · ')}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function fileMotionLabels({
+  data,
+  unreadBadges,
+  versionDisplay,
+  now,
+  inlineOwner,
+  owner,
+  t,
+  tPlural,
+}: Pick<
+  FileRowSurfaceProps,
+  'data' | 'unreadBadges' | 'versionDisplay' | 'now' | 'inlineOwner'
+> & {
+  owner: string
+  t: ReturnType<typeof useT>['t']
+  tPlural: ReturnType<typeof useT>['tPlural']
+}) {
+  const versionMotionLabel =
+    (unreadBadges || versionDisplay === 'recent') && now
+      ? versionBadgeLabel(data, now, (version) =>
+          t('project.versionBadge', { version }),
+        )
+      : null
+  const unreadCommentLabel = unreadBadges
+    ? unreadNewCommentLabel(data.unreadCommentCount ?? 0, t, tPlural)
+    : null
+  const motionSubline = versionMotionLabel || unreadCommentLabel
+  const showUnreadDot = unreadBadges && fileHasUnread(data)
+
+  const motionSegments = [versionMotionLabel, unreadCommentLabel].filter(
+    (segment): segment is string => Boolean(segment),
+  )
+  const projectSublineTitle = [
+    inlineOwner ? owner : null,
+    ...motionSegments,
+    data.projectName,
+    data.contextualWorkspaceLabel,
+  ]
+    .filter((segment): segment is string => Boolean(segment))
+    .join(' · ')
+
+  return { motionSubline, motionSegments, projectSublineTitle, showUnreadDot }
+}
+
+function FileDesktopMetadata({
+  data,
+  visibility,
+  recencyPresentation,
+  modified,
+  activity,
+  richStats,
+  showOwner,
+  homeCompact,
+  inlineOwner,
+  owner,
+  compactOnly,
+}: Pick<
+  FileRowSurfaceProps,
+  | 'data'
+  | 'recencyPresentation'
+  | 'richStats'
+  | 'showOwner'
+  | 'homeCompact'
+  | 'inlineOwner'
+> & {
+  visibility: string
+  modified: string | null
+  activity: string
+  owner: string
+  compactOnly: string
+}) {
+  const { tPlural } = useT()
+  return (
+    <>
+      <VisibilityChip
+        visibility={data.visibility}
+        label={visibility}
+        className={cn(
+          'max-wide:hidden pointer-events-none relative z-0 justify-self-start',
+          compactOnly,
+        )}
+        data-regression-responsive="desktop-only"
+      />
+      {recencyPresentation === 'row' ? (
+        <span
+          className={cn(desktopCellClassName, 'text-left', compactOnly)}
+          data-regression-responsive="desktop-only"
+        >
+          {modified ?? '—'}
+        </span>
+      ) : null}
+      <span
+        className={cn(desktopCellClassName, compactOnly)}
+        data-regression-responsive="desktop-only"
+      >
+        {richStats ? (
+          <span className="inline-flex items-center gap-3">
+            <span
+              className="inline-flex items-center gap-1"
+              aria-label={tPlural('card.viewCount', data.viewCount)}
+            >
+              <IconEye size={13} aria-hidden="true" />
+              {data.viewCount}
+            </span>
+            {data.commentCount > 0 ? (
+              <span
+                className="inline-flex items-center gap-1"
+                aria-label={tPlural('card.commentCount', data.commentCount)}
+              >
+                <IconMessage size={13} aria-hidden="true" />
+                {data.commentCount}
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          activity
+        )}
+      </span>
+      {showOwner && !(homeCompact && inlineOwner) ? (
+        <span
+          className={cn(authorClassName, compactOnly)}
+          data-regression-responsive="desktop-only"
+        >
+          <FileOwner
+            data={data}
+            owner={owner}
+            ownerNameClassName="min-w-0 truncate"
+          />
+        </span>
+      ) : null}
+    </>
+  )
+}
+
+function motionSublineVisibility(
+  inlineOwner: boolean,
+  dateRail: boolean,
+  homeCompact: boolean,
+) {
+  if (inlineOwner && dateRail) return '@max-recent-rail-wide:hidden'
+  if (inlineOwner && homeCompact)
+    return '@max-[theme(--breakpoint-stack)]:hidden'
+  return 'max-wide:hidden'
+}
+
+function compactFileColumnVisibility(
+  dateRail: boolean,
+  homeCompact: boolean,
+  lostAccess: boolean | undefined,
+) {
+  return dateRail
+    ? '@max-recent-rail-wide:hidden'
+    : homeCompact
+      ? lostAccess
+        ? 'hidden'
+        : '@max-[theme(--breakpoint-stack)]:hidden'
+      : ''
 }

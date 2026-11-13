@@ -115,15 +115,6 @@ export function CommentPanel({
   const translator = useT()
   const { setCommentPanelOpen } = useAnalyticsConsent()
   const { locale, t, tPlural } = translator
-  const [filter, setFilter] = useState<CommentFilter>('open')
-  const [previousRequestedFilter, setPreviousRequestedFilter] =
-    useState(requestedFilter)
-  const [activeRequestedFilter, setActiveRequestedFilter] =
-    useState(requestedFilter)
-  if (requestedFilter !== previousRequestedFilter) {
-    setPreviousRequestedFilter(requestedFilter)
-    setActiveRequestedFilter(requestedFilter)
-  }
   const [replyState, dispatchReply] = useReducer(
     commentReplyReducer,
     undefined,
@@ -132,10 +123,6 @@ export function CommentPanel({
   const [threadLimitState, setThreadLimitState] = useState<{
     scope: string
     value: number
-  } | null>(null)
-  const [autoFilterTarget, setAutoFilterTarget] = useState<{
-    key: string
-    filter: CommentFilter
   } | null>(null)
   useLayoutEffect(() => {
     setCommentPanelOpen(open)
@@ -160,32 +147,12 @@ export function CommentPanel({
     () => threads.find((thread) => thread.id === targetThreadId),
     [targetThreadId, threads],
   )
-  const targetThreadFilterKey = targetThread
-    ? `${targetThread.id}:${targetThread.status}`
-    : null
-
-  if (!targetThreadId && autoFilterTarget !== null) {
-    setAutoFilterTarget(null)
-  }
-  if (
-    open &&
-    targetThread &&
-    filter !== 'all' &&
-    filter !== targetThread.status &&
-    autoFilterTarget?.key !== targetThreadFilterKey
-  ) {
-    setAutoFilterTarget({
-      key: targetThreadFilterKey ?? targetThread.id,
-      filter: targetThread.status,
-    })
-  }
-  const visibleFilter = activeRequestedFilter
-    ? activeRequestedFilter
-    : open &&
-        targetThreadFilterKey &&
-        autoFilterTarget?.key === targetThreadFilterKey
-      ? autoFilterTarget.filter
-      : filter
+  const { visibleFilter, onFilterChange } = useCommentPanelFilter(
+    requestedFilter,
+    targetThreadId,
+    targetThread,
+    open,
+  )
 
   const visibleThreads = useMemo(() => {
     const filtered =
@@ -356,18 +323,7 @@ export function CommentPanel({
     >
       <CommentPanelHeader />
 
-      <CommentPanelTabs
-        value={visibleFilter}
-        onValueChange={(item) => {
-          setActiveRequestedFilter(undefined)
-          setAutoFilterTarget(
-            targetThreadFilterKey
-              ? { key: targetThreadFilterKey, filter: item }
-              : null,
-          )
-          setFilter(item)
-        }}
-      >
+      <CommentPanelTabs value={visibleFilter} onValueChange={onFilterChange}>
         {commentList}
       </CommentPanelTabs>
       {showNewThreadComposer ? (
@@ -676,22 +632,8 @@ function ThreadCard({
   const onTargetMissing = useCallback((messageId: string) => {
     setMissingMessageIds((current) => new Set(current).add(messageId))
   }, [])
-  const newMessageIds = new Set<string>()
-  for (const pair of newCommentMessages) {
-    if (pair.threadId === thread.id && !missingMessageIds.has(pair.messageId))
-      newMessageIds.add(pair.messageId)
-  }
-  const hasNewMessages =
-    thread.messages.some((message) => newMessageIds.has(message.id)) ||
-    (thread.messages.length < thread.messageCount && newMessageIds.size > 0)
-  const firstUnreadId = newCommentMessages.find(
-    (pair) =>
-      pair.threadId === thread.id && !missingMessageIds.has(pair.messageId),
-  )?.messageId
-  const missingSelectedId =
-    target && !thread.messages.some((message) => message.id === firstUnreadId)
-      ? firstUnreadId
-      : undefined
+  const { newMessageIds, hasNewMessages, missingSelectedId } =
+    threadUnreadState(thread, newCommentMessages, missingMessageIds, target)
   const page = useCommentPage(thread.id, missingSelectedId, onTargetMissing)
   const gaps = commentGapRequests(thread)
   const firstMessage = thread.messages[0]
@@ -733,15 +675,7 @@ function ThreadCard({
       tabIndex={-1}
       aria-labelledby={`comment-card-header-${thread.id}`}
       data-new-comment-thread={hasNewMessages || undefined}
-      className={cn(
-        'focus-visible:ring-ring/50 bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 focus-visible:ring-3 focus-visible:outline-none has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
-        canNavigateToText &&
-          'cursor-pointer [&>[data-thread-content]]:relative [&>[data-thread-content]]:z-1',
-        target &&
-          'ring-ring/50 border-link bg-[linear-gradient(180deg,color-mix(in_srgb,var(--link)_10%,var(--background)),var(--background)_42%)] ring-3',
-        thread.status === 'resolved' &&
-          'text-muted-foreground bg-[color-mix(in_srgb,var(--success)_7%,var(--background))]',
-      )}
+      className={threadCardClassName(canNavigateToText, target, thread.status)}
       // A full-size button below provides the keyboard target. Pointer capture
       // complements it for taps on non-interactive content without turning the
       // article containing other controls into a button.
@@ -877,30 +811,17 @@ function ThreadCard({
           }}
         />
       ) : null}
-      {thread.status === 'open' && replyOpen ? (
-        <div data-thread-content="">
-          <CommentReplyComposer
-            variant="panel"
-            value={replyBody}
-            pending={pendingReply}
-            inputRef={replyRef}
-            onChange={onReplyChange}
-            onCancel={onReplyCancel}
-            onSubmit={submitReply}
-          />
-        </div>
-      ) : thread.status === 'open' ? (
-        <div data-thread-content="">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onReplyOpen}
-          >
-            {t('comments.reply')}
-          </Button>
-        </div>
-      ) : null}
+      <ThreadReplyEntry
+        thread={thread}
+        replyOpen={replyOpen}
+        replyBody={replyBody}
+        pendingReply={pendingReply}
+        replyRef={replyRef}
+        onReplyChange={onReplyChange}
+        onReplyCancel={onReplyCancel}
+        onReplyOpen={onReplyOpen}
+        onSubmit={submitReply}
+      />
     </article>
   )
 }
@@ -1130,5 +1051,149 @@ function CommentReplyList({
         </Fragment>
       ))}
     </div>
+  )
+}
+
+function useCommentPanelFilter(
+  requestedFilter: CommentFilter | undefined,
+  targetThreadId: string | null,
+  targetThread: CommentThreadView | undefined,
+  open: boolean,
+) {
+  const [filter, setFilter] = useState<CommentFilter>('open')
+  const [previousRequestedFilter, setPreviousRequestedFilter] =
+    useState(requestedFilter)
+  const [activeRequestedFilter, setActiveRequestedFilter] =
+    useState(requestedFilter)
+  if (requestedFilter !== previousRequestedFilter) {
+    setPreviousRequestedFilter(requestedFilter)
+    setActiveRequestedFilter(requestedFilter)
+  }
+  const [autoFilterTarget, setAutoFilterTarget] = useState<{
+    key: string
+    filter: CommentFilter
+  } | null>(null)
+  const targetThreadFilterKey = targetThread
+    ? `${targetThread.id}:${targetThread.status}`
+    : null
+
+  if (!targetThreadId && autoFilterTarget !== null) {
+    setAutoFilterTarget(null)
+  }
+  if (
+    open &&
+    targetThread &&
+    filter !== 'all' &&
+    filter !== targetThread.status &&
+    autoFilterTarget?.key !== targetThreadFilterKey
+  ) {
+    setAutoFilterTarget({
+      key: targetThreadFilterKey ?? targetThread.id,
+      filter: targetThread.status,
+    })
+  }
+  const visibleFilter = activeRequestedFilter
+    ? activeRequestedFilter
+    : open &&
+        targetThreadFilterKey &&
+        autoFilterTarget?.key === targetThreadFilterKey
+      ? autoFilterTarget.filter
+      : filter
+
+  const onFilterChange = (item: CommentFilter) => {
+    setActiveRequestedFilter(undefined)
+    setAutoFilterTarget(
+      targetThreadFilterKey
+        ? { key: targetThreadFilterKey, filter: item }
+        : null,
+    )
+    setFilter(item)
+  }
+  return { visibleFilter, onFilterChange }
+}
+
+function threadUnreadState(
+  thread: CommentThreadView,
+  newCommentMessages: ReadonlyArray<NewCommentMessage>,
+  missingMessageIds: ReadonlySet<string>,
+  target: boolean,
+) {
+  const newMessageIds = new Set<string>()
+  for (const pair of newCommentMessages) {
+    if (pair.threadId === thread.id && !missingMessageIds.has(pair.messageId))
+      newMessageIds.add(pair.messageId)
+  }
+  const hasNewMessages =
+    thread.messages.some((message) => newMessageIds.has(message.id)) ||
+    (thread.messages.length < thread.messageCount && newMessageIds.size > 0)
+  const firstUnreadId = newCommentMessages.find(
+    (pair) =>
+      pair.threadId === thread.id && !missingMessageIds.has(pair.messageId),
+  )?.messageId
+  const missingSelectedId =
+    target && !thread.messages.some((message) => message.id === firstUnreadId)
+      ? firstUnreadId
+      : undefined
+  return { newMessageIds, hasNewMessages, missingSelectedId }
+}
+
+function ThreadReplyEntry({
+  thread,
+  replyOpen,
+  replyBody,
+  pendingReply,
+  replyRef,
+  onReplyChange,
+  onReplyCancel,
+  onReplyOpen,
+  onSubmit,
+}: Pick<
+  Parameters<typeof ThreadCard>[0],
+  | 'thread'
+  | 'replyOpen'
+  | 'replyBody'
+  | 'onReplyChange'
+  | 'onReplyCancel'
+  | 'onReplyOpen'
+> & {
+  pendingReply: boolean
+  replyRef: RefObject<HTMLTextAreaElement | null>
+  onSubmit: () => Promise<void>
+}) {
+  const { t } = useT()
+  return thread.status === 'open' && replyOpen ? (
+    <div data-thread-content="">
+      <CommentReplyComposer
+        variant="panel"
+        value={replyBody}
+        pending={pendingReply}
+        inputRef={replyRef}
+        onChange={onReplyChange}
+        onCancel={onReplyCancel}
+        onSubmit={onSubmit}
+      />
+    </div>
+  ) : thread.status === 'open' ? (
+    <div data-thread-content="">
+      <Button type="button" variant="outline" size="sm" onClick={onReplyOpen}>
+        {t('comments.reply')}
+      </Button>
+    </div>
+  ) : null
+}
+
+function threadCardClassName(
+  canNavigateToText: boolean,
+  target: boolean,
+  status: CommentThreadView['status'],
+) {
+  return cn(
+    'focus-visible:ring-ring/50 bg-background scroll-m-scroll-anchor-sm has-[[data-comment-thread-hitarea]:focus-visible]:ring-ring/50 border-border has-[[data-comment-thread-hitarea]:focus-visible]:border-link relative grid max-w-full min-w-0 flex-none gap-2 overflow-hidden rounded-[var(--r-lg)] border p-3 focus-visible:ring-3 focus-visible:outline-none has-[[data-comment-thread-hitarea]:focus-visible]:ring-3',
+    canNavigateToText &&
+      'cursor-pointer [&>[data-thread-content]]:relative [&>[data-thread-content]]:z-1',
+    target &&
+      'ring-ring/50 border-link bg-[linear-gradient(180deg,color-mix(in_srgb,var(--link)_10%,var(--background)),var(--background)_42%)] ring-3',
+    status === 'resolved' &&
+      'text-muted-foreground bg-[color-mix(in_srgb,var(--success)_7%,var(--background))]',
   )
 }

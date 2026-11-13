@@ -99,25 +99,19 @@ function ScopedVisibilityDialog({
   }, [])
   const saveEndpoint = `/api/shareables/${encodeURIComponent(shareableId)}/save`
   const lookupEndpoint = `/api/shareables/${encodeURIComponent(shareableId)}/grants/lookup`
-  const currentEditableVisibility = currentVisibility
-  const currentLinkExpiryDate = toLocalDateInputValue(linkExpiresAt)
-  const minimumLinkExpiryDate = addDaysToLocalDate(0)
-  const maximumLinkExpiryDate =
-    linkExpiryMaxDays === null
-      ? undefined
-      : maximumSelectableLocalDate(linkExpiryMaxDays)
-  const requestedDefaultLinkExpiryDate = linkExpiryDefaultDays
-    ? addDaysToLocalDate(linkExpiryDefaultDays)
-    : null
-  const defaultLinkExpiryDate = clampLocalDateToMaximum(
-    requestedDefaultLinkExpiryDate,
+  const {
+    currentEditableVisibility,
+    minimumLinkExpiryDate,
     maximumLinkExpiryDate,
-  )
-  const initialLinkExpiryDate = currentLinkExpiryDate ?? defaultLinkExpiryDate
-  const initialLinkExpiryUnlimited =
-    currentEditableVisibility === 'link'
-      ? currentLinkExpiryDate === null
-      : linkExpiryDefaultDays === null
+    defaultLinkExpiryDate,
+    initialLinkExpiryDate,
+    initialLinkExpiryUnlimited,
+  } = linkExpiryDefaults({
+    currentVisibility,
+    linkExpiresAt,
+    linkExpiryMaxDays,
+    linkExpiryDefaultDays,
+  })
   const [state, dispatch] = useReducer(
     visibilityDialogReducer,
     createVisibilityDialogState(currentEditableVisibility, open, {
@@ -155,10 +149,9 @@ function ScopedVisibilityDialog({
     savedVisibility,
     linkExpiryChanged,
   )
-  const showsGrants =
-    state.selected === 'private' ||
-    state.selected === 'workspace' ||
-    state.selected === 'project'
+  const showsGrants = ['private', 'workspace', 'project'].includes(
+    state.selected,
+  )
 
   const commitGrantInput = (value = state.grants.input) =>
     commitGrantInputChanges({
@@ -470,5 +463,46 @@ async function readSaveError(
     return body.error?.message ?? 'Failed to save'
   } catch {
     return (await res.text()) || 'Failed to save'
+  }
+}
+
+function linkExpiryDefaults({
+  currentVisibility,
+  linkExpiresAt,
+  linkExpiryMaxDays,
+  linkExpiryDefaultDays,
+}: Pick<
+  VisibilityDialogProps,
+  | 'currentVisibility'
+  | 'linkExpiresAt'
+  | 'linkExpiryMaxDays'
+  | 'linkExpiryDefaultDays'
+>) {
+  const currentEditableVisibility = currentVisibility
+  const currentLinkExpiryDate = toLocalDateInputValue(linkExpiresAt)
+  const minimumLinkExpiryDate = addDaysToLocalDate(0)
+  const maximumLinkExpiryDate =
+    linkExpiryMaxDays === null
+      ? undefined
+      : maximumSelectableLocalDate(linkExpiryMaxDays)
+  const requestedDefaultLinkExpiryDate = linkExpiryDefaultDays
+    ? addDaysToLocalDate(linkExpiryDefaultDays)
+    : null
+  const defaultLinkExpiryDate = clampLocalDateToMaximum(
+    requestedDefaultLinkExpiryDate,
+    maximumLinkExpiryDate,
+  )
+  const initialLinkExpiryDate = currentLinkExpiryDate ?? defaultLinkExpiryDate
+  const initialLinkExpiryUnlimited =
+    currentEditableVisibility === 'link'
+      ? currentLinkExpiryDate === null
+      : linkExpiryDefaultDays === null
+  return {
+    currentEditableVisibility,
+    minimumLinkExpiryDate,
+    maximumLinkExpiryDate,
+    defaultLinkExpiryDate,
+    initialLinkExpiryDate,
+    initialLinkExpiryUnlimited,
   }
 }

@@ -98,40 +98,18 @@ export function LinkVisibilitySection({
   const { t } = useT()
   const expiryInputId = useId()
   const expiryDescriptionId = useId()
-  const url = buildShareableUrl(shareableId, 'link')
-  const { state, copy } = useCopyState(url)
   return (
     <>
       <p className={dialogNoteWarnClassName}>
         {t('visibilityDialog.link.warn')}
       </p>
-      {!available ? (
-        <p className="text-warning text-sm">
-          {t('visibilityDialog.link.unavailable')}
-        </p>
-      ) : null}
-      {suspended ? (
-        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
-          {t('visibilityDialog.link.suspended')}
-          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
-        </p>
-      ) : null}
-      {expired && !suspended ? (
-        <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
-          <span>{t('visibilityDialog.link.expired')}</span>
-          {available ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={saving}
-              onClick={onRepublish}
-            >
-              {t('visibilityDialog.link.republish')}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <LinkVisibilityWarnings
+        available={available}
+        suspended={suspended}
+        expired={expired}
+        saving={saving}
+        onRepublish={onRepublish}
+      />
       <div className="flex flex-col gap-1 text-sm">
         <label htmlFor={expiryInputId} className="font-medium">
           {t('visibilityDialog.link.expiry')}
@@ -173,46 +151,100 @@ export function LinkVisibilitySection({
           {t('visibilityDialog.link.unlimited')}
         </label>
       ) : null}
-      {showActions ? (
-        <div className="flex flex-col gap-2">
-          <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
-            <Input
-              value={url}
-              readOnly
-              aria-label={t('visibilityDialog.link.urlLabel')}
-              className="text-muted-foreground flex-1 text-sm"
-              onFocus={(event) => event.currentTarget.select()}
-              onClick={(event) => event.currentTarget.select()}
-            />
-            <Button type="button" size="sm" onClick={copy}>
-              {t('visibilityDialog.link.copyButton')}
+      {showActions ? <LinkCopyActions shareableId={shareableId} /> : null}
+    </>
+  )
+}
+
+function LinkVisibilityWarnings({
+  available,
+  suspended,
+  expired,
+  saving,
+  onRepublish,
+}: {
+  available: boolean
+  suspended: boolean
+  expired: boolean
+  saving: boolean
+  onRepublish: () => void
+}) {
+  const { t } = useT()
+  return (
+    <>
+      {!available ? (
+        <p className="text-warning text-sm">
+          {t('visibilityDialog.link.unavailable')}
+        </p>
+      ) : null}
+      {suspended ? (
+        <p className="border-warning/40 bg-warning-soft rounded-[var(--r-md)] border p-3 text-sm">
+          {t('visibilityDialog.link.suspended')}
+          {expired ? ` ${t('visibilityDialog.link.expired')}` : null}
+        </p>
+      ) : null}
+      {expired && !suspended ? (
+        <div className="border-warning/40 bg-warning-soft flex flex-col gap-2 rounded-[var(--r-md)] border p-3 text-sm">
+          <span>{t('visibilityDialog.link.expired')}</span>
+          {available ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={saving}
+              onClick={onRepublish}
+            >
+              {t('visibilityDialog.link.republish')}
             </Button>
-          </div>
-          <span
-            className={
-              state === 'idle'
-                ? 'min-h-10 text-sm'
-                : state === 'failed'
-                  ? 'text-warning min-h-10 text-sm'
-                  : 'text-muted-foreground min-h-10 text-sm'
-            }
-            role="status"
-            aria-live="polite"
-            data-copy-status
-          >
-            {state === 'idle'
-              ? ''
-              : state === 'copied'
-                ? t('visibilityDialog.link.copied')
-                : t('visibilityDialog.link.copyFailed')}
-          </span>
-          <Button variant="outline" size="sm" asChild>
-            <a target="_blank" rel="noopener noreferrer" href={url}>
-              {t('visibilityDialog.link.openAsRecipient')}
-            </a>
-          </Button>
+          ) : null}
         </div>
       ) : null}
     </>
+  )
+}
+
+function LinkCopyActions({ shareableId }: { shareableId: string }) {
+  const { t } = useT()
+  const url = buildShareableUrl(shareableId, 'link')
+  const { state, copy } = useCopyState(url)
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="border-border bg-muted flex items-center gap-2 rounded-[var(--r-md)] border p-2">
+        <Input
+          value={url}
+          readOnly
+          aria-label={t('visibilityDialog.link.urlLabel')}
+          className="text-muted-foreground flex-1 text-sm"
+          onFocus={(event) => event.currentTarget.select()}
+          onClick={(event) => event.currentTarget.select()}
+        />
+        <Button type="button" size="sm" onClick={copy}>
+          {t('visibilityDialog.link.copyButton')}
+        </Button>
+      </div>
+      <span
+        className={
+          state === 'idle'
+            ? 'min-h-10 text-sm'
+            : state === 'failed'
+              ? 'text-warning min-h-10 text-sm'
+              : 'text-muted-foreground min-h-10 text-sm'
+        }
+        role="status"
+        aria-live="polite"
+        data-copy-status
+      >
+        {state === 'idle'
+          ? ''
+          : state === 'copied'
+            ? t('visibilityDialog.link.copied')
+            : t('visibilityDialog.link.copyFailed')}
+      </span>
+      <Button variant="outline" size="sm" asChild>
+        <a target="_blank" rel="noopener noreferrer" href={url}>
+          {t('visibilityDialog.link.openAsRecipient')}
+        </a>
+      </Button>
+    </div>
   )
 }

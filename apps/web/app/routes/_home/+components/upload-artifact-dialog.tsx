@@ -386,7 +386,6 @@ export function UploadArtifactDialog({
     [],
   )
 
-  const projectShareDefaults = destination?.shareDefaults ?? []
   const externalPosting = destination?.externalPosting ?? null
   const showSlackNotification = shouldShowSlackNotification(
     destination?.hasSlackChannel,
@@ -467,21 +466,10 @@ export function UploadArtifactDialog({
             {t('upload.visibility.link.unavailable')}
           </p>
         ) : null}
-        {destination && externalPosting ? (
-          <ExternalUploadNote
-            audienceCount={externalPosting.audienceCount}
-            externalCount={externalPosting.externalCount}
-            workspaceName={externalPosting.workspaceName}
-            baseVisibility={destination.baseVisibility ?? 'workspace'}
-          />
-        ) : destination &&
-          currentState.visibility === 'project' &&
-          projectShareDefaults.length > 0 ? (
-          <UploadProjectAudience
-            defaults={projectShareDefaults}
-            baseVisibility={destination.baseVisibility ?? 'workspace'}
-          />
-        ) : null}
+        <UploadAudienceNote
+          destination={destination}
+          visibility={currentState.visibility}
+        />
         {currentState.visibility === 'private' && !externalPosting ? (
           <UploadInitialGrants
             grantInput={currentState.grantInput}
@@ -737,4 +725,30 @@ function UploadProjectAudience({
 
 function isTerminalUploadError(code: string | undefined): boolean {
   return isUploadShareableErrorCode(code) && TERMINAL_UPLOAD_ERRORS.has(code)
+}
+
+function UploadAudienceNote({
+  destination,
+  visibility,
+}: {
+  destination: UploadArtifactDialogProps['destination']
+  visibility: EditableVisibility
+}) {
+  const externalPosting = destination?.externalPosting ?? null
+  const projectShareDefaults = destination?.shareDefaults ?? []
+  return destination && externalPosting ? (
+    <ExternalUploadNote
+      audienceCount={externalPosting.audienceCount}
+      externalCount={externalPosting.externalCount}
+      workspaceName={externalPosting.workspaceName}
+      baseVisibility={destination.baseVisibility ?? 'workspace'}
+    />
+  ) : destination &&
+    visibility === 'project' &&
+    projectShareDefaults.length > 0 ? (
+    <UploadProjectAudience
+      defaults={projectShareDefaults}
+      baseVisibility={destination.baseVisibility ?? 'workspace'}
+    />
+  ) : null
 }

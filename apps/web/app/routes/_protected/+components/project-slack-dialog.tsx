@@ -1,7 +1,6 @@
+import { ProjectSlackStatus } from './project-slack-status'
 import { useEffect, useEffectEvent } from 'react'
 import { useFetcher } from 'react-router'
-import { IconLoader2 } from '@tabler/icons-react'
-import { Badge } from '~/components/ui/badge'
 import { Button } from '~/components/ui/button'
 import {
   Dialog,
@@ -12,9 +11,8 @@ import {
   DialogTitle,
 } from '~/components/ui/dialog'
 import { useT } from '~/hooks/use-t'
-import { formatRelative } from '~/lib/datetime'
 
-type SlackData = {
+export type SlackData = {
   current: {
     channelName: string
     teamName: string | null
@@ -49,7 +47,7 @@ function ProjectSlackDialogContent({
   onOpenChange: (open: boolean) => void
   projectId: string
 }) {
-  const { t, locale } = useT()
+  const { t } = useT()
   const fetcher = useFetcher<SlackData | { intent: string; ok: true }>()
   const busy = fetcher.state !== 'idle'
   // POST 応答 ({ intent, ok }) と loader 応答 (SlackData) の union を絞る。
@@ -81,49 +79,7 @@ function ProjectSlackDialogContent({
             {t('project.slack.description')}
           </DialogDescription>
         </DialogHeader>
-        {!data ? (
-          <div className="flex justify-center py-8">
-            <IconLoader2
-              className="size-5 animate-spin"
-              aria-label={t('project.slack.loading')}
-            />
-          </div>
-        ) : data.current ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="truncate font-medium">
-                #{data.current.channelName.replace(/^#/, '')}
-              </span>
-              <Badge
-                variant={
-                  data.current.requiresReauthorization
-                    ? 'destructive'
-                    : 'success'
-                }
-              >
-                {data.current.requiresReauthorization
-                  ? t('project.slack.reauthorizationRequired')
-                  : t('project.slack.active')}
-              </Badge>
-            </div>
-            <p className="text-muted-foreground text-sm">
-              {data.current.teamName ? `${data.current.teamName} · ` : ''}
-              {data.current.updatedBy ?? ''} ·{' '}
-              {formatRelative(data.current.updatedAt, locale)}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-muted-foreground text-sm">
-              {t('project.slack.unconfigured')}
-            </p>
-            <Button asChild>
-              <a href={`/projects/${projectId}/slack/install`}>
-                {t('project.slack.choose')}
-              </a>
-            </Button>
-          </div>
-        )}
+        <ProjectSlackStatus data={data} projectId={projectId} />
         {data ? (
           <DialogFooter className="sm:justify-between">
             {data.current ? (

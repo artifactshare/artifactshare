@@ -1,18 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { CredentialTable } from './+components/credential-table'
+import { useState } from 'react'
 import { Form, useActionData, useNavigation } from 'react-router'
 import { SettingsPage } from '~/components/form/settings-page'
 import { SettingsSection } from '~/components/form/settings-section'
-import { TableEmptyRow } from '~/components/form/table-empty-row'
 import { TeamMuted } from '~/components/form/team-muted'
 import { Button } from '~/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '~/components/ui/table'
+import { TableCell, TableRow } from '~/components/ui/table'
 import { useT } from '~/hooks/use-t'
 import type { Locale } from '~/i18n/messages'
 import { formatRelative } from '~/lib/datetime'
@@ -152,7 +145,10 @@ export default function CliSessionsPage({ loaderData }: Route.ComponentProps) {
             />
           </>
         ) : null}
-        <CredentialTable empty={loaderData.cliFamilies.length === 0}>
+        <CredentialTable
+          empty={loaderData.cliFamilies.length === 0}
+          emptyMessage={t('team.tokens.cli.empty')}
+        >
           {loaderData.cliFamilies.map((family) => (
             <CliFamilyRow
               key={family.familyId}
@@ -163,42 +159,6 @@ export default function CliSessionsPage({ loaderData }: Route.ComponentProps) {
         </CredentialTable>
       </SettingsSection>
     </SettingsPage>
-  )
-}
-
-function CredentialTable({
-  children,
-  empty,
-}: {
-  children: ReactNode
-  empty: boolean
-}) {
-  const { t } = useT()
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{t('team.tokens.table.name')}</TableHead>
-          <TableHead className="max-phone:hidden">
-            {t('team.tokens.table.created')}
-          </TableHead>
-          <TableHead className="max-nav:hidden">
-            {t('team.tokens.table.lastUsed')}
-          </TableHead>
-          <TableHead className="text-right">
-            {t('team.tokens.table.actions')}
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {children}
-        {empty ? (
-          <TableEmptyRow colSpan={4}>
-            {t('team.tokens.cli.empty')}
-          </TableEmptyRow>
-        ) : null}
-      </TableBody>
-    </Table>
   )
 }
 

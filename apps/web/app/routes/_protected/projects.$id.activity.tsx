@@ -2,14 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useFetcher } from 'react-router'
 import type { Route } from './+types/projects.$id.activity'
 import { IconStack2 as Layers } from '@tabler/icons-react'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
+import { ProjectPageBreadcrumb } from '~/components/app/project-page-breadcrumb'
 import { Topbar } from '../_home/+components/topbar'
 import { BottomTabBar } from '../_home/+components/bottom-tab-bar'
 import { FeedList } from '../_home/+components/feed-list'
@@ -177,31 +170,10 @@ export default function ProjectActivity({ loaderData }: Route.ComponentProps) {
         tabIndex={-1}
         aria-busy={busy}
       >
-        <PageBreadcrumb aria-label={t('project.location')}>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/">{t('tb.home')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/projects">{t('project.projects')}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to={`/projects/${ctx.projectId}`}>{ctx.projectName}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{t('project.activityHistory')}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </PageBreadcrumb>
+        <ProjectPageBreadcrumb
+          title={t('project.activityHistory')}
+          project={{ id: ctx.projectId, name: ctx.projectName }}
+        />
         <AppPageHeader>
           <AppPageHeaderMain>
             <AppPageHeaderTitleRow>

@@ -1,16 +1,27 @@
+import { feedLocation } from './feed-location'
+import { feedEventText } from './feed-event-text'
 import { Link } from 'react-router'
 import {
   IconEye,
   IconMessage,
   IconGitBranch,
   IconPlus,
-  IconHome,
-  IconStack2 as Layers,
 } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import type { FeedEventRow } from '~/services/events.server'
 import { formatRelative } from '~/lib/datetime'
 import { useT } from '~/hooks/use-t'
+
+const eventIcons: Partial<Record<FeedEventRow['type'], typeof IconEye>> = {
+  artifact_viewed: IconEye,
+  comment_posted: IconMessage,
+  version_published: IconGitBranch,
+}
+const eventIconClasses: Partial<Record<FeedEventRow['type'], string>> = {
+  artifact_viewed: 'bg-link-soft text-link',
+  comment_posted: 'text-link',
+  version_published: 'bg-warning-soft text-warning',
+}
 
 // 翻訳済み文字列の placeholder 位置へリンク要素を差し込む ({title} / {project})
 function inline(value: string, name: string, child: ReactNode) {
@@ -36,91 +47,10 @@ export function FeedItem({
   showLocation?: boolean
 }) {
   const { locale, t } = useT()
-  const actor = row.actorName ?? t('home.unknownActor')
   const isAddDigest =
     row.type === 'artifact_created' && (row.addCount ?? 0) >= 2
   const isDigest = typeof row.viewedFileCount === 'number'
-  const vars = { actor, title: '{title}' }
-  const text = isAddDigest
-    ? t('home.actorAddedToProjectCount', {
-        actor,
-        project: '{project}',
-        count: String(row.addCount),
-      })
-    : row.type === 'artifact_created'
-      ? t('home.actorAddedInline', vars)
-      : row.type === 'artifact_viewed'
-        ? isDigest
-          ? (row.viewUniqueCount
-              ? t(
-                  row.viewUniqueCount === 1
-                    ? 'home.viewDigest_one'
-                    : 'home.viewDigest_other',
-                  {
-                    files: String(row.viewedFileCount),
-                    count: String(row.viewUniqueCount),
-                  },
-                )
-              : t(
-                  row.anonymousViewCount === 1
-                    ? 'home.viewDigestAnonymous_one'
-                    : 'home.viewDigestAnonymous_other',
-                  {
-                    files: String(row.viewedFileCount),
-                    count: String(row.anonymousViewCount ?? 0),
-                  },
-                )) +
-            (row.viewUniqueCount && row.anonymousViewCount
-              ? ` · ${t(row.anonymousViewCount === 1 ? 'home.anonymousViewsSuffix_one' : 'home.anonymousViewsSuffix_other', { count: String(row.anonymousViewCount) })}`
-              : '')
-          : (row.viewUniqueCount
-              ? t(
-                  row.viewUniqueCount === 1
-                    ? 'home.viewedByInline_one'
-                    : 'home.viewedByInline_other',
-                  { ...vars, count: String(row.viewUniqueCount) },
-                )
-              : t(
-                  row.anonymousViewCount === 1
-                    ? 'home.anonymousViewsInline_one'
-                    : 'home.anonymousViewsInline_other',
-                  { ...vars, count: String(row.anonymousViewCount ?? 0) },
-                )) +
-            (row.viewUniqueCount && row.anonymousViewCount
-              ? ` · ${t(row.anonymousViewCount === 1 ? 'home.anonymousViewsSuffix_one' : 'home.anonymousViewsSuffix_other', { count: String(row.anonymousViewCount) })}`
-              : '')
-        : row.type === 'comment_posted'
-          ? t(
-              row.commentCount !== null
-                ? 'home.actorCommentedCountInline'
-                : 'home.actorCommentedInline',
-              row.commentCount !== null
-                ? { ...vars, count: String(row.commentCount) }
-                : vars,
-            )
-          : row.type === 'version_published'
-            ? row.versionStart !== null && row.versionEnd !== null
-              ? t(
-                  row.versionAuthorCount === 1
-                    ? 'home.actorPublishedRangeInline'
-                    : 'home.publishedRangeInline',
-                  row.versionAuthorCount === 1
-                    ? {
-                        ...vars,
-                        start: String(row.versionStart),
-                        end: String(row.versionEnd),
-                      }
-                    : {
-                        title: '{title}',
-                        start: String(row.versionStart),
-                        end: String(row.versionEnd),
-                      },
-                )
-              : t('home.actorPublishedInline', {
-                  ...vars,
-                  version: String(row.versionNumber ?? 1),
-                })
-            : t('home.actorAddedInline', vars)
+  const text = feedEventText(row, t)
   const artifactLink = (
     <Link
       className="text-foreground font-medium hover:underline"
@@ -145,47 +75,17 @@ export function FeedItem({
       : row.type === 'comment_posted'
         ? inline(text, 'title', artifactLink)
         : text
-  // 場所は単一対象の行だけ。閲覧ダイジェスト (複数ファイル束ね) と追加束ね
-  // (本文のプロジェクト名が場所) には出さない
-  const location =
-    showLocation &&
-    !isDigest &&
-    !isAddDigest &&
-    (row.isViewerInbox ||
-      (row.containerKind === 'project' && row.containerName)) ? (
-      row.isViewerInbox ? (
-        <>
-          <IconHome size={13} aria-hidden="true" /> {t('tb.home')}
-        </>
-      ) : (
-        <>
-          <Layers size={13} aria-hidden="true" /> {row.containerName}
-        </>
-      )
-    ) : null
+  const location = feedLocation(row, showLocation, t)
+  const Icon = eventIcons[row.type] ?? IconPlus
   const iconClass =
-    row.type === 'artifact_viewed'
-      ? 'bg-link-soft text-link'
-      : row.type === 'comment_posted'
-        ? 'text-link'
-        : row.type === 'version_published'
-          ? 'bg-warning-soft text-warning'
-          : 'bg-muted text-muted-foreground'
+    eventIconClasses[row.type] ?? 'bg-muted text-muted-foreground'
   return (
     <li className="border-divider flex gap-3 border-b px-1 py-3 text-sm">
       <span
         aria-hidden="true"
         className={`flex size-6 shrink-0 items-center justify-center rounded ${iconClass}`}
       >
-        {row.type === 'artifact_viewed' ? (
-          <IconEye size={16} />
-        ) : row.type === 'comment_posted' ? (
-          <IconMessage size={16} />
-        ) : row.type === 'version_published' ? (
-          <IconGitBranch size={16} />
-        ) : (
-          <IconPlus size={16} />
-        )}
+        <Icon size={16} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="wrap-anywhere">{renderedText}</div>

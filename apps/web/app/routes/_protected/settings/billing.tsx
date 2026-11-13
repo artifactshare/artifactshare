@@ -402,31 +402,11 @@ export default function BillingPage({ loaderData }: Route.ComponentProps) {
             </TeamMutedParagraph>
           ) : null}
 
-          {loaderData.canManage ? (
-            loaderData.billingConfigured ? (
-              loaderData.hasSubscription ? (
-                <SubscribedActions
-                  isPending={isPending}
-                  contract={loaderData.contract}
-                />
-              ) : awaitingCheckoutReflection ? (
-                <CheckoutPendingNotice />
-              ) : (
-                <CheckoutActions
-                  isPending={isPending}
-                  defaultCurrency={loaderData.defaultCurrency}
-                  initialPlan={loaderData.initialPlan}
-                  initialInterval={loaderData.initialInterval}
-                  locale={locale}
-                  externalPostingEnabled={loaderData.externalPostingEnabled}
-                />
-              )
-            ) : (
-              <BillingUnavailableNotice />
-            )
-          ) : (
-            <ReadOnlyNotice />
-          )}
+          <BillingActions
+            loaderData={loaderData}
+            isPending={isPending}
+            awaitingCheckoutReflection={awaitingCheckoutReflection}
+          />
         </SettingsSubsection>
         {loaderData.monthlyEstimate ? (
           <section>
@@ -502,14 +482,6 @@ function CurrentPlanCard({
   activeProjectCount: number
 }) {
   const { locale, t } = useT()
-  const hydrated = useHydrated()
-  const renewsAtLabel = contract?.renewsAt
-    ? hydrated
-      ? new Date(contract.renewsAt).toLocaleDateString(
-          locale === 'ja' ? 'ja-JP' : 'en-US',
-        )
-      : contract.renewsAt.slice(0, 10)
-    : null
   return (
     <Card size="sm">
       <CardHeader>
@@ -521,35 +493,7 @@ function CurrentPlanCard({
             {subscriptionStatusLabel(status, t)}
           </Badge>
         </CardTitle>
-        {contract ? (
-          <CardDescription>
-            {contract.currency && contract.amount !== null ? (
-              <>
-                {priceWithInterval(
-                  t,
-                  formatPrice(contract.currency, contract.amount),
-                  contract.interval,
-                )}
-                {renewsAtLabel ? ' · ' : null}
-              </>
-            ) : null}
-            {renewsAtLabel ? (
-              <>
-                {t(
-                  contract.cancelAtPeriodEnd
-                    ? 'billing.contract.endsAt'
-                    : 'billing.contract.renewsAt',
-                )}{' '}
-                {renewsAtLabel}
-              </>
-            ) : null}
-            {(contract.currency && contract.amount !== null) ||
-            renewsAtLabel ? (
-              <br />
-            ) : null}
-            {t('billing.contract.taxNote')}
-          </CardDescription>
-        ) : null}
+        {contract ? <ContractDescription contract={contract} /> : null}
       </CardHeader>
       {canManage && contract ? (
         <CardContent>
@@ -908,27 +852,12 @@ function ChangeContractOption({
     load(`/settings/billing-preview?${params}`)
   }, [open, plan, interval, load])
 
-  const previewLoading = preview.state !== 'idle' || preview.data === undefined
-  const proration =
-    preview.data?.kind === 'ok' &&
-    preview.data.currency &&
-    preview.data.prorationAmount !== null
-      ? {
-          currency: preview.data.currency,
-          amount: preview.data.prorationAmount,
-        }
-      : null
-  // 符号は加算・控除の文言で表すため、金額は絶対値で表示する。
-  const prorationLabel = proration
-    ? formatPrice(proration.currency, Math.abs(proration.amount))
-    : null
-  // ダイアログは client でしか開かないので、そのままローカル日付で表示できる。
-  const nextInvoiceAtLabel =
-    preview.data?.kind === 'ok' && preview.data.nextInvoiceAt
-      ? new Date(preview.data.nextInvoiceAt).toLocaleDateString(
-          locale === 'ja' ? 'ja-JP' : 'en-US',
-        )
-      : null
+  const { prorationText, nextInvoiceAtLabel } = planChangePreviewLabels(
+    preview.data,
+    preview.state,
+    locale,
+    t,
+  )
 
   return (
     <>
@@ -969,18 +898,7 @@ function ChangeContractOption({
             <TeamMutedParagraph>
               {t('billing.confirm.timing')}
             </TeamMutedParagraph>
-            <TeamMutedParagraph>
-              {previewLoading
-                ? t('billing.confirm.previewLoading')
-                : proration && prorationLabel
-                  ? t(
-                      proration.amount < 0
-                        ? 'billing.confirm.prorationCredit'
-                        : 'billing.confirm.prorationCharge',
-                      { amount: prorationLabel },
-                    )
-                  : t('billing.confirm.previewUnavailable')}
-            </TeamMutedParagraph>
+            <TeamMutedParagraph>{prorationText}</TeamMutedParagraph>
             {nextInvoiceAtLabel ? (
               <TeamMutedParagraph>
                 {t('billing.confirm.nextInvoiceAt', {
@@ -1099,4 +1017,121 @@ function subscriptionStatusLabel(
   if (status === 'past_due') return t('billing.subscription.pastDue')
   if (status === 'canceled') return t('billing.subscription.canceled')
   return t('billing.subscription.other')
+}
+
+function BillingActions({
+  loaderData,
+  isPending,
+  awaitingCheckoutReflection,
+}: {
+  loaderData: Route.ComponentProps['loaderData']
+  isPending: boolean
+  awaitingCheckoutReflection: boolean
+}) {
+  const { locale } = useT()
+  if (!loaderData.canManage) return <ReadOnlyNotice />
+  if (!loaderData.billingConfigured) return <BillingUnavailableNotice />
+  if (loaderData.hasSubscription)
+    return (
+      <SubscribedActions isPending={isPending} contract={loaderData.contract} />
+    )
+  if (awaitingCheckoutReflection) return <CheckoutPendingNotice />
+  return (
+    <CheckoutActions
+      isPending={isPending}
+      defaultCurrency={loaderData.defaultCurrency}
+      initialPlan={loaderData.initialPlan}
+      initialInterval={loaderData.initialInterval}
+      locale={locale}
+      externalPostingEnabled={loaderData.externalPostingEnabled}
+    />
+  )
+}
+
+function ContractDescription({ contract }: { contract: SubscriptionContract }) {
+  const { t, locale } = useT()
+  const hydrated = useHydrated()
+  const renewsAtLabel = contractRenewalLabel(
+    contract.renewsAt,
+    hydrated,
+    locale,
+  )
+  return (
+    <CardDescription>
+      {contract.currency && contract.amount !== null ? (
+        <>
+          {priceWithInterval(
+            t,
+            formatPrice(contract.currency, contract.amount),
+            contract.interval,
+          )}
+          {renewsAtLabel ? ' · ' : null}
+        </>
+      ) : null}
+      {renewsAtLabel ? (
+        <>
+          {t(
+            contract.cancelAtPeriodEnd
+              ? 'billing.contract.endsAt'
+              : 'billing.contract.renewsAt',
+          )}{' '}
+          {renewsAtLabel}
+        </>
+      ) : null}
+      {(contract.currency && contract.amount !== null) || renewsAtLabel ? (
+        <br />
+      ) : null}
+      {t('billing.contract.taxNote')}
+    </CardDescription>
+  )
+}
+
+function planChangePreviewLabels(
+  data: PlanChangePreview | undefined,
+  state: string,
+  locale: string,
+  t: ReturnType<typeof useT>['t'],
+) {
+  const previewLoading = state !== 'idle' || data === undefined
+  const proration =
+    data?.kind === 'ok' && data.currency && data.prorationAmount !== null
+      ? {
+          currency: data.currency,
+          amount: data.prorationAmount,
+        }
+      : null
+  // 符号は加算・控除の文言で表すため、金額は絶対値で表示する。
+  const prorationLabel = proration
+    ? formatPrice(proration.currency, Math.abs(proration.amount))
+    : null
+  // ダイアログは client でしか開かないので、そのままローカル日付で表示できる。
+  const nextInvoiceAtLabel =
+    data?.kind === 'ok' && data.nextInvoiceAt
+      ? new Date(data.nextInvoiceAt).toLocaleDateString(
+          locale === 'ja' ? 'ja-JP' : 'en-US',
+        )
+      : null
+
+  const prorationText = previewLoading
+    ? t('billing.confirm.previewLoading')
+    : proration && prorationLabel
+      ? t(
+          proration.amount < 0
+            ? 'billing.confirm.prorationCredit'
+            : 'billing.confirm.prorationCharge',
+          { amount: prorationLabel },
+        )
+      : t('billing.confirm.previewUnavailable')
+  return { prorationText, nextInvoiceAtLabel }
+}
+
+function contractRenewalLabel(
+  renewsAt: string | null,
+  hydrated: boolean,
+  locale: string,
+) {
+  if (!renewsAt) return null
+  return hydrated
+    ? new Date(renewsAt).toLocaleDateString(locale === 'ja' ? 'ja-JP' : 'en-US')
+    : renewsAt.slice(0, 10)
 }

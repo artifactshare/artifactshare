@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { CredentialTable } from './+components/credential-table'
+import { useEffect, useMemo, useRef } from 'react'
 import { Form, useActionData, useFetcher, useNavigation } from 'react-router'
 import { InlineFields } from '~/components/form/inline-fields'
 import { SettingsPage } from '~/components/form/settings-page'
@@ -6,15 +7,7 @@ import { SettingsSection } from '~/components/form/settings-section'
 import { Button } from '~/components/ui/button'
 import { Field, FieldError, FieldLabel } from '~/components/ui/field'
 import { Input } from '~/components/ui/input'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '~/components/ui/table'
-import { TableEmptyRow } from '~/components/form/table-empty-row'
+import { TableCell, TableRow } from '~/components/ui/table'
 import { CreatedTokenPanel } from './+components/created-token-panel'
 import { TeamActions } from './+components/team-actions'
 import { TeamMuted } from '~/components/form/team-muted'
@@ -201,42 +194,6 @@ export default function ApiTokensPage({ loaderData }: Route.ComponentProps) {
         </p>
       </SettingsSection>
     </SettingsPage>
-  )
-}
-
-function CredentialTable({
-  children,
-  empty,
-  emptyMessage,
-}: {
-  children: ReactNode
-  empty: boolean
-  emptyMessage: string
-}) {
-  const { t } = useT()
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{t('team.tokens.table.name')}</TableHead>
-          <TableHead className="max-phone:hidden">
-            {t('team.tokens.table.created')}
-          </TableHead>
-          <TableHead className="max-nav:hidden">
-            {t('team.tokens.table.lastUsed')}
-          </TableHead>
-          <TableHead className="text-right">
-            {t('team.tokens.table.actions')}
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {children}
-        {empty ? (
-          <TableEmptyRow colSpan={4}>{emptyMessage}</TableEmptyRow>
-        ) : null}
-      </TableBody>
-    </Table>
   )
 }
 

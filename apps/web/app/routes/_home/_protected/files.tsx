@@ -22,14 +22,7 @@ import {
   fileDateHeadingClassName,
 } from '../+components/file-list-styles'
 import type { HomeLayoutContext } from '../_layout'
-import { PageBreadcrumb } from '~/components/app/page-breadcrumb'
-import {
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '~/components/ui/breadcrumb'
+import { HomeListBreadcrumb } from '~/components/app/home-list-breadcrumb'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import { useT } from '~/hooks/use-t'
 import { groupByDay } from '~/lib/datetime'
@@ -213,17 +206,7 @@ export default function Files({ loaderData }: Route.ComponentProps) {
   if (!layout.signedIn) return null
   return (
     <div ref={ref} tabIndex={-1} aria-busy={nav.state !== 'idle'}>
-      <PageBreadcrumb aria-label={t('project.location')}>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">{t('tb.home')}</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>{t('home.myFiles')}</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </PageBreadcrumb>
+      <HomeListBreadcrumb title={t('home.myFiles')} />
       <section className={homeSectionClassName}>
         <AppPageHeader>
           <AppPageHeaderMain>

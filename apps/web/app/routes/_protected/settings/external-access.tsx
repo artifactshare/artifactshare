@@ -130,8 +130,11 @@ export default function ExternalAccessPage({
   const pending = navigation.state !== 'idle'
   const canEditSwitches = policy.plan === 'team' && shell.currentUserIsAdmin
   const canEditExpiry =
-    (policy.plan !== 'team' && shell.currentUserRole === 'owner') ||
-    (policy.plan === 'team' && shell.currentUserIsAdmin)
+    policy.plan === 'team'
+      ? shell.currentUserIsAdmin
+      : shell.currentUserRole === 'owner'
+  const expiryDisabled = !canEditExpiry || pending
+  const switchesDisabled = !canEditSwitches || pending
   const canEdit = canEditSwitches || canEditExpiry
   const [defaultUnlimited, setDefaultUnlimited] = useFormCheckbox(
     policy.linkExpiryDefaultDays === null,
@@ -190,7 +193,7 @@ export default function ExternalAccessPage({
                 <PolicyToggle
                   name="linkSharingEnabled"
                   checked={policy.linkSharingEnabled}
-                  disabled={!canEditSwitches || pending}
+                  disabled={switchesDisabled}
                   includeHidden={canEditSwitches}
                   title={t('externalAccess.linkSharing')}
                   description={toggleDescription(
@@ -203,7 +206,7 @@ export default function ExternalAccessPage({
                 <PolicyToggle
                   name="externalPostingEnabled"
                   checked={policy.externalPostingEnabled}
-                  disabled={!canEditSwitches || pending}
+                  disabled={switchesDisabled}
                   includeHidden={canEditSwitches}
                   title={t('externalAccess.externalPosting')}
                   description={toggleDescription(
@@ -233,7 +236,7 @@ export default function ExternalAccessPage({
                   max={365}
                   step={1}
                   defaultValue={policy.linkExpiryDefaultDays ?? ''}
-                  disabled={!canEditExpiry || pending || defaultUnlimited}
+                  disabled={expiryDisabled || defaultUnlimited}
                   required={!defaultUnlimited}
                   aria-label={t('externalAccess.expiry.default')}
                   aria-describedby={defaultExpirationUnitId}
@@ -251,7 +254,7 @@ export default function ExternalAccessPage({
                       name="defaultUnlimited"
                       value="true"
                       checked={defaultUnlimited}
-                      disabled={!canEditExpiry || pending}
+                      disabled={expiryDisabled}
                       onChange={(event) =>
                         setDefaultUnlimited(event.currentTarget.checked)
                       }
@@ -271,7 +274,7 @@ export default function ExternalAccessPage({
                   max={365}
                   step={1}
                   defaultValue={policy.linkExpiryMaxDays ?? ''}
-                  disabled={!canEditExpiry || pending || maxUnlimited}
+                  disabled={expiryDisabled || maxUnlimited}
                   required={!maxUnlimited}
                   aria-label={t('externalAccess.expiry.max')}
                   aria-describedby={maximumExpirationUnitId}
@@ -288,7 +291,7 @@ export default function ExternalAccessPage({
                     name="maxUnlimited"
                     value="true"
                     checked={maxUnlimited}
-                    disabled={!canEditExpiry || pending}
+                    disabled={expiryDisabled}
                     onChange={(event) => {
                       setMaxUnlimited(event.currentTarget.checked)
                       if (!event.currentTarget.checked)

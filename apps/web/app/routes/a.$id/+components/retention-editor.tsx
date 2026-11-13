@@ -1,4 +1,5 @@
-import { useId, useRef, useState } from 'react'
+import { retentionSummary } from './retention-copy'
+import { useId, useRef, useState, type RefObject } from 'react'
 import { useRevalidator } from 'react-router'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
@@ -45,12 +46,7 @@ export function RetentionEditor({
   const saveButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState<'failed' | 'changed' | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
-  const proposed = limited ? Number(count) : null
-  // Match the contract's nullable z.number().int().min(1) without a runtime
-  // package import: Zod integer validation also rejects unsafe integers.
-  const valid =
-    proposed === null ||
-    (count.trim() !== '' && Number.isSafeInteger(proposed) && proposed >= 1)
+  const { proposed, valid } = retentionProposal(limited, count)
   const unchanged = proposed === retainVersions
   function editDraft(next: { limited: boolean; count: string }) {
     setDraft(next)
@@ -112,18 +108,7 @@ export function RetentionEditor({
             !publisherManaged && 'truncate',
           )}
         >
-          {retainVersions === null
-            ? t('vw.retentionSummaryAll')
-            : t(
-                retainVersions === 1
-                  ? publisherManaged
-                    ? 'vw.retentionManagedNoteOne'
-                    : 'vw.retentionNoteOne'
-                  : publisherManaged
-                    ? 'vw.retentionManagedNoteOther'
-                    : 'vw.retentionNoteOther',
-                { count: retainVersions },
-              )}
+          {retentionSummary(retainVersions, publisherManaged, t)}
         </p>
         <Button
           data-retention-change
@@ -149,66 +134,15 @@ export function RetentionEditor({
           void save()
         }}
       >
-        <fieldset disabled={pending} className="flex flex-col gap-2">
-          <legend className="text-sm font-medium">
-            {t('vw.retentionTitle')}
-          </legend>
-          {publisherManaged ? (
-            <p className="text-muted-foreground text-sm">
-              {t('vw.retentionManagedProtection')}
-            </p>
-          ) : null}
-          <RadioGroup
-            aria-label={t('vw.retentionTitle')}
-            value={limited ? 'limited' : 'all'}
-            onValueChange={(value) =>
-              editDraft({ limited: value === 'limited', count })
-            }
-            disabled={pending}
-          >
-            <label className="flex items-center gap-2 text-sm">
-              <RadioGroupItem value="all" data-retention-all />
-              {t('vw.retentionAll')}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <RadioGroupItem value="limited" data-retention-limited />
-              {t(
-                publisherManaged
-                  ? 'vw.retentionManagedLimited'
-                  : 'vw.retentionLimited',
-              )}
-            </label>
-          </RadioGroup>
-          {limited ? (
-            <div className="flex flex-col gap-1">
-              <label htmlFor={`${id}-count`} className="text-sm">
-                {t(
-                  publisherManaged
-                    ? 'vw.retentionManagedCount'
-                    : 'vw.retentionCount',
-                )}
-              </label>
-              <Input
-                id={`${id}-count`}
-                type="number"
-                min="1"
-                step="1"
-                required
-                value={count}
-                aria-invalid={!valid}
-                aria-describedby={!valid ? `${id}-error` : undefined}
-                onChange={(event) =>
-                  editDraft({ limited, count: event.target.value })
-                }
-              />
-              {!valid ? (
-                <p id={`${id}-error`} className="text-destructive text-sm">
-                  {t('vw.retentionInvalid')}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </fieldset>
+        <RetentionFields
+          id={id}
+          pending={pending}
+          publisherManaged={publisherManaged}
+          limited={limited}
+          count={count}
+          valid={valid}
+          onEdit={editDraft}
+        />
         <Button
           data-retention-save
           ref={saveButton}
@@ -223,85 +157,211 @@ export function RetentionEditor({
           data-retention-saved={saved || undefined}
           className="text-sm"
         >
-          {!preview &&
-            (pending
-              ? t('vw.retentionSaving')
-              : error
-                ? t(
-                    error === 'changed'
-                      ? 'vw.retentionChanged'
-                      : 'vw.retentionFailed',
-                  )
-                : saved
-                  ? t('vw.retentionSaved')
-                  : null)}
+          {!preview && retentionSaveStatus(pending, error, saved, t)}
         </div>
       </form>
-      <AlertDialog
-        open={preview !== null}
-        onOpenChange={(open) => {
-          if (!open && !busy.current) setPreview(null)
-        }}
-      >
-        <AlertDialogContent
-          onCloseAutoFocus={(event) => {
-            event.preventDefault()
-            const target = saveButton.current?.disabled
-              ? changeButton.current
-              : saveButton.current
-            target?.focus()
-          }}
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t(
-                publisherManaged
-                  ? 'vw.retentionManagedConfirmTitle'
-                  : 'vw.retentionConfirmTitle',
-              )}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                publisherManaged
-                  ? preview?.count === 1
-                    ? 'vw.retentionManagedConfirmOne'
-                    : 'vw.retentionManagedConfirm'
-                  : preview?.count === 1
-                    ? 'vw.retentionConfirmOne'
-                    : 'vw.retentionConfirm',
-                { count: preview?.count ?? 0 },
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div role="status" className="text-sm">
-            {pending ? t('vw.retentionSaving') : null}
-          </div>
-          {error ? (
-            <p role="alert" className="text-destructive text-sm">
-              {t(
-                error === 'changed'
-                  ? 'vw.retentionChanged'
-                  : 'vw.retentionFailed',
-              )}
-            </p>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>
-              {t('confirm.cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={pending}
-              onClick={(event) => {
-                event.preventDefault()
-                if (preview) void save(preview)
-              }}
-            >
-              {t('vw.retentionConfirmSave')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RetentionConfirmation
+        preview={preview}
+        pending={pending}
+        error={error}
+        publisherManaged={publisherManaged}
+        busy={busy}
+        saveButton={saveButton}
+        changeButton={changeButton}
+        onPreviewChange={setPreview}
+        onSave={save}
+      />
     </>
   )
+}
+
+function RetentionConfirmation({
+  preview,
+  pending,
+  error,
+  publisherManaged,
+  busy,
+  saveButton,
+  changeButton,
+  onPreviewChange,
+  onSave,
+}: {
+  preview: Preview | null
+  pending: boolean
+  error: 'failed' | 'changed' | null
+  publisherManaged?: boolean
+  busy: RefObject<boolean>
+  saveButton: RefObject<HTMLButtonElement | null>
+  changeButton: RefObject<HTMLButtonElement | null>
+  onPreviewChange: (preview: Preview | null) => void
+  onSave: (preview: Preview) => Promise<void>
+}) {
+  const { t } = useT()
+  return (
+    <AlertDialog
+      open={preview !== null}
+      onOpenChange={(open) => {
+        if (!open && !busy.current) onPreviewChange(null)
+      }}
+    >
+      <AlertDialogContent
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          const target = saveButton.current?.disabled
+            ? changeButton.current
+            : saveButton.current
+          target?.focus()
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t(
+              publisherManaged
+                ? 'vw.retentionManagedConfirmTitle'
+                : 'vw.retentionConfirmTitle',
+            )}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(
+              publisherManaged
+                ? preview?.count === 1
+                  ? 'vw.retentionManagedConfirmOne'
+                  : 'vw.retentionManagedConfirm'
+                : preview?.count === 1
+                  ? 'vw.retentionConfirmOne'
+                  : 'vw.retentionConfirm',
+              { count: preview?.count ?? 0 },
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div role="status" className="text-sm">
+          {pending ? t('vw.retentionSaving') : null}
+        </div>
+        {error ? (
+          <p role="alert" className="text-destructive text-sm">
+            {t(
+              error === 'changed'
+                ? 'vw.retentionChanged'
+                : 'vw.retentionFailed',
+            )}
+          </p>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>
+            {t('confirm.cancel')}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={pending}
+            onClick={(event) => {
+              event.preventDefault()
+              if (preview) void onSave(preview)
+            }}
+          >
+            {t('vw.retentionConfirmSave')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+function retentionProposal(limited: boolean, count: string) {
+  const proposed = limited ? Number(count) : null
+  // Match the contract's nullable z.number().int().min(1) without a runtime
+  // package import: Zod integer validation also rejects unsafe integers.
+  const valid =
+    proposed === null ||
+    (count.trim() !== '' && Number.isSafeInteger(proposed) && proposed >= 1)
+  return { proposed, valid }
+}
+
+function RetentionFields({
+  id,
+  pending,
+  publisherManaged,
+  limited,
+  count,
+  valid,
+  onEdit,
+}: {
+  id: string
+  pending: boolean
+  publisherManaged?: boolean
+  limited: boolean
+  count: string
+  valid: boolean
+  onEdit: (draft: { limited: boolean; count: string }) => void
+}) {
+  const { t } = useT()
+  return (
+    <fieldset disabled={pending} className="flex flex-col gap-2">
+      <legend className="text-sm font-medium">{t('vw.retentionTitle')}</legend>
+      {publisherManaged ? (
+        <p className="text-muted-foreground text-sm">
+          {t('vw.retentionManagedProtection')}
+        </p>
+      ) : null}
+      <RadioGroup
+        aria-label={t('vw.retentionTitle')}
+        value={limited ? 'limited' : 'all'}
+        onValueChange={(value) =>
+          onEdit({ limited: value === 'limited', count })
+        }
+        disabled={pending}
+      >
+        <label className="flex items-center gap-2 text-sm">
+          <RadioGroupItem value="all" data-retention-all />
+          {t('vw.retentionAll')}
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <RadioGroupItem value="limited" data-retention-limited />
+          {t(
+            publisherManaged
+              ? 'vw.retentionManagedLimited'
+              : 'vw.retentionLimited',
+          )}
+        </label>
+      </RadioGroup>
+      {limited ? (
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`${id}-count`} className="text-sm">
+            {t(
+              publisherManaged
+                ? 'vw.retentionManagedCount'
+                : 'vw.retentionCount',
+            )}
+          </label>
+          <Input
+            id={`${id}-count`}
+            type="number"
+            min="1"
+            step="1"
+            required
+            value={count}
+            aria-invalid={!valid}
+            aria-describedby={!valid ? `${id}-error` : undefined}
+            onChange={(event) => onEdit({ limited, count: event.target.value })}
+          />
+          {!valid ? (
+            <p id={`${id}-error`} className="text-destructive text-sm">
+              {t('vw.retentionInvalid')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </fieldset>
+  )
+}
+
+function retentionSaveStatus(
+  pending: boolean,
+  error: 'failed' | 'changed' | null,
+  saved: boolean,
+  t: ReturnType<typeof useT>['t'],
+) {
+  if (pending) return t('vw.retentionSaving')
+  if (error)
+    return t(error === 'changed' ? 'vw.retentionChanged' : 'vw.retentionFailed')
+  return saved ? t('vw.retentionSaved') : null
 }

@@ -89,9 +89,5 @@
   },
   "supplyChain": {
     "minScore": 50
-  },
-  "rules": {
-    "react-doctor/no-high-complexity-react-function": "off",
-    "react-doctor/duplicate-jsx-subtree": "off"
   }
 }

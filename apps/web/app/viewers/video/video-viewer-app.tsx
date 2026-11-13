@@ -289,13 +289,7 @@ function Controls({
             id="play"
             variant="ghost"
             className={CONTROL}
-            aria-label={text(
-              player.ended
-                ? 'videoViewer.replay'
-                : paused
-                  ? 'videoViewer.play'
-                  : 'videoViewer.pause',
-            )}
+            aria-label={text(playbackActionKey(player.ended, paused))}
             disabled={failed}
             onClick={() => void runtime.togglePlay()}
           >
@@ -493,4 +487,9 @@ function PlaybackSettings({
       </div>
     </>
   )
+}
+
+function playbackActionKey(ended: boolean, paused: boolean) {
+  if (ended) return 'videoViewer.replay' as const
+  return paused ? ('videoViewer.play' as const) : ('videoViewer.pause' as const)
 }

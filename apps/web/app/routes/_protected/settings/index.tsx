@@ -426,17 +426,14 @@ function MemberRow({
   const grantAdminFormId = `grant-admin-${member.id}`
   const revokeAdminFormId = `revoke-admin-${member.id}`
   const revokeCliSessionsFormId = `revoke-cli-sessions-${member.id}`
-  const isSelf = member.id === currentUserId
-  const isOwner = member.role === 'owner'
-  const isAdmin = member.role === 'admin'
-  const canManageRoles =
-    canManage &&
-    currentUserRole === 'owner' &&
-    !isSelf &&
-    member.role !== 'owner'
-  const eligibleForTransfer = canManageRoles
-  const eligibleForRemove = canManage && !isOwner && !isAdmin && !isSelf
-  const eligibleForCliRevoke = canManage && member.role === 'member'
+  const {
+    isOwner,
+    isAdmin,
+    canManageRoles,
+    eligibleForTransfer,
+    eligibleForRemove,
+    eligibleForCliRevoke,
+  } = memberPermissions(member, currentUserId, canManage, currentUserRole)
 
   return (
     <TableRow>
@@ -460,66 +457,21 @@ function MemberRow({
       </TableCell>
       <TableCell>
         <TeamActions>
-          {eligibleForTransfer || eligibleForRemove || eligibleForCliRevoke ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <IconButton
-                  type="button"
-                  icon={IconDots}
-                  size="md"
-                  disabled={pendingForMember}
-                  aria-label={t('team.members.menu')}
-                />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {canManageRoles && member.role === 'member' ? (
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      const form = document.getElementById(grantAdminFormId)
-                      if (form instanceof HTMLFormElement) form.requestSubmit()
-                    }}
-                  >
-                    {t('team.members.makeAdmin')}
-                  </DropdownMenuItem>
-                ) : null}
-                {canManageRoles && member.role === 'admin' ? (
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      const form = document.getElementById(revokeAdminFormId)
-                      if (form instanceof HTMLFormElement) form.requestSubmit()
-                    }}
-                  >
-                    {t('team.members.removeAdmin')}
-                  </DropdownMenuItem>
-                ) : null}
-                {canManageRoles ? (
-                  <DropdownMenuItem
-                    onSelect={() => setTransferOwnerDialogOpen(true)}
-                  >
-                    {t('team.members.transferOwner')}
-                  </DropdownMenuItem>
-                ) : null}
-                {eligibleForCliRevoke ? (
-                  <DropdownMenuItem
-                    onSelect={() => setRevokeCliDialogOpen(true)}
-                  >
-                    {t('team.members.revokeCliSessions')}
-                  </DropdownMenuItem>
-                ) : null}
-                {canManageRoles && eligibleForRemove ? (
-                  <DropdownMenuSeparator />
-                ) : null}
-                {eligibleForRemove ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => setRemoveDialogOpen(true)}
-                  >
-                    {t('team.members.remove')}
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+          <MemberActionsMenu
+            permissions={{
+              eligibleForTransfer,
+              eligibleForRemove,
+              eligibleForCliRevoke,
+              canManageRoles,
+            }}
+            member={member}
+            pendingForMember={pendingForMember}
+            grantAdminFormId={grantAdminFormId}
+            revokeAdminFormId={revokeAdminFormId}
+            onTransfer={() => setTransferOwnerDialogOpen(true)}
+            onRevokeCli={() => setRevokeCliDialogOpen(true)}
+            onRemove={() => setRemoveDialogOpen(true)}
+          />
           {canManageRoles ? (
             <>
               <Form
@@ -814,5 +766,119 @@ function RemovedMemberRow({
         </AlertDialog>
       </TableCell>
     </TableRow>
+  )
+}
+
+function memberPermissions(
+  member: TeamContributor,
+  currentUserId: string,
+  canManage: boolean,
+  currentUserRole: WorkspaceMemberRole,
+) {
+  const isSelf = member.id === currentUserId
+  const isOwner = member.role === 'owner'
+  const isAdmin = member.role === 'admin'
+  const canManageRoles =
+    canManage &&
+    currentUserRole === 'owner' &&
+    !isSelf &&
+    member.role !== 'owner'
+  const eligibleForTransfer = canManageRoles
+  const eligibleForRemove = canManage && !isOwner && !isAdmin && !isSelf
+  const eligibleForCliRevoke = canManage && member.role === 'member'
+  return {
+    isOwner,
+    isAdmin,
+    canManageRoles,
+    eligibleForTransfer,
+    eligibleForRemove,
+    eligibleForCliRevoke,
+  }
+}
+
+function MemberActionsMenu({
+  permissions,
+  member,
+  pendingForMember,
+  grantAdminFormId,
+  revokeAdminFormId,
+  onTransfer,
+  onRevokeCli,
+  onRemove,
+}: {
+  permissions: Pick<
+    ReturnType<typeof memberPermissions>,
+    | 'eligibleForTransfer'
+    | 'eligibleForRemove'
+    | 'eligibleForCliRevoke'
+    | 'canManageRoles'
+  >
+  member: TeamContributor
+  pendingForMember: boolean
+  grantAdminFormId: string
+  revokeAdminFormId: string
+  onTransfer: () => void
+  onRevokeCli: () => void
+  onRemove: () => void
+}) {
+  const { t } = useT()
+  const {
+    eligibleForTransfer,
+    eligibleForRemove,
+    eligibleForCliRevoke,
+    canManageRoles,
+  } = permissions
+  if (!eligibleForTransfer && !eligibleForRemove && !eligibleForCliRevoke)
+    return null
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <IconButton
+          type="button"
+          icon={IconDots}
+          size="md"
+          disabled={pendingForMember}
+          aria-label={t('team.members.menu')}
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {canManageRoles && member.role === 'member' ? (
+          <DropdownMenuItem
+            onSelect={() => {
+              const form = document.getElementById(grantAdminFormId)
+              if (form instanceof HTMLFormElement) form.requestSubmit()
+            }}
+          >
+            {t('team.members.makeAdmin')}
+          </DropdownMenuItem>
+        ) : null}
+        {canManageRoles && member.role === 'admin' ? (
+          <DropdownMenuItem
+            onSelect={() => {
+              const form = document.getElementById(revokeAdminFormId)
+              if (form instanceof HTMLFormElement) form.requestSubmit()
+            }}
+          >
+            {t('team.members.removeAdmin')}
+          </DropdownMenuItem>
+        ) : null}
+        {canManageRoles ? (
+          <DropdownMenuItem onSelect={onTransfer}>
+            {t('team.members.transferOwner')}
+          </DropdownMenuItem>
+        ) : null}
+        {eligibleForCliRevoke ? (
+          <DropdownMenuItem onSelect={onRevokeCli}>
+            {t('team.members.revokeCliSessions')}
+          </DropdownMenuItem>
+        ) : null}
+        {canManageRoles && eligibleForRemove ? <DropdownMenuSeparator /> : null}
+        {eligibleForRemove ? (
+          <DropdownMenuItem variant="destructive" onSelect={onRemove}>
+            {t('team.members.remove')}
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

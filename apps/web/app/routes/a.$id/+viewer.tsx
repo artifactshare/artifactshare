@@ -253,49 +253,12 @@ function ViewerContent({ loaderData }: { loaderData: LoaderData }) {
         />
       )
     case 'ok':
-      return (
-        <>
-          <ViewerShell
-            artifact={loaderData.artifact}
-            user={loaderData.user}
-            renderType={loaderData.renderType}
-            sandboxUrl={loaderData.sandboxUrl}
-            bundlePaths={[]}
-            appOrigin={loaderData.appOrigin}
-            analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
-            linkSafety={loaderData.linkSafety}
-          />
-          <ArtifactViewTracker
-            artifactId={loaderData.artifact.id}
-            renderType={loaderData.renderType}
-            canTrackView={loaderData.canTrackView}
-            visibility={loaderData.artifact.visibility}
-            viewerState={loaderData.user ? 'authenticated' : 'anonymous'}
-          />
-        </>
-      )
     case 'static_site':
       return (
-        <>
-          <ViewerShell
-            artifact={loaderData.artifact}
-            user={loaderData.user}
-            renderType="static_site"
-            sandboxUrl={loaderData.sandboxUrl}
-            bundlePaths={loaderData.bundlePaths}
-            fallbackToIndex={loaderData.fallbackToIndex}
-            appOrigin={loaderData.appOrigin}
-            analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
-            linkSafety={loaderData.linkSafety}
-          />
-          <ArtifactViewTracker
-            artifactId={loaderData.artifact.id}
-            renderType="static_site"
-            canTrackView={loaderData.canTrackView}
-            visibility={loaderData.artifact.visibility}
-            viewerState={loaderData.user ? 'authenticated' : 'anonymous'}
-          />
-        </>
+        <TrackedArtifactView
+          loaderData={loaderData}
+          shouldLoadAnalytics={shouldLoadAnalytics}
+        />
       )
     default: {
       const _exhaustive: never = loaderData
@@ -421,5 +384,38 @@ export function ErrorBoundary({ error }: { error: unknown }) {
       reason={is404 ? 'missing' : 'open-error'}
       screenCaptureError="viewer-route-error-boundary"
     />
+  )
+}
+
+function TrackedArtifactView({
+  loaderData,
+  shouldLoadAnalytics,
+}: {
+  loaderData: Extract<LoaderData, { kind: 'ok' | 'static_site' }>
+  shouldLoadAnalytics: boolean
+}) {
+  const staticSite = loaderData.kind === 'static_site'
+  const renderType = staticSite ? 'static_site' : loaderData.renderType
+  return (
+    <>
+      <ViewerShell
+        artifact={loaderData.artifact}
+        user={loaderData.user}
+        renderType={renderType}
+        sandboxUrl={loaderData.sandboxUrl}
+        bundlePaths={staticSite ? loaderData.bundlePaths : []}
+        fallbackToIndex={staticSite ? loaderData.fallbackToIndex : undefined}
+        appOrigin={loaderData.appOrigin}
+        analyticsMode={shouldLoadAnalytics ? 'enabled' : 'disabled'}
+        linkSafety={loaderData.linkSafety}
+      />
+      <ArtifactViewTracker
+        artifactId={loaderData.artifact.id}
+        renderType={renderType}
+        canTrackView={loaderData.canTrackView}
+        visibility={loaderData.artifact.visibility}
+        viewerState={loaderData.user ? 'authenticated' : 'anonymous'}
+      />
+    </>
   )
 }

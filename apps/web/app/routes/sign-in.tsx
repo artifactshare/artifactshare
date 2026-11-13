@@ -168,22 +168,6 @@ export default function SignIn() {
   // better-auth redirects the unlinkable-account case as ?error=account_not_linked
   // (lowercase, from "account not linked".split(" ").join("_")), so match
   // case-insensitively; the AADSTS token is always uppercase from Microsoft.
-  const providerErrorLower = providerError?.toLowerCase() ?? ''
-  const getProviderErrorMessage = () => {
-    if (!providerError) return null
-    if (
-      providerError.includes('AADSTS65001') ||
-      providerErrorLower.includes('consent_required')
-    ) {
-      return t('signin.error.admin_consent')
-    }
-    if (providerErrorLower.includes('account_not_linked')) {
-      return t('signin.error.account_not_linked')
-    }
-    return t('signin.error.generic')
-  }
-  const providerErrorMessage = getProviderErrorMessage()
-
   const handleSendCode = async (e: FormEvent) => {
     e.preventDefault()
     dispatch({ type: 'submitStart' })
@@ -236,16 +220,12 @@ export default function SignIn() {
     }
   }
 
-  const title = isOAuth
-    ? t('oa.signin.title')
-    : intent === 'upload'
-      ? t('signin.upload.title')
-      : t('signin.title')
-  const sub = isOAuth
-    ? t('oa.signin.sub')
-    : intent === 'upload'
-      ? t('signin.upload.sub')
-      : t('signin.sub')
+  const { title, sub, providerErrorMessage } = signInCopy(
+    isOAuth,
+    intent,
+    providerError,
+    t,
+  )
   const providers = (
     <SignInOptions
       callbackURL={callbackURL}
@@ -334,65 +314,127 @@ export default function SignIn() {
       )}
 
       {step === 'code' && (
-        <form onSubmit={handleVerifyCode} noValidate>
-          <AuthFormStack>
-            <AuthHint>{t('signin.otp.sentTo', { email })}</AuthHint>
-            <Field data-invalid={formError ? true : undefined}>
-              <FieldLabel htmlFor="signin-code" className="sr-only">
-                {t('signin.otp.placeholder')}
-              </FieldLabel>
-              <Input
-                ref={codeInputRef}
-                id="signin-code"
-                type="text"
-                className="tracking-otp text-center indent-[var(--tracking-otp)] text-lg tabular-nums"
-                placeholder={t('signin.otp.placeholder')}
-                value={code}
-                onChange={(e) =>
-                  dispatch({
-                    type: 'setCode',
-                    code: e.target.value.replace(/\D/g, '').slice(0, 6),
-                  })
-                }
-                required
-                autoComplete="one-time-code"
-                inputMode="numeric"
-                maxLength={6}
-                aria-invalid={formError ? true : undefined}
-                aria-describedby={formError ? 'signin-code-error' : undefined}
-              />
-              <FieldError id="signin-code-error">{formError}</FieldError>
-            </Field>
-            <Button
-              type="submit"
-              disabled={maintenance || submitting || code.length < 6}
-            >
-              {t('signin.otp.verify')}
-            </Button>
-            <AuthLinksRow>
-              <Button
-                type="button"
-                variant="link"
-                onClick={handleResend}
-                disabled={submitting}
-              >
-                {t('signin.otp.resend')}
-              </Button>
-              <Button
-                type="button"
-                variant="link"
-                onClick={() => dispatch({ type: 'changeEmail' })}
-              >
-                {t('signin.otp.changeEmail')}
-              </Button>
-            </AuthLinksRow>
-          </AuthFormStack>
-        </form>
+        <SignInCodeForm
+          state={state}
+          maintenance={maintenance}
+          inputRef={codeInputRef}
+          onSubmit={handleVerifyCode}
+          onResend={handleResend}
+          onCodeChange={(nextCode) =>
+            dispatch({ type: 'setCode', code: nextCode })
+          }
+          onChangeEmail={() => dispatch({ type: 'changeEmail' })}
+        />
       )}
 
       {maintenance && (
         <AuthMaintenanceNotice>{t('lp.maintenanceAuth')}</AuthMaintenanceNotice>
       )}
     </AuthCard>
+  )
+}
+
+function signInCopy(
+  isOAuth: boolean,
+  intent: ReturnType<typeof signInIntent>,
+  providerError: string | null,
+  t: ReturnType<typeof useT>['t'],
+) {
+  const title = isOAuth
+    ? t('oa.signin.title')
+    : intent === 'upload'
+      ? t('signin.upload.title')
+      : t('signin.title')
+  const sub = isOAuth
+    ? t('oa.signin.sub')
+    : intent === 'upload'
+      ? t('signin.upload.sub')
+      : t('signin.sub')
+  const providerErrorLower = providerError?.toLowerCase() ?? ''
+  const getProviderErrorMessage = () => {
+    if (!providerError) return null
+    if (
+      providerError.includes('AADSTS65001') ||
+      providerErrorLower.includes('consent_required')
+    ) {
+      return t('signin.error.admin_consent')
+    }
+    if (providerErrorLower.includes('account_not_linked')) {
+      return t('signin.error.account_not_linked')
+    }
+    return t('signin.error.generic')
+  }
+  const providerErrorMessage = getProviderErrorMessage()
+
+  return { title, sub, providerErrorMessage }
+}
+
+function SignInCodeForm({
+  state,
+  maintenance,
+  inputRef,
+  onSubmit,
+  onResend,
+  onCodeChange,
+  onChangeEmail,
+}: {
+  state: FormState
+  maintenance: boolean
+  inputRef: React.RefObject<HTMLInputElement | null>
+  onSubmit: (event: FormEvent) => Promise<void>
+  onResend: () => Promise<void>
+  onCodeChange: (code: string) => void
+  onChangeEmail: () => void
+}) {
+  const { t } = useT()
+  const { email, code, error: formError, submitting } = state
+  return (
+    <form onSubmit={onSubmit} noValidate>
+      <AuthFormStack>
+        <AuthHint>{t('signin.otp.sentTo', { email })}</AuthHint>
+        <Field data-invalid={formError ? true : undefined}>
+          <FieldLabel htmlFor="signin-code" className="sr-only">
+            {t('signin.otp.placeholder')}
+          </FieldLabel>
+          <Input
+            ref={inputRef}
+            id="signin-code"
+            type="text"
+            className="tracking-otp text-center indent-[var(--tracking-otp)] text-lg tabular-nums"
+            placeholder={t('signin.otp.placeholder')}
+            value={code}
+            onChange={(e) =>
+              onCodeChange(e.target.value.replace(/\D/g, '').slice(0, 6))
+            }
+            required
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            maxLength={6}
+            aria-invalid={formError ? true : undefined}
+            aria-describedby={formError ? 'signin-code-error' : undefined}
+          />
+          <FieldError id="signin-code-error">{formError}</FieldError>
+        </Field>
+        <Button
+          type="submit"
+          disabled={maintenance || submitting || code.length < 6}
+        >
+          {t('signin.otp.verify')}
+        </Button>
+        <AuthLinksRow>
+          <Button
+            type="button"
+            variant="link"
+            onClick={onResend}
+            disabled={submitting}
+          >
+            {t('signin.otp.resend')}
+          </Button>
+          <Button type="button" variant="link" onClick={onChangeEmail}>
+            {t('signin.otp.changeEmail')}
+          </Button>
+        </AuthLinksRow>
+      </AuthFormStack>
+    </form>
   )
 }
