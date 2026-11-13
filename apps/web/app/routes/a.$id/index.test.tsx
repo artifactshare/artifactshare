@@ -2550,8 +2550,11 @@ test.each(['html_page', 'markdown_page', 'static_site', 'unknown'] as const)(
           throw new Error('Expected allowed content')
         expect(result.artifact.versions).not.toHaveLength(0)
         expect(result.artifact.canChangeRetention).toBe(owner)
-        if (owner) expect(result.artifact.publisherManaged).toBe(true)
-        else {
+        if (owner) {
+          expect(result.artifact.publisherManaged).toBe(true)
+          expect(result.artifact.retainVersions).toBe(1)
+        } else {
+          expect(result.artifact).not.toHaveProperty('retainVersions')
           expect(result.artifact).not.toHaveProperty('publisherManaged')
           expect(result.artifact).not.toHaveProperty(
             'extraProtectedCurrentVersion',

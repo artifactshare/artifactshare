@@ -41,6 +41,7 @@ test.each(['owner', 'member', 'anonymous'] as const)(
         expect(result.artifact.canChangeRetention).toBe(true)
         expect(result.artifact.publisherManaged).toBe(true)
       } else {
+        expect(result.artifact).not.toHaveProperty('retainVersions')
         expect(result.artifact).not.toHaveProperty('publisherManaged')
         expect(result.artifact).not.toHaveProperty(
           'extraProtectedCurrentVersion',

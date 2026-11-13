@@ -432,6 +432,7 @@ export async function loader({
     ownerManagementAccess && allowsHumanCliMutation(getCliAuthority(context))
   const retentionMetadata = canManageRetention
     ? {
+        retainVersions: shareable.retain_versions,
         publisherManaged:
           shareable.created_by_publisher_client_id != null ||
           shareable.assigned_publisher_client_id != null,
@@ -823,7 +824,6 @@ export async function loader({
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention: canManageRetention,
-        retainVersions: shareable.retain_versions,
         ...retentionMetadata,
         versions,
         grants,
@@ -858,7 +858,6 @@ export async function loader({
         displayedVersionOrdinal,
         isHistoricalVersion,
         canChangeRetention: canManageRetention,
-        retainVersions: shareable.retain_versions,
         ...retentionMetadata,
         versions,
         grants,
@@ -922,7 +921,6 @@ export async function loader({
       displayedVersionOrdinal,
       isHistoricalVersion,
       canChangeRetention: canManageRetention,
-      retainVersions: shareable.retain_versions,
       ...retentionMetadata,
       versions,
       grants,
