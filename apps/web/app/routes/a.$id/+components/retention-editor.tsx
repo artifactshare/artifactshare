@@ -158,6 +158,13 @@ export function RetentionEditor({
         >
           {t('vw.retentionSave')}
         </Button>
+        <div
+          role="status"
+          data-retention-saved={saved || undefined}
+          className="text-sm"
+        >
+          {!preview && retentionSaveStatus(pending, error, saved, t)}
+        </div>
         <RetentionFields
           id={id}
           pending={pending}
@@ -167,13 +174,6 @@ export function RetentionEditor({
           valid={valid}
           onEdit={editDraft}
         />
-        <div
-          role="status"
-          data-retention-saved={saved || undefined}
-          className="text-sm"
-        >
-          {!preview && retentionSaveStatus(pending, error, saved, t)}
-        </div>
       </form>
       <RetentionConfirmation
         preview={preview}

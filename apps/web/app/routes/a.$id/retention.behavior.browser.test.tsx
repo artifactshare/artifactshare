@@ -612,13 +612,14 @@ test.each(['failed', 'changed'] as const)(
 )
 
 test.each([
-  ['en', 1],
-  ['en', 2],
-  ['ja', 1],
-  ['ja', 2],
+  ['en', 1, 'single'],
+  ['en', 2, 'single'],
+  ['ja', 1, 'single'],
+  ['ja', 2, 'single'],
+  ['ja', 1, 'static_site'],
 ] as const)(
-  'managed %s editor wraps protection on mobile and confirms %s scheduled removals',
-  async (locale, count) => {
+  'managed %s editor wraps protection on mobile and confirms %s scheduled removals (%s)',
+  async (locale, count, replaceMode) => {
     state.locale = locale
     await page.viewport(390, count === 1 ? 600 : 844)
     await act(async () =>
@@ -629,6 +630,7 @@ test.each([
           artifactId="abc123def4"
           canChangeRetention
           canReplaceFile
+          replaceMode={replaceMode}
           onSubmit={() => {}}
           retainVersions={2}
           publisherManaged
@@ -697,6 +699,23 @@ test.each([
       }
     }
     expectUnclipped(save)
+    await expect
+      .element(
+        page.getByRole('button', {
+          name: new RegExp(bindTestI18n(locale).t('history.dropTitle')),
+        }),
+      )
+      .toBeVisible()
+    if (replaceMode === 'static_site') {
+      await expect
+        .element(
+          page.getByRole('button', {
+            name: bindTestI18n(locale).t('upload.pick.folder'),
+            exact: true,
+          }),
+        )
+        .toBeVisible()
+    }
     const scroller = save.closest('form')!.parentElement!
     // Use native keyboard scrolling, rather than assigning scrollTop.
     scroller.tabIndex = -1
@@ -720,6 +739,7 @@ test.each([
     expect(panel.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
+    await waitForBrowserLayout()
     scroller.focus()
     await userEvent.keyboard('{Home}')
     await vi.waitFor(() => {
@@ -763,7 +783,7 @@ test.each([
       expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
     )
     await vi.waitFor(() => expect(document.activeElement).toBe(save))
-    fetchMock.mockRejectedValueOnce(new Error('offline'))
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }))
     await userEvent.keyboard('{Enter}')
     const status = panel.querySelector('[role="status"]')!
     await vi.waitFor(() =>
@@ -773,10 +793,12 @@ test.each([
           : bindTestI18n(locale).t('vw.retentionFailed'),
       ),
     )
+    // Feedback must be visible from Save, before scrolling to the history.
+    expectUnclipped(save)
+    expectUnclipped(status)
     scroller.focus()
     await userEvent.keyboard('{End}')
     await vi.waitFor(() => {
-      expectUnclipped(status)
       expectUnclipped(page.getByRole('link', { name: /v1/ }).element())
     })
     expect(host.scrollWidth).toBeLessThanOrEqual(

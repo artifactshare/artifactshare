@@ -192,7 +192,7 @@ function DropzoneButton({
       <span
         className={cn(
           'text-sm font-semibold',
-          compactOnMobile && 'max-sheet:hidden',
+          compactOnMobile && 'max-sheet:sr-only',
         )}
       >
         {t('history.dropTitle')}
