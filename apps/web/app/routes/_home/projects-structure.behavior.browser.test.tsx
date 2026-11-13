@@ -261,7 +261,8 @@ describe('projects structure', () => {
     expect(projectLinks).toHaveLength(1)
     const projectRow = projectLinks[0].parentElement
     expect(projectRow).not.toBeNull()
-    expect(projectRow).toHaveTextContent('Joined')
+    // The row includes its name and metadata as well as the joined status.
+    expect(projectRow).toMatchTextContent('Joined')
     expect(projectRow?.querySelector('button')).toBeNull()
     expect(submitMock).toHaveBeenCalledWith(
       { intent: 'join-project', projectId: 'joinable-1' },
@@ -302,7 +303,7 @@ describe('projects structure', () => {
     const joinedRow = host.querySelector<HTMLElement>(
       `a[aria-label="${joinedName}"]`,
     )!.parentElement!
-    expect(joinedRow).toHaveTextContent('1 new')
+    expect(joinedRow).toMatchTextContent('1 new')
     const joinableRow = host.querySelector<HTMLElement>(
       `a[aria-label="${joinableName}"]`,
     )!.parentElement!

@@ -70,6 +70,7 @@ export default defineConfig({
     },
   ],
   test: {
+    fileParallelism: false,
     sequence: { sequencer: BrowserDurationSequencer },
     include: ['app/**/*.behavior.browser.test.tsx'],
     api: { host: '127.0.0.1' },
@@ -157,7 +158,6 @@ export default defineConfig({
           ],
         },
       ],
-      fileParallelism: false,
     },
   },
 })

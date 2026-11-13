@@ -213,7 +213,7 @@ function republishShareable(
   ])
 }
 
-describe.sequential('D1 compatibility', () => {
+describe('D1 compatibility', { concurrent: false }, () => {
   it('applies the project migrations', async () => {
     const result = await db
       .prepare(

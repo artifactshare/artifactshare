@@ -1246,7 +1246,11 @@ describe('CSP reporter runtime behavior', () => {
     ])
     const reporter = page.frameLocator(page.elementLocator(frame!))
     await reporter.getByText('Highlighted text', { exact: true }).click()
-    await reporter.getByLabelText('Open 1 unresolved comment on').click()
+    await reporter
+      .getByLabelText(
+        'Open 1 unresolved comment on this text: Highlighted text',
+      )
+      .click()
     expect(
       messages.filter((message) => message.kind === 'link-clicked'),
     ).toHaveLength(0)
@@ -1321,7 +1325,11 @@ describe('CSP reporter runtime behavior', () => {
     ])
     const reporter = page.frameLocator(page.elementLocator(frame!))
     await reporter.getByText('Highlighted text', { exact: true }).click()
-    await reporter.getByLabelText('Open 1 unresolved comment on').click()
+    await reporter
+      .getByLabelText(
+        'Open 1 unresolved comment on this text: Highlighted text',
+      )
+      .click()
     await probeReporter()
     expect(
       messages.filter(

@@ -127,12 +127,25 @@ test('many headings read only final path labels and use bounded node index trave
   const engine = build(document.body)
   const range = document.createRange()
   range.selectNodeContents(document.querySelector('#target')!)
-  const get = vi.spyOn(WeakMap.prototype, 'get')
-  expect(engine.locus(range)).toEqual({
+  // Vitest 5's spy bookkeeping itself uses WeakMap.get. Count native calls
+  // without a spy, and restore before invoking assertion or cleanup machinery.
+  const originalGet = WeakMap.prototype.get
+  let calls = 0
+  let locus: ReturnType<typeof engine.locus>
+  try {
+    WeakMap.prototype.get = function (key) {
+      calls++
+      return originalGet.call(this, key)
+    }
+    locus = engine.locus(range)
+  } finally {
+    WeakMap.prototype.get = originalGet
+  }
+  expect(locus).toEqual({
     headings: ['section'],
     block_text: 'selected',
   })
-  expect(get.mock.calls.length).toBeLessThan(10)
+  expect(calls).toBeLessThan(10)
 })
 
 test('headings inside a selection do not replace the path at its start', () => {

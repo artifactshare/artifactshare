@@ -1,3 +1,4 @@
+import { usercontentUnhandledFrame } from './worker-network-policy'
 import { openPopup, waitForMenuClose } from './browser-waits'
 import assert from 'node:assert/strict'
 import type { Cookie, Download, Page } from 'playwright'
@@ -26,7 +27,7 @@ import {
 import { assertShellAssets } from './usercontent-shell-assets.js'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
 import { setupServer } from 'msw/node'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import {
   SANDBOX_PROBE_MARKER,
   SANDBOX_PROBE_PATH,
@@ -138,17 +139,7 @@ async function delivery(page: Page, buildDirectory: string, blockAll = false) {
       ),
     )
     network.listen({
-      onUnhandledRequest(request) {
-        if (
-          ['127.0.0.1', 'localhost', '[::1]'].includes(
-            new URL(request.url).hostname,
-          )
-        )
-          return
-        throw new Error(
-          `Unexpected Worker network request: ${new URL(request.url).origin}`,
-        )
-      },
+      onUnhandledFrame: usercontentUnhandledFrame,
     })
     const restrictedBrowser = blockAll
       ? await (

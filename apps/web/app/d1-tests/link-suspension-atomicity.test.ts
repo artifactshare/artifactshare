@@ -121,7 +121,7 @@ function failStatement(source: D1Database, pattern: RegExp): D1Database {
   })
 }
 
-describe.sequential('link suspension D1 atomicity', () => {
+describe('link suspension D1 atomicity', { concurrent: false }, () => {
   it('commits exactly one event, audit, and flag update under concurrent production transitions', async () => {
     const shareableId = 'atomic001a'
     await seedShareable(shareableId)
