@@ -654,6 +654,214 @@ describe('Worker integration harness', () => {
     expect(invalidReceiptCount?.count).toBe(0)
   })
 
+  test.each(['2026-08-26.dahlia', '2026-10-28.endive'])(
+    'reconciles signed %s snapshot references from current state with retry and duplicate delivery',
+    async (apiVersion) => {
+      const env = await worker.getEnv()
+      await env.DB.prepare(
+        "INSERT INTO workspaces (id, name, created_at) VALUES ('ws-stripe', 'Stripe fixture', '2026-07-01T00:00:00Z')",
+      ).run()
+      let retrievals = 0
+      let failRetrieval = true
+      network.use(
+        http.get(
+          'https://api.stripe.com/v1/subscriptions/sub_runtime',
+          ({ request }) => {
+            retrievals += 1
+            expect(request.headers.get('Stripe-Version')).toBe(
+              '2026-10-28.endive',
+            )
+            if (failRetrieval)
+              return HttpResponse.json(
+                {
+                  error: {
+                    type: 'invalid_request_error',
+                    message: 'controlled retrieval failure',
+                  },
+                },
+                { status: 400 },
+              )
+            return HttpResponse.json({
+              id: 'sub_runtime',
+              object: 'subscription',
+              status: 'active',
+              customer: 'cus_runtime',
+              currency: 'usd',
+              metadata: { workspace_id: 'ws-stripe' },
+              items: {
+                data: [
+                  {
+                    id: 'si_runtime',
+                    price: {
+                      id: 'price_public_local_plus_monthly',
+                      recurring: { usage_type: 'licensed' },
+                    },
+                  },
+                ],
+              },
+            })
+          },
+        ),
+      )
+      const stripe = new Stripe(STRIPE_SECRET_KEY)
+      const shapes = [
+        {
+          type: 'checkout.session.completed',
+          object: {
+            id: 'cs_runtime',
+            object: 'checkout.session',
+            subscription: 'sub_runtime',
+          },
+        },
+        {
+          type: 'customer.subscription.updated',
+          object: {
+            id: 'sub_runtime',
+            object: 'subscription',
+            status: 'canceled',
+          },
+        },
+        {
+          type: 'invoice.paid',
+          object: {
+            id: 'in_runtime',
+            object: 'invoice',
+            parent: { subscription_details: { subscription: 'sub_runtime' } },
+          },
+        },
+      ]
+      for (const [index, shape] of shapes.entries()) {
+        const eventId = `evt_runtime_shape_${index}`
+        const body = JSON.stringify({
+          id: eventId,
+          object: 'event',
+          api_version: apiVersion,
+          created: 1775000000,
+          livemode: false,
+          pending_webhooks: 1,
+          request: { id: null, idempotency_key: null },
+          type: shape.type,
+          data: { object: shape.object },
+        })
+        const signature = stripe.webhooks.generateTestHeaderString({
+          payload: body,
+          secret: STRIPE_WEBHOOK_SECRET,
+        })
+        const deliver = () =>
+          worker.fetch('/api/stripe/webhook', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'stripe-signature': signature,
+            },
+            body,
+          })
+        if (index === 0) {
+          expect((await deliver()).status).toBe(500)
+          expect(
+            await env.DB.prepare(
+              'SELECT processed_at, error FROM billing_webhook_events WHERE stripe_event_id = ?',
+            )
+              .bind(eventId)
+              .first(),
+          ).toEqual({
+            processed_at: null,
+            error: 'controlled retrieval failure',
+          })
+          expect(
+            await env.DB.prepare(
+              'SELECT COUNT(*) AS count FROM audit_events',
+            ).first(),
+          ).toEqual({ count: 0 })
+          failRetrieval = false
+        }
+        expect((await deliver()).status).toBe(200)
+        expect(
+          await env.DB.prepare(
+            'SELECT processed_at, error FROM billing_webhook_events WHERE stripe_event_id = ?',
+          )
+            .bind(eventId)
+            .first(),
+        ).toEqual({ processed_at: expect.any(String), error: null })
+        const beforeDuplicate = retrievals
+        expect((await deliver()).status).toBe(200)
+        expect(retrievals).toBe(beforeDuplicate)
+      }
+      expect(retrievals).toBe(4)
+      expect(
+        await env.DB.prepare(
+          "SELECT plan, stripe_subscription_id, stripe_subscription_status FROM workspaces WHERE id = 'ws-stripe'",
+        ).first(),
+      ).toEqual({
+        plan: 'plus',
+        stripe_subscription_id: 'sub_runtime',
+        stripe_subscription_status: 'active',
+      })
+      expect(
+        await env.DB.prepare(
+          'SELECT COUNT(*) AS count FROM audit_events',
+        ).first(),
+      ).toEqual({ count: 1 })
+    },
+  )
+
+  test('rejects expired and tampered subscription signatures before receipts or retrieval', async () => {
+    let retrievals = 0
+    network.use(
+      http.get('https://api.stripe.com/v1/subscriptions/sub_invalid', () => {
+        retrievals += 1
+        return HttpResponse.json(
+          { error: { message: 'must not retrieve' } },
+          { status: 400 },
+        )
+      }),
+    )
+    const stripe = new Stripe(STRIPE_SECRET_KEY)
+    // Installed v23 Webhooks.js DEFAULT_TOLERANCE is 300 seconds.
+    expect(stripe.webhooks.DEFAULT_TOLERANCE).toBe(300)
+    const body = JSON.stringify({
+      id: 'evt_runtime_invalid_subscription',
+      object: 'event',
+      api_version: '2026-10-28.endive',
+      type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_invalid', object: 'subscription' } },
+    })
+    const fresh = stripe.webhooks.generateTestHeaderString({
+      payload: body,
+      secret: STRIPE_WEBHOOK_SECRET,
+    })
+    const expired = stripe.webhooks.generateTestHeaderString({
+      payload: body,
+      secret: STRIPE_WEBHOOK_SECRET,
+      timestamp:
+        Math.floor(Date.now() / 1000) -
+        stripe.webhooks.DEFAULT_TOLERANCE -
+        3600,
+    })
+    for (const [payload, signature] of [
+      [body, expired],
+      [body.replace('sub_invalid', 'sub_tampered'), fresh],
+      [body, `${fresh.slice(0, -1)}${fresh.endsWith('0') ? '1' : '0'}`],
+    ]) {
+      const response = await worker.fetch('/api/stripe/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'stripe-signature': signature!,
+        },
+        body: payload,
+      })
+      expect(response.status).toBe(400)
+      const env = await worker.getEnv()
+      expect(
+        await env.DB.prepare(
+          'SELECT COUNT(*) AS count FROM billing_webhook_events',
+        ).first(),
+      ).toEqual({ count: 0 })
+      expect(retrievals).toBe(0)
+    }
+  })
+
   test('dispatches scheduled reconciliation through the Worker runtime', async () => {
     const env = await worker.getEnv()
     await env.DB.batch([

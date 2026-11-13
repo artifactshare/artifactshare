@@ -531,6 +531,76 @@ describe('billing sync service', () => {
     })
   })
 
+  test('receipt failure rolls back workspace and audit, then retry processes once', async () => {
+    seedWorkspace(sqlite, { plan: 'free' })
+    sqlite.exec(`INSERT INTO billing_webhook_events
+      (stripe_event_id, event_type, received_at) VALUES
+      ('evt_rollback', 'customer.subscription.updated', '2026-07-01T00:00:00.000Z')`)
+    const before = sqlite
+      .prepare("SELECT * FROM workspaces WHERE id = 'ws1'")
+      .get()
+    const stripe = mockStripeRetrieve(
+      makeSubscription({
+        id: 'sub_new',
+        status: 'active',
+        metadata: { workspace_id: 'ws1' },
+        items: [{ priceId: prices.plusMonthly }],
+      }),
+    )
+    const sync = () =>
+      syncWorkspaceSubscription(db, stripe, env, 'sub_new', {
+        stripeEventId: 'evt_rollback',
+      })
+    sqlite.exec(`CREATE TRIGGER fail_receipt BEFORE UPDATE OF processed_at ON billing_webhook_events
+      WHEN NEW.stripe_event_id = 'evt_rollback'
+      BEGIN SELECT RAISE(ABORT, 'receipt processing fault'); END`)
+    try {
+      await expect(sync()).rejects.toThrow('receipt processing fault')
+      expect(
+        sqlite.prepare("SELECT * FROM workspaces WHERE id = 'ws1'").get(),
+        'workspace rollback',
+      ).toEqual(before)
+      expect(sqlite.prepare('SELECT * FROM audit_events').all()).toHaveLength(0)
+      expect(
+        sqlite
+          .prepare(
+            "SELECT processed_at FROM billing_webhook_events WHERE stripe_event_id = 'evt_rollback'",
+          )
+          .get(),
+      ).toEqual({ processed_at: null })
+    } finally {
+      sqlite.exec('DROP TRIGGER IF EXISTS fail_receipt')
+    }
+    await expect(sync()).resolves.toEqual({ kind: 'ok' })
+    await expect(sync()).resolves.toEqual({ kind: 'ok' })
+    expect(readWorkspace(sqlite)).toEqual({
+      plan: 'plus',
+      stripe_subscription_id: 'sub_new',
+      stripe_subscription_status: 'active',
+      storage_quota_bytes: PLAN_STORAGE_QUOTA_BYTES.plus,
+    })
+    expect(
+      sqlite
+        .prepare(
+          "SELECT link_sharing_enabled, external_posting_enabled, link_expiry_default_days, link_expiry_max_days FROM workspaces WHERE id = 'ws1'",
+        )
+        .get(),
+    ).toEqual({
+      link_sharing_enabled: 1,
+      external_posting_enabled: 1,
+      link_expiry_default_days: 30,
+      link_expiry_max_days: 90,
+    })
+    expect(sqlite.prepare('SELECT * FROM audit_events').all()).toHaveLength(1)
+    expect(
+      sqlite
+        .prepare(
+          "SELECT processed_at FROM billing_webhook_events WHERE stripe_event_id = 'evt_rollback'",
+        )
+        .get(),
+    ).toEqual({ processed_at: expect.any(String) })
+  })
+
   test('syncWorkspaceSubscription writes plan.change audit once with webhook idempotency', async () => {
     seedWorkspace(sqlite, { plan: 'free' })
     sqlite.exec(`
