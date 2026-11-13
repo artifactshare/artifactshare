@@ -1,0 +1,46 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index c09ce40820cfa5b9b45cda83722188c64f1d2658..35a84fbc829015582291278dbd21b069b2ad0e81 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -12907,13 +12907,11 @@ const walkTreeStats = (rootDirectory) => {
+ 	return collected;
+ };
+ const compileGlobAlternation = (patterns, matchDotNames) => {
+-	const regexSources = [];
+-	for (const pattern of patterns) {
+-		const compiled = new minimatch.Minimatch(pattern, { dot: matchDotNames }).makeRe();
+-		if (compiled === false) return null;
+-		regexSources.push(compiled.source);
+-	}
+-	return regexSources.length === 0 ? null : new RegExp(regexSources.join("|"));
++	const matchers = patterns.map((pattern) => new minimatch.Minimatch(pattern, { dot: matchDotNames }));
++	if (matchers.some((matcher) => matcher.set.length === 0)) return null;
++	return matchers.length === 0 ? null : {
++		test: (path) => matchers.some((matcher) => matcher.match(path))
++	};
+ };
+ const countPathSegments = (relativePath) => {
+ 	let segmentCount = 1;
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 0238927b47772402e84802db9a664885e3d81b1d..4228e1b55173ebda2d1043644c76b2120dfa451a 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -12875,13 +12875,11 @@ const walkTreeStats = (rootDirectory) => {
+ 	return collected;
+ };
+ const compileGlobAlternation = (patterns, matchDotNames) => {
+-	const regexSources = [];
+-	for (const pattern of patterns) {
+-		const compiled = new Minimatch(pattern, { dot: matchDotNames }).makeRe();
+-		if (compiled === false) return null;
+-		regexSources.push(compiled.source);
+-	}
+-	return regexSources.length === 0 ? null : new RegExp(regexSources.join("|"));
++	const matchers = patterns.map((pattern) => new Minimatch(pattern, { dot: matchDotNames }));
++	if (matchers.some((matcher) => matcher.set.length === 0)) return null;
++	return matchers.length === 0 ? null : {
++		test: (path) => matchers.some((matcher) => matcher.match(path))
++	};
+ };
+ const countPathSegments = (relativePath) => {
+ 	let segmentCount = 1;
