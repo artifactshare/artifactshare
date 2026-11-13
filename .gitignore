@@ -24,6 +24,7 @@ __screenshots__/
 !apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/
 !apps/web/app/routes/dev.scenarios.$scenario/__screenshots__/**
 apps/web/.vitest-attachments/
+apps/web/.vitest/
 .cli-test-measurements/
 .perf-traces/
 .secrets*

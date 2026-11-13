@@ -115,15 +115,23 @@ test.each(['en', 'ja'] as const)(
   },
 )
 
-describe.sequential('locale cleanup after a failed assertion', () => {
-  // This expected failure exercises teardown when assertion-time cleanup would
-  // be skipped. The next test must still render in the default locale.
-  test.fails('interrupts a test after changing the shared locale', () => {
-    language.locale = 'en'
-    expect(render({ files: [file] })).toContain(t('ja', 'home.unopenedSeeAll'))
-  })
+describe(
+  'locale cleanup after a failed assertion',
+  { concurrent: false },
+  () => {
+    // This expected failure exercises teardown when assertion-time cleanup would
+    // be skipped. The next test must still render in the default locale.
+    test.fails('interrupts a test after changing the shared locale', () => {
+      language.locale = 'en'
+      expect(render({ files: [file] })).toContain(
+        t('ja', 'home.unopenedSeeAll'),
+      )
+    })
 
-  test('renders Japanese after the interrupted English test', () => {
-    expect(render({ files: [file] })).toContain(t('ja', 'home.unopenedSeeAll'))
-  })
-})
+    test('renders Japanese after the interrupted English test', () => {
+      expect(render({ files: [file] })).toContain(
+        t('ja', 'home.unopenedSeeAll'),
+      )
+    })
+  },
+)

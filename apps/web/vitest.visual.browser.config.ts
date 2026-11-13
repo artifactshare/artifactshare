@@ -22,6 +22,7 @@ export default defineConfig({
     },
   ],
   test: {
+    fileParallelism: false,
     include: [
       'app/**/*.browser.test.tsx',
       '!app/**/*.behavior.browser.test.tsx',
@@ -33,7 +34,6 @@ export default defineConfig({
       headless: true,
       screenshotFailures: !process.env.VISUAL_FAULT,
       instances: [{ browser: 'chromium' }],
-      fileParallelism: false,
       expect: {
         toMatchScreenshot: {
           resolveScreenshotPath: ({

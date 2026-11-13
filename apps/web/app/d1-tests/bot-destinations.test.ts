@@ -172,270 +172,275 @@ async function placementSnapshot(workspaceId: string) {
   ).map((result) => result.results)
 }
 
-describe.sequential('ordinary bot destinations at the real D1 commit boundary', () => {
-  it.each([
-    'file-create',
-    'site-create',
-    'file-version',
-    'site-version',
-    'key-file',
-    'key-site',
-    'append',
-  ] as const)(
-    'enforces live approval, credential and placement for %s',
-    async (operation) => {
-      const { createWorkspaceBot, listWorkspaceBots, stopWorkspaceBot } =
-        await import('../services/bot-members.server')
-      const { updateWorkspaceBotDestinations } =
-        await import('../services/bot-destinations.server')
-      for (const change of [
-        'allowed',
-        'remove',
-        'stop',
-        'credential',
-        'archive',
-        'grant',
-      ] as const) {
-        const prefix = `bot-${operation}-${change}`
-        await seedProject(prefix)
-        const actor = { id: `${prefix}-owner`, workspaceId: `${prefix}-ws` }
-        const a = `${prefix}-project`
-        const b = `${prefix}-private`
-        await database.batch([
-          database
-            .prepare(
-              "INSERT INTO workspace_members (workspace_id,user_id,role,status,created_at,updated_at) VALUES (?,?,'owner','active',?,?)",
-            )
-            .bind(actor.workspaceId, actor.id, at, at),
-          database
-            .prepare(
-              "INSERT INTO artifact_containers (id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES (?,?,'project','Management','private',?,?,?)",
-            )
-            .bind(b, actor.workspaceId, actor.id, at, at),
-        ])
-        const db = createDb(database)
-        const bot = await createWorkspaceBot(db, actor, {
-          name: 'Reports',
-          projectId: a,
-          projectIds: [a, b],
-        })
-        if (bot.kind !== 'ok') throw new Error(bot.kind)
-        const family = await db
-          .selectFrom('cli_family_authorities')
-          .selectAll()
-          .where('user_id', '=', bot.botUserId)
-          .executeTakeFirstOrThrow()
-        const authority: Extract<CliAuthority, { kind: 'agent' }> = {
-          kind: 'agent',
-          familyId: family.family_id,
-          workspaceId: actor.workspaceId,
-          projectId: a,
-          projectNameSnapshot: prefix,
-          agentProfileId: family.agent_profile_id!,
-          ordinaryBot: true,
-        }
-        const user = {
-          id: bot.botUserId,
-          workspaceId: actor.workspaceId,
-          email: bot.email,
-          emailVerified: true,
-          hd: 'example.com',
-        }
-        const file = () =>
-          new File(['<p>Report</p>'], 'index.html', { type: 'text/html' })
-        let artifactId = ''
-        let versionId = ''
-        let keyId: string | null = null
-        if (!operation.endsWith('create')) {
-          if (operation.includes('site')) {
-            const begun = await beginStaticSiteBundleUploadSession(
-              db,
-              user,
-              b,
-              'stable',
-              { authority, agentProfileId: authority.agentProfileId },
-            )
-            if (begun.kind !== 'ok') throw new Error(begun.kind)
-            await begun.session.addFile(file())
-            const created = await begun.session.commit('project')
-            if (created.kind !== 'ok') throw new Error(created.kind)
-            artifactId = created.id
-            versionId = created.versionId
-          } else {
-            const created = await uploadShareable(
-              db,
-              user,
-              file(),
-              'project',
-              [],
-              b,
-              'stable',
-              { authority, agentProfileId: authority.agentProfileId },
-            )
-            if (created.kind !== 'ok') throw new Error(created.kind)
-            artifactId = created.id
-            versionId = created.versionId
+describe(
+  'ordinary bot destinations at the real D1 commit boundary',
+  { concurrent: false },
+  () => {
+    it.each([
+      'file-create',
+      'site-create',
+      'file-version',
+      'site-version',
+      'key-file',
+      'key-site',
+      'append',
+    ] as const)(
+      'enforces live approval, credential and placement for %s',
+      async (operation) => {
+        const { createWorkspaceBot, listWorkspaceBots, stopWorkspaceBot } =
+          await import('../services/bot-members.server')
+        const { updateWorkspaceBotDestinations } =
+          await import('../services/bot-destinations.server')
+        for (const change of [
+          'allowed',
+          'remove',
+          'stop',
+          'credential',
+          'archive',
+          'grant',
+        ] as const) {
+          const prefix = `bot-${operation}-${change}`
+          await seedProject(prefix)
+          const actor = { id: `${prefix}-owner`, workspaceId: `${prefix}-ws` }
+          const a = `${prefix}-project`
+          const b = `${prefix}-private`
+          await database.batch([
+            database
+              .prepare(
+                "INSERT INTO workspace_members (workspace_id,user_id,role,status,created_at,updated_at) VALUES (?,?,'owner','active',?,?)",
+              )
+              .bind(actor.workspaceId, actor.id, at, at),
+            database
+              .prepare(
+                "INSERT INTO artifact_containers (id,workspace_id,kind,name,base_visibility,created_by_id,created_at,updated_at) VALUES (?,?,'project','Management','private',?,?,?)",
+              )
+              .bind(b, actor.workspaceId, actor.id, at, at),
+          ])
+          const db = createDb(database)
+          const bot = await createWorkspaceBot(db, actor, {
+            name: 'Reports',
+            projectId: a,
+            projectIds: [a, b],
+          })
+          if (bot.kind !== 'ok') throw new Error(bot.kind)
+          const family = await db
+            .selectFrom('cli_family_authorities')
+            .selectAll()
+            .where('user_id', '=', bot.botUserId)
+            .executeTakeFirstOrThrow()
+          const authority: Extract<CliAuthority, { kind: 'agent' }> = {
+            kind: 'agent',
+            familyId: family.family_id,
+            workspaceId: actor.workspaceId,
+            projectId: a,
+            projectNameSnapshot: prefix,
+            agentProfileId: family.agent_profile_id!,
+            ordinaryBot: true,
           }
-          keyId = (
-            await db
-              .selectFrom('artifact_keys')
-              .select('id')
-              .where('shareable_id', '=', artifactId)
-              .executeTakeFirstOrThrow()
-          ).id
-        }
-        const before = await placementSnapshot(actor.workspaceId)
-        const objects = [...bucketObjects].sort()
-        const usage = await db
-          .selectFrom('workspaces')
-          .select('storage_used_bytes')
-          .where('id', '=', actor.workspaceId)
-          .executeTakeFirstOrThrow()
-        let intercepted = false
-        const guarded = createDb(
-          beforeFirstBatch(database, async () => {
-            intercepted = true
-            if (change === 'remove') {
-              const inventory = (
-                await listWorkspaceBots(db, actor.workspaceId)
-              )[0]!
-              expect(
-                await updateWorkspaceBotDestinations(db, actor, {
-                  botUserId: user.id,
-                  projectId: a,
-                  projectIds: [a],
-                  revision: inventory.destinationRevision!,
-                }),
-              ).toEqual({ kind: 'ok' })
+          const user = {
+            id: bot.botUserId,
+            workspaceId: actor.workspaceId,
+            email: bot.email,
+            emailVerified: true,
+            hd: 'example.com',
+          }
+          const file = () =>
+            new File(['<p>Report</p>'], 'index.html', { type: 'text/html' })
+          let artifactId = ''
+          let versionId = ''
+          let keyId: string | null = null
+          if (!operation.endsWith('create')) {
+            if (operation.includes('site')) {
+              const begun = await beginStaticSiteBundleUploadSession(
+                db,
+                user,
+                b,
+                'stable',
+                { authority, agentProfileId: authority.agentProfileId },
+              )
+              if (begun.kind !== 'ok') throw new Error(begun.kind)
+              await begun.session.addFile(file())
+              const created = await begun.session.commit('project')
+              if (created.kind !== 'ok') throw new Error(created.kind)
+              artifactId = created.id
+              versionId = created.versionId
+            } else {
+              const created = await uploadShareable(
+                db,
+                user,
+                file(),
+                'project',
+                [],
+                b,
+                'stable',
+                { authority, agentProfileId: authority.agentProfileId },
+              )
+              if (created.kind !== 'ok') throw new Error(created.kind)
+              artifactId = created.id
+              versionId = created.versionId
             }
-            if (change === 'stop')
-              expect(await stopWorkspaceBot(db, actor, user.id)).toEqual({
-                kind: 'ok',
+            keyId = (
+              await db
+                .selectFrom('artifact_keys')
+                .select('id')
+                .where('shareable_id', '=', artifactId)
+                .executeTakeFirstOrThrow()
+            ).id
+          }
+          const before = await placementSnapshot(actor.workspaceId)
+          const objects = [...bucketObjects].sort()
+          const usage = await db
+            .selectFrom('workspaces')
+            .select('storage_used_bytes')
+            .where('id', '=', actor.workspaceId)
+            .executeTakeFirstOrThrow()
+          let intercepted = false
+          const guarded = createDb(
+            beforeFirstBatch(database, async () => {
+              intercepted = true
+              if (change === 'remove') {
+                const inventory = (
+                  await listWorkspaceBots(db, actor.workspaceId)
+                )[0]!
+                expect(
+                  await updateWorkspaceBotDestinations(db, actor, {
+                    botUserId: user.id,
+                    projectId: a,
+                    projectIds: [a],
+                    revision: inventory.destinationRevision!,
+                  }),
+                ).toEqual({ kind: 'ok' })
+              }
+              if (change === 'stop')
+                expect(await stopWorkspaceBot(db, actor, user.id)).toEqual({
+                  kind: 'ok',
+                })
+              if (change === 'credential')
+                await db
+                  .updateTable('cli_refresh_credentials')
+                  .set({ revoked_at: at })
+                  .where('family_id', '=', authority.familyId)
+                  .execute()
+              if (change === 'archive')
+                await db
+                  .updateTable('artifact_containers')
+                  .set({ archived_at: at })
+                  .where('id', '=', b)
+                  .execute()
+              if (change === 'grant')
+                await db
+                  .deleteFrom('project_share_defaults')
+                  .where('project_container_id', '=', b)
+                  .execute()
+            }),
+          )
+          try {
+            let result: { kind: string }
+            if (operation === 'append')
+              result = await publish({
+                db: guarded,
+                actor: {
+                  kind: 'bot',
+                  user: { ...user, kind: 'bot', selfUploadEnabled: true },
+                  authority,
+                },
+                target: { kind: 'append', artifactId },
+                content: { kind: 'append', content: '<p>More</p>' },
               })
-            if (change === 'credential')
-              await db
-                .updateTable('cli_refresh_credentials')
-                .set({ revoked_at: at })
-                .where('family_id', '=', authority.familyId)
-                .execute()
-            if (change === 'archive')
-              await db
-                .updateTable('artifact_containers')
-                .set({ archived_at: at })
-                .where('id', '=', b)
-                .execute()
-            if (change === 'grant')
-              await db
-                .deleteFrom('project_share_defaults')
-                .where('project_container_id', '=', b)
-                .execute()
-          }),
-        )
-        try {
-          let result: { kind: string }
-          if (operation === 'append')
-            result = await publish({
-              db: guarded,
-              actor: {
-                kind: 'bot',
-                user: { ...user, kind: 'bot', selfUploadEnabled: true },
-                authority,
-              },
-              target: { kind: 'append', artifactId },
-              content: { kind: 'append', content: '<p>More</p>' },
-            })
-          else if (operation === 'file-create')
-            result = await uploadShareable(
-              guarded,
-              user,
-              file(),
-              'project',
-              [],
-              b,
-              'new',
-              { authority, agentProfileId: authority.agentProfileId },
-            )
-          else if (operation === 'site-create') {
-            const begun = await beginStaticSiteBundleUploadSession(
-              guarded,
-              user,
-              b,
-              'new',
-              { authority, agentProfileId: authority.agentProfileId },
-            )
-            if (begun.kind !== 'ok') throw new Error(begun.kind)
-            await begun.session.addFile(file())
-            result = await begun.session.commit('project')
-          } else if (operation.includes('site')) {
-            const begun = await beginStaticSiteBundleVersionUploadSession(
-              guarded,
-              user,
-              artifactId,
-              operation === 'key-site' ? keyId : null,
-              {
+            else if (operation === 'file-create')
+              result = await uploadShareable(
+                guarded,
+                user,
+                file(),
+                'project',
+                [],
+                b,
+                'new',
+                { authority, agentProfileId: authority.agentProfileId },
+              )
+            else if (operation === 'site-create') {
+              const begun = await beginStaticSiteBundleUploadSession(
+                guarded,
+                user,
+                b,
+                'new',
+                { authority, agentProfileId: authority.agentProfileId },
+              )
+              if (begun.kind !== 'ok') throw new Error(begun.kind)
+              await begun.session.addFile(file())
+              result = await begun.session.commit('project')
+            } else if (operation.includes('site')) {
+              const begun = await beginStaticSiteBundleVersionUploadSession(
+                guarded,
+                user,
+                artifactId,
+                operation === 'key-site' ? keyId : null,
+                {
+                  authority,
+                  agentProfileId: authority.agentProfileId,
+                  expectedCurrentVersionId: versionId,
+                },
+              )
+              if (begun.kind !== 'ok') throw new Error(begun.kind)
+              await begun.session.addFile(file())
+              result = await begun.session.commitVersion()
+            } else
+              result = await createVersion({
+                db: guarded,
+                user,
+                shareableId: artifactId,
+                file: file(),
                 authority,
                 agentProfileId: authority.agentProfileId,
                 expectedCurrentVersionId: versionId,
-              },
+                touchArtifactKeyId:
+                  operation === 'key-file' ? keyId! : undefined,
+              })
+            expect(intercepted).toBe(true)
+            expect(result.kind).toBe(
+              change === 'allowed'
+                ? 'ok'
+                : operation.endsWith('create')
+                  ? 'invalid-container'
+                  : 'not-found',
             )
-            if (begun.kind !== 'ok') throw new Error(begun.kind)
-            await begun.session.addFile(file())
-            result = await begun.session.commitVersion()
-          } else
-            result = await createVersion({
-              db: guarded,
-              user,
-              shareableId: artifactId,
-              file: file(),
-              authority,
-              agentProfileId: authority.agentProfileId,
-              expectedCurrentVersionId: versionId,
-              touchArtifactKeyId: operation === 'key-file' ? keyId! : undefined,
-            })
-          expect(intercepted).toBe(true)
-          expect(result.kind).toBe(
-            change === 'allowed'
-              ? 'ok'
-              : operation.endsWith('create')
-                ? 'invalid-container'
-                : 'not-found',
-          )
-          if (change !== 'allowed') {
-            // Management audits are expected; publication state and accounting are not.
-            const after = await placementSnapshot(actor.workspaceId)
-            expect(after).toEqual(before)
-            expect([...bucketObjects].sort()).toEqual(objects)
-            expect(
-              await db
-                .selectFrom('workspaces')
-                .select('storage_used_bytes')
-                .where('id', '=', actor.workspaceId)
-                .executeTakeFirstOrThrow(),
-            ).toEqual(usage)
+            if (change !== 'allowed') {
+              // Management audits are expected; publication state and accounting are not.
+              const after = await placementSnapshot(actor.workspaceId)
+              expect(after).toEqual(before)
+              expect([...bucketObjects].sort()).toEqual(objects)
+              expect(
+                await db
+                  .selectFrom('workspaces')
+                  .select('storage_used_bytes')
+                  .where('id', '=', actor.workspaceId)
+                  .executeTakeFirstOrThrow(),
+              ).toEqual(usage)
+            }
+            if (change === 'remove')
+              expect(
+                (
+                  await uploadShareable(
+                    db,
+                    user,
+                    file(),
+                    'project',
+                    [],
+                    a,
+                    null,
+                    { authority },
+                  )
+                ).kind,
+              ).toBe('ok')
+          } finally {
+            await guarded.destroy()
+            await db.destroy()
           }
-          if (change === 'remove')
-            expect(
-              (
-                await uploadShareable(
-                  db,
-                  user,
-                  file(),
-                  'project',
-                  [],
-                  a,
-                  null,
-                  { authority },
-                )
-              ).kind,
-            ).toBe('ok')
-        } finally {
-          await guarded.destroy()
-          await db.destroy()
         }
-      }
-    },
-  )
-})
+      },
+    )
+  },
+)
 
 test.each(['demotion', 'stop', 'edit', 'reissue', 'quota', 'archive'] as const)(
   'destination edit rolls back on concurrent %s',

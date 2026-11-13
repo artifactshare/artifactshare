@@ -35,6 +35,18 @@ describe('renderMermaidInDocument', () => {
 
     await renderMermaidInDocument(doc, true)
 
+    // Observe initialization in the test that first loads the cached renderer.
+    const { default: mermaid } = await import('mermaid')
+    expect(mermaid.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: 'default',
+        securityLevel: 'strict',
+        suppressErrorRendering: true,
+        htmlLabels: false,
+        flowchart: { useMaxWidth: false },
+        sequence: { useMaxWidth: false },
+      }),
+    )
     expect(render).toHaveBeenCalledWith(
       expect.stringMatching(/^artifactshare-mermaid-/),
       'flowchart LR\nA --> B',
@@ -109,15 +121,4 @@ test('keeps failed source visible while rendering its neighbor with intrinsic si
   expect(blocks[0].textContent).toBe('invalid')
   expect(blocks[1].hidden).toBe(true)
   expect(doc.querySelectorAll('.mermaid-diagram')).toHaveLength(1)
-  const { default: mermaid } = await import('mermaid')
-  expect(mermaid.initialize).toHaveBeenCalledWith(
-    expect.objectContaining({
-      theme: 'default',
-      securityLevel: 'strict',
-      suppressErrorRendering: true,
-      htmlLabels: false,
-      flowchart: { useMaxWidth: false },
-      sequence: { useMaxWidth: false },
-    }),
-  )
 })

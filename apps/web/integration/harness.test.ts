@@ -1,5 +1,7 @@
 import { integrationWorkerConfig } from '../app/test/integration-worker-config'
-import { http, HttpResponse, passthrough } from 'msw'
+import { http, HttpResponse } from 'msw/http'
+import { passthrough } from 'msw/utils/passthrough'
+import { integrationUnhandledFrame } from '../app/test/worker-network-policy'
 import { setupServer } from 'msw/node'
 import {
   afterAll,
@@ -277,15 +279,7 @@ function installTailHandler() {
 
 beforeAll(async () => {
   network.listen({
-    onUnhandledRequest(request) {
-      const url = new URL(request.url)
-      if (url.hostname === '127.0.0.1') {
-        return
-      }
-      throw new Error(
-        `Unhandled outbound request: ${request.method} ${request.url}`,
-      )
-    },
+    onUnhandledFrame: integrationUnhandledFrame,
   })
   await harness.listen()
 })

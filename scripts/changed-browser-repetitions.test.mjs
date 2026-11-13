@@ -418,9 +418,10 @@ test('Vitest discovery isolates suffix and case collisions without browser execu
   fs.writeFileSync(
     path.join(workspace, 'vitest.behavior.browser.config.ts'),
     `
+    import { playwright } from '@vitest/browser-playwright'
     export default { test: {
       include: ['**/*.test.tsx'],
-      browser: { enabled: true, instances: [{ browser: 'chromium' }] }
+      browser: { enabled: true, provider: playwright(), instances: [{ browser: 'chromium' }] }
     } }
   `,
   )
@@ -1415,9 +1416,10 @@ test('Vitest related imports prioritize without execution and preserve effective
   fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"module"}')
   fs.writeFileSync(
     path.join(workspace, 'vitest.behavior.browser.config.ts'),
-    `export default { test: {
+    `import { playwright } from '@vitest/browser-playwright'
+    export default { test: {
     include: ['*.test.tsx'], exclude: ['excluded.test.tsx'],
-    browser: { enabled: true, instances: [{ browser: 'chromium' }] }
+    browser: { enabled: true, provider: playwright(), instances: [{ browser: 'chromium' }] }
   } }`,
   )
   fs.writeFileSync(path.join(workspace, 'source.ts'), 'export const value = 1')
