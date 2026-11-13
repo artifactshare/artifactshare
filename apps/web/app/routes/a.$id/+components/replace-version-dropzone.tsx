@@ -13,6 +13,7 @@ import { hasLocalFiles } from './drag-files'
 
 export function ReplaceVersionDropzone({
   className,
+  compactOnMobile = false,
   active,
   uploading,
   inputRef,
@@ -22,6 +23,7 @@ export function ReplaceVersionDropzone({
   t,
 }: {
   className: string
+  compactOnMobile?: boolean
   active: boolean
   uploading: boolean
   inputRef: RefObject<HTMLInputElement | null>
@@ -43,13 +45,20 @@ export function ReplaceVersionDropzone({
     <div className={className}>
       {uploading ? (
         <div
-          className="bg-muted text-muted-foreground border-border flex w-full cursor-default flex-col items-center gap-1 rounded-[var(--r-lg)] border-2 border-solid p-4"
+          className={cn(
+            'bg-muted text-muted-foreground border-border flex w-full cursor-default flex-col items-center gap-1 rounded-[var(--r-lg)] border-2 border-solid p-4',
+            compactOnMobile &&
+              'max-sheet:flex-row max-sheet:flex-wrap max-sheet:justify-center max-sheet:gap-2 max-sheet:p-2',
+          )}
           data-panel-dropzone=""
           aria-live="polite"
           aria-busy="true"
         >
           <IconLoader
-            className="size-icon-dropzone text-link animate-spin [animation-duration:var(--anim-spin-duration)]"
+            className={cn(
+              'size-icon-dropzone text-link animate-spin [animation-duration:var(--anim-spin-duration)]',
+              compactOnMobile && 'max-sheet:size-4',
+            )}
             aria-hidden="true"
           />
           <span className="text-sm font-semibold">
@@ -61,6 +70,7 @@ export function ReplaceVersionDropzone({
         </div>
       ) : (
         <DropzoneButton
+          compactOnMobile={compactOnMobile}
           active={active}
           inputRef={inputRef}
           replaceMode={replaceMode}
@@ -116,6 +126,7 @@ export function ReplaceVersionDropzone({
 }
 
 function DropzoneButton({
+  compactOnMobile = false,
   active,
   inputRef,
   replaceMode,
@@ -123,6 +134,7 @@ function DropzoneButton({
   submitFiles,
   t,
 }: {
+  compactOnMobile?: boolean
   active: boolean
   inputRef: RefObject<HTMLInputElement | null>
   replaceMode: 'single' | 'static_site'
@@ -135,6 +147,8 @@ function DropzoneButton({
       type="button"
       className={cn(
         'text-foreground flex w-full cursor-pointer flex-col items-center gap-1 rounded-[var(--r-lg)] border-2 border-dashed p-4 transition-[border-color,background] duration-100',
+        compactOnMobile &&
+          'max-sheet:flex-row max-sheet:justify-center max-sheet:gap-2 max-sheet:p-2',
         active ? 'border-link bg-link-soft' : 'bg-muted border-border-strong',
       )}
       data-panel-dropzone=""
@@ -168,12 +182,35 @@ function DropzoneButton({
         }
       }}
     >
-      <UploadIcon className="size-icon-dropzone text-link" aria-hidden="true" />
-      <span className="text-sm font-semibold">{t('history.dropTitle')}</span>
-      <small className="text-muted-foreground text-xs">
+      <UploadIcon
+        className={cn(
+          'size-icon-dropzone text-link',
+          compactOnMobile && 'max-sheet:size-4',
+        )}
+        aria-hidden="true"
+      />
+      <span
+        className={cn(
+          'text-sm font-semibold',
+          compactOnMobile && 'max-sheet:hidden',
+        )}
+      >
+        {t('history.dropTitle')}
+      </span>
+      <small
+        className={cn(
+          'text-muted-foreground text-xs',
+          compactOnMobile && 'max-sheet:hidden',
+        )}
+      >
         {t('history.dropCaption')}
       </small>
-      <span className="bg-foreground text-background mt-1.5 rounded-[var(--r-sm)] px-3 py-1.5 text-sm font-medium">
+      <span
+        className={cn(
+          'bg-foreground text-background mt-1.5 rounded-[var(--r-sm)] px-3 py-1.5 text-sm font-medium',
+          compactOnMobile && 'max-sheet:mt-0',
+        )}
+      >
         {t('history.pickFile')}
       </span>
     </button>

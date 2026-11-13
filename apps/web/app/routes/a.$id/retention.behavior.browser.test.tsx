@@ -628,6 +628,8 @@ test.each([
           onOpenChange={() => {}}
           artifactId="abc123def4"
           canChangeRetention
+          canReplaceFile
+          onSubmit={() => {}}
           retainVersions={2}
           publisherManaged
           versions={[
@@ -666,18 +668,46 @@ test.each([
     const save = panel.querySelector<HTMLButtonElement>(
       '[data-retention-save]',
     )!
-    // The save action must precede the fields even when both fit on screen.
-    const fields = panel.querySelector('[role="radiogroup"]')!
-    expect(
-      save.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-    const bounds = save.getBoundingClientRect()
-    expect(bounds.width).toBeGreaterThan(0)
-    expect(bounds.height).toBeGreaterThan(0)
-    expect(bounds.top).toBeGreaterThanOrEqual(panel.getBoundingClientRect().top)
-    expect(bounds.bottom).toBeLessThanOrEqual(
-      Math.min(window.innerHeight, panel.getBoundingClientRect().bottom),
+    // Disabled buttons intentionally ignore pointer hits; measure every clipping
+    // ancestor before any interaction can scroll the initial action into view.
+    const expectUnclipped = (element: Element) => {
+      const bounds = element.getBoundingClientRect()
+      expect(bounds.width).toBeGreaterThan(0)
+      expect(bounds.height).toBeGreaterThan(0)
+      expect(bounds.top).toBeGreaterThanOrEqual(0)
+      expect(bounds.bottom).toBeLessThanOrEqual(window.innerHeight)
+      for (
+        let ancestor = element.parentElement;
+        ancestor;
+        ancestor = ancestor.parentElement
+      ) {
+        if (
+          /(auto|scroll|hidden|clip)/.test(getComputedStyle(ancestor).overflowY)
+        ) {
+          const clip = ancestor.getBoundingClientRect()
+          expect(
+            bounds.top,
+            'action above clipping ancestor',
+          ).toBeGreaterThanOrEqual(clip.top)
+          expect(
+            bounds.bottom,
+            'action below clipping ancestor',
+          ).toBeLessThanOrEqual(clip.bottom)
+        }
+      }
+    }
+    expectUnclipped(save)
+    const scroller = save.closest('form')!.parentElement!
+    // Use native keyboard scrolling, rather than assigning scrollTop.
+    scroller.tabIndex = -1
+    scroller.focus()
+    await userEvent.keyboard('{End}')
+    await vi.waitFor(() =>
+      expect(scroller.scrollTop).toBeGreaterThanOrEqual(
+        scroller.scrollHeight - scroller.clientHeight - 1,
+      ),
     )
+    expectUnclipped(page.getByRole('spinbutton').element())
     await expect
       .element(page.getByRole('radiogroup'))
       .toHaveAccessibleDescription(
@@ -690,6 +720,20 @@ test.each([
     expect(panel.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
+    scroller.focus()
+    await userEvent.keyboard('{Home}')
+    await vi.waitFor(() => {
+      expectUnclipped(save)
+      const bounds = save.getBoundingClientRect()
+      expect(
+        save.contains(
+          document.elementFromPoint(
+            bounds.left + bounds.width / 2,
+            bounds.top + bounds.height / 2,
+          ),
+        ),
+      ).toBe(true)
+    })
     fetchMock.mockResolvedValueOnce(preview(count))
     await page
       .getByRole('button', {
@@ -719,6 +763,22 @@ test.each([
       expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
     )
     await vi.waitFor(() => expect(document.activeElement).toBe(save))
+    fetchMock.mockRejectedValueOnce(new Error('offline'))
+    await userEvent.keyboard('{Enter}')
+    const status = panel.querySelector('[role="status"]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toContain(
+        locale === 'en'
+          ? 'Could not save. Please try again.'
+          : bindTestI18n(locale).t('vw.retentionFailed'),
+      ),
+    )
+    scroller.focus()
+    await userEvent.keyboard('{End}')
+    await vi.waitFor(() => {
+      expectUnclipped(status)
+      expectUnclipped(page.getByRole('link', { name: /v1/ }).element())
+    })
     expect(host.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     )

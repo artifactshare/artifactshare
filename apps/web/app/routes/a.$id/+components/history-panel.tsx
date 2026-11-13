@@ -84,6 +84,7 @@ export function HistoryPanel({
         })
       }}
       topbar={topbarCollapsed ? 'none' : 'viewer'}
+      className="max-sheet:h-[var(--height-history-panel-sheet)]"
       aria-describedby={undefined}
     >
       <SheetHeader>
@@ -171,7 +172,8 @@ export function HistoryPanelBody({
 
       {canReplaceFile ? (
         <ReplaceVersionDropzone
-          className="border-divider bg-card border-t p-3.5"
+          className="border-divider bg-card sheet:p-3.5 shrink-0 border-t p-2"
+          compactOnMobile
           active={active}
           uploading={uploading}
           inputRef={inputRef}
