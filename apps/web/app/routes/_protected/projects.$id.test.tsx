@@ -1051,7 +1051,7 @@ test.each(['member', 'shared'] as const)(
         {
           modifiedTime: '2026-07-01T00:00:00Z',
           versionCount: 1,
-          badgeVersionNumber: null,
+          badgeVersionNumber: 1,
         },
       )
       expect(first.projectActivity.pins).toHaveLength(1)
@@ -1098,7 +1098,7 @@ test.each(['member', 'shared'] as const)(
       expect(mixed.files.map((file) => file.id)).toEqual(['scheduled', 'other'])
       expect(mixed.files[0]).toMatchObject({
         versionCount: 4,
-        badgeVersionNumber: 3,
+        badgeVersionNumber: 4,
         latestPublishedAt: NOW,
       })
       expect(mixed.projectActivity.pins[0]).toMatchObject({

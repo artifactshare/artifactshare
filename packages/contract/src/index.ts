@@ -573,7 +573,11 @@ export const ArtifactVersionUpdateResponseSchema = z.object({
   label: VersionLabelSchema.nullable().optional(),
   id: stringId.optional(),
   versionId: stringId,
-  shareUrl: url.optional(),
+  shareUrl: url
+    .describe(
+      'Publisher version appends return the stable app /a/:id viewer URL, independent of current visibility. Normal viewer authorization and host routing apply.',
+    )
+    .optional(),
   /** Static-site replacement responses include this field. */
   artifactKind: UploadArtifactKindSchema.optional(),
 })

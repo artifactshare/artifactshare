@@ -1,4 +1,3 @@
-import { retentionSummary } from './retention-copy'
 import { RetentionEditor } from './retention-editor'
 import { IconHistory as HistoryIcon, IconX } from '@tabler/icons-react'
 import { useRef, useState, type RefObject } from 'react'
@@ -21,6 +20,7 @@ interface HistoryPanelProps {
   artifactId?: string
   canChangeRetention?: boolean
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   open: boolean
@@ -39,6 +39,7 @@ export function HistoryPanel({
   versions,
   retainVersions,
   publisherManaged,
+  extraProtectedCurrentVersion,
   artifactId,
   canChangeRetention,
   open,
@@ -83,6 +84,7 @@ export function HistoryPanel({
         })
       }}
       topbar={topbarCollapsed ? 'none' : 'viewer'}
+      className="max-sheet:h-[var(--height-history-panel-sheet)]"
       aria-describedby={undefined}
     >
       <SheetHeader>
@@ -104,6 +106,7 @@ export function HistoryPanel({
         canChangeRetention={canChangeRetention}
         retainVersions={retainVersions}
         publisherManaged={publisherManaged}
+        extraProtectedCurrentVersion={extraProtectedCurrentVersion}
         versions={versions}
         canReplaceFile={canReplaceFile}
         active={active}
@@ -123,6 +126,7 @@ export function HistoryPanelBody({
   versions,
   retainVersions,
   publisherManaged,
+  extraProtectedCurrentVersion,
   artifactId,
   canChangeRetention,
   canReplaceFile,
@@ -138,6 +142,7 @@ export function HistoryPanelBody({
   artifactId?: string
   canChangeRetention?: boolean
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   retainVersions?: number | null
   versions: ReadonlyArray<VersionRow>
   canReplaceFile: boolean
@@ -159,18 +164,16 @@ export function HistoryPanelBody({
             artifactId={artifactId}
             retainVersions={retainVersions ?? null}
             publisherManaged={publisherManaged}
+            extraProtectedCurrentVersion={extraProtectedCurrentVersion}
           />
-        ) : retainVersions != null ? (
-          <p className="text-muted-foreground m-0 text-xs">
-            {retentionSummary(retainVersions, publisherManaged, t)}
-          </p>
         ) : null}
         <VersionRows versions={versions} locale={locale} t={t} />
       </div>
 
       {canReplaceFile ? (
         <ReplaceVersionDropzone
-          className="border-divider bg-card border-t p-3.5"
+          className="border-divider bg-card sheet:p-3.5 shrink-0 border-t p-2"
+          compactOnMobile
           active={active}
           uploading={uploading}
           inputRef={inputRef}

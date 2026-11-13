@@ -1,3 +1,4 @@
+import { hasExtraProtectedCurrentVersion } from '~/services/version-retention.server'
 import {
   selectArtifactVersion,
   isRemovedArtifactVersion,
@@ -111,6 +112,7 @@ interface ArtifactSummary {
   canChangeRetention?: boolean
   retainVersions?: number | null
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   versions: ReadonlyArray<VersionRow>
   hasDirectGrants?: boolean
   grants: ReadonlyArray<GrantEntry>
@@ -233,6 +235,7 @@ export type LoaderData =
         canChangeRetention?: boolean
         retainVersions?: number | null
         publisherManaged?: boolean
+        extraProtectedCurrentVersion?: boolean
         versions: ReadonlyArray<VersionRow>
         hasDirectGrants?: boolean
         grants: ReadonlyArray<GrantEntry>
@@ -425,6 +428,22 @@ export async function loader({
     shareable.owner_user_id === user.id &&
     accessFacts?.workspaceAccessRevoked === false
 
+  const canManageRetention =
+    ownerManagementAccess && allowsHumanCliMutation(getCliAuthority(context))
+  const retentionMetadata = canManageRetention
+    ? {
+        retainVersions: shareable.retain_versions,
+        publisherManaged:
+          shareable.created_by_publisher_client_id != null ||
+          shareable.assigned_publisher_client_id != null,
+        extraProtectedCurrentVersion:
+          shareable.retain_versions != null &&
+          (shareable.created_by_publisher_client_id != null ||
+            shareable.assigned_publisher_client_id != null) &&
+          (await hasExtraProtectedCurrentVersion(db, shareable.id)),
+      }
+    : {}
+
   if (
     displayCheck.kind === 'access-denied' &&
     linkAccess?.kind === 'suspended' &&
@@ -512,13 +531,15 @@ export async function loader({
         fallback_to_index: shareable.fallback_to_index ?? 0,
       }
   if (!displayedVersion) {
-    const removed = await removedVersionResponse(
-      db,
-      shareable.id,
-      requestedVersionId,
-      userInfo,
-      `/a/${shareable.id}`,
-    )
+    const removed = canManageRetention
+      ? await removedVersionResponse(
+          db,
+          shareable.id,
+          requestedVersionId,
+          userInfo,
+          `/a/${shareable.id}`,
+        )
+      : null
     if (removed) return removed
     throw new Response('Not found', { status: 404 })
   }
@@ -586,13 +607,15 @@ export async function loader({
     (version) => version.id === displayedVersion.id,
   )
   if (!displayedHistoryVersion) {
-    const removed = await removedVersionResponse(
-      db,
-      shareable.id,
-      requestedVersionId,
-      userInfo,
-      `/a/${shareable.id}`,
-    )
+    const removed = canManageRetention
+      ? await removedVersionResponse(
+          db,
+          shareable.id,
+          requestedVersionId,
+          userInfo,
+          `/a/${shareable.id}`,
+        )
+      : null
     if (removed) return removed
     throw new Response('Not found', { status: 404 })
   }
@@ -800,12 +823,8 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
-        canChangeRetention:
-          isOwner && allowsHumanCliMutation(getCliAuthority(context)),
-        retainVersions: shareable.retain_versions,
-        publisherManaged:
-          shareable.created_by_publisher_client_id != null ||
-          shareable.assigned_publisher_client_id != null,
+        canChangeRetention: canManageRetention,
+        ...retentionMetadata,
         versions,
         grants,
         hasDirectGrants,
@@ -838,12 +857,8 @@ export async function loader({
         displayedVersionId: displayedVersion.id,
         displayedVersionOrdinal,
         isHistoricalVersion,
-        canChangeRetention:
-          isOwner && allowsHumanCliMutation(getCliAuthority(context)),
-        retainVersions: shareable.retain_versions,
-        publisherManaged:
-          shareable.created_by_publisher_client_id != null ||
-          shareable.assigned_publisher_client_id != null,
+        canChangeRetention: canManageRetention,
+        ...retentionMetadata,
         versions,
         grants,
         hasDirectGrants,
@@ -905,12 +920,8 @@ export async function loader({
       displayedVersionId: displayedVersion.id,
       displayedVersionOrdinal,
       isHistoricalVersion,
-      canChangeRetention:
-        isOwner && allowsHumanCliMutation(getCliAuthority(context)),
-      retainVersions: shareable.retain_versions,
-      publisherManaged:
-        shareable.created_by_publisher_client_id != null ||
-        shareable.assigned_publisher_client_id != null,
+      canChangeRetention: canManageRetention,
+      ...retentionMetadata,
       versions,
       grants,
       hasDirectGrants,
@@ -1006,14 +1017,6 @@ async function buildLinkAnonymousResponse(
 
   if (options.redirectToLinkDomain) {
     const requestUrl = new URL(request.url)
-    const removed = await removedVersionResponse(
-      db,
-      shareable.id,
-      requestUrl.searchParams.get('version')?.trim(),
-      null,
-      canonicalUrl,
-    )
-    if (removed) return removed
     const redirectUrl = new URL(
       linkViewerHistoryUrl('/', requestUrl.search, ''),
       canonicalUrl,

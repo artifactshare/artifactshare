@@ -38,6 +38,24 @@ export function candidates(shareableId: string, proposed?: number | null) {
       ))`
 }
 
+// Complete published ordering, independent of the visible history page.
+export async function hasExtraProtectedCurrentVersion(
+  db: Kysely<DB>,
+  shareableId: string,
+) {
+  const result = await sql<{ extra: number }>`SELECT EXISTS (
+    SELECT 1 FROM shareables s JOIN versions v ON v.id = s.current_version_id AND v.shareable_id = s.id
+    WHERE s.id = ${shareableId} AND s.retain_versions IS NOT NULL
+      AND (s.created_by_publisher_client_id IS NOT NULL OR s.assigned_publisher_client_id IS NOT NULL)
+      AND v.status = 'published' AND v.published_at IS NOT NULL
+      AND v.created_by_publisher_client_id IS NOT NULL
+      AND (SELECT COUNT(*) FROM versions newer WHERE newer.shareable_id = s.id
+        AND newer.status = 'published' AND newer.published_at IS NOT NULL
+        AND newer.created_by_publisher_client_id IS NOT NULL AND newer.number > v.number) >= s.retain_versions
+  ) AS extra`.execute(db)
+  return Boolean(result.rows[0]?.extra)
+}
+
 export async function pruneVersions(
   db: Kysely<DB>,
   shareableId: string,

@@ -5,6 +5,7 @@ import {
 import { requireUserApiMiddleware } from '~/middleware/auth'
 import { requireUser } from '~/middleware/context'
 import {
+  isPendingUnrestrictedDeviceApproval,
   loadAgentApprovalContext,
   loadPublisherApprovalContext,
 } from '~/services/cli-device-authority.server'
@@ -22,20 +23,33 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       DeviceApprovalResponseSchema.parse({ agentApproval: null }),
     )
   }
-  const publisherApproval = await loadPublisherApprovalContext(
-    query.data.user_code,
-    user.id,
-    user.workspaceId,
-  )
+  const [publisherApproval, agentApproval] = await Promise.all([
+    loadPublisherApprovalContext(
+      query.data.user_code,
+      user.id,
+      user.workspaceId,
+    ),
+    loadAgentApprovalContext(
+      query.data.user_code,
+      user.id,
+      user.workspaceId,
+      user.email,
+    ),
+  ])
+  if (
+    !publisherApproval &&
+    !agentApproval &&
+    !(await isPendingUnrestrictedDeviceApproval(query.data.user_code, user.id))
+  ) {
+    return new Response(null, {
+      status: 503,
+      headers: { 'Cache-Control': 'private, no-store' },
+    })
+  }
   return Response.json(
     DeviceApprovalResponseSchema.parse({
       ...(publisherApproval ? { publisherApproval } : {}),
-      agentApproval: await loadAgentApprovalContext(
-        query.data.user_code,
-        user.id,
-        user.workspaceId,
-        user.email,
-      ),
+      agentApproval,
     }),
   )
 }

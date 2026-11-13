@@ -24,3 +24,29 @@ test('viewer loader distinguishes successful empty grants from unavailable or re
   expect(viewer.artifact.grants).toEqual([])
   expect(viewer.artifact.hasDirectGrants).toBeUndefined()
 })
+
+test.each(['owner', 'member', 'anonymous'] as const)(
+  'allowed %s reads expose management evidence only to managers',
+  async (persona) => {
+    for (const historical of [false, true]) {
+      const result = await loadPublishedViewer({
+        locale: 'en',
+        scheduled: true,
+        historical,
+        persona,
+      })
+      expect(result.kind).toBe('ok')
+      expect(result.sandboxUrl).toBeTruthy()
+      if (persona === 'owner') {
+        expect(result.artifact.canChangeRetention).toBe(true)
+        expect(result.artifact.publisherManaged).toBe(true)
+      } else {
+        expect(result.artifact).not.toHaveProperty('retainVersions')
+        expect(result.artifact).not.toHaveProperty('publisherManaged')
+        expect(result.artifact).not.toHaveProperty(
+          'extraProtectedCurrentVersion',
+        )
+      }
+    }
+  },
+)

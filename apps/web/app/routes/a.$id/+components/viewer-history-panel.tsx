@@ -10,6 +10,7 @@ type ViewerHistoryPanelProps = {
     | 'canChangeRetention'
     | 'retainVersions'
     | 'publisherManaged'
+    | 'extraProtectedCurrentVersion'
     | 'versions'
   >
   state: {
@@ -46,6 +47,7 @@ export function ViewerHistoryPanel({
       canChangeRetention={artifact.canChangeRetention}
       retainVersions={artifact.retainVersions}
       publisherManaged={artifact.publisherManaged}
+      extraProtectedCurrentVersion={artifact.extraProtectedCurrentVersion}
       versions={artifact.versions ?? []}
       open={state.historyOpen}
       onOpenChange={(open) => {

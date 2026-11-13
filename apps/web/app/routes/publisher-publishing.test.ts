@@ -1,3 +1,4 @@
+import { ArtifactVersionUpdateResponseSchema } from '@artifactshare/contract'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import type { D1BatchStmt } from '~/test/d1-batch-mock'
 import type { DatabaseSync } from 'node:sqlite'
@@ -1711,3 +1712,66 @@ test('publisher cannot turn human project ownership into destination or move aut
   }
   expect(bodies[0]).toEqual(bodies[1])
 })
+
+test.each(['html_page', 'markdown_page', 'static_site'] as const)(
+  'publisher %s append URL does not disclose visibility',
+  async (kind) => {
+    const created = kind === 'static_site' ? await createSite() : await create()
+    let current = created.versionId
+    for (const visibility of ['private', 'workspace', 'link']) {
+      fixture
+        .current!.prepare('UPDATE shareables SET visibility = ? WHERE id = ?')
+        .run(visibility, created.id)
+      const body =
+        kind === 'static_site'
+          ? site({ 'index.html': '<h1>Updated</h1>' })
+          : new FormData()
+      if (kind !== 'static_site')
+        body.set(
+          'file',
+          new File(
+            [kind === 'markdown_page' ? '# Updated' : '<p>Updated</p>'],
+            kind === 'markdown_page' ? 'report.md' : 'report.html',
+            { type: kind === 'markdown_page' ? 'text/markdown' : 'text/html' },
+          ),
+        )
+      const response = await update(
+        args(
+          `/api/shareables/${created.id}/versions?${kind === 'static_site' ? 'artifact_kind=static_site&' : ''}expected_version=${current}`,
+          body,
+          created.id,
+        ),
+      )
+      expect(response.status).toBe(200)
+      const result = ArtifactVersionUpdateResponseSchema.parse(
+        await response.json(),
+      )
+      expect(result.shareUrl).toBe(`https://example.test/a/${created.id}`)
+      const storedKey =
+        kind === 'static_site'
+          ? fixture
+              .current!.prepare(
+                "SELECT r2_key FROM version_files WHERE version_id = ? AND path = '/index.html'",
+              )
+              .get(result.versionId)
+          : fixture
+              .current!.prepare('SELECT r2_key FROM versions WHERE id = ?')
+              .get(result.versionId)
+      expect(blobs.get(String(storedKey!.r2_key))).toBe(
+        kind === 'static_site'
+          ? '<h1>Updated</h1>'
+          : kind === 'markdown_page'
+            ? '# Updated'
+            : '<p>Updated</p>',
+      )
+      current = result.versionId
+      expect(
+        fixture
+          .current!.prepare(
+            'SELECT current_version_id FROM shareables WHERE id = ?',
+          )
+          .get(created.id),
+      ).toMatchObject({ current_version_id: current })
+    }
+  },
+)

@@ -281,7 +281,8 @@ removal and unattended token imports.
 
 Read [REST API only](references/rest-api-only.md) when working directly with
 static-site inheritance or publisher device credentials. These have no supported
-CLI workflows; do not invent flags for them.
+CLI workflows; do not invent flags for them. Publisher version append responses
+use a stable app viewer URL regardless of visibility; opening it still checks access.
 
 ## Quick reference
 

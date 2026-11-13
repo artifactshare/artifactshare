@@ -32,6 +32,8 @@ flags, MCP inputs, or bridge inputs for inheritance.
 
 ### Publisher device credentials (API only)
 
+Publisher version appends return a stable app /a/:id shareUrl for HTML, Markdown and static sites, independent of current visibility. Opening it uses normal viewer authorization and host routing; human update URLs retain their existing visibility behavior.
+
 Versions added with publisher credentials are scheduled updates: content and live viewers refresh, but list order, feeds, unread indicators, and human update labels do not change. Browser history marks Scheduled update without exposing client names. API `updated_at` remains the actual mutation time; internal `activity_at` controls human activity ordering. Initial creation and versions published through other credentials keep their existing behavior.
 
 The device API accepts `preset: "publisher"` with a required `device_name`.

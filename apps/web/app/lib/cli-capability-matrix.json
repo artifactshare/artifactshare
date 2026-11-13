@@ -62,6 +62,7 @@
     },
     {
       "id": "publisher-artifact-api",
+      "description": "Publisher version appends return a stable app /a/:id shareUrl for HTML, Markdown and static sites, independent of current visibility. Opening it uses normal viewer authorization and host routing; human update URLs retain their existing visibility behavior.",
       "identifier": "REST_OPERATIONS",
       "implementation_path": "packages/contract/src/surface-contract.mjs"
     },

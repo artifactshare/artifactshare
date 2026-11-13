@@ -32,6 +32,7 @@ interface VersionWidgetProps {
     limit: number | null
     editable: boolean
     publisherManaged?: boolean
+    extraProtectedCurrentVersion?: boolean
   }
   canViewHistory?: boolean
   canReplaceFile?: boolean
@@ -394,7 +395,7 @@ function VersionActivityOnly({
   )
 }
 
-function VersionHistoryPreview({
+export function VersionHistoryPreview({
   retention,
   versions,
 }: Pick<VersionWidgetProps, 'retention' | 'versions'>) {
@@ -402,9 +403,14 @@ function VersionHistoryPreview({
   const retainVersions = retention?.limit
   return (
     <>
-      {retainVersions != null ? (
+      {retention?.editable ? (
         <p className="text-muted-foreground m-0 px-2 text-xs">
-          {retentionSummary(retainVersions, retention?.publisherManaged, t)}
+          {retentionSummary(
+            retainVersions ?? null,
+            retention?.publisherManaged,
+            t,
+            retention?.extraProtectedCurrentVersion,
+          )}
         </p>
       ) : null}
       <VersionRows

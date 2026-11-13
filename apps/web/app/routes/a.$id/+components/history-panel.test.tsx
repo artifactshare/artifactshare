@@ -1,3 +1,4 @@
+import { VersionHistoryPreview } from './version-widget'
 import { bindI18n } from '~/lib/i18n'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
@@ -5,35 +6,40 @@ import { HistoryPanel, HistoryPanelBody, VersionWidget } from './history-panel'
 import { hasLocalFiles } from './drag-files'
 import { VersionRows } from './version-rows'
 
+const localized = vi.hoisted(() => ({ locale: null as 'en' | 'ja' | null }))
+
 vi.mock('~/hooks/use-t', () => ({
-  useT: () => ({
-    locale: 'en',
-    t: (key: string, vars?: Record<string, string | number>) =>
-      ({
-        'vw.retentionNoteOther': `Keeping the latest ${vars?.count} versions`,
-        'vw.versionHistory': 'History & add new version',
-        'vw.versionHistoryReadonly': 'Version history',
-        'common.close': 'Close',
-        'history.current': 'Current',
-        'history.empty': 'No versions yet.',
-        'history.viewAll': 'Open history',
-        'history.updateShort': 'Update available',
-        'history.updateAvailable': 'A new version is available',
-        'history.showLatest': 'Show latest',
-        'history.dropTitle': 'Add new version',
-        'history.dropCaption': 'Drop here, or use the button below',
-        'history.pickFile': 'Choose file...',
-        'history.uploadingTitle': 'Uploading',
-        'history.uploadingCaption': 'Registering a new version...',
-        'upload.pick.folder': 'Upload site folder',
-        'upload.error.missingFile': 'Choose a file to upload.',
-        'vw.versionStatus': 'Version status',
-        'vw.activityStatus': 'Activity and version status',
-        'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
-        'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
-      })[key] ?? key,
-    tPlural: (_stem: string, count: number) => `${count} new comments`,
-  }),
+  useT: () =>
+    localized.locale
+      ? bindI18n(localized.locale)
+      : {
+          locale: 'en',
+          t: (key: string, vars?: Record<string, string | number>) =>
+            ({
+              'vw.retentionNoteOther': `Keeping the latest ${vars?.count} versions`,
+              'vw.versionHistory': 'History & add new version',
+              'vw.versionHistoryReadonly': 'Version history',
+              'common.close': 'Close',
+              'history.current': 'Current',
+              'history.empty': 'No versions yet.',
+              'history.viewAll': 'Open history',
+              'history.updateShort': 'Update available',
+              'history.updateAvailable': 'A new version is available',
+              'history.showLatest': 'Show latest',
+              'history.dropTitle': 'Add new version',
+              'history.dropCaption': 'Drop here, or use the button below',
+              'history.pickFile': 'Choose file...',
+              'history.uploadingTitle': 'Uploading',
+              'history.uploadingCaption': 'Registering a new version...',
+              'upload.pick.folder': 'Upload site folder',
+              'upload.error.missingFile': 'Choose a file to upload.',
+              'vw.versionStatus': 'Version status',
+              'vw.activityStatus': 'Activity and version status',
+              'vw.versionStatusWithVersion': `Version status: ${vars?.version ?? ''}`,
+              'vw.versionStatusWithUpdate': `Version status: ${vars?.version ?? ''}, new version available`,
+            })[key] ?? key,
+          tPlural: (_stem: string, count: number) => `${count} new comments`,
+        },
 }))
 
 vi.mock('react-router', () => ({
@@ -371,7 +377,7 @@ test.each([
   { locale: 'ja', retainVersions: 24, note: '最新24件の版を残しています' },
   { locale: 'ja', retainVersions: null, note: null },
 ] as const)(
-  '$locale history notes configured retention $retainVersions',
+  '$locale nonmanager history withholds configured retention $retainVersions',
   ({ locale, retainVersions, note }) => {
     const html = renderToStaticMarkup(
       <HistoryPanelBody
@@ -392,7 +398,7 @@ test.each([
       expect(html).not.toContain('Keeping the latest')
       expect(html).not.toContain('残しています')
     } else {
-      expect(html).toContain(`>${note}</p>`)
+      expect(html).not.toContain(`>${note}</p>`)
     }
   },
 )
@@ -419,15 +425,23 @@ test.each([true, false])(
     )
     expect(html.includes('data-retention-change')).toBe(canChangeRetention)
     if (canChangeRetention) expect(html).toContain('aria-expanded="false"')
-    expect(html).toContain('Keeping the latest 2 versions')
+    expect(html.includes('Keeping the latest 2 versions')).toBe(
+      canChangeRetention,
+    )
   },
 )
 
-test.each(['en', 'ja'] as const)(
-  '%s scheduled history preserves labels and links without personal attribution',
-  (locale) => {
+test.each([
+  ['en', 'panel'],
+  ['en', 'popover'],
+  ['ja', 'panel'],
+  ['ja', 'popover'],
+] as const)(
+  '%s %s scheduled history preserves labels and links without personal attribution',
+  (locale, density) => {
     const html = renderToStaticMarkup(
       <VersionRows
+        density={density}
         locale={locale}
         t={bindI18n(locale).t}
         versions={[
@@ -454,7 +468,11 @@ test.each(['en', 'ja'] as const)(
         ]}
       />,
     )
-    expect(html).toContain(locale === 'en' ? 'Scheduled update' : '定期更新')
+    expect(html).toMatch(
+      new RegExp(
+        `<div[^>]*>\\s*<span[^>]*>${locale === 'en' ? 'Scheduled update' : '定期更新'}</span>[\\s\\S]*?10 B</span>\\s*</div>`,
+      ),
+    )
     expect(
       html.split(locale === 'en' ? 'Scheduled update' : '定期更新'),
     ).toHaveLength(2)
@@ -488,7 +506,7 @@ test.each([
 )
 
 test.each(['en', 'ja'] as const)(
-  'managed %s read-only history explains human preservation',
+  'managed %s read-only history withholds retention summaries',
   (locale) => {
     for (const publisherManaged of [false, true]) {
       const html = renderToStaticMarkup(
@@ -511,8 +529,8 @@ test.each(['en', 'ja'] as const)(
         locale === 'en'
           ? 'All versions people added are kept.'
           : '人が追加した版はすべて残します。'
-      expect(html.includes(protection)).toBe(publisherManaged)
-      expect(html).toContain(
+      expect(html).not.toContain(protection)
+      expect(html).not.toContain(
         locale === 'en'
           ? publisherManaged
             ? 'Keeping the latest 2 scheduled versions.'
@@ -521,6 +539,84 @@ test.each(['en', 'ja'] as const)(
             ? '最新2件の定期更新の版'
             : '最新2件の版',
       )
+    }
+  },
+)
+
+test.each(['en', 'ja'] as const)(
+  '%s panel and popover show retention only with management evidence',
+  (locale) => {
+    localized.locale = locale
+    try {
+      const versions = [
+        {
+          id: 'v1',
+          ordinal: 1,
+          createdAt: '2026-05-29T00:00:00.000Z',
+          sizeBytes: 10,
+          isCurrent: true,
+          isDisplayed: false,
+        },
+        {
+          id: 'v2',
+          ordinal: 2,
+          createdAt: '2026-05-30T00:00:00.000Z',
+          sizeBytes: 10,
+          isCurrent: false,
+          isDisplayed: true,
+        },
+      ]
+      for (const editable of [false, true]) {
+        for (const managed of [false, true]) {
+          const evidence = editable
+            ? {
+                publisherManaged: managed,
+                extraProtectedCurrentVersion: managed,
+              }
+            : {}
+          const views = [
+            <HistoryPanelBody
+              artifactId="abc123def4"
+              canChangeRetention={editable}
+              retainVersions={1}
+              {...evidence}
+              versions={versions}
+              canReplaceFile={false}
+              active={false}
+              uploading={false}
+              inputRef={{ current: null }}
+              replaceMode="single"
+              setLocalDropActive={() => {}}
+              submitFiles={() => {}}
+              locale={locale}
+              t={bindI18n(locale).t}
+            />,
+            <VersionHistoryPreview
+              retention={{ limit: 1, editable, ...evidence }}
+              versions={versions}
+            />,
+          ]
+          for (const view of views) {
+            const html = renderToStaticMarkup(view)
+            expect(html).toContain('v1')
+            expect(html).toContain('v2')
+            if (locale === 'ja' && editable && managed) {
+              expect(html).toContain(
+                'ファイルの現在の版に設定されている古い定期更新の版も残しています。',
+              )
+              expect(html).not.toContain('現在表示している')
+            }
+            expect(
+              html.includes(locale === 'en' ? 'Keeping' : '残しています'),
+            ).toBe(editable)
+            expect(
+              html.includes(bindI18n(locale).t('vw.retentionExtraCurrent')),
+            ).toBe(editable && managed)
+          }
+        }
+      }
+    } finally {
+      localized.locale = null
     }
   },
 )

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Clarify that publisher API version appends return a stable app viewer URL without exposing current visibility. Viewer authorization still applies.
+
 - Workspace bot credentials can post to administrator-approved destination projects without reimport. `projects list` shows the approved destinations; `doctor` accepts a publishable approved secondary default and diagnoses archived or grant-revoked destinations while retaining the singular primary contract. Private-project reports must explicitly use project visibility. Update the bundled skill to version 64 with this guidance.
 
 ## 0.23.0 - 2026-11-09

@@ -1,3 +1,6 @@
+vi.mock('~/services/version-retention.server', () => ({
+  hasExtraProtectedCurrentVersion: async () => false,
+}))
 import * as artifactTypes from '~/lib/artifact-type'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { ViewerShell } from './+components/viewer-shell'
@@ -2247,7 +2250,7 @@ describe('retention removal access', () => {
     vi.clearAllMocks()
     isWorkspaceAccessRevokedMock.mockResolvedValue(false)
   })
-  test.each([false, true])(
+  test.each([false])(
     'removed versions return 410 without content or tracking (anonymous: %s)',
     async (anonymous) => {
       const { context } = setupHtmlShareable()
@@ -2468,5 +2471,98 @@ test.each([
     const serialized = JSON.stringify(result)
     expect(serialized).not.toContain('client1')
     expect(serialized).not.toContain('client2')
+  },
+)
+
+test('anonymous removed and unknown versions have the same app-to-link redirect', async () => {
+  const { context } = setupHtmlShareable()
+  context.set(userContext, null)
+  dbMock.selectFrom.mockImplementation((table: string) => {
+    if (table === 'shareables')
+      return shareableQuery({
+        id: 'html123abc',
+        visibility: 'link',
+        workspace_id: 'ws1',
+        owner_user_id: 'u1',
+        current_version_id: 'v2',
+        r2_key: 'key2',
+      })
+    if (table === 'version_retention_tombstones')
+      return chain({
+        executeTakeFirst: async () => ({ version_id: 'removed' }),
+      })
+    return emptyFirstQuery()
+  })
+  for (const version of ['removed', 'unknown']) {
+    await expect(
+      loader({
+        params: { id: 'html123abc' },
+        request: new Request(
+          `https://artifactshare.com/a/html123abc?version=${version}`,
+        ),
+        context,
+      } as never),
+    ).rejects.toMatchObject({ status: 301, headers: expect.any(Headers) })
+  }
+  expect(dbMock.selectFrom).not.toHaveBeenCalledWith(
+    'version_retention_tombstones',
+  )
+})
+
+test.each(['html_page', 'markdown_page', 'static_site', 'unknown'] as const)(
+  'allowed %s responses withhold management fields from shared readers',
+  async (kind) => {
+    isWorkspaceAccessRevokedMock.mockResolvedValue(false)
+    const classify = vi.spyOn(artifactTypes, 'detectArtifactType')
+    if (kind === 'unknown') classify.mockReturnValue(null)
+    try {
+      for (const owner of [true, false]) {
+        const { context } = setupHtmlShareable({
+          shareable: {
+            version_artifact_kind: kind,
+            artifact_kind: kind,
+            owner_user_id: owner ? 'u1' : 'u2',
+            retain_versions: 1,
+            assigned_publisher_client_id: 'client1',
+          },
+        })
+        const select = dbMock.selectFrom.getMockImplementation()!
+        dbMock.selectFrom.mockImplementation((table: string) =>
+          table === 'version_files' ? versionFilesQuery() : select(table),
+        )
+        const result = await loader({
+          params: { id: 'html123abc' },
+          request: new Request('https://artifactshare.com/a/html123abc'),
+          context,
+        } as never)
+        expect(result.kind).toBe(
+          kind === 'static_site'
+            ? 'static_site'
+            : kind === 'unknown'
+              ? 'unsupported'
+              : 'ok',
+        )
+        if (
+          result.kind !== 'ok' &&
+          result.kind !== 'static_site' &&
+          result.kind !== 'unsupported'
+        )
+          throw new Error('Expected allowed content')
+        expect(result.artifact.versions).not.toHaveLength(0)
+        expect(result.artifact.canChangeRetention).toBe(owner)
+        if (owner) {
+          expect(result.artifact.publisherManaged).toBe(true)
+          expect(result.artifact.retainVersions).toBe(1)
+        } else {
+          expect(result.artifact).not.toHaveProperty('retainVersions')
+          expect(result.artifact).not.toHaveProperty('publisherManaged')
+          expect(result.artifact).not.toHaveProperty(
+            'extraProtectedCurrentVersion',
+          )
+        }
+      }
+    } finally {
+      classify.mockRestore()
+    }
   },
 )

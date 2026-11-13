@@ -13,6 +13,7 @@ vi.mock('~/middleware/context', () => ({
 }))
 
 vi.mock('~/services/cli-device-authority.server', () => ({
+  isPendingUnrestrictedDeviceApproval: vi.fn().mockResolvedValue(true),
   loadAgentApprovalContext: loadAgentApprovalContextMock,
   loadPublisherApprovalContext: vi.fn().mockResolvedValue(null),
 }))
@@ -80,7 +81,7 @@ describe('/api/cli/device-approval', () => {
     )
   })
 
-  test('returns the legacy null response when no agent approval exists', async () => {
+  test('returns the null response for a verified unrestricted request', async () => {
     loadAgentApprovalContextMock.mockResolvedValue(null)
 
     const response = await loader({
@@ -108,4 +109,24 @@ describe('/api/cli/device-approval', () => {
     }
     expect(loadAgentApprovalContextMock).not.toHaveBeenCalled()
   })
+})
+
+test('missing publisher context is unavailable, never unrestricted approval', async () => {
+  const authority = await import('~/services/cli-device-authority.server')
+  vi.mocked(
+    authority.isPendingUnrestrictedDeviceApproval,
+  ).mockResolvedValueOnce(false)
+  requireUserMock.mockReturnValue(user)
+  const response = await loader({
+    context: {},
+    request: new Request(
+      'https://artifactshare.test/api/cli/device-approval?user_code=AB12CD34',
+    ),
+  } as never)
+  expect(authority.isPendingUnrestrictedDeviceApproval).toHaveBeenCalledWith(
+    'AB12CD34',
+    user.id,
+  )
+  expect(response.status).toBe(503)
+  expect(await response.text()).toBe('')
 })

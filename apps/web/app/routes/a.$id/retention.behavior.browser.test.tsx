@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { createMemoryRouter, RouterProvider, useLoaderData } from 'react-router'
 import { VersionWidget } from './+components/version-widget'
-import { HistoryPanelBody } from './+components/history-panel'
+import { HistoryPanel, HistoryPanelBody } from './+components/history-panel'
 import { bindI18n as bindTestI18n } from '~/lib/i18n'
 import { RetentionEditor } from './+components/retention-editor'
 import ViewerRoute from './+viewer'
@@ -612,23 +612,148 @@ test.each(['failed', 'changed'] as const)(
 )
 
 test.each([
-  ['en', 1],
-  ['en', 2],
-  ['ja', 1],
-  ['ja', 2],
+  ['en', 1, 'single'],
+  ['en', 2, 'single'],
+  ['ja', 1, 'single'],
+  ['ja', 2, 'single'],
+  ['ja', 1, 'static_site'],
 ] as const)(
-  'managed %s editor wraps protection on mobile and confirms %s scheduled removals',
-  async (locale, count) => {
+  'managed %s editor wraps protection on mobile and confirms %s scheduled removals (%s)',
+  async (locale, count, replaceMode) => {
     state.locale = locale
-    await page.viewport(390, 844)
-    await mount(2, true, true)
+    await page.viewport(390, count === 1 ? 600 : 844)
+    await act(async () =>
+      root.render(
+        <HistoryPanel
+          open
+          onOpenChange={() => {}}
+          artifactId="abc123def4"
+          canChangeRetention
+          canReplaceFile
+          replaceMode={replaceMode}
+          onSubmit={() => {}}
+          retainVersions={2}
+          publisherManaged
+          versions={[
+            {
+              id: 'v1',
+              ordinal: 1,
+              createdAt: '2026-05-29T00:00:00.000Z',
+              sizeBytes: 10,
+              isCurrent: true,
+            },
+          ]}
+        />,
+      ),
+    )
+    await expect
+      .element(
+        page.getByRole('button', {
+          name: locale === 'en' ? 'Change' : '変更',
+          exact: true,
+        }),
+      )
+      .toBeVisible()
+    expect(
+      page.getByRole('link', { name: /v1/ }).element().getBoundingClientRect()
+        .height,
+    ).toBeGreaterThan(0)
+    await page
+      .getByRole('button', {
+        name: locale === 'en' ? 'Change' : '変更',
+        exact: true,
+      })
+      .click()
+    await waitForBrowserLayout()
+    // Observe before any field/click helper can scroll the save action into view.
+    const panel = document.querySelector('[data-slot="sheet-content"]')!
+    const save = panel.querySelector<HTMLButtonElement>(
+      '[data-retention-save]',
+    )!
+    // Disabled buttons intentionally ignore pointer hits; measure every clipping
+    // ancestor before any interaction can scroll the initial action into view.
+    const expectUnclipped = (element: Element) => {
+      const bounds = element.getBoundingClientRect()
+      expect(bounds.width).toBeGreaterThan(0)
+      expect(bounds.height).toBeGreaterThan(0)
+      expect(bounds.top).toBeGreaterThanOrEqual(0)
+      expect(bounds.bottom).toBeLessThanOrEqual(window.innerHeight)
+      for (
+        let ancestor = element.parentElement;
+        ancestor;
+        ancestor = ancestor.parentElement
+      ) {
+        if (
+          /(auto|scroll|hidden|clip)/.test(getComputedStyle(ancestor).overflowY)
+        ) {
+          const clip = ancestor.getBoundingClientRect()
+          expect(
+            bounds.top,
+            'action above clipping ancestor',
+          ).toBeGreaterThanOrEqual(clip.top)
+          expect(
+            bounds.bottom,
+            'action below clipping ancestor',
+          ).toBeLessThanOrEqual(clip.bottom)
+        }
+      }
+    }
+    expectUnclipped(save)
+    await expect
+      .element(
+        page.getByRole('button', {
+          name: new RegExp(bindTestI18n(locale).t('history.dropTitle')),
+        }),
+      )
+      .toBeVisible()
+    if (replaceMode === 'static_site') {
+      await expect
+        .element(
+          page.getByRole('button', {
+            name: bindTestI18n(locale).t('upload.pick.folder'),
+            exact: true,
+          }),
+        )
+        .toBeVisible()
+    }
+    const scroller = save.closest('form')!.parentElement!
+    // Use native keyboard scrolling, rather than assigning scrollTop.
+    scroller.tabIndex = -1
+    scroller.focus()
+    await userEvent.keyboard('{End}')
+    await vi.waitFor(() =>
+      expect(scroller.scrollTop).toBeGreaterThanOrEqual(
+        scroller.scrollHeight - scroller.clientHeight - 1,
+      ),
+    )
+    expectUnclipped(page.getByRole('spinbutton').element())
+    await expect
+      .element(page.getByRole('radiogroup'))
+      .toHaveAccessibleDescription(
+        bindTestI18n(locale).t('vw.retentionManagedProtection'),
+      )
     const protection =
       locale === 'en'
         ? 'All versions people added are kept'
         : '人が追加した版はすべて残します'
-    expect(host.textContent).toContain(protection)
+    expect(panel.textContent).toContain(protection)
     const input = page.getByRole('spinbutton')
     await input.fill('1')
+    await waitForBrowserLayout()
+    scroller.focus()
+    await userEvent.keyboard('{Home}')
+    await vi.waitFor(() => {
+      expectUnclipped(save)
+      const bounds = save.getBoundingClientRect()
+      expect(
+        save.contains(
+          document.elementFromPoint(
+            bounds.left + bounds.width / 2,
+            bounds.top + bounds.height / 2,
+          ),
+        ),
+      ).toBe(true)
+    })
     fetchMock.mockResolvedValueOnce(preview(count))
     await page
       .getByRole('button', {
@@ -653,6 +778,29 @@ test.each([
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       retain_versions: 1,
     })
+    await userEvent.keyboard('{Escape}')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull(),
+    )
+    await vi.waitFor(() => expect(document.activeElement).toBe(save))
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }))
+    await userEvent.keyboard('{Enter}')
+    const status = panel.querySelector('[role="status"]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toContain(
+        locale === 'en'
+          ? 'Could not save. Please try again.'
+          : bindTestI18n(locale).t('vw.retentionFailed'),
+      ),
+    )
+    // Feedback must be visible from Save, before scrolling to the history.
+    expectUnclipped(save)
+    expectUnclipped(status)
+    scroller.focus()
+    await userEvent.keyboard('{End}')
+    await vi.waitFor(() => {
+      expectUnclipped(page.getByRole('link', { name: /v1/ }).element())
+    })
     expect(host.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth,
     )
@@ -660,7 +808,7 @@ test.each([
 )
 
 test.each(['en', 'ja'] as const)(
-  'managed %s read-only version menu preserves the protection note',
+  'managed %s version menu withholds retention from nonmanagers',
   async (locale) => {
     state.locale = locale
     for (const publisherManaged of [false, true]) {
@@ -678,7 +826,7 @@ test.each(['en', 'ja'] as const)(
               },
             ]}
             onOpenHistory={() => {}}
-            retention={{ limit: 1, editable: false, publisherManaged }}
+            retention={{ limit: 1, editable: false }}
           />,
         ),
       )
@@ -696,7 +844,11 @@ test.each(['en', 'ja'] as const)(
             ? 'All versions people added are kept.'
             : '人が追加した版はすべて残します。',
         ),
-      ).toBe(publisherManaged)
+      ).toBe(false)
+      expect(host.textContent).toContain('v1')
+      expect(host.textContent).not.toContain(
+        locale === 'en' ? 'Keeping' : '残しています',
+      )
     }
   },
 )

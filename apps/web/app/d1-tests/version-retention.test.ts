@@ -1,9 +1,16 @@
+import {
+  currentVersionNumberSelect,
+  latestPublishedAtSelect,
+} from '../services/home.server'
 import { fileURLToPath } from 'node:url'
 import { createTestHarness } from 'wrangler'
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('cloudflare:workers', () => ({ env: { BUCKET: { delete: vi.fn() } } }))
 import { createDb } from '../services/db.server'
-import { pruneVersions } from '../services/version-retention.server'
+import {
+  hasExtraProtectedCurrentVersion,
+  pruneVersions,
+} from '../services/version-retention.server'
 import {
   previewRetention,
   saveRetention,
@@ -372,4 +379,34 @@ test('snapshot preserves ordered duplicate managed references and empty arrays',
     references: [],
     eligible: [],
   })
+})
+
+test('D1 current badge and extra-current evidence preserve human and current versions', async () => {
+  await database.batch([
+    database.prepare(
+      "INSERT INTO publisher_clients (id, user_id, workspace_id, name, created_at) VALUES ('client1', 'u1', 'ws1', 'Reports', '2026-09-01')",
+    ),
+    database.prepare(
+      "UPDATE shareables SET assigned_publisher_client_id = 'client1', current_version_id = 'v1'",
+    ),
+    database.prepare(
+      "UPDATE versions SET created_by_publisher_client_id = 'client1'",
+    ),
+  ])
+  const db = createDb(database)
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(true)
+  expect(
+    await db
+      .selectFrom('shareables')
+      .select([currentVersionNumberSelect, latestPublishedAtSelect])
+      .executeTakeFirst(),
+  ).toMatchObject({ badge_version_number: 1, latest_published_at: null })
+  expect(await pruneVersions(db, 's1')).toBe(0)
+  await database
+    .prepare(
+      "UPDATE versions SET created_by_publisher_client_id = NULL WHERE id = 'v1'",
+    )
+    .run()
+  expect(await hasExtraProtectedCurrentVersion(db, 's1')).toBe(false)
+  expect(await pruneVersions(db, 's1')).toBe(0)
 })

@@ -141,15 +141,18 @@ async function publishStaticSiteUpdate(
 
   const result = await session.commitVersion()
   if (result.kind !== 'ok') return result
-  const shareable = await context.db
-    .selectFrom('shareables')
-    .select('visibility')
-    .where('id', '=', context.target.artifactId)
-    .executeTakeFirstOrThrow()
+  const shareable =
+    context.authority?.kind === 'publisher'
+      ? null
+      : await context.db
+          .selectFrom('shareables')
+          .select('visibility')
+          .where('id', '=', context.target.artifactId)
+          .executeTakeFirstOrThrow()
   return {
     kind: 'static-site-update-ok',
     result,
-    shareUrlVisibility: shareable.visibility,
+    shareUrlVisibility: shareable?.visibility ?? 'private',
   }
 }
 

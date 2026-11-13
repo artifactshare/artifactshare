@@ -129,6 +129,7 @@ export type ViewerShellArtifact = {
   canChangeRetention?: boolean
   retainVersions?: number | null
   publisherManaged?: boolean
+  extraProtectedCurrentVersion?: boolean
   versions?: ReadonlyArray<VersionRow>
   comments?: ReadonlyArray<CommentThreadView>
   revisitContext?: ViewerRevisitContext | null
@@ -2472,6 +2473,7 @@ function ViewerShellView(controller: ViewerShellController) {
         retention={{
           limit: artifact.retainVersions ?? null,
           publisherManaged: artifact.publisherManaged,
+          extraProtectedCurrentVersion: artifact.extraProtectedCurrentVersion,
           editable: artifact.canChangeRetention === true,
         }}
         canViewHistory={canViewHistory}

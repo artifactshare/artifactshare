@@ -323,6 +323,198 @@ describe('/device', () => {
     },
   )
 
+  test('a rejected publisher choice refreshes clients without claiming expiration or success', async () => {
+    deviceParams = new URLSearchParams('user_code=ab12-cd34')
+    const auth = await import('~/lib/auth-client')
+    deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+    vi.mocked(auth.loadDeviceAgentApproval)
+      .mockResolvedValueOnce({
+        preset: 'publisher',
+        requestedName: 'Reports',
+        clients: [],
+      })
+      .mockResolvedValue({
+        preset: 'publisher',
+        requestedName: 'Reports',
+        clients: [{ id: 'client1', name: 'Reports' }],
+      })
+    vi.mocked(auth.deviceApprove).mockResolvedValue({ error: { status: 400 } })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await React.act(async () =>
+        root.render(
+          <Device
+            {...({
+              loaderData: { signedIn: true, agentApproval: null },
+            } as Parameters<typeof Device>[0])}
+          />,
+        ),
+      )
+      await React.act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('#device-code-confirmation')!
+          .click(),
+      )
+      const approve = Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'device.approve',
+      )!
+      expect(approve.disabled).toBe(false)
+      await React.act(async () => approve.click())
+      expect(container.textContent).toContain('device.retry')
+      expect(container.textContent).toContain('Reports')
+      expect(container.textContent).not.toContain('device.expired.title')
+      expect(
+        Array.from(container.querySelectorAll('p')).some(
+          (p) => p.textContent === 'device.approved',
+        ),
+      ).toBe(false)
+      expect(
+        Array.from(container.querySelectorAll('button')).find(
+          (b) => b.textContent === 'device.approve',
+        )!.disabled,
+      ).toBe(true)
+      expect(
+        container.querySelector<HTMLInputElement>('#device-code-confirmation')!
+          .checked,
+      ).toBe(true)
+    } finally {
+      await React.act(async () => root.unmount())
+    }
+  })
+
+  test.each([
+    ['expired', { error: { status: 410 } }, 'device.expired.title'],
+    [
+      'handled',
+      { data: { status: 'already_handled' } },
+      'device.already_handled.title',
+    ],
+    ['pending', { data: { status: 'pending' } }, 'device.unavailable.title'],
+    ['unavailable', { error: { status: 500 } }, 'device.unavailable.title'],
+  ] as const)(
+    'rechecks %s status when context disappears after pending verification',
+    async (_label, result, message) => {
+      deviceParams = new URLSearchParams('user_code=ab12-cd34')
+      const auth = await import('~/lib/auth-client')
+      deviceVerifyMock
+        .mockResolvedValueOnce({ data: { status: 'pending' } })
+        .mockResolvedValue(result)
+      vi.mocked(auth.loadDeviceAgentApproval).mockImplementationOnce(
+        async () => {
+          expect(deviceVerifyMock).toHaveBeenCalledTimes(1)
+          throw new Error('context disappeared')
+        },
+      )
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      try {
+        await React.act(async () =>
+          root.render(
+            <Device
+              {...({
+                loaderData: { signedIn: true, agentApproval: null },
+              } as Parameters<typeof Device>[0])}
+            />,
+          ),
+        )
+        expect(deviceVerifyMock).toHaveBeenCalledTimes(2)
+        expect(container.textContent).toContain(message)
+        expect(container.textContent).not.toContain('device.approve')
+      } finally {
+        await React.act(async () => root.unmount())
+      }
+    },
+  )
+
+  test.each([
+    'expired',
+    'unknown',
+    'handled',
+    'context-failure',
+    'verification-failure',
+  ] as const)(
+    'publisher approval and reload preserve %s evidence',
+    async (fault) => {
+      deviceParams = new URLSearchParams('user_code=ab12-cd34')
+      const auth = await import('~/lib/auth-client')
+      const approval = {
+        preset: 'publisher' as const,
+        requestedName: 'Reports',
+        clients: [],
+      }
+      deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+      vi.mocked(auth.loadDeviceAgentApproval).mockResolvedValue(approval)
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      const render = (key: string) =>
+        React.act(async () =>
+          root.render(
+            <Device
+              key={key}
+              {...({
+                loaderData: { signedIn: true, agentApproval: null },
+              } as Parameters<typeof Device>[0])}
+            />,
+          ),
+        )
+      try {
+        await render('initial')
+        const confirm = container.querySelector<HTMLButtonElement>(
+          '#device-code-confirmation',
+        )!
+        await React.act(async () => confirm.click())
+        const approve = Array.from(container.querySelectorAll('button')).find(
+          (b) => b.textContent === 'device.approve',
+        )!
+        expect(approve.disabled).toBe(false)
+        vi.mocked(auth.deviceApprove).mockResolvedValue({
+          error: { status: 400 },
+        })
+        if (fault === 'expired')
+          deviceVerifyMock.mockResolvedValue({ error: { status: 410 } })
+        if (fault === 'unknown')
+          deviceVerifyMock.mockResolvedValue({ error: { status: 404 } })
+        if (fault === 'handled')
+          deviceVerifyMock.mockResolvedValue({
+            data: { status: 'already_handled' },
+          })
+        if (fault === 'verification-failure')
+          deviceVerifyMock.mockRejectedValue(new Error('transport unavailable'))
+        if (fault === 'context-failure')
+          vi.mocked(auth.loadDeviceAgentApproval).mockRejectedValue(
+            new Error('context unavailable'),
+          )
+        await React.act(async () => approve.click())
+        const message =
+          fault === 'expired'
+            ? 'device.expired.title'
+            : fault === 'unknown'
+              ? 'device.not_found.title'
+              : fault === 'handled'
+                ? 'device.already_handled.title'
+                : 'device.unavailable.title'
+        expect(container.textContent).toContain(message)
+        expect(container.textContent).not.toContain('device.approved')
+        expect(container.textContent).not.toContain('device.approve')
+        await render('reload')
+        expect(container.textContent).toContain(message)
+        expect(container.textContent).not.toContain('device.approve')
+        deviceVerifyMock.mockResolvedValue({ data: { status: 'pending' } })
+        vi.mocked(auth.loadDeviceAgentApproval).mockResolvedValue(approval)
+        await render('recovered')
+        expect(container.textContent).toContain('device.publisher.capability')
+        expect(
+          Array.from(container.querySelectorAll('button')).find(
+            (b) => b.textContent === 'device.approve',
+          )!.disabled,
+        ).toBe(true)
+      } finally {
+        await React.act(async () => root.unmount())
+      }
+    },
+  )
+
   test.each([
     [
       { data: { status: 'pending' } },
@@ -336,6 +528,7 @@ describe('/device', () => {
       { data: { status: 'denied' } },
       { kind: 'done', code: 'AB12CD34', decision: 'denied' },
     ],
+    [{ error: { status: 500 } }, { kind: 'unavailable', code: 'AB12CD34' }],
     [{ error: { status: 410 } }, { kind: 'expired', code: 'AB12CD34' }],
     [{ error: { status: 404 } }, { kind: 'not_found', code: 'AB12CD34' }],
     [{ data: { status: 'used' } }, { kind: 'already', code: 'AB12CD34' }],
@@ -1021,13 +1214,13 @@ test.each([
   [
     'en',
     en,
-    'read and update files and sites',
+    'read, download and update files and sites',
     'Access continues after you share or move them',
   ],
   [
     'ja',
     ja,
-    '確認、更新、削除、古い版の削除',
+    '確認、ダウンロード、更新、削除、古い版の削除',
     '同じワークスペース内で共有や移動をしたあとも',
   ],
 ] as const)(

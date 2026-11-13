@@ -391,13 +391,28 @@ export async function clearAgentApprovalProject(input: {
 
 export async function isPublisherDeviceApproval(
   userCode: string,
+  userId?: string,
 ): Promise<boolean> {
   const row = await env.DB.prepare(
-    'SELECT preset FROM deviceCode WHERE userCode = ?',
+    'SELECT preset FROM deviceCode WHERE userCode = ? AND (? IS NULL OR userId = ?)',
   )
-    .bind(userCode)
+    .bind(userCode, userId ?? null, userId ?? null)
     .first<{ preset: string }>()
   return row?.preset === 'publisher'
+}
+
+export async function isPendingUnrestrictedDeviceApproval(
+  userCode: string,
+  userId: string,
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 AS found FROM deviceCode
+      WHERE userCode = ? AND userId = ? AND status = 'pending' AND expiresAt > ?
+        AND (preset IS NULL OR preset = 'unrestricted')`,
+  )
+    .bind(userCode, userId, nowIso())
+    .first<{ found: number }>()
+  return row !== null
 }
 
 export async function loadPublisherApprovalContext(
