@@ -6,6 +6,7 @@ import { commentUiSelector, createTextAnchorEngine } from './anchor-engine.js'
 import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
+import { previewScreen, reportScreen } from './screen.js'
 
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
@@ -87,6 +88,8 @@ export function verifyAnchors(
   }
   let checking: number[] = []
   let verdicts = []
+  // Preview: a comment made on another screen is neither here nor missing.
+  let screen = ctx.previewCapability ? previewScreen(ctx) : null
   if (!engine) {
     for (let i = 0; i < ctx.pendingAnchors.length; i++) {
       if (ctx.pendingAnchors[i].kind === 'text') {
@@ -97,6 +100,18 @@ export function verifyAnchors(
   }
   for (let i = 0; i < (anchors || []).length; i++) {
     let anchor = anchors[i] || {}
+    if (
+      screen !== null &&
+      (typeof anchor.screen === 'string' ? anchor.screen : '') !== screen
+    ) {
+      delete ctx.checkingDeadlines[anchor.thread]
+      verdicts.push({
+        thread: anchor.thread,
+        attached: false,
+        position_state: 'other-screen',
+      })
+      continue
+    }
     let attached = false
     if (anchor.kind === 'element') {
       attached = findElement(ctx, anchor) !== null
@@ -209,6 +224,11 @@ export function flashElement(ctx: ReporterState, selector: unknown) {
 
 export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
+  // Alt/Option operates the page, so nothing is offered for a comment.
+  if (event.altKey) {
+    clearAnnotateHover(ctx)
+    return
+  }
   let target = annotateTargetFrom(
     ctx,
     ctx.primordials.targetGet ? ctx.primordials.targetGet(event) : event.target,
@@ -222,6 +242,34 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
 
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
+  // Alt/Option+click uses the page. Browsers download a link on Alt+click, so
+  // replace the gesture with the plain click the document expects.
+  if (ctx.previewCapability && ctx.previewPassThrough) return
+  if (event.altKey && ctx.previewCapability) {
+    const original = ctx.primordials.targetGet
+      ? ctx.primordials.targetGet(event)
+      : event.target
+    if (!original || (original as Node).nodeType !== 1) return
+    event.preventDefault()
+    event.stopPropagation()
+    ctx.previewPassThrough = true
+    try {
+      ;(original as Element).dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          button: event.button,
+          view: ctx.win,
+        }),
+      )
+    } finally {
+      ctx.previewPassThrough = false
+    }
+    return
+  }
   let target = annotateTargetFrom(
     ctx,
     ctx.primordials.targetGet ? ctx.primordials.targetGet(event) : event.target,
@@ -235,6 +283,8 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   let selected = ctx.win.getSelection()
   if (selected && !selected.isCollapsed && selected.toString().trim()) return
   let rect = target.getBoundingClientRect()
+  // The parent stamps the pick with the screen reported just before it.
+  reportScreen(ctx)
   send(ctx, {
     kind: 'element-annotate',
     selector: cssPath(ctx, target),

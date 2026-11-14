@@ -89,6 +89,8 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanDiscard': 'Discard them',
     'preview.positionChecking': 'Checking comment position…',
     'preview.positionNeedsCheck': 'Quoted text not found in this version',
+    'preview.modeHint': 'Alt+click uses the page',
+    'preview.positionOtherScreen': 'On another screen; select to go there',
     'preview.orphanKeep': 'Keep',
     'preview.you': 'You',
     'preview.agentName': 'Agent',
@@ -245,6 +247,9 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanDiscard': 'まとめて破棄',
     'preview.positionChecking': 'コメントの位置を確認しています…',
     'preview.positionNeedsCheck': '引用した文がこの版に見つかりません',
+    'preview.modeHint': 'Alt（Option）+クリックでページを操作',
+    'preview.positionOtherScreen':
+      '別の画面のコメント。選ぶとその画面へ移動します',
     'preview.orphanKeep': '残す',
     'preview.you': 'あなた',
     'preview.agentName': 'エージェント',

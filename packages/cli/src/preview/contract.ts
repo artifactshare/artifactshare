@@ -18,6 +18,8 @@ export type PreviewAnchor =
       textStart: number | null
       textEnd: number | null
       cssPath: string | null
+      /** Screen (URL state) the comment was made on; absent for the default. */
+      screen?: string
     }
   | {
       kind: 'element'
@@ -33,6 +35,8 @@ export type PreviewAnchor =
       ownTextHash?: string
       ownTextExcerpt?: string
       tagName?: string
+      /** Screen (URL state) the comment was made on; absent for the default. */
+      screen?: string
     }
 
 export type PreviewAnnotationStatus =
@@ -247,6 +251,14 @@ export function isPreviewAnchor(
   if (record.state !== 'attached' && record.state !== 'orphaned') {
     return false
   }
+  // The URL screen an interactive document showed; omitted for the default.
+  if (
+    record.screen !== undefined &&
+    (typeof record.screen !== 'string' ||
+      record.screen.length === 0 ||
+      record.screen.length > 1000)
+  )
+    return false
   const optionalString = (name: string): boolean =>
     record[name] === undefined || typeof record[name] === 'string'
   if (record.kind === 'element') {

@@ -1,6 +1,7 @@
 import type { ReporterState } from './state.js'
 import { retainPreviewPick } from './annotate.js'
 import { send } from './messaging.js'
+import { reportScreen } from './screen.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 import { liveCommentLocation } from './hash.js'
 
@@ -67,6 +68,7 @@ export function sendSelection(ctx: ReporterState) {
     return
   }
   let rect = range.getBoundingClientRect()
+  reportScreen(ctx)
   send(ctx, {
     kind: 'text-selection',
     targetPath,

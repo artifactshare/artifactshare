@@ -1552,6 +1552,8 @@
   "preview.orphanDiscard": "まとめて破棄",
   "preview.positionChecking": "コメントの位置を確認しています…",
   "preview.positionNeedsCheck": "引用した文がこの版に見つかりません",
+  "preview.modeHint": "Alt（Option）+クリックでページを操作",
+  "preview.positionOtherScreen": "別の画面のコメント。選ぶとその画面へ移動します",
   "preview.orphanKeep": "残す",
   "preview.you": "あなた",
   "preview.agentName": "エージェント",

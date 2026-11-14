@@ -8,10 +8,11 @@ export interface CommentHighlight extends TextSelector {
   count?: number
 }
 export type VerificationAnchor =
-  | (TextSelector & { kind: 'text'; thread: string })
+  | (TextSelector & { kind: 'text'; thread: string; screen?: string })
   | {
       kind: 'element'
       thread: string
+      screen?: string
       selector: string
       ownText?: string
       ownTextHash?: string
@@ -85,6 +86,10 @@ export function createReporterState(
     previewTrackedPick: null as PreviewPick | null,
     previewGeometryFrame: 0,
     previewCapability: '',
+    previewHomePath: '',
+    previewPassThrough: false,
+    previewScreenTimer: 0,
+    previewLastScreen: null as string | null,
     previewGeneration: 0,
     previewSendSequence: 0,
     previewReceiveSequence: 0,

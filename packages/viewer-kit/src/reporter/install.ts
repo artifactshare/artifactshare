@@ -19,6 +19,7 @@ import {
   sendOutsidePointerDown,
 } from './badges.js'
 import { clearMarks, applyHighlights } from './highlights.js'
+import { installScreenTracking } from './screen.js'
 import { onAnnotateHover, onAnnotateClick, verifyAnchors } from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
@@ -39,6 +40,7 @@ export function installReporter(win: ReporterWindow) {
     ctx.documentToken = ''
   }
   installHashTracking(ctx)
+  installScreenTracking(ctx)
   installAnchorObserver(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)

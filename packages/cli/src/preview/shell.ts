@@ -122,6 +122,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .mode-toggle .count { background: var(--pending); color: #2a1800; border-radius: var(--r-full);
     font-size: 11px; min-width: 18px; height: 18px; display: none; place-items: center; padding: 0 5px; }
   .mode-toggle .count.show { display: grid; }
+  .mode-hint { position: fixed; right: 320px; bottom: 64px; z-index: 60; display: none;
+    font-size: 12px; color: var(--muted-foreground); background: var(--card);
+    border-radius: var(--r-full); box-shadow: var(--shadow-lg); padding: 4px 12px; }
+  body.annotate .mode-hint { display: block; }
+  /* Touch and narrow layouts have no Alt key; they use the switch. */
+  @media (hover: none), (max-width: 860px) { body.annotate .mode-hint { display: none; } }
   .popover { position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px));
     background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
     padding: 10px; display: none; }
@@ -256,6 +262,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <span id="modeLabel" data-msg="preview.annotateMode"></span>
   <span class="count" id="pendingCount">0</span>
 </button>
+<div class="mode-hint" id="modeHint" data-msg="preview.modeHint"></div>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
   <label for="popText" data-msg="preview.editorLabel"></label>
@@ -346,6 +353,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let orphanedThreads = new Set();
   let checkingThreads = new Set();
   let lastVerifiedAnchors = null;
+  // URL screen of an interactive document, as the reporter last observed it.
+  let currentScreen = '';
+  let otherScreenThreads = new Set();
+  let screenAfterReload = null;
+  let pingAfterVerify = null;
+  let pendingRestore = null;
   let verificationId = 0;
   let verificationGeneration = -1;
   let verifyPending = false;
@@ -463,7 +476,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
         ...(data.ownTextHash ? { ownTextHash: data.ownTextHash, ownTextExcerpt: data.ownTextExcerpt } : { ownText: data.ownText }), tagName: data.tagName,
+        ...(currentScreen ? { screen: currentScreen } : {}),
       }, data.label, data.rect, data.sequence);
+    } else if (data.kind === 'screen') {
+      onScreen(data.screen);
     } else if (data.kind === 'annotation-geometry') {
       if (!pendingAnchor || data.pickSequence !== targetPickSequence) return;
       targetRect = data.rect;
@@ -483,6 +499,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         quotedText: data.quotedText, prefixText: data.prefixText,
         suffixText: data.suffixText, textStart: data.textStart,
         textEnd: data.textEnd, cssPath: data.cssPath,
+        ...(currentScreen ? { screen: currentScreen } : {}),
       }, data.quotedText, data.rect, data.sequence);
     }
   });
@@ -746,6 +763,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       label.textContent = anchorLabel(annotation.anchor);
       if (checkingThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionChecking');
       else if (orphanedThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
+      else if (otherScreenThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionOtherScreen');
       const state = document.createElement('span');
       state.className = 'state';
       state.textContent = stateLabel(annotation.status);
@@ -782,6 +800,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         thread.appendChild(msg);
       });
       thread.addEventListener('click', () => {
+        if (otherScreenThreads.has(annotation.thread) && !orphanedThreads.has(annotation.thread)) {
+          restoreScreen(annotation);
+          return;
+        }
         if (annotation.anchor && annotation.anchor.kind === 'element') {
           if (!orphanedThreads.has(annotation.thread) && !checkingThreads.has(annotation.thread)) postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
         }
@@ -836,11 +858,69 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (!popText.value.trim() && !saveFailed && pendingReload === null) hidePopover();
   });
 
+  // --- screens (URL state of interactive documents) ----------------------
+  function onScreen(screen) {
+    if (screenAfterReload !== null) {
+      const target = screenAfterReload;
+      screenAfterReload = null;
+      // A reload starts on the default screen; return to where the reader was.
+      if (target !== screen) postToFrame({ kind: 'show-screen', screen: target });
+    }
+    if (pendingRestore && screen === pendingRestore.target && !pendingRestore.settling) {
+      // A document may show the URL and then redirect away from it; the
+      // screen counts as restored only if it is still current shortly after.
+      const restoring = pendingRestore;
+      restoring.settling = setTimeout(() => {
+        restoring.settling = null;
+        if (pendingRestore !== restoring || currentScreen !== restoring.target) return;
+        clearTimeout(restoring.timer);
+        pendingRestore = null;
+        pingAfterVerify = restoring.thread;
+        lastVerifiedAnchors = null;
+        checkOrphans();
+      }, 300);
+    }
+    if (screen === currentScreen) return;
+    currentScreen = screen;
+    lastVerifiedAnchors = null;
+    checkOrphans();
+  }
+  function restoreScreen(annotation) {
+    const target = annotation.anchor.screen || '';
+    if (pendingRestore) {
+      clearTimeout(pendingRestore.timer);
+      clearTimeout(pendingRestore.settling);
+    }
+    // Success is the reporter showing the target; only a document that never
+    // gets there is treated as unrestorable.
+    pendingRestore = {
+      thread: annotation.thread,
+      target,
+      settling: null,
+      timer: setTimeout(() => {
+        if (!pendingRestore || pendingRestore.thread !== annotation.thread) return;
+        clearTimeout(pendingRestore.settling);
+        pendingRestore = null;
+        // Never attach the comment to another screen's element; mark it as
+        // needing a check instead.
+        otherScreenThreads.delete(annotation.thread);
+        orphanedThreads.add(annotation.thread);
+        renderPanel();
+        document.getElementById('orphanText').textContent =
+          tCount('preview.orphanNotice', orphanedThreads.size);
+        document.getElementById('orphanDiscard').style.display = '';
+        document.getElementById('orphanNotice').classList.add('show');
+      }, 2000),
+    };
+    postToFrame({ kind: 'show-screen', screen: target });
+  }
+
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
     if (ended || savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
     previewCapability = '';
     hidePopover();
+    screenAfterReload = currentScreen;
     verificationId++;
     verificationGeneration = -1;
     let scrollY = 0;
@@ -893,9 +973,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     verifyPending = false;
     const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
     checkingThreads = new Set((verdicts || []).filter(v => v.position_state === 'checking').map(v => v.thread));
+    // A comment on another screen is neither found nor lost here.
+    otherScreenThreads = new Set((verdicts || []).filter(v => v.position_state === 'other-screen').map(v => v.thread));
     const newlyOrphaned = [];
     annotations.forEach((annotation) => {
-      if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread)) return;
+      if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread) ||
+        otherScreenThreads.has(annotation.thread)) return;
       const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
         newlyOrphaned.push(annotation.thread);
@@ -903,6 +986,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (!found) orphanedThreads.add(annotation.thread);
       else orphanedThreads.delete(annotation.thread);
     });
+    if (pingAfterVerify !== null) {
+      const shown = annotations.find(annotation => annotation.thread === pingAfterVerify);
+      pingAfterVerify = null;
+      if (shown && attached.get(shown.thread) === true && shown.anchor.kind === 'element')
+        postToFrame({ kind: 'element-ping', selector: shown.anchor.selector });
+    }
     // Reporter observations are display-only. Persist only explicit user actions.
     renderPanel();
     if (newlyOrphaned.length > 0) {
