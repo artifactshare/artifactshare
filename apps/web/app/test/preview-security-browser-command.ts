@@ -570,12 +570,12 @@ export const previewSecurity = defineBrowserCommand(
         // reporter's ready then says the edit is still open.
         if (shell.context().browser()!.browserType().name() === 'webkit')
           await frame.waitForFunction(
-            (before) =>
+            (earlier) =>
               (
                 window as unknown as {
                   previewHandshake: { documentGeneration: number }
                 }
-              ).previewHandshake.documentGeneration > before,
+              ).previewHandshake.documentGeneration > earlier,
             generationBefore,
           )
         assert.equal(await shell.locator('#popInlineHint').isVisible(), true)
