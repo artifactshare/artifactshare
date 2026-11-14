@@ -121,17 +121,23 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
     return
   }
   ctx.primordials.preventDefault(event)
+  // A fragment is followed once the page's handlers had their turn, even if
+  // one of them stops the click before it reaches the window.
+  if (fragment)
+    ctx.win.setTimeout(() => {
+      if (ctx.primordials.weakMapGet(ctx.pendingLinkClicks, event) !== pending)
+        return
+      ctx.primordials.weakMapDelete(ctx.pendingLinkClicks, event)
+      if (!pending.artifactPrevented) ctx.win.location.hash = pending.href
+    }, 0)
 }
 
 export function finishLinkClick(ctx: ReporterState, event: MouseEvent) {
   let pending = ctx.primordials.weakMapGet(ctx.pendingLinkClicks, event)
-  if (!pending) return
+  // Fragments are followed by the task queued in prepareLinkClick.
+  if (!pending || pending.fragment) return
   ctx.primordials.weakMapDelete(ctx.pendingLinkClicks, event)
   if (pending.artifactPrevented) return
-  if (pending.fragment) {
-    ctx.win.location.hash = pending.href
-    return
-  }
   if (pending.openExternally && ctx.externalLinkPolicyMode === 'direct') {
     openExternalLink(ctx, pending.href)
     return

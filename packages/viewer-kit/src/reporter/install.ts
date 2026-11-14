@@ -22,6 +22,7 @@ import { clearMarks, applyHighlights } from './highlights.js'
 import { installScreenTracking } from './screen.js'
 import {
   clearAnnotateHover,
+  markOperating,
   onAnnotateHover,
   onAnnotateClick,
   verifyAnchors,
@@ -88,6 +89,15 @@ export function installReporter(win: ReporterWindow) {
     'click',
     (event: Parameters<typeof onAnnotateClick>[1]) =>
       onAnnotateClick(ctx, event),
+    true,
+  )
+  // Mark an Alt/Option click as operating the page before any document
+  // listener runs (window capture comes first), so clicks a page handler
+  // causes from there are not picks either.
+  ctx.primordials.addEventListener(
+    ctx.win,
+    'click',
+    (event: MouseEvent) => markOperating(ctx, event),
     true,
   )
   // Holding Alt/Option means the next click operates the page.

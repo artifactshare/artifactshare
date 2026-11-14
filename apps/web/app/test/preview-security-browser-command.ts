@@ -180,7 +180,7 @@ export const previewSecurity = defineBrowserCommand(
       label: string,
     ) => `<!doctype html><title>${label}</title>
 <nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a> <a id="routerLink" href="settings">Settings link</a> <a id="badHash" href="#/q%zz">Odd route</a></nav>
-<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><x-host id="host"></x-host></div>
+<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><button id="capProxy">Capture proxy</button><a id="stopFrag" href="#/stop">Stop link</a><x-host id="host"></x-host></div>
 <main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
 <script>
   let lockedLeft = false;
@@ -212,7 +212,11 @@ export const previewSecurity = defineBrowserCommand(
   };
   render();
   window.clicks = { counted: 0, shadow: 0 };
-  window.addEventListener('click', (event) => { if (event.target.id === 'counted') clicks.counted++; }, true);
+  window.addEventListener('click', (event) => {
+    if (event.target.id === 'counted') clicks.counted++;
+    if (event.target.id === 'capProxy') document.getElementById('chk').click();
+  }, true);
+  document.getElementById('stopFrag').addEventListener('click', (event) => event.stopPropagation());
   document.getElementById('proxy').onclick = () => document.getElementById('chk').click();
   customElements.define('x-host', class extends HTMLElement {
     connectedCallback() {
@@ -353,6 +357,10 @@ export const previewSecurity = defineBrowserCommand(
         assert.equal(await frame.locator('#chk').isChecked(), true)
         await frame.locator('#proxy').click({ modifiers: ['Alt'] })
         assert.equal(await frame.locator('#chk').isChecked(), false)
+        await frame.locator('#capProxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), true)
+        await frame.locator('#capProxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), false)
         await frame.locator('#counted').click({ modifiers: ['Alt'] })
         await frame.locator('#host').click({ modifiers: ['Alt'] })
         assert.deepEqual(
@@ -362,6 +370,11 @@ export const previewSecurity = defineBrowserCommand(
           { counted: 1, shadow: 1 },
         )
         assert.equal(await shell.locator('#popover.show').count(), 0)
+        // A fragment link whose handler only stops propagation still moves.
+        await frame.locator('#stopFrag').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/stop')
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/2')
         result.checks.push('alt-click-operates')
 
         // A plain click still annotates, and the comment keeps its screen.

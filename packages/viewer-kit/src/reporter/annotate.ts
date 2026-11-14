@@ -242,6 +242,14 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   target.classList.add('as-preview-annotate-hover')
 }
 
+export function markOperating(ctx: ReporterState, event: MouseEvent) {
+  if (!ctx.previewCapability || !event.altKey || ctx.previewOperating) return
+  ctx.previewOperating = true
+  ctx.win.setTimeout(() => {
+    ctx.previewOperating = false
+  }, 0)
+}
+
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
   // Alt/Option+click uses the page: the real click reaches the document
@@ -249,12 +257,7 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   // control, a handler calling el.click()) are not picks either. The link gate
   // treats it as an unmodified click.
   if (ctx.previewCapability && event.altKey) {
-    if (!ctx.previewOperating) {
-      ctx.previewOperating = true
-      ctx.win.setTimeout(() => {
-        ctx.previewOperating = false
-      }, 0)
-    }
+    markOperating(ctx, event)
     return
   }
   if (ctx.previewCapability && ctx.previewOperating) return
