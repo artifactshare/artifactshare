@@ -818,6 +818,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     background: var(--accent); border-radius: var(--r-md);
     padding: 8px 10px; margin-bottom: 12px; }
   .note:empty { display: none; }
+  /* Keep keyboard focus visible on the blue primary action and in WebKit. */
+  .btn:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+    outline: 2px solid var(--link); outline-offset: 2px; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   .btn { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border);
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
