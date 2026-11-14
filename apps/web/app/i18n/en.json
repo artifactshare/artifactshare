@@ -1554,7 +1554,7 @@
   "preview.positionNeedsCheck": "Quoted text not found in this version",
   "preview.rewriteLabel": "Wording (edit to rewrite)",
   "preview.commentOptional": "Comment (optional)",
-  "preview.inlineHint": "Editing on the page · Enter adds",
+  "preview.inlineHint": "Editing on the page · Enter there adds",
   "preview.rewriteHeading": "Rewrite",
   "preview.rewriteRemoved": "(remove this text)",
   "preview.modeHint": "Alt/Option+click uses the page",

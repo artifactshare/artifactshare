@@ -145,7 +145,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     resize: none; background: var(--background); color: var(--foreground); }
   .popover textarea:focus { outline: 2px solid var(--link); outline-offset: -1px; }
   #popError { color: var(--foreground); font-size: 13px; line-height: 1.4; }
-  #popError:not(:empty) { margin-top: 8px; }
+  #popError:not(:empty) { margin-top: 8px; border-left: 3px solid var(--coral); padding-left: 8px; }
   .popover .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
   .popover .inline-hint { display: none; font-size: 12px; line-height: 1.4; margin-bottom: 6px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

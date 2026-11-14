@@ -20,7 +20,7 @@ export function ensureAnnotateStyles(ctx: ReporterState) {
     '.as-preview-flash{background-color:rgba(34,197,94,0.35) !important;transition:background-color 1s ease;}' +
     '.as-preview-flash-fade{background-color:transparent !important;}' +
     '.as-preview-annotate-text{cursor:text !important;}' +
-    '.as-preview-editing{outline:2px solid #6366f1 !important;outline-offset:2px;cursor:text;}'
+    '.as-preview-editing{outline:2px dashed #6366f1 !important;outline-offset:2px;background-color:rgba(99,102,241,0.08) !important;cursor:text;}'
   ctx.doc.head.appendChild(style)
 }
 

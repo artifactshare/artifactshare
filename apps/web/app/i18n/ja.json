@@ -1554,7 +1554,7 @@
   "preview.positionNeedsCheck": "引用した文がこの版に見つかりません",
   "preview.rewriteLabel": "文言（書き換えるときはここを直す）",
   "preview.commentOptional": "コメント（任意）",
-  "preview.inlineHint": "ページ上で編集中・Enter で追加",
+  "preview.inlineHint": "ページで編集中・そこで Enter を押すと追加",
   "preview.rewriteHeading": "書き換え",
   "preview.rewriteRemoved": "（この文を削除）",
   "preview.modeHint": "Alt（Option）+クリックでページを操作",
