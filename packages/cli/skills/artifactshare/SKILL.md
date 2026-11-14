@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 67
+version: 68
 managed: true
 -->
 

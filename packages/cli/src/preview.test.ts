@@ -426,6 +426,70 @@ test('a competing preview wait returns retry guidance', async () => {
   }
 })
 
+test('a rewrite reaches the agent and the review history', async () => {
+  const { env, dir } = previewEnv()
+  const filePath = writeLp(dir)
+  const server = await startPreview(env, filePath)
+  await browserApi(server, 'POST', '/api/annotations', {
+    anchor: {
+      kind: 'element',
+      state: 'attached',
+      selector: 'body > h1',
+      label: 'h1 "Hello preview"',
+      contextText: 'Hello preview',
+      ownText: 'Hello preview',
+      tagName: 'H1',
+    },
+    comment: 'Friendlier',
+    rewrite: { original: 'Hello preview', proposed: 'Welcome to the preview' },
+  })
+  await browserApi(server, 'POST', '/api/annotations/submit')
+  const items = (
+    expectSuccess(
+      run(['preview', 'next', filePath, '--json'], env),
+      'preview next',
+    ).data as { items: Record<string, unknown>[] }
+  ).items
+  assert.deepEqual(items[0]!.rewrite, {
+    original: 'Hello preview',
+    proposed: 'Welcome to the preview',
+  })
+  expectSuccess(
+    run(['preview', 'done', filePath, '--stdin', '--json'], env, {
+      input: JSON.stringify({
+        items: [{ thread: items[0]!.thread, generation: 1, outcome: 'fixed' }],
+      }),
+    }),
+    'preview done',
+  )
+  const listed = expectSuccess(
+    run(['preview', 'history', filePath, '--json'], env),
+    'preview history',
+  ).data as { batches: { batch_id: string }[] }
+  const record = (
+    expectSuccess(
+      run(
+        [
+          'preview',
+          'history',
+          filePath,
+          '--batch',
+          listed.batches[0]!.batch_id,
+          '--json',
+        ],
+        env,
+      ),
+      'preview history',
+    ).data as { batch: { items: { rewrite?: unknown }[] } }
+  ).batch
+  assert.deepEqual(record.items[0]!.rewrite, {
+    original: 'Hello preview',
+    proposed: 'Welcome to the preview',
+  })
+  run(['preview', 'stop', filePath, '--json'], env)
+  await new Promise((resolve) => server.child.once('exit', resolve))
+})
+
 test('the annotate-submit-next-done loop round-trips through the CLI', async () => {
   const { env, dir } = previewEnv()
   const filePath = writeLp(dir)

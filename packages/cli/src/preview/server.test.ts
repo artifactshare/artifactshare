@@ -123,6 +123,60 @@ describe('startPreviewServer', () => {
     rmSync(context.dir, { recursive: true, force: true })
   })
 
+  it('keeps a rewrite of the anchored text through next and rejects mismatches', async () => {
+    const anchor = {
+      kind: 'element',
+      state: 'attached',
+      selector: 'h1',
+      label: 'h1 "Hello"',
+      contextText: 'Hello',
+      ownText: 'Hello',
+      tagName: 'H1',
+    }
+    for (const rewrite of [
+      { original: 'Other text', proposed: 'Hi' },
+      { original: 'Hello', proposed: 'Hello' },
+      { original: 'Hello', proposed: 'x'.repeat(16001) },
+      { original: 'Hello', proposed: 'Hi', extra: true },
+    ])
+      expect(
+        (
+          await post(context, '/api/annotations', {
+            anchor,
+            comment: '',
+            rewrite,
+          })
+        ).status,
+      ).toBe(400)
+    const saved = await post(context, '/api/annotations', {
+      anchor,
+      comment: '',
+      rewrite: { original: 'Hello', proposed: 'Welcome' },
+    })
+    expect(saved.status).toBe(200)
+    const { annotation } = (await saved.json()) as {
+      annotation: { messages: unknown[] }
+    }
+    // A rewrite needs no reason, so no empty human message is stored.
+    expect(annotation.messages).toEqual([])
+    await post(context, '/api/annotations', { anchor, comment: 'Plain note' })
+    await post(context, '/api/annotations/submit', {})
+    const next = (await (
+      await post(context, '/api/agent/next', { wait: 0 })
+    ).json()) as { items: { comment: string; rewrite?: unknown }[] }
+    expect(next.items.map((item) => [item.comment, item.rewrite])).toEqual([
+      ['', { original: 'Hello', proposed: 'Welcome' }],
+      ['Plain note', undefined],
+    ])
+    const reopened = createPreviewStore(
+      join(context.dir, 'config', 'annotations.json'),
+    )
+    expect(reopened.all()[0]!.rewrite).toEqual({
+      original: 'Hello',
+      proposed: 'Welcome',
+    })
+  })
+
   it.each([16000, 16001, 1_100_000])(
     'saves and reopens bounded element anchors of %i code units through next',
     async (length) => {

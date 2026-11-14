@@ -1245,6 +1245,8 @@ results include the sanitized agent notification projection.
 Element text up to 16,000 normalized UTF-16 code units keeps raw ownText.
 Larger captures return ownTextHash (full-text SHA-256) and ownTextExcerpt
 (first 16,000 code units, reader context only). Legacy anchors are unchanged.
+Items the user rewrote carry rewrite: {original, proposed}; apply proposed in
+place of the displayed original text, as written.
 
 Common failures:
   preview_session_not_found  Start a session with: preview <file>

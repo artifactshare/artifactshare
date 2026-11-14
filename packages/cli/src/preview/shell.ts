@@ -147,6 +147,19 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   #popError { color: var(--foreground); font-size: 13px; line-height: 1.4; }
   #popError:not(:empty) { margin-top: 8px; }
   .popover .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+  .popover .rewrite-toggle { align-self: flex-start; margin-bottom: 6px; padding: 0; border: 0;
+    min-height: 24px; display: inline-flex; align-items: center;
+    background: none; font: inherit; font-size: 12px; color: var(--link); cursor: pointer; }
+  .popover .rewrite-toggle:hover { text-decoration: underline; }
+  .popover .rewrite-toggle[hidden] { display: none; }
+  .popover .rewrite-field { display: none; flex-direction: column; margin-bottom: 6px; }
+  .popover.rewriting .rewrite-field { display: flex; }
+  .popover label { font-size: 12px; margin-bottom: 4px; }
+  .thread .rewrite { margin: 6px 0 0; font-size: 12px; line-height: 1.5;
+    border-left: 2px solid var(--border); padding-left: 8px; overflow-wrap: anywhere; }
+  .thread .rewrite .who { font-weight: 600; font-size: 11px; display: block; color: var(--muted-foreground); }
+  .thread .rewrite del { color: var(--muted-foreground); }
+  .thread .rewrite ins { text-decoration: none; background: var(--accent); }
   .panel { width: 300px; border-left: 1px solid var(--border); background: var(--background);
     padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
   .panel h2 { font-size: 12px; margin: 0; color: var(--muted-foreground); font-weight: 600; }
@@ -268,7 +281,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <div class="mode-hint" id="modeHint" data-msg="preview.modeHint"></div>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
-  <label for="popText" data-msg="preview.editorLabel"></label>
+  <button type="button" class="rewrite-toggle" id="popRewriteToggle" aria-expanded="false" hidden></button>
+  <div class="rewrite-field">
+    <label for="popRewrite" data-msg="preview.rewriteLabel"></label>
+    <textarea id="popRewrite" rows="3" maxlength="16000" aria-describedby="popTarget popStatus"></textarea>
+  </div>
+  <label for="popText" id="popTextLabel" data-msg="preview.editorLabel"></label>
   <textarea id="popText" rows="2" aria-describedby="popTarget popStatus"></textarea>
   <div id="popStatus" role="status"></div>
   <div id="popError" role="alert"></div>
@@ -333,6 +351,39 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   const popover = document.getElementById('popover');
   const popTarget = document.getElementById('popTarget');
   const popText = document.getElementById('popText');
+  const popRewrite = document.getElementById('popRewrite');
+  const popRewriteToggle = document.getElementById('popRewriteToggle');
+  // The anchored text a rewrite may replace, and whether rewriting is on.
+  let rewritable = null;
+  let rewriting = false;
+  // Filled once per entry, so clearing it (a proposed removal) survives toggling.
+  let rewriteStarted = false;
+  function setRewriting(on) {
+    rewriting = on && rewritable !== null;
+    popover.classList.toggle('rewriting', rewriting);
+    popRewriteToggle.setAttribute('aria-expanded', String(rewriting));
+    popRewriteToggle.textContent = t(rewriting ? 'preview.rewriteOff' : 'preview.rewriteOn');
+    document.getElementById('popTextLabel').textContent = t(rewriting ? 'preview.rewriteReason' : 'preview.editorLabel');
+    popText.placeholder = t(rewriting ? 'preview.rewriteReasonPlaceholder' : 'preview.inputPlaceholder');
+    if (rewriting && !rewriteStarted) {
+      popRewrite.value = rewritable;
+      rewriteStarted = true;
+    }
+  }
+  // What the reader has entered: a comment, a changed rewrite, or both.
+  function entryRewrite() {
+    if (!rewriting) return null;
+    // Kept exactly as typed: boundary spaces can be part of the wording.
+    const proposed = popRewrite.value;
+    return proposed === rewritable ? null : { original: rewritable, proposed };
+  }
+  function entryHasContent() {
+    return Boolean(popText.value.trim()) || entryRewrite() !== null;
+  }
+  function entryKey() {
+    const rewrite = entryRewrite();
+    return JSON.stringify([popText.value.trim(), rewrite ? rewrite.proposed : null]);
+  }
   popText.placeholder = t('preview.inputPlaceholder');
   const threadsEl = document.getElementById('threads');
   const panelEmpty = document.getElementById('panelEmpty');
@@ -516,7 +567,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let savePending = false;
   let saveFailed = false;
   // Text that reconciliation confirmed as already saved for this attempt.
-  let confirmedSavedText = null;
+  let confirmedSavedKey = null;
   let unconfirmedSave = null;
   let targetRect = null;
   let targetPickSequence = null;
@@ -545,7 +596,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   function openPopover(anchor, label, rect, pickSequence) {
     if (ended) return;
-    if (savePending || saveFailed || (pendingAnchor && popText.value.trim())) {
+    if (savePending || saveFailed || (pendingAnchor && entryHasContent())) {
       document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : savePending ? 'preview.savePending' : 'preview.entryBlocked');
       positionPopover();
       return;
@@ -557,16 +608,34 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     targetRect = rect;
     targetPickSequence = pickSequence;
     postToFrame({ kind: 'track-annotation-pick', pickSequence });
+    popText.value = '';
+    popRewrite.value = '';
+    rewritable = rewritableTextOf(anchor);
+    rewriteStarted = false;
+    popRewriteToggle.hidden = rewritable === null;
+    setRewriting(false);
     popover.classList.add('show');
     positionPopover();
-    popText.value = '';
     popText.focus();
   }
+  // Mirrors the CLI contract: quoted text, or an element's raw own text.
+  function rewritableTextOf(anchor) {
+    if (anchor.kind === 'text') return anchor.quotedText || null;
+    if (anchor.kind === 'element') return anchor.ownText || null;
+    return null;
+  }
+  popRewriteToggle.addEventListener('click', () => {
+    setRewriting(!rewriting);
+    // Switching changes what would be saved, like typing does.
+    if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
+    positionPopover();
+    (rewriting ? popRewrite : popText).focus();
+  });
   function hidePopover(flushReload = false) {
     if (savePending || ended) return;
     popover.classList.remove('show');
     saveFailed = false;
-    confirmedSavedText = null;
+    confirmedSavedKey = null;
     unconfirmedSave = null;
     document.getElementById('popAdd').textContent = t('preview.add');
     document.getElementById('popAdd').disabled = false;
@@ -580,31 +649,34 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }
   }
   document.getElementById('popCancel').addEventListener('click', () => hidePopover(true));
-  popText.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) addAnnotation();
-    if (event.key === 'Escape') hidePopover(true);
-  });
+  for (const field of [popText, popRewrite]) {
+    field.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) addAnnotation();
+      if (event.key === 'Escape') hidePopover(true);
+    });
+    field.addEventListener('input', () => {
+      if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
+    });
+  }
   document.getElementById('popAdd').addEventListener('click', addAnnotation);
-  popText.addEventListener('input', () => {
-    if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
-  });
   async function checkUnconfirmedSave(restoreFocus) {
     const refreshed = await reconcileAnnotations();
     if (ended) return;
     const attempt = unconfirmedSave;
     const found = annotations.some(annotation => !attempt.threads.has(annotation.thread) &&
-      annotation.comment === attempt.comment && annotation.anchor &&
+      annotation.comment === attempt.comment &&
+      JSON.stringify(annotation.rewrite || null) === JSON.stringify(attempt.rewrite || null) && annotation.anchor &&
       Object.entries(attempt.anchor).every(([key, value]) => annotation.anchor[key] === value));
     const add = document.getElementById('popAdd');
     savePending = false;
     saveFailed = true;
-    confirmedSavedText = found ? attempt.comment : null;
-    add.disabled = found && popText.value.trim() === attempt.comment;
+    confirmedSavedKey = found ? attempt.key : null;
+    add.disabled = found && entryKey() === attempt.key;
     add.textContent = t(refreshed || found ? 'preview.add' : 'preview.checkSave');
     document.getElementById('popError').textContent = t(found ? 'preview.annotationAlreadySaved' :
       refreshed ? 'preview.annotationSaveFailed' : 'preview.annotationSaveUnknown');
     // A failed read must never turn the next click into another write.
-    if ((refreshed && !found) || (found && popText.value.trim() !== attempt.comment)) unconfirmedSave = null;
+    if ((refreshed && !found) || (found && entryKey() !== attempt.key)) unconfirmedSave = null;
     positionPopover();
     if (restoreFocus()) {
       // Firefox can retain the artifact browsing context after a blocked pick.
@@ -616,7 +688,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   async function addAnnotation() {
     const comment = popText.value.trim();
-    if (ended || !comment || !pendingAnchor || savePending) return;
+    const rewrite = entryRewrite();
+    if (ended || (!comment && !rewrite) || !pendingAnchor || savePending) return;
     // Explicit Add owns the editor before tracking this attempt. Firefox may
     // still have the opaque frame active after a blocked annotation pick.
     window.focus();
@@ -625,7 +698,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     // but do not override a deliberate move while the request is pending.
     let focusMoved = false;
     const observeFocus = (event) => {
-      if (event.target !== document.body && event.target !== popText &&
+      if (event.target !== document.body && event.target !== popText && event.target !== popRewrite &&
           event.target !== document.getElementById('popAdd')) focusMoved = true;
     };
     const movedAway = () => { focusMoved = true; };
@@ -636,6 +709,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // Freeze the submitted text until acknowledgement/reconciliation finishes.
       // Keep it selectable, including when the session ends during the request.
       popText.readOnly = true;
+      popRewrite.readOnly = true;
+      popRewriteToggle.disabled = true;
       popText.setAttribute('aria-busy', 'true');
       document.getElementById('popCancel').disabled = true;
       document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : 'preview.savePending');
@@ -644,12 +719,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       document.getElementById('popAdd').disabled = true;
       window.addEventListener('blur', movedAway);
       popText.addEventListener('blur', movedAway, true);
+      popRewrite.addEventListener('blur', movedAway, true);
       if (unconfirmedSave) {
         await checkUnconfirmedSave(() => !focusMoved);
         return;
       }
-      const attempt = { anchor: pendingAnchor, comment, threads: new Set(annotations.map(annotation => annotation.thread)) };
-      const result = await api('POST', '/api/annotations', { anchor: pendingAnchor, comment }, false);
+      const attempt = { anchor: pendingAnchor, comment, rewrite, key: entryKey(), threads: new Set(annotations.map(annotation => annotation.thread)) };
+      const result = await api('POST', '/api/annotations', { anchor: pendingAnchor, comment, ...(rewrite ? { rewrite } : {}) }, false);
       if (ended) return;
       if (!result || !result.annotation || typeof result.annotation.thread !== 'string' || !result.annotation.thread) {
         unconfirmedSave = attempt;
@@ -660,9 +736,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       document.getElementById('popAdd').disabled = false;
       document.getElementById('popError').textContent = '';
       popText.value = '';
+      popRewrite.value = '';
       hidePopover(true);
     } finally {
       popText.readOnly = ended;
+      popRewrite.readOnly = ended;
+      popRewriteToggle.disabled = ended;
       popText.removeAttribute('aria-busy');
       document.getElementById('popCancel').disabled = ended;
       document.getElementById('popStatus').textContent = !ended && pendingReload !== null ? t('preview.updateQueued') : '';
@@ -670,6 +749,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       document.removeEventListener('focusin', observeFocus);
       window.removeEventListener('blur', movedAway);
       popText.removeEventListener('blur', movedAway, true);
+      popRewrite.removeEventListener('blur', movedAway, true);
       cancelAddFocusRestore = null;
     }
   }
@@ -808,6 +888,20 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         });
         thread.appendChild(go);
       }
+      if (annotation.rewrite) {
+        // The reader's own wording, shown before and after.
+        const rewrite = document.createElement('div');
+        rewrite.className = 'rewrite';
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = t('preview.rewriteHeading');
+        const before = document.createElement('del');
+        before.textContent = annotation.rewrite.original;
+        const after = document.createElement('ins');
+        after.textContent = annotation.rewrite.proposed || t('preview.rewriteRemoved');
+        rewrite.append(who, before, document.createTextNode(' → '), after);
+        thread.appendChild(rewrite);
+      }
       (annotation.messages || []).forEach((message) => {
         const msg = document.createElement('div');
         msg.className = message.author === 'agent' ? 'msg agent' : 'msg';
@@ -873,7 +967,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     body.classList.toggle('annotate', annotateMode);
     modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
-    if (!popText.value.trim() && !saveFailed && pendingReload === null) hidePopover();
+    if (!entryHasContent() && !saveFailed && pendingReload === null) hidePopover();
   });
 
   // --- screens (URL state of interactive documents) ----------------------
@@ -940,7 +1034,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
-    if (ended || savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
+    if (ended || savePending || saveFailed || (pendingAnchor && entryHasContent())) return;
     previewCapability = '';
     hidePopover();
     // A restore in progress continues on the reloaded document, with a fresh
@@ -1116,11 +1210,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     events.close();
     const screen = document.getElementById('endedScreen');
     // A comment confirmed as saved is not unsaved work, unless it was edited.
-    const confirmedSaved = confirmedSavedText !== null && popText.value.trim() === confirmedSavedText;
-    if (pendingAnchor && !confirmedSaved && (popText.value || savePending || saveFailed)) {
+    const confirmedSaved = confirmedSavedKey !== null && entryKey() === confirmedSavedKey;
+    if (pendingAnchor && !confirmedSaved && (popText.value || entryRewrite() !== null || savePending || saveFailed)) {
       endedBody.innerHTML = t('preview.ended.unsaved', { command: '__CMD__' }).replace('__CMD__', '<code></code>');
       endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
       popText.readOnly = true;
+      popRewrite.readOnly = true;
+      popRewriteToggle.disabled = true;
       popover.querySelector('.row').hidden = true;
       popover.querySelector('.row').style.display = 'none';
       screen.querySelector('.box').appendChild(popover);

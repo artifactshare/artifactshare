@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { test, vi } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { createPreviewStore } from './store.js'
 import type { PreviewAnchor } from './contract.js'
 
@@ -726,4 +726,18 @@ test('blocked parent delete keeps the saved comment in memory and on disk', () =
   store.deleteDraft(draft.thread)
   assert.deepEqual(createPreviewStore(path).all(), [])
   rmSync(dir, { recursive: true })
+})
+
+test('reopening an applied rewrite asks for more instead of the same rewrite', () => {
+  const store = createPreviewStore(storePath())
+  const draft = store.createDraft(anchor, '', {
+    original: 'Hello',
+    proposed: 'Welcome',
+  })
+  expect(draft.messages).toEqual([])
+  store.submitDrafts()
+  store.applyDone([{ thread: draft.thread, generation: 1, outcome: 'fixed' }])
+  expect(store.reopen(draft.thread).ok).toBe(true)
+  expect(store.all()[0]!.rewrite).toBeUndefined()
+  expect(store.createDraft(anchor, '').messages).toHaveLength(1)
 })

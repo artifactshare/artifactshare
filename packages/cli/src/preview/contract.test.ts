@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { isPreviewAnchor } from './contract.js'
+import { isPreviewAnchor, isPreviewRewrite } from './contract.js'
 
 const legacy = {
   kind: 'text',
@@ -97,4 +97,18 @@ test('anchors keep an optional bounded screen', () => {
   expect(isPreviewAnchor(element)).toBe(true)
   for (const screen of ['', 'x'.repeat(1001), 2, null])
     expect(isPreviewAnchor({ ...element, screen })).toBe(false)
+})
+
+test('rewrites are bounded and must change the text', () => {
+  expect(isPreviewRewrite({ original: 'a', proposed: 'b' })).toBe(true)
+  expect(isPreviewRewrite({ original: 'a', proposed: '' })).toBe(true)
+  for (const value of [
+    { original: 'a', proposed: 'a' },
+    { original: '', proposed: 'b' },
+    { original: 'a', proposed: 'b'.repeat(16001) },
+    { original: 'a', proposed: 'b', extra: 1 },
+    { original: 'a' },
+    null,
+  ])
+    expect(isPreviewRewrite(value)).toBe(false)
 })

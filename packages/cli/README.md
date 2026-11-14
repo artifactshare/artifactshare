@@ -149,6 +149,12 @@ count.
 
 ## Local preview and annotation
 
+A comment can also rewrite the selected element or text: choose **Rewrite the
+text** in the editor, change the wording that starts from the current text, and
+optionally say why. `preview next` returns it as `rewrite: {original,
+proposed}` for the agent to apply to the source file, and `preview history`
+keeps it with the batch. The browser never writes the file itself.
+
 Interactive documents stay usable in comment mode: Alt/Option+click operates
 links, buttons, checkboxes and slide controls, and a plain click comments. Each
 comment remembers the URL screen it was made on (a `#/` or `#!/` route hash, or
