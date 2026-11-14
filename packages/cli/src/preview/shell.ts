@@ -976,7 +976,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         { thread: annotation.thread }, annotation.anchor)),
     };
     verifyPending = true;
-    postToFrame({ kind: 'comment-highlights', textAnchorsEnabled: true, highlights: pending.filter(a => a.anchor.kind === 'text').map(a => Object.assign({ threadId: a.thread, count: 1 }, a.anchor)) });
+    // Highlight only this screen's quotes: another screen may repeat the text.
+    postToFrame({ kind: 'comment-highlights', textAnchorsEnabled: true, highlights: pending.filter(a => a.anchor.kind === 'text' && (a.anchor.screen || '') === currentScreen).map(a => Object.assign({ threadId: a.thread, count: 1 }, a.anchor)) });
     postToFrame(request);
     // The frame arms its listener during the ready handshake, which this can
     // still race. One resend keeps a missed request from leaving every anchor

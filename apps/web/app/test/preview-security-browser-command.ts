@@ -179,8 +179,8 @@ export const previewSecurity = defineBrowserCommand(
     const screensHtml = (
       label: string,
     ) => `<!doctype html><title>${label}</title>
-<nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a></nav>
-<main id="stage"></main><p id="intro">Intro text</p>
+<nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a></nav>
+<main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
 <script>
   let lockedLeft = false;
   const home = location.pathname;
@@ -320,6 +320,16 @@ export const previewSecurity = defineBrowserCommand(
         await frame.locator('#next').click({ modifiers: ['Alt'] })
         await heading().filter({ hasText: 'Slide 2' }).waitFor()
         assert.equal(await shell.locator('#popover.show').count(), 0)
+        // A link to another document is routed like a plain click, never by
+        // navigating the preview frame away from the file.
+        await frame.locator('#away').click({ modifiers: ['Alt'] })
+        // test-wait: elapsed-time — observe the absence of a frame navigation, which nothing signals.
+        await shell.waitForTimeout(300)
+        assert.equal(
+          await frame.evaluate(() => document.title),
+          'Interactive document',
+        )
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
         result.checks.push('alt-click-operates')
 
         // A plain click still annotates, and the comment keeps its screen.
@@ -437,6 +447,44 @@ export const previewSecurity = defineBrowserCommand(
         await heading().filter({ hasText: 'Slide 3' }).waitFor()
         await otherScreen('Slide two note').waitFor()
         result.checks.push('reload-keeps-screen')
+
+        // A quote repeated on every screen is highlighted only on its own.
+        // Select the quote directly; a pointer gesture would also pick the
+        // paragraph element in comment mode.
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(document.getElementById('intro')!)
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        })
+        await addComment('Intro quote')
+        // Painted as CSS custom highlights where supported, else as marks.
+        await frame.waitForFunction(
+          () =>
+            document.querySelectorAll('.ash-comment-highlight-badge').length +
+              ((globalThis as { CSS?: { highlights?: { size: number } } }).CSS
+                ?.highlights?.size ?? 0) >
+            0,
+        )
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Slide 4' }).waitFor()
+        await otherScreen('Intro quote').waitFor()
+        await frame.waitForFunction(
+          () =>
+            document.querySelectorAll('.ash-comment-highlight-badge').length +
+              ((globalThis as { CSS?: { highlights?: { size: number } } }).CSS
+                ?.highlights?.size ?? 0) ===
+            0,
+        )
+        result.checks.push('highlights-per-screen')
+
+        // The default screen can be restored too (fragment only, no History API).
+        await otherScreen('Intro note').focus()
+        await shell.keyboard.press('Enter')
+        await frame.waitForFunction(() => ['', '#'].includes(location.hash))
+        await otherScreen('Intro note').waitFor({ state: 'detached' })
+        result.checks.push('restore-default-screen')
         return result
       }
       if (view === 'popover') {

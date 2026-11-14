@@ -113,6 +113,31 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   ctx.primordials.preventDefault(event)
 }
 
+/** Routes an anchor like an accepted plain click, for a gesture the
+ * reporter replaced (Alt/Option+click in local Preview). Same-document
+ * fragments and links the gate does not handle are left alone. */
+export function routeLink(ctx: ReporterState, anchor: Element) {
+  if (ctx.primordials.hasAttribute(anchor, 'download')) return
+  let rawHref = ctx.primordials.getAttribute(anchor, 'href')
+  if (!rawHref || rawHref.charAt(0) === '#') return
+  let href
+  let openExternally = false
+  try {
+    let url = new ctx.win.URL(rawHref, ctx.win.location.href)
+    if (!shouldHandleLink(ctx, url)) return
+    href = url.href
+    openExternally =
+      url.origin !== ctx.win.location.origin && isExternallyOpenable(ctx, url)
+  } catch (e) {
+    return
+  }
+  if (openExternally && ctx.externalLinkPolicyMode === 'direct') {
+    openExternalLink(ctx, href)
+    return
+  }
+  send(ctx, { kind: 'link-clicked', href, token: ctx.documentToken })
+}
+
 export function finishLinkClick(ctx: ReporterState, event: MouseEvent) {
   let pending = ctx.primordials.weakMapGet(ctx.pendingLinkClicks, event)
   if (!pending) return

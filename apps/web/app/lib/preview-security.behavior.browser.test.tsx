@@ -130,5 +130,7 @@ test('interactive documents can be operated and annotated per screen', async () 
     routeCheck,
     'unrestorable-orphaned',
     'reload-keeps-screen',
+    'highlights-per-screen',
+    'restore-default-screen',
   ])
 }, 90000)

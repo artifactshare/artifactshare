@@ -7,6 +7,7 @@ import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
 import { previewScreen, reportScreen } from './screen.js'
+import { routeLink } from './links.js'
 
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
@@ -252,6 +253,15 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
     if (!original || (original as Node).nodeType !== 1) return
     event.preventDefault()
     event.stopPropagation()
+    // An untrusted click would bypass the link gate and navigate the frame
+    // itself, so links other than same-document fragments are routed like an
+    // accepted plain click instead.
+    const link = ctx.primordials.closest(original as Element, 'a[href]')
+    const href = link ? ctx.primordials.getAttribute(link, 'href') : null
+    if (link && !(href && href.charAt(0) === '#')) {
+      routeLink(ctx, link)
+      return
+    }
     ctx.previewPassThrough = true
     try {
       ;(original as Element).dispatchEvent(

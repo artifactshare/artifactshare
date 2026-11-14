@@ -79,7 +79,11 @@ export function showScreen(ctx: ReporterState, screen: unknown) {
   const path = hashIndex === -1 ? screen : screen.slice(0, hashIndex)
   const hash = hashIndex === -1 ? '' : screen.slice(hashIndex)
   try {
-    const target = path === '' ? ctx.previewHomePath : path
+    // Stored paths are decoded; encode each segment again for the URL.
+    const target =
+      path === ''
+        ? ctx.previewHomePath
+        : path.split('/').map(encodeURIComponent).join('/')
     if (
       target &&
       target[0] === '/' &&
@@ -90,16 +94,11 @@ export function showScreen(ctx: ReporterState, screen: unknown) {
       ctx.win.history.pushState(null, '', target + ctx.win.location.search)
       ctx.win.dispatchEvent(new PopStateEvent('popstate', { state: null }))
     }
-    if (hash !== ctx.win.location.hash) {
-      if (hash === '')
-        ctx.win.history.pushState(
-          null,
-          '',
-          ctx.win.location.pathname + ctx.win.location.search,
-        )
-      else ctx.win.location.hash = hash
-      if (hash === '') ctx.win.dispatchEvent(new HashChangeEvent('hashchange'))
-    }
+    // Fragment navigation only: WebKit forbids the History API in the
+    // opaque-origin sandbox. An in-page fragment already shows the default
+    // screen, so it is left in place.
+    if (hash !== fragmentScreen(ctx, ctx.win.location.hash))
+      ctx.win.location.hash = hash
   } catch {
     /* Report whatever screen is current. */
   }
