@@ -369,7 +369,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (rewritable === null) return null;
     // Kept exactly as typed: boundary spaces can be part of the wording.
     const proposed = popRewrite.value;
-    return proposed === rewritable ? null : { original: rewritable, proposed };
+    // A textarea stores line breaks as LF; untouched text is not a rewrite.
+    return proposed === rewritable.replace(/\\r\\n?/g, '\\n') ? null : { original: rewritable, proposed };
   }
   function entryHasContent() {
     return Boolean(popText.value.trim()) || entryRewrite() !== null;
@@ -542,6 +543,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // holds the latest draft.
       if (!inlineEditing || !pendingAnchor) return;
       leaveInline();
+      // Typing meant for the page continues in the field, not the document.
+      if (!savePending) { window.focus(); popRewrite.focus(); }
     } else if (data.kind === 'edit-key') {
       if (!inlineEditing || !pendingAnchor) return;
       if (data.key === 'commit') addAnnotation();
@@ -982,6 +985,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     body.classList.toggle('annotate', annotateMode);
     modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
+    // The page edit ends with comment mode; a draft stays in the field.
+    if (!annotateMode) leaveInline();
     if (!entryHasContent() && !saveFailed && pendingReload === null) hidePopover();
   });
 

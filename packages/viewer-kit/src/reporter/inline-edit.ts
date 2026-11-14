@@ -35,9 +35,18 @@ export function inlineEditable(ctx: ReporterState, el: Element) {
 }
 
 export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
-  if (!ctx.previewCapability || ctx.previewEdit) return
+  if (!ctx.previewCapability) return
   const pick = ctx.previewPick
-  if (!pick || pick.sequence !== sequence || pick.endpoints) return
+  if (
+    ctx.previewEdit ||
+    !pick ||
+    pick.sequence !== sequence ||
+    pick.endpoints
+  ) {
+    // A newer pick or edit got here first: the parent shows its field.
+    send(ctx, { kind: 'edit-ended' })
+    return
+  }
   const el = pick.target as HTMLElement
   // The document changed it since the pick: the parent shows its field.
   if (!el.isConnected || !inlineEditable(ctx, el)) {
@@ -118,13 +127,10 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
   if (edit.contentEditable === null) el.removeAttribute('contenteditable')
   else el.setAttribute('contenteditable', edit.contentEditable)
   el.classList.remove('as-preview-editing')
-  // Re-appending the original nodes queues mutation records, so the observer
-  // remeasures the restored DOM once. A removed element is outside the
-  // document: its removal was seen while paused, so remeasure here.
-  if (removed) {
-    send(ctx, { kind: 'edit-ended' })
-    if (!el.isConnected) rebuildAfterMutations(ctx)
-  }
+  if (removed) send(ctx, { kind: 'edit-ended' })
+  // Changes made while editing were not measured, and the restore's own
+  // mutation records can fall outside the anchor root: remeasure here.
+  rebuildAfterMutations(ctx)
 }
 
 export function sendInlineEditText(ctx: ReporterState) {
@@ -167,9 +173,16 @@ export function installInlineEditGuard(ctx: ReporterState) {
     'compositionupdate',
     'compositionend',
     'pointerdown',
+    'pointermove',
     'pointerup',
+    'pointercancel',
     'mousedown',
+    'mousemove',
     'mouseup',
+    'wheel',
+    'dragstart',
+    'selectstart',
+    'touchmove',
     'click',
     'dblclick',
     'auxclick',

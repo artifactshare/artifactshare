@@ -455,6 +455,67 @@ export const previewSecurity = defineBrowserCommand(
           original: 'Select this text',
           proposed: 'Select this sentence',
         })
+        // A prefilled field left as it is saves nothing; cleared, it proposes
+        // removal; boundary spaces are kept.
+        const before = (await stored()).length
+        await frame.locator('#linked').click({ position: { x: 2, y: 2 } })
+        await pop.waitFor()
+        await shell.locator('#popAdd').click()
+        assert.equal(await pop.count(), 1)
+        assert.equal((await stored()).length, before)
+        await shell.locator('#popRewrite').fill('')
+        const removal = saved()
+        await shell.locator('#popAdd').click()
+        assert.equal((await removal).status(), 200)
+        assert.deepEqual((await stored()).at(-1)!.rewrite, {
+          original: 'Read the guide first',
+          proposed: '',
+        })
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(
+            document.getElementById('sample')!.firstChild!,
+          )
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        })
+        await pop.waitFor()
+        await shell.locator('#popRewrite').fill(' Select this text ')
+        const spaced = saved()
+        await shell.locator('#popAdd').click()
+        assert.equal((await spaced).status(), 200)
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
+        assert.deepEqual((await stored()).at(-1)!.rewrite, {
+          original: 'Select this text',
+          proposed: ' Select this text ',
+        })
+
+        // Turning comment mode off gives the page back and keeps the draft.
+        await h1.click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await shell.keyboard.type(' off')
+        await shell.waitForFunction(
+          () =>
+            (document.getElementById('popRewrite') as HTMLTextAreaElement)
+              .value === 'Initial document off',
+        )
+        await shell.locator('#modeToggle').click()
+        await frame.waitForFunction(
+          () =>
+            !document.querySelector('h1')!.hasAttribute('contenteditable') &&
+            document.querySelector('h1')!.textContent === 'Initial document',
+        )
+        assert.equal(await shell.locator('#popRewrite').isVisible(), true)
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Initial document off',
+        )
+        await shell.locator('#popCancel').click()
+        await shell.locator('#modeToggle').click()
         // An element without its own text offers no rewrite.
         await frame.locator('input').click()
         await pop.waitFor()

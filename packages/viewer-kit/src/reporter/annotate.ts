@@ -192,6 +192,8 @@ export function ownText(ctx: ReporterState, el: Element) {
 
 export function setAnnotateMode(ctx: ReporterState, enabled: unknown) {
   ctx.annotateModeEnabled = enabled === true
+  // Turning comments off gives the page back; the parent keeps the draft.
+  if (!ctx.annotateModeEnabled) endInlineEdit(ctx)
   if (ctx.annotateModeEnabled) {
     ensureAnnotateStyles(ctx)
   } else {
@@ -349,9 +351,10 @@ export function retainPreviewPick(ctx: ReporterState, target: Element | Range) {
 
 export function trackPreviewPick(ctx: ReporterState, sequence: unknown) {
   if (!ctx.previewCapability) return
-  if (sequence !== null && sequence !== ctx.previewPick?.sequence) return
+  // Another accepted pick (or none) ends an edit of an earlier one.
   if (ctx.previewEdit && ctx.previewEdit.sequence !== sequence)
     endInlineEdit(ctx)
+  if (sequence !== null && sequence !== ctx.previewPick?.sequence) return
   ctx.previewTrackedPick = sequence === null ? null : ctx.previewPick
   if (ctx.previewGeometryFrame)
     ctx.win.cancelAnimationFrame(ctx.previewGeometryFrame)
