@@ -10,6 +10,7 @@ import {
 } from './highlights.js'
 import { installMermaidResults, requestMermaidRendering } from './mermaid.js'
 import {
+  trackPreviewPick,
   setAnnotateMode,
   pingElement,
   flashElement,
@@ -152,6 +153,8 @@ export function installMessageListener(ctx: ReporterState) {
       scrollToThread(ctx, data.threadId)
     } else if (data.kind === 'mermaid-rendered') {
       installMermaidResults(ctx, data.renderToken, data.results)
+    } else if (data.kind === 'track-annotation-pick') {
+      trackPreviewPick(ctx, data.pickSequence)
     } else if (data.kind === 'annotate-mode') {
       setAnnotateMode(ctx, data.enabled)
     } else if (data.kind === 'element-ping') {

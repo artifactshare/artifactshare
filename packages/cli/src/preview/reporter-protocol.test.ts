@@ -47,7 +47,13 @@ const ready = {
   token: 'e'.repeat(64),
 }
 
-test.each([element, selection, verdict, ready])(
+const geometry = {
+  ...envelope,
+  kind: 'annotation-geometry',
+  pickSequence: 1,
+  rect: element.rect,
+}
+test.each([element, selection, verdict, ready, geometry])(
   'admits a bounded observation and rejects missing/extra fields: $kind',
   (message) => {
     expect(validPreviewObservation(message)).toBe(true)
@@ -65,6 +71,8 @@ test.each([element, selection, verdict, ready])(
   },
 )
 test.each([
+  { ...geometry, pickSequence: 0 },
+  { ...geometry, rect: { ...element.rect, top: Infinity } },
   { ...element, selector: 'x'.repeat(4097) },
   { ...element, rect: { ...element.rect, top: Infinity } },
   { ...element, rect: { ...element.rect, left: 1_000_001 } },

@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Keep local Preview annotation drafts reachable during resizing and failed saves, preserve unconfirmed text after shutdown, and explain queued document updates. Stage all annotation mutations before atomic persistence, restore failure focus, improve share labels and offer snapshot retry. Reject ambiguous oversized element hash matches without deleting comments, preserve surrogate pairs in excerpts, and add a local canvas-background choice for transparent HTML. Update bundled Preview guidance to managed skill version 65.
+
 - Clarify that publisher API version appends return a stable app viewer URL without exposing current visibility. Viewer authorization still applies.
 
 - Workspace bot credentials can post to administrator-approved destination projects without reimport. `projects list` shows the approved destinations; `doctor` accepts a publishable approved secondary default and diagnoses archived or grant-revoked destinations while retaining the singular primary contract. Private-project reports must explicitly use project visibility. Update the bundled skill to version 64 with this guidance.

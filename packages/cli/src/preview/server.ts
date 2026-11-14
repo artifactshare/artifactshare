@@ -531,14 +531,19 @@ export async function startPreviewServer(
           agent: notification.projection(),
         })
       }
-      if (submitted.batch) {
-        if (notification.registration.capability === 'wait' && activeWait) {
-          events.emit('submitted')
-        } else {
-          await notification.notifyBatch(submitted.batch.id)
+      try {
+        if (submitted.batch) {
+          if (notification.registration.capability === 'wait' && activeWait) {
+            events.emit('submitted')
+          } else {
+            await notification.notifyBatch(submitted.batch.id)
+          }
         }
+      } finally {
+        // The submission is already committed even if a later dispatch-state
+        // write fails. Publish the actual persisted state, never stale drafts.
+        broadcastAnnotations()
       }
-      broadcastAnnotations()
       return sendJson(response, 200, {
         submitted: submitted.annotations.length,
         ...(submitted.batch ? { batch_id: submitted.batch.id } : {}),
@@ -571,10 +576,15 @@ export async function startPreviewServer(
         return [{ thread, state: state as 'attached' | 'orphaned' }]
       })
       let changed = false
-      for (const update of updates) {
-        if (store.setAnchorState(update.thread, update.state).ok) changed = true
+      try {
+        for (const update of updates) {
+          if (store.setAnchorState(update.thread, update.state).ok)
+            changed = true
+        }
+      } finally {
+        // Announce committed state changes even when a later save fails.
+        if (changed) broadcastAnnotations()
       }
-      if (changed) broadcastAnnotations()
       return sendJson(response, 200, { updated: updates.length })
     }
 
@@ -589,19 +599,17 @@ export async function startPreviewServer(
           )
         : []
       const results: Array<{ thread: string; discarded: boolean }> = []
-      for (const thread of threads) {
-        // Draft annotations delete directly. Resolved/dismissed ones are
-        // reopened to draft first, then deleted, using only public store
-        // API. In-flight annotations (requested/in_progress) are left for
-        // the agent to report on and are not discarded.
-        let result = store.deleteDraft(thread)
-        if (!result.ok && result.reason === 'invalid_status') {
-          const reopened = store.reopen(thread)
-          if (reopened.ok) result = store.deleteDraft(thread)
-        }
-        results.push({ thread, discarded: result.ok })
+      try {
+        // Draft, resolved and dismissed annotations are removed in one store
+        // transaction each, so a persistence failure cannot leave a finished
+        // comment saved as a fresh draft. In-flight annotations
+        // (requested/in_progress) are left for the agent to report on.
+        for (const thread of threads)
+          results.push({ thread, discarded: store.discardOrphan(thread).ok })
+      } finally {
+        // Announce threads already committed even when a later save fails.
+        broadcastAnnotations()
       }
-      broadcastAnnotations()
       return sendJson(response, 200, { results })
     }
 

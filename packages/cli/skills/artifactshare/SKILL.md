@@ -4,7 +4,7 @@ description: Share, publish, upload, host, update, open, or read back existing f
 ---
 
 <!-- artifactshare-skill
-version: 64
+version: 65
 managed: true
 -->
 
@@ -235,7 +235,15 @@ Do not launch duplicates while startup is indeterminate.
 When the user submits feedback, read the whole batch with `preview next --json`,
 fix it in one editing pass, save once, and report the batch with
 `preview done --stdin --json`. Skip orphaned anchors with an explanatory note.
-Saving reloads the preview. Sharing happens only when the user opens its share dialog.
+Saving reloads the preview after an open comment is added or cancelled. Failed
+operations keep the draft available for retry; if the session ends, copy any
+unconfirmed comment before closing the page, then use its restart command.
+Oversized element hashes with lone-surrogate or U+FFFD candidates stay
+orphaned/needs-check, including ambiguous legacy hashes; never infer a target
+from their selector alone. The local Document background choice can recover
+transparent HTML readability without changing authored styles, browser media
+queries, or the shared viewer. Sharing happens only when the user opens its
+share dialog.
 
 ## Changing and checking visibility
 

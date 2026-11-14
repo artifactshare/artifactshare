@@ -7,6 +7,8 @@ test('local preview isolates scripts and accepts only current bounded display ob
 
 test('preview primary buttons and document canvases remain readable in both themes', async () => {
   const measurements = await server.commands.previewSecurity('theme')
+  for (const contrast of measurements.textContrast)
+    expect(contrast).toBeGreaterThanOrEqual(4.5)
   expect(measurements.tokens).toHaveLength(4)
   for (const { colorScheme, value } of measurements.tokens)
     expect(value).toBe(colorScheme === 'dark' ? '#111315' : '#ffffff')
@@ -35,6 +37,10 @@ test('preview primary buttons and document canvases remain readable in both them
     'rgb(255, 255, 255)',
   ])
   expect(measurements.transparent).toBe('rgba(0, 0, 0, 0)')
+  expect(
+    measurements.recoveryContrast,
+    JSON.stringify({ darkMedia: measurements.darkMedia }),
+  ).toBeGreaterThanOrEqual(4.5)
   expect(measurements.authored).toBe('rgb(240, 230, 220)')
 }, 60000)
 
@@ -70,16 +76,18 @@ test('oversized reporter captures survive shell save, store reopen and preview n
     })
   }
   expect(result.next).toEqual(result.stored)
+  expect(result.ambiguous).toHaveLength(4)
+  for (const anchor of result.ambiguous) {
+    expect(anchor.next).toEqual(anchor.stored)
+    expect(anchor.stored.ownTextHash).toMatch(/^[a-f0-9]{64}$/)
+  }
 }, 60000)
 
-test('phone failed drafts keep Add and Cancel above the panel', async () => {
+test('resized failed drafts keep reachable actions and remain copyable after shutdown', async () => {
   const measurements = await server.commands.previewSecurity('popover')
-  expect(measurements).toEqual([
-    { short: false, selector: '#popAdd', hit: true },
-    { short: false, selector: '#popCancel', hit: true },
-    { short: true, selector: '#popAdd', hit: true },
-    { short: true, selector: '#popCancel', hit: true },
-  ])
+  expect(measurements).toHaveLength(12)
+  for (const result of measurements)
+    expect(result.hit, JSON.stringify(result)).toBe(true)
 }, 60000)
 
 test('Markdown preview keeps its existing frame color scheme and white background', async () => {
@@ -87,4 +95,20 @@ test('Markdown preview keeps its existing frame color scheme and white backgroun
     { scheme: 'normal', background: 'rgb(255, 255, 255)' },
     { scheme: 'normal', background: 'rgb(255, 255, 255)' },
   ])
+}, 60000)
+
+test('actual share popup and mobile keyboard paths retain readable fields, errors and meaningful focus', async () => {
+  const measurements = await server.commands.previewSecurity('share')
+  expect(measurements).toHaveLength(8)
+  for (const result of measurements) {
+    expect(result.states).toEqual([
+      'form',
+      'upload-error',
+      'snapshot-failed',
+      'auth',
+      'done',
+    ])
+    for (const contrast of result.contrast)
+      expect(contrast, JSON.stringify(result)).toBeGreaterThanOrEqual(4.5)
+  }
 }, 60000)

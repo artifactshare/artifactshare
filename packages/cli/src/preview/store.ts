@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -163,6 +164,8 @@ export interface PreviewStore {
     author: PreviewThreadMessage['author'],
   ): PreviewStoreResult
   reopen(thread: string): PreviewStoreResult
+  /** Removes a draft, resolved or dismissed comment in one saved transaction. */
+  discardOrphan(thread: string): PreviewStoreResult
   setAnchorState(
     thread: string,
     state: 'attached' | 'orphaned',
@@ -369,9 +372,19 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     const dir = dirname(annotationsPath)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     const temp = join(dir, `.annotations-${randomUUID()}.tmp`)
-    writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
-    renameSync(temp, annotationsPath)
-    chmodSync(annotationsPath, 0o600)
+    try {
+      writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 })
+      chmodSync(temp, 0o600)
+      // Rename is the commit point: nothing throwable follows it.
+      renameSync(temp, annotationsPath)
+    } catch (error) {
+      try {
+        rmSync(temp, { force: true })
+      } catch {
+        /* Preserve the write error. */
+      }
+      throw error
+    }
   }
 
   if (needsSave) save()
@@ -422,7 +435,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
     return { id: randomUUID(), author, body, created_at: nowIso() }
   }
 
-  return {
+  const store: PreviewStore = {
     get quarantinedPath() {
       return quarantined
     },
@@ -680,6 +693,26 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       return { ok: true, annotation }
     },
 
+    discardOrphan(thread) {
+      const annotation = find(thread)
+      if (!annotation) return { ok: false, reason: 'unknown_thread' }
+      // In-flight comments stay for the agent to report on.
+      if (
+        annotation.status !== 'draft' &&
+        annotation.status !== 'resolved' &&
+        annotation.status !== 'dismissed'
+      ) {
+        return {
+          ok: false,
+          reason: 'invalid_status',
+          status: annotation.status,
+        }
+      }
+      annotations = annotations.filter((entry) => entry.thread !== thread)
+      save()
+      return { ok: true, annotation }
+    },
+
     reopen(thread) {
       const annotation = find(thread)
       if (!annotation) return { ok: false, reason: 'unknown_thread' }
@@ -733,4 +766,33 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       return annotations
     },
   }
+  const readers = new Set([
+    'activeBatch',
+    'latestBatch',
+    'batches',
+    'unresolved',
+    'all',
+  ])
+  return new Proxy(store, {
+    get(target, key, receiver) {
+      const operation = Reflect.get(target, key, receiver)
+      if (typeof operation !== 'function' || readers.has(String(key)))
+        return operation
+      return (...args: unknown[]) => {
+        const committedAnnotations = annotations
+        const committedBatches = batches
+        // Mutate private candidates so callers holding nested records never
+        // observe a failed transaction. All operations here are synchronous.
+        annotations = structuredClone(annotations)
+        batches = structuredClone(batches)
+        try {
+          return Reflect.apply(operation, target, args)
+        } catch (error) {
+          annotations = committedAnnotations
+          batches = committedBatches
+          throw error
+        }
+      }
+    },
+  })
 }

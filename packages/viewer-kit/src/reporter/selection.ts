@@ -1,4 +1,5 @@
 import type { ReporterState } from './state.js'
+import { retainPreviewPick } from './annotate.js'
 import { send } from './messaging.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 import { liveCommentLocation } from './hash.js'
@@ -88,4 +89,5 @@ export function sendSelection(ctx: ReporterState) {
       height: rect.height,
     },
   })
+  if (ctx.previewCapability) retainPreviewPick(ctx, range.cloneRange())
 }

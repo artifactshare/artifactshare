@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto'
 import { VIOLATION_REPORTER_SCRIPT_BODY } from '@artifactshare/viewer-kit/csp-reporter'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PREVIEW_MUTATION_HEADER,
   PREVIEW_MUTATION_HEADER_VALUE,
@@ -20,6 +26,11 @@ import {
 } from './server.js'
 import type { PreviewAgentAdapter } from './notification.js'
 import { createPreviewStore } from './store.js'
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  return { ...fs, renameSync: vi.fn(fs.renameSync) }
+})
 
 const MUTATION_HEADERS = {
   'content-type': 'application/json',
@@ -306,12 +317,99 @@ describe('startPreviewServer', () => {
       anchor: { kind: 'artifact' },
       comment: 'private comment body',
     })
+    const config = join(context.dir, 'config')
+    const saved = readFileSync(join(config, 'annotations.json'), 'utf8')
+    renameSync(config, config + '-saved')
+    writeFileSync(config, 'blocked')
+    try {
+      expect((await post(context, '/api/annotations/submit', {})).status).toBe(
+        500,
+      )
+      expect(context.store.all()[0]!.status).toBe('draft')
+      expect(context.store.batches()).toEqual([])
+      expect(payloads).toEqual([])
+      expect(
+        readFileSync(join(config + '-saved', 'annotations.json'), 'utf8'),
+      ).toBe(saved)
+      const displayed = await (
+        await fetch(`${origin(context)}/api/annotations`)
+      ).json()
+      expect(displayed.annotations[0].status).toBe('draft')
+    } finally {
+      rmSync(config)
+      renameSync(config + '-saved', config)
+    }
     const body = await (
       await post(context, '/api/annotations/submit', {})
     ).json()
+    expect(payloads).toHaveLength(1)
     expect(body.agent.state).toBe('queued')
     expect(JSON.stringify(payloads)).not.toContain('private comment body')
     expect(JSON.stringify(payloads)).not.toContain('secret-provider-target')
+  })
+
+  it('publishes the committed batch when the following dispatch write fails, and permits pickup', async () => {
+    await context.server.close()
+    rmSync(context.dir, { recursive: true, force: true })
+    const dispatch = vi.fn(async () => ({ status: 'accepted' as const }))
+    context = await startContext({
+      notificationRegistration: {
+        provider: 'fixture',
+        transport: 'fixture_push',
+        capability: 'push',
+        target: 'synthetic-target',
+        registered_at: '2026-08-29T00:00:00.000Z',
+      },
+      notificationAdapter: { dispatch },
+    })
+    const comment = 'Preserve this saved request'
+    await post(context, '/api/annotations', {
+      anchor: { kind: 'artifact' },
+      comment,
+    })
+    const stream = await fetch(`${origin(context)}/events`)
+    const reader = stream.body!.getReader()
+    let observed = ''
+    const collect = (async () => {
+      const decoder = new TextDecoder()
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) return
+        observed += decoder.decode(chunk.value)
+      }
+    })()
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    try {
+      await vi.waitFor(() => expect(observed).toContain('"status":"draft"'))
+      observed = ''
+      vi.mocked(renameSync)
+        .mockImplementationOnce(fs.renameSync)
+        .mockImplementationOnce(() => {
+          throw new Error('dispatch commit fault')
+        })
+      expect((await post(context, '/api/annotations/submit', {})).status).toBe(
+        500,
+      )
+      await vi.waitFor(() => expect(observed).toContain('"status":"requested"'))
+      expect(dispatch).not.toHaveBeenCalled()
+      const reopened = createPreviewStore(
+        join(context.dir, 'config', 'annotations.json'),
+      )
+      expect(reopened.all()[0]).toMatchObject({ status: 'requested', comment })
+      expect(reopened.latestBatch()).toMatchObject({
+        state: 'manual_required',
+        dispatch_status: null,
+      })
+      const retry = await post(context, '/api/agent/next', { wait: 0 })
+      expect((await retry.json()).items).toMatchObject([
+        { status: 'in_progress', comment },
+      ])
+      expect(context.store.all()).toHaveLength(1)
+    } finally {
+      vi.mocked(renameSync).mockReset().mockImplementation(fs.renameSync)
+      await reader.cancel()
+      await collect
+    }
   })
 
   it('serves the shell page and the artifact with the reporter injected', async () => {

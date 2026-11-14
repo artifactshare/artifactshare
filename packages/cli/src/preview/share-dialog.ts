@@ -810,13 +810,17 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     border-radius: var(--r-lg); box-shadow: var(--shadow-lg); padding: 20px; }
   .dialog h3 { margin: 0 0 12px; font-size: 15px; }
   .field { margin-bottom: 12px; font-size: 13px; }
-  .field label { display: block; font-size: 11px; color: var(--faint); margin-bottom: 4px; }
+  .field label { display: block; font-size: 11px; color: var(--muted-foreground); margin-bottom: 4px; }
   select { width: 100%; font: inherit; font-size: 13px; padding: 6px 8px;
     border: 1px solid var(--border-strong); border-radius: var(--r-md);
     background: var(--background); color: var(--foreground); }
   .note { font-size: 12px; color: var(--muted-foreground);
     background: var(--accent); border-radius: var(--r-md);
     padding: 8px 10px; margin-bottom: 12px; }
+  .note:empty { display: none; }
+  /* Keep keyboard focus visible on the blue primary action and in WebKit. */
+  .btn:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
+    outline: 2px solid var(--link); outline-offset: 2px; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   .btn { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border);
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
@@ -827,7 +831,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   .btn-primary:disabled:hover { background: var(--primary); }
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .url-box { display: flex; gap: 8px; margin-bottom: 12px; }
-  .url-box input { flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;
+  .url-box input { min-width: 0; flex: 1; font: inherit; font-size: 13px; padding: 6px 8px;
     border: 1px solid var(--border-strong); border-radius: var(--r-md);
     background: var(--background); color: var(--foreground); }
   .auth-part, .done-part { display: none; }
@@ -837,7 +841,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   .dialog.shared .done-part { display: block; }
   a { color: var(--link); }
   .user-code { font-size: 18px; font-weight: 700; letter-spacing: 2px; margin: 8px 0; }
-  .error { color: #c0392b; font-size: 12px; margin-bottom: 8px; display: none; }
+  .error { color: var(--foreground); font-size: 12px; margin-bottom: 8px; display: none; }
 </style>
 </head>
 <body>
@@ -859,8 +863,9 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     <div class="note" id="privateDefaultNote"></div>
     <div class="note" id="notCarried"></div>
     <div class="note" id="snapshotNote"></div>
-    <div class="error" id="shareError"></div>
+    <div class="error" id="shareError" role="alert"></div>
     <div class="row">
+      <button class="btn" id="snapshotRetry" hidden></button>
       <button class="btn" id="cancelBtn"></button>
       <button class="btn btn-primary" id="shareBtn"></button>
     </div>
@@ -875,7 +880,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   <div class="done-part">
     <h3 id="doneTitle"></h3>
     <div class="url-box">
-      <input readonly id="shareUrl">
+      <input readonly id="shareUrl" aria-labelledby="doneTitle">
       <button class="btn" id="copyBtn"></button>
     </div>
     <p class="note" id="shareNotes" style="display:none"></p>
@@ -902,6 +907,8 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   el('visLink').textContent = t('visibilityLink');
   el('privateDefaultNote').textContent = t('privateDefault');
   el('notCarried').textContent = t('notCarried');
+  el('snapshotRetry').textContent = t('retrySnapshot');
+  el('snapshotRetry').addEventListener('click', refreshSnapshot);
   el('cancelBtn').textContent = t('cancel');
   el('shareBtn').textContent = t('confirm');
   el('authTitle').textContent = t('title');
@@ -936,15 +943,24 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // Without a snapshot there is nothing to upload, and a Share button that
     // silently does nothing reads as a broken dialog.
     snapshotFailed = true;
+    // A failed refresh leaves no current snapshot; drop any earlier capture time.
+    el('snapshotNote').textContent = '';
+    el('snapshotRetry').hidden = false;
     el('shareError').textContent = t('snapshotFailed');
     el('shareError').style.display = 'block';
     el('shareBtn').disabled = true;
   }
 
   var snapshotPending = false;
+  var visibilityChosen = false;
+  // After sign-in the newly loaded destination must be confirmed before sharing.
+  var destinationUnconfirmed = false;
   function refreshSnapshot() {
     if (snapshotPending || shareInFlight || el('dialog').className !== 'dialog') return;
+    var retryFocused = document.activeElement === el('snapshotRetry');
+    var shareFocused = document.activeElement === el('shareBtn');
     snapshotPending = true;
+    el('snapshotRetry').disabled = true;
     snapshotFailed = false;
     snapshotId = null;
     if (el('shareError').textContent === t('snapshotFailed') ||
@@ -959,12 +975,29 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         return;
       }
       snapshotId = result.body.snapshot_id;
+      if (retryFocused && (document.activeElement === document.body || document.activeElement === el('snapshotRetry'))) el('destination').focus();
+      el('snapshotRetry').hidden = true;
       var takenAt = new Date(result.body.taken_at);
       el('snapshotNote').textContent =
         t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
+      if (destinationUnconfirmed) {
+        el('shareError').textContent = t('confirmDestination');
+        el('shareError').style.display = 'block';
+      }
     })
     .catch(reportSnapshotFailure)
-    .finally(function () { snapshotPending = false; syncVisibility(); });
+    .finally(function () {
+      snapshotPending = false;
+      el('snapshotRetry').disabled = false;
+      syncVisibility();
+      if (!snapshotFailed && shareFocused && !el('shareBtn').disabled &&
+          document.activeElement === document.body) el('shareBtn').focus();
+      // A shell-triggered refresh also disables Share. If it owned focus,
+      // move to the available recovery action instead of leaving keyboard
+      // navigation anchored to a disabled control. Preserve moves to fields.
+      if (snapshotFailed && (retryFocused || shareFocused) &&
+          (document.activeElement === document.body || document.activeElement === el('snapshotRetry') || document.activeElement === el('shareBtn'))) el('snapshotRetry').focus();
+    });
   }
   window.addEventListener('message', function (event) {
     if (event.source !== window.opener || event.origin !== bootstrap.artifactOrigin) return;
@@ -993,7 +1026,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
           destination.appendChild(option);
         });
         destination.value = previous;
-        if (body.default_visibility) {
+        if (body.default_visibility && !visibilityChosen) {
           el('visibility').value = body.default_visibility;
         }
         syncVisibility();
@@ -1043,11 +1076,19 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         ? ''
         : 'none';
   }
-  el('destination').addEventListener('change', syncVisibility);
-  el('visibility').addEventListener('change', syncVisibility);
+  el('destination').addEventListener('change', function () {
+    destinationUnconfirmed = false;
+    syncVisibility();
+  });
+  el('visibility').addEventListener('change', function () { visibilityChosen = true; syncVisibility(); });
 
   function share() {
     if (!snapshotId || shareInFlight || snapshotPending || el('dialog').className !== 'dialog') return;
+    destinationUnconfirmed = false;
+    var restoreFocus = document.activeElement === el('shareBtn');
+    function recoverFocus() {
+      if (restoreFocus && (document.activeElement === document.body || document.activeElement === el('shareBtn'))) el('shareBtn').focus();
+    }
     shareInFlight = true;
     el('shareBtn').disabled = true;
     el('shareError').style.display = 'none';
@@ -1066,11 +1107,13 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         showDone(result.body.url, result.body.visibility, result.body.warnings);
         return;
       }
+      recoverFocus();
       el('shareError').textContent = shareErrorText(result.body);
       el('shareError').style.display = 'block';
     }).catch(function () {
       shareInFlight = false;
       el('shareBtn').disabled = false;
+      recoverFocus();
       el('shareError').textContent = t('shareFailed');
       el('shareError').style.display = 'block';
     });
@@ -1119,6 +1162,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     var link = auth.verification_uri_complete || auth.verification_uri;
     el('authLink').href = link;
     el('authLink').textContent = link;
+    el('authLink').focus();
     el('userCode').textContent = auth.user_code;
     // The authorization server dictates the poll rate; polling faster earns
     // slow_down responses that never converge.
@@ -1133,6 +1177,12 @@ function renderPage(options: ShareDialogHandlerOptions): string {
             // Projects only become visible once authenticated; sharing straight
             // away would silently pick Home for a first-time user.
             loadContext().then(function () {
+              // Recover focus lost with the hidden sign-in step, but keep a
+              // control the person chose while projects were loading.
+              var active = document.activeElement;
+              if (!active || active === document.body ||
+                  document.querySelector('.auth-part').contains(active)) el('destination').focus();
+              destinationUnconfirmed = true;
               el('shareError').textContent = t('confirmDestination');
               el('shareError').style.display = 'block';
             });
@@ -1143,6 +1193,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
             el('dialog').className = 'dialog';
             // An account mismatch is not "sign in again": repeating the same
             // approval never resolves it, so show what the server reported.
+            el('destination').focus();
             var detail = body.error && (body.error.message || body.error.why);
             el('shareError').textContent = detail
               ? detail + (body.error.hint ? ' ' + body.error.hint : '')
@@ -1165,6 +1216,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   function showDone(url, confirmed, warnings) {
     el('dialog').className = 'dialog shared';
     el('shareUrl').value = url;
+    el('shareUrl').focus();
     var notes = [];
     var requested = el('destination').value ? 'project' : el('visibility').value;
     if (confirmed && confirmed !== requested) {

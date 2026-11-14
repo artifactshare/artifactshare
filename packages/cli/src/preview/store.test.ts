@@ -1,14 +1,28 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, vi } from 'vitest'
 import { createPreviewStore } from './store.js'
 import type { PreviewAnchor } from './contract.js'
 
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>()
-  return { ...fs, writeFileSync: vi.fn(fs.writeFileSync) }
+  return {
+    ...fs,
+    writeFileSync: vi.fn(fs.writeFileSync),
+    renameSync: vi.fn(fs.renameSync),
+    chmodSync: vi.fn(fs.chmodSync),
+  }
 })
 
 const anchor: PreviewAnchor = {
@@ -568,4 +582,148 @@ test('a failed draft write rolls back before a successful retry', () => {
   } finally {
     write.mockRestore()
   }
+})
+
+// Real files exercise replacement and reopen; syscall faults are deterministic
+// even when the runner can bypass directory permission bits.
+test.each([
+  'create',
+  'delete',
+  'discard',
+  'submit',
+  'deliver',
+  'done',
+  'manual',
+  'started',
+  'accepted',
+  'failed',
+  'recovery',
+  'reply',
+  'reopen',
+  'orphan',
+  'anchor',
+])(
+  '%s preserves committed and escaped state on pre-commit failure, then retries',
+  (operation) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      for (const syscall of [writeFileSync, chmodSync, renameSync]) {
+        const path = storePath()
+        const store = createPreviewStore(path)
+        const draft = store.createDraft(anchor, 'Preserve this comment')
+        const thread = draft.thread
+        if (
+          [
+            'deliver',
+            'done',
+            'manual',
+            'started',
+            'accepted',
+            'failed',
+            'recovery',
+            'reopen',
+            'orphan',
+          ].includes(operation)
+        )
+          store.submitDrafts()
+        const batchId = store.latestBatch()?.id ?? ''
+        if (['manual', 'recovery'].includes(operation))
+          store.markDispatchStarted(batchId)
+        if (operation === 'reopen' || operation === 'orphan')
+          store.applyDone([{ thread, generation: 1, outcome: 'fixed' }])
+        const mutate = () => {
+          switch (operation) {
+            case 'create':
+              return store.createDraft(anchor, 'Another comment')
+            case 'delete':
+              return store.deleteDraft(thread)
+            case 'discard':
+              return store.discardAllDrafts()
+            case 'submit':
+              return store.submitDrafts()
+            case 'deliver':
+              return store.deliver()
+            case 'done':
+              return store.applyDone([
+                { thread, generation: 1, outcome: 'fixed', note: 'Fixed' },
+              ])
+            case 'manual':
+              return store.markManualRequired(batchId)
+            case 'started':
+              return store.markDispatchStarted(batchId)
+            case 'accepted':
+              return store.markDispatchAccepted(batchId)
+            case 'failed':
+              return store.markDispatchFailed(
+                batchId,
+                'target_unavailable',
+                true,
+              )
+            case 'recovery':
+              return store.recoverInterruptedBatch()
+            case 'reply':
+              return store.reply(thread, 'More detail', 'human')
+            case 'reopen':
+              return store.reopen(thread)
+            case 'orphan':
+              return store.discardOrphan(thread)
+            case 'anchor':
+              return store.setAnchorState(thread, 'orphaned')
+          }
+        }
+        const escaped = { annotations: store.all(), batches: store.batches() }
+        const before = structuredClone(escaped)
+        const bytes = readFileSync(path, 'utf8')
+        // A failed touch must preserve timestamps even for escaped records.
+        vi.setSystemTime(Date.now() + 1000)
+        vi.mocked(syscall).mockImplementationOnce(() => {
+          throw new Error('pre-commit fault')
+        })
+        assert.throws(mutate, /pre-commit fault/)
+        assert.deepEqual(escaped, before)
+        assert.deepEqual(
+          { annotations: store.all(), batches: store.batches() },
+          before,
+        )
+        assert.equal(readFileSync(path, 'utf8'), bytes)
+        const reopened = createPreviewStore(path)
+        assert.deepEqual(
+          { annotations: reopened.all(), batches: reopened.batches() },
+          before,
+        )
+        assert.deepEqual(readdirSync(dirname(path)), ['annotations.json'])
+        mutate()
+        assert.notEqual(readFileSync(path, 'utf8'), bytes)
+        const retried = createPreviewStore(path)
+        assert.deepEqual(retried.all(), store.all())
+        assert.deepEqual(retried.batches(), store.batches())
+        assert.equal(statSync(path).mode & 0o777, 0o600)
+        rmSync(dirname(path), { recursive: true })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  },
+)
+
+test('blocked parent delete keeps the saved comment in memory and on disk', () => {
+  const path = storePath()
+  const dir = dirname(path)
+  const moved = dir + '-moved'
+  const store = createPreviewStore(path)
+  const draft = store.createDraft(anchor, 'Keep me')
+  const bytes = readFileSync(path, 'utf8')
+  renameSync(dir, moved)
+  writeFileSync(dir, 'blocked')
+  try {
+    assert.throws(() => store.deleteDraft(draft.thread))
+    assert.deepEqual(store.all(), [draft])
+    assert.equal(readFileSync(join(moved, 'annotations.json'), 'utf8'), bytes)
+  } finally {
+    rmSync(dir)
+    renameSync(moved, dir)
+  }
+  store.deleteDraft(draft.thread)
+  assert.deepEqual(createPreviewStore(path).all(), [])
+  rmSync(dir, { recursive: true })
 })

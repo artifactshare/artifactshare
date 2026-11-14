@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { PREVIEW_MESSAGES } from './preview/messages.generated.js'
 import { type ChildProcess, spawn } from 'node:child_process'
 import {
   chmodSync,
@@ -442,6 +443,8 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   })
   await browserApi(server, 'POST', '/api/annotations/submit')
 
+  // The recovery advice uses the same saved-batch pickup, not another submit.
+  assert.match(PREVIEW_MESSAGES.en['preview.submitUnconfirmed'], /preview next/)
   const next = run(['preview', 'next', filePath, '--json'], env)
   const nextPayload = expectSuccess(next, 'preview next')
   const items = (nextPayload.data as { items: Record<string, unknown>[] }).items
@@ -449,6 +452,7 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   const item = items[0]!
   assert.equal(item.status, 'in_progress')
   assert.equal(item.generation, 1)
+  assert.equal(item.comment, 'Make it friendlier')
   assert.equal(
     (nextPayload.data as { agent: { state: string } }).agent.state,
     'processing',

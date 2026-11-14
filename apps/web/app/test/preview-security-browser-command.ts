@@ -6,13 +6,15 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { defineBrowserCommand } from '@vitest/browser-playwright'
-import type { Frame } from 'playwright'
+import type { Frame, JSHandle, Locator, Page } from 'playwright'
+import { openPopup } from './browser-waits'
 
 // Execute the native postMessage call in a document script. DevTools evaluation
 // is not an authored script entry point and can supply a different incumbent
@@ -28,9 +30,72 @@ async function postFromDocument(
   await script.dispose()
 }
 
-type View = 'theme' | 'header' | 'oversized' | 'popover' | 'markdown-frame'
+// Composite every ancestor background before measuring translucent text.
+function textContrast(
+  locator: Locator,
+  placeholder = false,
+  canvas = [255, 255, 255],
+) {
+  return locator.evaluate(
+    (element, options) => {
+      const rgba = (value: string) => {
+        const channels = value.match(/[\d.]+/g)!.map(Number)
+        return [channels[0], channels[1], channels[2], channels[3] ?? 1]
+      }
+      const blend = (front: number[], back: number[]) =>
+        front
+          .slice(0, 3)
+          .map((channel, i) => channel * front[3] + back[i] * (1 - front[3]))
+      const ancestors: Element[] = []
+      for (
+        let current: Element | null = element;
+        current;
+        current = current.parentElement
+      )
+        ancestors.unshift(current)
+      let background = options.canvas
+      for (const ancestor of ancestors)
+        background = blend(
+          rgba(getComputedStyle(ancestor).backgroundColor),
+          background,
+        )
+      const foreground = blend(
+        rgba(
+          getComputedStyle(
+            element,
+            options.placeholder ? '::placeholder' : null,
+          ).color,
+        ),
+        background,
+      )
+      const luminance = (rgb: number[]) =>
+        rgb
+          .map((value) => value / 255)
+          .map((value) =>
+            value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+          )
+          .reduce(
+            (sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i],
+            0,
+          )
+      const a = luminance(foreground),
+        b = luminance(background)
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+    },
+    { placeholder, canvas },
+  )
+}
+
+type View =
+  | 'theme'
+  | 'header'
+  | 'oversized'
+  | 'popover'
+  | 'markdown-frame'
+  | 'share'
 type PopoverMeasurements = {
-  short: boolean
+  width: number
+  height: number
   selector: string
   hit: boolean
 }[]
@@ -44,6 +109,7 @@ type HeaderMeasurements = {
   accessible: string | null
 }[]
 type ThemeMeasurements = {
+  textContrast: number[]
   buttons: {
     colorScheme: string
     surface: string
@@ -57,10 +123,20 @@ type ThemeMeasurements = {
   frameSchemes: string[]
   canvases: string[]
   transparent: string
+  darkMedia: boolean
+  recoveryContrast: number
   authored: string
 }
+type ShareMeasurements = {
+  locale: string
+  colorScheme: string
+  width: number
+  states: string[]
+  contrast: number[]
+}[]
 type PreviewAnchor = Record<string, unknown>
 type OversizedMeasurements = {
+  ambiguous: { stored: PreviewAnchor; next: PreviewAnchor }[]
   status: number
   stored: PreviewAnchor
   next: PreviewAnchor
@@ -91,7 +167,7 @@ export const previewSecurity = defineBrowserCommand(
     )
     const fixtureHtml = (
       label: string,
-    ) => `<!doctype html><h1>${label}</h1><p id="sample">Select this text</p><script>
+    ) => `<!doctype html><h1>${label}</h1><p id="sample">Select this text</p><input aria-label="Authored input"><script>
     document.body.dataset.scriptRan = 'yes';
     window.addEventListener('message', event => {
       if (event.source === parent && event.data.kind === 'ready-check') window.previewHandshake = event.data;
@@ -152,12 +228,7 @@ export const previewSecurity = defineBrowserCommand(
       await shell.goto(ready.url)
       if (view === 'popover') {
         const measurements: PopoverMeasurements = []
-        await shell.setViewportSize({ width: 390, height: 844 })
-        await shell.route('**/api/annotations', (route) =>
-          route.request().method() === 'POST'
-            ? route.fulfill({ status: 500, json: {} })
-            : route.continue(),
-        )
+        await shell.setViewportSize({ width: 1280, height: 800 })
         const frame = await (await shell
           .locator('#artifactFrame')
           .elementHandle())!.contentFrame()
@@ -170,42 +241,122 @@ export const previewSecurity = defineBrowserCommand(
         )
         await frame.locator('#sample').evaluate((element) => {
           element.style.position = 'absolute'
-          element.style.top = '350px'
+          element.style.top = 'calc(100vh - 80px)'
+          element.style.left = 'min(780px, 30vw)'
         })
         await frame.locator('#sample').click()
         await shell.locator('#popover.show').waitFor()
-        await shell.locator('#popText').fill('Keep this draft')
-        await shell.locator('#popAdd').click()
+        const draft = 'Keep this exact draft\nthrough resizing and shutdown'
+        await shell.locator('#popText').fill(draft)
+        const target = await shell.locator('#popTarget').textContent()
+        // Pick a different target before intercepting Add: this is the original
+        // focus-loss order, not a frame interaction after the failure.
+        await frame.locator('h1').click()
         await shell
-          .locator('#popError')
-          .filter({ hasText: 'Could not save' })
+          .locator('#popStatus')
+          .filter({ hasText: 'Finish or cancel' })
           .waitFor()
-        for (const short of [false, true]) {
-          if (short)
-            await shell.locator('#popover').evaluate((element) => {
-              element.style.minHeight = '480px'
+        await shell.route('**/api/annotations', (route) =>
+          route.request().method() === 'POST'
+            ? route.fulfill({ status: 503, json: {} })
+            : route.continue(),
+        )
+        for (const size of [
+          { width: 1280, height: 800 },
+          { width: 390, height: 600 },
+          { width: 390, height: 844 },
+          { width: 600, height: 390 },
+          { width: 844, height: 390 },
+          { width: 844, height: 390, nearTop: true },
+        ]) {
+          await shell.setViewportSize({
+            width: size.width,
+            height: size.height,
+          })
+          if ('nearTop' in size) {
+            // Keep the same selected node and draft, but move it where the
+            // editor cannot fit above it, as in the reported landscape case.
+            await frame.locator('#sample').evaluate((element) => {
+              element.style.top = '80px'
             })
-          if (short) {
-            const failed = shell.waitForResponse(
-              (response) =>
-                response.url().endsWith('/api/annotations') &&
-                response.status() === 500,
+          }
+          // Compare with the actual responsive authored target, not the opening
+          // rectangle or merely the outer viewport. Browser/subprocess execution
+          // is necessary for native frame layout and hit testing.
+          const currentTarget = await frame.locator('#sample').boundingBox()
+          assert.ok(currentTarget)
+          await shell.waitForFunction((targetBounds) => {
+            const pop = document
+              .querySelector('#popover')!
+              .getBoundingClientRect()
+            const above = targetBounds.y - pop.height - 8
+            const expected =
+              above >= 8
+                ? above
+                : Math.max(
+                    8,
+                    Math.min(
+                      targetBounds.y + targetBounds.height + 8,
+                      innerHeight - 8 - pop.height,
+                    ),
+                  )
+            return Math.abs(pop.top - expected) <= 1
+          }, currentTarget)
+          // Native viewport changes also generate visualViewport resize events.
+          const failed = shell.waitForResponse(
+            (response) =>
+              response.url().endsWith('/api/annotations') &&
+              response.status() === 503,
+          )
+          await Promise.all([failed, shell.locator('#popAdd').click()])
+          await shell.waitForFunction(
+            () =>
+              !(document.querySelector('#popAdd') as HTMLButtonElement)
+                .disabled,
+          )
+          assert.equal(
+            await shell.evaluate(() => document.activeElement?.id),
+            'popText',
+            'failed Add restores editor focus',
+          )
+          const popBounds = await shell.locator('#popover').boundingBox()
+          assert.ok(popBounds)
+          if (currentTarget.y - popBounds.height - 8 >= 8)
+            assert.ok(
+              Math.abs(popBounds.y + popBounds.height + 8 - currentTarget.y) <=
+                1,
+              'popover prefers above the current responsive target',
             )
-            await shell.locator('#popAdd').click()
-            await failed
-            await shell.waitForFunction(
-              () =>
-                !(document.querySelector('#popAdd') as HTMLButtonElement)
-                  .disabled,
+          if ('nearTop' in size) {
+            assert.ok(
+              currentTarget.y - popBounds.height - 8 < 8,
+              'landscape fixture must leave insufficient room above the target',
+            )
+            const fallbackTop = Math.max(
+              8,
+              Math.min(
+                currentTarget.y + currentTarget.height + 8,
+                size.height - 8 - popBounds.height,
+              ),
+            )
+            assert.ok(
+              Math.abs(popBounds.y - fallbackTop) <= 1,
+              'no-room fallback is below the real target, clamped to the viewport',
             )
           }
+          assert.equal(await shell.locator('#popText').inputValue(), draft)
+          assert.equal(await shell.locator('#popTarget').textContent(), target)
           for (const selector of ['#popAdd', '#popCancel']) {
             measurements.push({
-              short,
+              ...size,
               selector,
               hit: await shell.locator(selector).evaluate((element) => {
                 const rect = element.getBoundingClientRect()
                 return (
+                  rect.left >= 0 &&
+                  rect.top >= 0 &&
+                  rect.right <= innerWidth &&
+                  rect.bottom <= innerHeight &&
                   document.elementFromPoint(
                     rect.x + rect.width / 2,
                     rect.y + rect.height / 2,
@@ -215,8 +366,628 @@ export const previewSecurity = defineBrowserCommand(
             })
           }
         }
-        await shell.locator('#popCancel').click()
-        assert.equal(await shell.locator('#popover.show').count(), 0)
+        await shell.unroute('**/api/annotations')
+        // Hold the POST so moves from the editor to a control, frame, or
+        // other window happen before the failure. The already-focused frame
+        // message path is covered separately by the happy-dom shell test.
+        for (const destination of [
+          'canvas',
+          'frame',
+          'frame-keyboard',
+          'window',
+        ]) {
+          let release!: () => void
+          const held = new Promise<void>((resolveHeld) => {
+            release = resolveHeld
+          })
+          await shell.route('**/api/annotations', async (route) => {
+            if (route.request().method() !== 'POST') return route.continue()
+            await held
+            await route.fulfill({ status: 503, json: {} })
+          })
+          let other: Page | null = null
+          let focusObservation: JSHandle<{
+            calls: string[]
+            restore(): void
+          }> | null = null
+          try {
+            await shell.locator('#popText').fill(draft)
+            // Preserve the original frame pick -> Add order; the test must not
+            // activate the parent to compensate for the product.
+            await frame.locator('h1').click()
+            const started = shell.waitForRequest(
+              (request) =>
+                request.url().endsWith('/api/annotations') &&
+                request.method() === 'POST',
+            )
+            await Promise.all([started, shell.locator('#popAdd').click()])
+            assert.equal(await shell.locator('#popCancel').isDisabled(), true)
+            assert.equal(
+              await shell.locator('#popText').getAttribute('aria-busy'),
+              'true',
+            )
+            assert.equal(
+              await shell.locator('#popStatus').textContent(),
+              'Confirming save…',
+            )
+            await shell.keyboard.type('must not replace submitted text')
+            assert.equal(await shell.locator('#popText').inputValue(), draft)
+            if (destination === 'canvas')
+              await shell.locator('#canvasBackground').focus()
+            if (destination === 'frame') await frame.locator('h1').click()
+            if (destination === 'frame-keyboard') {
+              // Establish frame ownership after Add, then Tab into authored
+              // content without a reporter pick/selection. Firefox otherwise
+              // cycles in the shell before ever reaching the authored input.
+              await shell.locator('#artifactFrame').focus()
+              for (let count = 0; count < 12; count++) {
+                await shell.keyboard.press('Tab')
+                if (
+                  await frame
+                    .locator('input')
+                    .evaluate((element) => document.activeElement === element)
+                )
+                  break
+              }
+              assert.equal(
+                await frame
+                  .locator('input')
+                  .evaluate((element) => document.activeElement === element),
+                true,
+              )
+              await shell.keyboard.type('authored input retained')
+            }
+            if (destination === 'window') {
+              // Headless pages can both report hasFocus=true. Observe an explicit
+              // platform blur after Add activation, not an alleged OS switch.
+              focusObservation = await shell.evaluateHandle(() => {
+                const calls: string[] = []
+                const editor =
+                  document.querySelector<HTMLTextAreaElement>('#popText')!
+                const windowFocus = window.focus
+                const editorFocus = editor.focus
+                window.focus = () => {
+                  calls.push('window')
+                  windowFocus.call(window)
+                }
+                editor.focus = () => {
+                  calls.push('editor')
+                  editorFocus.call(editor)
+                }
+                window.dispatchEvent(new Event('blur'))
+                return {
+                  calls,
+                  restore() {
+                    window.focus = windowFocus
+                    editor.focus = editorFocus
+                  },
+                }
+              })
+              other = await shell.context().newPage()
+              await other.setContent('<input aria-label="Other window">')
+              await other.bringToFront()
+              await other.locator('input').click()
+              await other.locator('input').fill('other input retained')
+            }
+            release()
+            await shell.waitForFunction(
+              () =>
+                !(document.querySelector('#popAdd') as HTMLButtonElement)
+                  .disabled,
+            )
+            assert.equal(await shell.locator('#popText').inputValue(), draft)
+            assert.equal(
+              await shell.locator('#popTarget').textContent(),
+              target,
+            )
+            if (destination !== 'window') {
+              assert.equal(
+                await shell.evaluate(() => document.activeElement?.id),
+                destination === 'canvas' ? 'canvasBackground' : 'artifactFrame',
+                'failed Add preserves deliberate focus movement',
+              )
+            } else {
+              assert.deepEqual(
+                await focusObservation!.evaluate(
+                  (observation) => observation.calls,
+                ),
+                [],
+                'failed Add makes no focus calls after observed window blur',
+              )
+              assert.equal(
+                await other!.locator('input').inputValue(),
+                'other input retained',
+              )
+            }
+            if (destination === 'frame-keyboard')
+              assert.equal(
+                await frame.locator('input').inputValue(),
+                'authored input retained',
+              )
+          } finally {
+            release()
+            if (focusObservation) {
+              await focusObservation.evaluate((observation) =>
+                observation.restore(),
+              )
+              await focusObservation.dispose()
+            }
+            if (other) await other.close()
+            await shell.unroute('**/api/annotations')
+          }
+        }
+        // Block the real persistence parent, then verify actual failure keeps the
+        // same draft. No mocked server result can stand in for this boundary.
+        const previews = join(dir, 'config', 'previews')
+        renameSync(previews, previews + '-saved')
+        writeFileSync(previews, 'blocked')
+        try {
+          await frame.locator('h1').click()
+          const failed = shell.waitForResponse(
+            (response) =>
+              response.url().endsWith('/api/annotations') &&
+              response.status() === 500,
+          )
+          await Promise.all([failed, shell.locator('#popAdd').click()])
+          await shell.waitForFunction(
+            () =>
+              !(document.querySelector('#popAdd') as HTMLButtonElement)
+                .disabled,
+          )
+          assert.equal(await shell.locator('#popText').inputValue(), draft)
+          assert.equal(
+            await shell.evaluate(() => document.activeElement?.id),
+            'popText',
+            'failed Add restores editor focus',
+          )
+        } finally {
+          rmSync(previews)
+          renameSync(previews + '-saved', previews)
+        }
+        const exited = once(child, 'exit')
+        child.kill('SIGTERM')
+        await exited
+        await shell.locator('#endedScreen.show').waitFor()
+        assert.equal(await shell.locator('#popText').inputValue(), draft)
+        assert.equal(
+          await shell
+            .locator('#popText')
+            .evaluate((element) => (element as HTMLTextAreaElement).readOnly),
+          true,
+        )
+        assert.ok(
+          (await shell.locator('#endedBody').textContent())!.includes(
+            'Copy it before closing',
+          ),
+        )
+        assert.ok(
+          (await shell.locator('#endedBody code').textContent())!.includes(
+            'artifactshare preview',
+          ),
+        )
+        await shell.locator('#popText').focus()
+        await shell.locator('#popText').press('ControlOrMeta+A')
+        assert.equal(
+          await shell.locator('#popText').evaluate((element) => {
+            const input = element as HTMLTextAreaElement
+            return input.value.slice(input.selectionStart, input.selectionEnd)
+          }),
+          draft,
+          'ended draft remains selectable for copying',
+        )
+        return measurements
+      }
+      if (view === 'share') {
+        const measurements: ShareMeasurements = []
+        for (const locale of ['en', 'ja'])
+          for (const colorScheme of ['light', 'dark'] as const)
+            for (const width of [440, 390]) {
+              await shell.context().addInitScript(
+                (language) =>
+                  Object.defineProperty(navigator, 'language', {
+                    configurable: true,
+                    value: language,
+                  }),
+                locale,
+              )
+              let shareState = 'error'
+              let snapshotFails = false
+              let snapshots = 0
+              let contextHeld: Promise<void> | null = null
+              const pattern = ready.share_origin + '/api/**'
+              await shell.context().route(pattern, async (route) => {
+                const path = new URL(route.request().url()).pathname
+                if (path === '/api/context' && contextHeld) await contextHeld
+                if (path === '/api/context')
+                  return route.fulfill({
+                    json: {
+                      authenticated: true,
+                      default_visibility: 'private',
+                      projects: [
+                        { id: 'synthetic-project', name: 'Review project' },
+                      ],
+                    },
+                  })
+                if (path === '/api/snapshot') {
+                  snapshots++
+                  return route.fulfill(
+                    snapshotFails
+                      ? { status: 500, json: {} }
+                      : {
+                          json: {
+                            snapshot_id: 'synthetic-snapshot',
+                            taken_at: new Date().toISOString(),
+                          },
+                        },
+                  )
+                }
+                if (path === '/api/auth-status')
+                  return route.fulfill({ json: { status: 'authenticated' } })
+                if (path === '/api/share') {
+                  if (shareState === 'error')
+                    return route.fulfill({
+                      status: 503,
+                      json: { error: { code: 'network_failed' } },
+                    })
+                  if (shareState === 'auth')
+                    return route.fulfill({
+                      json: {
+                        auth_required: true,
+                        auth_id: 'synthetic-auth',
+                        user_code: 'CODE',
+                        verification_uri: ready.share_origin + '/authorize',
+                        interval_seconds: 1,
+                      },
+                    })
+                  return route.fulfill({
+                    json: {
+                      url: 'https://example.com/shared',
+                      visibility: 'link',
+                      warnings: [],
+                    },
+                  })
+                }
+                return route.abort()
+              })
+              const dialog = await openPopup(shell.context(), () =>
+                shell.locator('#shareBtn').click(),
+              )
+              try {
+                await dialog.waitForLoadState('domcontentloaded')
+                await dialog.setViewportSize({ width, height: 560 })
+                await dialog.emulateMedia({ colorScheme })
+                await dialog.waitForFunction(
+                  () =>
+                    !(document.querySelector('#shareBtn') as HTMLButtonElement)
+                      .disabled,
+                )
+                const result = {
+                  locale,
+                  colorScheme,
+                  width,
+                  states: ['form'],
+                  contrast: [
+                    await textContrast(dialog.locator('#destLabel')),
+                    await textContrast(dialog.locator('#visLabel')),
+                  ],
+                }
+                // Activate the page that owns the controls, including after a
+                // shell-triggered refresh. macOS WebKit's native Tab preference
+                // skips buttons; Option+Tab traverses all keyboard controls.
+                const tabKey =
+                  process.platform === 'darwin' &&
+                  dialog.context().browser()!.browserType().name() === 'webkit'
+                    ? 'Alt+Tab'
+                    : 'Tab'
+                const focusByKeyboard = async (id: string) => {
+                  await dialog.bringToFront()
+                  if (tabKey === 'Alt+Tab')
+                    await dialog.evaluate(() => window.focus())
+                  for (let count = 0; count < 10; count++) {
+                    if (
+                      await dialog.evaluate(
+                        (targetId) => document.activeElement?.id === targetId,
+                        id,
+                      )
+                    )
+                      break
+                    await dialog.keyboard.press(tabKey)
+                  }
+                  assert.equal(
+                    await dialog.evaluate(() => document.activeElement?.id),
+                    id,
+                  )
+                  assert.equal(
+                    await dialog.locator('#' + id).evaluate((element) => {
+                      const rect = element.getBoundingClientRect()
+                      return (
+                        rect.top >= 0 &&
+                        rect.bottom <= innerHeight &&
+                        document.elementFromPoint(
+                          rect.x + rect.width / 2,
+                          rect.y + rect.height / 2,
+                        ) === element
+                      )
+                    }),
+                    true,
+                  )
+                }
+                await focusByKeyboard('destination')
+                assert.ok(await dialog.locator('#destLabel').textContent())
+                await focusByKeyboard('visibility')
+                if (locale === 'en') {
+                  // Native closed-select typeahead for "Anyone with the link".
+                  await dialog.keyboard.press('a')
+                } else {
+                  // Japanese text insertion is not a native picker key action.
+                  // This locale covers selection retention and recovery; only
+                  // the English flow witnesses OS-picker keyboard selection.
+                  await dialog.locator('#visibility').selectOption('link')
+                }
+                assert.equal(
+                  await dialog.locator('#visibility').inputValue(),
+                  'link',
+                )
+                await focusByKeyboard('shareBtn')
+                await dialog.keyboard.press('Enter')
+                await dialog
+                  .locator('#shareError')
+                  .waitFor({ state: 'visible' })
+                await dialog.waitForFunction(
+                  () =>
+                    !(document.querySelector('#shareBtn') as HTMLButtonElement)
+                      .disabled,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'shareBtn',
+                )
+                result.states.push('upload-error')
+                result.contrast.push(
+                  await textContrast(dialog.locator('#shareError')),
+                )
+                snapshotFails = true
+                await shell.locator('#shareBtn').click()
+                await dialog
+                  .locator('#snapshotRetry')
+                  .waitFor({ state: 'visible' })
+                assert.equal(
+                  await dialog.locator('#shareBtn').isDisabled(),
+                  true,
+                )
+                // An earlier capture time must not remain as an empty or stale note.
+                assert.equal(
+                  await dialog.locator('#snapshotNote').isVisible(),
+                  false,
+                )
+                result.states.push('snapshot-failed')
+                await dialog.waitForFunction(
+                  () =>
+                    !(
+                      document.querySelector(
+                        '#snapshotRetry',
+                      ) as HTMLButtonElement
+                    ).disabled,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'snapshotRetry',
+                  'failed refresh transfers disabled Share focus to retry',
+                )
+                await focusByKeyboard('snapshotRetry')
+                await dialog.keyboard.press('Enter')
+                await dialog.waitForFunction(
+                  () =>
+                    !(
+                      document.querySelector(
+                        '#snapshotRetry',
+                      ) as HTMLButtonElement
+                    ).disabled,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'snapshotRetry',
+                  'failed snapshot retry restores keyboard focus',
+                )
+                snapshotFails = false
+                await dialog.keyboard.press('Enter')
+                await dialog.waitForFunction(
+                  () =>
+                    !(document.querySelector('#shareBtn') as HTMLButtonElement)
+                      .disabled,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'destination',
+                )
+                // Passive refresh preserves the selected audience and current focus.
+                await focusByKeyboard('visibility')
+                const previousSnapshots = snapshots
+                const refreshed = dialog.waitForResponse((response) =>
+                  response.url().endsWith('/api/snapshot'),
+                )
+                await Promise.all([
+                  refreshed,
+                  shell.locator('#shareBtn').click(),
+                ])
+                assert.ok(snapshots > previousSnapshots)
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'visibility',
+                )
+                assert.equal(
+                  await dialog.locator('#visibility').inputValue(),
+                  'link',
+                )
+                shareState = 'auth'
+                await focusByKeyboard('shareBtn')
+                await dialog.keyboard.press('Enter')
+                await dialog.locator('.dialog.auth').waitFor()
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'authLink',
+                )
+                result.states.push('auth')
+                await dialog.waitForFunction(
+                  () =>
+                    document.querySelector('#dialog')!.className === 'dialog' &&
+                    document.activeElement?.id === 'destination',
+                )
+                assert.equal(
+                  await dialog.locator('#visibility').inputValue(),
+                  'link',
+                )
+                assert.ok(await dialog.locator('#shareError').isVisible())
+                const confirmGuidance = await dialog
+                  .locator('#shareError')
+                  .textContent()
+                // A failed passive refresh must not drop the request to confirm
+                // the newly loaded destination once the retry succeeds.
+                snapshotFails = true
+                await shell.locator('#shareBtn').click()
+                await dialog
+                  .locator('#snapshotRetry')
+                  .waitFor({ state: 'visible' })
+                snapshotFails = false
+                await dialog.locator('#snapshotRetry').click()
+                await dialog.waitForFunction(
+                  () =>
+                    !(document.querySelector('#shareBtn') as HTMLButtonElement)
+                      .disabled,
+                )
+                assert.ok(await dialog.locator('#shareError').isVisible())
+                assert.equal(
+                  await dialog.locator('#shareError').textContent(),
+                  confirmGuidance,
+                )
+                // A control chosen while projects load after sign-in keeps focus.
+                let releaseContext!: () => void
+                contextHeld = new Promise((release) => {
+                  releaseContext = release
+                })
+                const contextRequested = dialog.waitForRequest((request) =>
+                  request.url().endsWith('/api/context'),
+                )
+                await focusByKeyboard('shareBtn')
+                await dialog.keyboard.press('Enter')
+                await contextRequested
+                await dialog.waitForFunction(
+                  () =>
+                    document.querySelector('#dialog')!.className === 'dialog',
+                )
+                // The deliberate move itself is not under test; WebKit's
+                // headless Tab order is covered elsewhere.
+                await dialog.locator('#cancelBtn').focus()
+                const contextLoaded = dialog.waitForResponse((response) =>
+                  response.url().endsWith('/api/context'),
+                )
+                contextHeld = null
+                releaseContext()
+                await contextLoaded
+                await dialog.waitForFunction(
+                  (expected) =>
+                    document.querySelector('#shareError')!.textContent ===
+                    expected,
+                  confirmGuidance,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'cancelBtn',
+                  'sign-in return keeps a deliberately chosen control',
+                )
+                shareState = 'done'
+                await focusByKeyboard('shareBtn')
+                await dialog.keyboard.press('Enter')
+                await dialog.locator('.dialog.shared').waitFor()
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'shareUrl',
+                )
+                assert.equal(
+                  await dialog.locator('#shareUrl').inputValue(),
+                  'https://example.com/shared',
+                )
+                result.states.push('done')
+                await focusByKeyboard('continueBtn')
+                if (
+                  locale === 'ja' &&
+                  colorScheme === 'dark' &&
+                  width === 390
+                ) {
+                  // Finish must stop the real loopback process and release its
+                  // agent poll, not merely paint an ended screen.
+                  const pending = Promise.allSettled([
+                    fetch(ready.url + 'api/agent/next', {
+                      method: 'POST',
+                      headers: {
+                        'content-type': 'application/json',
+                        'x-artifactshare-preview': '1',
+                      },
+                      body: JSON.stringify({ wait: 10 }),
+                      signal: AbortSignal.timeout(15000),
+                    }).then((response) => response.json()),
+                  ])
+                  await shell.waitForFunction(async () => {
+                    const response = await fetch('/api/agent/next', {
+                      method: 'POST',
+                      headers: {
+                        'content-type': 'application/json',
+                        'x-artifactshare-preview': '1',
+                      },
+                      body: JSON.stringify({ wait: 0 }),
+                    })
+                    return response.status === 409
+                  })
+                  await focusByKeyboard('finishBtn')
+                  const stopped = Promise.allSettled([
+                    once(child, 'exit', {
+                      signal: AbortSignal.timeout(15000),
+                    }),
+                  ])
+                  const stopResponse = shell.waitForResponse((response) =>
+                    response.url().endsWith('/api/agent/stop'),
+                  )
+                  // Finish owns this popup's closure; a closing target can reject
+                  // the key acknowledgement even after its handler ran.
+                  const closed = dialog.waitForEvent('close')
+                  const key = dialog.keyboard.press('Enter').then(
+                    () => null,
+                    (error: unknown) => error,
+                  )
+                  const [stoppedResponse, , keyError] = await Promise.all([
+                    stopResponse,
+                    closed,
+                    key,
+                  ])
+                  if (keyError !== null) {
+                    assert.ok(keyError instanceof Error)
+                    assert.match(
+                      keyError.message,
+                      /Target page, context or browser has been closed|Target page\/context\/browser has been closed|(?:Input\.dispatchKeyEvent|Protocol error \(Input\.dispatchKeyEvent\)): Page closed/,
+                    )
+                    assert.equal(dialog.isClosed(), true)
+                  }
+                  assert.equal(stoppedResponse.status(), 200)
+                  const [pollResult] = await pending
+                  assert.equal(pollResult.status, 'fulfilled')
+                  if (pollResult.status === 'fulfilled')
+                    assert.equal(
+                      (pollResult.value as { session_ended?: boolean })
+                        .session_ended,
+                      true,
+                    )
+                  const [exitResult] = await stopped
+                  assert.equal(exitResult.status, 'fulfilled')
+                  if (exitResult.status === 'fulfilled')
+                    assert.deepEqual(exitResult.value, [0, null])
+                  await shell.locator('#endedScreen.show').waitFor()
+                }
+                measurements.push(result)
+              } finally {
+                await dialog.close()
+                await shell.context().unroute(pattern)
+              }
+            }
         return measurements
       }
       if (view === 'header') {
@@ -268,21 +1039,29 @@ export const previewSecurity = defineBrowserCommand(
       }
       if (view === 'theme') {
         const measurements: ThemeMeasurements = {
+          textContrast: [],
           buttons: [],
           tokens: [],
           frameSchemes: [],
           canvases: [],
           transparent: '',
+          darkMedia: false,
+          recoveryContrast: 0,
           authored: '',
         }
-        const dialog = await shell.context().newPage()
-        try {
-          await dialog.route('**/api/context', (route) =>
+        await shell
+          .context()
+          .route(ready.share_origin + '/api/context', (route) =>
             route.fulfill({
               json: { default_visibility: 'private', projects: [] },
             }),
           )
-          await dialog.goto(ready.share_origin)
+        const dialog = await openPopup(shell.context(), () =>
+          shell.locator('#shareBtn').click(),
+        )
+        try {
+          await dialog.waitForLoadState('domcontentloaded')
+          await dialog.setViewportSize({ width: 440, height: 560 })
           for (const colorScheme of ['light', 'dark'] as const) {
             await shell.emulateMedia({ colorScheme })
             await dialog.emulateMedia({ colorScheme })
@@ -363,6 +1142,11 @@ export const previewSecurity = defineBrowserCommand(
                 }
               }
             }
+            measurements.textContrast.push(
+              await textContrast(shell.locator('#popText'), true),
+              await textContrast(dialog.locator('#destLabel')),
+              await textContrast(dialog.locator('#visLabel')),
+            )
             measurements.frameSchemes.push(
               await shell
                 .locator('#artifactFrame')
@@ -380,6 +1164,48 @@ export const previewSecurity = defineBrowserCommand(
           assert.ok(artifact)
           measurements.transparent = await artifact.evaluate(
             () => getComputedStyle(document.body).backgroundColor,
+          )
+          await artifact.addStyleTag({
+            content:
+              '@media (prefers-color-scheme: dark) { body { color: #eee; } }',
+          })
+          const authoredColor = await artifact.evaluate(
+            () => getComputedStyle(document.body).color,
+          )
+          await shell
+            .locator('#popover')
+            .evaluate((el) => el.classList.remove('show'))
+          measurements.darkMedia = await artifact.evaluate(
+            () => matchMedia('(prefers-color-scheme: dark)').matches,
+          )
+          const recovery = measurements.darkMedia ? 'dark' : 'light'
+          await shell.locator('#canvasBackground').selectOption(recovery)
+          measurements.recoveryContrast = await textContrast(
+            artifact.locator('body'),
+            false,
+            measurements.darkMedia ? [17, 19, 21] : [255, 255, 255],
+          )
+          assert.equal(
+            await shell
+              .locator('#artifactFrame')
+              .evaluate((el) => getComputedStyle(el).backgroundColor),
+            measurements.darkMedia ? 'rgb(17, 19, 21)' : 'rgb(255, 255, 255)',
+          )
+          assert.equal(
+            await artifact.evaluate(
+              () => getComputedStyle(document.body).color,
+            ),
+            authoredColor,
+          )
+          assert.equal(
+            await artifact.evaluate(
+              () => getComputedStyle(document.body).backgroundColor,
+            ),
+            'rgba(0, 0, 0, 0)',
+          )
+          assert.equal(
+            await shell.locator('#artifactFrame').getAttribute('sandbox'),
+            'allow-scripts',
           )
           await artifact.evaluate(() => {
             document.body.style.background = 'rgb(240, 230, 220)'
@@ -414,27 +1240,81 @@ export const previewSecurity = defineBrowserCommand(
             response.url() === `${ready.url}api/annotations` &&
             response.request().method() === 'POST',
         )
-        await shell.locator('#popAdd').click()
-        const status = (await saved).status()
+        const [savedResponse] = await Promise.all([
+          saved,
+          shell.locator('#popAdd').click(),
+        ])
+        const status = savedResponse.status()
+        await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        for (const [index, suffix] of [
+          '\ud800',
+          '\ud801',
+          '\udc00',
+          '\ufffd',
+        ].entries()) {
+          await frame.locator('#sample').evaluate((element, ending) => {
+            element.textContent = 'x'.repeat(16_001) + ending
+          }, suffix)
+          await shell.waitForFunction(
+            (count) =>
+              document.querySelectorAll('.thread.orphaned').length === count,
+            index + 1,
+          )
+          // Dismiss the real notice before picking the next target underneath it.
+          if (await shell.locator('#orphanKeep').isVisible())
+            await shell.locator('#orphanKeep').click()
+          await frame.locator('#sample').click()
+          await shell.locator('#popover.show').waitFor()
+          await shell
+            .locator('#popText')
+            .fill('Keep ambiguous anchor for review')
+          const savedAmbiguous = shell.waitForResponse(
+            (response) =>
+              response.url().endsWith('/api/annotations') &&
+              response.request().method() === 'POST',
+          )
+          const [ambiguousResponse] = await Promise.all([
+            savedAmbiguous,
+            shell.locator('#popAdd').click(),
+          ])
+          assert.equal(ambiguousResponse.status(), 200)
+          await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        }
+        await shell.waitForFunction(
+          () => document.querySelectorAll('.thread.orphaned').length === 5,
+        )
         const submitted = shell.waitForResponse(
           (response) => response.url() === `${ready.url}api/annotations/submit`,
         )
-        await shell.locator('#submitBtn').click()
-        await submitted
+        await Promise.all([submitted, shell.locator('#submitBtn').click()])
         const previews = join(dir, 'config', 'previews')
         const storedFile = readdirSync(previews).find((name) =>
           name.startsWith('annotations-'),
         )!
-        const stored = JSON.parse(
+        const storedAnchors = JSON.parse(
           readFileSync(join(previews, storedFile), 'utf8'),
-        ).annotations[0].anchor as PreviewAnchor
+        ).annotations.map(
+          (entry: { anchor: PreviewAnchor }) => entry.anchor,
+        ) as PreviewAnchor[]
+        const stored = storedAnchors[0]
         // Restart the production CLI so preview next reads through a reopened store.
         const exited = once(child, 'exit')
         child.kill('SIGKILL')
         await exited
+        // Reopen against a real DOM candidate with the legacy replacement
+        // character digest, so missing selectors cannot explain orphaning.
+        writeFileSync(
+          file,
+          fixtureHtml('Reopened document') +
+            '<script>document.getElementById("sample").textContent = "x".repeat(16001) + "\\ufffd"</script>',
+        )
         child = startCli()
-        await waitReady()
-        const next = JSON.parse(
+        const reopened = await waitReady()
+        await shell.goto(reopened.url)
+        await shell.waitForFunction(
+          () => document.querySelectorAll('.thread.orphaned').length === 5,
+        )
+        const nextAnchors = JSON.parse(
           execFileSync(
             process.execPath,
             [cli, 'preview', 'next', file, '--json'],
@@ -448,8 +1328,18 @@ export const previewSecurity = defineBrowserCommand(
               encoding: 'utf8',
             },
           ),
-        ).data.items[0].anchor as PreviewAnchor
-        return { status, stored, next }
+        ).data.items.map(
+          (item: { anchor: PreviewAnchor }) => item.anchor,
+        ) as PreviewAnchor[]
+        return {
+          status,
+          stored,
+          next: nextAnchors[0],
+          ambiguous: storedAnchors.slice(1).map((anchor, index) => ({
+            stored: anchor,
+            next: nextAnchors[index + 1],
+          })),
+        }
       }
       assert.equal(
         await shell.locator('#artifactFrame').getAttribute('sandbox'),
@@ -608,8 +1498,11 @@ export const previewSecurity = defineBrowserCommand(
           response.url() === `${ready.url}api/annotations` &&
           response.request().method() === 'POST',
       )
-      await shell.locator('#popAdd').click()
-      assert.equal((await annotationResponse).status(), 200)
+      const [savedResponse] = await Promise.all([
+        annotationResponse,
+        shell.locator('#popAdd').click(),
+      ])
+      assert.equal(savedResponse.status(), 200)
       await shell.locator('.thread').waitFor()
       await send(observation) // duplicate sequence
       await barrier()
@@ -688,6 +1581,7 @@ declare module 'vitest/browser' {
     previewSecurity: {
       (): Promise<boolean>
       (scenario: 'popover'): Promise<PopoverMeasurements>
+      (scenario: 'share'): Promise<ShareMeasurements>
       (scenario: 'theme'): Promise<ThemeMeasurements>
       (
         scenario: 'markdown-frame',
