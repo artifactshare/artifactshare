@@ -792,8 +792,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         head.appendChild(reopen);
       }
       thread.appendChild(head);
-      if (otherScreenThreads.has(annotation.thread) && !orphanedThreads.has(annotation.thread) &&
-        !checkingThreads.has(annotation.thread)) {
+      if (onOtherScreen(annotation)) {
         // Its own wrapping line, and a real button so keyboards can go there.
         const go = document.createElement('button');
         go.type = 'button';
@@ -815,7 +814,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         thread.appendChild(msg);
       });
       thread.addEventListener('click', () => {
-        if (otherScreenThreads.has(annotation.thread) && !orphanedThreads.has(annotation.thread)) {
+        if (onOtherScreen(annotation)) {
           restoreScreen(annotation);
           return;
         }
@@ -890,7 +889,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         if (pendingRestore !== restoring || currentScreen !== restoring.target) return;
         clearTimeout(restoring.timer);
         pendingRestore = null;
-        pingAfterVerify = restoring.thread;
+        const restored = annotations.find(entry => entry.thread === restoring.thread);
+        if (restored && (restored.status === 'resolved' || restored.status === 'dismissed')) showTarget(restored);
+        else pingAfterVerify = restoring.thread;
         lastVerifiedAnchors = null;
         checkOrphans();
       }, 300);
@@ -899,6 +900,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     currentScreen = screen;
     lastVerifiedAnchors = null;
     checkOrphans();
+  }
+  // The stored screen decides, for every comment including finished ones.
+  function onOtherScreen(annotation) {
+    const anchor = annotation.anchor;
+    return Boolean(anchor) && anchor.kind !== 'artifact' && (anchor.screen || '') !== currentScreen;
+  }
+  function showTarget(annotation) {
+    if (annotation.anchor.kind === 'element')
+      postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
+    else if (annotation.anchor.kind === 'text')
+      postToFrame({ kind: 'scroll-to-comment', threadId: annotation.thread });
   }
   function restoreScreen(annotation) {
     const target = annotation.anchor.screen || '';
@@ -1005,8 +1017,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (pingAfterVerify !== null) {
       const shown = annotations.find(annotation => annotation.thread === pingAfterVerify);
       pingAfterVerify = null;
-      if (shown && attached.get(shown.thread) === true && shown.anchor.kind === 'element')
-        postToFrame({ kind: 'element-ping', selector: shown.anchor.selector });
+      if (shown && attached.get(shown.thread) === true) showTarget(shown);
     }
     // Reporter observations are display-only. Persist only explicit user actions.
     renderPanel();

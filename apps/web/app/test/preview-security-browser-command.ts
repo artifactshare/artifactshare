@@ -179,7 +179,7 @@ export const previewSecurity = defineBrowserCommand(
     const screensHtml = (
       label: string,
     ) => `<!doctype html><title>${label}</title>
-<nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a></nav>
+<nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a> <a id="routerLink" href="settings">Settings link</a> <a id="badHash" href="#/q%zz">Odd route</a></nav>
 <main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
 <script>
   let lockedLeft = false;
@@ -199,6 +199,12 @@ export const previewSecurity = defineBrowserCommand(
     location.hash = '#/' + (slide + 1);
   };
   document.getElementById('lock').onclick = () => { location.hash = '#/locked'; };
+  // A router link handles its own click, as single-page apps do.
+  document.getElementById('routerLink').onclick = (event) => {
+    event.preventDefault();
+    history.pushState(null, '', home.replace(/[^/]*$/, 'settings') + location.search);
+    render();
+  };
   document.getElementById('route').onclick = () => {
     history.pushState(null, '', home.replace(/[^/]*$/, 'settings') + location.search);
     render();
@@ -360,6 +366,17 @@ export const previewSecurity = defineBrowserCommand(
         await otherScreen('Slide two note').waitFor({ state: 'detached' })
         // Unsent comments survive moving between screens.
         assert.equal(await shell.locator('.thread').count(), 2)
+        // A route with a malformed escape is still its own screen.
+        await frame.locator('#badHash').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/q%zz')
+        await heading().click()
+        await addComment('Odd route note')
+        assert.equal(
+          (await stored()).find((entry) => entry.comment === 'Odd route note')!
+            .anchor.screen,
+          '#/q%zz',
+        )
+        await otherScreen('Slide two note').waitFor()
         result.checks.push('restore-hash-screen')
 
         // An in-page fragment is not a screen.
@@ -388,7 +405,8 @@ export const previewSecurity = defineBrowserCommand(
           }
         })
         if (historyApi) {
-          await frame.locator('#route').click({ modifiers: ['Alt'] })
+          // The router link's own handler runs; the frame never leaves the file.
+          await frame.locator('#routerLink').click({ modifiers: ['Alt'] })
           await heading().filter({ hasText: 'Settings' }).waitFor()
           await heading().click()
           await addComment('Settings note')

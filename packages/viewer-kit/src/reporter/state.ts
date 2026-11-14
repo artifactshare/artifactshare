@@ -87,7 +87,7 @@ export function createReporterState(
     previewGeometryFrame: 0,
     previewCapability: '',
     previewHomePath: '',
-    previewPassThrough: false,
+    previewReplayedClick: null as MouseEvent | null,
     previewScreenTimer: 0,
     previewLastScreen: null as string | null,
     previewGeneration: 0,

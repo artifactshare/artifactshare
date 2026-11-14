@@ -7,7 +7,6 @@ import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
 import { previewScreen, reportScreen } from './screen.js'
-import { routeLink } from './links.js'
 
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
@@ -244,39 +243,37 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
   // Alt/Option+click uses the page. Browsers download a link on Alt+click, so
-  // replace the gesture with the plain click the document expects.
-  if (ctx.previewCapability && ctx.previewPassThrough) return
+  // the gesture is replayed as the plain click the document expects. The
+  // replay passes through the document's own handlers and the link gate
+  // exactly like a plain click in browse mode.
+  if (ctx.previewCapability && ctx.previewReplayedClick === event) return
   if (event.altKey && ctx.previewCapability) {
-    const original = ctx.primordials.targetGet
-      ? ctx.primordials.targetGet(event)
-      : event.target
-    if (!original || (original as Node).nodeType !== 1) return
+    const path =
+      typeof event.composedPath === 'function' ? event.composedPath() : []
+    const original = (path[0] ??
+      (ctx.primordials.targetGet
+        ? ctx.primordials.targetGet(event)
+        : event.target)) as Node | null
+    if (!original || original.nodeType !== 1) return
     event.preventDefault()
-    event.stopPropagation()
-    // An untrusted click would bypass the link gate and navigate the frame
-    // itself, so links other than same-document fragments are routed like an
-    // accepted plain click instead.
-    const link = ctx.primordials.closest(original as Element, 'a[href]')
-    const href = link ? ctx.primordials.getAttribute(link, 'href') : null
-    if (link && !(href && href.charAt(0) === '#')) {
-      routeLink(ctx, link)
-      return
-    }
-    ctx.previewPassThrough = true
+    event.stopImmediatePropagation()
+    const replay = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      button: event.button,
+      detail: event.detail,
+      view: ctx.win,
+    })
+    ctx.previewReplayedClick = replay
     try {
-      ;(original as Element).dispatchEvent(
-        new MouseEvent('click', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          button: event.button,
-          view: ctx.win,
-        }),
-      )
+      ;(original as Element).dispatchEvent(replay)
     } finally {
-      ctx.previewPassThrough = false
+      ctx.previewReplayedClick = null
     }
     return
   }

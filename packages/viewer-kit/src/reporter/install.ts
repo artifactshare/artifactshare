@@ -20,7 +20,12 @@ import {
 } from './badges.js'
 import { clearMarks, applyHighlights } from './highlights.js'
 import { installScreenTracking } from './screen.js'
-import { onAnnotateHover, onAnnotateClick, verifyAnchors } from './annotate.js'
+import {
+  clearAnnotateHover,
+  onAnnotateHover,
+  onAnnotateClick,
+  verifyAnchors,
+} from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 
@@ -85,6 +90,10 @@ export function installReporter(win: ReporterWindow) {
       onAnnotateClick(ctx, event),
     true,
   )
+  // Holding Alt/Option means the next click operates the page.
+  ctx.doc.addEventListener('keydown', function (event) {
+    if (event.key === 'Alt' && ctx.annotateModeEnabled) clearAnnotateHover(ctx)
+  })
   installMessageListener(ctx)
   // Queued selection work belongs to the location it was started on.
   const queueSelection = function () {

@@ -1,33 +1,35 @@
-import {
-  canonicalCommentPathname,
-  canonicalCommentRouteHash,
-  MAX_COMMENT_LOCATION_LENGTH,
-} from './comment-location.js'
+import { MAX_COMMENT_LOCATION_LENGTH } from './comment-location.js'
 import { send } from './messaging.js'
 import type { ReporterState } from './state.js'
 
 // Local preview only: the URL state an interactive document shows inside the
-// sandbox. The default screen is ''. Non-URL state is deliberately not tracked.
+// sandbox, kept exactly as the document wrote it so it can be restored as is.
+// The default screen is ''. Non-URL state is deliberately not tracked.
 
-function fragmentScreen(ctx: ReporterState, hash: string): string | null {
-  if (hash === '' || hash === '#') return ''
-  const route = canonicalCommentRouteHash(hash)
-  if (route === null) return null
-  if (route !== '') return route
-  let id: string
+function fragmentScreen(ctx: ReporterState, hash: string): string {
+  // An empty route is how hash routers spell the default screen.
+  if (hash === '' || hash === '#' || hash === '#/' || hash === '#!/') return ''
+  if (hash.startsWith('#/') || hash.startsWith('#!/')) return hash
+  let id = hash.slice(1)
   try {
-    id = decodeURIComponent(hash.slice(1))
+    id = decodeURIComponent(id)
   } catch {
-    return null
+    /* A malformed escape cannot name an element; it is a screen. */
   }
   // An in-page fragment scrolls to a target in the same screen.
   if (ctx.doc.getElementById(id) || ctx.doc.getElementsByName(id).length > 0)
     return ''
-  try {
-    return '#' + encodeURIComponent(id)
-  } catch {
-    return null
+  return hash
+}
+
+// A stable short name for a screen too long to store; it cannot be restored.
+function digest(value: string) {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
   }
+  return '~' + (hash >>> 0).toString(16) + ':' + value.length
 }
 
 export function previewScreen(ctx: ReporterState): string | null {
@@ -40,22 +42,10 @@ export function previewScreen(ctx: ReporterState): string | null {
     return null
   }
   if (!ctx.previewHomePath) ctx.previewHomePath = pathname
-  let path = ''
-  if (pathname !== ctx.previewHomePath) {
-    let decoded: string
-    try {
-      decoded = decodeURIComponent(pathname)
-    } catch {
-      return null
-    }
-    const canonical = canonicalCommentPathname(decoded, true)
-    if (canonical === null) return null
-    path = canonical
-  }
-  const fragment = fragmentScreen(ctx, hash)
-  if (fragment === null) return null
-  const screen = path + fragment
-  return screen.length <= MAX_COMMENT_LOCATION_LENGTH ? screen : null
+  const screen =
+    (pathname === ctx.previewHomePath ? '' : pathname) +
+    fragmentScreen(ctx, hash)
+  return screen.length <= MAX_COMMENT_LOCATION_LENGTH ? screen : digest(screen)
 }
 
 /** Reports the current screen when it changed (or when forced). */
@@ -75,15 +65,16 @@ export function reportScreen(ctx: ReporterState, force = false) {
 export function showScreen(ctx: ReporterState, screen: unknown) {
   if (!ctx.previewCapability || typeof screen !== 'string') return
   if (screen.length > MAX_COMMENT_LOCATION_LENGTH) return
+  // A digest names a screen that was too long to keep; it cannot be shown.
+  if (screen.startsWith('~')) {
+    ctx.win.setTimeout(() => reportScreen(ctx, true), 50)
+    return
+  }
   const hashIndex = screen.indexOf('#')
   const path = hashIndex === -1 ? screen : screen.slice(0, hashIndex)
   const hash = hashIndex === -1 ? '' : screen.slice(hashIndex)
   try {
-    // Stored paths are decoded; encode each segment again for the URL.
-    const target =
-      path === ''
-        ? ctx.previewHomePath
-        : path.split('/').map(encodeURIComponent).join('/')
+    const target = path === '' ? ctx.previewHomePath : path
     if (
       target &&
       target[0] === '/' &&
