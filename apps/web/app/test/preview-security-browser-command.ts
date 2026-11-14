@@ -241,8 +241,8 @@ export const previewSecurity = defineBrowserCommand(
         )
         await frame.locator('#sample').evaluate((element) => {
           element.style.position = 'absolute'
-          element.style.top = '650px'
-          element.style.left = '780px'
+          element.style.top = 'calc(100vh - 80px)'
+          element.style.left = 'min(780px, 30vw)'
         })
         await frame.locator('#sample').click()
         await shell.locator('#popover.show').waitFor()
@@ -264,9 +264,44 @@ export const previewSecurity = defineBrowserCommand(
         for (const size of [
           { width: 1280, height: 800 },
           { width: 390, height: 600 },
+          { width: 390, height: 844 },
           { width: 600, height: 390 },
+          { width: 844, height: 390 },
+          { width: 844, height: 390, nearTop: true },
         ]) {
-          await shell.setViewportSize(size)
+          await shell.setViewportSize({
+            width: size.width,
+            height: size.height,
+          })
+          if ('nearTop' in size) {
+            // Keep the same selected node and draft, but move it where the
+            // editor cannot fit above it, as in the reported landscape case.
+            await frame.locator('#sample').evaluate((element) => {
+              element.style.top = '80px'
+            })
+          }
+          // Compare with the actual responsive authored target, not the opening
+          // rectangle or merely the outer viewport. Browser/subprocess execution
+          // is necessary for native frame layout and hit testing.
+          const currentTarget = await frame.locator('#sample').boundingBox()
+          assert.ok(currentTarget)
+          await shell.waitForFunction((targetBounds) => {
+            const pop = document
+              .querySelector('#popover')!
+              .getBoundingClientRect()
+            const above = targetBounds.y - pop.height - 8
+            const expected =
+              above >= 8
+                ? above
+                : Math.max(
+                    8,
+                    Math.min(
+                      targetBounds.y + targetBounds.height + 8,
+                      innerHeight - 8 - pop.height,
+                    ),
+                  )
+            return Math.abs(pop.top - expected) <= 1
+          }, currentTarget)
           // Native viewport changes also generate visualViewport resize events.
           const failed = shell.waitForResponse(
             (response) =>
@@ -284,6 +319,31 @@ export const previewSecurity = defineBrowserCommand(
             'popText',
             'failed Add restores editor focus',
           )
+          const popBounds = await shell.locator('#popover').boundingBox()
+          assert.ok(popBounds)
+          if (currentTarget.y - popBounds.height - 8 >= 8)
+            assert.ok(
+              Math.abs(popBounds.y + popBounds.height + 8 - currentTarget.y) <=
+                1,
+              'popover prefers above the current responsive target',
+            )
+          if ('nearTop' in size) {
+            assert.ok(
+              currentTarget.y - popBounds.height - 8 < 8,
+              'landscape fixture must leave insufficient room above the target',
+            )
+            const fallbackTop = Math.max(
+              8,
+              Math.min(
+                currentTarget.y + currentTarget.height + 8,
+                size.height - 8 - popBounds.height,
+              ),
+            )
+            assert.ok(
+              Math.abs(popBounds.y - fallbackTop) <= 1,
+              'no-room fallback is below the real target, clamped to the viewport',
+            )
+          }
           assert.equal(await shell.locator('#popText').inputValue(), draft)
           assert.equal(await shell.locator('#popTarget').textContent(), target)
           for (const selector of ['#popAdd', '#popCancel']) {
@@ -341,6 +401,17 @@ export const previewSecurity = defineBrowserCommand(
                 request.method() === 'POST',
             )
             await Promise.all([started, shell.locator('#popAdd').click()])
+            assert.equal(await shell.locator('#popCancel').isDisabled(), true)
+            assert.equal(
+              await shell.locator('#popText').getAttribute('aria-busy'),
+              'true',
+            )
+            assert.equal(
+              await shell.locator('#popStatus').textContent(),
+              'Confirming save…',
+            )
+            await shell.keyboard.type('must not replace submitted text')
+            assert.equal(await shell.locator('#popText').inputValue(), draft)
             if (destination === 'canvas')
               await shell.locator('#canvasBackground').focus()
             if (destination === 'frame') await frame.locator('h1').click()

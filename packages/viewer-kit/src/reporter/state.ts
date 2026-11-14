@@ -19,6 +19,11 @@ export type VerificationAnchor =
       tagName?: string
       contextText?: string
     }
+export interface PreviewPick {
+  sequence: number
+  target: Element | Range
+  endpoints: [Node, Node] | null
+}
 export interface SvgTextGroup {
   text: SVGTextContentElement
   start: number
@@ -76,6 +81,9 @@ export function createReporterState(
     primordials,
     documentToken: '',
     readyChallenge: '',
+    previewPick: null as PreviewPick | null,
+    previewTrackedPick: null as PreviewPick | null,
+    previewGeometryFrame: 0,
     previewCapability: '',
     previewGeneration: 0,
     previewSendSequence: 0,

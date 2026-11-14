@@ -470,6 +470,26 @@ test.each([
       expect(document.querySelector('#popStatus')!.textContent).toBe(
         PREVIEW_MESSAGES[locale]['preview.entryBlocked'],
       )
+      frame.focus()
+      focusWindow.mockClear()
+      add.click()
+      add.click()
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
+      )
+      expect(writes).toHaveLength(1)
+      expect(input.readOnly).toBe(true)
+      expect(add.textContent).toBe(
+        PREVIEW_MESSAGES[locale]['preview.savePending'],
+      )
+      expect(document.activeElement).toBe(input)
+      expect(input.getAttribute('aria-busy')).toBe('true')
+      expect(
+        document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+      ).toBe(true)
+      expect(document.querySelector('#popStatus')!.textContent).toBe(
+        PREVIEW_MESSAGES[locale]['preview.savePending'],
+      )
       events.dispatchEvent(
         new MessageEvent('reload', {
           data: JSON.stringify({ revision: 'old-revision' }),
@@ -484,19 +504,6 @@ test.each([
         PREVIEW_MESSAGES[locale]['preview.updateQueued'],
       )
       expect(frame.src).not.toContain('latest-revision')
-      frame.focus()
-      focusWindow.mockClear()
-      add.click()
-      add.click()
-      input.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
-      )
-      expect(writes).toHaveLength(1)
-      expect(input.readOnly).toBe(true)
-      expect(add.textContent).toBe(
-        PREVIEW_MESSAGES[locale]['preview.savePending'],
-      )
-      expect(document.activeElement).toBe(input)
       focusWindow.mockClear()
       if (failure === 'success') {
         finish(Response.json({ annotation: { thread: 'saved' } }))
@@ -504,6 +511,10 @@ test.each([
           expect(popover.classList.contains('show')).toBe(false),
         )
         expect(input.readOnly).toBe(false)
+        expect(input.hasAttribute('aria-busy')).toBe(false)
+        expect(
+          document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+        ).toBe(false)
         expect(input.value).toBe('')
         expect(writes).toEqual([
           { anchor, comment: 'keep this exact draft\nplease' },
@@ -580,6 +591,10 @@ test.each([
           ),
         )
         expect(input.readOnly).toBe(false)
+        expect(input.hasAttribute('aria-busy')).toBe(false)
+        expect(
+          document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+        ).toBe(false)
         expect(document.querySelector('#operationError')!.textContent).toBe('')
         expect(input.value).toBe('  keep this exact draft\nplease  ')
         if (recovery === 'unavailable' || recovery === 'superseded') {
@@ -590,6 +605,10 @@ test.each([
           expect(input.readOnly).toBe(true)
           await vi.waitFor(() => expect(add.disabled).toBe(false))
           expect(input.readOnly).toBe(false)
+          expect(input.hasAttribute('aria-busy')).toBe(false)
+          expect(
+            document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+          ).toBe(false)
           expect(writes).toHaveLength(1)
           readUnavailable = false
           recovered.push(saved)
@@ -612,6 +631,10 @@ test.each([
       }
       await vi.waitFor(() => expect(add.disabled).toBe(false))
       expect(input.readOnly).toBe(false)
+      expect(input.hasAttribute('aria-busy')).toBe(false)
+      expect(
+        document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+      ).toBe(false)
       expect(document.querySelector('#operationError')!.textContent).toBe('')
       expect(
         document.querySelector('#popover')!.classList.contains('show'),
@@ -698,6 +721,10 @@ test.each([
       ])
       expect(input.value).toBe('')
       expect(input.readOnly).toBe(false)
+      expect(input.hasAttribute('aria-busy')).toBe(false)
+      expect(
+        document.querySelector<HTMLButtonElement>('#popCancel')!.disabled,
+      ).toBe(false)
       expect(frame.src).toContain('latest-revision')
       frame.dispatchEvent(new Event('load'))
       document.querySelector<HTMLButtonElement>('#modeToggle')!.click()

@@ -463,7 +463,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
         ...(data.ownTextHash ? { ownTextHash: data.ownTextHash, ownTextExcerpt: data.ownTextExcerpt } : { ownText: data.ownText }), tagName: data.tagName,
-      }, data.label, data.rect);
+      }, data.label, data.rect, data.sequence);
+    } else if (data.kind === 'annotation-geometry') {
+      if (!pendingAnchor || data.pickSequence !== targetPickSequence) return;
+      targetRect = data.rect;
+      positionPopover();
     } else if (data.kind === 'anchor-verdicts') {
       if (data.verificationId !== verificationId || !Number.isSafeInteger(data.generation) || data.generation <= verificationGeneration) return;
       verificationGeneration = data.generation;
@@ -479,7 +483,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         quotedText: data.quotedText, prefixText: data.prefixText,
         suffixText: data.suffixText, textStart: data.textStart,
         textEnd: data.textEnd, cssPath: data.cssPath,
-      }, data.quotedText, data.rect);
+      }, data.quotedText, data.rect, data.sequence);
     }
   });
 
@@ -489,6 +493,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let saveFailed = false;
   let unconfirmedSave = null;
   let targetRect = null;
+  let targetPickSequence = null;
   function positionPopover() {
     if (ended || !popover.classList.contains('show')) return;
     const viewport = window.visualViewport;
@@ -512,10 +517,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     window.visualViewport.addEventListener('resize', positionPopover);
     window.visualViewport.addEventListener('scroll', positionPopover);
   }
-  function openPopover(anchor, label, rect) {
+  function openPopover(anchor, label, rect, pickSequence) {
     if (ended) return;
     if (savePending || saveFailed || (pendingAnchor && popText.value.trim())) {
-      document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : 'preview.entryBlocked');
+      document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : savePending ? 'preview.savePending' : 'preview.entryBlocked');
       positionPopover();
       return;
     }
@@ -524,6 +529,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     pendingAnchor = anchor;
     popTarget.textContent = label;
     targetRect = rect;
+    targetPickSequence = pickSequence;
+    postToFrame({ kind: 'track-annotation-pick', pickSequence });
     popover.classList.add('show');
     positionPopover();
     popText.value = '';
@@ -537,6 +544,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     document.getElementById('popAdd').textContent = t('preview.add');
     document.getElementById('popAdd').disabled = false;
     pendingAnchor = null;
+    targetPickSequence = null;
+    postToFrame({ kind: 'track-annotation-pick', pickSequence: null });
     if (flushReload && pendingReload !== null) {
       const target = pendingReload;
       pendingReload = null;
@@ -599,6 +608,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // Freeze the submitted text until acknowledgement/reconciliation finishes.
       // Keep it selectable, including when the session ends during the request.
       popText.readOnly = true;
+      popText.setAttribute('aria-busy', 'true');
+      document.getElementById('popCancel').disabled = true;
+      document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : 'preview.savePending');
+      positionPopover();
       document.getElementById('popAdd').textContent = t('preview.savePending');
       document.getElementById('popAdd').disabled = true;
       window.addEventListener('blur', movedAway);
@@ -622,6 +635,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       hidePopover(true);
     } finally {
       popText.readOnly = ended;
+      popText.removeAttribute('aria-busy');
+      document.getElementById('popCancel').disabled = ended;
+      document.getElementById('popStatus').textContent = !ended && pendingReload !== null ? t('preview.updateQueued') : '';
+      positionPopover();
       document.removeEventListener('focusin', observeFocus);
       window.removeEventListener('blur', movedAway);
       popText.removeEventListener('blur', movedAway, true);
@@ -970,6 +987,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   function showEnded() {
     if (ended) return;
     ended = true;
+    postToFrame({ kind: 'track-annotation-pick', pickSequence: null });
+    popText.removeAttribute('aria-busy');
+    document.getElementById('popStatus').textContent = '';
     previewCapability = '';
     if (readyBurstTimer) clearInterval(readyBurstTimer);
     events.close();

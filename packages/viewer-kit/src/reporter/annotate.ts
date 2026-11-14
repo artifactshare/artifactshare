@@ -249,6 +249,7 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
       height: rect.height,
     },
   })
+  retainPreviewPick(ctx, target)
 }
 
 // TextEncoder replaces lone surrogates with U+FFFD. Old digests cannot
@@ -277,4 +278,55 @@ export function elementTextIdentity(text: string) {
   return text.length <= 16_000
     ? { ownText: text }
     : { ownTextHash: textHash(text), ownTextExcerpt: text.slice(0, cut) }
+}
+
+// Retain actual picked nodes, never resolve a geometry request by selector.
+// Only the latest offer and the parent-accepted pick are retained.
+export function retainPreviewPick(ctx: ReporterState, target: Element | Range) {
+  if (ctx.previewCapability)
+    ctx.previewPick = {
+      sequence: ctx.previewSendSequence,
+      target,
+      endpoints:
+        'startContainer' in target
+          ? [target.startContainer, target.endContainer]
+          : null,
+    }
+}
+
+export function trackPreviewPick(ctx: ReporterState, sequence: unknown) {
+  if (!ctx.previewCapability) return
+  if (sequence !== null && sequence !== ctx.previewPick?.sequence) return
+  ctx.previewTrackedPick = sequence === null ? null : ctx.previewPick
+  if (ctx.previewGeometryFrame)
+    ctx.win.cancelAnimationFrame(ctx.previewGeometryFrame)
+  ctx.previewGeometryFrame = 0
+  let previous = ''
+  const measure = () => {
+    const pick = ctx.previewTrackedPick
+    if (!pick) return
+    const target = pick.target
+    const connected =
+      'isConnected' in target
+        ? target.isConnected
+        : target.startContainer.isConnected &&
+          target.endContainer.isConnected &&
+          target.startContainer === pick.endpoints![0] &&
+          target.endContainer === pick.endpoints![1]
+    const box = connected ? target.getBoundingClientRect() : null
+    const rect = box
+      ? { top: box.top, left: box.left, width: box.width, height: box.height }
+      : null
+    const signature = JSON.stringify(rect)
+    if (signature !== previous) {
+      previous = signature
+      send(ctx, {
+        kind: 'annotation-geometry',
+        pickSequence: pick.sequence,
+        rect,
+      })
+    }
+    ctx.previewGeometryFrame = ctx.win.requestAnimationFrame(measure)
+  }
+  measure()
 }

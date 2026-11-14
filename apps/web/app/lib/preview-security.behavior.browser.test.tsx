@@ -85,7 +85,7 @@ test('oversized reporter captures survive shell save, store reopen and preview n
 
 test('resized failed drafts keep reachable actions and remain copyable after shutdown', async () => {
   const measurements = await server.commands.previewSecurity('popover')
-  expect(measurements).toHaveLength(6)
+  expect(measurements).toHaveLength(12)
   for (const result of measurements)
     expect(result.hit, JSON.stringify(result)).toBe(true)
 }, 60000)

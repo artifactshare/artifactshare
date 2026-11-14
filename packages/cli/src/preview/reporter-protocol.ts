@@ -45,6 +45,13 @@ export function validPreviewObservation(value: unknown): boolean {
         typeof value.token === 'string' &&
         /^[a-f0-9]{64}$/.test(value.token)
       )
+    case 'annotation-geometry':
+      return (
+        keys(value, [...base, 'pickSequence', 'rect']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0 &&
+        (value.rect === null || rect(value.rect))
+      )
     case 'element-annotate':
       return (
         keys(value, [
