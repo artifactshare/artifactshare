@@ -522,6 +522,12 @@ export function missingState(
 
 export function scheduleChecking(ctx: ReporterState, retryDelay = 0) {
   if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
+  // Paused while a draft is edited in place; ending the edit remeasures and
+  // schedules again.
+  if (ctx.previewEdit) {
+    ctx.checkingTimer = undefined
+    return
+  }
   // A checking report still needs a follow-up even if its deadline elapsed
   // during this pass. Keep both streams: verification must not cancel an
   // unchanged (signature-suppressed) highlight's outstanding report.
@@ -568,6 +574,8 @@ export function applyHighlights(
   if (ctx.locationScoped && ctx.displayedPath !== liveCommentLocation(ctx))
     list = []
   ctx.pendingHighlights = Array.isArray(list) ? list : []
+  // Resolved against the restored text once an in-place edit ends.
+  if (ctx.previewEdit) return
   if (!ctx.pendingHighlights.length) {
     ctx.checkingHighlights = []
     ctx.lastResolutionSignature = ''

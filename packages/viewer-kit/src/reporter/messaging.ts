@@ -18,6 +18,11 @@ import {
 } from './annotate.js'
 import type { ReporterState } from './state.js'
 import { reportScreen, showScreen } from './screen.js'
+import {
+  lockInlineEdit,
+  sendInlineEditText,
+  startInlineEdit,
+} from './inline-edit.js'
 
 // Secret-bearing messages reach only captured messaging primordials.
 export function send(ctx: ReporterState, message: Record<string, unknown>) {
@@ -34,13 +39,24 @@ export function send(ctx: ReporterState, message: Record<string, unknown>) {
 
 export function ready(ctx: ReporterState) {
   if (ctx.readyChallenge && ctx.documentToken) {
-    send(ctx, {
-      kind: 'ready',
-      challenge: ctx.readyChallenge,
-      token: ctx.documentToken,
-    })
+    // Preview: say that an in-place edit is still open in this document.
+    if (ctx.previewEdit)
+      send(ctx, {
+        kind: 'ready',
+        challenge: ctx.readyChallenge,
+        token: ctx.documentToken,
+        editing: true,
+      })
+    else
+      send(ctx, {
+        kind: 'ready',
+        challenge: ctx.readyChallenge,
+        token: ctx.documentToken,
+      })
     reportHash(ctx, true)
     reportScreen(ctx, true)
+    // A newer handshake drops older messages: say the draft text again.
+    sendInlineEditText(ctx)
   }
 }
 
@@ -162,6 +178,10 @@ export function installMessageListener(ctx: ReporterState) {
       installMermaidResults(ctx, data.renderToken, data.results)
     } else if (data.kind === 'track-annotation-pick') {
       trackPreviewPick(ctx, data.pickSequence)
+    } else if (data.kind === 'inline-edit') {
+      startInlineEdit(ctx, data.pickSequence)
+    } else if (data.kind === 'inline-edit-lock') {
+      lockInlineEdit(ctx, data.locked)
     } else if (data.kind === 'show-screen') {
       showScreen(ctx, data.screen)
     } else if (data.kind === 'annotate-mode') {

@@ -145,15 +145,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     resize: none; background: var(--background); color: var(--foreground); }
   .popover textarea:focus { outline: 2px solid var(--link); outline-offset: -1px; }
   #popError { color: var(--foreground); font-size: 13px; line-height: 1.4; }
-  #popError:not(:empty) { margin-top: 8px; }
+  #popError:not(:empty) { margin-top: 8px; border-left: 3px solid var(--coral); padding-left: 8px; }
   .popover .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
-  .popover .rewrite-toggle { align-self: flex-start; margin-bottom: 6px; padding: 0; border: 0;
-    min-height: 24px; display: inline-flex; align-items: center;
-    background: none; font: inherit; font-size: 12px; color: var(--link); cursor: pointer; }
-  .popover .rewrite-toggle:hover { text-decoration: underline; }
-  .popover .rewrite-toggle[hidden] { display: none; }
-  .popover .rewrite-field { display: none; flex-direction: column; margin-bottom: 6px; }
-  .popover.rewriting .rewrite-field { display: flex; }
+  .popover .inline-hint { display: none; font-size: 12px; line-height: 1.4; margin-bottom: 6px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .popover.inline .inline-hint { display: block; }
+  .popover .rewrite-field { display: none; flex-direction: column; margin-top: 8px; }
+  .popover.rewriting:not(.inline) .rewrite-field { display: flex; }
   .popover label { font-size: 12px; margin-bottom: 4px; }
   .thread .rewrite { margin: 6px 0 0; font-size: 12px; line-height: 1.5;
     border-left: 2px solid var(--border); padding-left: 8px; overflow-wrap: anywhere; }
@@ -281,13 +279,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 <div class="mode-hint" id="modeHint" data-msg="preview.modeHint"></div>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
-  <button type="button" class="rewrite-toggle" id="popRewriteToggle" aria-expanded="false" hidden></button>
+  <div class="inline-hint" id="popInlineHint" data-msg="preview.inlineHint"></div>
+  <label for="popText" id="popTextLabel" data-msg="preview.editorLabel"></label>
+  <textarea id="popText" rows="2" aria-describedby="popTarget popStatus"></textarea>
   <div class="rewrite-field">
     <label for="popRewrite" data-msg="preview.rewriteLabel"></label>
     <textarea id="popRewrite" rows="3" maxlength="16000" aria-describedby="popTarget popStatus"></textarea>
   </div>
-  <label for="popText" id="popTextLabel" data-msg="preview.editorLabel"></label>
-  <textarea id="popText" rows="2" aria-describedby="popTarget popStatus"></textarea>
   <div id="popStatus" role="status"></div>
   <div id="popError" role="alert"></div>
   <div class="row">
@@ -352,30 +350,27 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   const popTarget = document.getElementById('popTarget');
   const popText = document.getElementById('popText');
   const popRewrite = document.getElementById('popRewrite');
-  const popRewriteToggle = document.getElementById('popRewriteToggle');
-  // The anchored text a rewrite may replace, and whether rewriting is on.
+  // The anchored text a rewrite may replace. Text-only elements are edited on
+  // the page itself (inline); popRewrite then mirrors that draft and stays
+  // hidden. Anything else that has text shows popRewrite, prefilled.
   let rewritable = null;
-  let rewriting = false;
-  // Filled once per entry, so clearing it (a proposed removal) survives toggling.
-  let rewriteStarted = false;
-  function setRewriting(on) {
-    rewriting = on && rewritable !== null;
-    popover.classList.toggle('rewriting', rewriting);
-    popRewriteToggle.setAttribute('aria-expanded', String(rewriting));
-    popRewriteToggle.textContent = t(rewriting ? 'preview.rewriteOff' : 'preview.rewriteOn');
-    document.getElementById('popTextLabel').textContent = t(rewriting ? 'preview.rewriteReason' : 'preview.editorLabel');
-    popText.placeholder = t(rewriting ? 'preview.rewriteReasonPlaceholder' : 'preview.inputPlaceholder');
-    if (rewriting && !rewriteStarted) {
-      popRewrite.value = rewritable;
-      rewriteStarted = true;
-    }
+  let inlineEditing = false;
+  // The handshake generation the page edit started in.
+  let inlineGeneration = 0;
+  function setRewriteMode(inline) {
+    inlineEditing = inline && rewritable !== null;
+    popover.classList.toggle('rewriting', rewritable !== null);
+    popover.classList.toggle('inline', inlineEditing);
+    document.getElementById('popTextLabel').textContent =
+      t(rewritable !== null ? 'preview.commentOptional' : 'preview.editorLabel');
   }
   // What the reader has entered: a comment, a changed rewrite, or both.
   function entryRewrite() {
-    if (!rewriting) return null;
+    if (rewritable === null) return null;
     // Kept exactly as typed: boundary spaces can be part of the wording.
     const proposed = popRewrite.value;
-    return proposed === rewritable ? null : { original: rewritable, proposed };
+    // A textarea stores line breaks as LF; untouched text is not a rewrite.
+    return proposed === rewritable.replace(/\\r\\n?/g, '\\n') ? null : { original: rewritable, proposed };
   }
   function entryHasContent() {
     return Boolean(popText.value.trim()) || entryRewrite() !== null;
@@ -533,7 +528,29 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         selector: data.selector, label: data.label, contextText: data.contextText,
         ...(data.ownTextHash ? { ownTextHash: data.ownTextHash, ownTextExcerpt: data.ownTextExcerpt } : { ownText: data.ownText }), tagName: data.tagName,
         ...(currentScreen ? { screen: currentScreen } : {}),
-      }, data.label, data.rect, data.sequence);
+      }, data.label, data.rect, data.sequence, data.editable === true);
+    } else if (data.kind === 'edit-text') {
+      if (!inlineEditing || savePending || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
+      popRewrite.value = data.text;
+      document.getElementById('popAdd').disabled = false;
+    } else if (data.kind === 'ready') {
+      // A later handshake from a document that is not editing (a reload or
+      // navigation) means the page edit is gone; WebKit also re-handshakes
+      // on same-document hash changes, where the edit continues.
+      if (inlineEditing && documentGeneration > inlineGeneration && data.editing !== true) leaveInline();
+    } else if (data.kind === 'edit-ended') {
+      // The page edit could not start or was removed; popRewrite already
+      // holds the latest draft.
+      // Only about the pick being edited now, not an earlier one.
+      if (!inlineEditing || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
+      leaveInline();
+      // Typing meant for the page continues in the field, not the document.
+      if (!savePending && !popover.contains(document.activeElement)) { window.focus(); popRewrite.focus(); }
+    } else if (data.kind === 'edit-key') {
+      if (!inlineEditing || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
+      if (data.key === 'commit') addAnnotation();
+      else if (data.key === 'cancel') hidePopover(true);
+      else { window.focus(); popText.focus(); }
     } else if (data.kind === 'screen') {
       onScreen(data.screen);
     } else if (data.kind === 'screen-shown') {
@@ -594,7 +611,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     window.visualViewport.addEventListener('resize', positionPopover);
     window.visualViewport.addEventListener('scroll', positionPopover);
   }
-  function openPopover(anchor, label, rect, pickSequence) {
+  function openPopover(anchor, label, rect, pickSequence, editable = false) {
     if (ended) return;
     if (savePending || saveFailed || (pendingAnchor && entryHasContent())) {
       document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : savePending ? 'preview.savePending' : 'preview.entryBlocked');
@@ -609,14 +626,29 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     targetPickSequence = pickSequence;
     postToFrame({ kind: 'track-annotation-pick', pickSequence });
     popText.value = '';
-    popRewrite.value = '';
     rewritable = rewritableTextOf(anchor);
-    rewriteStarted = false;
-    popRewriteToggle.hidden = rewritable === null;
-    setRewriting(false);
+    popRewrite.value = rewritable === null ? '' : rewritable;
+    setRewriteMode(editable && anchor.kind === 'element');
+    if (!inlineEditing) resumeOrphanCheck();
     popover.classList.add('show');
     positionPopover();
-    popText.focus();
+    // Inline, the reader is already typing on the page (Tab comes here).
+    inlineGeneration = documentGeneration;
+    if (inlineEditing) postToFrame({ kind: 'inline-edit', pickSequence });
+    else popText.focus();
+  }
+  // The page took the edited element away: keep the draft in the field.
+  function resumeOrphanCheck() {
+    if (!orphanCheckDeferred) return;
+    const showChecking = orphanCheckDeferred === 'show';
+    orphanCheckDeferred = null;
+    checkOrphans(showChecking);
+  }
+  function leaveInline() {
+    if (!inlineEditing) return;
+    setRewriteMode(false);
+    positionPopover();
+    resumeOrphanCheck();
   }
   // Mirrors the CLI contract: quoted text, or an element's raw own text.
   function rewritableTextOf(anchor) {
@@ -624,16 +656,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (anchor.kind === 'element') return anchor.ownText || null;
     return null;
   }
-  popRewriteToggle.addEventListener('click', () => {
-    setRewriting(!rewriting);
-    // Switching changes what would be saved, like typing does.
-    if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
-    positionPopover();
-    (rewriting ? popRewrite : popText).focus();
-  });
   function hidePopover(flushReload = false) {
     if (savePending || ended) return;
     popover.classList.remove('show');
+    inlineEditing = false;
+    resumeOrphanCheck();
     saveFailed = false;
     confirmedSavedKey = null;
     unconfirmedSave = null;
@@ -710,7 +737,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // Keep it selectable, including when the session ends during the request.
       popText.readOnly = true;
       popRewrite.readOnly = true;
-      popRewriteToggle.disabled = true;
+      if (inlineEditing) postToFrame({ kind: 'inline-edit-lock', locked: true });
       popText.setAttribute('aria-busy', 'true');
       document.getElementById('popCancel').disabled = true;
       document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : 'preview.savePending');
@@ -741,7 +768,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     } finally {
       popText.readOnly = ended;
       popRewrite.readOnly = ended;
-      popRewriteToggle.disabled = ended;
+      // Still open after a failure: the page text can be edited again.
+      if (inlineEditing && !ended && pendingAnchor) postToFrame({ kind: 'inline-edit-lock', locked: false });
       popText.removeAttribute('aria-busy');
       document.getElementById('popCancel').disabled = ended;
       document.getElementById('popStatus').textContent = !ended && pendingReload !== null ? t('preview.updateQueued') : '';
@@ -967,6 +995,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     body.classList.toggle('annotate', annotateMode);
     modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
+    // The page edit ends with comment mode; a draft stays in the field.
+    if (!annotateMode) leaveInline();
     if (!entryHasContent() && !saveFailed && pendingReload === null) hidePopover();
   });
 
@@ -1054,7 +1084,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     frame.src = '/artifact?rev=' + encodeURIComponent(nextRevision || '');
   }
 
+  // Anchors are measured once a page edit ends; asking now would only show
+  // every comment as being checked.
+  let orphanCheckDeferred = null;
   function checkOrphans(showChecking = true) {
+    if (inlineEditing) { orphanCheckDeferred = orphanCheckDeferred === 'show' || showChecking ? 'show' : 'quiet'; return; }
     // The frame captured these anchors, so it also decides whether they still
     // resolve: re-implementing the rules here would let capture and
     // verification drift apart. Resolved and dismissed threads are excluded —
@@ -1216,7 +1250,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
       popText.readOnly = true;
       popRewrite.readOnly = true;
-      popRewriteToggle.disabled = true;
+      // The page edit is gone with the session; show the draft so it can be copied.
+      leaveInline();
       popover.querySelector('.row').hidden = true;
       popover.querySelector('.row').style.display = 'none';
       screen.querySelector('.box').appendChild(popover);

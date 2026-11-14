@@ -13,6 +13,7 @@ import {
 } from './anchor-engine.js'
 import { anchorRoot } from './selection.js'
 import { applyHighlights, invalidateChangedPaint } from './highlights.js'
+import { endInlineEdit } from './inline-edit.js'
 
 export function rebuildAfterMutations(ctx: ReporterState) {
   let hasText = ctx.pendingHighlights.length > 0
@@ -54,6 +55,30 @@ export function rebuildAfterMutations(ctx: ReporterState) {
   }
 }
 export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
+  if (ctx.previewEdit) {
+    // The document removed what is being edited: end the edit; the parent
+    // keeps the typed text. Otherwise remeasure only once it is restored.
+    if (!ctx.previewEdit.element.isConnected) endInlineEdit(ctx, true)
+    else {
+      // The draft can change the layout around it; badge moves of our own
+      // must not schedule another pass.
+      for (let i = 0; i < records.length; i++) {
+        const target = records[i].target
+        const element =
+          target.nodeType === 1
+            ? (target as Element)
+            : (target as Node).parentElement
+        if (
+          !element ||
+          !ctx.primordials.closest(element, ignoredMutationSelector())
+        ) {
+          schedulePositionBadges(ctx)
+          break
+        }
+      }
+    }
+    return
+  }
   let root = anchorRoot(ctx)
   let rootReplaced = root !== ctx.observedAnchorRoot
   ctx.observedAnchorRoot = root

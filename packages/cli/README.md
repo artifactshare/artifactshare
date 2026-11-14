@@ -149,9 +149,11 @@ count.
 
 ## Local preview and annotation
 
-A comment can also rewrite the selected element or text: choose **Rewrite the
-text** in the editor, change the wording that starts from the current text, and
-optionally say why. `preview next` returns it as `rewrite: {original,
+A comment can also rewrite the wording. Click a heading or paragraph made only
+of text and edit it right on the page: Enter adds, Esc cancels, and Tab moves
+to an optional comment. Other elements and selected text show the current
+wording in the editor, ready to change. The page returns to its original text
+once editing ends. `preview next` returns the change as `rewrite: {original,
 proposed}` for the agent to apply to the source file, and `preview history`
 keeps it with the batch. The browser never writes the file itself.
 

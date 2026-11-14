@@ -40,7 +40,13 @@ export function validPreviewObservation(value: unknown): boolean {
   switch (value.kind) {
     case 'ready':
       return (
-        keys(value, [...base, 'challenge', 'token']) &&
+        keys(value, [
+          ...base,
+          'challenge',
+          'token',
+          ...(Object.hasOwn(value, 'editing') ? ['editing'] : []),
+        ]) &&
+        (!Object.hasOwn(value, 'editing') || value.editing === true) &&
         str(value.challenge, 64) &&
         typeof value.token === 'string' &&
         /^[a-f0-9]{64}$/.test(value.token)
@@ -71,6 +77,7 @@ export function validPreviewObservation(value: unknown): boolean {
             ? ['ownTextHash', 'ownTextExcerpt']
             : ['ownText']),
           'tagName',
+          ...(Object.hasOwn(value, 'editable') ? ['editable'] : []),
           'rect',
         ]) &&
         str(value.selector, 4096) &&
@@ -82,7 +89,30 @@ export function validPreviewObservation(value: unknown): boolean {
             str(value.ownTextExcerpt, 16_000)
           : str(value.ownText, 1_000_000)) &&
         str(value.tagName, 128) &&
+        (!Object.hasOwn(value, 'editable') ||
+          typeof value.editable === 'boolean') &&
         rect(value.rect)
+      )
+    // In-place edit drafts: plain text, bounded like a rewrite.
+    case 'edit-text':
+      return (
+        keys(value, [...base, 'pickSequence', 'text']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0 &&
+        str(value.text, 16_000)
+      )
+    case 'edit-ended':
+      return (
+        keys(value, [...base, 'pickSequence']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0
+      )
+    case 'edit-key':
+      return (
+        keys(value, [...base, 'pickSequence', 'key']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0 &&
+        ['commit', 'cancel', 'comment'].includes(value.key as string)
       )
     case 'text-selection':
       return (

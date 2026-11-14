@@ -28,6 +28,7 @@ import {
   verifyAnchors,
 } from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
+import { endInlineEdit, installInlineEditGuard } from './inline-edit.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 
 export function installReporter(win: ReporterWindow) {
@@ -48,7 +49,11 @@ export function installReporter(win: ReporterWindow) {
   installHashTracking(ctx)
   installScreenTracking(ctx)
   installAnchorObserver(ctx)
+  // Before any other window listener, so none of them sees edit input.
+  installInlineEditGuard(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
+    // A page kept for back/forward must come back as authored.
+    endInlineEdit(ctx)
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)
       return
     ctx.anchorObserver!.disconnect()

@@ -63,6 +63,15 @@ export interface TextPaint {
   active: boolean | undefined
   target: boolean | undefined
 }
+export interface InlineEdit {
+  element: HTMLElement
+  sequence: number
+  nodes: Node[]
+  data: (string | null)[]
+  contentEditable: string | null
+  raw: string
+  text: string
+}
 export interface PendingLinkClick {
   artifactPrevented: boolean
   href: string
@@ -86,6 +95,8 @@ export function createReporterState(
     readyChallenge: '',
     previewPick: null as PreviewPick | null,
     previewTrackedPick: null as PreviewPick | null,
+    previewEdit: null as InlineEdit | null,
+    previewEditKeys: primordials.objectCreate(null) as Record<string, true>,
     previewGeometryFrame: 0,
     previewCapability: '',
     previewHomePath: '',
