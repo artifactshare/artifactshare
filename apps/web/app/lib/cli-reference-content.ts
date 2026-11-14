@@ -205,7 +205,7 @@ const jaRoleByPath: Record<string, string> = {
   'preview done': '標準入力の JSON で結果を一括報告します（世代単位で冪等）。',
   'preview reply': 'スレッドへ返信を追記します。状態は変わりません。',
   'preview history':
-    '送信したバッチごとに、指摘と、エージェントが報告する前後の文書をローカルの履歴から読みます。',
+    '送信したバッチごとに、コメントと、エージェントが報告する前後の文書をローカルの履歴から読みます。',
   'preview stop': 'プレビューを終了します。コメントは保存されたままです。',
   open: 'Artifact Share URL を読み取り、必要なら CLI skill を準備します。',
   profiles: '名前付きの認証 profile を管理します。',
