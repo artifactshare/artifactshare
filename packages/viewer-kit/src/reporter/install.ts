@@ -110,7 +110,8 @@ export function installReporter(win: ReporterWindow) {
     // An Alt/Option click operates the page; it does not offer a selection.
     if (
       ctx.previewCapability &&
-      ((event as MouseEvent).altKey || (event as KeyboardEvent).key === 'Alt')
+      ((event.type === 'mouseup' && (event as MouseEvent).altKey) ||
+        (event as KeyboardEvent).key === 'Alt')
     )
       return
     let generation = ctx.locationGeneration

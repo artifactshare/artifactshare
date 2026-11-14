@@ -358,7 +358,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let lastVerifiedAnchors = null;
   // URL screen of an interactive document, as the reporter last observed it.
   let currentScreen = '';
-  let otherScreenThreads = new Set();
+  // Comments whose screen the document could not show again. They stay
+  // stored and are not offered for bulk discard.
+  let unrestorableThreads = new Set();
   let screenAfterReload = null;
   let pingAfterVerify = null;
   let pendingRestore = null;
@@ -757,7 +759,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (annotation.status === 'in_progress') thread.classList.add('working');
       if (annotation.status === 'resolved') thread.classList.add('resolved');
       if (annotation.status === 'dismissed') thread.classList.add('dismissed');
-      if (orphanedThreads.has(annotation.thread)) thread.classList.add('orphaned');
+      if (orphanedThreads.has(annotation.thread) || unrestorableThreads.has(annotation.thread)) thread.classList.add('orphaned');
       const head = document.createElement('div');
       head.className = 'head';
       const num = document.createElement('span');
@@ -767,7 +769,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       label.className = 'anchor-label';
       label.textContent = anchorLabel(annotation.anchor);
       if (checkingThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionChecking');
-      else if (orphanedThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
+      else if (orphanedThreads.has(annotation.thread) || unrestorableThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
       const state = document.createElement('span');
       state.className = 'state';
       state.textContent = stateLabel(annotation.status);
@@ -885,7 +887,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (screen === currentScreen) return;
     currentScreen = screen;
     lastVerifiedAnchors = null;
-    checkOrphans();
+    checkOrphans(false);
   }
   // The stored screen decides, for every comment including finished ones.
   function onOtherScreen(annotation) {
@@ -901,13 +903,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // Never attach the comment to another screen's element; mark it as
   // needing a check instead.
   function markUnrestorable(thread) {
-    otherScreenThreads.delete(thread);
-    orphanedThreads.add(thread);
+    unrestorableThreads.add(thread);
     renderPanel();
-    document.getElementById('orphanText').textContent =
-      tCount('preview.orphanNotice', orphanedThreads.size);
-    document.getElementById('orphanDiscard').style.display = '';
-    document.getElementById('orphanNotice').classList.add('show');
   }
   // The frame reports whether the screen was shown, could not be shown, or
   // the reader moved on first. A frame that never answers changes nothing.
@@ -963,7 +960,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     frame.src = '/artifact?rev=' + encodeURIComponent(nextRevision || '');
   }
 
-  function checkOrphans() {
+  function checkOrphans(showChecking = true) {
     // The frame captured these anchors, so it also decides whether they still
     // resolve: re-implementing the rules here would let capture and
     // verification drift apart. Resolved and dismissed threads are excluded —
@@ -979,7 +976,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }));
     if (key === lastVerifiedAnchors) return;
     lastVerifiedAnchors = key;
-    checkingThreads = new Set(pending.map(annotation => annotation.thread));
+    // A screen change re-verifies quietly: the panel keeps its labels.
+    if (showChecking) checkingThreads = new Set(pending.map(annotation => annotation.thread));
     renderPanel();
     verificationId++;
     verificationGeneration = -1;
@@ -1004,11 +1002,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
     checkingThreads = new Set((verdicts || []).filter(v => v.position_state === 'checking').map(v => v.thread));
     // A comment on another screen is neither found nor lost here.
-    otherScreenThreads = new Set((verdicts || []).filter(v => v.position_state === 'other-screen').map(v => v.thread));
+    const otherScreen = new Set((verdicts || []).filter(v => v.position_state === 'other-screen').map(v => v.thread));
     const newlyOrphaned = [];
     annotations.forEach((annotation) => {
       if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread) ||
-        otherScreenThreads.has(annotation.thread)) return;
+        otherScreen.has(annotation.thread)) return;
+      unrestorableThreads.delete(annotation.thread);
       const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
         newlyOrphaned.push(annotation.thread);

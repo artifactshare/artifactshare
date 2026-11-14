@@ -494,9 +494,9 @@ export const previewSecurity = defineBrowserCommand(
           .locator('.thread.orphaned')
           .filter({ hasText: 'Locked note' })
           .waitFor()
-        await shell.locator('#orphanNotice.show').waitFor()
+        // It needs a check, but is not offered for bulk discard.
         assert.equal(await shell.locator('.thread.orphaned').count(), 1)
-        await shell.locator('#orphanKeep').click()
+        assert.equal(await shell.locator('#orphanNotice.show').count(), 0)
         result.checks.push('unrestorable-orphaned')
 
         // After a file update, the reader returns to the screen they were on.

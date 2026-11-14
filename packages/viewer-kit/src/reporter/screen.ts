@@ -7,19 +7,11 @@ import type { ReporterState } from './state.js'
 // The default screen is ''. Non-URL state is deliberately not tracked.
 
 function fragmentScreen(ctx: ReporterState, hash: string): string {
-  // An empty route is how hash routers spell the default screen.
-  if (hash === '' || hash === '#' || hash === '#/' || hash === '#!/') return ''
-  if (hash.startsWith('#/') || hash.startsWith('#!/')) return hash
-  let id = hash.slice(1)
-  try {
-    id = decodeURIComponent(id)
-  } catch {
-    /* A malformed escape cannot name an element; it is a screen. */
-  }
-  // An in-page fragment scrolls to a target in the same screen.
-  if (ctx.doc.getElementById(id) || ctx.doc.getElementsByName(id).length > 0)
-    return ''
-  return hash
+  // Only route fragments are screens; an empty route is how hash routers
+  // spell the default screen. Plain fragments (#top, #section, #3) scroll or
+  // toggle within a screen and are not tracked.
+  if (hash === '#/' || hash === '#!/') return ''
+  return hash.startsWith('#/') || hash.startsWith('#!/') ? hash : ''
 }
 
 // A stable short name for a screen too long to store; it cannot be restored.

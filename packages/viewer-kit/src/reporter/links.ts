@@ -40,7 +40,8 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   let altKey = readEventValue(ctx, ctx.primordials.altKeyGet, event)
   // Local Preview uses Alt/Option+click to operate the page in comment mode;
   // the opaque sandbox has no downloads, so it follows the link as usual.
-  let altAsPlain = Boolean(ctx.previewCapability) && altKey === true
+  let altAsPlain =
+    Boolean(ctx.previewCapability) && ctx.annotateModeEnabled && altKey === true
   if (
     !trusted(ctx, event) ||
     defaultPrevented !== false ||

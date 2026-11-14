@@ -150,13 +150,15 @@ count.
 ## Local preview and annotation
 
 Interactive documents stay usable in comment mode: Alt/Option+click operates
-links, buttons, tabs and slide controls, and a plain click comments. Each
-comment remembers the URL screen it was made on (route hash, a fragment that
-names no element, or a History API path) as `screen`. Comments from another
+links, buttons, checkboxes and slide controls, and a plain click comments. Each
+comment remembers the URL screen it was made on (a `#/` or `#!/` route hash, or
+a History API path) as `screen`; plain fragments such as `#section` are not
+screens. Comments from another
 screen are shown as such instead of attaching to a similar element; selecting
 one returns to its screen, and one whose screen can no longer be shown needs a
-check. Screens that exist only in script state, such as an open modal, are not
-tracked. WebKit does not allow the History API in the opaque-origin sandbox.
+check without being offered for bulk discard. Screens that exist only in script
+state, such as an open modal, are not tracked. Firefox ignores Alt+click on a
+`<label>`; use the mode switch there. WebKit does not allow the History API in the opaque-origin sandbox.
 
 The editor keeps its text and target during resizing and failed saves. Finish or
 cancel the current entry before choosing another target or loading a queued
