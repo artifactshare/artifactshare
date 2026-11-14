@@ -547,7 +547,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // Typing meant for the page continues in the field, not the document.
       if (!savePending && !popover.contains(document.activeElement)) { window.focus(); popRewrite.focus(); }
     } else if (data.kind === 'edit-key') {
-      if (!inlineEditing || !pendingAnchor) return;
+      if (!inlineEditing || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
       if (data.key === 'commit') addAnnotation();
       else if (data.key === 'cancel') hidePopover(true);
       else { window.focus(); popText.focus(); }
@@ -629,6 +629,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     rewritable = rewritableTextOf(anchor);
     popRewrite.value = rewritable === null ? '' : rewritable;
     setRewriteMode(editable && anchor.kind === 'element');
+    if (!inlineEditing) resumeOrphanCheck();
     popover.classList.add('show');
     positionPopover();
     // Inline, the reader is already typing on the page (Tab comes here).
@@ -639,8 +640,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // The page took the edited element away: keep the draft in the field.
   function resumeOrphanCheck() {
     if (!orphanCheckDeferred) return;
-    orphanCheckDeferred = false;
-    checkOrphans();
+    const showChecking = orphanCheckDeferred === 'show';
+    orphanCheckDeferred = null;
+    checkOrphans(showChecking);
   }
   function leaveInline() {
     if (!inlineEditing) return;
@@ -1084,9 +1086,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 
   // Anchors are measured once a page edit ends; asking now would only show
   // every comment as being checked.
-  let orphanCheckDeferred = false;
+  let orphanCheckDeferred = null;
   function checkOrphans(showChecking = true) {
-    if (inlineEditing) { orphanCheckDeferred = true; return; }
+    if (inlineEditing) { orphanCheckDeferred = orphanCheckDeferred === 'show' || showChecking ? 'show' : 'quiet'; return; }
     // The frame captured these anchors, so it also decides whether they still
     // resolve: re-implementing the rules here would let capture and
     // verification drift apart. Resolved and dismissed threads are excluded —

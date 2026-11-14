@@ -109,7 +109,9 @@ export function validPreviewObservation(value: unknown): boolean {
       )
     case 'edit-key':
       return (
-        keys(value, [...base, 'key']) &&
+        keys(value, [...base, 'pickSequence', 'key']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0 &&
         ['commit', 'cancel', 'comment'].includes(value.key as string)
       )
     case 'text-selection':

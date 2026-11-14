@@ -96,6 +96,7 @@ export function createReporterState(
     previewPick: null as PreviewPick | null,
     previewTrackedPick: null as PreviewPick | null,
     previewEdit: null as InlineEdit | null,
+    previewEditKeys: primordials.objectCreate(null) as Record<string, true>,
     previewGeometryFrame: 0,
     previewCapability: '',
     previewHomePath: '',

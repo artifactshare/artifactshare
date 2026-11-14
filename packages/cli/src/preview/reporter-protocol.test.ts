@@ -62,7 +62,12 @@ const editText = {
   text: 'New wording',
 }
 const editEnded = { ...envelope, kind: 'edit-ended', pickSequence: 3 }
-const editKey = { ...envelope, kind: 'edit-key', key: 'commit' }
+const editKey = {
+  ...envelope,
+  kind: 'edit-key',
+  pickSequence: 3,
+  key: 'commit',
+}
 test.each([
   element,
   selection,

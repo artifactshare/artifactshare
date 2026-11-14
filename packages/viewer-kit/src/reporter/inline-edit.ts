@@ -114,6 +114,8 @@ export function lockInlineEdit(ctx: ReporterState, locked: unknown) {
     'contenteditable',
     locked ? 'false' : 'plaintext-only',
   )
+  // Text typed before the lock arrived was dropped while saving; resend it.
+  if (!locked) sendInlineEditText(ctx)
 }
 
 /** Puts the document back. `removed` tells the parent the element went away. */
@@ -202,6 +204,10 @@ export function installInlineEditGuard(ctx: ReporterState) {
     'dragstart',
     'selectstart',
     'touchmove',
+    'pointerrawupdate' as keyof WindowEventMap,
+    'textInput' as keyof WindowEventMap,
+    'DOMMouseScroll' as keyof WindowEventMap,
+    'MozMousePixelScroll' as keyof WindowEventMap,
     'touchcancel',
     'dragenter',
     'dragleave',
@@ -221,6 +227,16 @@ export function installInlineEditGuard(ctx: ReporterState) {
       type,
       function (event: Event) {
         const edit = ctx.previewEdit
+        // A key pressed in the edit is released after Enter or Esc ended
+        // it; that keyup belongs to the edit too.
+        if (type === 'keyup') {
+          const code = (event as KeyboardEvent).code
+          if (ctx.previewEditKeys[code] === true) {
+            delete ctx.previewEditKeys[code]
+            event.stopImmediatePropagation()
+            return
+          }
+        }
         if (!edit) return
         const target = ctx.primordials.targetGet
           ? ctx.primordials.targetGet(event)
@@ -232,7 +248,10 @@ export function installInlineEditGuard(ctx: ReporterState) {
         event.stopImmediatePropagation()
         if (type === 'input') onEditInput(ctx)
         else if (type === 'drop') ctx.primordials.preventDefault(event)
-        else if (type === 'keydown') onEditKey(ctx, event as KeyboardEvent)
+        else if (type === 'keydown') {
+          ctx.previewEditKeys[(event as KeyboardEvent).code] = true
+          onEditKey(ctx, event as KeyboardEvent)
+        }
       },
       true,
     )
@@ -258,5 +277,9 @@ function onEditKey(ctx: ReporterState, event: KeyboardEvent) {
     key = 'comment'
   if (!key) return
   ctx.primordials.preventDefault(event)
-  send(ctx, { kind: 'edit-key', key })
+  send(ctx, {
+    kind: 'edit-key',
+    pickSequence: ctx.previewEdit!.sequence,
+    key,
+  })
 }
