@@ -151,6 +151,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     min-height: 24px; display: inline-flex; align-items: center;
     background: none; font: inherit; font-size: 12px; color: var(--link); cursor: pointer; }
   .popover .rewrite-toggle:hover { text-decoration: underline; }
+  .popover .rewrite-toggle[hidden] { display: none; }
   .popover .rewrite-field { display: none; flex-direction: column; margin-bottom: 6px; }
   .popover.rewriting .rewrite-field { display: flex; }
   .popover label { font-size: 12px; margin-bottom: 4px; }
@@ -283,7 +284,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <button type="button" class="rewrite-toggle" id="popRewriteToggle" aria-expanded="false" hidden></button>
   <div class="rewrite-field">
     <label for="popRewrite" data-msg="preview.rewriteLabel"></label>
-    <textarea id="popRewrite" rows="3" aria-describedby="popTarget popStatus"></textarea>
+    <textarea id="popRewrite" rows="3" maxlength="16000" aria-describedby="popTarget popStatus"></textarea>
   </div>
   <label for="popText" id="popTextLabel" data-msg="preview.editorLabel"></label>
   <textarea id="popText" rows="2" aria-describedby="popTarget popStatus"></textarea>
@@ -355,6 +356,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // The anchored text a rewrite may replace, and whether rewriting is on.
   let rewritable = null;
   let rewriting = false;
+  // Filled once per entry, so clearing it (a proposed removal) survives toggling.
+  let rewriteStarted = false;
   function setRewriting(on) {
     rewriting = on && rewritable !== null;
     popover.classList.toggle('rewriting', rewriting);
@@ -362,12 +365,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     popRewriteToggle.textContent = t(rewriting ? 'preview.rewriteOff' : 'preview.rewriteOn');
     document.getElementById('popTextLabel').textContent = t(rewriting ? 'preview.rewriteReason' : 'preview.editorLabel');
     popText.placeholder = t(rewriting ? 'preview.rewriteReasonPlaceholder' : 'preview.inputPlaceholder');
-    if (rewriting && !popRewrite.value) popRewrite.value = rewritable;
+    if (rewriting && !rewriteStarted) {
+      popRewrite.value = rewritable;
+      rewriteStarted = true;
+    }
   }
   // What the reader has entered: a comment, a changed rewrite, or both.
   function entryRewrite() {
     if (!rewriting) return null;
-    const proposed = popRewrite.value.trim();
+    // Kept exactly as typed: boundary spaces can be part of the wording.
+    const proposed = popRewrite.value;
     return proposed === rewritable ? null : { original: rewritable, proposed };
   }
   function entryHasContent() {
@@ -560,7 +567,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let savePending = false;
   let saveFailed = false;
   // Text that reconciliation confirmed as already saved for this attempt.
-  let confirmedSavedText = null;
+  let confirmedSavedKey = null;
   let unconfirmedSave = null;
   let targetRect = null;
   let targetPickSequence = null;
@@ -604,6 +611,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     popText.value = '';
     popRewrite.value = '';
     rewritable = rewritableTextOf(anchor);
+    rewriteStarted = false;
     popRewriteToggle.hidden = rewritable === null;
     setRewriting(false);
     popover.classList.add('show');
@@ -618,6 +626,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   }
   popRewriteToggle.addEventListener('click', () => {
     setRewriting(!rewriting);
+    // Switching changes what would be saved, like typing does.
+    if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
     positionPopover();
     (rewriting ? popRewrite : popText).focus();
   });
@@ -625,7 +635,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (savePending || ended) return;
     popover.classList.remove('show');
     saveFailed = false;
-    confirmedSavedText = null;
+    confirmedSavedKey = null;
     unconfirmedSave = null;
     document.getElementById('popAdd').textContent = t('preview.add');
     document.getElementById('popAdd').disabled = false;
@@ -644,13 +654,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) addAnnotation();
       if (event.key === 'Escape') hidePopover(true);
     });
-  }
-  document.getElementById('popAdd').addEventListener('click', addAnnotation);
-  for (const field of [popText, popRewrite]) {
     field.addEventListener('input', () => {
       if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
     });
   }
+  document.getElementById('popAdd').addEventListener('click', addAnnotation);
   async function checkUnconfirmedSave(restoreFocus) {
     const refreshed = await reconcileAnnotations();
     if (ended) return;
@@ -662,7 +670,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const add = document.getElementById('popAdd');
     savePending = false;
     saveFailed = true;
-    confirmedSavedText = found ? attempt.key : null;
+    confirmedSavedKey = found ? attempt.key : null;
     add.disabled = found && entryKey() === attempt.key;
     add.textContent = t(refreshed || found ? 'preview.add' : 'preview.checkSave');
     document.getElementById('popError').textContent = t(found ? 'preview.annotationAlreadySaved' :
@@ -1202,7 +1210,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     events.close();
     const screen = document.getElementById('endedScreen');
     // A comment confirmed as saved is not unsaved work, unless it was edited.
-    const confirmedSaved = confirmedSavedText !== null && entryKey() === confirmedSavedText;
+    const confirmedSaved = confirmedSavedKey !== null && entryKey() === confirmedSavedKey;
     if (pendingAnchor && !confirmedSaved && (popText.value || entryRewrite() !== null || savePending || saveFailed)) {
       endedBody.innerHTML = t('preview.ended.unsaved', { command: '__CMD__' }).replace('__CMD__', '<code></code>');
       endedBody.querySelector('code').textContent = CONFIG.resumeCommand;

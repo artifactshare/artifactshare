@@ -150,8 +150,10 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare preview next --sess
   replace `original` (the text at the anchor as displayed) with `proposed`
   in the source file, keeping the surrounding markup. `comment` is their
   optional reason and may be empty; an empty `proposed` means remove that
-  text. Apply it as written rather than rephrasing it, and report `skipped`
-  with a note when the text cannot be found or applied.
+  text. For an element, `original` is its displayed text with inline markup
+  flattened, so keep links and formatting in the source while applying the
+  new wording. Apply it as written rather than rephrasing it, and report
+  `skipped` with a note when the text cannot be found or applied.
 - An item whose `anchor.state` is `orphaned` lost its place in the document;
   do not try to re-fix it — report it as `skipped` with a note.
 - `done` is idempotent per generation: each item comes back as `accepted`,

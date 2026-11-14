@@ -397,6 +397,27 @@ export const previewSecurity = defineBrowserCommand(
             ],
           ],
         )
+        // An element without its own text offers no rewrite.
+        await frame.locator('input').click()
+        await shell.locator('#popover.show').waitFor()
+        assert.equal(await toggle.isVisible(), false)
+        await shell.locator('#popCancel').click()
+        // A cleared field proposes removal and survives toggling; spaces are kept.
+        await frame.locator('#sample').click()
+        await shell.locator('#popover.show').waitFor()
+        await toggle.click()
+        await shell.locator('#popRewrite').fill('')
+        await toggle.click()
+        await toggle.click()
+        assert.equal(await shell.locator('#popRewrite').inputValue(), '')
+        await shell.locator('#popRewrite').fill(' Select this text ')
+        const spaced = saved()
+        await shell.locator('#popAdd').click()
+        assert.equal((await spaced).status(), 200)
+        assert.deepEqual((await stored()).at(-1)!.rewrite, {
+          original: 'Select this text',
+          proposed: ' Select this text ',
+        })
         // A plain comment is unchanged by the feature.
         await frame.locator('h1').click()
         await shell.locator('#popover.show').waitFor()
@@ -405,7 +426,7 @@ export const previewSecurity = defineBrowserCommand(
         const third = saved()
         await shell.locator('#popAdd').click()
         assert.equal((await third).status(), 200)
-        assert.equal((await stored())[2]!.rewrite, undefined)
+        assert.equal((await stored()).at(-1)!.rewrite, undefined)
         return true
       }
       if (view === 'screens') {

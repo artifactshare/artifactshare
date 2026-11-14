@@ -454,7 +454,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         anchor,
         comment,
         // A rewrite may stand alone; its reason is optional.
-        messages: comment ? [message('human', comment)] : [],
+        messages: comment || !rewrite ? [message('human', comment)] : [],
         batch_id: null,
         created_at: created,
         updated_at: created,
@@ -734,6 +734,8 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
           status: annotation.status,
         }
       }
+      // An applied rewrite is not requested again; the reopen asks for more.
+      delete annotation.rewrite
       annotation.status = 'draft'
       annotation.generation += 1
       annotation.batch_id = null
