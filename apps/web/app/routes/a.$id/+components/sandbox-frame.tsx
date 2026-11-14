@@ -850,6 +850,8 @@ function useSandboxFrameController({
       focusRetryFailureRef.current = false
       focusFrame()
     }
+    frameAnsweredRef.current = true
+    offerInitialFocus()
   })
   const handleTextSelectionMessage = useEffectEvent(
     (message: TextSelectionMessage) => {
@@ -1082,6 +1084,45 @@ function useSandboxFrameController({
     )
   }, [locale, showsViewerPreferences, trustedMessageOrigin])
 
+  // Opening a document should let the keyboard reach it without a click, once,
+  // and only while the reader has not started doing something in the viewer.
+  // Later answers (revalidation, reconnects, in-frame navigation) never offer
+  // it again, and a comment link keeps its own destination.
+  const initialFocusRef = useRef<'pending' | 'settled'>(
+    targetThreadId ? 'settled' : 'pending',
+  )
+  const readerActedRef = useRef(false)
+  const frameAnsweredRef = useRef(false)
+  const offerInitialFocus = useEffectEvent(() => {
+    if (initialFocusRef.current === 'settled' || !frameAnsweredRef.current)
+      return
+    // A background tab is offered focus when it is first shown.
+    if (document.visibilityState !== 'visible') return
+    initialFocusRef.current = 'settled'
+    if (readerActedRef.current) return
+    const selection = window.getSelection()
+    if (selection && !selection.isCollapsed) return
+    focusFrame()
+  })
+  useEffect(() => {
+    const acted = (event: Event) => {
+      // The frame gaining focus is not the reader working in the viewer.
+      if (event.target === frameRef.current) return
+      readerActedRef.current = true
+    }
+    const shown = () => offerInitialFocus()
+    window.addEventListener('pointerdown', acted, true)
+    window.addEventListener('keydown', acted, true)
+    document.addEventListener('focusin', acted, true)
+    document.addEventListener('visibilitychange', shown)
+    return () => {
+      window.removeEventListener('pointerdown', acted, true)
+      window.removeEventListener('keydown', acted, true)
+      document.removeEventListener('focusin', acted, true)
+      document.removeEventListener('visibilitychange', shown)
+    }
+  }, [])
+
   const focusFrame = useCallback(() => {
     requestAnimationFrame(() => {
       const active = document.activeElement
@@ -1091,6 +1132,7 @@ function useSandboxFrameController({
   }, [])
 
   const handleFrameLoad = useCallback(() => {
+    frameAnsweredRef.current = false
     securityChallengeRef.current = createSandboxChallenge()
     securityTokenRef.current = null
     // A new document reports its own page once it has answered.
