@@ -35,7 +35,8 @@ export function inlineEditable(ctx: ReporterState, el: Element) {
 }
 
 export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
-  if (!ctx.previewCapability) return
+  if (!ctx.previewCapability || typeof sequence !== 'number' || !(sequence > 0))
+    return
   const pick = ctx.previewPick
   if (
     ctx.previewEdit ||
@@ -44,13 +45,13 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
     pick.endpoints
   ) {
     // A newer pick or edit got here first: the parent shows its field.
-    send(ctx, { kind: 'edit-ended' })
+    send(ctx, { kind: 'edit-ended', pickSequence: sequence })
     return
   }
   const el = pick.target as HTMLElement
   // The document changed it since the pick: the parent shows its field.
   if (!el.isConnected || !inlineEditable(ctx, el)) {
-    send(ctx, { kind: 'edit-ended' })
+    send(ctx, { kind: 'edit-ended', pickSequence: sequence })
     return
   }
   const nodes: Node[] = []
@@ -127,7 +128,7 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
   if (edit.contentEditable === null) el.removeAttribute('contenteditable')
   else el.setAttribute('contenteditable', edit.contentEditable)
   el.classList.remove('as-preview-editing')
-  if (removed) send(ctx, { kind: 'edit-ended' })
+  if (removed) send(ctx, { kind: 'edit-ended', pickSequence: edit.sequence })
   // Changes made while editing were not measured, and the restore's own
   // mutation records can fall outside the anchor root: remeasure here.
   rebuildAfterMutations(ctx)
@@ -174,10 +175,14 @@ export function installInlineEditGuard(ctx: ReporterState) {
     'compositionend',
     'pointerdown',
     'pointermove',
+    'pointerover',
+    'pointerout',
     'pointerup',
     'pointercancel',
     'mousedown',
     'mousemove',
+    'mouseover',
+    'mouseout',
     'mouseup',
     'wheel',
     'dragstart',

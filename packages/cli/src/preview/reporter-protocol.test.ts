@@ -56,7 +56,7 @@ const geometry = {
 const screen = { ...envelope, kind: 'screen', screen: '#/2' }
 const editableElement = { ...element, editable: true }
 const editText = { ...envelope, kind: 'edit-text', text: 'New wording' }
-const editEnded = { ...envelope, kind: 'edit-ended' }
+const editEnded = { ...envelope, kind: 'edit-ended', pickSequence: 3 }
 const editKey = { ...envelope, kind: 'edit-key', key: 'commit' }
 test.each([
   element,
@@ -99,6 +99,7 @@ test('admits the in-place edit flag only as a boolean', () => {
 test.each([
   { ...editText, text: 'x'.repeat(16_001) },
   { ...editEnded, text: '' },
+  { ...editEnded, pickSequence: 0 },
   { ...editKey, key: 'save' },
   { ...ready, editing: false },
   { ...ready, editing: 'yes' },

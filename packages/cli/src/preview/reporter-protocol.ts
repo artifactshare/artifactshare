@@ -97,7 +97,11 @@ export function validPreviewObservation(value: unknown): boolean {
     case 'edit-text':
       return keys(value, [...base, 'text']) && str(value.text, 16_000)
     case 'edit-ended':
-      return keys(value, base)
+      return (
+        keys(value, [...base, 'pickSequence']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0
+      )
     case 'edit-key':
       return (
         keys(value, [...base, 'key']) &&

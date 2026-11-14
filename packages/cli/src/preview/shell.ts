@@ -541,7 +541,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     } else if (data.kind === 'edit-ended') {
       // The page edit could not start or was removed; popRewrite already
       // holds the latest draft.
-      if (!inlineEditing || !pendingAnchor) return;
+      // Only about the pick being edited now, not an earlier one.
+      if (!inlineEditing || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
       leaveInline();
       // Typing meant for the page continues in the field, not the document.
       if (!savePending) { window.focus(); popRewrite.focus(); }
