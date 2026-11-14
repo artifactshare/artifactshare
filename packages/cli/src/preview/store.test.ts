@@ -600,6 +600,7 @@ test.each([
   'recovery',
   'reply',
   'reopen',
+  'orphan',
   'anchor',
 ])(
   '%s preserves committed and escaped state on pre-commit failure, then retries',
@@ -621,13 +622,14 @@ test.each([
             'failed',
             'recovery',
             'reopen',
+            'orphan',
           ].includes(operation)
         )
           store.submitDrafts()
         const batchId = store.latestBatch()?.id ?? ''
         if (['manual', 'recovery'].includes(operation))
           store.markDispatchStarted(batchId)
-        if (operation === 'reopen')
+        if (operation === 'reopen' || operation === 'orphan')
           store.applyDone([{ thread, generation: 1, outcome: 'fixed' }])
         const mutate = () => {
           switch (operation) {
@@ -663,6 +665,8 @@ test.each([
               return store.reply(thread, 'More detail', 'human')
             case 'reopen':
               return store.reopen(thread)
+            case 'orphan':
+              return store.discardOrphan(thread)
             case 'anchor':
               return store.setAnchorState(thread, 'orphaned')
           }

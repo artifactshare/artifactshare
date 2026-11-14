@@ -164,6 +164,8 @@ export interface PreviewStore {
     author: PreviewThreadMessage['author'],
   ): PreviewStoreResult
   reopen(thread: string): PreviewStoreResult
+  /** Removes a draft, resolved or dismissed comment in one saved transaction. */
+  discardOrphan(thread: string): PreviewStoreResult
   setAnchorState(
     thread: string,
     state: 'attached' | 'orphaned',
@@ -687,6 +689,26 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       if (!annotation) return { ok: false, reason: 'unknown_thread' }
       annotation.messages.push(message(author, body))
       touch(annotation)
+      save()
+      return { ok: true, annotation }
+    },
+
+    discardOrphan(thread) {
+      const annotation = find(thread)
+      if (!annotation) return { ok: false, reason: 'unknown_thread' }
+      // In-flight comments stay for the agent to report on.
+      if (
+        annotation.status !== 'draft' &&
+        annotation.status !== 'resolved' &&
+        annotation.status !== 'dismissed'
+      ) {
+        return {
+          ok: false,
+          reason: 'invalid_status',
+          status: annotation.status,
+        }
+      }
+      annotations = annotations.filter((entry) => entry.thread !== thread)
       save()
       return { ok: true, annotation }
     },

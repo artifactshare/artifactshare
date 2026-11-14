@@ -836,6 +836,28 @@ export const previewSecurity = defineBrowserCommand(
                   'link',
                 )
                 assert.ok(await dialog.locator('#shareError').isVisible())
+                const confirmGuidance = await dialog
+                  .locator('#shareError')
+                  .textContent()
+                // A failed passive refresh must not drop the request to confirm
+                // the newly loaded destination once the retry succeeds.
+                snapshotFails = true
+                await shell.locator('#shareBtn').click()
+                await dialog
+                  .locator('#snapshotRetry')
+                  .waitFor({ state: 'visible' })
+                snapshotFails = false
+                await dialog.locator('#snapshotRetry').click()
+                await dialog.waitForFunction(
+                  () =>
+                    !(document.querySelector('#shareBtn') as HTMLButtonElement)
+                      .disabled,
+                )
+                assert.ok(await dialog.locator('#shareError').isVisible())
+                assert.equal(
+                  await dialog.locator('#shareError').textContent(),
+                  confirmGuidance,
+                )
                 shareState = 'done'
                 await focusByKeyboard('shareBtn')
                 await dialog.keyboard.press('Enter')

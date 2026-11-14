@@ -491,6 +491,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let cancelAddFocusRestore = null;
   let savePending = false;
   let saveFailed = false;
+  // Text that reconciliation confirmed as already saved for this attempt.
+  let confirmedSavedText = null;
   let unconfirmedSave = null;
   let targetRect = null;
   let targetPickSequence = null;
@@ -540,6 +542,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (savePending || ended) return;
     popover.classList.remove('show');
     saveFailed = false;
+    confirmedSavedText = null;
     unconfirmedSave = null;
     document.getElementById('popAdd').textContent = t('preview.add');
     document.getElementById('popAdd').disabled = false;
@@ -571,6 +574,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     const add = document.getElementById('popAdd');
     savePending = false;
     saveFailed = true;
+    confirmedSavedText = found ? attempt.comment : null;
     add.disabled = found && popText.value.trim() === attempt.comment;
     add.textContent = t(refreshed || found ? 'preview.add' : 'preview.checkSave');
     document.getElementById('popError').textContent = t(found ? 'preview.annotationAlreadySaved' :
@@ -994,7 +998,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (readyBurstTimer) clearInterval(readyBurstTimer);
     events.close();
     const screen = document.getElementById('endedScreen');
-    if (pendingAnchor && (popText.value || savePending || saveFailed)) {
+    // A comment confirmed as saved is not unsaved work, unless it was edited.
+    const confirmedSaved = confirmedSavedText !== null && popText.value.trim() === confirmedSavedText;
+    if (pendingAnchor && !confirmedSaved && (popText.value || savePending || saveFailed)) {
       endedBody.innerHTML = t('preview.ended.unsaved', { command: '__CMD__' }).replace('__CMD__', '<code></code>');
       endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
       popText.readOnly = true;

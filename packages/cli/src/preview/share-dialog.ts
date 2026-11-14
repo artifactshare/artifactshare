@@ -953,6 +953,8 @@ function renderPage(options: ShareDialogHandlerOptions): string {
 
   var snapshotPending = false;
   var visibilityChosen = false;
+  // After sign-in the newly loaded destination must be confirmed before sharing.
+  var destinationUnconfirmed = false;
   function refreshSnapshot() {
     if (snapshotPending || shareInFlight || el('dialog').className !== 'dialog') return;
     var retryFocused = document.activeElement === el('snapshotRetry');
@@ -978,6 +980,10 @@ function renderPage(options: ShareDialogHandlerOptions): string {
       var takenAt = new Date(result.body.taken_at);
       el('snapshotNote').textContent =
         t('snapshotNote').replace('{time}', takenAt.toLocaleTimeString());
+      if (destinationUnconfirmed) {
+        el('shareError').textContent = t('confirmDestination');
+        el('shareError').style.display = 'block';
+      }
     })
     .catch(reportSnapshotFailure)
     .finally(function () {
@@ -1070,11 +1076,15 @@ function renderPage(options: ShareDialogHandlerOptions): string {
         ? ''
         : 'none';
   }
-  el('destination').addEventListener('change', syncVisibility);
+  el('destination').addEventListener('change', function () {
+    destinationUnconfirmed = false;
+    syncVisibility();
+  });
   el('visibility').addEventListener('change', function () { visibilityChosen = true; syncVisibility(); });
 
   function share() {
     if (!snapshotId || shareInFlight || snapshotPending || el('dialog').className !== 'dialog') return;
+    destinationUnconfirmed = false;
     var restoreFocus = document.activeElement === el('shareBtn');
     function recoverFocus() {
       if (restoreFocus && (document.activeElement === document.body || document.activeElement === el('shareBtn'))) el('shareBtn').focus();
@@ -1168,6 +1178,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
             // away would silently pick Home for a first-time user.
             loadContext().then(function () {
               el('destination').focus();
+              destinationUnconfirmed = true;
               el('shareError').textContent = t('confirmDestination');
               el('shareError').style.display = 'block';
             });

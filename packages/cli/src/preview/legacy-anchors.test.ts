@@ -627,6 +627,20 @@ test.each([
         expect(add.disabled).toBe(true)
         expect(writes).toHaveLength(1)
         expect(input.value).toBe('  keep this exact draft\nplease  ')
+        // A comment confirmed as saved is not reported as unsaved at the end.
+        events.dispatchEvent(new MessageEvent('session-ended', { data: '{}' }))
+        expect(
+          document.querySelector('#endedScreen')!.classList.contains('show'),
+        ).toBe(true)
+        expect(document.querySelector('#endedScreen')!.contains(input)).toBe(
+          false,
+        )
+        expect(document.querySelector('#endedBody')!.textContent).not.toBe(
+          PREVIEW_MESSAGES[locale]['preview.ended.unsaved'].replace(
+            '{command}',
+            'artifactshare preview sample.html',
+          ),
+        )
         return
       }
       await vi.waitFor(() => expect(add.disabled).toBe(false))
