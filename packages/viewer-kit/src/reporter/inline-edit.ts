@@ -14,7 +14,7 @@ export function inlineEditable(ctx: ReporterState, el: Element) {
   // Code keeps its whitespace and controls own their text; neither is
   // edited as collapsed plain text.
   if (
-    /^(A|AUDIO|BUTTON|CANVAS|CODE|IFRAME|IMG|INPUT|KBD|LABEL|OPTION|PRE|SAMP|SCRIPT|SELECT|STYLE|SUMMARY|TEXTAREA|TITLE|VIDEO)$/.test(
+    /^(A|AUDIO|BUTTON|CANVAS|CODE|IFRAME|IMG|INPUT|KBD|LABEL|METER|NOSCRIPT|OBJECT|OPTGROUP|OPTION|PRE|PROGRESS|SAMP|SCRIPT|SELECT|STYLE|SUMMARY|TEMPLATE|TEXTAREA|TITLE|VIDEO)$/.test(
       el.tagName,
     ) ||
     el.tagName.indexOf('-') >= 0
@@ -60,6 +60,8 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
   // Checking follow-ups resume when the edit ends and anchors are remeasured.
   if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
   ctx.checkingTimer = undefined
+  ctx.win.clearTimeout(ctx.resolveTimer)
+  ctx.resolveStartedAt = 0
   ctx.previewEdit = {
     element: el,
     sequence: pick.sequence,
@@ -70,6 +72,11 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
     text: ownText(ctx, el),
   }
   el.setAttribute('contenteditable', 'plaintext-only')
+  // Without plaintext-only support the attribute is invalid: use the field.
+  if (!el.isContentEditable) {
+    endInlineEdit(ctx, true)
+    return
+  }
   el.classList.add('as-preview-editing')
   // The pick click left focus in this document. If the reader has already
   // moved to the parent's comment field, editing waits for their next click.
@@ -111,9 +118,13 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
   if (edit.contentEditable === null) el.removeAttribute('contenteditable')
   else el.setAttribute('contenteditable', edit.contentEditable)
   el.classList.remove('as-preview-editing')
-  if (removed) send(ctx, { kind: 'edit-ended' })
-  // Mutations made while editing were not measured; measure the restored DOM.
-  rebuildAfterMutations(ctx)
+  // Re-appending the original nodes queues mutation records, so the observer
+  // remeasures the restored DOM once. A removed element is outside the
+  // document: its removal was seen while paused, so remeasure here.
+  if (removed) {
+    send(ctx, { kind: 'edit-ended' })
+    if (!el.isConnected) rebuildAfterMutations(ctx)
+  }
 }
 
 export function sendInlineEditText(ctx: ReporterState) {

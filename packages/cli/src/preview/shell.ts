@@ -355,6 +355,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   // hidden. Anything else that has text shows popRewrite, prefilled.
   let rewritable = null;
   let inlineEditing = false;
+  // The handshake generation the page edit started in.
+  let inlineGeneration = 0;
   function setRewriteMode(inline) {
     inlineEditing = inline && rewritable !== null;
     popover.classList.toggle('rewriting', rewritable !== null);
@@ -530,6 +532,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (!inlineEditing || savePending || !pendingAnchor) return;
       popRewrite.value = data.text;
       document.getElementById('popAdd').disabled = false;
+    } else if (data.kind === 'ready') {
+      // A later handshake from a document that is not editing (a reload or
+      // navigation) means the page edit is gone; WebKit also re-handshakes
+      // on same-document hash changes, where the edit continues.
+      if (inlineEditing && documentGeneration > inlineGeneration && data.editing !== true) leaveInline();
     } else if (data.kind === 'edit-ended') {
       // The page edit could not start or was removed; popRewrite already
       // holds the latest draft.
@@ -621,6 +628,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     popover.classList.add('show');
     positionPopover();
     // Inline, the reader is already typing on the page (Tab comes here).
+    inlineGeneration = documentGeneration;
     if (inlineEditing) postToFrame({ kind: 'inline-edit', pickSequence });
     else popText.focus();
   }

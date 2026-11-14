@@ -40,7 +40,13 @@ export function validPreviewObservation(value: unknown): boolean {
   switch (value.kind) {
     case 'ready':
       return (
-        keys(value, [...base, 'challenge', 'token']) &&
+        keys(value, [
+          ...base,
+          'challenge',
+          'token',
+          ...(Object.hasOwn(value, 'editing') ? ['editing'] : []),
+        ]) &&
+        (!Object.hasOwn(value, 'editing') || value.editing === true) &&
         str(value.challenge, 64) &&
         typeof value.token === 'string' &&
         /^[a-f0-9]{64}$/.test(value.token)

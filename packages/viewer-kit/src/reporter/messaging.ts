@@ -39,11 +39,20 @@ export function send(ctx: ReporterState, message: Record<string, unknown>) {
 
 export function ready(ctx: ReporterState) {
   if (ctx.readyChallenge && ctx.documentToken) {
-    send(ctx, {
-      kind: 'ready',
-      challenge: ctx.readyChallenge,
-      token: ctx.documentToken,
-    })
+    // Preview: say that an in-place edit is still open in this document.
+    if (ctx.previewEdit)
+      send(ctx, {
+        kind: 'ready',
+        challenge: ctx.readyChallenge,
+        token: ctx.documentToken,
+        editing: true,
+      })
+    else
+      send(ctx, {
+        kind: 'ready',
+        challenge: ctx.readyChallenge,
+        token: ctx.documentToken,
+      })
     reportHash(ctx, true)
     reportScreen(ctx, true)
     // A newer handshake drops older messages: say the draft text again.

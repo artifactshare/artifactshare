@@ -574,6 +574,8 @@ export function applyHighlights(
   if (ctx.locationScoped && ctx.displayedPath !== liveCommentLocation(ctx))
     list = []
   ctx.pendingHighlights = Array.isArray(list) ? list : []
+  // Resolved against the restored text once an in-place edit ends.
+  if (ctx.previewEdit) return
   if (!ctx.pendingHighlights.length) {
     ctx.checkingHighlights = []
     ctx.lastResolutionSignature = ''

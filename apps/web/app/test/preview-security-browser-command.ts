@@ -484,6 +484,39 @@ export const previewSecurity = defineBrowserCommand(
         )
         await shell.locator('#popCancel').click()
 
+        // A same-document hash change keeps the edit (WebKit re-handshakes
+        // there); a reload ends it and keeps the draft in the field.
+        await h1.click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await shell.keyboard.type(' draft')
+        await frame.evaluate(() => {
+          location.hash = '#moved'
+        })
+        // test-wait: elapsed-time — a re-handshake completes within the ready burst.
+        await shell.waitForTimeout(800)
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), true)
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await shell.keyboard.type(' kept')
+        await shell.waitForFunction(
+          () =>
+            (document.getElementById('popRewrite') as HTMLTextAreaElement)
+              .value === 'Initial document draft kept',
+        )
+        await frame.evaluate(() => location.reload())
+        await shell.locator('#popRewrite').waitFor()
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Initial document draft kept',
+        )
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), false)
+        await shell.locator('#popCancel').click()
+        await frame.locator('h1').waitFor()
+
         // A selection elsewhere while an untouched element is being edited
         // offers that text instead.
         await h1.click()

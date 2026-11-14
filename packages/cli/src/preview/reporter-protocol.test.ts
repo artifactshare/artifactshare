@@ -85,6 +85,9 @@ test.each([
     }
   },
 )
+test('admits a ready that reports an open in-place edit', () => {
+  expect(validPreviewObservation({ ...ready, editing: true })).toBe(true)
+})
 test('admits the in-place edit flag only as a boolean', () => {
   expect(validPreviewObservation(editableElement)).toBe(true)
   expect(validPreviewObservation({ ...element, editable: false })).toBe(true)
@@ -97,6 +100,8 @@ test.each([
   { ...editText, text: 'x'.repeat(16_001) },
   { ...editEnded, text: '' },
   { ...editKey, key: 'save' },
+  { ...ready, editing: false },
+  { ...ready, editing: 'yes' },
   { ...editKey, key: 1 },
 ])('rejects malformed in-place edit observations', (message) => {
   expect(validPreviewObservation(message)).toBe(false)

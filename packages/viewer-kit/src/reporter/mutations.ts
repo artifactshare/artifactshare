@@ -59,6 +59,8 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     // The document removed what is being edited: end the edit; the parent
     // keeps the typed text. Otherwise remeasure only once it is restored.
     if (!ctx.previewEdit.element.isConnected) endInlineEdit(ctx, true)
+    // The draft can change the layout around it.
+    else schedulePositionBadges(ctx)
     return
   }
   let root = anchorRoot(ctx)
