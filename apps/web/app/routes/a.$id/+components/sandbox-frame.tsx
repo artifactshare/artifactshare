@@ -1102,7 +1102,14 @@ function useSandboxFrameController({
     if (readerActedRef.current) return
     const selection = window.getSelection()
     if (selection && !selection.isCollapsed) return
-    focusFrame()
+    // A task, not an animation frame: a page that is not painting yet still
+    // receives the focus, and the same guard keeps a control chosen meanwhile.
+    window.setTimeout(() => {
+      if (readerActedRef.current) return
+      const active = document.activeElement
+      if (active !== document.body && active !== frameRef.current) return
+      frameRef.current?.focus({ preventScroll: true })
+    }, 0)
   })
   useEffect(() => {
     const acted = (event: Event) => {
