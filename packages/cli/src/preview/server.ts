@@ -531,14 +531,19 @@ export async function startPreviewServer(
           agent: notification.projection(),
         })
       }
-      if (submitted.batch) {
-        if (notification.registration.capability === 'wait' && activeWait) {
-          events.emit('submitted')
-        } else {
-          await notification.notifyBatch(submitted.batch.id)
+      try {
+        if (submitted.batch) {
+          if (notification.registration.capability === 'wait' && activeWait) {
+            events.emit('submitted')
+          } else {
+            await notification.notifyBatch(submitted.batch.id)
+          }
         }
+      } finally {
+        // The submission is already committed even if a later dispatch-state
+        // write fails. Publish the actual persisted state, never stale drafts.
+        broadcastAnnotations()
       }
-      broadcastAnnotations()
       return sendJson(response, 200, {
         submitted: submitted.annotations.length,
         ...(submitted.batch ? { batch_id: submitted.batch.id } : {}),

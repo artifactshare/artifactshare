@@ -142,7 +142,9 @@ export function findElement(
     const text = ownText(ctx, peers[i])
     if (
       anchor.ownTextHash !== undefined
-        ? text.length > 16_000 && textHash(text) === anchor.ownTextHash
+        ? text.length > 16_000 &&
+          eligibleElementHash(text) &&
+          textHash(text) === anchor.ownTextHash
         : text === anchor.ownText
     )
       matches.push(peers[i])
@@ -249,9 +251,30 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   })
 }
 
+// TextEncoder replaces lone surrogates with U+FFFD. Old digests cannot
+// distinguish those inputs from a literal replacement character.
+function eligibleElementHash(text: string) {
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i)
+    if (unit === 0xfffd) return false
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(++i)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return false
+  }
+  return true
+}
+
 /** Keep normal captures byte-compatible; only oversized text needs hashing. */
-function elementTextIdentity(text: string) {
+export function elementTextIdentity(text: string) {
+  const cut =
+    text.charCodeAt(15_999) >= 0xd800 &&
+    text.charCodeAt(15_999) <= 0xdbff &&
+    text.charCodeAt(16_000) >= 0xdc00 &&
+    text.charCodeAt(16_000) <= 0xdfff
+      ? 15_999
+      : 16_000
   return text.length <= 16_000
     ? { ownText: text }
-    : { ownTextHash: textHash(text), ownTextExcerpt: text.slice(0, 16_000) }
+    : { ownTextHash: textHash(text), ownTextExcerpt: text.slice(0, cut) }
 }

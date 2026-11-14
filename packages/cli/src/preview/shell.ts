@@ -122,10 +122,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .mode-toggle .count { background: var(--pending); color: #2a1800; border-radius: var(--r-full);
     font-size: 11px; min-width: 18px; height: 18px; display: none; place-items: center; padding: 0 5px; }
   .mode-toggle .count.show { display: grid; }
-  .popover { position: fixed; z-index: 50; width: min(300px, 80vw);
+  .popover { position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px));
     background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
     padding: 10px; display: none; }
-  .popover.show { display: block; }
+  .popover.show { display: flex; flex-direction: column; overflow-y: auto; }
+  .popover textarea { min-height: 48px; flex-shrink: 0; }
+  .popover textarea::placeholder { color: var(--muted-foreground); opacity: 1; }
+  .popover .row { position: sticky; bottom: 0; background: var(--card); flex-shrink: 0; }
+  #popStatus { font-size: 12px; color: var(--muted-foreground); }
+  .canvas-control { font-size: 12px; color: var(--muted-foreground); }
+  .canvas-control select { font: inherit; color: var(--foreground); background: var(--background); }
   .popover .target-label { font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .popover textarea { width: 100%; border: 1px solid var(--border);
@@ -192,7 +198,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .notice.show { display: flex; }
   .ended { position: fixed; inset: 0; background: var(--surface-warm); z-index: 100;
     display: none; place-items: center; text-align: center; }
-  .ended.show { display: grid; }
+  .ended.show { display: grid; overflow-y: auto; }
+  .ended .popover.show { position: static; width: 100%; max-height: none !important; text-align: left; box-shadow: none; }
   .ended .box { max-width: 420px; padding: 24px; }
   .ended h3 { font-size: 16px; margin: 12px 0 8px; }
   .ended p { font-size: 13px; color: var(--muted-foreground); margin: 0 0 16px; }
@@ -229,7 +236,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   </div>
   <aside class="panel">
     <p data-msg="preview.isolationNotice" style="font-size:12px;color:var(--muted-foreground);margin:0"></p>
+    ${isMarkdown ? '' : `<label class="canvas-control"><span data-msg="preview.canvasLabel"></span> <select id="canvasBackground" aria-describedby="canvasHelp"><option value="light" data-msg="preview.canvasLight"></option><option value="dark" data-msg="preview.canvasDark"></option></select></label><p class="canvas-control" id="canvasHelp" data-msg="preview.canvasHelp"></p>`}
     <h2 data-msg="preview.panelTitle"></h2>
+    <div id="operationError" role="alert"></div>
     <div class="submit-bar" id="submitBar">
       <button class="btn btn-primary" id="submitBtn" aria-describedby="batchStatus"></button>
       <button class="btn" id="discardAll" data-msg="preview.discardDrafts"></button>
@@ -249,7 +258,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
 </button>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
-  <textarea id="popText" rows="2"></textarea>
+  <label for="popText" data-msg="preview.editorLabel"></label>
+  <textarea id="popText" rows="2" aria-describedby="popTarget popStatus"></textarea>
+  <div id="popStatus" role="status"></div>
   <div id="popError" role="alert"></div>
   <div class="row">
     <button class="btn" id="popCancel" data-msg="preview.cancel"></button>
@@ -298,6 +309,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   watchStatus.title = t('preview.watching');
 
   const frame = document.getElementById('artifactFrame');
+  const canvasBackground = document.getElementById('canvasBackground');
+  if (canvasBackground) canvasBackground.addEventListener('change', () => {
+    frame.style.backgroundColor = canvasBackground.value === 'dark' ? '#111315' : '#ffffff';
+  });
 
   // Saved annotations can outlive edits made while the preview was stopped, so
   // reconcile once the first frame is ready rather than waiting for a save.
@@ -322,6 +337,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
 
   let annotations = [];
+  let annotationVersion = 0;
   let agent = { state: 'manual_required' };
   let pendingAnchor = null;
   let annotateMode = true;
@@ -426,9 +442,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // "Preview ended" has to be true for the agent too: without the stop,
       // the process keeps serving and pending next polls never receive
       // session_ended.
-      if (data.kind === 'share-finished') {
-        showEnded();
+      if (data.kind === 'share-finished' && !ended) {
         api('POST', '/api/agent/stop');
+        showEnded();
       }
       return;
     }
@@ -442,6 +458,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     receiveSequence = data.sequence;
     if (data.kind === 'element-annotate') {
       if (!annotateMode) return;
+      if (cancelAddFocusRestore) cancelAddFocusRestore();
       openPopover({
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
@@ -455,6 +472,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // The reporter keeps emitting selections so normal reading still works;
       // only annotation mode turns one into a comment.
       if (!annotateMode) return;
+      if (cancelAddFocusRestore) cancelAddFocusRestore();
       openPopover({
         kind: 'text', state: 'attached', position_state: 'attached',
         selectorFormat: data.selectorFormat, textHash: data.textHash, ambiguousAtCreation: data.ambiguousAtCreation,
@@ -466,74 +484,182 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   });
 
   // --- popover ------------------------------------------------------------
+  let cancelAddFocusRestore = null;
   let savePending = false;
   let saveFailed = false;
-  let popoverTop = 52;
+  let unconfirmedSave = null;
+  let targetRect = null;
   function positionPopover() {
-    const height = popover.getBoundingClientRect().height;
-    const bottom = window.innerWidth <= 860
-      ? document.querySelector('.panel').getBoundingClientRect().top
-      : window.innerHeight;
-    const fitsAbovePanel = bottom - height - 8 >= 52;
-    // On phones the floating mode toggle (60) also overlaps the action row.
-    popover.style.zIndex = window.innerWidth <= 860 ? '61' : '';
-    popover.style.top = Math.max(52, Math.min(popoverTop,
-      (fitsAbovePanel ? bottom : window.innerHeight) - height - 8)) + 'px';
+    if (ended || !popover.classList.contains('show')) return;
+    const viewport = window.visualViewport;
+    const left = (viewport ? viewport.offsetLeft : 0) + 8;
+    const top = (viewport ? viewport.offsetTop : 0) + 8;
+    const width = viewport ? viewport.width : window.innerWidth;
+    const height = viewport ? viewport.height : window.innerHeight;
+    popover.style.maxHeight = Math.max(0, height - 16) + 'px';
+    popover.style.maxWidth = Math.max(0, width - 16) + 'px';
+    const box = popover.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const targetTop = frameRect.top + (targetRect ? targetRect.top : 60);
+    const above = targetTop - box.height - 8;
+    const preferred = above >= top ? above : targetTop + (targetRect ? targetRect.height : 0) + 8;
+    popover.style.left = Math.max(left, Math.min(frameRect.left + (targetRect ? targetRect.left : 40), left + width - 16 - (box.width || 300))) + 'px';
+    popover.style.top = Math.max(top, Math.min(preferred, top + height - 16 - box.height)) + 'px';
+  }
+  window.addEventListener('resize', positionPopover);
+  window.addEventListener('orientationchange', positionPopover);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', positionPopover);
+    window.visualViewport.addEventListener('scroll', positionPopover);
   }
   function openPopover(anchor, label, rect) {
-    if (savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
+    if (ended) return;
+    if (savePending || saveFailed || (pendingAnchor && popText.value.trim())) {
+      document.getElementById('popStatus').textContent = t(pendingReload !== null ? 'preview.updateQueued' : 'preview.entryBlocked');
+      positionPopover();
+      return;
+    }
+    document.getElementById('popStatus').textContent = pendingReload !== null ? t('preview.updateQueued') : '';
     document.getElementById('popError').textContent = '';
     pendingAnchor = anchor;
     popTarget.textContent = label;
-    const frameRect = frame.getBoundingClientRect();
-    const left = Math.max(8, Math.min(
-      frameRect.left + (rect ? rect.left : 40) + 20,
-      window.innerWidth - 320));
-    popoverTop = frameRect.top + (rect ? rect.top + rect.height : 60) + 8;
-    popover.style.left = left + 'px';
+    targetRect = rect;
     popover.classList.add('show');
     positionPopover();
     popText.value = '';
     popText.focus();
   }
-  function hidePopover() {
-    if (savePending) return;
+  function hidePopover(flushReload = false) {
+    if (savePending || ended) return;
     popover.classList.remove('show');
     saveFailed = false;
+    unconfirmedSave = null;
+    document.getElementById('popAdd').textContent = t('preview.add');
+    document.getElementById('popAdd').disabled = false;
     pendingAnchor = null;
-    if (pendingReload !== null) {
+    if (flushReload && pendingReload !== null) {
       const target = pendingReload;
       pendingReload = null;
       reloadFrame(target);
     }
   }
-  document.getElementById('popCancel').addEventListener('click', hidePopover);
+  document.getElementById('popCancel').addEventListener('click', () => hidePopover(true));
   popText.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) addAnnotation();
-    if (event.key === 'Escape') hidePopover();
+    if (event.key === 'Escape') hidePopover(true);
   });
   document.getElementById('popAdd').addEventListener('click', addAnnotation);
+  popText.addEventListener('input', () => {
+    if (!savePending && !ended) document.getElementById('popAdd').disabled = false;
+  });
+  async function checkUnconfirmedSave(restoreFocus) {
+    const refreshed = await reconcileAnnotations();
+    if (ended) return;
+    const attempt = unconfirmedSave;
+    const found = annotations.some(annotation => !attempt.threads.has(annotation.thread) &&
+      annotation.comment === attempt.comment && annotation.anchor &&
+      Object.entries(attempt.anchor).every(([key, value]) => annotation.anchor[key] === value));
+    const add = document.getElementById('popAdd');
+    savePending = false;
+    saveFailed = true;
+    add.disabled = found && popText.value.trim() === attempt.comment;
+    add.textContent = t(refreshed || found ? 'preview.add' : 'preview.checkSave');
+    document.getElementById('popError').textContent = t(found ? 'preview.annotationAlreadySaved' :
+      refreshed ? 'preview.annotationSaveFailed' : 'preview.annotationSaveUnknown');
+    // A failed read must never turn the next click into another write.
+    if ((refreshed && !found) || (found && popText.value.trim() !== attempt.comment)) unconfirmedSave = null;
+    positionPopover();
+    if (restoreFocus()) {
+      // Firefox can retain the artifact browsing context after a blocked pick.
+      // Reclaim it only for this failed Add, unless the user moved away during
+      // the request. Focusing the textarea alone does not cross that boundary.
+      window.focus();
+      popText.focus();
+    }
+  }
   async function addAnnotation() {
     const comment = popText.value.trim();
-    if (!comment || !pendingAnchor || savePending) return;
-    savePending = true;
-    document.getElementById('popAdd').disabled = true;
-    const result = await api('POST', '/api/annotations', { anchor: pendingAnchor, comment });
-    savePending = false;
-    document.getElementById('popAdd').disabled = false;
-    if (!result || !result.annotation || typeof result.annotation.thread !== 'string' || !result.annotation.thread) {
-      saveFailed = true;
-      document.getElementById('popError').textContent = t('preview.annotationSaveFailed');
-      positionPopover();
-      return;
+    if (ended || !comment || !pendingAnchor || savePending) return;
+    // Explicit Add owns the editor before tracking this attempt. Firefox may
+    // still have the opaque frame active after a blocked annotation pick.
+    window.focus();
+    popText.focus();
+    // Disabling Add may drop focus to the document. Restore that lost focus,
+    // but do not override a deliberate move while the request is pending.
+    let focusMoved = false;
+    const observeFocus = (event) => {
+      if (event.target !== document.body && event.target !== popText &&
+          event.target !== document.getElementById('popAdd')) focusMoved = true;
+    };
+    const movedAway = () => { focusMoved = true; };
+    document.addEventListener('focusin', observeFocus);
+    cancelAddFocusRestore = movedAway;
+    try {
+      savePending = true;
+      // Freeze the submitted text until acknowledgement/reconciliation finishes.
+      // Keep it selectable, including when the session ends during the request.
+      popText.readOnly = true;
+      document.getElementById('popAdd').textContent = t('preview.savePending');
+      document.getElementById('popAdd').disabled = true;
+      window.addEventListener('blur', movedAway);
+      popText.addEventListener('blur', movedAway, true);
+      if (unconfirmedSave) {
+        await checkUnconfirmedSave(() => !focusMoved);
+        return;
+      }
+      const attempt = { anchor: pendingAnchor, comment, threads: new Set(annotations.map(annotation => annotation.thread)) };
+      const result = await api('POST', '/api/annotations', { anchor: pendingAnchor, comment }, false);
+      if (ended) return;
+      if (!result || !result.annotation || typeof result.annotation.thread !== 'string' || !result.annotation.thread) {
+        unconfirmedSave = attempt;
+        await checkUnconfirmedSave(() => !focusMoved);
+        return;
+      }
+      savePending = false;
+      document.getElementById('popAdd').disabled = false;
+      document.getElementById('popError').textContent = '';
+      popText.value = '';
+      hidePopover(true);
+    } finally {
+      popText.readOnly = ended;
+      document.removeEventListener('focusin', observeFocus);
+      window.removeEventListener('blur', movedAway);
+      popText.removeEventListener('blur', movedAway, true);
+      cancelAddFocusRestore = null;
     }
-    document.getElementById('popError').textContent = '';
-    popText.value = '';
-    hidePopover();
   }
 
   // --- API ----------------------------------------------------------------
-  async function api(method, path, bodyValue) {
+  async function reconcileAnnotations() {
+    const version = annotationVersion;
+    try {
+      const response = await fetch('/api/annotations', { cache: 'no-store' });
+      if (!response.ok) return false;
+      const data = await response.json();
+      // An incoming event or another completed read supersedes this snapshot.
+      // Returning false also keeps an unknown save from becoming a new POST.
+      if (ended || version !== annotationVersion || !data || !Array.isArray(data.annotations)) return false;
+      annotationVersion++;
+      if (JSON.stringify(annotations) !== JSON.stringify(data.annotations) ||
+          (data.agent && JSON.stringify(agent) !== JSON.stringify(data.agent))) {
+        annotations = data.annotations;
+        agent = data.agent || agent;
+        renderPanel();
+        checkOrphans();
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+  async function api(method, path, bodyValue, reportFailure = true) {
+    if (ended) return null;
+    const operationError = document.getElementById('operationError');
+    operationError.textContent = '';
+    const focused = document.activeElement;
+    const submittedThreads = path === '/api/annotations/submit'
+      ? new Set(annotations.filter(annotation => annotation.status === 'draft').map(annotation => annotation.thread))
+      : null;
     const headers = { 'content-type': 'application/json' };
     headers[MUTATION_HEADER] = '1';
     try {
@@ -542,9 +668,20 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         headers,
         body: bodyValue === undefined ? '{}' : JSON.stringify(bodyValue),
       });
-      if (!response.ok) return null;
-      return await response.json().catch(() => null);
+      if (!response.ok) throw new Error('operation failed');
+      return await response.json();
     } catch (error) {
+      if (reportFailure) {
+        await reconcileAnnotations();
+        if (ended) return null;
+        const submitted = submittedThreads && annotations.some(annotation =>
+          submittedThreads.has(annotation.thread) && annotation.status !== 'draft');
+        operationError.textContent = t(submitted ? 'preview.submitUnconfirmed' : 'preview.operationFailed');
+        if (document.activeElement === document.body && focused && (!focused.isConnected || focused.disabled)) {
+          operationError.tabIndex = -1;
+          operationError.focus();
+        }
+      }
       return null;
     }
   }
@@ -568,6 +705,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     return t('preview.stateDismissed');
   }
   function renderPanel() {
+    if (ended) return;
     threadsEl.textContent = '';
     const ordered = annotations.slice().reverse();
     ordered.forEach((annotation, index) => {
@@ -674,11 +812,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     body.classList.toggle('annotate', annotateMode);
     modeToggle.setAttribute('aria-checked', String(annotateMode));
     postToFrame({ kind: 'annotate-mode', enabled: annotateMode });
-    if (!popText.value.trim()) hidePopover();
+    if (!popText.value.trim() && !saveFailed && pendingReload === null) hidePopover();
   });
 
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
+    if (ended || savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
     previewCapability = '';
     hidePopover();
     verificationId++;
@@ -757,6 +896,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   document.getElementById('orphanDiscard').addEventListener('click', async () => {
     const threads = Array.from(orphanedThreads);
     const result = await api('POST', '/api/annotations/orphan-discard', { threads });
+    if (!result) return;
     // The server keeps threads the agent is still working on. Forgetting them
     // here would drop their orphan mark while the fix is still in flight.
     const kept = ((result && result.results) || [])
@@ -789,6 +929,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   events.addEventListener('annotations', (event) => {
     try {
       const data = JSON.parse(event.data);
+      annotationVersion++;
       annotations = data.annotations || [];
       agent = data.agent || agent;
     }
@@ -802,6 +943,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     revision = data.revision;
     if (popover.classList.contains('show')) {
       pendingReload = revision;
+      document.getElementById('popStatus').textContent = t('preview.updateQueued');
+      positionPopover();
     } else {
       reloadFrame(revision);
     }
@@ -830,7 +973,17 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     previewCapability = '';
     if (readyBurstTimer) clearInterval(readyBurstTimer);
     events.close();
-    document.getElementById('endedScreen').classList.add('show');
+    const screen = document.getElementById('endedScreen');
+    if (pendingAnchor && (popText.value || savePending || saveFailed)) {
+      endedBody.innerHTML = t('preview.ended.unsaved', { command: '__CMD__' }).replace('__CMD__', '<code></code>');
+      endedBody.querySelector('code').textContent = CONFIG.resumeCommand;
+      popText.readOnly = true;
+      popover.querySelector('.row').hidden = true;
+      popover.querySelector('.row').style.display = 'none';
+      screen.querySelector('.box').appendChild(popover);
+    }
+    document.querySelectorAll('button, select').forEach(control => { control.disabled = true; });
+    screen.classList.add('show');
   }
 
   // --- share --------------------------------------------------------------
@@ -848,8 +1001,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   fetch('/api/annotations', { cache: 'no-store' })
     .then((response) => response.json())
     .then((data) => {
-      annotations = (data && data.annotations) || [];
-      agent = (data && data.agent) || agent;
+      if (ended) return;
+      // Initial SSE can arrive first. Only its annotation state supersedes
+      // this read; revision and quarantine metadata still belong to startup.
+      if (annotationVersion === 0) {
+        annotations = (data && data.annotations) || [];
+        agent = (data && data.agent) || agent;
+      }
       revision = data ? data.revision : null;
       renderPanel();
       checkOrphans();

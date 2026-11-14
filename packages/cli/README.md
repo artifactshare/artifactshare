@@ -149,6 +149,23 @@ count.
 
 ## Local preview and annotation
 
+The editor keeps its text and target during resizing and failed saves. Finish or
+cancel the current entry before choosing another target or loading a queued
+update. A failed operation can be retried; a lost acknowledgement does not prove
+that nothing was saved. If Preview ends, copy any unconfirmed comment from the
+surviving page before closing it, then use the displayed restart command.
+Never-saved text is not restored from disk after restarting. Oversized element
+anchors use UTF-8 SHA-256 with a pair-safe excerpt of at most 16,000 UTF-16 code
+units. Candidates containing lone surrogates or U+FFFD cannot hash-attach,
+including ambiguous legacy hashes; their comments remain stored and visible as
+needs-check. Short raw-text and unambiguous legacy anchors remain supported.
+
+For HTML with unreadable colors on a transparent canvas, the local **Document
+background** control offers light (the default) and dark backgrounds. It changes
+only the iframe background behind transparent content; authored backgrounds and
+colors, browser theme/media detection, Markdown and the shared Web Viewer are
+unchanged. It is a manual readability recovery, not automatic theme correction.
+
 `preview <file>` serves one local `.md` or `.html` file at a `127.0.0.1` URL
 with the same rendering as the product viewer. It is a local feature: it works
 without signing in, and previewing uploads nothing. In the browser, you select

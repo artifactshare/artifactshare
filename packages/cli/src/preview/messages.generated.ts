@@ -3,7 +3,15 @@
 export const PREVIEW_MESSAGES = {
   en: {
     'preview.annotationSaveFailed':
-      'Could not save the comment. Your comment is still here. Try again.',
+      'The save response could not be confirmed. Your text is still here. Review the saved comments before trying Add again.',
+    'preview.annotationSaveUnknown':
+      'The save response and saved comments could not be checked. Your text is still here. Check the save status before adding again.',
+    'preview.annotationAlreadySaved':
+      'A matching comment is already saved. Your text is still here; Cancel closes this entry without deleting the saved comment.',
+    'preview.savePending': 'Confirming save…',
+    'preview.checkSave': 'Check save status',
+    'preview.submitUnconfirmed':
+      'The comments are saved, but agent handoff could not be confirmed. Ask the agent to run preview next to pick up the saved batch.',
     'preview.isolationNotice':
       'Preview runs scripts in an isolated frame. localStorage, IndexedDB and other same-origin features are unavailable. Preview isolation cannot be disabled.',
     'preview.localBadge': 'Local preview',
@@ -84,6 +92,20 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanKeep': 'Keep',
     'preview.you': 'You',
     'preview.agentName': 'Agent',
+    'preview.editorLabel': 'Comment',
+    'preview.entryBlocked':
+      'Finish or cancel this comment before choosing another target.',
+    'preview.updateQueued':
+      'The document changed. Add or cancel this comment to load the latest version.',
+    'preview.operationFailed':
+      'The operation could not be confirmed. Check the comments and try again.',
+    'preview.ended.unsaved':
+      'This comment was not confirmed saved. Copy it before closing this page. Restart with:{command}',
+    'preview.canvasLabel': 'Document background',
+    'preview.canvasLight': 'Light',
+    'preview.canvasDark': 'Dark',
+    'preview.canvasHelp':
+      'Changes only the local background behind transparent content, not authored colors or theme detection.',
     'preview.inputPlaceholder': 'What should change?',
     'preview.cancel': 'Cancel',
     'preview.add': 'Add',
@@ -132,11 +154,20 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.errorStorageLimit':
       'The workspace has reached its storage limit.',
     'preview.shareDialog.snapshotFailed':
-      'The file could not be read, so sharing is disabled. Reopen this dialog once it is available.',
+      'The file could not be read, so sharing is disabled. Retry once the file is available.',
+    'preview.shareDialog.retrySnapshot': 'Retry reading file',
   },
   ja: {
     'preview.annotationSaveFailed':
-      'コメントを保存できませんでした。入力内容は残っています。もう一度お試しください。',
+      '保存の応答を確認できませんでした。入力した内容は残っています。保存済みのコメントを確認してから、もう一度追加してください。',
+    'preview.annotationSaveUnknown':
+      '保存の応答と保存済みのコメントを確認できませんでした。入力した内容は残っています。再度追加する前に保存状況を確認してください。',
+    'preview.annotationAlreadySaved':
+      '同じ内容のコメントが保存されています。入力した内容は残っています。キャンセルで入力欄を閉じても、保存済みのコメントは削除されません。',
+    'preview.savePending': '保存結果を確認中…',
+    'preview.checkSave': '保存状況を確認',
+    'preview.submitUnconfirmed':
+      'コメントは保存されていますが、エージェントへの引き渡しを確認できませんでした。エージェントに preview next を実行して保存済みのコメントを取得するよう依頼してください。',
     'preview.isolationNotice':
       'プレビューのスクリプトは隔離されたフレームで実行されます。localStorage、IndexedDB など、同一オリジンを必要とする機能は使えません。この隔離は解除できません。',
     'preview.localBadge': 'ローカルプレビュー',
@@ -217,6 +248,20 @@ export const PREVIEW_MESSAGES = {
     'preview.orphanKeep': '残す',
     'preview.you': 'あなた',
     'preview.agentName': 'エージェント',
+    'preview.editorLabel': 'コメント',
+    'preview.entryBlocked':
+      '別の対象を選ぶには、このコメントを追加するかキャンセルしてください。',
+    'preview.updateQueued':
+      '文書が更新されました。このコメントを追加するかキャンセルすると、最新版を読み込みます。',
+    'preview.operationFailed':
+      '操作の完了を確認できませんでした。コメントを確認して、もう一度お試しください。',
+    'preview.ended.unsaved':
+      'このコメントの保存は確認できていません。ページを閉じる前にコピーしてください。再開するには次を実行します。{command}',
+    'preview.canvasLabel': '文書の背景',
+    'preview.canvasLight': '明るい',
+    'preview.canvasDark': '暗い',
+    'preview.canvasHelp':
+      '透明な部分のローカル背景だけを変更します。文書の配色やテーマ判定は変わりません。',
     'preview.inputPlaceholder': 'どう直してほしい？',
     'preview.cancel': 'キャンセル',
     'preview.add': '追加',
@@ -267,7 +312,8 @@ export const PREVIEW_MESSAGES = {
     'preview.shareDialog.errorStorageLimit':
       'ワークスペースの保存容量の上限に達しています。',
     'preview.shareDialog.snapshotFailed':
-      'ファイルを読み取れないため共有できません。読み取れるようになってからこのダイアログを開き直してください。',
+      'ファイルを読み込めないため、共有できません。ファイルを確認してから再試行してください。',
+    'preview.shareDialog.retrySnapshot': '読み込みを再試行',
   },
 } as const
 

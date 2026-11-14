@@ -93,7 +93,10 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     expect(snapshots).toHaveLength(1)
     const visibility = document.querySelector<HTMLSelectElement>('#visibility')!
     visibility.value = 'link'
+    visibility.dispatchEvent(new Event('change'))
+    share.focus()
     refresh()
+    visibility.focus()
     expect(snapshots).toHaveLength(2)
     finishSnapshot(
       Response.json({
@@ -103,6 +106,7 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     )
     await vi.waitFor(() => expect(share.disabled).toBe(false))
     expect(visibility.value).toBe('link')
+    expect(document.activeElement).toBe(visibility)
     share.click()
     refresh()
     share.click()
@@ -120,19 +124,43 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     await vi.waitFor(() =>
       expect(document.querySelector('#dialog')!.className).toBe('dialog auth'),
     )
+    expect(document.activeElement).toBe(document.querySelector('#authLink'))
     refresh()
     refresh()
     expect(document.querySelector('#userCode')!.textContent).toBe('CODE')
     expect(snapshots).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(5000)
     expect(document.querySelector('#dialog')!.className).toBe('dialog')
+    expect(document.activeElement).toBe(document.querySelector('#destination'))
+    expect(visibility.value).toBe('link')
     const error = document.querySelector<HTMLElement>('#shareError')!
     const guidance = error.textContent
     expect(guidance).not.toBe('')
     expect(error.style.display).toBe('block')
+    share.focus()
     refresh()
+    share.blur()
     expect(error.textContent).toBe(guidance)
     expect(error.style.display).toBe('block')
+    finishSnapshot(Response.json({}, { status: 500 }))
+    const retry = document.querySelector<HTMLButtonElement>('#snapshotRetry')!
+    await vi.waitFor(() => expect(retry.hidden).toBe(false))
+    expect(share.disabled).toBe(true)
+    expect(document.activeElement).toBe(retry)
+    retry.focus()
+    retry.click()
+    // Model engines that move focus to body when a focused button is disabled.
+    retry.blur()
+    finishSnapshot(Response.json({}, { status: 500 }))
+    await vi.waitFor(() => expect(retry.disabled).toBe(false))
+    expect(document.activeElement).toBe(retry)
+    retry.click()
+    visibility.focus()
+    finishSnapshot(Response.json({}, { status: 500 }))
+    await vi.waitFor(() => expect(retry.disabled).toBe(false))
+    expect(document.activeElement).toBe(visibility)
+    retry.focus()
+    retry.click()
     finishSnapshot(
       Response.json({
         snapshot_id: 'third',
@@ -140,13 +168,20 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
       }),
     )
     await vi.waitFor(() => expect(share.disabled).toBe(false))
-    expect(error.style.display).toBe('block')
+    expect(retry.hidden).toBe(true)
+    expect(document.activeElement).toBe(document.querySelector('#destination'))
+    share.focus()
     share.click()
     finishShare(Response.json({ error: 'upload_failed' }, { status: 500 }))
     await vi.waitFor(() => expect(share.disabled).toBe(false))
+    expect(document.activeElement).toBe(share)
     const failure = error.textContent
     expect(failure).not.toBe(guidance)
     refresh()
+    // Model native engines that drop focus when Share is disabled.
+    document.body.tabIndex = -1
+    document.body.focus()
+    expect(document.activeElement).toBe(document.body)
     expect(error.textContent).toBe(failure)
     expect(error.style.display).toBe('block')
     finishSnapshot(
@@ -157,6 +192,7 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     )
     await vi.waitFor(() => expect(share.disabled).toBe(false))
     expect(error.style.display).toBe('block')
+    expect(document.activeElement).toBe(share)
     share.click()
     refresh()
     expect(uploads).toHaveLength(3)
@@ -174,13 +210,14 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
       ),
     )
     refresh()
+    expect(document.activeElement).toBe(document.querySelector('#shareUrl'))
     expect(document.querySelector<HTMLInputElement>('#shareUrl')!.value).toBe(
       'https://example.com/shared',
     )
     expect(document.querySelector('#shareNotes')!.textContent).toContain(
       'Saved note',
     )
-    expect(snapshots).toHaveLength(4)
+    expect(snapshots).toHaveLength(7)
     expect(uploads).toHaveLength(3)
   } finally {
     for (const [type, listener] of listeners.mock.calls)
@@ -189,6 +226,7 @@ test('refreshes only the editable dialog, coalescing pending snapshots and prese
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    document.body.removeAttribute('tabindex')
     document.body.innerHTML = ''
   }
 })

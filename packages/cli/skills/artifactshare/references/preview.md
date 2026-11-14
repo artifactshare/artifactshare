@@ -153,12 +153,31 @@ carried into the shared copy.
 Element anchors keep raw `ownText` for normalized text of at most 16,000 UTF-16
 code units, including empty text. Larger captures omit `ownText` and return
 `ownTextHash` (the full normalized text's SHA-256, 64 lowercase hex characters)
-and `ownTextExcerpt` (its first 16,000 code units). `preview next` preserves these
+and `ownTextExcerpt` (at most its first 16,000 code units, shortened to 15,999
+when necessary to avoid splitting a valid surrogate pair). `preview next` preserves these
 fields. The excerpt is reader context only and is never used for matching.
-Normal and legacy anchors remain unchanged; existing stored raw text is not
-migrated. Failed annotation saves retain the draft and show a retry message.
+UTF-8 SHA-256 bytes stay compatible for well-formed text. Oversized hash
+candidates containing a lone surrogate or U+FFFD after whitespace normalization
+are ineligible for attachment, including legacy hashes from literal U+FFFD.
+Their comments stay stored and visible as orphaned/needs-check; neither the
+selector nor the excerpt can override that verdict. Short raw-text anchors
+(including U+FFFD), unambiguous legacy anchors and selection anchors remain
+supported; existing stored raw text is not migrated. Failed annotation saves retain the draft and show a retry message.
 Repeated Share focuses the existing dialog: editable snapshots refresh in place,
 while sign-in, uploads and completed results keep their state.
+
+The editor keeps its text and target during resizing and failed saves. Finish or
+cancel the current entry before choosing another target or loading a queued
+update. A failed operation can be retried; a lost acknowledgement does not prove
+that nothing was saved. If Preview ends, copy any unconfirmed comment from the
+surviving page before closing it, then use the displayed restart command.
+Never-saved text is not restored from disk after restarting.
+
+For HTML with unreadable colors on a transparent canvas, the local **Document
+background** control offers light (the default) and dark backgrounds. It changes
+only the iframe background behind transparent content; authored backgrounds and
+colors, browser theme/media detection, Markdown and the shared Web Viewer are
+unchanged. It is a manual readability recovery, not automatic theme correction.
 
 ### Local preview isolation
 
