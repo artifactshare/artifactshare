@@ -7,6 +7,7 @@ import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
 import { previewScreen, reportScreen } from './screen.js'
+import { endInlineEdit, inlineEditable } from './inline-edit.js'
 
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
@@ -17,7 +18,9 @@ export function ensureAnnotateStyles(ctx: ReporterState) {
     '.as-preview-annotate-hover{outline:2px solid #6366f1 !important;outline-offset:2px;}' +
     '.as-preview-pinged{outline:2px solid #6366f1 !important;outline-offset:2px;background-color:rgba(99,102,241,0.12) !important;transition:background-color 0.4s ease;}' +
     '.as-preview-flash{background-color:rgba(34,197,94,0.35) !important;transition:background-color 1s ease;}' +
-    '.as-preview-flash-fade{background-color:transparent !important;}'
+    '.as-preview-flash-fade{background-color:transparent !important;}' +
+    '.as-preview-annotate-text{cursor:text !important;}' +
+    '.as-preview-editing{outline:2px solid #6366f1 !important;outline-offset:2px;cursor:text;}'
   ctx.doc.head.appendChild(style)
 }
 
@@ -34,7 +37,10 @@ export function annotateTargetFrom(
 
 export function clearAnnotateHover(ctx: ReporterState) {
   if (ctx.annotateHoverElement) {
-    ctx.annotateHoverElement.classList.remove('as-preview-annotate-hover')
+    ctx.annotateHoverElement.classList.remove(
+      'as-preview-annotate-hover',
+      'as-preview-annotate-text',
+    )
     ctx.annotateHoverElement = null
   }
 }
@@ -81,6 +87,8 @@ export function verifyAnchors(
 ) {
   ctx.anchorSnapshotGeneration++
   ctx.pendingAnchors = anchors || []
+  // An in-place edit is a draft: anchors are measured once the text is back.
+  if (ctx.previewEdit) return
   if (!ctx.pendingAnchors.length) {
     ctx.checkingAnchors = []
     scheduleChecking(ctx)
@@ -237,9 +245,12 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   )
   if (target === ctx.annotateHoverElement) return
   clearAnnotateHover(ctx)
-  if (!target) return
+  if (!target || (ctx.previewEdit && ctx.previewEdit.element === target)) return
   ctx.annotateHoverElement = target
   target.classList.add('as-preview-annotate-hover')
+  // A text cursor says the click edits the text itself.
+  if (inlineEditable(ctx, target))
+    target.classList.add('as-preview-annotate-text')
 }
 
 export function markOperating(ctx: ReporterState, event: MouseEvent) {
@@ -283,6 +294,7 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
     contextText: annotateContextText(ctx, target),
     ...elementTextIdentity(ownText(ctx, target)),
     tagName: target.tagName,
+    ...(ctx.previewCapability ? { editable: inlineEditable(ctx, target) } : {}),
     rect: {
       top: rect.top,
       left: rect.left,
@@ -338,6 +350,8 @@ export function retainPreviewPick(ctx: ReporterState, target: Element | Range) {
 export function trackPreviewPick(ctx: ReporterState, sequence: unknown) {
   if (!ctx.previewCapability) return
   if (sequence !== null && sequence !== ctx.previewPick?.sequence) return
+  if (ctx.previewEdit && ctx.previewEdit.sequence !== sequence)
+    endInlineEdit(ctx)
   ctx.previewTrackedPick = sequence === null ? null : ctx.previewPick
   if (ctx.previewGeometryFrame)
     ctx.win.cancelAnimationFrame(ctx.previewGeometryFrame)

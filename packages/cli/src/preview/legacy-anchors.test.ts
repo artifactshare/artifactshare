@@ -440,7 +440,7 @@ test.each([
       const input = document.querySelector<HTMLTextAreaElement>('#popText')!
       const add = document.querySelector<HTMLButtonElement>('#popAdd')!
       expect(document.querySelector('label[for=popText]')!.textContent).toBe(
-        PREVIEW_MESSAGES[locale]['preview.editorLabel'],
+        PREVIEW_MESSAGES[locale]['preview.commentOptional'],
       )
       expect(input.getAttribute('aria-describedby')).toContain('popTarget')
       input.value = '  keep this exact draft\nplease  '

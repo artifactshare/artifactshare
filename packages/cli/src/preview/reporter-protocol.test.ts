@@ -54,7 +54,21 @@ const geometry = {
   rect: element.rect,
 }
 const screen = { ...envelope, kind: 'screen', screen: '#/2' }
-test.each([element, selection, verdict, ready, geometry, screen])(
+const editableElement = { ...element, editable: true }
+const editText = { ...envelope, kind: 'edit-text', text: 'New wording' }
+const editEnded = { ...envelope, kind: 'edit-ended', text: '' }
+const editKey = { ...envelope, kind: 'edit-key', key: 'commit' }
+test.each([
+  element,
+  selection,
+  verdict,
+  ready,
+  geometry,
+  screen,
+  editText,
+  editEnded,
+  editKey,
+])(
   'admits a bounded observation and rejects missing/extra fields: $kind',
   (message) => {
     expect(validPreviewObservation(message)).toBe(true)
@@ -71,6 +85,22 @@ test.each([element, selection, verdict, ready, geometry, screen])(
     }
   },
 )
+test('admits the in-place edit flag only as a boolean', () => {
+  expect(validPreviewObservation(editableElement)).toBe(true)
+  expect(validPreviewObservation({ ...element, editable: false })).toBe(true)
+  expect(validPreviewObservation({ ...element, editable: 'yes' })).toBe(false)
+  expect(
+    validPreviewObservation({ ...editableElement, unexpected: true }),
+  ).toBe(false)
+})
+test.each([
+  { ...editText, text: 'x'.repeat(16_001) },
+  { ...editEnded, text: null },
+  { ...editKey, key: 'save' },
+  { ...editKey, key: 1 },
+])('rejects malformed in-place edit observations', (message) => {
+  expect(validPreviewObservation(message)).toBe(false)
+})
 test.each([
   { ...geometry, pickSequence: 0 },
   { ...screen, screen: 'x'.repeat(1001) },

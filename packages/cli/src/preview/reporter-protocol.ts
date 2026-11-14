@@ -71,6 +71,7 @@ export function validPreviewObservation(value: unknown): boolean {
             ? ['ownTextHash', 'ownTextExcerpt']
             : ['ownText']),
           'tagName',
+          ...(Object.hasOwn(value, 'editable') ? ['editable'] : []),
           'rect',
         ]) &&
         str(value.selector, 4096) &&
@@ -82,7 +83,18 @@ export function validPreviewObservation(value: unknown): boolean {
             str(value.ownTextExcerpt, 16_000)
           : str(value.ownText, 1_000_000)) &&
         str(value.tagName, 128) &&
+        (!Object.hasOwn(value, 'editable') ||
+          typeof value.editable === 'boolean') &&
         rect(value.rect)
+      )
+    // In-place edit drafts: plain text, bounded like a rewrite.
+    case 'edit-text':
+    case 'edit-ended':
+      return keys(value, [...base, 'text']) && str(value.text, 16_000)
+    case 'edit-key':
+      return (
+        keys(value, [...base, 'key']) &&
+        ['commit', 'cancel', 'comment'].includes(value.key as string)
       )
     case 'text-selection':
       return (

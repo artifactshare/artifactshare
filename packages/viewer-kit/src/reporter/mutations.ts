@@ -13,6 +13,7 @@ import {
 } from './anchor-engine.js'
 import { anchorRoot } from './selection.js'
 import { applyHighlights, invalidateChangedPaint } from './highlights.js'
+import { endInlineEdit } from './inline-edit.js'
 
 export function rebuildAfterMutations(ctx: ReporterState) {
   let hasText = ctx.pendingHighlights.length > 0
@@ -54,6 +55,12 @@ export function rebuildAfterMutations(ctx: ReporterState) {
   }
 }
 export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
+  if (ctx.previewEdit) {
+    // The document removed what is being edited: end the edit; the parent
+    // keeps the typed text. Otherwise remeasure only once it is restored.
+    if (!ctx.previewEdit.element.isConnected) endInlineEdit(ctx, true)
+    return
+  }
   let root = anchorRoot(ctx)
   let rootReplaced = root !== ctx.observedAnchorRoot
   ctx.observedAnchorRoot = root

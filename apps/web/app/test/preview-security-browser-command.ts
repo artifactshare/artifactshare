@@ -236,7 +236,13 @@ export const previewSecurity = defineBrowserCommand(
       file,
       view === 'screens'
         ? screensHtml('Interactive document')
-        : fixtureHtml('Initial document'),
+        : view === 'rewrite'
+          ? fixtureHtml('Initial document') +
+            `<p id="linked">Read the <a href="#guide">guide</a> first</p><p id="volatile">Goes away</p><script>
+  window.deck = 0;
+  document.addEventListener('keydown', () => window.deck++);
+</script>`
+          : fixtureHtml('Initial document'),
     )
     const startCli = () =>
       spawn(process.execPath, [cli, 'preview', file, '--no-open', '--json'], {
@@ -318,56 +324,119 @@ export const previewSecurity = defineBrowserCommand(
               response.request().method() === 'POST',
           )
 
-        // An element: the rewrite starts from its current text.
-        await frame.locator('h1').click()
-        await shell.locator('#popover.show').waitFor()
-        const toggle = shell.locator('#popRewriteToggle')
-        assert.equal(await toggle.textContent(), 'Rewrite the text')
-        await toggle.click()
+        const pop = shell.locator('#popover.show')
+        const h1 = frame.locator('h1')
+        const deckKeys = () =>
+          frame.evaluate(() => (window as unknown as { deck: number }).deck)
+        // A text-only element is edited right on the page; no toggle exists.
+        await frame.locator('h1').hover()
         assert.equal(
-          await shell.locator('#popRewrite').inputValue(),
-          'Initial document',
+          await h1.evaluate((el) => getComputedStyle(el).cursor),
+          'text',
         )
+        await h1.click()
+        await pop.waitFor()
+        assert.equal(await shell.locator('#popRewriteToggle').count(), 0)
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), true)
+        assert.equal(await shell.locator('#popRewrite').isVisible(), false)
         assert.equal(
           await shell.locator('#popTextLabel').textContent(),
-          'Why (optional)',
+          'Comment (optional)',
         )
-        assert.equal(
-          await shell.evaluate(() => document.activeElement?.id),
-          'popRewrite',
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
         )
-        // Unchanged text with no reason is not a rewrite and saves nothing.
-        await shell.locator('#popAdd').click()
-        assert.equal(await shell.locator('#popover.show').count(), 1)
-        assert.equal((await stored()).length, 0)
-        await shell.locator('#popRewrite').fill('Updated document title')
+        // Keys typed into the text never reach the document's own handlers.
+        await shell.keyboard.type(' title')
+        await shell.keyboard.press('ArrowLeft')
+        await shell.keyboard.press('ArrowRight')
+        assert.equal(await deckKeys(), 0)
+        await shell.waitForFunction(
+          () =>
+            (document.getElementById('popRewrite') as HTMLTextAreaElement)
+              .value === 'Initial document title',
+        )
+        // Enter adds; the page shows the original text again.
         const first = saved()
-        await shell.locator('#popAdd').click()
+        await shell.keyboard.press('Enter')
         assert.equal((await first).status(), 200)
         await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        assert.equal(await h1.textContent(), 'Initial document')
+        assert.equal(await h1.getAttribute('contenteditable'), null)
         const card = shell
           .locator('.thread')
-          .filter({ hasText: 'Updated document title' })
+          .filter({ hasText: 'Initial document title' })
         assert.equal(
           await card.locator('.rewrite del').textContent(),
           'Initial document',
         )
         assert.equal(
           await card.locator('.rewrite ins').textContent(),
-          'Updated document title',
+          'Initial document title',
         )
+
+        // Editing does not unsettle comments already on that element, even
+        // when the document changes elsewhere meanwhile.
+        await h1.click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await shell.keyboard.type(' again')
+        await frame.evaluate(() =>
+          document.body.appendChild(document.createElement('hr')),
+        )
+        // test-wait: elapsed-time — a missing anchor turns orphaned after its 3 s check window.
+        await shell.waitForTimeout(3500)
+        assert.equal(await shell.locator('.thread.orphaned').count(), 0)
+        // Escape cancels and restores the page text.
+        await shell.keyboard.press('Escape')
+        await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        assert.equal(await h1.textContent(), 'Initial document')
+        assert.equal((await stored()).length, 1)
+
+        // Comment only, keyboard only: click, Tab, type, Ctrl+Enter.
+        await h1.click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await shell.keyboard.press('Tab')
+        await shell.waitForFunction(
+          () => document.activeElement?.id === 'popText',
+        )
+        await shell.keyboard.type('Plain comment')
+        const plain = saved()
+        await shell.keyboard.press('Control+Enter')
+        assert.equal((await plain).status(), 200)
+        assert.equal((await stored()).at(-1)!.comment, 'Plain comment')
+        assert.equal((await stored()).at(-1)!.rewrite, undefined)
+
+        // An element with markup inside shows the field, prefilled, instead.
+        await frame.locator('#linked').click({ position: { x: 2, y: 2 } })
+        await pop.waitFor()
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), false)
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Read the guide first',
+        )
+        assert.equal(
+          await shell.evaluate(() => document.activeElement?.id),
+          'popText',
+        )
+        await shell.locator('#popCancel').click()
 
         // A text selection, with a reason, keyboard only.
         await frame.evaluate(() => {
           const range = document.createRange()
-          range.selectNodeContents(document.getElementById('sample')!)
+          range.selectNodeContents(
+            document.getElementById('sample')!.firstChild!,
+          )
           getSelection()!.removeAllRanges()
           getSelection()!.addRange(range)
           document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
         })
-        await shell.locator('#popover.show').waitFor()
-        await toggle.focus()
-        await shell.keyboard.press('Enter')
+        await pop.waitFor()
         assert.equal(
           await shell.locator('#popRewrite').inputValue(),
           'Select this text',
@@ -378,55 +447,38 @@ export const previewSecurity = defineBrowserCommand(
         await shell.locator('#popText').press('Control+Enter')
         assert.equal((await second).status(), 200)
         await frame.evaluate(() => getSelection()!.removeAllRanges())
-        assert.deepEqual(
-          (await stored()).map((entry) => [entry.comment, entry.rewrite]),
-          [
-            [
-              '',
-              {
-                original: 'Initial document',
-                proposed: 'Updated document title',
-              },
-            ],
-            [
-              'Clearer wording',
-              {
-                original: 'Select this text',
-                proposed: 'Select this sentence',
-              },
-            ],
-          ],
-        )
-        // An element without its own text offers no rewrite.
-        await frame.locator('input').click()
-        await shell.locator('#popover.show').waitFor()
-        assert.equal(await toggle.isVisible(), false)
-        await shell.locator('#popCancel').click()
-        // A cleared field proposes removal and survives toggling; spaces are kept.
-        await frame.locator('#sample').click()
-        await shell.locator('#popover.show').waitFor()
-        await toggle.click()
-        await shell.locator('#popRewrite').fill('')
-        await toggle.click()
-        await toggle.click()
-        assert.equal(await shell.locator('#popRewrite').inputValue(), '')
-        await shell.locator('#popRewrite').fill(' Select this text ')
-        const spaced = saved()
-        await shell.locator('#popAdd').click()
-        assert.equal((await spaced).status(), 200)
         assert.deepEqual((await stored()).at(-1)!.rewrite, {
           original: 'Select this text',
-          proposed: ' Select this text ',
+          proposed: 'Select this sentence',
         })
-        // A plain comment is unchanged by the feature.
-        await frame.locator('h1').click()
-        await shell.locator('#popover.show').waitFor()
+        // An element without its own text offers no rewrite.
+        await frame.locator('input').click()
+        await pop.waitFor()
         assert.equal(await shell.locator('#popRewrite').isVisible(), false)
-        await shell.locator('#popText').fill('Plain comment')
-        const third = saved()
-        await shell.locator('#popAdd').click()
-        assert.equal((await third).status(), 200)
-        assert.equal((await stored()).at(-1)!.rewrite, undefined)
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), false)
+        await shell.locator('#popCancel').click()
+
+        // The document removing the element mid-edit keeps the draft.
+        await frame.locator('#volatile').click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.id === 'volatile',
+        )
+        await shell.keyboard.type(' now')
+        await shell.waitForFunction(
+          () =>
+            (document.getElementById('popRewrite') as HTMLTextAreaElement)
+              .value === 'Goes away now',
+        )
+        await frame.evaluate(() =>
+          document.getElementById('volatile')!.remove(),
+        )
+        await shell.locator('#popRewrite').waitFor()
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Goes away now',
+        )
+        await shell.locator('#popCancel').click()
         return true
       }
       if (view === 'screens') {
@@ -457,6 +509,7 @@ export const previewSecurity = defineBrowserCommand(
           ).annotations
         const addComment = async (comment: string) => {
           await shell.locator('#popover.show').waitFor()
+          await shell.locator('#popText').click()
           await shell.locator('#popText').fill(comment)
           const saved = shell.waitForResponse(
             (response) =>
@@ -733,6 +786,9 @@ export const previewSecurity = defineBrowserCommand(
         await frame.locator('#sample').click()
         await shell.locator('#popover.show').waitFor()
         const draft = 'Keep this exact draft\nthrough resizing and shutdown'
+        // The text-only target is being edited on the page; the reader moves
+        // to the comment field by clicking it.
+        await shell.locator('#popText').click()
         await shell.locator('#popText').fill(draft)
         const target = await shell.locator('#popTarget').textContent()
         // Pick a different target before intercepting Add: this is the original
@@ -905,6 +961,14 @@ export const previewSecurity = defineBrowserCommand(
               // Establish frame ownership after Add, then Tab into authored
               // content without a reporter pick/selection. Firefox otherwise
               // cycles in the shell before ever reaching the authored input.
+              // The page edit is locked while saving, so it leaves the
+              // frame's tab order; the lock is a message, so wait for it.
+              await frame.waitForFunction(
+                () =>
+                  document
+                    .getElementById('sample')!
+                    .getAttribute('contenteditable') === 'false',
+              )
               await shell.locator('#artifactFrame').focus()
               for (let count = 0; count < 12; count++) {
                 await shell.keyboard.press('Tab')

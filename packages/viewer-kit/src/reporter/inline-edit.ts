@@ -1,0 +1,203 @@
+import type { ReporterState } from './state.js'
+import { ensureAnnotateStyles, ownText } from './annotate.js'
+import { send } from './messaging.js'
+import { rebuildAfterMutations } from './mutations.js'
+
+// Local preview only: a picked element made only of text can be rewritten in
+// place. The edit is a draft the parent mirrors; the document is put back
+// exactly as it was when editing ends, so anchors and the file never see it.
+export const INLINE_EDIT_MAX_LENGTH = 16_000
+
+export function inlineEditable(ctx: ReporterState, el: Element) {
+  if (!ctx.previewCapability) return false
+  if (el.namespaceURI !== 'http://www.w3.org/1999/xhtml') return false
+  // Code keeps its whitespace and controls own their text; neither is
+  // edited as collapsed plain text.
+  if (
+    /^(A|AUDIO|BUTTON|CANVAS|CODE|IFRAME|IMG|INPUT|KBD|LABEL|OPTION|PRE|SAMP|SCRIPT|SELECT|STYLE|SUMMARY|TEXTAREA|TITLE|VIDEO)$/.test(
+      el.tagName,
+    ) ||
+    el.tagName.indexOf('-') >= 0
+  )
+    return false
+  if (el.firstElementChild !== null || el.shadowRoot !== null) return false
+  if ((el as HTMLElement).isContentEditable) return false
+  if (el.getRootNode() !== ctx.doc) return false
+  if (ctx.primordials.closest(el, 'a,button,label,summary,select,svg'))
+    return false
+  const text = ownText(ctx, el)
+  return text.length > 0 && text.length <= INLINE_EDIT_MAX_LENGTH
+}
+
+export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
+  if (!ctx.previewCapability || ctx.previewEdit) return
+  const pick = ctx.previewPick
+  if (!pick || pick.sequence !== sequence || pick.endpoints) return
+  const el = pick.target as HTMLElement
+  if (!el.isConnected || !inlineEditable(ctx, el)) return
+  const nodes: Node[] = []
+  const data: (string | null)[] = []
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const node = el.childNodes[i]
+    nodes[i] = node
+    data[i] =
+      node.nodeType === 3 || node.nodeType === 8
+        ? (node as CharacterData).data
+        : null
+  }
+  ensureAnnotateStyles(ctx)
+  el.classList.remove('as-preview-annotate-hover', 'as-preview-annotate-text')
+  if (ctx.annotateHoverElement === el) ctx.annotateHoverElement = null
+  ctx.previewEdit = {
+    element: el,
+    sequence: pick.sequence,
+    nodes,
+    data,
+    contentEditable: ctx.primordials.getAttribute(el, 'contenteditable'),
+    raw: el.textContent || '',
+    text: ownText(ctx, el),
+  }
+  el.setAttribute('contenteditable', 'plaintext-only')
+  el.classList.add('as-preview-editing')
+  // The pick click left focus in this document. If the reader has already
+  // moved to the parent's comment field, editing waits for their next click.
+  if (!ctx.doc.hasFocus()) return
+  try {
+    el.focus({ preventScroll: true })
+    const selection = ctx.win.getSelection()
+    if (selection) {
+      const range = ctx.primordials.createRange(ctx.doc)
+      ctx.primordials.rangeSetStart(range, el, el.childNodes.length)
+      ctx.primordials.rangeCollapse(range, true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+  } catch (e) {}
+}
+
+export function lockInlineEdit(ctx: ReporterState, locked: unknown) {
+  const edit = ctx.previewEdit
+  if (!edit || typeof locked !== 'boolean') return
+  edit.element.setAttribute(
+    'contenteditable',
+    locked ? 'false' : 'plaintext-only',
+  )
+}
+
+/** Puts the document back. `removed` tells the parent the element went away. */
+export function endInlineEdit(ctx: ReporterState, removed = false) {
+  const edit = ctx.previewEdit
+  if (!edit) return
+  ctx.previewEdit = null
+  const el = edit.element
+  for (let i = 0; i < edit.nodes.length; i++) {
+    const value = edit.data[i]
+    if (value !== null) (edit.nodes[i] as CharacterData).data = value
+  }
+  while (el.firstChild) el.removeChild(el.firstChild)
+  for (let i = 0; i < edit.nodes.length; i++) el.appendChild(edit.nodes[i])
+  if (edit.contentEditable === null) el.removeAttribute('contenteditable')
+  else el.setAttribute('contenteditable', edit.contentEditable)
+  el.classList.remove('as-preview-editing')
+  if (removed) send(ctx, { kind: 'edit-ended', text: edit.text })
+  // Mutations made while editing were not measured; measure the restored DOM.
+  rebuildAfterMutations(ctx)
+}
+
+export function sendInlineEditText(ctx: ReporterState) {
+  const edit = ctx.previewEdit
+  if (edit) send(ctx, { kind: 'edit-text', text: edit.text })
+}
+
+function onEditInput(ctx: ReporterState) {
+  const edit = ctx.previewEdit!
+  const el = edit.element
+  // Plain text only: anything else (a dropped node) is put back as text.
+  if (el.firstElementChild !== null) el.textContent = el.textContent || ''
+  const text = ownText(ctx, el)
+  if (text.length > INLINE_EDIT_MAX_LENGTH) {
+    el.textContent = edit.raw
+    return
+  }
+  edit.raw = el.textContent || ''
+  if (text === edit.text) return
+  edit.text = text
+  sendInlineEditText(ctx)
+}
+
+/** Events inside the element being edited never reach the document's own
+ * handlers (window capture runs before any of them), so typing cannot drive
+ * a slide deck or a shortcut. Their default actions still edit the text. */
+export function installInlineEditGuard(ctx: ReporterState) {
+  const guardedEvents: (keyof WindowEventMap)[] = [
+    'keydown',
+    'keypress',
+    'keyup',
+    'beforeinput',
+    'input',
+    'paste',
+    'cut',
+    'copy',
+    'drop',
+    'dragover',
+    'compositionstart',
+    'compositionupdate',
+    'compositionend',
+    'pointerdown',
+    'pointerup',
+    'mousedown',
+    'mouseup',
+    'click',
+    'dblclick',
+    'auxclick',
+    'contextmenu',
+    'touchstart',
+    'touchend',
+  ]
+
+  for (let i = 0; i < guardedEvents.length; i++) {
+    const type = guardedEvents[i]
+    ctx.primordials.addEventListener(
+      ctx.win,
+      type,
+      function (event: Event) {
+        const edit = ctx.previewEdit
+        if (!edit) return
+        const target = ctx.primordials.targetGet
+          ? ctx.primordials.targetGet(event)
+          : event.target
+        if (!target || !edit.element.contains(target as Node)) {
+          // A drop elsewhere must not land in the editable element either.
+          return
+        }
+        event.stopImmediatePropagation()
+        if (type === 'input') onEditInput(ctx)
+        else if (type === 'drop') ctx.primordials.preventDefault(event)
+        else if (type === 'keydown') onEditKey(ctx, event as KeyboardEvent)
+      },
+      true,
+    )
+  }
+}
+
+function onEditKey(ctx: ReporterState, event: KeyboardEvent) {
+  // An IME composition owns Enter and Escape until it is committed.
+  if (event.isComposing || event.keyCode === 229) return
+  let key = ''
+  if (event.key === 'Enter') {
+    ctx.primordials.preventDefault(event)
+    if (event.shiftKey) return
+    key = 'commit'
+  } else if (event.key === 'Escape') key = 'cancel'
+  else if (
+    event.key === 'Tab' &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    !event.ctrlKey
+  )
+    key = 'comment'
+  if (!key) return
+  ctx.primordials.preventDefault(event)
+  send(ctx, { kind: 'edit-key', key })
+}

@@ -28,6 +28,7 @@ import {
   verifyAnchors,
 } from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
+import { installInlineEditGuard } from './inline-edit.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 
 export function installReporter(win: ReporterWindow) {
@@ -48,6 +49,8 @@ export function installReporter(win: ReporterWindow) {
   installHashTracking(ctx)
   installScreenTracking(ctx)
   installAnchorObserver(ctx)
+  // Before any other window listener, so none of them sees edit input.
+  installInlineEditGuard(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)
       return

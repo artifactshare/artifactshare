@@ -36,7 +36,7 @@ export function anchorRoot(ctx: ReporterState) {
 }
 
 export function sendSelection(ctx: ReporterState) {
-  if (!ctx.textAnchorsEnabled) return
+  if (!ctx.textAnchorsEnabled || ctx.previewEdit) return
   let selection = ctx.win.getSelection()
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
     send(ctx, { kind: 'text-selection-cleared' })
