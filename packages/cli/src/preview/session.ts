@@ -114,6 +114,17 @@ export function annotationsFilePath(
   return join(previewsDir(env), `annotations-${sessionId}.json`)
 }
 
+/** Per-session review history: one JSON file per submitted batch. */
+export function historyDirPath(
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (!isSessionId(sessionId)) {
+    throw new Error('invalid preview session id')
+  }
+  return join(previewsDir(env), `history-${sessionId}`)
+}
+
 export function previewRealpath(input: string): PreviewRealpathResult {
   try {
     return { ok: true, realpath: realpathSync(input) }

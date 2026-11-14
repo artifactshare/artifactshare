@@ -87,6 +87,8 @@ const roleByPath: Record<string, string> = {
     'Report batch outcomes from stdin JSON, idempotent per generation.',
   'preview reply':
     'Append a reply to an annotation thread without changing state.',
+  'preview history':
+    'Read local review history: each batch with its comments and the document before and after the agent reported.',
   'preview stop': 'Stop a live preview session; annotations stay saved.',
   open: 'Read an Artifact Share URL and prepare the CLI skill when needed.',
   profiles: 'Manage named authentication profiles.',
@@ -202,6 +204,8 @@ const jaRoleByPath: Record<string, string> = {
   'preview next': '未処理のコメントバッチをエージェントへ返します。',
   'preview done': '標準入力の JSON で結果を一括報告します（世代単位で冪等）。',
   'preview reply': 'スレッドへ返信を追記します。状態は変わりません。',
+  'preview history':
+    '送信したバッチごとに、コメントと、エージェントが報告する前後の文書をローカルの履歴から読みます。',
   'preview stop': 'プレビューを終了します。コメントは保存されたままです。',
   open: 'Artifact Share URL を読み取り、必要なら CLI skill を準備します。',
   profiles: '名前付きの認証 profile を管理します。',

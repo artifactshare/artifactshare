@@ -48,6 +48,7 @@ export const COMMAND_NAMES = new Set<CliCommand>([
   'preview next',
   'preview done',
   'preview reply',
+  'preview history',
   'preview stop',
 ])
 export const SUBCOMMANDS: Record<string, readonly string[]> = {
@@ -57,7 +58,7 @@ export const SUBCOMMANDS: Record<string, readonly string[]> = {
   projects: ['list', 'create', 'edit'],
   skills: ['install', 'list', 'update', 'remove', 'ensure'],
   config: ['get', 'set', 'unset'],
-  preview: ['start', 'next', 'done', 'reply', 'stop'],
+  preview: ['start', 'next', 'done', 'reply', 'history', 'stop'],
 }
 export const UPDATE_OPTION_KEYS = new Set([
   'allowPlaintextTokenStore',

@@ -1572,6 +1572,7 @@
         "preview next",
         "preview done",
         "preview reply",
+        "preview history",
         "preview stop"
       ],
       "surfaces": {
@@ -1659,6 +1660,18 @@
           "--thread",
           "--body",
           "--session"
+        ],
+        "preview history": [
+          "--help",
+          "--version",
+          "--json",
+          "--base-url",
+          "--token",
+          "--profile",
+          "--allow-plaintext-token-store",
+          "--insecure-localhost",
+          "--session",
+          "--batch"
         ],
         "preview stop": [
           "--help",

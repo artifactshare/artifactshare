@@ -5,6 +5,8 @@ For user-facing announcements, see https://artifactshare.com/updates?product=cli
 
 ## Unreleased
 
+- Keep local review history for Preview: each submitted batch saves its comments and anchors, the document when it was sent, and the document at each agent report, in the local previews directory with private file modes. `preview history <file>` lists batches and `--batch <id>` returns one in full, including after the preview stops. Agent `fixed`/`skipped` reports are kept as reports, not approval; documents over 2 MiB keep only revision and size. Nothing is uploaded. Update the bundled skill to version 66.
+
 - Keep local Preview annotation drafts reachable during resizing and failed saves, preserve unconfirmed text after shutdown, and explain queued document updates. Stage all annotation mutations before atomic persistence, restore failure focus, improve share labels and offer snapshot retry. Reject ambiguous oversized element hash matches without deleting comments, preserve surrogate pairs in excerpts, and add a local canvas-background choice for transparent HTML. Update bundled Preview guidance to managed skill version 65.
 
 - Clarify that publisher API version appends return a stable app viewer URL without exposing current visibility. Viewer authorization still applies.

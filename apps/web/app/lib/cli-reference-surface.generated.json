@@ -473,6 +473,22 @@
       ]
     },
     {
+      "path": "preview history",
+      "usage": "artifactshare preview history <OPTIONS> [<file>]",
+      "options": [
+        "--help",
+        "--version",
+        "--json",
+        "--base-url",
+        "--token",
+        "--profile",
+        "--allow-plaintext-token-store",
+        "--insecure-localhost",
+        "--session",
+        "--batch"
+      ]
+    },
+    {
       "path": "preview next",
       "usage": "artifactshare preview next <OPTIONS> [<file>]",
       "options": [
@@ -851,5 +867,5 @@
       ]
     }
   ],
-  "generated_date": "2026-11-09"
+  "generated_date": "2026-11-14"
 }
