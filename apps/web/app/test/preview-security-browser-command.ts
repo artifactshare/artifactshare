@@ -593,9 +593,11 @@ export const previewSecurity = defineBrowserCommand(
               let shareState = 'error'
               let snapshotFails = false
               let snapshots = 0
+              let contextHeld: Promise<void> | null = null
               const pattern = ready.share_origin + '/api/**'
-              await shell.context().route(pattern, (route) => {
+              await shell.context().route(pattern, async (route) => {
                 const path = new URL(route.request().url()).pathname
+                if (path === '/api/context' && contextHeld) await contextHeld
                 if (path === '/api/context')
                   return route.fulfill({
                     json: {
@@ -857,6 +859,41 @@ export const previewSecurity = defineBrowserCommand(
                 assert.equal(
                   await dialog.locator('#shareError').textContent(),
                   confirmGuidance,
+                )
+                // A control chosen while projects load after sign-in keeps focus.
+                let releaseContext!: () => void
+                contextHeld = new Promise((resolve) => {
+                  releaseContext = resolve
+                })
+                const contextRequested = dialog.waitForRequest((request) =>
+                  request.url().endsWith('/api/context'),
+                )
+                await focusByKeyboard('shareBtn')
+                await dialog.keyboard.press('Enter')
+                await contextRequested
+                await dialog.waitForFunction(
+                  () =>
+                    document.querySelector('#dialog')!.className === 'dialog',
+                )
+                // The deliberate move itself is not under test; WebKit's
+                // headless Tab order is covered elsewhere.
+                await dialog.locator('#cancelBtn').focus()
+                const contextLoaded = dialog.waitForResponse((response) =>
+                  response.url().endsWith('/api/context'),
+                )
+                contextHeld = null
+                releaseContext()
+                await contextLoaded
+                await dialog.waitForFunction(
+                  (expected) =>
+                    document.querySelector('#shareError')!.textContent ===
+                    expected,
+                  confirmGuidance,
+                )
+                assert.equal(
+                  await dialog.evaluate(() => document.activeElement?.id),
+                  'cancelBtn',
+                  'sign-in return keeps a deliberately chosen control',
                 )
                 shareState = 'done'
                 await focusByKeyboard('shareBtn')

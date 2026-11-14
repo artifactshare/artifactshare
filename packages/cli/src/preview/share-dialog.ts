@@ -1177,7 +1177,11 @@ function renderPage(options: ShareDialogHandlerOptions): string {
             // Projects only become visible once authenticated; sharing straight
             // away would silently pick Home for a first-time user.
             loadContext().then(function () {
-              el('destination').focus();
+              // Recover focus lost with the hidden sign-in step, but keep a
+              // control the person chose while projects were loading.
+              var active = document.activeElement;
+              if (!active || active === document.body ||
+                  document.querySelector('.auth-part').contains(active)) el('destination').focus();
               destinationUnconfirmed = true;
               el('shareError').textContent = t('confirmDestination');
               el('shareError').style.display = 'block';
