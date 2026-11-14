@@ -531,8 +531,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       popRewrite.value = data.text;
       document.getElementById('popAdd').disabled = false;
     } else if (data.kind === 'edit-ended') {
+      // The page edit could not start or was removed; popRewrite already
+      // holds the latest draft.
       if (!inlineEditing || !pendingAnchor) return;
-      popRewrite.value = data.text;
       leaveInline();
     } else if (data.kind === 'edit-key') {
       if (!inlineEditing || !pendingAnchor) return;

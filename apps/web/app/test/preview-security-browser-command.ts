@@ -238,7 +238,11 @@ export const previewSecurity = defineBrowserCommand(
         ? screensHtml('Interactive document')
         : view === 'rewrite'
           ? fixtureHtml('Initial document') +
-            `<p id="linked">Read the <a href="#guide">guide</a> first</p><p id="volatile">Goes away</p><script>
+            `<p id="linked">Read the <a href="#guide">guide</a> first</p><p id="volatile">Goes away</p><p id="morph">Changes when picked</p><pre><code><span id="token">let answer</span> = 42</code></pre><script>
+  // Changes the element after the pick is sent, before editing can start.
+  document.getElementById('morph').addEventListener('mouseup', (event) => {
+    setTimeout(() => event.target.append(document.createElement('b')), 0);
+  });
   window.deck = 0;
   document.addEventListener('keydown', () => window.deck++);
 </script>`
@@ -477,6 +481,58 @@ export const previewSecurity = defineBrowserCommand(
         assert.equal(
           await shell.locator('#popRewrite').inputValue(),
           'Goes away now',
+        )
+        await shell.locator('#popCancel').click()
+
+        // A selection elsewhere while an untouched element is being edited
+        // offers that text instead.
+        await h1.click()
+        await pop.waitFor()
+        await frame.waitForFunction(
+          () => document.activeElement?.tagName === 'H1',
+        )
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(
+            document.getElementById('sample')!.firstChild!,
+          )
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        })
+        await shell
+          .locator('#popTarget')
+          .filter({ hasText: 'Select this text' })
+          .waitFor()
+        assert.equal(await shell.locator('#popRewrite').isVisible(), true)
+        await frame.waitForFunction(
+          () => !document.querySelector('h1')!.hasAttribute('contenteditable'),
+        )
+        await shell.locator('#popCancel').click()
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
+
+        // An element that stops being text-only before editing starts falls
+        // back to the field.
+        await frame.locator('#morph').click()
+        await pop.waitFor()
+        await shell.locator('#popRewrite').waitFor()
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Changes when picked',
+        )
+        assert.equal(
+          await frame.locator('#morph').getAttribute('contenteditable'),
+          null,
+        )
+        await shell.locator('#popCancel').click()
+
+        // Code, including highlighted tokens inside it, is never edited in place.
+        await frame.locator('#token').click()
+        await pop.waitFor()
+        assert.equal(await shell.locator('#popInlineHint').isVisible(), false)
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'let answer',
         )
         await shell.locator('#popCancel').click()
         return true

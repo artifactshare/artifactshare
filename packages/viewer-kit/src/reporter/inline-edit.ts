@@ -23,7 +23,12 @@ export function inlineEditable(ctx: ReporterState, el: Element) {
   if (el.firstElementChild !== null || el.shadowRoot !== null) return false
   if ((el as HTMLElement).isContentEditable) return false
   if (el.getRootNode() !== ctx.doc) return false
-  if (ctx.primordials.closest(el, 'a,button,label,summary,select,svg'))
+  if (
+    ctx.primordials.closest(
+      el,
+      'a,button,label,summary,select,svg,pre,code,kbd,samp',
+    )
+  )
     return false
   const text = ownText(ctx, el)
   return text.length > 0 && text.length <= INLINE_EDIT_MAX_LENGTH
@@ -34,7 +39,11 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
   const pick = ctx.previewPick
   if (!pick || pick.sequence !== sequence || pick.endpoints) return
   const el = pick.target as HTMLElement
-  if (!el.isConnected || !inlineEditable(ctx, el)) return
+  // The document changed it since the pick: the parent shows its field.
+  if (!el.isConnected || !inlineEditable(ctx, el)) {
+    send(ctx, { kind: 'edit-ended' })
+    return
+  }
   const nodes: Node[] = []
   const data: (string | null)[] = []
   for (let i = 0; i < el.childNodes.length; i++) {
@@ -48,6 +57,9 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
   ensureAnnotateStyles(ctx)
   el.classList.remove('as-preview-annotate-hover', 'as-preview-annotate-text')
   if (ctx.annotateHoverElement === el) ctx.annotateHoverElement = null
+  // Checking follow-ups resume when the edit ends and anchors are remeasured.
+  if (ctx.checkingTimer) ctx.win.clearTimeout(ctx.checkingTimer)
+  ctx.checkingTimer = undefined
   ctx.previewEdit = {
     element: el,
     sequence: pick.sequence,
@@ -99,7 +111,7 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
   if (edit.contentEditable === null) el.removeAttribute('contenteditable')
   else el.setAttribute('contenteditable', edit.contentEditable)
   el.classList.remove('as-preview-editing')
-  if (removed) send(ctx, { kind: 'edit-ended', text: edit.text })
+  if (removed) send(ctx, { kind: 'edit-ended' })
   // Mutations made while editing were not measured; measure the restored DOM.
   rebuildAfterMutations(ctx)
 }
