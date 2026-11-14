@@ -89,8 +89,11 @@ export function startInlineEdit(ctx: ReporterState, sequence: unknown) {
   }
   el.classList.add('as-preview-editing')
   // The pick click left focus in this document. If the reader has already
-  // moved to the parent's comment field, editing waits for their next click.
-  if (!ctx.doc.hasFocus()) return
+  // moved to the parent's comment field, the rewrite uses the field instead.
+  if (!ctx.doc.hasFocus()) {
+    endInlineEdit(ctx, true)
+    return
+  }
   try {
     el.focus({ preventScroll: true })
     const selection = ctx.win.getSelection()
@@ -136,7 +139,12 @@ export function endInlineEdit(ctx: ReporterState, removed = false) {
 
 export function sendInlineEditText(ctx: ReporterState) {
   const edit = ctx.previewEdit
-  if (edit) send(ctx, { kind: 'edit-text', text: edit.text })
+  if (edit)
+    send(ctx, {
+      kind: 'edit-text',
+      pickSequence: edit.sequence,
+      text: edit.text,
+    })
 }
 
 function onEditInput(ctx: ReporterState) {
@@ -177,17 +185,27 @@ export function installInlineEditGuard(ctx: ReporterState) {
     'pointermove',
     'pointerover',
     'pointerout',
+    'pointerenter',
+    'pointerleave',
+    'gotpointercapture',
+    'lostpointercapture',
     'pointerup',
     'pointercancel',
     'mousedown',
     'mousemove',
     'mouseover',
     'mouseout',
+    'mouseenter',
+    'mouseleave',
     'mouseup',
     'wheel',
     'dragstart',
     'selectstart',
     'touchmove',
+    'touchcancel',
+    'dragenter',
+    'dragleave',
+    'dragend',
     'click',
     'dblclick',
     'auxclick',

@@ -553,11 +553,31 @@ export const previewSecurity = defineBrowserCommand(
           () => document.activeElement?.tagName === 'H1',
         )
         await shell.keyboard.type(' draft')
+        const handshakeGeneration = () =>
+          frame.evaluate(
+            () =>
+              (
+                window as unknown as {
+                  previewHandshake: { documentGeneration: number }
+                }
+              ).previewHandshake.documentGeneration,
+          )
+        const generationBefore = await handshakeGeneration()
         await frame.evaluate(() => {
           location.hash = '#moved'
         })
-        // test-wait: elapsed-time — a re-handshake completes within the ready burst.
-        await shell.waitForTimeout(800)
+        // WebKit starts a newer handshake on a same-document hash change; the
+        // reporter's ready then says the edit is still open.
+        if (shell.context().browser()!.browserType().name() === 'webkit')
+          await frame.waitForFunction(
+            (before) =>
+              (
+                window as unknown as {
+                  previewHandshake: { documentGeneration: number }
+                }
+              ).previewHandshake.documentGeneration > before,
+            generationBefore,
+          )
         assert.equal(await shell.locator('#popInlineHint').isVisible(), true)
         await frame.waitForFunction(
           () => document.activeElement?.tagName === 'H1',

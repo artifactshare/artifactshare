@@ -95,7 +95,12 @@ export function validPreviewObservation(value: unknown): boolean {
       )
     // In-place edit drafts: plain text, bounded like a rewrite.
     case 'edit-text':
-      return keys(value, [...base, 'text']) && str(value.text, 16_000)
+      return (
+        keys(value, [...base, 'pickSequence', 'text']) &&
+        integer(value.pickSequence) &&
+        value.pickSequence > 0 &&
+        str(value.text, 16_000)
+      )
     case 'edit-ended':
       return (
         keys(value, [...base, 'pickSequence']) &&

@@ -59,8 +59,24 @@ export function handleMutations(ctx: ReporterState, records: MutationRecord[]) {
     // The document removed what is being edited: end the edit; the parent
     // keeps the typed text. Otherwise remeasure only once it is restored.
     if (!ctx.previewEdit.element.isConnected) endInlineEdit(ctx, true)
-    // The draft can change the layout around it.
-    else schedulePositionBadges(ctx)
+    else {
+      // The draft can change the layout around it; badge moves of our own
+      // must not schedule another pass.
+      for (let i = 0; i < records.length; i++) {
+        const target = records[i].target
+        const element =
+          target.nodeType === 1
+            ? (target as Element)
+            : (target as Node).parentElement
+        if (
+          !element ||
+          !ctx.primordials.closest(element, ignoredMutationSelector())
+        ) {
+          schedulePositionBadges(ctx)
+          break
+        }
+      }
+    }
     return
   }
   let root = anchorRoot(ctx)

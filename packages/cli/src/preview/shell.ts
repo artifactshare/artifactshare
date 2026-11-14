@@ -530,7 +530,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         ...(currentScreen ? { screen: currentScreen } : {}),
       }, data.label, data.rect, data.sequence, data.editable === true);
     } else if (data.kind === 'edit-text') {
-      if (!inlineEditing || savePending || !pendingAnchor) return;
+      if (!inlineEditing || savePending || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
       popRewrite.value = data.text;
       document.getElementById('popAdd').disabled = false;
     } else if (data.kind === 'ready') {
@@ -545,7 +545,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (!inlineEditing || !pendingAnchor || data.pickSequence !== targetPickSequence) return;
       leaveInline();
       // Typing meant for the page continues in the field, not the document.
-      if (!savePending) { window.focus(); popRewrite.focus(); }
+      if (!savePending && !popover.contains(document.activeElement)) { window.focus(); popRewrite.focus(); }
     } else if (data.kind === 'edit-key') {
       if (!inlineEditing || !pendingAnchor) return;
       if (data.key === 'commit') addAnnotation();
@@ -637,10 +637,16 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     else popText.focus();
   }
   // The page took the edited element away: keep the draft in the field.
+  function resumeOrphanCheck() {
+    if (!orphanCheckDeferred) return;
+    orphanCheckDeferred = false;
+    checkOrphans();
+  }
   function leaveInline() {
     if (!inlineEditing) return;
     setRewriteMode(false);
     positionPopover();
+    resumeOrphanCheck();
   }
   // Mirrors the CLI contract: quoted text, or an element's raw own text.
   function rewritableTextOf(anchor) {
@@ -652,6 +658,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (savePending || ended) return;
     popover.classList.remove('show');
     inlineEditing = false;
+    resumeOrphanCheck();
     saveFailed = false;
     confirmedSavedKey = null;
     unconfirmedSave = null;
@@ -1075,7 +1082,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     frame.src = '/artifact?rev=' + encodeURIComponent(nextRevision || '');
   }
 
+  // Anchors are measured once a page edit ends; asking now would only show
+  // every comment as being checked.
+  let orphanCheckDeferred = false;
   function checkOrphans(showChecking = true) {
+    if (inlineEditing) { orphanCheckDeferred = true; return; }
     // The frame captured these anchors, so it also decides whether they still
     // resolve: re-implementing the rules here would let capture and
     // verification drift apart. Resolved and dismissed threads are excluded —
