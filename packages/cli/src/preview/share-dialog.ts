@@ -817,6 +817,7 @@ function renderPage(options: ShareDialogHandlerOptions): string {
   .note { font-size: 12px; color: var(--muted-foreground);
     background: var(--accent); border-radius: var(--r-md);
     padding: 8px 10px; margin-bottom: 12px; }
+  .note:empty { display: none; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   .btn { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border);
     border-radius: var(--r-md); background: var(--background); color: var(--foreground);
@@ -939,6 +940,8 @@ function renderPage(options: ShareDialogHandlerOptions): string {
     // Without a snapshot there is nothing to upload, and a Share button that
     // silently does nothing reads as a broken dialog.
     snapshotFailed = true;
+    // A failed refresh leaves no current snapshot; drop any earlier capture time.
+    el('snapshotNote').textContent = '';
     el('snapshotRetry').hidden = false;
     el('shareError').textContent = t('snapshotFailed');
     el('shareError').style.display = 'block';

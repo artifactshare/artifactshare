@@ -753,6 +753,11 @@ export const previewSecurity = defineBrowserCommand(
                   await dialog.locator('#shareBtn').isDisabled(),
                   true,
                 )
+                // An earlier capture time must not remain as an empty or stale note.
+                assert.equal(
+                  await dialog.locator('#snapshotNote').isVisible(),
+                  false,
+                )
                 result.states.push('snapshot-failed')
                 await dialog.waitForFunction(
                   () =>
