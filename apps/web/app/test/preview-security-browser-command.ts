@@ -180,7 +180,7 @@ export const previewSecurity = defineBrowserCommand(
       label: string,
     ) => `<!doctype html><title>${label}</title>
 <nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a> <a id="routerLink" href="settings">Settings link</a> <a id="badHash" href="#/q%zz">Odd route</a></nav>
-<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><button id="capProxy">Capture proxy</button><a id="stopFrag" href="#/stop">Stop link</a><x-host id="host"></x-host></div>
+<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><button id="capProxy">Capture proxy</button><a id="stopFrag" href="#/stop">Stop link</a><a id="absFrag">Absolute link</a><x-host id="host"></x-host></div>
 <main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
 <script>
   let lockedLeft = false;
@@ -217,6 +217,7 @@ export const previewSecurity = defineBrowserCommand(
     if (event.target.id === 'capProxy') document.getElementById('chk').click();
   }, true);
   document.getElementById('stopFrag').addEventListener('click', (event) => event.stopPropagation());
+  document.getElementById('absFrag').href = location.href.split('#')[0] + '#/abs';
   document.getElementById('proxy').onclick = () => document.getElementById('chk').click();
   customElements.define('x-host', class extends HTMLElement {
     connectedCallback() {
@@ -373,6 +374,18 @@ export const previewSecurity = defineBrowserCommand(
         // A fragment link whose handler only stops propagation still moves.
         await frame.locator('#stopFrag').click({ modifiers: ['Alt'] })
         await frame.waitForFunction(() => location.hash === '#/stop')
+        await frame.locator('#absFrag').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/abs')
+        // An existing text selection is not offered by an Alt click.
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(document.getElementById('intro')!)
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+        })
+        await frame.locator('#counted').click({ modifiers: ['Alt'] })
+        assert.equal(await shell.locator('#popover.show').count(), 0)
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
         await frame.locator('#next').click({ modifiers: ['Alt'] })
         await frame.waitForFunction(() => location.hash === '#/2')
         result.checks.push('alt-click-operates')

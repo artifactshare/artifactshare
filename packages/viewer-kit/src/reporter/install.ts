@@ -106,7 +106,13 @@ export function installReporter(win: ReporterWindow) {
   })
   installMessageListener(ctx)
   // Queued selection work belongs to the location it was started on.
-  const queueSelection = function () {
+  const queueSelection = function (event: Event) {
+    // An Alt/Option click operates the page; it does not offer a selection.
+    if (
+      ctx.previewCapability &&
+      ((event as MouseEvent).altKey || (event as KeyboardEvent).key === 'Alt')
+    )
+      return
     let generation = ctx.locationGeneration
     ctx.win.setTimeout(() => {
       if (generation === ctx.locationGeneration) sendSelection(ctx)

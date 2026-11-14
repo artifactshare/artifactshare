@@ -87,10 +87,23 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   else
     try {
       url = new ctx.win.URL(rawHref, ctx.win.location.href)
-      if (!shouldHandleLink(ctx, url)) return
-      href = url.href
+      // A full URL to this same document with a fragment is a fragment link.
+      if (altAsPlain && url.hash) {
+        let here = new ctx.win.URL(ctx.win.location.href)
+        let there = new ctx.win.URL(url.href)
+        here.hash = ''
+        there.hash = ''
+        if (here.href === there.href) {
+          fragment = true
+          rawHref = url.hash
+        }
+      }
+      if (!fragment && !shouldHandleLink(ctx, url)) return
+      href = fragment ? rawHref : url.href
       openExternally =
-        url.origin !== ctx.win.location.origin && isExternallyOpenable(ctx, url)
+        !fragment &&
+        url.origin !== ctx.win.location.origin &&
+        isExternallyOpenable(ctx, url)
     } catch (e) {
       href = rawHref
     }
