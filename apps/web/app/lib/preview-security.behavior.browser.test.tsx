@@ -135,3 +135,7 @@ test('interactive documents can be operated and annotated per screen', async () 
     'restore-superseded',
   ])
 }, 90000)
+
+test('a reader can rewrite element and selected text for the agent', async () => {
+  expect(await server.commands.previewSecurity('rewrite')).toBe(true)
+}, 60000)

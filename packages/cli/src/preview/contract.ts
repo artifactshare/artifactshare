@@ -120,6 +120,39 @@ export interface PreviewAnnotation {
   updated_at: string
   /** Agent-provided summary shown on the thread (from the done note). */
   summary: string | null
+  /** The reader's own wording for the anchored text, for the agent to apply.
+   * Absent on ordinary comments. */
+  rewrite?: PreviewRewrite
+}
+
+/** Text the reader rewrote in Preview: the anchored text as captured and the
+ * replacement they want. The agent applies it to the source file. */
+export interface PreviewRewrite {
+  original: string
+  proposed: string
+}
+
+export const PREVIEW_REWRITE_MAX_LENGTH = 16_000
+
+export function isPreviewRewrite(value: unknown): value is PreviewRewrite {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    Object.keys(record).length === 2 &&
+    typeof record.original === 'string' &&
+    typeof record.proposed === 'string' &&
+    record.original.length > 0 &&
+    record.original.length <= PREVIEW_REWRITE_MAX_LENGTH &&
+    record.proposed.length <= PREVIEW_REWRITE_MAX_LENGTH &&
+    record.proposed !== record.original
+  )
+}
+
+/** The anchored text a rewrite replaces, or null when the anchor has none. */
+export function rewritableText(anchor: PreviewAnchor): string | null {
+  if (anchor.kind === 'text') return anchor.quotedText || null
+  if (anchor.kind === 'element') return anchor.ownText || null
+  return null
 }
 
 export type PreviewDoneOutcome = 'fixed' | 'skipped'
@@ -145,6 +178,9 @@ export interface PreviewNextItem {
   anchor: PreviewAnchor
   comment: string
   messages: PreviewThreadMessage[]
+  /** Present when the reader rewrote the text; apply `proposed` in place of
+   * `original` at the anchor. */
+  rewrite?: PreviewRewrite
 }
 
 export interface PreviewNextResult {
@@ -225,6 +261,8 @@ export function isPreviewAnnotation(
 ): value is PreviewAnnotation {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
+  if (record.rewrite !== undefined && !isPreviewRewrite(record.rewrite))
+    return false
   return (
     typeof record.thread === 'string' &&
     Number.isInteger(record.generation) &&

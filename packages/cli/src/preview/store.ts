@@ -17,6 +17,7 @@ import type {
   PreviewDoneItemInput,
   PreviewDoneItemResult,
   PreviewNextItem,
+  PreviewRewrite,
   PreviewThreadMessage,
 } from './contract.js'
 import { isPreviewAnnotation } from './contract.js'
@@ -140,7 +141,11 @@ function isAnnotationsFileV1(value: unknown): value is AnnotationsFileV1 {
 
 export interface PreviewStore {
   readonly quarantinedPath: string | null
-  createDraft(anchor: PreviewAnchor, comment: string): PreviewAnnotation
+  createDraft(
+    anchor: PreviewAnchor,
+    comment: string,
+    rewrite?: PreviewRewrite,
+  ): PreviewAnnotation
   deleteDraft(thread: string): PreviewStoreResult
   discardAllDrafts(): PreviewAnnotation[]
   submitDrafts(): PreviewSubmitResult
@@ -440,7 +445,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
       return quarantined
     },
 
-    createDraft(anchor, comment) {
+    createDraft(anchor, comment, rewrite) {
       const created = nowIso()
       const annotation: PreviewAnnotation = {
         thread: randomUUID(),
@@ -448,11 +453,13 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         status: 'draft',
         anchor,
         comment,
-        messages: [message('human', comment)],
+        // A rewrite may stand alone; its reason is optional.
+        messages: comment ? [message('human', comment)] : [],
         batch_id: null,
         created_at: created,
         updated_at: created,
         summary: null,
+        ...(rewrite ? { rewrite: { ...rewrite } } : {}),
       }
       annotations.push(annotation)
       try {
@@ -559,6 +566,7 @@ export function createPreviewStore(annotationsPath: string): PreviewStore {
         anchor: entry.anchor,
         comment: entry.comment,
         messages: entry.messages,
+        ...(entry.rewrite ? { rewrite: entry.rewrite } : {}),
       }))
     },
 

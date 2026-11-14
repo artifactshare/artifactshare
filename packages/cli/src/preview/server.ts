@@ -22,9 +22,12 @@ import {
   type PreviewAnchor,
   type PreviewDoneItemInput,
   type PreviewNextResult,
+  type PreviewRewrite,
   type PreviewSessionIdentity,
   isPreviewAnchor,
   isPreviewDoneItemInput,
+  isPreviewRewrite,
+  rewritableText,
 } from './contract.js'
 import { PREVIEW_MESSAGES } from './messages.generated.js'
 import {
@@ -515,7 +518,20 @@ export async function startPreviewServer(
       if (!isPreviewAnchor(body.anchor) || typeof body.comment !== 'string') {
         return sendJson(response, 400, { error: 'invalid_annotation' })
       }
-      const annotation = store.createDraft(body.anchor, body.comment)
+      // A rewrite replaces exactly the text the anchor captured.
+      const rewrite = body.rewrite
+      if (
+        rewrite !== undefined &&
+        (!isPreviewRewrite(rewrite) ||
+          rewritableText(body.anchor) !== rewrite.original)
+      ) {
+        return sendJson(response, 400, { error: 'invalid_annotation' })
+      }
+      const annotation = store.createDraft(
+        body.anchor,
+        body.comment,
+        rewrite as PreviewRewrite | undefined,
+      )
       broadcastAnnotations()
       return sendJson(response, 200, { annotation })
     }

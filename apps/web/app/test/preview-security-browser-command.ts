@@ -94,6 +94,7 @@ type View =
   | 'markdown-frame'
   | 'share'
   | 'screens'
+  | 'rewrite'
 type PopoverMeasurements = {
   width: number
   height: number
@@ -289,6 +290,124 @@ export const previewSecurity = defineBrowserCommand(
         Object.defineProperty(navigator, 'language', { value: 'en' }),
       )
       await shell.goto(ready.url)
+      if (view === 'rewrite') {
+        await shell.setViewportSize({ width: 1280, height: 800 })
+        const frame = await (await shell
+          .locator('#artifactFrame')
+          .elementHandle())!.contentFrame()
+        assert.ok(frame)
+        await frame.waitForFunction(() =>
+          Boolean(
+            (window as unknown as { previewHandshake: unknown })
+              .previewHandshake,
+          ),
+        )
+        const stored = async () =>
+          (
+            (await (await fetch(`${ready.url}api/annotations`)).json()) as {
+              annotations: {
+                comment: string
+                rewrite?: { original: string; proposed: string }
+              }[]
+            }
+          ).annotations
+        const saved = () =>
+          shell.waitForResponse(
+            (response) =>
+              response.url().endsWith('/api/annotations') &&
+              response.request().method() === 'POST',
+          )
+
+        // An element: the rewrite starts from its current text.
+        await frame.locator('h1').click()
+        await shell.locator('#popover.show').waitFor()
+        const toggle = shell.locator('#popRewriteToggle')
+        assert.equal(await toggle.textContent(), 'Rewrite the text')
+        await toggle.click()
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Initial document',
+        )
+        assert.equal(
+          await shell.locator('#popTextLabel').textContent(),
+          'Why (optional)',
+        )
+        assert.equal(
+          await shell.evaluate(() => document.activeElement?.id),
+          'popRewrite',
+        )
+        // Unchanged text with no reason is not a rewrite and saves nothing.
+        await shell.locator('#popAdd').click()
+        assert.equal(await shell.locator('#popover.show').count(), 1)
+        assert.equal((await stored()).length, 0)
+        await shell.locator('#popRewrite').fill('Updated document title')
+        const first = saved()
+        await shell.locator('#popAdd').click()
+        assert.equal((await first).status(), 200)
+        await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        const card = shell
+          .locator('.thread')
+          .filter({ hasText: 'Updated document title' })
+        assert.equal(
+          await card.locator('.rewrite del').textContent(),
+          'Initial document',
+        )
+        assert.equal(
+          await card.locator('.rewrite ins').textContent(),
+          'Updated document title',
+        )
+
+        // A text selection, with a reason, keyboard only.
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(document.getElementById('sample')!)
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        })
+        await shell.locator('#popover.show').waitFor()
+        await toggle.focus()
+        await shell.keyboard.press('Enter')
+        assert.equal(
+          await shell.locator('#popRewrite').inputValue(),
+          'Select this text',
+        )
+        await shell.locator('#popRewrite').fill('Select this sentence')
+        await shell.locator('#popText').fill('Clearer wording')
+        const second = saved()
+        await shell.locator('#popText').press('Control+Enter')
+        assert.equal((await second).status(), 200)
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
+        assert.deepEqual(
+          (await stored()).map((entry) => [entry.comment, entry.rewrite]),
+          [
+            [
+              '',
+              {
+                original: 'Initial document',
+                proposed: 'Updated document title',
+              },
+            ],
+            [
+              'Clearer wording',
+              {
+                original: 'Select this text',
+                proposed: 'Select this sentence',
+              },
+            ],
+          ],
+        )
+        // A plain comment is unchanged by the feature.
+        await frame.locator('h1').click()
+        await shell.locator('#popover.show').waitFor()
+        assert.equal(await shell.locator('#popRewrite').isVisible(), false)
+        await shell.locator('#popText').fill('Plain comment')
+        const third = saved()
+        await shell.locator('#popAdd').click()
+        assert.equal((await third).status(), 200)
+        assert.equal((await stored())[2]!.rewrite, undefined)
+        return true
+      }
       if (view === 'screens') {
         await shell.setViewportSize({ width: 1280, height: 800 })
         const frameHandle = async () => {
@@ -1935,6 +2054,7 @@ declare module 'vitest/browser' {
       (scenario: 'header'): Promise<HeaderMeasurements>
       (scenario: 'oversized'): Promise<OversizedMeasurements>
       (scenario: 'screens'): Promise<{ checks: string[] }>
+      (scenario: 'rewrite'): Promise<boolean>
     }
   }
 }

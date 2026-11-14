@@ -18,6 +18,7 @@ import type {
   PreviewAnnotation,
   PreviewAnnotationBatch,
   PreviewDoneOutcome,
+  PreviewRewrite,
   PreviewThreadMessage,
 } from './contract.js'
 
@@ -36,6 +37,8 @@ export interface PreviewHistoryItem {
   anchor: PreviewAnchor
   /** Thread messages as they were when the batch was submitted. */
   messages: PreviewThreadMessage[]
+  /** The reader's own wording, when they rewrote the text. */
+  rewrite?: PreviewRewrite
 }
 
 export interface PreviewHistoryReport {
@@ -194,6 +197,9 @@ export function createPreviewHistory(
             comment: annotation.comment,
             anchor: structuredClone(annotation.anchor),
             messages: structuredClone(annotation.messages),
+            ...(annotation.rewrite
+              ? { rewrite: { ...annotation.rewrite } }
+              : {}),
           })),
         reports: [],
         completed_at: null,
