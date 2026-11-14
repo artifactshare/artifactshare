@@ -862,8 +862,8 @@ export const previewSecurity = defineBrowserCommand(
                 )
                 // A control chosen while projects load after sign-in keeps focus.
                 let releaseContext!: () => void
-                contextHeld = new Promise((resolve) => {
-                  releaseContext = resolve
+                contextHeld = new Promise((release) => {
+                  releaseContext = release
                 })
                 const contextRequested = dialog.waitForRequest((request) =>
                   request.url().endsWith('/api/context'),
