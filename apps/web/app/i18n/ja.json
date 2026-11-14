@@ -1556,6 +1556,7 @@
   "preview.rewriteOff": "コメントだけにする",
   "preview.rewriteLabel": "書き換え後の文言",
   "preview.rewriteReason": "理由（任意）",
+  "preview.rewriteReasonPlaceholder": "任意：この言い回しにする理由",
   "preview.rewriteHeading": "書き換え",
   "preview.rewriteRemoved": "（この文を削除）",
   "preview.modeHint": "Alt（Option）+クリックでページを操作",

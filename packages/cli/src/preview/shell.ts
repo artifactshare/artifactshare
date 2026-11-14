@@ -148,6 +148,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   #popError:not(:empty) { margin-top: 8px; }
   .popover .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
   .popover .rewrite-toggle { align-self: flex-start; margin-bottom: 6px; padding: 0; border: 0;
+    min-height: 24px; display: inline-flex; align-items: center;
     background: none; font: inherit; font-size: 12px; color: var(--link); cursor: pointer; }
   .popover .rewrite-toggle:hover { text-decoration: underline; }
   .popover .rewrite-field { display: none; flex-direction: column; margin-bottom: 6px; }
@@ -360,6 +361,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     popRewriteToggle.setAttribute('aria-expanded', String(rewriting));
     popRewriteToggle.textContent = t(rewriting ? 'preview.rewriteOff' : 'preview.rewriteOn');
     document.getElementById('popTextLabel').textContent = t(rewriting ? 'preview.rewriteReason' : 'preview.editorLabel');
+    popText.placeholder = t(rewriting ? 'preview.rewriteReasonPlaceholder' : 'preview.inputPlaceholder');
     if (rewriting && !popRewrite.value) popRewrite.value = rewritable;
   }
   // What the reader has entered: a comment, a changed rewrite, or both.
