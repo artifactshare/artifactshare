@@ -35,6 +35,7 @@ import {
 import { renderPreviewShell } from './shell.js'
 import { mutationOriginAllowed } from './request-origin.js'
 import type { PreviewStore } from './store.js'
+import { createPreviewHistory } from './history.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const WATCH_DEBOUNCE_MS = 200
@@ -65,6 +66,8 @@ export interface PreviewServerOptions {
     registration: PreviewAgentNotificationRegistration,
   ) => void
   openBrowser?: boolean
+  /** Directory for local review history; omitted means no history. */
+  historyDir?: string
   /** Extra CLI options; accepted for forward compatibility, unused here. */
   cliOptions?: Record<string, unknown>
 }
@@ -205,6 +208,27 @@ export async function startPreviewServer(
       : {}),
   })
   const fileName = basename(filePath)
+  const history = options.historyDir
+    ? createPreviewHistory(options.historyDir, fileName)
+    : null
+  // History is a local by-product of review: a failed write must not turn a
+  // committed submission or report into a failed request.
+  function recordHistory(action: () => void): void {
+    try {
+      action()
+    } catch (error) {
+      console.warn(
+        `Could not save preview review history: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  function currentDocument(): Buffer | null {
+    try {
+      return readFileSync(filePath)
+    } catch {
+      return null
+    }
+  }
   const isMarkdown = filePath.toLowerCase().endsWith('.md')
 
   let revision = ''
@@ -531,6 +555,16 @@ export async function startPreviewServer(
           agent: notification.projection(),
         })
       }
+      if (history && submitted.batch) {
+        const batch = submitted.batch
+        recordHistory(() =>
+          history.recordSubmission(
+            batch,
+            submitted.annotations,
+            currentDocument(),
+          ),
+        )
+      }
       try {
         if (submitted.batch) {
           if (notification.registration.capability === 'wait' && activeWait) {
@@ -637,6 +671,36 @@ export async function startPreviewServer(
       const accepted = items.filter(
         (_, index) => outcomes[index] === 'accepted',
       )
+      if (history && accepted.length > 0) {
+        const document = currentDocument()
+        const byBatch = new Map<string, typeof accepted>()
+        for (const item of accepted) {
+          const batchId = store
+            .all()
+            .find((annotation) => annotation.thread === item.thread)?.batch_id
+          if (!batchId) continue
+          byBatch.set(batchId, [...(byBatch.get(batchId) ?? []), item])
+        }
+        for (const [batchId, reported] of byBatch) {
+          const completed =
+            store.batches().find((batch) => batch.id === batchId)?.state ===
+            'completed'
+          recordHistory(() =>
+            history.recordReport(
+              batchId,
+              reported.map((item) => ({
+                thread: item.thread,
+                generation: item.generation,
+                outcome: item.outcome,
+                note: item.note ?? null,
+                reported_by: 'agent' as const,
+              })),
+              completed,
+              document,
+            ),
+          )
+        }
+      }
       if (accepted.length > 0) {
         broadcast('done', {
           threads: doneEventThreads(store, accepted),

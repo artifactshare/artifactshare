@@ -14,6 +14,7 @@ import {
 import type { PreviewSessionCredentials } from '../preview/session.js'
 import {
   annotationsFilePath,
+  historyDirPath,
   previewIdentityPath,
   previewRealpath,
   previewsDir,
@@ -32,6 +33,7 @@ import {
   writeSessionFile,
 } from '../preview/session.js'
 import { createPreviewStore } from '../preview/store.js'
+import { createPreviewHistory } from '../preview/history.js'
 import { startPreviewServer } from '../preview/server.js'
 import {
   defaultPreviewNotificationRegistration,
@@ -654,6 +656,7 @@ export async function runPreview(
       filePath: real.realpath,
       store,
       sessionId,
+      historyDir: historyDirPath(sessionId),
       notificationRegistration: requestedNotification.registration,
       ...(requestedNotification.adapter
         ? { notificationAdapter: requestedNotification.adapter }
@@ -817,6 +820,61 @@ export async function runPreviewDone(
   })
   if ('error' in result) return writeFailure(command, result.error, mode, 1)
   return writeSuccess(command, result.body, mode)
+}
+
+/** Reads saved review history from disk; works after the preview has ended. */
+export function runPreviewHistory(parsed: ParsedArgs, mode: OutputMode): void {
+  const command = 'preview history'
+  const explicitSession =
+    typeof parsed.options.session === 'string' ? parsed.options.session : null
+  const positional = parsed.positionals[0]
+  if ((explicitSession === null) === (positional === undefined)) {
+    return writeFailure(
+      command,
+      validationError(
+        'Pass exactly one of a file or --session.',
+        'Name the previewed file, or copy the session value from the preview ready JSON.',
+      ),
+      mode,
+      1,
+    )
+  }
+  if (explicitSession !== null && !isSessionId(explicitSession)) {
+    return writeFailure(
+      command,
+      validationError(
+        'A session id is 16 hexadecimal characters.',
+        'Copy the session value from the preview ready JSON.',
+      ),
+      mode,
+      1,
+    )
+  }
+  const sessionId =
+    explicitSession ?? sessionIdForPath(previewIdentityPath(positional!))
+  const history = createPreviewHistory(historyDirPath(sessionId), '')
+  const batchId =
+    typeof parsed.options.batch === 'string' ? parsed.options.batch : null
+  if (batchId !== null) {
+    const record = history.read(batchId)
+    if (!record) {
+      return writeFailure(
+        command,
+        validationError(
+          'No saved history exists for that batch.',
+          'List saved batches with preview history and pass one batch_id.',
+        ),
+        mode,
+        1,
+      )
+    }
+    return writeSuccess(command, { session_id: sessionId, batch: record }, mode)
+  }
+  return writeSuccess(
+    command,
+    { session_id: sessionId, batches: history.list() },
+    mode,
+  )
 }
 
 export async function runPreviewReply(

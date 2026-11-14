@@ -133,8 +133,8 @@ export const CLI_README_COMMANDS = [
     'Serve a local Markdown or HTML file with the product viewer look for browser annotation; local only, no sign-in, nothing uploaded; PDFs and videos cannot be previewed',
   ],
   [
-    '`preview next` / `preview done` / `preview reply` / `preview stop`',
-    'Agent loop for a live preview: poll submitted annotation batches (oversized element text uses ownTextHash and a reader-only ownTextExcerpt above 16,000 UTF-16 code units), report fixed/skipped outcomes from stdin, reply into a thread, and stop the session',
+    '`preview next` / `preview done` / `preview reply` / `preview history` / `preview stop`',
+    'Agent loop for a live preview: poll submitted annotation batches (oversized element text uses ownTextHash and a reader-only ownTextExcerpt above 16,000 UTF-16 code units), report fixed/skipped outcomes from stdin, reply into a thread, read local review history, and stop the session',
   ],
   [
     '`login` / `logout` / `whoami`',

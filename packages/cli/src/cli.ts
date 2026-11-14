@@ -56,6 +56,7 @@ import {
   previewNextRunner,
   previewDoneRunner,
   previewReplyRunner,
+  previewHistoryRunner,
   previewStopRunner,
 } from './commands.js'
 import {
@@ -1321,6 +1322,45 @@ Common failures:
   preview_request_failed     Unknown thread id; list them with preview next`,
 })
 
+const previewHistoryDefinition = define({
+  name: 'history',
+  description:
+    'Read saved local review history: each submitted batch, the document before it and after the agent reported.',
+  toKebab: true,
+  args: {
+    ...commonArgs,
+    file: {
+      type: 'positional',
+      toKebab: true,
+      required: false,
+      description: 'Previewed file path (or pass --session)',
+    },
+    session: {
+      type: 'string',
+      toKebab: true,
+      description: 'Preview session id from the ready JSON',
+    },
+    batch: {
+      type: 'string',
+      toKebab: true,
+      description:
+        'Return one batch with its comments, reports and document snapshots',
+    },
+  },
+  examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview history ./lp.html
+npm exec --yes --package=@artifactshare/cli -- artifactshare preview history ./lp.html --batch <batch_id>
+
+Works after the preview has stopped; reads only local files and sends nothing.
+Without --batch, lists batches with item, fixed and skipped counts. With
+--batch, returns the submitted comments and anchors, each agent report, and
+snapshots keyed by document revision (before_revision, after_revision).
+fixed and skipped are the agent's report, not a person's approval. Documents
+over 2 MiB keep only their revision and size.
+
+Common failures:
+  validation_failed  Pass a file or --session, and a batch_id that exists`,
+})
+
 const previewStopDefinition = define({
   name: 'stop',
   description: 'Stop a live preview session. Annotations stay saved on disk.',
@@ -1394,6 +1434,7 @@ const previewDefinition = define({
     next: lazyCommand(previewNextDefinition, previewNextRunner),
     done: lazyCommand(previewDoneDefinition, previewDoneRunner),
     reply: lazyCommand(previewReplyDefinition, previewReplyRunner),
+    history: lazyCommand(previewHistoryDefinition, previewHistoryRunner),
     stop: lazyCommand(previewStopDefinition, previewStopRunner),
   },
   examples: `npm exec --yes --package=@artifactshare/cli -- artifactshare preview ./lp.html

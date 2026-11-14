@@ -458,6 +458,9 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
     'processing',
   )
 
+  const original = readFileSync(filePath, 'utf8')
+  const edited = original.replace('Hello preview', 'Welcome to the preview')
+  writeFileSync(filePath, edited)
   const done = run(['preview', 'done', filePath, '--stdin', '--json'], env, {
     input: JSON.stringify({
       items: [
@@ -516,6 +519,44 @@ test('the annotate-submit-next-done loop round-trips through the CLI', async () 
   expectFailure(after, {
     command: 'preview next',
     code: 'preview_session_not_found',
+  })
+  // Review history survives the session and later edits, with no extra input.
+  writeFileSync(filePath, edited + '<!-- later edit -->')
+  const listed = expectSuccess(
+    run(['preview', 'history', filePath, '--json'], env),
+    'preview history',
+  ).data as { batches: Record<string, unknown>[] }
+  assert.equal(listed.batches.length, 1)
+  assert.equal(listed.batches[0]!.items, 1)
+  assert.equal(listed.batches[0]!.fixed, 1)
+  assert.equal(listed.batches[0]!.skipped, 0)
+  assert.equal(typeof listed.batches[0]!.completed_at, 'string')
+  const record = (
+    expectSuccess(
+      run(
+        [
+          'preview',
+          'history',
+          filePath,
+          '--batch',
+          String(listed.batches[0]!.batch_id),
+          '--json',
+        ],
+        env,
+      ),
+      'preview history',
+    ).data as { batch: Record<string, any> }
+  ).batch
+  assert.equal(record.items[0].comment, 'Make it friendlier')
+  assert.equal(record.items[0].anchor.contextText, 'Hello preview')
+  assert.equal(record.snapshots[record.before_revision].content, original)
+  assert.equal(record.snapshots[record.after_revision].content, edited)
+  assert.deepEqual(record.reports[0].items[0], {
+    thread: item.thread,
+    generation: 1,
+    outcome: 'fixed',
+    note: 'Warmed up the headline',
+    reported_by: 'agent',
   })
 })
 

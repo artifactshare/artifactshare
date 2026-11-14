@@ -71,6 +71,11 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare preview start ./lp.
 - Report outcomes with `preview done --stdin`; reply into a thread with
   `preview reply --thread <id> --body <text>` (state unchanged); end the
   session with `preview stop` (annotations stay saved on disk).
+- `preview history <file>` lists earlier batches with before/after document
+  snapshots, and `--batch <id>` returns one batch's comments, reports and
+  snapshots. Use it to look up past corrections before reviewing a similar
+  document. It reads local files only; `fixed`/`skipped` are agent reports,
+  not human approval.
 
 ### Waking up when the user submits a batch
 

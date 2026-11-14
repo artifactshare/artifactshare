@@ -16,6 +16,7 @@ import {
   runPreviewDone,
   runPreviewNext,
   runPreviewReply,
+  runPreviewHistory,
   runPreviewStop,
 } from './command-runners/preview.js'
 import {
@@ -529,6 +530,14 @@ export async function previewReplyRunner(
 ): Promise<void> {
   const parsed = parsedArgsFromContext('preview reply', ctx)
   return await runPreviewReply(parsed, outputMode(parsed.options))
+}
+
+export function previewHistoryRunner(
+  ctx: Readonly<CommandContext>,
+): Promise<void> {
+  const parsed = parsedArgsFromContext('preview history', ctx)
+  runPreviewHistory(parsed, outputMode(parsed.options))
+  return Promise.resolve()
 }
 
 export async function previewStopRunner(

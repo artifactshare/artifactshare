@@ -78,6 +78,7 @@ export type CliCommand =
   | 'preview next'
   | 'preview done'
   | 'preview reply'
+  | 'preview history'
   | 'preview stop'
   | 'login'
   | 'logout'
