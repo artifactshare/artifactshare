@@ -180,6 +180,7 @@ export const previewSecurity = defineBrowserCommand(
       label: string,
     ) => `<!doctype html><title>${label}</title>
 <nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a> <a id="routerLink" href="settings">Settings link</a> <a id="badHash" href="#/q%zz">Odd route</a></nav>
+<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><x-host id="host"></x-host></div>
 <main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
 <script>
   let lockedLeft = false;
@@ -210,6 +211,17 @@ export const previewSecurity = defineBrowserCommand(
     render();
   };
   render();
+  window.clicks = { counted: 0, shadow: 0 };
+  window.addEventListener('click', (event) => { if (event.target.id === 'counted') clicks.counted++; }, true);
+  document.getElementById('proxy').onclick = () => document.getElementById('chk').click();
+  customElements.define('x-host', class extends HTMLElement {
+    connectedCallback() {
+      const button = document.createElement('button');
+      button.textContent = 'Shadow';
+      button.onclick = () => clicks.shadow++;
+      this.attachShadow({ mode: 'open' }).append(button);
+    }
+  });
   window.addEventListener('message', event => {
     if (event.source === parent && event.data.kind === 'ready-check') window.previewHandshake = event.data;
   });
@@ -336,6 +348,20 @@ export const previewSecurity = defineBrowserCommand(
           'Interactive document',
         )
         await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        // Controls run exactly once and nothing they trigger becomes a pick.
+        await frame.locator('#chk').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), true)
+        await frame.locator('#proxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), false)
+        await frame.locator('#counted').click({ modifiers: ['Alt'] })
+        await frame.locator('#host').click({ modifiers: ['Alt'] })
+        assert.deepEqual(
+          await frame.evaluate(
+            () => (window as unknown as { clicks: unknown }).clicks,
+          ),
+          { counted: 1, shadow: 1 },
+        )
+        assert.equal(await shell.locator('#popover.show').count(), 0)
         result.checks.push('alt-click-operates')
 
         // A plain click still annotates, and the comment keeps its screen.
@@ -477,6 +503,7 @@ export const previewSecurity = defineBrowserCommand(
           document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
         })
         await addComment('Intro quote')
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
         // Painted as CSS custom highlights where supported, else as marks.
         await frame.waitForFunction(
           () =>
@@ -503,6 +530,20 @@ export const previewSecurity = defineBrowserCommand(
         await frame.waitForFunction(() => ['', '#'].includes(location.hash))
         await otherScreen('Intro note').waitFor({ state: 'detached' })
         result.checks.push('restore-default-screen')
+
+        // Moving on while a screen is being restored is not a failed restore.
+        await otherScreen('Slide two note').click()
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/3')
+        await otherScreen('Slide two note').waitFor()
+        assert.equal(
+          await shell
+            .locator('.thread.orphaned')
+            .filter({ hasText: 'Slide two note' })
+            .count(),
+          0,
+        )
+        result.checks.push('restore-superseded')
         return result
       }
       if (view === 'popover') {

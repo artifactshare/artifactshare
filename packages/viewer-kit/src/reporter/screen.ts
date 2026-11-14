@@ -41,7 +41,6 @@ export function previewScreen(ctx: ReporterState): string | null {
   } catch {
     return null
   }
-  if (!ctx.previewHomePath) ctx.previewHomePath = pathname
   const screen =
     (pathname === ctx.previewHomePath ? '' : pathname) +
     fragmentScreen(ctx, hash)
@@ -51,10 +50,6 @@ export function previewScreen(ctx: ReporterState): string | null {
 /** Reports the current screen when it changed (or when forced). */
 export function reportScreen(ctx: ReporterState, force = false) {
   if (!ctx.previewCapability) return
-  // History API changes have no event; a cheap string comparison catches
-  // them. Hosted viewers never start this check.
-  if (!ctx.previewScreenTimer)
-    ctx.previewScreenTimer = ctx.win.setInterval(() => reportScreen(ctx), 250)
   const screen = previewScreen(ctx)
   if (screen === null || (!force && screen === ctx.previewLastScreen)) return
   ctx.previewLastScreen = screen
@@ -65,9 +60,11 @@ export function reportScreen(ctx: ReporterState, force = false) {
 export function showScreen(ctx: ReporterState, screen: unknown) {
   if (!ctx.previewCapability || typeof screen !== 'string') return
   if (screen.length > MAX_COMMENT_LOCATION_LENGTH) return
+  const restore = { screen, readerActed: false }
+  ctx.previewRestore = restore
   // A digest names a screen that was too long to keep; it cannot be shown.
   if (screen.startsWith('~')) {
-    ctx.win.setTimeout(() => reportScreen(ctx, true), 50)
+    finishShowScreen(ctx, restore)
     return
   }
   const hashIndex = screen.indexOf('#')
@@ -93,12 +90,44 @@ export function showScreen(ctx: ReporterState, screen: unknown) {
   } catch {
     /* Report whatever screen is current. */
   }
-  // Routers render on the events above; report after they had a chance.
-  ctx.win.setTimeout(() => reportScreen(ctx, true), 50)
+  // Routers render on the events above; judge once they had a chance, and
+  // only this frame can tell a redirect from the reader moving on.
+  ctx.win.setTimeout(() => finishShowScreen(ctx, restore), 300)
+}
+
+function finishShowScreen(
+  ctx: ReporterState,
+  restore: { screen: string; readerActed: boolean },
+) {
+  if (ctx.previewRestore !== restore) return
+  ctx.previewRestore = null
+  reportScreen(ctx, true)
+  const outcome = restore.readerActed
+    ? 'superseded'
+    : previewScreen(ctx) === restore.screen
+      ? 'shown'
+      : 'not-shown'
+  send(ctx, { kind: 'screen-shown', screen: restore.screen, outcome })
+}
+
+/** After a URL change, report once the document's own handlers have run,
+ * so a fragment is classified against the rendered screen. */
+export function scheduleScreenReport(ctx: ReporterState) {
+  if (!ctx.previewCapability) return
+  ctx.win.setTimeout(() => reportScreen(ctx), 0)
 }
 
 export function installScreenTracking(ctx: ReporterState) {
-  const check = () => reportScreen(ctx)
-  ctx.win.addEventListener('hashchange', check)
-  ctx.win.addEventListener('popstate', check)
+  const acted = (event: Event) => {
+    if (ctx.previewRestore && event.isTrusted)
+      ctx.previewRestore.readerActed = true
+  }
+  ctx.doc.addEventListener('pointerdown', acted, true)
+  ctx.doc.addEventListener('keydown', acted, true)
+  // The document's own path, before any of its scripts change the URL.
+  try {
+    ctx.previewHomePath = ctx.win.location.pathname
+  } catch {
+    ctx.previewHomePath = '/'
+  }
 }

@@ -3,9 +3,6 @@ import { readEventValue, send } from './messaging.js'
 import { hitComment } from './badges.js'
 
 export function trusted(ctx: ReporterState, event: Event) {
-  // Local Preview replays an Alt/Option+click as the reader's plain click.
-  if (ctx.previewReplayedClick !== null && event === ctx.previewReplayedClick)
-    return true
   try {
     return ctx.primordials.trustedGetter && ctx.primordials.trustedGetter.get
       ? ctx.primordials.trustedGet!(event) === true
@@ -41,6 +38,9 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   let ctrlKey = readEventValue(ctx, ctx.primordials.ctrlKeyGet, event)
   let shiftKey = readEventValue(ctx, ctx.primordials.shiftKeyGet, event)
   let altKey = readEventValue(ctx, ctx.primordials.altKeyGet, event)
+  // Local Preview uses Alt/Option+click to operate the page in comment mode;
+  // the opaque sandbox has no downloads, so it follows the link as usual.
+  let altAsPlain = Boolean(ctx.previewCapability) && altKey === true
   if (
     !trusted(ctx, event) ||
     defaultPrevented !== false ||
@@ -48,7 +48,7 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
     metaKey !== false ||
     ctrlKey !== false ||
     shiftKey !== false ||
-    altKey !== false
+    (altKey !== false && !altAsPlain)
   ) {
     return
   }
@@ -74,25 +74,32 @@ export function prepareLinkClick(ctx: ReporterState, event: MouseEvent) {
   let anchor = element ? ctx.primordials.closest(element, 'a[href]') : null
   if (!anchor || ctx.primordials.hasAttribute(anchor, 'download')) return
   let rawHref = ctx.primordials.getAttribute(anchor, 'href')
-  if (!rawHref || rawHref.charAt(0) === '#') return
+  if (!rawHref) return
+  let fragment = rawHref.charAt(0) === '#'
+  // A plain fragment link keeps the browser's own handling; with Alt the
+  // browser would download instead, so it is followed after the page's turn.
+  if (fragment && !altAsPlain) return
 
   let url
   let href
   let openExternally = false
-  try {
-    url = new ctx.win.URL(rawHref, ctx.win.location.href)
-    if (!shouldHandleLink(ctx, url)) return
-    href = url.href
-    openExternally =
-      url.origin !== ctx.win.location.origin && isExternallyOpenable(ctx, url)
-  } catch (e) {
-    href = rawHref
-  }
+  if (fragment) href = rawHref
+  else
+    try {
+      url = new ctx.win.URL(rawHref, ctx.win.location.href)
+      if (!shouldHandleLink(ctx, url)) return
+      href = url.href
+      openExternally =
+        url.origin !== ctx.win.location.origin && isExternallyOpenable(ctx, url)
+    } catch (e) {
+      href = rawHref
+    }
 
   let pending = ctx.primordials.objectCreate(null)
   pending.artifactPrevented = false
   pending.href = href
   pending.openExternally = openExternally
+  pending.fragment = fragment
   try {
     ctx.primordials.defineProperty(event, 'preventDefault', {
       configurable: true,
@@ -121,6 +128,10 @@ export function finishLinkClick(ctx: ReporterState, event: MouseEvent) {
   if (!pending) return
   ctx.primordials.weakMapDelete(ctx.pendingLinkClicks, event)
   if (pending.artifactPrevented) return
+  if (pending.fragment) {
+    ctx.win.location.hash = pending.href
+    return
+  }
   if (pending.openExternally && ctx.externalLinkPolicyMode === 'direct') {
     openExternalLink(ctx, pending.href)
     return

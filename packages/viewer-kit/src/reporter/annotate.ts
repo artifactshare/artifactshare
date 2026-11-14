@@ -89,7 +89,9 @@ export function verifyAnchors(
   let checking: number[] = []
   let verdicts = []
   // Preview: a comment made on another screen is neither here nor missing.
+  // The parent hears this screen before the verdicts that depend on it.
   let screen = ctx.previewCapability ? previewScreen(ctx) : null
+  if (screen !== null) reportScreen(ctx)
   if (!engine) {
     for (let i = 0; i < ctx.pendingAnchors.length; i++) {
       if (ctx.pendingAnchors[i].kind === 'text') {
@@ -242,41 +244,20 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
 
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
-  // Alt/Option+click uses the page. Browsers download a link on Alt+click, so
-  // the gesture is replayed as the plain click the document expects. The
-  // replay passes through the document's own handlers and the link gate
-  // exactly like a plain click in browse mode.
-  if (ctx.previewCapability && ctx.previewReplayedClick === event) return
-  if (event.altKey && ctx.previewCapability) {
-    const path =
-      typeof event.composedPath === 'function' ? event.composedPath() : []
-    const original = (path[0] ??
-      (ctx.primordials.targetGet
-        ? ctx.primordials.targetGet(event)
-        : event.target)) as Node | null
-    if (!original || original.nodeType !== 1) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    const replay = new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      screenX: event.screenX,
-      screenY: event.screenY,
-      button: event.button,
-      detail: event.detail,
-      view: ctx.win,
-    })
-    ctx.previewReplayedClick = replay
-    try {
-      ;(original as Element).dispatchEvent(replay)
-    } finally {
-      ctx.previewReplayedClick = null
+  // Alt/Option+click uses the page: the real click reaches the document
+  // untouched, and clicks it causes in the same task (a label activating its
+  // control, a handler calling el.click()) are not picks either. The link gate
+  // treats it as an unmodified click.
+  if (ctx.previewCapability && event.altKey) {
+    if (!ctx.previewOperating) {
+      ctx.previewOperating = true
+      ctx.win.setTimeout(() => {
+        ctx.previewOperating = false
+      }, 0)
     }
     return
   }
+  if (ctx.previewCapability && ctx.previewOperating) return
   let target = annotateTargetFrom(
     ctx,
     ctx.primordials.targetGet ? ctx.primordials.targetGet(event) : event.target,

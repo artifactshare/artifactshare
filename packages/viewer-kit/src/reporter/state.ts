@@ -67,6 +67,8 @@ export interface PendingLinkClick {
   artifactPrevented: boolean
   href: string
   openExternally: boolean
+  /** A same-document fragment followed for Alt/Option+click in Preview. */
+  fragment?: boolean
 }
 export type ReporterPointerEvent = MouseEvent & {
   pointerType?: string
@@ -87,8 +89,8 @@ export function createReporterState(
     previewGeometryFrame: 0,
     previewCapability: '',
     previewHomePath: '',
-    previewReplayedClick: null as MouseEvent | null,
-    previewScreenTimer: 0,
+    previewOperating: false,
+    previewRestore: null as { screen: string; readerActed: boolean } | null,
     previewLastScreen: null as string | null,
     previewGeneration: 0,
     previewSendSequence: 0,

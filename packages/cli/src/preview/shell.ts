@@ -483,6 +483,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       }, data.label, data.rect, data.sequence);
     } else if (data.kind === 'screen') {
       onScreen(data.screen);
+    } else if (data.kind === 'screen-shown') {
+      onScreenShown(data.screen, data.outcome);
     } else if (data.kind === 'annotation-geometry') {
       if (!pendingAnchor || data.pickSequence !== targetPickSequence) return;
       targetRect = data.rect;
@@ -880,22 +882,6 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       // A reload starts on the default screen; return to where the reader was.
       if (target !== screen) postToFrame({ kind: 'show-screen', screen: target });
     }
-    if (pendingRestore && screen === pendingRestore.target && !pendingRestore.settling) {
-      // A document may show the URL and then redirect away from it; the
-      // screen counts as restored only if it is still current shortly after.
-      const restoring = pendingRestore;
-      restoring.settling = setTimeout(() => {
-        restoring.settling = null;
-        if (pendingRestore !== restoring || currentScreen !== restoring.target) return;
-        clearTimeout(restoring.timer);
-        pendingRestore = null;
-        const restored = annotations.find(entry => entry.thread === restoring.thread);
-        if (restored && (restored.status === 'resolved' || restored.status === 'dismissed')) showTarget(restored);
-        else pingAfterVerify = restoring.thread;
-        lastVerifiedAnchors = null;
-        checkOrphans();
-      }, 300);
-    }
     if (screen === currentScreen) return;
     currentScreen = screen;
     lastVerifiedAnchors = null;
@@ -912,34 +898,47 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     else if (annotation.anchor.kind === 'text')
       postToFrame({ kind: 'scroll-to-comment', threadId: annotation.thread });
   }
-  function restoreScreen(annotation) {
-    const target = annotation.anchor.screen || '';
-    if (pendingRestore) {
-      clearTimeout(pendingRestore.timer);
-      clearTimeout(pendingRestore.settling);
+  // Never attach the comment to another screen's element; mark it as
+  // needing a check instead.
+  function markUnrestorable(thread) {
+    otherScreenThreads.delete(thread);
+    orphanedThreads.add(thread);
+    renderPanel();
+    document.getElementById('orphanText').textContent =
+      tCount('preview.orphanNotice', orphanedThreads.size);
+    document.getElementById('orphanDiscard').style.display = '';
+    document.getElementById('orphanNotice').classList.add('show');
+  }
+  // The frame reports whether the screen was shown, could not be shown, or
+  // the reader moved on first. A frame that never answers changes nothing.
+  function armRestoreTimer() {
+    const restoring = pendingRestore;
+    clearTimeout(restoring.timer);
+    restoring.timer = setTimeout(() => {
+      if (pendingRestore === restoring) pendingRestore = null;
+    }, 5000);
+  }
+  function onScreenShown(screen, outcome) {
+    if (!pendingRestore || screen !== pendingRestore.target) return;
+    const restoring = pendingRestore;
+    clearTimeout(restoring.timer);
+    pendingRestore = null;
+    if (outcome === 'not-shown') {
+      markUnrestorable(restoring.thread);
+      return;
     }
-    // Success is the reporter showing the target; only a document that never
-    // gets there is treated as unrestorable.
-    pendingRestore = {
-      thread: annotation.thread,
-      target,
-      settling: null,
-      timer: setTimeout(() => {
-        if (!pendingRestore || pendingRestore.thread !== annotation.thread) return;
-        clearTimeout(pendingRestore.settling);
-        pendingRestore = null;
-        // Never attach the comment to another screen's element; mark it as
-        // needing a check instead.
-        otherScreenThreads.delete(annotation.thread);
-        orphanedThreads.add(annotation.thread);
-        renderPanel();
-        document.getElementById('orphanText').textContent =
-          tCount('preview.orphanNotice', orphanedThreads.size);
-        document.getElementById('orphanDiscard').style.display = '';
-        document.getElementById('orphanNotice').classList.add('show');
-      }, 2000),
-    };
-    postToFrame({ kind: 'show-screen', screen: target });
+    if (outcome !== 'shown') return;
+    const restored = annotations.find(entry => entry.thread === restoring.thread);
+    if (restored && (restored.status === 'resolved' || restored.status === 'dismissed')) showTarget(restored);
+    else pingAfterVerify = restoring.thread;
+    lastVerifiedAnchors = null;
+    checkOrphans();
+  }
+  function restoreScreen(annotation) {
+    if (pendingRestore) clearTimeout(pendingRestore.timer);
+    pendingRestore = { thread: annotation.thread, target: annotation.anchor.screen || '', timer: null };
+    armRestoreTimer();
+    postToFrame({ kind: 'show-screen', screen: pendingRestore.target });
   }
 
   // --- reload + orphan handling ------------------------------------------
@@ -947,7 +946,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (ended || savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
     previewCapability = '';
     hidePopover();
-    screenAfterReload = currentScreen;
+    // A restore in progress continues on the reloaded document, with a fresh
+    // allowance for it to load.
+    screenAfterReload = pendingRestore ? pendingRestore.target : currentScreen;
+    if (pendingRestore) armRestoreTimer();
     verificationId++;
     verificationGeneration = -1;
     let scrollY = 0;

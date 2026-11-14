@@ -47,6 +47,12 @@ export function validPreviewObservation(value: unknown): boolean {
       )
     case 'screen':
       return keys(value, [...base, 'screen']) && str(value.screen, 1000)
+    case 'screen-shown':
+      return (
+        keys(value, [...base, 'screen', 'outcome']) &&
+        str(value.screen, 1000) &&
+        ['shown', 'not-shown', 'superseded'].includes(value.outcome as string)
+      )
     case 'annotation-geometry':
       return (
         keys(value, [...base, 'pickSequence', 'rect']) &&
