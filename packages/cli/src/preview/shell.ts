@@ -162,6 +162,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
   .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
+  .thread .screen-link { display: block; margin: 6px 0 0; padding: 0; border: 0; background: none;
+    font: inherit; font-size: 12px; text-align: left; color: var(--link); cursor: pointer; }
+  .thread .screen-link:hover { text-decoration: underline; }
   .thread .msg { margin: 4px 0 0; }
   .thread .msg.agent { color: var(--muted-foreground); border-left: 2px solid var(--border);
     padding-left: 8px; margin-top: 8px; }
@@ -763,7 +766,6 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       label.textContent = anchorLabel(annotation.anchor);
       if (checkingThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionChecking');
       else if (orphanedThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
-      else if (otherScreenThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionOtherScreen');
       const state = document.createElement('span');
       state.className = 'state';
       state.textContent = stateLabel(annotation.status);
@@ -790,6 +792,19 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         head.appendChild(reopen);
       }
       thread.appendChild(head);
+      if (otherScreenThreads.has(annotation.thread) && !orphanedThreads.has(annotation.thread) &&
+        !checkingThreads.has(annotation.thread)) {
+        // Its own wrapping line, and a real button so keyboards can go there.
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'screen-link';
+        go.textContent = t('preview.positionOtherScreen');
+        go.addEventListener('click', (event) => {
+          event.stopPropagation();
+          restoreScreen(annotation);
+        });
+        thread.appendChild(go);
+      }
       (annotation.messages || []).forEach((message) => {
         const msg = document.createElement('div');
         msg.className = message.author === 'agent' ? 'msg agent' : 'msg';

@@ -304,18 +304,18 @@ export const previewSecurity = defineBrowserCommand(
           assert.equal((await saved).status(), 200)
           await shell.locator('#popover.show').waitFor({ state: 'hidden' })
         }
-        const threadLabel = (comment: string) =>
+        const otherScreen = (comment: string) =>
           shell
             .locator('.thread')
             .filter({ hasText: comment })
-            .locator('.anchor-label')
+            .locator('button.screen-link')
         const result = { checks: [] as string[] }
 
         // Comment mode shows how to use the page; Alt+click operates it.
         await shell.locator('#modeHint').waitFor()
         assert.equal(
           await shell.locator('#modeHint').textContent(),
-          'Alt+click uses the page',
+          'Alt/Option+click uses the page',
         )
         await frame.locator('#next').click({ modifiers: ['Alt'] })
         await heading().filter({ hasText: 'Slide 2' }).waitFor()
@@ -327,9 +327,7 @@ export const previewSecurity = defineBrowserCommand(
         await addComment('Slide two note')
         await frame.locator('#next').click({ modifiers: ['Alt'] })
         await heading().filter({ hasText: 'Slide 3' }).waitFor()
-        await threadLabel('Slide two note')
-          .filter({ hasText: 'On another screen' })
-          .waitFor()
+        await otherScreen('Slide two note').waitFor()
         assert.equal(await shell.locator('.thread.orphaned').count(), 0)
         assert.equal(await shell.locator('#orphanNotice.show').count(), 0)
         await heading().click()
@@ -343,21 +341,13 @@ export const previewSecurity = defineBrowserCommand(
         })
         result.checks.push('same-selector-separate-screens')
 
-        // Selecting a comment restores its screen and shows its element.
-        await shell
-          .locator('.thread')
-          .filter({ hasText: 'Slide two note' })
-          .click()
+        // The keyboard reaches the other-screen action, which restores the
+        // comment's screen and shows its element.
+        await otherScreen('Slide two note').focus()
+        await shell.keyboard.press('Enter')
         await heading().filter({ hasText: 'Slide 2' }).waitFor()
-        await threadLabel('Slide three note')
-          .filter({ hasText: 'On another screen' })
-          .waitFor()
-        assert.equal(
-          (await threadLabel('Slide two note').textContent())!.includes(
-            'another screen',
-          ),
-          false,
-        )
+        await otherScreen('Slide three note').waitFor()
+        await otherScreen('Slide two note').waitFor({ state: 'detached' })
         // Unsent comments survive moving between screens.
         assert.equal(await shell.locator('.thread').count(), 2)
         result.checks.push('restore-hash-screen')
@@ -445,9 +435,7 @@ export const previewSecurity = defineBrowserCommand(
           () => document.title === 'Updated interactive document',
         )
         await heading().filter({ hasText: 'Slide 3' }).waitFor()
-        await threadLabel('Slide two note')
-          .filter({ hasText: 'On another screen' })
-          .waitFor()
+        await otherScreen('Slide two note').waitFor()
         result.checks.push('reload-keeps-screen')
         return result
       }
