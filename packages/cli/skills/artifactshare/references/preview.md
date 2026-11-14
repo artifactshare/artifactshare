@@ -55,6 +55,12 @@ npm exec --yes --package=@artifactshare/cli -- artifactshare preview start ./lp.
   invocation's task or process handle as the server owner.
 - Editing and saving the file reloads the page automatically; annotations
   stay anchored where possible.
+- Interactive documents (slides, tabs, SPAs): in comment mode the user
+  Alt/Option+clicks to operate the page and plainly clicks to comment. Element
+  and text anchors may carry `screen`, the URL state (a `#/` or `#!/` route
+  hash, or a History API path) they were made on; the default screen omits
+  it. Plain fragments such as `#section` and non-URL state such as an open
+  modal are not recorded. Use `screen` to find which slide or route a comment refers to.
 - `preview next` returns every batch the user has submitted; it is
   non-claiming (calling it again returns the same open items) and with
   `--wait <sec>` it long-polls. `timed_out: true` and `session_ended: true`

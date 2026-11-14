@@ -8,10 +8,11 @@ export interface CommentHighlight extends TextSelector {
   count?: number
 }
 export type VerificationAnchor =
-  | (TextSelector & { kind: 'text'; thread: string })
+  | (TextSelector & { kind: 'text'; thread: string; screen?: string })
   | {
       kind: 'element'
       thread: string
+      screen?: string
       selector: string
       ownText?: string
       ownTextHash?: string
@@ -66,6 +67,8 @@ export interface PendingLinkClick {
   artifactPrevented: boolean
   href: string
   openExternally: boolean
+  /** A same-document fragment followed for Alt/Option+click in Preview. */
+  fragment?: boolean
 }
 export type ReporterPointerEvent = MouseEvent & {
   pointerType?: string
@@ -85,6 +88,10 @@ export function createReporterState(
     previewTrackedPick: null as PreviewPick | null,
     previewGeometryFrame: 0,
     previewCapability: '',
+    previewHomePath: '',
+    previewOperating: false,
+    previewRestore: null as { screen: string; readerActed: boolean } | null,
+    previewLastScreen: null as string | null,
     previewGeneration: 0,
     previewSendSequence: 0,
     previewReceiveSequence: 0,

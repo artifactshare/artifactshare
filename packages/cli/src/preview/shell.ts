@@ -122,6 +122,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .mode-toggle .count { background: var(--pending); color: #2a1800; border-radius: var(--r-full);
     font-size: 11px; min-width: 18px; height: 18px; display: none; place-items: center; padding: 0 5px; }
   .mode-toggle .count.show { display: grid; }
+  .mode-hint { position: fixed; right: 320px; bottom: 64px; z-index: 60; display: none;
+    font-size: 12px; color: var(--muted-foreground); background: var(--card);
+    border-radius: var(--r-full); box-shadow: var(--shadow-lg); padding: 4px 12px; }
+  body.annotate .mode-hint { display: block; }
+  /* Touch and narrow layouts have no Alt key; they use the switch. */
+  @media (hover: none), (max-width: 860px) { body.annotate .mode-hint { display: none; } }
   .popover { position: fixed; z-index: 80; width: min(300px, calc(100vw - 16px));
     background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
     padding: 10px; display: none; }
@@ -156,6 +162,9 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   .thread .state { font-size: 11px; color: var(--muted-foreground); margin-left: auto; flex: none; }
   .thread .anchor-label { color: var(--muted-foreground); font-size: 11px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
+  .thread .screen-link { display: block; margin: 6px 0 0; padding: 0; border: 0; background: none;
+    font: inherit; font-size: 12px; text-align: left; color: var(--link); cursor: pointer; }
+  .thread .screen-link:hover { text-decoration: underline; }
   .thread .msg { margin: 4px 0 0; }
   .thread .msg.agent { color: var(--muted-foreground); border-left: 2px solid var(--border);
     padding-left: 8px; margin-top: 8px; }
@@ -256,6 +265,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   <span id="modeLabel" data-msg="preview.annotateMode"></span>
   <span class="count" id="pendingCount">0</span>
 </button>
+<div class="mode-hint" id="modeHint" data-msg="preview.modeHint"></div>
 <div class="popover" id="popover">
   <div class="target-label" id="popTarget"></div>
   <label for="popText" data-msg="preview.editorLabel"></label>
@@ -346,6 +356,14 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
   let orphanedThreads = new Set();
   let checkingThreads = new Set();
   let lastVerifiedAnchors = null;
+  // URL screen of an interactive document, as the reporter last observed it.
+  let currentScreen = '';
+  // Comments whose screen the document could not show again. They stay
+  // stored and are not offered for bulk discard.
+  let unrestorableThreads = new Set();
+  let screenAfterReload = null;
+  let pingAfterVerify = null;
+  let pendingRestore = null;
   let verificationId = 0;
   let verificationGeneration = -1;
   let verifyPending = false;
@@ -463,7 +481,12 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         kind: 'element', state: 'attached',
         selector: data.selector, label: data.label, contextText: data.contextText,
         ...(data.ownTextHash ? { ownTextHash: data.ownTextHash, ownTextExcerpt: data.ownTextExcerpt } : { ownText: data.ownText }), tagName: data.tagName,
+        ...(currentScreen ? { screen: currentScreen } : {}),
       }, data.label, data.rect, data.sequence);
+    } else if (data.kind === 'screen') {
+      onScreen(data.screen);
+    } else if (data.kind === 'screen-shown') {
+      onScreenShown(data.screen, data.outcome);
     } else if (data.kind === 'annotation-geometry') {
       if (!pendingAnchor || data.pickSequence !== targetPickSequence) return;
       targetRect = data.rect;
@@ -483,6 +506,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         quotedText: data.quotedText, prefixText: data.prefixText,
         suffixText: data.suffixText, textStart: data.textStart,
         textEnd: data.textEnd, cssPath: data.cssPath,
+        ...(currentScreen ? { screen: currentScreen } : {}),
       }, data.quotedText, data.rect, data.sequence);
     }
   });
@@ -735,7 +759,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (annotation.status === 'in_progress') thread.classList.add('working');
       if (annotation.status === 'resolved') thread.classList.add('resolved');
       if (annotation.status === 'dismissed') thread.classList.add('dismissed');
-      if (orphanedThreads.has(annotation.thread)) thread.classList.add('orphaned');
+      if (orphanedThreads.has(annotation.thread) || unrestorableThreads.has(annotation.thread)) thread.classList.add('orphaned');
       const head = document.createElement('div');
       head.className = 'head';
       const num = document.createElement('span');
@@ -745,7 +769,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       label.className = 'anchor-label';
       label.textContent = anchorLabel(annotation.anchor);
       if (checkingThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionChecking');
-      else if (orphanedThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
+      else if (orphanedThreads.has(annotation.thread) || unrestorableThreads.has(annotation.thread)) label.textContent += ' · ' + t('preview.positionNeedsCheck');
       const state = document.createElement('span');
       state.className = 'state';
       state.textContent = stateLabel(annotation.status);
@@ -772,6 +796,18 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         head.appendChild(reopen);
       }
       thread.appendChild(head);
+      if (onOtherScreen(annotation)) {
+        // Its own wrapping line, and a real button so keyboards can go there.
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'screen-link';
+        go.textContent = t('preview.positionOtherScreen');
+        go.addEventListener('click', (event) => {
+          event.stopPropagation();
+          restoreScreen(annotation);
+        });
+        thread.appendChild(go);
+      }
       (annotation.messages || []).forEach((message) => {
         const msg = document.createElement('div');
         msg.className = message.author === 'agent' ? 'msg agent' : 'msg';
@@ -782,6 +818,10 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         thread.appendChild(msg);
       });
       thread.addEventListener('click', () => {
+        if (onOtherScreen(annotation)) {
+          restoreScreen(annotation);
+          return;
+        }
         if (annotation.anchor && annotation.anchor.kind === 'element') {
           if (!orphanedThreads.has(annotation.thread) && !checkingThreads.has(annotation.thread)) postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
         }
@@ -836,11 +876,77 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     if (!popText.value.trim() && !saveFailed && pendingReload === null) hidePopover();
   });
 
+  // --- screens (URL state of interactive documents) ----------------------
+  function onScreen(screen) {
+    if (screenAfterReload !== null) {
+      const target = screenAfterReload;
+      screenAfterReload = null;
+      // A reload starts on the default screen; return to where the reader was.
+      if (target !== screen) postToFrame({ kind: 'show-screen', screen: target });
+    }
+    if (screen === currentScreen) return;
+    currentScreen = screen;
+    lastVerifiedAnchors = null;
+    checkOrphans(false);
+  }
+  // The stored screen decides, for every comment including finished ones.
+  function onOtherScreen(annotation) {
+    const anchor = annotation.anchor;
+    return Boolean(anchor) && anchor.kind !== 'artifact' && (anchor.screen || '') !== currentScreen;
+  }
+  function showTarget(annotation) {
+    if (annotation.anchor.kind === 'element')
+      postToFrame({ kind: 'element-ping', selector: annotation.anchor.selector });
+    else if (annotation.anchor.kind === 'text')
+      postToFrame({ kind: 'scroll-to-comment', threadId: annotation.thread });
+  }
+  // Never attach the comment to another screen's element; mark it as
+  // needing a check instead.
+  function markUnrestorable(thread) {
+    unrestorableThreads.add(thread);
+    renderPanel();
+  }
+  // The frame reports whether the screen was shown, could not be shown, or
+  // the reader moved on first. A frame that never answers changes nothing.
+  function armRestoreTimer() {
+    const restoring = pendingRestore;
+    clearTimeout(restoring.timer);
+    restoring.timer = setTimeout(() => {
+      if (pendingRestore === restoring) pendingRestore = null;
+    }, 5000);
+  }
+  function onScreenShown(screen, outcome) {
+    if (!pendingRestore || screen !== pendingRestore.target) return;
+    const restoring = pendingRestore;
+    clearTimeout(restoring.timer);
+    pendingRestore = null;
+    if (outcome === 'not-shown') {
+      markUnrestorable(restoring.thread);
+      return;
+    }
+    if (outcome !== 'shown') return;
+    const restored = annotations.find(entry => entry.thread === restoring.thread);
+    if (restored && (restored.status === 'resolved' || restored.status === 'dismissed')) showTarget(restored);
+    else pingAfterVerify = restoring.thread;
+    lastVerifiedAnchors = null;
+    checkOrphans();
+  }
+  function restoreScreen(annotation) {
+    if (pendingRestore) clearTimeout(pendingRestore.timer);
+    pendingRestore = { thread: annotation.thread, target: annotation.anchor.screen || '', timer: null };
+    armRestoreTimer();
+    postToFrame({ kind: 'show-screen', screen: pendingRestore.target });
+  }
+
   // --- reload + orphan handling ------------------------------------------
   function reloadFrame(nextRevision) {
     if (ended || savePending || saveFailed || (pendingAnchor && popText.value.trim())) return;
     previewCapability = '';
     hidePopover();
+    // A restore in progress continues on the reloaded document, with a fresh
+    // allowance for it to load.
+    screenAfterReload = pendingRestore ? pendingRestore.target : currentScreen;
+    if (pendingRestore) armRestoreTimer();
     verificationId++;
     verificationGeneration = -1;
     let scrollY = 0;
@@ -854,7 +960,7 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     frame.src = '/artifact?rev=' + encodeURIComponent(nextRevision || '');
   }
 
-  function checkOrphans() {
+  function checkOrphans(showChecking = true) {
     // The frame captured these anchors, so it also decides whether they still
     // resolve: re-implementing the rules here would let capture and
     // verification drift apart. Resolved and dismissed threads are excluded —
@@ -870,7 +976,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     }));
     if (key === lastVerifiedAnchors) return;
     lastVerifiedAnchors = key;
-    checkingThreads = new Set(pending.map(annotation => annotation.thread));
+    // A screen change re-verifies quietly: the panel keeps its labels.
+    if (showChecking) checkingThreads = new Set(pending.map(annotation => annotation.thread));
     renderPanel();
     verificationId++;
     verificationGeneration = -1;
@@ -881,7 +988,8 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
         { thread: annotation.thread }, annotation.anchor)),
     };
     verifyPending = true;
-    postToFrame({ kind: 'comment-highlights', textAnchorsEnabled: true, highlights: pending.filter(a => a.anchor.kind === 'text').map(a => Object.assign({ threadId: a.thread, count: 1 }, a.anchor)) });
+    // Highlight only this screen's quotes: another screen may repeat the text.
+    postToFrame({ kind: 'comment-highlights', textAnchorsEnabled: true, highlights: pending.filter(a => a.anchor.kind === 'text' && (a.anchor.screen || '') === currentScreen).map(a => Object.assign({ threadId: a.thread, count: 1 }, a.anchor)) });
     postToFrame(request);
     // The frame arms its listener during the ready handshake, which this can
     // still race. One resend keeps a missed request from leaving every anchor
@@ -893,9 +1001,13 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
     verifyPending = false;
     const attached = new Map((verdicts || []).map((v) => [v.thread, v.attached === true]));
     checkingThreads = new Set((verdicts || []).filter(v => v.position_state === 'checking').map(v => v.thread));
+    // A comment on another screen is neither found nor lost here.
+    const otherScreen = new Set((verdicts || []).filter(v => v.position_state === 'other-screen').map(v => v.thread));
     const newlyOrphaned = [];
     annotations.forEach((annotation) => {
-      if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread)) return;
+      if (!attached.has(annotation.thread) || checkingThreads.has(annotation.thread) ||
+        otherScreen.has(annotation.thread)) return;
+      unrestorableThreads.delete(annotation.thread);
       const found = attached.get(annotation.thread);
       if (!found && !orphanedThreads.has(annotation.thread)) {
         newlyOrphaned.push(annotation.thread);
@@ -903,6 +1015,11 @@ export function renderPreviewShell(options: PreviewShellOptions): string {
       if (!found) orphanedThreads.add(annotation.thread);
       else orphanedThreads.delete(annotation.thread);
     });
+    if (pingAfterVerify !== null) {
+      const shown = annotations.find(annotation => annotation.thread === pingAfterVerify);
+      pingAfterVerify = null;
+      if (shown && attached.get(shown.thread) === true) showTarget(shown);
+    }
     // Reporter observations are display-only. Persist only explicit user actions.
     renderPanel();
     if (newlyOrphaned.length > 0) {

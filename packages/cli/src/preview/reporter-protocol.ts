@@ -45,6 +45,14 @@ export function validPreviewObservation(value: unknown): boolean {
         typeof value.token === 'string' &&
         /^[a-f0-9]{64}$/.test(value.token)
       )
+    case 'screen':
+      return keys(value, [...base, 'screen']) && str(value.screen, 1000)
+    case 'screen-shown':
+      return (
+        keys(value, [...base, 'screen', 'outcome']) &&
+        str(value.screen, 1000) &&
+        ['shown', 'not-shown', 'superseded'].includes(value.outcome as string)
+      )
     case 'annotation-geometry':
       return (
         keys(value, [...base, 'pickSequence', 'rect']) &&
@@ -131,7 +139,7 @@ export function validPreviewObservation(value: unknown): boolean {
             typeof v.attached === 'boolean' &&
             (v.attached
               ? v.position_state === 'attached'
-              : ['checking', 'needs-check'].includes(
+              : ['checking', 'needs-check', 'other-screen'].includes(
                   v.position_state as string,
                 )),
         )

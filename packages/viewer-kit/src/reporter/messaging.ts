@@ -17,6 +17,7 @@ import {
   verifyAnchors,
 } from './annotate.js'
 import type { ReporterState } from './state.js'
+import { reportScreen, showScreen } from './screen.js'
 
 // Secret-bearing messages reach only captured messaging primordials.
 export function send(ctx: ReporterState, message: Record<string, unknown>) {
@@ -39,6 +40,7 @@ export function ready(ctx: ReporterState) {
       token: ctx.documentToken,
     })
     reportHash(ctx, true)
+    reportScreen(ctx, true)
   }
 }
 
@@ -106,16 +108,21 @@ export function installMessageListener(ctx: ReporterState) {
       return
     }
     // Preview is opt-in. Hosted viewers retain their existing protocol.
+    // WebKit fires the frame's load event on a same-document hash change, so
+    // the parent may start a newer handshake for this same document; follow
+    // it rather than ignoring every later parent message.
     if (
-      !ctx.previewCapability &&
       data.kind === READY_CHECK_MESSAGE_KIND &&
       typeof data.previewCapability === 'string' &&
       /^[a-f0-9]{64}$/.test(data.previewCapability) &&
       Number.isSafeInteger(data.documentGeneration) &&
-      data.documentGeneration > 0
+      data.documentGeneration > 0 &&
+      (!ctx.previewCapability ||
+        data.documentGeneration > ctx.previewGeneration)
     ) {
       ctx.previewCapability = data.previewCapability
       ctx.previewGeneration = data.documentGeneration
+      ctx.previewReceiveSequence = 0
     }
     if (ctx.previewCapability) {
       if (
@@ -155,6 +162,8 @@ export function installMessageListener(ctx: ReporterState) {
       installMermaidResults(ctx, data.renderToken, data.results)
     } else if (data.kind === 'track-annotation-pick') {
       trackPreviewPick(ctx, data.pickSequence)
+    } else if (data.kind === 'show-screen') {
+      showScreen(ctx, data.screen)
     } else if (data.kind === 'annotate-mode') {
       setAnnotateMode(ctx, data.enabled)
     } else if (data.kind === 'element-ping') {

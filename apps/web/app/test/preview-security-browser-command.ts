@@ -93,6 +93,7 @@ type View =
   | 'popover'
   | 'markdown-frame'
   | 'share'
+  | 'screens'
 type PopoverMeasurements = {
   width: number
   height: number
@@ -173,7 +174,69 @@ export const previewSecurity = defineBrowserCommand(
       if (event.source === parent && event.data.kind === 'ready-check') window.previewHandshake = event.data;
     });
   </script>`
-    writeFileSync(file, fixtureHtml('Initial document'))
+    // Interactive fixture: hash slides, a History API route, an in-page
+    // fragment, and a screen the document refuses to show again.
+    const screensHtml = (
+      label: string,
+    ) => `<!doctype html><title>${label}</title>
+<nav><button id="next">Next</button> <button id="lock">Lock</button> <button id="route">Route</button> <a id="toIntro" href="#intro">Intro</a> <a id="away" href="elsewhere.html">Away</a> <a id="routerLink" href="settings">Settings link</a> <a id="badHash" href="#/q%zz">Odd route</a></nav>
+<div><input type="checkbox" id="chk" aria-label="Check"><button id="proxy">Proxy</button><button id="counted">Counted</button><button id="capProxy">Capture proxy</button><a id="stopFrag" href="#/stop">Stop link</a><a id="absFrag">Absolute link</a><x-host id="host"></x-host></div>
+<main id="stage"></main><p>This constant paragraph keeps the quoted context identical on every slide of the deck.</p><p id="intro">Intro text</p><p>This closing paragraph is also identical on every slide of the deck.</p>
+<script>
+  let lockedLeft = false;
+  const home = location.pathname;
+  const render = () => {
+    if (location.hash === '#/locked' && lockedLeft) history.replaceState(null, '', home + location.search + '#/1');
+    if (location.hash !== '#/locked' && document.querySelector('#stage h2')?.textContent === 'Locked') lockedLeft = true;
+    const slide = (/^#\\/(\\d+)$/.exec(location.hash) || [])[1] || '1';
+    const title = location.pathname.endsWith('/settings') ? 'Settings'
+      : location.hash === '#/locked' ? 'Locked' : 'Slide ' + slide;
+    document.getElementById('stage').innerHTML = '<h2>' + title + '</h2>';
+  };
+  addEventListener('hashchange', render);
+  addEventListener('popstate', render);
+  document.getElementById('next').onclick = () => {
+    const slide = Number((/^#\\/(\\d+)$/.exec(location.hash) || [])[1] || 1);
+    location.hash = '#/' + (slide + 1);
+  };
+  document.getElementById('lock').onclick = () => { location.hash = '#/locked'; };
+  // A router link handles its own click, as single-page apps do.
+  document.getElementById('routerLink').onclick = (event) => {
+    event.preventDefault();
+    history.pushState(null, '', home.replace(/[^/]*$/, 'settings') + location.search);
+    render();
+  };
+  document.getElementById('route').onclick = () => {
+    history.pushState(null, '', home.replace(/[^/]*$/, 'settings') + location.search);
+    render();
+  };
+  render();
+  window.clicks = { counted: 0, shadow: 0 };
+  window.addEventListener('click', (event) => {
+    if (event.target.id === 'counted') clicks.counted++;
+    if (event.target.id === 'capProxy') document.getElementById('chk').click();
+  }, true);
+  document.getElementById('stopFrag').addEventListener('click', (event) => event.stopPropagation());
+  document.getElementById('absFrag').href = location.href.split('#')[0] + '#/abs';
+  document.getElementById('proxy').onclick = () => document.getElementById('chk').click();
+  customElements.define('x-host', class extends HTMLElement {
+    connectedCallback() {
+      const button = document.createElement('button');
+      button.textContent = 'Shadow';
+      button.onclick = () => clicks.shadow++;
+      this.attachShadow({ mode: 'open' }).append(button);
+    }
+  });
+  window.addEventListener('message', event => {
+    if (event.source === parent && event.data.kind === 'ready-check') window.previewHandshake = event.data;
+  });
+</script>`
+    writeFileSync(
+      file,
+      view === 'screens'
+        ? screensHtml('Interactive document')
+        : fixtureHtml('Initial document'),
+    )
     const startCli = () =>
       spawn(process.execPath, [cli, 'preview', file, '--no-open', '--json'], {
         cwd: dir,
@@ -226,6 +289,289 @@ export const previewSecurity = defineBrowserCommand(
         Object.defineProperty(navigator, 'language', { value: 'en' }),
       )
       await shell.goto(ready.url)
+      if (view === 'screens') {
+        await shell.setViewportSize({ width: 1280, height: 800 })
+        const frameHandle = async () => {
+          const handle = await (await shell
+            .locator('#artifactFrame')
+            .elementHandle())!.contentFrame()
+          assert.ok(handle)
+          await handle.waitForFunction(() =>
+            Boolean(
+              (window as unknown as { previewHandshake: unknown })
+                .previewHandshake,
+            ),
+          )
+          return handle
+        }
+        let frame = await frameHandle()
+        const heading = () => frame.locator('#stage h2')
+        const stored = async () =>
+          (
+            (await (await fetch(`${ready.url}api/annotations`)).json()) as {
+              annotations: {
+                comment: string
+                anchor: { screen?: string }
+              }[]
+            }
+          ).annotations
+        const addComment = async (comment: string) => {
+          await shell.locator('#popover.show').waitFor()
+          await shell.locator('#popText').fill(comment)
+          const saved = shell.waitForResponse(
+            (response) =>
+              response.url().endsWith('/api/annotations') &&
+              response.request().method() === 'POST',
+          )
+          await shell.locator('#popAdd').click()
+          assert.equal((await saved).status(), 200)
+          await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        }
+        const otherScreen = (comment: string) =>
+          shell
+            .locator('.thread')
+            .filter({ hasText: comment })
+            .locator('button.screen-link')
+        const result = { checks: [] as string[] }
+
+        // Comment mode shows how to use the page; Alt+click operates it.
+        await shell.locator('#modeHint').waitFor()
+        assert.equal(
+          await shell.locator('#modeHint').textContent(),
+          'Alt/Option+click uses the page',
+        )
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        assert.equal(await shell.locator('#popover.show').count(), 0)
+        // A link to another document is routed like a plain click, never by
+        // navigating the preview frame away from the file.
+        await frame.locator('#away').click({ modifiers: ['Alt'] })
+        // test-wait: elapsed-time — observe the absence of a frame navigation, which nothing signals.
+        await shell.waitForTimeout(300)
+        assert.equal(
+          await frame.evaluate(() => document.title),
+          'Interactive document',
+        )
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        // Controls run exactly once and nothing they trigger becomes a pick.
+        await frame.locator('#chk').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), true)
+        await frame.locator('#proxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), false)
+        await frame.locator('#capProxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), true)
+        await frame.locator('#capProxy').click({ modifiers: ['Alt'] })
+        assert.equal(await frame.locator('#chk').isChecked(), false)
+        await frame.locator('#counted').click({ modifiers: ['Alt'] })
+        await frame.locator('#host').click({ modifiers: ['Alt'] })
+        assert.deepEqual(
+          await frame.evaluate(
+            () => (window as unknown as { clicks: unknown }).clicks,
+          ),
+          { counted: 1, shadow: 1 },
+        )
+        assert.equal(await shell.locator('#popover.show').count(), 0)
+        // A fragment link whose handler only stops propagation still moves.
+        await frame.locator('#stopFrag').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/stop')
+        await frame.locator('#absFrag').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/abs')
+        // An existing text selection is not offered by an Alt click.
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(document.getElementById('intro')!)
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+        })
+        await frame.locator('#counted').click({ modifiers: ['Alt'] })
+        assert.equal(await shell.locator('#popover.show').count(), 0)
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/2')
+        result.checks.push('alt-click-operates')
+
+        // A plain click still annotates, and the comment keeps its screen.
+        await heading().click()
+        await addComment('Slide two note')
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Slide 3' }).waitFor()
+        await otherScreen('Slide two note').waitFor()
+        assert.equal(await shell.locator('.thread.orphaned').count(), 0)
+        assert.equal(await shell.locator('#orphanNotice.show').count(), 0)
+        await heading().click()
+        await addComment('Slide three note')
+        const screens = Object.fromEntries(
+          (await stored()).map((entry) => [entry.comment, entry.anchor.screen]),
+        )
+        assert.deepEqual(screens, {
+          'Slide two note': '#/2',
+          'Slide three note': '#/3',
+        })
+        result.checks.push('same-selector-separate-screens')
+
+        // The keyboard reaches the other-screen action, which restores the
+        // comment's screen and shows its element.
+        await otherScreen('Slide two note').focus()
+        await shell.keyboard.press('Enter')
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        await otherScreen('Slide three note').waitFor()
+        await otherScreen('Slide two note').waitFor({ state: 'detached' })
+        // Unsent comments survive moving between screens.
+        assert.equal(await shell.locator('.thread').count(), 2)
+        // A route with a malformed escape is still its own screen.
+        await frame.locator('#badHash').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/q%zz')
+        await heading().click()
+        await addComment('Odd route note')
+        assert.equal(
+          (await stored()).find((entry) => entry.comment === 'Odd route note')!
+            .anchor.screen,
+          '#/q%zz',
+        )
+        await otherScreen('Slide two note').waitFor()
+        result.checks.push('restore-hash-screen')
+
+        // An in-page fragment is not a screen.
+        await frame.locator('#toIntro').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#intro')
+        await frame.locator('#intro').click()
+        await addComment('Intro note')
+        assert.equal(
+          (await stored()).find((entry) => entry.comment === 'Intro note')!
+            .anchor.screen,
+          undefined,
+        )
+        result.checks.push('in-page-fragment')
+
+        // A History API route is a screen and is restored with popstate.
+        // WebKit rejects the History API inside an opaque-origin sandbox, so
+        // such documents cannot route there at all; record the difference.
+        const historyApi = await frame.evaluate(() => {
+          try {
+            const current = location.href
+            history.replaceState(history.state, '', location.pathname + 'probe')
+            history.replaceState(history.state, '', current)
+            return true
+          } catch {
+            return false
+          }
+        })
+        if (historyApi) {
+          // The router link's own handler runs; the frame never leaves the file.
+          await frame.locator('#routerLink').click({ modifiers: ['Alt'] })
+          await heading().filter({ hasText: 'Settings' }).waitFor()
+          await heading().click()
+          await addComment('Settings note')
+          assert.equal(
+            (await stored()).find((entry) => entry.comment === 'Settings note')!
+              .anchor.screen,
+            '/settings',
+          )
+          await shell
+            .locator('.thread')
+            .filter({ hasText: 'Slide two note' })
+            .click()
+          await heading().filter({ hasText: 'Slide 2' }).waitFor()
+          assert.equal(
+            await frame.evaluate(() => location.pathname.endsWith('/settings')),
+            false,
+          )
+          result.checks.push('restore-history-route')
+        } else result.checks.push('history-api-unavailable')
+
+        // A screen the document no longer shows is never attached elsewhere.
+        await frame.locator('#lock').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Locked' }).waitFor()
+        await heading().click()
+        await addComment('Locked note')
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Slide 2' }).waitFor()
+        await shell
+          .locator('.thread')
+          .filter({ hasText: 'Locked note' })
+          .click()
+        await shell
+          .locator('.thread.orphaned')
+          .filter({ hasText: 'Locked note' })
+          .waitFor()
+        // It needs a check, but is not offered for bulk discard.
+        assert.equal(await shell.locator('.thread.orphaned').count(), 1)
+        assert.equal(await shell.locator('#orphanNotice.show').count(), 0)
+        result.checks.push('unrestorable-orphaned')
+
+        // After a file update, the reader returns to the screen they were on.
+        await shell
+          .locator('.thread')
+          .filter({ hasText: 'Slide three note' })
+          .click()
+        await heading().filter({ hasText: 'Slide 3' }).waitFor()
+        const reloaded = shell.waitForEvent('framenavigated', {
+          predicate: (navigated) => navigated.url().includes('/artifact?rev='),
+        })
+        writeFileSync(file, screensHtml('Updated interactive document'))
+        await reloaded
+        frame = await frameHandle()
+        await frame.waitForFunction(
+          () => document.title === 'Updated interactive document',
+        )
+        await heading().filter({ hasText: 'Slide 3' }).waitFor()
+        await otherScreen('Slide two note').waitFor()
+        result.checks.push('reload-keeps-screen')
+
+        // A quote repeated on every screen is highlighted only on its own.
+        // Select the quote directly; a pointer gesture would also pick the
+        // paragraph element in comment mode.
+        await frame.evaluate(() => {
+          const range = document.createRange()
+          range.selectNodeContents(document.getElementById('intro')!)
+          getSelection()!.removeAllRanges()
+          getSelection()!.addRange(range)
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+        })
+        await addComment('Intro quote')
+        await frame.evaluate(() => getSelection()!.removeAllRanges())
+        // Painted as CSS custom highlights where supported, else as marks.
+        await frame.waitForFunction(
+          () =>
+            document.querySelectorAll('.ash-comment-highlight-badge').length +
+              ((globalThis as { CSS?: { highlights?: { size: number } } }).CSS
+                ?.highlights?.size ?? 0) >
+            0,
+        )
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await heading().filter({ hasText: 'Slide 4' }).waitFor()
+        await otherScreen('Intro quote').waitFor()
+        await frame.waitForFunction(
+          () =>
+            document.querySelectorAll('.ash-comment-highlight-badge').length +
+              ((globalThis as { CSS?: { highlights?: { size: number } } }).CSS
+                ?.highlights?.size ?? 0) ===
+            0,
+        )
+        result.checks.push('highlights-per-screen')
+
+        // The default screen can be restored too (fragment only, no History API).
+        await otherScreen('Intro note').focus()
+        await shell.keyboard.press('Enter')
+        await frame.waitForFunction(() => ['', '#'].includes(location.hash))
+        await otherScreen('Intro note').waitFor({ state: 'detached' })
+        result.checks.push('restore-default-screen')
+
+        // Moving on while a screen is being restored is not a failed restore.
+        await otherScreen('Slide two note').click()
+        await frame.locator('#next').click({ modifiers: ['Alt'] })
+        await frame.waitForFunction(() => location.hash === '#/3')
+        await otherScreen('Slide two note').waitFor()
+        assert.equal(
+          await shell
+            .locator('.thread.orphaned')
+            .filter({ hasText: 'Slide two note' })
+            .count(),
+          0,
+        )
+        result.checks.push('restore-superseded')
+        return result
+      }
       if (view === 'popover') {
         const measurements: PopoverMeasurements = []
         await shell.setViewportSize({ width: 1280, height: 800 })
@@ -1588,6 +1934,7 @@ declare module 'vitest/browser' {
       ): Promise<{ scheme: string; background: string }[]>
       (scenario: 'header'): Promise<HeaderMeasurements>
       (scenario: 'oversized'): Promise<OversizedMeasurements>
+      (scenario: 'screens'): Promise<{ checks: string[] }>
     }
   }
 }

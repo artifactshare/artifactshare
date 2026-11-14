@@ -6,6 +6,7 @@ import { commentUiSelector, createTextAnchorEngine } from './anchor-engine.js'
 import { anchorRoot, cssPath } from './selection.js'
 import { missingState, scheduleChecking } from './highlights.js'
 import { send } from './messaging.js'
+import { previewScreen, reportScreen } from './screen.js'
 
 export function ensureAnnotateStyles(ctx: ReporterState) {
   if (ctx.doc.getElementById('as-preview-annotate-style')) return
@@ -87,6 +88,10 @@ export function verifyAnchors(
   }
   let checking: number[] = []
   let verdicts = []
+  // Preview: a comment made on another screen is neither here nor missing.
+  // The parent hears this screen before the verdicts that depend on it.
+  let screen = ctx.previewCapability ? previewScreen(ctx) : null
+  if (screen !== null) reportScreen(ctx)
   if (!engine) {
     for (let i = 0; i < ctx.pendingAnchors.length; i++) {
       if (ctx.pendingAnchors[i].kind === 'text') {
@@ -97,6 +102,18 @@ export function verifyAnchors(
   }
   for (let i = 0; i < (anchors || []).length; i++) {
     let anchor = anchors[i] || {}
+    if (
+      screen !== null &&
+      (typeof anchor.screen === 'string' ? anchor.screen : '') !== screen
+    ) {
+      delete ctx.checkingDeadlines[anchor.thread]
+      verdicts.push({
+        thread: anchor.thread,
+        attached: false,
+        position_state: 'other-screen',
+      })
+      continue
+    }
     let attached = false
     if (anchor.kind === 'element') {
       attached = findElement(ctx, anchor) !== null
@@ -209,6 +226,11 @@ export function flashElement(ctx: ReporterState, selector: unknown) {
 
 export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
+  // Alt/Option operates the page, so nothing is offered for a comment.
+  if (event.altKey) {
+    clearAnnotateHover(ctx)
+    return
+  }
   let target = annotateTargetFrom(
     ctx,
     ctx.primordials.targetGet ? ctx.primordials.targetGet(event) : event.target,
@@ -220,8 +242,25 @@ export function onAnnotateHover(ctx: ReporterState, event: MouseEvent) {
   target.classList.add('as-preview-annotate-hover')
 }
 
+export function markOperating(ctx: ReporterState, event: MouseEvent) {
+  if (!ctx.previewCapability || !event.altKey || ctx.previewOperating) return
+  ctx.previewOperating = true
+  ctx.win.setTimeout(() => {
+    ctx.previewOperating = false
+  }, 0)
+}
+
 export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   if (!ctx.annotateModeEnabled) return
+  // Alt/Option+click uses the page: the real click reaches the document
+  // untouched, and clicks it causes in the same task (a label activating its
+  // control, a handler calling el.click()) are not picks either. The link gate
+  // treats it as an unmodified click.
+  if (ctx.previewCapability && event.altKey) {
+    markOperating(ctx, event)
+    return
+  }
+  if (ctx.previewCapability && ctx.previewOperating) return
   let target = annotateTargetFrom(
     ctx,
     ctx.primordials.targetGet ? ctx.primordials.targetGet(event) : event.target,
@@ -235,6 +274,8 @@ export function onAnnotateClick(ctx: ReporterState, event: MouseEvent) {
   let selected = ctx.win.getSelection()
   if (selected && !selected.isCollapsed && selected.toString().trim()) return
   let rect = target.getBoundingClientRect()
+  // The parent stamps the pick with the screen reported just before it.
+  reportScreen(ctx)
   send(ctx, {
     kind: 'element-annotate',
     selector: cssPath(ctx, target),

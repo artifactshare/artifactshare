@@ -83,3 +83,18 @@ test('element fingerprints require a complete pair without raw text; legacy text
   }
   expect(isPreviewAnchor(base, { stored: true })).toBe(true)
 })
+
+test('anchors keep an optional bounded screen', () => {
+  const element = {
+    kind: 'element',
+    state: 'attached',
+    selector: 'h2',
+    label: 'h2',
+    contextText: 'Slide 2',
+  }
+  expect(isPreviewAnchor({ ...element, screen: '#/2' })).toBe(true)
+  expect(isPreviewAnchor({ ...legacy, screen: '/settings' })).toBe(true)
+  expect(isPreviewAnchor(element)).toBe(true)
+  for (const screen of ['', 'x'.repeat(1001), 2, null])
+    expect(isPreviewAnchor({ ...element, screen })).toBe(false)
+})

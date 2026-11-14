@@ -1,3 +1,4 @@
+import { scheduleScreenReport } from './screen.js'
 import { send } from './messaging.js'
 import type { ReporterState } from './state.js'
 import { commentLocationFromUrl } from './comment-location.js'
@@ -43,6 +44,7 @@ export function retireStaleLocation(ctx: ReporterState) {
 }
 
 export function reportHash(ctx: ReporterState, force = false) {
+  scheduleScreenReport(ctx)
   try {
     retireStaleLocation(ctx)
   } catch (e) {}

@@ -53,7 +53,8 @@ const geometry = {
   pickSequence: 1,
   rect: element.rect,
 }
-test.each([element, selection, verdict, ready, geometry])(
+const screen = { ...envelope, kind: 'screen', screen: '#/2' }
+test.each([element, selection, verdict, ready, geometry, screen])(
   'admits a bounded observation and rejects missing/extra fields: $kind',
   (message) => {
     expect(validPreviewObservation(message)).toBe(true)
@@ -72,6 +73,14 @@ test.each([element, selection, verdict, ready, geometry])(
 )
 test.each([
   { ...geometry, pickSequence: 0 },
+  { ...screen, screen: 'x'.repeat(1001) },
+  { ...screen, screen: 2 },
+  {
+    ...verdict,
+    verdicts: [
+      { thread: 'one', attached: true, position_state: 'other-screen' },
+    ],
+  },
   { ...geometry, rect: { ...element.rect, top: Infinity } },
   { ...element, selector: 'x'.repeat(4097) },
   { ...element, rect: { ...element.rect, top: Infinity } },
@@ -135,4 +144,16 @@ test('oversized observations require exactly a valid hash and bounded excerpt', 
   ])
     expect(validPreviewObservation({ ...large, ...patch })).toBe(false)
   expect(validPreviewObservation({ ...element, ownText: '' })).toBe(true)
+})
+
+test('admits a comment on another screen as unattached', () => {
+  expect(
+    validPreviewObservation({
+      ...verdict,
+      verdicts: [
+        { thread: 'one', attached: false, position_state: 'other-screen' },
+      ],
+    }),
+  ).toBe(true)
+  expect(validPreviewObservation({ ...screen, screen: '' })).toBe(true)
 })

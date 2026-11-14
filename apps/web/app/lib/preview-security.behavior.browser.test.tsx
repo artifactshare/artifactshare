@@ -112,3 +112,26 @@ test('actual share popup and mobile keyboard paths retain readable fields, error
       expect(contrast, JSON.stringify(result)).toBeGreaterThanOrEqual(4.5)
   }
 }, 60000)
+
+test('interactive documents can be operated and annotated per screen', async () => {
+  const result = await server.commands.previewSecurity('screens')
+  const routeCheck = result.checks[4]
+  // Only WebKit forbids the History API in the opaque-origin sandbox.
+  expect(routeCheck).toBe(
+    server.browser === 'webkit'
+      ? 'history-api-unavailable'
+      : 'restore-history-route',
+  )
+  expect(result.checks).toEqual([
+    'alt-click-operates',
+    'same-selector-separate-screens',
+    'restore-hash-screen',
+    'in-page-fragment',
+    routeCheck,
+    'unrestorable-orphaned',
+    'reload-keeps-screen',
+    'highlights-per-screen',
+    'restore-default-screen',
+    'restore-superseded',
+  ])
+}, 90000)

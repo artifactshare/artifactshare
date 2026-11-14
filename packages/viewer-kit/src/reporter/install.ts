@@ -19,7 +19,14 @@ import {
   sendOutsidePointerDown,
 } from './badges.js'
 import { clearMarks, applyHighlights } from './highlights.js'
-import { onAnnotateHover, onAnnotateClick, verifyAnchors } from './annotate.js'
+import { installScreenTracking } from './screen.js'
+import {
+  clearAnnotateHover,
+  markOperating,
+  onAnnotateHover,
+  onAnnotateClick,
+  verifyAnchors,
+} from './annotate.js'
 import { prepareLinkClick, finishLinkClick } from './links.js'
 import { createTextAnchorEngine } from './anchor-engine.js'
 
@@ -39,6 +46,7 @@ export function installReporter(win: ReporterWindow) {
     ctx.documentToken = ''
   }
   installHashTracking(ctx)
+  installScreenTracking(ctx)
   installAnchorObserver(ctx)
   ctx.primordials.addEventListener(ctx.win, 'pagehide', function (event) {
     if (readEventValue(ctx, ctx.primordials.persistedGet, event) === true)
@@ -83,9 +91,29 @@ export function installReporter(win: ReporterWindow) {
       onAnnotateClick(ctx, event),
     true,
   )
+  // Mark an Alt/Option click as operating the page before any document
+  // listener runs (window capture comes first), so clicks a page handler
+  // causes from there are not picks either.
+  ctx.primordials.addEventListener(
+    ctx.win,
+    'click',
+    (event: MouseEvent) => markOperating(ctx, event),
+    true,
+  )
+  // Holding Alt/Option means the next click operates the page.
+  ctx.doc.addEventListener('keydown', function (event) {
+    if (event.key === 'Alt' && ctx.annotateModeEnabled) clearAnnotateHover(ctx)
+  })
   installMessageListener(ctx)
   // Queued selection work belongs to the location it was started on.
-  const queueSelection = function () {
+  const queueSelection = function (event: Event) {
+    // An Alt/Option click operates the page; it does not offer a selection.
+    if (
+      ctx.previewCapability &&
+      ((event.type === 'mouseup' && (event as MouseEvent).altKey) ||
+        (event as KeyboardEvent).key === 'Alt')
+    )
+      return
     let generation = ctx.locationGeneration
     ctx.win.setTimeout(() => {
       if (generation === ctx.locationGeneration) sendSelection(ctx)
