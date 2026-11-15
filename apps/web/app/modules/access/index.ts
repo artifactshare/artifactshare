@@ -1,5 +1,6 @@
 export {
   facts,
+  activeLinkExpiry,
   projectAccessAllowed,
   projectAccessAllowedSql,
   projectAccessFactSelections,
