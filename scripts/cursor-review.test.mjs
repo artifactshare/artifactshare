@@ -14,6 +14,15 @@ const base = 'b'.repeat(40)
 const root = '/repo'
 
 function cleanGit(_file, args) {
+  if (args[0] === 'log') {
+    assert.deepEqual(args, [
+      'log',
+      '--reverse',
+      '--format=### %h%n%n%B',
+      `${base}..${head}`,
+    ])
+    return '### aaaaaaa\n\nBranch workaround record.\n'
+  }
   if (args[0] === 'status') return ''
   if (args[0] === 'merge-base') return `${base}\n`
   if (args[0] === 'diff') return 'diff --git a/file b/file\n+change\n'
@@ -41,6 +50,7 @@ test('uses Cursor Ask mode for a read-only review', () => {
     base: defaultBase,
     head,
     diff: 'diff --git a/file b/file',
+    commitMessages: 'Branch workaround record.',
   })
   const request = invocation({
     model: defaultModel,
@@ -99,6 +109,10 @@ test('runs Cursor review, prints its result, and reports wall time', () => {
   assert.equal(calls[0][0], 'cursor-agent')
   assert.equal(calls[0][2].cwd, root)
   assert.match(calls[0][2].input, /diff --git/u)
+  assert.match(
+    calls[0][2].input,
+    /## Commit messages\n> ### aaaaaaa\n> \n> Branch workaround record\./u,
+  )
   assert.match(calls[0][2].input, new RegExp(`${base}\\.\\.\\.${head}`))
   assert.deepEqual(logs, ['GO'])
   assert.deepEqual(errors, [
@@ -123,6 +137,7 @@ test('requires a clean checkout and rejects checkout mutation', () => {
   let headReads = 0
   const changed = main({
     exec: (_file, args) => {
+      if (args[0] === 'log') return 'Change message'
       if (args[0] === 'status') return ''
       if (args[0] === 'merge-base') return `${head}\n`
       if (args[0] === 'diff') return 'diff --git a/file b/file\n+change\n'

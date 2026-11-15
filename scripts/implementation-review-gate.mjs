@@ -354,14 +354,23 @@ async function main({
       throw new Error(
         'Test change evidence does not match the fixed review range.',
       )
+    const commitBase = run('git', ['merge-base', defaultBase, head]).trim()
     const commitMessages = run('git', [
       'log',
       '--reverse',
       '--format=### %h%n%n%B',
-      `${target.base}..${head}`,
+      `${commitBase}..${head}`,
     ])
     // Quote Git evidence so commit headings and lists are not context sections.
     const quotedCommitMessages = commitMessages
+      .replaceAll(
+        '--- CURRENT CHANGE CONTEXT ---',
+        '[escaped: CURRENT CHANGE CONTEXT]',
+      )
+      .replaceAll(
+        '--- END CURRENT CHANGE CONTEXT ---',
+        '[escaped: END CURRENT CHANGE CONTEXT]',
+      )
       .split(/\r?\n/u)
       .map((line) => `> ${line}`)
       .join('\n')

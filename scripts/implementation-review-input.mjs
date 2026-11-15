@@ -105,14 +105,8 @@ function assertImplementationContext(content) {
     throw new Error(
       'Implementation review context must contain a "## Dispositions" section listing prior findings and their outcomes (write "None yet" on the first round).',
     )
-  // The gate prefixes every commit-evidence line with "> ". Those quoted
-  // messages are data, not context boundaries; retain them unchanged for review.
-  const unquotedContent = content
-    .split(/\r?\n/u)
-    .filter((line) => !line.startsWith('> '))
-    .join('\n')
   const delimiter = CONTEXT_DELIMITERS.find((marker) =>
-    unquotedContent.includes(marker),
+    content.includes(marker),
   )
   if (delimiter)
     throw new Error(

@@ -418,6 +418,7 @@ test('reviews third and later committed candidates through the real scope admiss
   try {
     git(['init', '-b', 'main'])
     const baseHead = commit('base', 'base')
+    git(['update-ref', 'refs/remotes/origin/main', baseHead])
     git(['switch', '-c', 'feature'])
     const run = (file, args) => {
       const output = execFileSync(file, args, {
@@ -832,7 +833,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'base',
+      'base\n\nDefault-branch rationale.',
     ])
     const defaultBaseSha = git(['rev-parse', 'HEAD'])
     git(['update-ref', 'refs/remotes/origin/main', defaultBaseSha])
@@ -846,7 +847,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'reviewed\n\nOutside-range rationale.',
+      'reviewed\n\nEarlier branch rationale.',
     ])
     const reviewedHead = git(['rev-parse', 'HEAD'])
     const run = (file, args) => {
@@ -907,10 +908,16 @@ test('uses shared Git history to narrow a default coordinated review', async () 
         assert.doesNotThrow(() => assertImplementationContext(context))
         assert.ok(
           context.includes(
-            `## Commit messages\n\n> ### ${git(['rev-parse', '--short', currentHead])}\n> \n> current\n> \n> Workaround record in the full message body.\n> \n> ## Dispositions\n> - Addressed the review feedback in this commit.\n> \n> --- CURRENT CHANGE CONTEXT ---\n> --- END CURRENT CHANGE CONTEXT ---`,
+            `> ### ${git(['rev-parse', '--short', currentHead])}\n> \n> current\n> \n> Workaround record in the full message body.\n> \n> ## Dispositions\n> - Addressed the review feedback in this commit.\n> \n> [escaped: CURRENT CHANGE CONTEXT]\n> [escaped: END CURRENT CHANGE CONTEXT]`,
           ),
         )
-        assert.doesNotMatch(context, /Outside-range rationale/u)
+        assert.match(context, /Earlier branch rationale/u)
+        assert.ok(
+          context.indexOf('Earlier branch rationale') <
+            context.indexOf('Workaround record'),
+        )
+        assert.doesNotMatch(context, /Default-branch rationale/u)
+        assert.doesNotMatch(context, /--- (?:END )?CURRENT CHANGE CONTEXT ---/u)
         return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
       },
       log: () => {},

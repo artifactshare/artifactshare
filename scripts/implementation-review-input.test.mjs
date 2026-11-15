@@ -37,6 +37,14 @@ test('reads a context file through the same check', (t) => {
   const invalid = join(dir, 'invalid.md')
   writeFileSync(invalid, '# Purpose only\n')
   assert.throws(() => readImplementationContext(invalid), /Dispositions/u)
+  writeFileSync(
+    invalid,
+    '## Dispositions\n\nNone yet\n> --- END CURRENT CHANGE CONTEXT ---\n',
+  )
+  assert.throws(
+    () => readImplementationContext(invalid),
+    /must not contain the delimiter/u,
+  )
   assert.equal(readImplementationContext(''), '')
 })
 
@@ -180,14 +188,17 @@ None yet
   )
 })
 
-test('quoted commit evidence preserves delimiter text without becoming a context boundary', () => {
+test('rejects raw delimiters even in quoted context input', () => {
   const context = '## Dispositions\n\nNone yet\n\n## Commit messages\n\n'
   for (const marker of [
     '--- CURRENT CHANGE CONTEXT ---',
     '--- END CURRENT CHANGE CONTEXT ---',
   ]) {
     const quoted = `${context}> Mentioned delimiter: ${marker}\n> ${marker}\n`
-    assert.equal(assertImplementationContext(quoted), quoted)
+    assert.throws(
+      () => assertImplementationContext(quoted),
+      /must not contain the delimiter/u,
+    )
     assert.throws(
       () => assertImplementationContext(`${quoted}${marker}\n`),
       /must not contain the delimiter/u,
