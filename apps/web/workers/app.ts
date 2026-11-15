@@ -75,8 +75,13 @@ const requestHandler = createRequestHandler(
 
 const MAINTENANCE_FLAG_KEY = 'maintenance'
 
+export type ScheduledWorkerEnv = Pick<
+  Cloudflare.Env,
+  'BETTER_AUTH_URL' | 'SLACK_ALERT_WEBHOOK_URL' | 'BUCKET' | keyof BillingEnv
+>
+
 function reconciliationOptionsFromEnv(
-  env: Cloudflare.Env,
+  env: Pick<Cloudflare.Env, keyof BillingEnv>,
 ): ReconciliationOptions {
   const options: ReconciliationOptions = {}
   if (env.STRIPE_SECRET_KEY) {
@@ -106,7 +111,7 @@ h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
 </html>`
 
 export default {
-  scheduled(controller, env, ctx) {
+  scheduled(controller, env: ScheduledWorkerEnv, ctx) {
     // createDb() may throw synchronously if env.DB is misbound. Wrap it inside
     // the promise so any failure flows through ctx.waitUntil and surfaces on
     // the dashboard as a failed cron, not a silent success.
