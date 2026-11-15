@@ -305,20 +305,23 @@ export function projectAccessAllowedSql(
   )`
 }
 
-function activeLinkExpiry(now: string) {
-  return sql<boolean>`(shareables.link_expires_at IS NULL OR (
-    strftime('%Y-%m-%dT%H:%M:%S', shareables.link_expires_at) = substr(shareables.link_expires_at, 1, 19)
-    AND substr(shareables.link_expires_at, -1) = 'Z'
-    AND substr(shareables.link_expires_at, 12, 2) BETWEEN '00' AND '23'
+export function activeLinkExpiry(
+  now: string,
+  column = sql.ref('shareables.link_expires_at'),
+) {
+  return sql<boolean>`(${column} IS NULL OR (
+    strftime('%Y-%m-%dT%H:%M:%S', ${column}) = substr(${column}, 1, 19)
+    AND substr(${column}, -1) = 'Z'
+    AND substr(${column}, 12, 2) BETWEEN '00' AND '23'
     AND (
-      length(shareables.link_expires_at) = 20
+      length(${column}) = 20
       OR (
-        length(shareables.link_expires_at) > 21
-        AND substr(shareables.link_expires_at, 20, 1) = '.'
-        AND substr(shareables.link_expires_at, 21, length(shareables.link_expires_at) - 21) NOT GLOB '*[^0-9]*'
+        length(${column}) > 21
+        AND substr(${column}, 20, 1) = '.'
+        AND substr(${column}, 21, length(${column}) - 21) NOT GLOB '*[^0-9]*'
       )
     )
-    AND julianday(shareables.link_expires_at) > julianday(${now})
+    AND julianday(${column}) > julianday(${now})
   ))`
 }
 
