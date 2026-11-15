@@ -60,6 +60,7 @@
     "scripts/check-dependency-overrides.mjs",
     "scripts/check-dependency-overrides.test.mjs",
     "scripts/check-npm-reserved-package.mjs",
+    "scripts/measure-workspace-search.mjs",
     "scripts/audit-ai-search-eligibility.mjs",
     "scripts/audit-ai-search-eligibility.test.mjs",
     "scripts/billing-regression.mjs",

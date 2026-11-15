@@ -304,6 +304,28 @@ export async function listProjectsForIndex(
     joined: Boolean(row.joined),
   }))
 }
+/** Bounded name-only projection using the same live project access predicate. */
+export function suggestProjects(
+  db: Db,
+  userId: string,
+  query: string,
+  includeArchived = false,
+) {
+  return db
+    .selectFrom('artifact_containers as c')
+    .innerJoin('users as access_viewer', (join) =>
+      join.on('access_viewer.id', '=', userId),
+    )
+    .select(['c.id', 'c.name'])
+    .where(projectAccessAllowedSql('c', 'access_viewer'))
+    .$if(!includeArchived, (q) => q.where('c.archived_at', 'is', null))
+    .where(sql<boolean>`instr(lower(c.name),lower(${query}))>0`)
+    .orderBy('c.updated_at', 'desc')
+    .orderBy('c.id')
+    .limit(3)
+    .execute()
+}
+
 export async function listJoinedProjectsForDropdown(
   db: Db,
   user: SessionUser,

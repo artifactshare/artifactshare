@@ -37,6 +37,10 @@ const expectedMiddleware: Record<string, AuthMiddleware> = {
   'api.project-candidates.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.share-defaults.tsx': 'requireUserApiMiddleware',
   'api.projects.$id.tsx': 'requireUserApiMiddleware',
+  'api.search.tsx': 'requireUserApiMiddleware',
+  'api.search-suggestions.tsx': 'requireUserApiMiddleware',
+  'api.search-logs.tsx': 'requireUserApiMiddleware',
+  'api.search-logs.$id.opens.tsx': 'requireUserApiMiddleware',
   'api.search-palette.tsx': 'requireUserApiMiddleware',
   'api.share-recipient-candidates.tsx': 'requireUserApiMiddleware',
   'api.shareables.$id.abuse-check.tsx': 'requireUserApiMiddleware',
@@ -85,7 +89,7 @@ function importedAuthMiddleware(source: string): AuthMiddleware | null {
 
 function declaredMiddleware(source: string): AuthMiddleware | null {
   const exportMatch = source.match(
-    /export\s+const\s+middleware\s*=\s*\[\s*(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\s*\]/,
+    /export\s+const\s+middleware\s*=\s*\[[^\]]*?\b(requireUserMiddleware|requireUserApiMiddleware|requireUserApiWithBearerMiddleware|requireBridgeBearerMiddleware)\b[^\]]*\]/,
   )
   return (exportMatch?.[1] as AuthMiddleware | undefined) ?? null
 }

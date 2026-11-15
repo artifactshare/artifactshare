@@ -1,3 +1,14 @@
+import {
+  prepareQuery,
+  bindAllowedIds,
+  SearchCapacityError,
+  type IndexSearchResult,
+  literalKey,
+  groupKey,
+  excerpt,
+  type IndexSearchInput,
+  type SearchTier,
+} from '../app/services/search-index/query'
 import { DurableObject } from 'cloudflare:workers'
 import { createDb } from '../app/services/db.server'
 import {
@@ -15,8 +26,12 @@ import {
 } from '../app/services/search-index/extract'
 import {
   INDEX_FORMAT_VERSION,
+  BM25_WEIGHTS,
+  KATAKANA_WEIGHT,
+  katakanaRuns,
   normalizeSearchText,
   packTokens,
+  phraseSeam,
   snippet,
   splitUtf8,
   COLUMN_BYTES,
@@ -62,12 +77,308 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
       CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, document INTEGER NOT NULL, ordinal INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS chunks_document ON chunks(document);
       CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(title, body, script);
+      CREATE VIRTUAL TABLE IF NOT EXISTS search_runs USING fts5(katakana);
+      CREATE VIRTUAL TABLE IF NOT EXISTS search_seams USING fts5(title, body, script);
       CREATE TABLE IF NOT EXISTS snippets (document INTEGER NOT NULL, ordinal INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(document, ordinal));
       CREATE VIEW IF NOT EXISTS serving_chunks AS SELECT c.id, d.shareable, d.version, d.path FROM chunks c JOIN documents d ON d.id=c.document JOIN active a ON a.id=d.shareable AND a.generation=d.generation;
       CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
       INSERT OR IGNORE INTO schema_version(version) VALUES(1);
     `)
+    const columns = new Set(
+      ctx.storage.sql
+        .exec<{ name: string }>('PRAGMA table_info(documents)')
+        .toArray()
+        .map((row) => row.name),
+    )
+    if (!columns.has('title_key'))
+      ctx.storage.sql.exec(
+        "ALTER TABLE documents ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
+      )
+    if (!columns.has('activity_at'))
+      ctx.storage.sql.exec(
+        "ALTER TABLE documents ADD COLUMN activity_at TEXT NOT NULL DEFAULT ''",
+      )
+    if (!columns.has('group_key'))
+      ctx.storage.sql.exec(
+        "ALTER TABLE documents ADD COLUMN group_key TEXT NOT NULL DEFAULT ''",
+      )
+    ctx.storage.sql.exec(
+      'CREATE INDEX IF NOT EXISTS documents_group_key ON documents(group_key)',
+    )
+    // Remove the prior persisted query cache and its invalidation triggers.
+    for (const table of ['documents', 'chunks', 'active'])
+      for (const event of ['INSERT', 'UPDATE', 'DELETE'])
+        ctx.storage.sql.exec(
+          `DROP TRIGGER IF EXISTS invalidate_query_${table}_${event}`,
+        )
+    ctx.storage.sql
+      .exec(`DROP TABLE IF EXISTS query_results; DROP TABLE IF EXISTS query_cache; DROP TABLE IF EXISTS query_allowed_ids;
+      CREATE INDEX IF NOT EXISTS chunks_document_ordinal ON chunks(document,ordinal);`)
   }
+  /** Build one SQL ranking over the requested document set, never JS-wide row arrays. */
+  #matchingPages(input: IndexSearchInput, details = false, titleOnly = false) {
+    const query = prepareQuery(input.query)
+    const filters: string[] = []
+    const bindings: Array<string | number> = []
+    if (titleOnly) {
+      filters.push('instr(d.title_key,?)>0')
+      bindings.push(query.literal)
+    }
+    if (input.allowedIds !== undefined) {
+      const arrays = bindAllowedIds(input.allowedIds)
+      filters.push(
+        '(' +
+          arrays
+            .map(() => 'd.shareable IN (SELECT value FROM json_each(?))')
+            .join(' OR ') +
+          ')',
+      )
+      bindings.push(...arrays)
+    }
+    for (const [column, values] of [
+      ['d.owner', input.ownerUserIds],
+      ['d.container', input.containerIds],
+    ] as const)
+      if (values !== undefined) {
+        filters.push(`${column} IN (SELECT value FROM json_each(?))`)
+        bindings.push(JSON.stringify(values))
+      }
+    if (input.groupKeys) {
+      filters.push('d.group_key IN (SELECT value FROM json_each(?))')
+      bindings.push(JSON.stringify(input.groupKeys))
+    }
+    if (input.updated?.from) {
+      filters.push("strftime('%Y-%m-%dT%H:%M:%fZ',d.activity_at)>=?")
+      bindings.push(input.updated.from)
+    }
+    if (input.updated?.to) {
+      filters.push("strftime('%Y-%m-%dT%H:%M:%fZ',d.activity_at)<?")
+      bindings.push(input.updated.to)
+    }
+    if (!query.blank && !query.terms.length) filters.push('0')
+    const order =
+      query.blank || input.sort === 'newest'
+        ? 'activityAt DESC,id'
+        : 'tierNumber,score,id'
+    const phrase =
+      '{title body script}: "' + query.phrase.replaceAll('"', '""') + '"'
+    const statement = `WITH filtered AS MATERIALIZED (
+      SELECT d.id AS document,d.shareable AS id,d.path,d.title_key,d.group_key,coalesce(strftime('%Y-%m-%dT%H:%M:%fZ',d.activity_at),'') AS activityAt
+      FROM documents d JOIN active a ON a.id=d.shareable AND a.generation=d.generation ${filters.length ? 'WHERE ' + filters.join(' AND ') : ''}
+    ), token_hits AS MATERIALIZED (
+      SELECT search.rowid AS chunk,t.key AS term,bm25(search,?,?,?) AS score
+      FROM json_each(?) t CROSS JOIN search WHERE search MATCH t.value
+    ), run_hits AS MATERIALIZED (
+      SELECT search_runs.rowid AS chunk,t.key AS term,bm25(search_runs,?) AS score
+      FROM json_each(?) t CROSS JOIN search_runs WHERE search_runs MATCH t.value
+    ), phrase_hits AS MATERIALIZED (
+      SELECT rowid AS chunk FROM search WHERE search MATCH ?
+    ), seam_hits AS MATERIALIZED (
+      SELECT rowid AS chunk FROM search_seams WHERE search_seams MATCH ?
+    ), phrase_documents AS MATERIALIZED (
+      SELECT DISTINCT c.document FROM phrase_hits h JOIN chunks c ON c.id=h.chunk
+      UNION SELECT c.document FROM seam_hits h JOIN chunks c ON c.id=h.chunk
+    ), raw_hits AS (
+      SELECT c.document,h.term,h.score FROM token_hits h JOIN chunks c ON c.id=h.chunk JOIN filtered d ON d.document=c.document
+      UNION ALL
+      SELECT c.document,h.term,h.score FROM run_hits h JOIN chunks c ON c.id=h.chunk JOIN filtered d ON d.document=c.document
+    ), evidence AS (
+      SELECT document,count(DISTINCT term) AS terms,sum(score) AS score FROM raw_hits GROUP BY document
+    ), candidates AS MATERIALIZED (
+      SELECT d.*,coalesce(e.score,0) AS score,instr(d.title_key,?)>0 AS literal
+      FROM filtered d LEFT JOIN evidence e ON e.document=d.document
+      WHERE ${query.blank ? '1 OR' : ''} ${input.any ? 'e.terms>0' : 'e.terms=?'} OR ${query.blank ? '0' : 'instr(d.title_key,?)>0'}
+    ), tiers AS (
+      SELECT d.*,CASE WHEN ${input.any ? '1' : '0'} THEN 3 WHEN ${query.blank ? '0' : 'd.literal'} THEN 0
+      WHEN ${titleOnly ? '0' : 'p.document IS NOT NULL'} THEN 1 ELSE 2 END AS tierNumber
+      FROM candidates d ${titleOnly ? '' : 'LEFT JOIN phrase_documents p ON p.document=d.document'}
+    ), pages AS (
+      SELECT *,row_number() OVER(PARTITION BY id ORDER BY tierNumber,score,path) AS page FROM tiers
+    )${
+      !details && input.maxResults !== undefined
+        ? `, top_pages AS MATERIALIZED (
+      SELECT * FROM pages WHERE page=1 ORDER BY ${order} LIMIT ?
+    )`
+        : ''
+    } SELECT ${details ? '' : `row_number() OVER(ORDER BY ${order}) AS rank,`}id,document,path,
+      CASE tierNumber WHEN 0 THEN 'title' WHEN 1 THEN 'phrase' WHEN 2 THEN 'all' ELSE 'any' END AS tier,activityAt
+      ${input.groupKeys ? ',group_key AS groupKey,row_number() OVER(PARTITION BY group_key ORDER BY ' + order + ') AS groupRank' : ''}
+      FROM ${!details && input.maxResults !== undefined ? 'top_pages' : 'pages WHERE page=1'} ${details ? '' : input.maxResults !== undefined ? 'ORDER BY rank' : 'ORDER BY rank LIMIT ?'}`
+    // Keep binding order explicit: MATCH terms are data, never query syntax from callers.
+    return {
+      statement,
+      bindings: [
+        ...bindings,
+        ...BM25_WEIGHTS,
+        JSON.stringify(query.expressions),
+        KATAKANA_WEIGHT,
+        JSON.stringify(query.runExpressions),
+        phrase,
+        phrase,
+        query.literal,
+        ...(input.any ? [] : [query.terms.length]),
+        ...(query.blank ? [] : [query.literal]),
+        ...(details ? [] : [input.maxResults ?? -1]),
+      ],
+    }
+  }
+
+  search(input: IndexSearchInput): IndexSearchResult {
+    try {
+      return this.searchPage(input)
+    } catch (error) {
+      if (error instanceof SearchCapacityError)
+        return { error: { code: 'search_capacity_exceeded' } }
+      throw error
+    }
+  }
+  private searchPage(input: IndexSearchInput) {
+    const { cursor = 0, limit: requestedLimit = 2000, ...criteria } = input
+    const limit = Math.max(1, Math.min(2000, requestedLimit))
+    const read = (titleOnly: boolean) => {
+      const query = this.#matchingPages(criteria, false, titleOnly)
+      return this.ctx.storage.sql
+        .exec<{
+          id: string
+          tier: SearchTier
+          rank: number
+          activityAt: string
+        }>(
+          `SELECT id,tier,rank,activityAt FROM (${query.statement}) WHERE rank>? ORDER BY rank LIMIT ?`,
+          ...query.bindings,
+          cursor,
+          limit + 1,
+        )
+        .toArray()
+    }
+    // Literal-title hits precede every other tier. A full window plus its witness
+    // proves that lower tiers cannot change this bounded relevance page.
+    const titles =
+      criteria.maxResults !== undefined &&
+      criteria.sort !== 'newest' &&
+      !criteria.any &&
+      criteria.query.trim()
+        ? read(true)
+        : []
+    const rows = titles.length > limit ? titles : read(false)
+    return {
+      items: rows.slice(0, limit),
+      nextCursor: rows.length > limit ? cursor + limit : null,
+      ...(input.includeActiveDocumentCount
+        ? {
+            activeDocumentCount: this.ctx.storage.sql
+              .exec<{ n: number }>('SELECT count(*) AS n FROM active')
+              .one().n,
+          }
+        : {}),
+    }
+  }
+
+  groupMembers(input: IndexSearchInput, keys: string[]): IndexSearchResult {
+    try {
+      const query = this.#matchingPages({ ...input, groupKeys: keys })
+      const cursor = Math.max(0, input.cursor ?? 0)
+      const end = cursor + 2000
+      // Per-key pages let the caller count authorized members, not index rows.
+      const rows = this.ctx.storage.sql
+        .exec<{
+          id: string
+          tier: SearchTier
+          rank: number
+          activityAt: string
+          groupKey: string
+          groupRank: number
+        }>(
+          `SELECT * FROM (${query.statement}) WHERE groupRank>? AND groupRank<=?`,
+          ...query.bindings,
+          cursor,
+          end + 1,
+        )
+        .toArray()
+      return {
+        items: rows
+          .filter((row) => row.groupRank <= end)
+          .map(({ id, tier, rank, activityAt }) => ({
+            id,
+            tier,
+            rank,
+            activityAt,
+          })),
+        nextCursor: null,
+        incompleteGroupKeys: [
+          ...new Set(
+            rows
+              .filter((row) => row.groupRank > end)
+              .map((row) => row.groupKey),
+          ),
+        ],
+      }
+    } catch (error) {
+      if (error instanceof SearchCapacityError)
+        return { error: { code: 'search_capacity_exceeded' } }
+      throw error
+    }
+  }
+
+  details(
+    input: IndexSearchInput,
+    ids: string[],
+  ): Array<{ id: string; path: string; excerpt: string }> {
+    const query = this.#matchingPages({ ...input, allowedIds: ids }, true)
+    const rows = this.ctx.storage.sql
+      .exec<{ id: string; document: number; path: string }>(
+        query.statement,
+        ...query.bindings,
+      )
+      .toArray()
+    return rows.map((row) => {
+      const body = this.ctx.storage.sql
+        .exec<{ body: string }>(
+          'SELECT body FROM snippets WHERE document=? ORDER BY ordinal',
+          row.document,
+        )
+        .toArray()
+        .map((part) => part.body)
+        .join('')
+      return { id: row.id, path: row.path, excerpt: excerpt(body, input.query) }
+    })
+  }
+
+  /** Shared ingestion writer; protected so the test subclass uses identical FTS seams. */
+  protected writeChunk(document: number, ordinal: number, columns: string[][]) {
+    this.ctx.storage.transactionSync(() => {
+      const id = this.ctx.storage.sql
+        .exec<{ id: number }>(
+          'INSERT INTO chunks(document,ordinal) VALUES(?,?) RETURNING id',
+          document,
+          ordinal,
+        )
+        .one().id
+      this.ctx.storage.sql.exec(
+        'INSERT INTO search(rowid,title,body,script) VALUES(?,?,?,?)',
+        id,
+        columns[0][ordinal] ?? '',
+        columns[1][ordinal] ?? '',
+        columns[2][ordinal] ?? '',
+      )
+      if (ordinal > 0)
+        this.ctx.storage.sql.exec(
+          'INSERT INTO search_seams(rowid,title,body,script) VALUES(?,?,?,?)',
+          id,
+          ...columns
+            .slice(0, 3)
+            .map((column) =>
+              phraseSeam(column[ordinal - 1] ?? '', column[ordinal] ?? ''),
+            ),
+        )
+      this.ctx.storage.sql.exec(
+        'INSERT INTO search_runs(rowid,katakana) VALUES(?,?)',
+        id,
+        columns[3][ordinal] ?? '',
+      )
+    })
+  }
+
   private state(): State | undefined {
     return this.ctx.storage.sql
       .exec<State>(
@@ -434,7 +745,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
           stagedDocument?.id ??
           this.ctx.storage.sql
             .exec<{ id: number }>(
-              'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title) VALUES(?,?,?,?,?,?,?,?) RETURNING id',
+              'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,group_key) VALUES(?,?,?,?,?,?,?,?,?,?,?) RETURNING id',
               source.id,
               source.current_version_id!,
               page.path,
@@ -443,10 +754,20 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
               source.container_id,
               source.updated_at,
               normalizeSearchText(displayTitle(source)),
+              literalKey(displayTitle(source)),
+              source.activity_at,
+              groupKey(displayTitle(source)),
             )
             .one().id
         const columns = [displayTitle(source), text.body, text.script].map(
           (value) => packTokens(normalizeSearchText(value)),
+        )
+        columns.push(
+          packTokens(
+            katakanaRuns(
+              [displayTitle(source), text.body, text.script].join(' '),
+            ),
+          ),
         )
         const count = Math.max(1, ...columns.map((column) => column.length))
         this.ctx.storage.sql.exec(
@@ -463,22 +784,7 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         for (let ordinal = written; ordinal < count; ordinal++) {
           if (chunkBudget === 0) return false
           chunkBudget--
-          this.ctx.storage.transactionSync(() => {
-            const id = this.ctx.storage.sql
-              .exec<{ id: number }>(
-                'INSERT INTO chunks(document,ordinal) VALUES(?,?) RETURNING id',
-                document,
-                ordinal,
-              )
-              .one().id
-            this.ctx.storage.sql.exec(
-              'INSERT INTO search(rowid,title,body,script) VALUES(?,?,?,?)',
-              id,
-              columns[0][ordinal] ?? '',
-              columns[1][ordinal] ?? '',
-              columns[2][ordinal] ?? '',
-            )
-          })
+          this.writeChunk(document, ordinal, columns)
         }
         this.ctx.storage.sql.exec(
           'DELETE FROM snippets WHERE document=?',
@@ -549,6 +855,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .toArray()
       for (const row of rows) {
         this.ctx.storage.sql.exec('DELETE FROM search WHERE rowid=?', row.id)
+        this.ctx.storage.sql.exec(
+          'DELETE FROM search_runs WHERE rowid=?',
+          row.id,
+        )
+        this.ctx.storage.sql.exec(
+          'DELETE FROM search_seams WHERE rowid=?',
+          row.id,
+        )
         this.ctx.storage.sql.exec('DELETE FROM chunks WHERE id=?', row.id)
       }
       this.ctx.storage.sql.exec(

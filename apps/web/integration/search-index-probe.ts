@@ -1,9 +1,33 @@
+import {
+  literalKey,
+  groupKey,
+  type IndexSearchInput,
+} from '../app/services/search-index/query'
+import {
+  seedSearchBenchmark,
+  measureSearchBenchmark,
+} from './search-benchmark-worker'
+import {
+  normalizeSearchText,
+  katakanaRuns,
+  INDEX_FORMAT_VERSION,
+} from '../app/services/search-index/normalize'
 import { WorkspaceSearchIndex as Index } from '../workers/workspace-search-index'
 
+export type SearchProbeDocument = {
+  id: string
+  title: string
+  chunks: Array<{ body: string; script?: string }>
+  path?: string
+  generation?: string
+  active?: boolean
+  activityAt?: string
+}
 type Point = 'registry' | 'idle' | 'put' | 'cleanup'
 
 /** Test-only storage gates: the implementation still runs against real D1, R2 and DO SQL. */
 export class WorkspaceSearchIndex extends Index {
+  private readonly constructorChanges: number
   private readonly gates: Map<
     Point,
     { reached: boolean; release: () => void; wait: Promise<void> }
@@ -80,10 +104,134 @@ export class WorkspaceSearchIndex extends Index {
         return typeof value === 'function' ? value.bind(target) : value
       },
     })
+    const before = ctx.storage.sql
+      .exec<{ n: number }>('SELECT total_changes() AS n')
+      .one().n
     super(ctx, { ...env, DB: database, BUCKET: bucket })
+    this.constructorChanges =
+      ctx.storage.sql.exec<{ n: number }>('SELECT total_changes() AS n').one()
+        .n - before
     this.gates = gates
     this.failures = failures
     this.operations = operations
+  }
+  queryState() {
+    return {
+      constructorChanges: this.constructorChanges,
+      changes: this.ctx.storage.sql
+        .exec<{ n: number }>('SELECT total_changes() AS n')
+        .one().n,
+    }
+  }
+  seedDocuments(documents: SearchProbeDocument[]): void {
+    this.ctx.storage.transactionSync(() => {
+      for (const row of documents) {
+        const generation = row.generation ?? 'current'
+        const document = this.ctx.storage.sql
+          .exec<{ id: number }>(
+            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,group_key,complete) VALUES(?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
+            row.id,
+            'version',
+            row.path ?? 'index.html',
+            generation,
+            'owner',
+            'home',
+            '2026-09-15T00:00:00.000Z',
+            normalizeSearchText(row.title),
+            literalKey(row.title),
+            row.activityAt ?? '2026-09-15T00:00:00.000Z',
+            groupKey(row.title),
+          )
+          .one().id
+        if (row.active !== false)
+          this.ctx.storage.sql.exec(
+            'INSERT OR REPLACE INTO active(id,generation,fingerprint,content,format) VALUES(?,?,?,?,?)',
+            row.id,
+            generation,
+            'seed',
+            'seed',
+            INDEX_FORMAT_VERSION,
+          )
+        const columns = [
+          [normalizeSearchText(row.title)],
+          row.chunks.map((text) => normalizeSearchText(text.body)),
+          row.chunks.map((text) => normalizeSearchText(text.script ?? '')),
+          row.chunks.map((text) =>
+            katakanaRuns([row.title, text.body, text.script ?? ''].join(' ')),
+          ),
+        ]
+        for (const [ordinal, text] of row.chunks.entries()) {
+          this.writeChunk(document, ordinal, columns)
+          this.ctx.storage.sql.exec(
+            'INSERT INTO snippets(document,ordinal,body) VALUES(?,?,?)',
+            document,
+            ordinal,
+            text.body,
+          )
+        }
+      }
+    })
+  }
+  seedSearch(
+    workspace: string,
+    offset: number,
+    count: number,
+    size: number,
+  ): void {
+    this.ctx.storage.transactionSync(() => {
+      for (let i = offset; i < offset + count; i++) {
+        const id = `${workspace}-${i}`
+        const key = (size >= 4 && i === size - 2 ? 0 : i)
+          .toString(26)
+          .replace(/[0-9a-p]/g, (c) =>
+            String.fromCharCode(97 + parseInt(c, 26)),
+          )
+        const title = `alpha ${key}`
+        const body = `alpha payload body ${i % 100 === 0 || (size >= 4 && i === size - 2) ? 'rareword partner' : ''}`
+        const document = this.ctx.storage.sql
+          .exec<{ id: number }>(
+            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,group_key,complete) VALUES(?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
+            id,
+            'version',
+            'index.html',
+            'current',
+            `${workspace}-${i === size - 1 ? 'owner' : 'actor'}`,
+            `${workspace}-home`,
+            '2026-09-15T00:00:00.000Z',
+            normalizeSearchText(title),
+            title,
+            '2026-09-15T00:00:00.000Z',
+            groupKey(title),
+          )
+          .one().id
+        this.ctx.storage.sql.exec(
+          'INSERT INTO active(id,generation,fingerprint,content,format) VALUES(?,?,?,?,?)',
+          id,
+          'current',
+          'seed',
+          'seed',
+          INDEX_FORMAT_VERSION,
+        )
+        const chunk = this.ctx.storage.sql
+          .exec<{ id: number }>(
+            'INSERT INTO chunks(document,ordinal) VALUES(?,0) RETURNING id',
+            document,
+          )
+          .one().id
+        this.ctx.storage.sql.exec(
+          'INSERT INTO search(rowid,title,body,script) VALUES(?,?,?,?)',
+          chunk,
+          normalizeSearchText(title),
+          body,
+          '',
+        )
+        this.ctx.storage.sql.exec(
+          'INSERT INTO snippets(document,ordinal,body) VALUES(?,0,?)',
+          document,
+          body,
+        )
+      }
+    })
   }
   listCount(): number {
     return this.operations.lists
@@ -149,10 +297,52 @@ export default {
       point: Point
       after?: number
       now: number
+      input: IndexSearchInput
+      ids: string[]
+      documents: SearchProbeDocument[]
+      size: number
+      warmup: number
+      samples: number
     }>()
     const stub = env.WORKSPACE_SEARCH_INDEX.getByName(`${command.workspace}:0`)
     let result: unknown
     switch (command.action) {
+      case 'seedDocuments':
+        result = await stub.seedDocuments(command.documents)
+        break
+      case 'queryState':
+        result = await stub.queryState()
+        break
+      case 'search':
+        result = await stub.search(command.input)
+        break
+      case 'groupMembers':
+        result = await stub.groupMembers(command.input, command.ids)
+        break
+      case 'details':
+        result = await stub.details(command.input, command.ids)
+        break
+      case 'seedSearch':
+        await seedSearchBenchmark(env, command.workspace, command.size)
+        for (let offset = 0; offset < command.size; offset += 500)
+          // Keep one bounded storage batch in flight on this single DO.
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          await stub.seedSearch(
+            command.workspace,
+            offset,
+            Math.min(500, command.size - offset),
+            command.size,
+          )
+        result = { size: command.size }
+        break
+      case 'measureSearch':
+        result = await measureSearchBenchmark(
+          env,
+          command.workspace,
+          command.warmup,
+          command.samples,
+        )
+        break
       case 'sync':
         result = await stub.sync(command.workspace)
         break
