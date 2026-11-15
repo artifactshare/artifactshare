@@ -56,7 +56,10 @@ due work exists. Reservations use actual time and are at least 300 seconds apart
 retain that budget on every outcome, and expire after 60 seconds. One reservation
 claims at most ten rows and permits one HTTP call with a five-second timeout,
 no redirect following and no automatic retries. HTTP attempts are persisted
-before dispatch. Missing configuration consumes a reservation but no HTTP attempt.
+before dispatch. An explicitly observed skipped dispatch restores the unsent
+attempt under the matching row token and records `dispatch_expired`; unknown
+crash outcomes still consume attempts. The control reservation is never released.
+Missing configuration consumes a reservation but no HTTP attempt.
 Acknowledgements require the row lease; dispatch also checks the control lease.
 
 Allowed attempt starts are at least 240 seconds apart, with at most two in any
@@ -71,10 +74,14 @@ Retry delays are 5, 10, 20, 40 and then 60 minutes. Non-429 permanent 4xx failur
 are terminal. Network errors, timeouts, 429 and server errors retry, stopping at
 12 HTTP attempts or 24 hours from admission. Missing configuration is durably
 recorded and checked again after five minutes without using an HTTP attempt;
-it still expires after 24 hours. Overdue work is expired in bounded batches.
+it still expires after 24 hours while retaining `configuration_missing` as its
+cause. Overdue work is expired in bounded batches.
 Terminal records remain available for investigation and duplicates never rearm
 them. Safe cron summaries expose active count, oldest age, configuration state,
-new and historical terminal outcomes and saturated day. Current drain, transport or D1 faults,
+current-run newly failed/expired counts and saturated day. The summary queries
+only indexed active rows; it does not scan retained terminal history every five
+minutes. Historical terminal totals remain available through existing authorized
+operator database access when needed. Current drain, transport or D1 faults,
 new terminal outcomes, active age over ten minutes or missing configuration fail
 the cron after both notification jobs are attempted. Historical terminal rows and
 old saturation alone do not keep failing cron.

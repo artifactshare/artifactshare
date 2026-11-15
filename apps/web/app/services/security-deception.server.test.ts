@@ -417,6 +417,56 @@ describe('read-only attributed probes', () => {
     authEnv.APP_ENV = 'development'
     expect((await resolveDeceptionIdentity(db, request)).kind).toBe('trusted')
   })
+  test('production ignores unaccepted names but verifies the secure signature and live session', async () => {
+    const valid = cookie()
+    const stale = 'better-auth.session_token=stale'
+    expect(
+      (
+        await resolveDeceptionIdentity(
+          db,
+          probe({ cookie: `${stale}; ${valid}` }),
+        )
+      ).kind,
+    ).toBe('trusted')
+    expect(
+      (
+        await resolveDeceptionIdentity(
+          db,
+          probe({ cookie: `${valid}; ${valid}; ${stale}` }),
+        )
+      ).kind,
+    ).toBe('unauthenticated')
+    const forged = `__Secure-better-auth.session_token=${encodeURIComponent(`synthetic-session.${createHmac('sha256', 'synthetic-wrong-key').update('synthetic-session').digest('base64')}`)}`
+    expect(
+      (
+        await resolveDeceptionIdentity(
+          db,
+          probe({ cookie: `${forged}; ${stale}` }),
+        )
+      ).kind,
+    ).toBe('unauthenticated')
+    authEnv.APP_ENV = 'development'
+    expect(
+      (
+        await resolveDeceptionIdentity(
+          db,
+          probe({ cookie: `${valid}; ${stale}` }),
+        )
+      ).kind,
+    ).toBe('unauthenticated')
+    authEnv.APP_ENV = 'production'
+    sqlite.exec('DELETE FROM sessions')
+    expect(
+      (
+        await resolveDeceptionIdentity(
+          db,
+          probe({
+            cookie: `${valid}; ${stale}; __Secure-better-auth.session_data=CANARY_CACHE`,
+          }),
+        )
+      ).kind,
+    ).toBe('unauthenticated')
+  })
   test('missing signing configuration fails unavailable without a cookie fallback', async () => {
     const request = probe()
     authEnv.BETTER_AUTH_SECRET = ''
@@ -509,7 +559,11 @@ describe('durable admission and delivery', () => {
       drainDeceptionSignals(db, undefined, () => at + 86400000),
     ).rejects.toThrow('unhealthy')
     expect(await rows()).toMatchObject([
-      { status: 'expired', failure_code: 'age_limit', attempt_count: 0 },
+      {
+        status: 'expired',
+        failure_code: 'configuration_missing',
+        attempt_count: 0,
+      },
     ])
     await expect(
       drainDeceptionSignals(db, undefined, () => at + 86400001),
@@ -595,35 +649,79 @@ describe('durable admission and delivery', () => {
     // Latest allowed previous start at +658999, earliest next at +899000.
     expect(899000 - 658999).toBeGreaterThanOrEqual(240000)
   })
-  test('rejects a lease that expires while the final database fence is in flight', async () => {
-    await admitDeceptionSignal(db, principal, new Date(at))
-    let time = at
-    const original = sqlite.prepare.bind(sqlite)
-    const prepare = vi.spyOn(sqlite, 'prepare').mockImplementation((query) => {
-      if (
-        query.startsWith(
-          'select "lease_expires_at" from "security_deception_delivery_control"',
+  test.each(['lease', 'age', 'ownership'] as const)(
+    'rejects delayed dispatch after %s changes',
+    async (delay) => {
+      await admitDeceptionSignal(db, principal, new Date(at))
+      let time = at
+      if (delay === 'age')
+        sqlite.exec(
+          `UPDATE security_deception_signals SET first_detected_at='${new Date(at - 86400000 + 30000).toISOString()}'`,
         )
+      const original = sqlite.prepare.bind(sqlite)
+      const prepare = vi
+        .spyOn(sqlite, 'prepare')
+        .mockImplementation((query) => {
+          if (
+            query.startsWith(
+              'select "lease_expires_at" from "security_deception_delivery_control"',
+            )
+          ) {
+            time = at + (delay === 'age' ? 30000 : 60000)
+            if (delay === 'ownership')
+              original(
+                "UPDATE security_deception_signals SET lease_token='new-owner', attempt_count=7",
+              ).run()
+          }
+          return original(query)
+        })
+      await expect(
+        drainDeceptionSignals(db, 'https://synthetic.invalid', () => time),
+      ).rejects.toThrow('unhealthy')
+      expect(logs).toHaveBeenLastCalledWith(
+        'security_deception_delivery',
+        expect.objectContaining({ current_failure: true }),
       )
-        time = at + 60000
-      return original(query)
-    })
-    await drainDeceptionSignals(db, 'https://synthetic.invalid', () => time)
-    expect(transport).not.toHaveBeenCalled()
-    prepare.mockRestore()
-    expect(await rows()).toMatchObject([
-      { status: 'pending', attempt_count: 1 },
-    ])
-    await drainDeceptionSignals(
-      db,
-      'https://synthetic.invalid',
-      () => at + 300000,
-    )
-    expect(transport).toHaveBeenCalledTimes(1)
-    expect(await rows()).toMatchObject([
-      { status: 'delivered', attempt_count: 2 },
-    ])
-  })
+      expect(transport).not.toHaveBeenCalled()
+      prepare.mockRestore()
+      expect(
+        (
+          await db
+            .selectFrom('security_deception_delivery_control')
+            .selectAll()
+            .executeTakeFirstOrThrow()
+        ).next_send_at,
+      ).toBe(new Date(at + 300000).toISOString())
+      if (delay === 'ownership') {
+        expect(await rows()).toMatchObject([
+          { lease_token: 'new-owner', attempt_count: 7, failure_code: null },
+        ])
+        return
+      }
+      expect(await rows()).toMatchObject([
+        {
+          status: delay === 'age' ? 'expired' : 'retry',
+          attempt_count: 0,
+          last_attempt_at: null,
+          failure_code: 'dispatch_expired',
+        },
+      ])
+      if (delay === 'age') {
+        await drainDeceptionSignals(db, undefined, () => at + 300000)
+        expect(transport).not.toHaveBeenCalled()
+        return
+      }
+      await drainDeceptionSignals(
+        db,
+        'https://synthetic.invalid',
+        () => at + 360000,
+      )
+      expect(transport).toHaveBeenCalledTimes(1)
+      expect(await rows()).toMatchObject([
+        { status: 'delivered', attempt_count: 1 },
+      ])
+    },
+  )
   test('delayed actual HTTP starts respect reservation spacing across UTC five-minute boundaries', async () => {
     let time = at + 299000
     const starts: number[] = []
@@ -665,6 +763,57 @@ describe('durable admission and delivery', () => {
       expect(
         starts.filter((t) => t >= start && t < start + 300000).length,
       ).toBeLessThanOrEqual(2)
+  })
+  test('mixed digest restores aged unsent rows even when sent-row acknowledgement fails', async () => {
+    await admitDeceptionSignal(db, principal, new Date(at))
+    await db
+      .updateTable('security_deception_signals')
+      .set({ first_detected_at: new Date(at - 86400000 + 30000).toISOString() })
+      .execute()
+    await admitDeceptionSignal(
+      db,
+      { ...principal, actor_id: 'fresh' },
+      new Date(at),
+    )
+    let time = at
+    const original = sqlite.prepare.bind(sqlite)
+    const prepare = vi.spyOn(sqlite, 'prepare').mockImplementation((query) => {
+      if (
+        query.startsWith(
+          'select "lease_expires_at" from "security_deception_delivery_control"',
+        )
+      )
+        time = at + 30000
+      return original(query)
+    })
+    transport.mockImplementationOnce(async () => {
+      prepare.mockImplementation((query) => {
+        if (
+          query.startsWith('update "security_deception_signals"') &&
+          query.includes('"delivered_at"')
+        )
+          throw new Error('CANARY_ACK')
+        return original(query)
+      })
+      return { ok: true }
+    })
+    await expect(
+      drainDeceptionSignals(db, 'https://synthetic.invalid', () => time),
+    ).rejects.toThrow('unhealthy')
+    expect(transport).toHaveBeenCalledTimes(1)
+    const signals = await rows()
+    expect(signals.find((row) => row.actor_id === 'u1')).toMatchObject({
+      status: 'expired',
+      failure_code: 'dispatch_expired',
+      attempt_count: 0,
+    })
+    expect(signals.find((row) => row.actor_id === 'fresh')).toMatchObject({
+      status: 'pending',
+      attempt_count: 1,
+    })
+    expect(transport.mock.calls[0]![1]).not.toContain(
+      signals.find((row) => row.actor_id === 'u1')!.id,
+    )
   })
   test('ack failure conservatively consumes attempt; later retry retains correlation', async () => {
     await admitDeceptionSignal(db, principal, new Date(at))
@@ -713,7 +862,7 @@ describe('durable admission and delivery', () => {
     expect(text).not.toContain('https://')
     for (const row of admitted) expect(text).toContain(row.id)
   })
-  test('pending age >10min is unhealthy, historical failures/saturation are summary only', async () => {
+  test('pending age >10min is unhealthy, historical failures do not alert or enter the indexed active summary', async () => {
     await admitDeceptionSignal(db, principal, new Date(at))
     await db
       .updateTable('security_deception_signals')
@@ -730,12 +879,29 @@ describe('durable admission and delivery', () => {
       .updateTable('security_deception_delivery_control')
       .set({ saturated_day: '2026-01-01' })
       .execute()
+    const reads = vi.spyOn(sqlite, 'prepare')
     await drainDeceptionSignals(db, undefined, () => at + 600002)
+    const summaryQuery = reads.mock.calls
+      .map(([query]) => query)
+      .find((query) => query.includes('AS active'))!
+    expect(summaryQuery).toContain("WHERE status IN ('pending', 'retry')")
+    expect(sqlite.prepare(`EXPLAIN QUERY PLAN ${summaryQuery}`).all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: expect.stringMatching(
+            /SEARCH .* USING (?:COVERING )?INDEX security_deception_due/,
+          ),
+        }),
+      ]),
+    )
+    expect(logs.mock.calls.at(-1)![1]).not.toHaveProperty('failed')
+    expect(logs.mock.calls.at(-1)![1]).not.toHaveProperty('expired')
     expect(logs).toHaveBeenLastCalledWith(
       'security_deception_delivery',
       expect.objectContaining({
         active: 0,
-        failed: 1,
+        newly_failed: 0,
+        newly_expired: 0,
         saturated_day: '2026-01-01',
       }),
     )

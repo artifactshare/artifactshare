@@ -148,8 +148,11 @@ export default {
               drainDeceptionSignals(db, env.SLACK_ALERT_WEBHOOK_URL),
             ),
           ])
-          if (jobs.some((job) => job.status === 'rejected'))
-            throw new Error('scheduled notification delivery failed')
+          if (jobs[1].status === 'rejected')
+            console.error('security_deception_scheduled_failed')
+          if (jobs[0].status === 'rejected') throw jobs[0].reason
+          if (jobs[1].status === 'rejected')
+            throw new Error('security_deception_scheduled_failed')
         } else {
           const options = reconciliationOptionsFromEnv(env)
           try {

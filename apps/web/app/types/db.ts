@@ -970,6 +970,7 @@ export interface SecurityDeceptionSignalsTable {
     | 'http_rejected'
     | 'attempt_limit'
     | 'age_limit'
+    | 'dispatch_expired'
     | null
   http_status: number | null
 }

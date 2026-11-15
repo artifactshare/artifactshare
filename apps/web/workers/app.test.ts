@@ -1980,22 +1980,56 @@ describe('inert authenticated decoy Worker boundary', () => {
       expect(drainDeceptionMock).not.toHaveBeenCalled()
     },
   )
-  test.each(['project', 'deception'])(
+  test.each(['project', 'deception', 'both'])(
     'both scheduled jobs run despite %s failure',
     async (failing) => {
       const error = new Error('CANARY_FAILURE')
-      if (failing === 'project')
+      const marker = vi.spyOn(console, 'error').mockImplementation(() => {})
+      let finishOther!: () => void
+      const other = new Promise<void>((resolve) => {
+        finishOther = resolve
+      })
+      if (failing !== 'deception')
         processSlackNotificationOutboxMock.mockRejectedValue(error)
-      else drainDeceptionMock.mockRejectedValue(error)
+      else processSlackNotificationOutboxMock.mockReturnValue(other)
+      if (failing !== 'project') drainDeceptionMock.mockRejectedValue(error)
+      else drainDeceptionMock.mockReturnValue(other)
       const ctx = executionContext()
       app.scheduled(
         { cron: '*/5 * * * *', scheduledTime: 0 } as ScheduledController,
         productionEnv({ maintenance: false }),
         ctx,
       )
-      await expect(vi.mocked(ctx.waitUntil).mock.calls[0]![0]).rejects.toThrow(
-        'scheduled notification delivery failed',
+      const scheduled = vi.mocked(ctx.waitUntil).mock.calls[0]![0]
+      let settled = false
+      void scheduled.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        },
       )
+      await vi.waitFor(() => {
+        expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
+        expect(drainDeceptionMock).toHaveBeenCalledTimes(1)
+      })
+      if (failing !== 'both') expect(settled).toBe(false)
+      finishOther()
+      if (failing === 'deception')
+        await expect(scheduled).rejects.toThrow(
+          'security_deception_scheduled_failed',
+        )
+      else await expect(scheduled).rejects.toBe(error)
+      if (failing !== 'project')
+        expect(marker).toHaveBeenCalledWith(
+          'security_deception_scheduled_failed',
+        )
+      else
+        expect(marker).not.toHaveBeenCalledWith(
+          'security_deception_scheduled_failed',
+        )
+      expect(JSON.stringify(marker.mock.calls)).not.toContain('CANARY_FAILURE')
       expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
       expect(drainDeceptionMock).toHaveBeenCalledTimes(1)
       expect(drainDeceptionMock.mock.calls[0]).toEqual([

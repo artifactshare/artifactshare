@@ -38,21 +38,15 @@ export type DeceptionIdentity =
   | { kind: 'unauthenticated' | 'workspace-denied' | 'unavailable' }
 
 async function cookieToken(request: Request): Promise<string | null> {
+  const acceptedNames = isProduction(env)
+    ? [AUTH_SESSION_TOKEN_COOKIE_NAMES[0]]
+    : AUTH_SESSION_TOKEN_COOKIE_NAMES
   const cookies = (request.headers.get('cookie') ?? '')
     .split(';')
     .map((part) => part.trim())
-    .filter((part) =>
-      AUTH_SESSION_TOKEN_COOKIE_NAMES.some((name) =>
-        part.startsWith(`${name}=`),
-      ),
-    )
+    .filter((part) => acceptedNames.some((name) => part.startsWith(`${name}=`)))
   if (cookies.length !== 1) return null
   const cookie = cookies[0]!
-  if (
-    isProduction(env) &&
-    !cookie.startsWith(`${AUTH_SESSION_TOKEN_COOKIE_NAMES[0]}=`)
-  )
-    return null
   let value: string
   try {
     value = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1))

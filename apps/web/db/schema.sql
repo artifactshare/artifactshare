@@ -1647,7 +1647,7 @@ CREATE TABLE security_deception_signals (
   lease_expires_at TEXT,
   last_attempt_at TEXT,
   delivered_at TEXT,
-  failure_code TEXT CHECK (failure_code IN ('configuration_missing', 'network', 'http_retry', 'http_rejected', 'attempt_limit', 'age_limit')),
+  failure_code TEXT CHECK (failure_code IN ('configuration_missing', 'network', 'http_retry', 'http_rejected', 'attempt_limit', 'age_limit', 'dispatch_expired')),
   http_status INTEGER CHECK (http_status BETWEEN 100 AND 599),
   CHECK ((client_kind IS NULL) = (client_id IS NULL)),
   CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL)),
