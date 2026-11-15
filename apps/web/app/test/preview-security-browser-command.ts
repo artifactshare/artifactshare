@@ -365,6 +365,11 @@ export const previewSecurity = defineBrowserCommand(
         await shell.keyboard.press('Enter')
         assert.equal((await first).status(), 200)
         await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        await frame.waitForFunction(
+          () =>
+            !document.querySelector('h1')!.hasAttribute('contenteditable') &&
+            document.querySelector('h1')!.textContent === 'Initial document',
+        )
         assert.equal(await h1.textContent(), 'Initial document')
         assert.equal(await h1.getAttribute('contenteditable'), null)
         const card = shell
@@ -396,6 +401,11 @@ export const previewSecurity = defineBrowserCommand(
         // Escape cancels and restores the page text.
         await shell.keyboard.press('Escape')
         await shell.locator('#popover.show').waitFor({ state: 'hidden' })
+        await frame.waitForFunction(
+          () =>
+            !document.querySelector('h1')!.hasAttribute('contenteditable') &&
+            document.querySelector('h1')!.textContent === 'Initial document',
+        )
         assert.equal(await h1.textContent(), 'Initial document')
         assert.equal((await stored()).length, 1)
 
