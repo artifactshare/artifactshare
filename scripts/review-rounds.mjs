@@ -104,6 +104,9 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
     head: codex.head,
     base: codex.base,
     profile: codex.profile,
+    ...(codex.commitBase && codex.commitBase === claude.commitBase
+      ? { commitBase: codex.commitBase }
+      : {}),
   }
 }
 
@@ -121,16 +124,27 @@ export function resolvePairReviewBase({
     return { base: explicitBase, previousHead: null, reused: false }
   const pair = matchingPairHistory({ codexState, claudeState, profile })
   if (!pair) return { base: defaultBase, previousHead: null, reused: false }
+  const metadata = pair.commitBase ? { commitBase: pair.commitBase } : {}
   // A same-HEAD rerun must read the original requested range again. Reusing
   // the previous base preserves that range without treating an empty diff as
   // a successful review.
   if (pair.head === head && baseIsReachable(pair.base, run))
-    return { base: pair.base, previousHead: pair.head, reused: true }
+    return {
+      base: pair.base,
+      previousHead: pair.head,
+      reused: true,
+      ...metadata,
+    }
   if (
     isStrictAncestor(pair.head, head, run) &&
     !rangeIsEmpty(pair.head, head, run)
   )
-    return { base: pair.head, previousHead: pair.head, reused: true }
+    return {
+      base: pair.head,
+      previousHead: pair.head,
+      reused: true,
+      ...metadata,
+    }
   // The prior pair may have been rebased or garbage-collected, or may belong
   // to a divergent line. Start from the ordinary default in all such cases.
   return { base: defaultBase, previousHead: null, reused: false }
@@ -148,9 +162,13 @@ export function isStrictAncestor(base, head, run = commandOutput) {
   }
 }
 
-export function recordRound(state, { head, reviewer, base, profile }) {
+export function recordRound(
+  state,
+  { head, reviewer, base, profile, commitBase },
+) {
   const round = { head, reviewer, at: new Date().toISOString() }
   if (base !== undefined) round.base = base
+  if (commitBase !== undefined) round.commitBase = commitBase
   if (profile !== undefined) round.profile = profile
   return {
     schema_version: 1,
