@@ -175,7 +175,8 @@ export async function drainDeceptionSignals(
       status: string
     }>`UPDATE security_deception_signals
       SET status = CASE WHEN attempt_count >= 12 THEN 'failed' ELSE 'expired' END,
-        failure_code = CASE WHEN attempt_count >= 12 THEN 'attempt_limit' WHEN failure_code = 'configuration_missing' THEN 'configuration_missing' ELSE 'age_limit' END,
+        failure_code = COALESCE(failure_code, CASE WHEN attempt_count >= 12 THEN 'attempt_limit' ELSE 'age_limit' END),
+        http_status = CASE WHEN failure_code IS NOT NULL THEN http_status ELSE NULL END,
         lease_token = NULL, lease_expires_at = NULL
       WHERE id IN (SELECT id FROM security_deception_signals WHERE status IN ('pending', 'retry')
         AND (first_detected_at <= ${iso(now - 86400000)} OR attempt_count >= 12)
@@ -195,6 +196,7 @@ export async function drainDeceptionSignals(
             .set({
               status: 'retry',
               failure_code: 'configuration_missing',
+              http_status: null,
               next_attempt_at: iso(clock() + 300000),
               lease_token: null,
               lease_expires_at: null,
@@ -237,89 +239,108 @@ export async function drainDeceptionSignals(
               )
               if (!result.ok) currentFailure = true
               const at = clock()
-              for (const row of dispatchRows) {
-                const permanent =
-                  !result.ok &&
-                  result.status >= 400 &&
-                  result.status < 500 &&
-                  result.status !== 429
-                const terminal = permanent || row.attempt_count >= 12
-                const aged = at - Date.parse(row.first_detected_at) >= 86400000
-                const status = result.ok
-                  ? 'delivered'
-                  : terminal
-                    ? 'failed'
-                    : aged
-                      ? 'expired'
-                      : 'retry'
-                const updated = await db
-                  .updateTable('security_deception_signals')
-                  .set({
-                    status,
-                    delivered_at: result.ok ? iso(at) : null,
-                    failure_code: result.ok
-                      ? null
-                      : permanent
-                        ? 'http_rejected'
-                        : terminal
-                          ? 'attempt_limit'
-                          : aged
-                            ? 'age_limit'
-                            : result.status === 0
-                              ? 'network'
-                              : 'http_retry',
-                    http_status:
-                      result.ok || result.status === 0 ? null : result.status,
-                    next_attempt_at: iso(
-                      at +
-                        Math.min(60, 5 * 2 ** (row.attempt_count - 1)) * 60000,
-                    ),
-                    lease_token: null,
-                    lease_expires_at: null,
-                  })
-                  .where('id', '=', row.id)
-                  .where('lease_token', '=', token)
-                  .where('lease_expires_at', '>', iso(at))
-                  .executeTakeFirst()
-                if (Number(updated.numUpdatedRows) !== 1) currentFailure = true
-                if (status === 'failed') newlyFailed++
-                if (status === 'expired') newlyExpired++
+              const acknowledgements = await Promise.allSettled(
+                dispatchRows.map(async (row) => {
+                  const permanent =
+                    !result.ok &&
+                    result.status >= 400 &&
+                    result.status < 500 &&
+                    result.status !== 429
+                  const terminal = permanent || row.attempt_count >= 12
+                  const aged =
+                    at - Date.parse(row.first_detected_at) >= 86400000
+                  const status = result.ok
+                    ? 'delivered'
+                    : terminal
+                      ? 'failed'
+                      : aged
+                        ? 'expired'
+                        : 'retry'
+                  const updated = await db
+                    .updateTable('security_deception_signals')
+                    .set({
+                      status,
+                      delivered_at: result.ok ? iso(at) : null,
+                      failure_code: result.ok
+                        ? null
+                        : permanent
+                          ? 'http_rejected'
+                          : result.status === 0
+                            ? 'network'
+                            : 'http_retry',
+                      http_status:
+                        result.ok || result.status === 0 ? null : result.status,
+                      next_attempt_at: iso(
+                        at +
+                          Math.min(60, 5 * 2 ** (row.attempt_count - 1)) *
+                            60000,
+                      ),
+                      lease_token: null,
+                      lease_expires_at: null,
+                    })
+                    .where('id', '=', row.id)
+                    .where('lease_token', '=', token)
+                    .where('lease_expires_at', '>', iso(at))
+                    .executeTakeFirst()
+                  if (Number(updated.numUpdatedRows) !== 1)
+                    currentFailure = true
+                  if (Number(updated.numUpdatedRows) === 1) {
+                    if (status === 'failed') newlyFailed++
+                    if (status === 'expired') newlyExpired++
+                  }
+                }),
+              )
+              for (const acknowledgement of acknowledgements) {
+                if (acknowledgement.status === 'rejected') currentFailure = true
               }
             }
           } finally {
             const sentIds = new Set(
               canDispatch ? dispatchRows.map((row) => row.id) : [],
             )
-            for (const row of rows.filter(
-              (claimed) => !sentIds.has(claimed.id),
-            )) {
-              // Only an observed no-send can undo a persisted attempt. A crash or
-              // unknown transport result leaves conservative accounting intact.
-              currentFailure = true
-              const incremented = attempted.some(
-                (attempt) => attempt.id === row.id,
-              )
-              const aged =
-                clock() - Date.parse(row.first_detected_at) >= 86400000
-              const restored = await db
-                .updateTable('security_deception_signals')
-                .set({
-                  status: aged ? 'expired' : 'retry',
-                  failure_code: 'dispatch_expired',
-                  ...(incremented
-                    ? {
-                        attempt_count: sql`attempt_count - 1`,
-                        last_attempt_at: row.last_attempt_at,
-                      }
-                    : {}),
-                  next_attempt_at: iso(clock() + 300000),
-                  lease_token: null,
-                  lease_expires_at: null,
-                })
-                .where('id', '=', row.id)
-                .where('lease_token', '=', token)
-                .executeTakeFirst()
-              if (aged && Number(restored.numUpdatedRows) === 1) newlyExpired++
+            const restoreAt = clock()
+            const restorations = await Promise.allSettled(
+              rows
+                .filter((claimed) => !sentIds.has(claimed.id))
+                .map(async (row) => {
+                  // Only an observed no-send can undo a persisted attempt. A crash or
+                  // unknown transport result leaves conservative accounting intact.
+                  currentFailure = true
+                  const incremented = attempted.some(
+                    (attempt) => attempt.id === row.id,
+                  )
+                  const aged =
+                    restoreAt - Date.parse(row.first_detected_at) >= 86400000
+                  const restored = await db
+                    .updateTable('security_deception_signals')
+                    .set({
+                      status: aged ? 'expired' : 'retry',
+                      failure_code: aged
+                        ? (row.failure_code ?? 'age_limit')
+                        : 'dispatch_expired',
+                      http_status:
+                        aged && row.failure_code !== null
+                          ? row.http_status
+                          : null,
+                      ...(incremented
+                        ? {
+                            attempt_count: sql`attempt_count - 1`,
+                            last_attempt_at: row.last_attempt_at,
+                          }
+                        : {}),
+                      next_attempt_at: iso(restoreAt + 300000),
+                      lease_token: null,
+                      lease_expires_at: null,
+                    })
+                    .where('id', '=', row.id)
+                    .where('lease_token', '=', token)
+                    .executeTakeFirst()
+                  if (aged && Number(restored.numUpdatedRows) === 1)
+                    newlyExpired++
+                }),
+            )
+            for (const restoration of restorations) {
+              if (restoration.status === 'rejected') currentFailure = true
             }
           }
         }

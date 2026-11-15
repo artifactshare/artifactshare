@@ -623,7 +623,7 @@ describe('durable admission and delivery', () => {
     }
     expect(transport).toHaveBeenCalledTimes(12)
     expect(await rows()).toMatchObject([
-      { status: 'failed', failure_code: 'attempt_limit' },
+      { status: 'failed', failure_code: 'http_retry', http_status: 429 },
     ])
     expect(await admitDeceptionSignal(db, principal, new Date(at))).toBe(
       'duplicate',
@@ -703,7 +703,8 @@ describe('durable admission and delivery', () => {
           status: delay === 'age' ? 'expired' : 'retry',
           attempt_count: 0,
           last_attempt_at: null,
-          failure_code: 'dispatch_expired',
+          failure_code: delay === 'age' ? 'age_limit' : 'dispatch_expired',
+          http_status: null,
         },
       ])
       if (delay === 'age') {
@@ -804,7 +805,7 @@ describe('durable admission and delivery', () => {
     const signals = await rows()
     expect(signals.find((row) => row.actor_id === 'u1')).toMatchObject({
       status: 'expired',
-      failure_code: 'dispatch_expired',
+      failure_code: 'age_limit',
       attempt_count: 0,
     })
     expect(signals.find((row) => row.actor_id === 'fresh')).toMatchObject({
@@ -845,6 +846,147 @@ describe('durable admission and delivery', () => {
     expect(transport.mock.calls[0]![1]).toContain(id)
     expect(transport.mock.calls[1]![1]).toContain(id)
   })
+  test.each(['ack', 'restore', 'terminal_ack'] as const)(
+    'a failed %s still completes other independent row updates',
+    async (phase) => {
+      for (const actor_id of ['first', 'second', 'third']) {
+        await admitDeceptionSignal(db, { ...principal, actor_id }, new Date(at))
+      }
+      if (phase === 'terminal_ack') {
+        await db
+          .updateTable('security_deception_signals')
+          .set({ attempt_count: 11 })
+          .execute()
+        transport.mockResolvedValue({ ok: false, status: 503 })
+      }
+      let time = at
+      let updates = 0
+      const original = sqlite.prepare.bind(sqlite)
+      vi.spyOn(sqlite, 'prepare').mockImplementation((query) => {
+        if (
+          phase === 'restore' &&
+          query.startsWith(
+            'select "lease_expires_at" from "security_deception_delivery_control"',
+          )
+        )
+          time = at + 60000
+        if (
+          query.startsWith('update "security_deception_signals"') &&
+          (phase !== 'restore'
+            ? query.includes('"delivered_at"')
+            : query.includes('"last_attempt_at"'))
+        ) {
+          updates++
+          if (updates === 1) throw new Error('CANARY_ROW_UPDATE')
+        }
+        return original(query)
+      })
+      await expect(
+        drainDeceptionSignals(db, 'https://synthetic.invalid', () => time),
+      ).rejects.toThrow('unhealthy')
+      expect(updates).toBe(3)
+      const signals = await rows()
+      expect(signals.filter((row) => row.status === 'pending')).toHaveLength(1)
+      expect(
+        signals.filter(
+          (row) =>
+            row.status ===
+            (phase === 'restore'
+              ? 'retry'
+              : phase === 'terminal_ack'
+                ? 'failed'
+                : 'delivered'),
+        ),
+      ).toHaveLength(2)
+      expect(
+        signals.filter((row) => row.status === 'pending')[0]!.attempt_count,
+      ).toBe(phase === 'terminal_ack' ? 12 : 1)
+      if (phase === 'terminal_ack') {
+        expect(
+          signals
+            .filter((row) => row.status === 'failed')
+            .every(
+              (row) =>
+                row.failure_code === 'http_retry' && row.http_status === 503,
+            ),
+        ).toBe(true)
+        expect(logs).toHaveBeenLastCalledWith(
+          'security_deception_delivery',
+          expect.objectContaining({
+            newly_failed: 2,
+            newly_expired: 0,
+            current_failure: true,
+          }),
+        )
+      }
+      if (phase === 'restore') {
+        expect(transport).not.toHaveBeenCalled()
+        expect(
+          signals
+            .filter((row) => row.status === 'retry')
+            .every(
+              (row) =>
+                row.attempt_count === 0 &&
+                row.last_attempt_at === null &&
+                row.failure_code === 'dispatch_expired' &&
+                row.http_status === null,
+            ),
+        ).toBe(true)
+      } else expect(transport).toHaveBeenCalledTimes(1)
+    },
+  )
+  test.each([
+    { cause: null, http: null },
+    { cause: 'configuration_missing' as const, http: null },
+    { cause: 'http_retry' as const, http: 503 },
+    { cause: 'network' as const, http: null },
+    { cause: 'dispatch_expired' as const, http: null },
+  ])(
+    'bulk limits retain the last cause and matching HTTP status: %j',
+    async ({ cause, http }) => {
+      for (const actor_id of ['aged', 'attempts']) {
+        await admitDeceptionSignal(db, { ...principal, actor_id }, new Date(at))
+      }
+      await db
+        .updateTable('security_deception_signals')
+        .set({
+          failure_code: cause,
+          http_status: http,
+        })
+        .execute()
+      await db
+        .updateTable('security_deception_signals')
+        .set({
+          first_detected_at: new Date(at - 86400000).toISOString(),
+        })
+        .where('actor_id', '=', 'aged')
+        .execute()
+      await db
+        .updateTable('security_deception_signals')
+        .set({ attempt_count: 12 })
+        .where('actor_id', '=', 'attempts')
+        .execute()
+      await expect(
+        drainDeceptionSignals(db, 'https://synthetic.invalid', () => at),
+      ).rejects.toThrow('unhealthy')
+      const signals = await rows()
+      expect(signals.find((row) => row.actor_id === 'aged')).toMatchObject({
+        status: 'expired',
+        failure_code: cause ?? 'age_limit',
+        http_status: http,
+      })
+      expect(signals.find((row) => row.actor_id === 'attempts')).toMatchObject({
+        status: 'failed',
+        failure_code: cause ?? 'attempt_limit',
+        http_status: http,
+      })
+      expect(transport).not.toHaveBeenCalled()
+      expect(logs).toHaveBeenLastCalledWith(
+        'security_deception_delivery',
+        expect.objectContaining({ newly_failed: 1, newly_expired: 1 }),
+      )
+    },
+  )
   test('bounded digest retains ten correlations and escapes identifiers', async () => {
     const signals = Array.from({ length: 10 }, (_, i) => ({
       ...principal,

@@ -56,9 +56,12 @@ due work exists. Reservations use actual time and are at least 300 seconds apart
 retain that budget on every outcome, and expire after 60 seconds. One reservation
 claims at most ten rows and permits one HTTP call with a five-second timeout,
 no redirect following and no automatic retries. HTTP attempts are persisted
-before dispatch. An explicitly observed skipped dispatch restores the unsent
-attempt under the matching row token and records `dispatch_expired`; unknown
-crash outcomes still consume attempts. The control reservation is never released.
+before dispatch. An explicitly observed skipped dispatch restores the previous
+attempt count and attempt time under the matching row token. Before the age
+limit it records `dispatch_expired` with no HTTP status; at the age limit it
+preserves the previous cause and matching HTTP status. Unknown crash outcomes
+still consume attempts conservatively, even when no HTTP receipt can be proved.
+The control reservation is never released.
 Missing configuration consumes a reservation but no HTTP attempt.
 Acknowledgements require the row lease; dispatch also checks the control lease.
 
@@ -74,8 +77,13 @@ Retry delays are 5, 10, 20, 40 and then 60 minutes. Non-429 permanent 4xx failur
 are terminal. Network errors, timeouts, 429 and server errors retry, stopping at
 12 HTTP attempts or 24 hours from admission. Missing configuration is durably
 recorded and checked again after five minutes without using an HTTP attempt;
-it still expires after 24 hours while retaining `configuration_missing` as its
-cause. Overdue work is expired in bounded batches.
+it still expires after 24 hours. Overdue work is expired in bounded batches.
+Delivery `status` records the outcome: `expired` for age exhaustion, or `failed`
+for attempt exhaustion or permanent rejection. The `failure_code` and matching
+`http_status` describe the last observed failure, retained when a limit ends
+delivery. Only rows with no prior cause use `age_limit` or `attempt_limit`
+with a null HTTP status. A newly observed transport failure records its own
+cause even when that attempt reaches a terminal limit.
 Terminal records remain available for investigation and duplicates never rearm
 them. Safe cron summaries expose active count, oldest age, configuration state,
 current-run newly failed/expired counts and saturated day. The summary queries

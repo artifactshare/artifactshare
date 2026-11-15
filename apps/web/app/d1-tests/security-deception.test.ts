@@ -206,40 +206,84 @@ test('real D1 competing reservations and conditional claims yield only one diges
   ).toBe(new Date(at + 600000).toISOString())
 })
 
-test('real D1 restores an observed unsent attempt without releasing reservation budget', async () => {
-  await admitDeceptionSignal(db, principal, new Date(at))
-  let ticks = 0
-  await expect(
-    drainDeceptionSignals(db, 'https://synthetic.invalid', () =>
-      ++ticks >= 6 ? at + 60000 : at,
-    ),
-  ).rejects.toThrow('unhealthy')
-  expect(send).not.toHaveBeenCalled()
-  expect(
-    await db.selectFrom('security_deception_signals').selectAll().execute(),
-  ).toMatchObject([
-    {
-      status: 'retry',
-      failure_code: 'dispatch_expired',
-      attempt_count: 0,
-      last_attempt_at: null,
-    },
-  ])
-  expect(await reserveDeceptionDelivery(db, at + 299999, 'early')).toBe(false)
-  await expect(
-    sql`UPDATE security_deception_signals SET failure_code = 'unknown'`.execute(
-      db,
-    ),
-  ).rejects.toThrow()
-  await Promise.all([
-    drainDeceptionSignals(db, 'https://synthetic.invalid', () => at + 360000),
-    drainDeceptionSignals(db, 'https://synthetic.invalid', () => at + 360000),
-  ])
-  expect(send).toHaveBeenCalledTimes(1)
-  expect(
-    await db.selectFrom('security_deception_signals').selectAll().execute(),
-  ).toMatchObject([{ status: 'delivered', attempt_count: 1 }])
-})
+test.each([
+  { aged: false, cause: 'http_retry' as const, http: 503 },
+  { aged: true, cause: null, http: null },
+  { aged: true, cause: 'configuration_missing' as const, http: null },
+  { aged: true, cause: 'http_retry' as const, http: 503 },
+])(
+  'real D1 restores observed unsent attempts: %j',
+  async ({ aged, cause, http }) => {
+    await admitDeceptionSignal(db, principal, new Date(at))
+    const previousAttempt = new Date(at - 300000).toISOString()
+    await db
+      .updateTable('security_deception_signals')
+      .set({
+        first_detected_at: new Date(
+          aged ? at - 86400000 + 30000 : at,
+        ).toISOString(),
+        failure_code: cause,
+        http_status: http,
+        attempt_count: 1,
+        last_attempt_at: previousAttempt,
+      })
+      .execute()
+    let time = at
+    let fenceObserved = false
+    const fencedDb = db.withPlugin({
+      transformQuery({ node }) {
+        if (
+          node.kind === 'SelectQueryNode' &&
+          JSON.stringify(node).includes('lease_expires_at') &&
+          JSON.stringify(node).includes('security_deception_delivery_control')
+        ) {
+          fenceObserved = true
+          time = at + 60000
+        }
+        return node
+      },
+      async transformResult({ result }) {
+        return result
+      },
+    })
+    await expect(
+      drainDeceptionSignals(fencedDb, 'https://synthetic.invalid', () => time),
+    ).rejects.toThrow('unhealthy')
+    expect(fenceObserved).toBe(true)
+    expect(send).not.toHaveBeenCalled()
+    expect(
+      await db.selectFrom('security_deception_signals').selectAll().execute(),
+    ).toMatchObject([
+      {
+        status: aged ? 'expired' : 'retry',
+        failure_code: aged ? (cause ?? 'age_limit') : 'dispatch_expired',
+        http_status: aged ? http : null,
+        attempt_count: 1,
+        last_attempt_at: previousAttempt,
+        next_attempt_at: new Date(at + 360000).toISOString(),
+      },
+    ])
+    expect(await reserveDeceptionDelivery(db, at + 299999, 'early')).toBe(false)
+    await expect(
+      sql`UPDATE security_deception_signals SET failure_code = 'unknown'`.execute(
+        db,
+      ),
+    ).rejects.toThrow()
+    if (aged) {
+      await drainDeceptionSignals(db, undefined, () => at + 360000)
+      expect(send).not.toHaveBeenCalled()
+      return
+    }
+    await Promise.all([
+      drainDeceptionSignals(db, 'https://synthetic.invalid', () => at + 360000),
+      drainDeceptionSignals(db, 'https://synthetic.invalid', () => at + 360000),
+    ])
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(
+      await db.selectFrom('security_deception_signals').selectAll().execute(),
+    ).toMatchObject([{ status: 'delivered', attempt_count: 2 }])
+  },
+)
 
 test('real D1 migration constraints and multi-batch inclusive retention', async () => {
   await seedCopies(1000, new Date(at - 86400000))
