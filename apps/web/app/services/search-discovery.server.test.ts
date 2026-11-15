@@ -8,6 +8,7 @@ import {
   buildCandidateDiscoveryQuery,
   discoverCandidates,
   enumerateDiscoverableIds,
+  discoverSuggestionCandidates,
   loadDiscoveryViewer,
 } from './search-discovery.server'
 
@@ -206,6 +207,7 @@ test.each([
         ],
         nextCursor: null,
       }),
+      groupMembers: async (request) => indexes(workspace).search(request),
       details: async (_query, ids) => {
         detailed.push(...ids)
         return ids.map((id) => ({
@@ -710,4 +712,46 @@ test('plural owners and Home intersect archive and personal viewed filters', asy
       ownerUserIds: ['owner'],
     }),
   ).toEqual([])
+})
+
+test('typeahead checks live eligibility and filters for ranked owned, viewed and shared candidates', async () => {
+  fixture.sqlite.exec(`
+    UPDATE shareables SET visibility='link';
+    ${seen}
+    INSERT INTO shareables (id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+      VALUES ('owned','source','viewer','Owned','html_page','private','project','${now}','${now}','${now}'),
+             ('denied','source','owner','Denied','html_page','private','project','${now}','${now}','${now}');
+    INSERT INTO project_share_defaults (id,project_container_id,email,created_at,updated_at)
+      VALUES ('suggest-default','project','viewer@example.com','${now}','${now}');
+  `)
+  const domain = await discoverSuggestionCandidates(fixture.db, {
+    workspaceId: 'source',
+    candidateIds: ['file', 'owned', 'denied'],
+    viewerUserId: 'viewer',
+    now,
+  })
+  expect(domain).toEqual([
+    { workspaceId: 'source', id: 'file' },
+    { workspaceId: 'source', id: 'owned' },
+  ])
+  expect(
+    await discoverSuggestionCandidates(fixture.db, {
+      workspaceId: 'source',
+      candidateIds: ['file', 'owned', 'denied'],
+      viewerUserId: 'viewer',
+      now,
+      ownerUserIds: ['viewer'],
+    }),
+  ).toEqual([{ workspaceId: 'source', id: 'owned' }])
+  fixture.sqlite.exec(
+    "UPDATE shareables SET link_suspended_at='2026-09-01' WHERE id='file'",
+  )
+  expect(
+    await discoverSuggestionCandidates(fixture.db, {
+      workspaceId: 'source',
+      candidateIds: ['file', 'owned', 'denied'],
+      viewerUserId: 'viewer',
+      now,
+    }),
+  ).toEqual([{ workspaceId: 'source', id: 'owned' }])
 })

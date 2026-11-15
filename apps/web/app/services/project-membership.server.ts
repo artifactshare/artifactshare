@@ -320,7 +320,7 @@ export function suggestProjects(
     .where(projectAccessAllowedSql('c', 'access_viewer'))
     .$if(!includeArchived, (q) => q.where('c.archived_at', 'is', null))
     .where(sql<boolean>`instr(lower(c.name),lower(${query}))>0`)
-    .orderBy('c.name')
+    .orderBy('c.updated_at', 'desc')
     .orderBy('c.id')
     .limit(3)
     .execute()

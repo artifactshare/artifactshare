@@ -14,7 +14,20 @@ export async function readSearchLogs(db: Db, actorId: string) {
     .execute()
   if (!logs.length) return []
   const opens = await db
-    .selectFrom('search_opens as o')
+    .selectFrom(
+      db
+        .selectFrom('search_opens')
+        .select(['id', 'search_id', 'shareable_id', 'rank', 'opened_at'])
+        .select(
+          sql<number>`row_number() OVER (PARTITION BY search_id ORDER BY opened_at DESC, id)`.as(
+            'position',
+          ),
+        )
+        .where(
+          sql<boolean>`search_id IN (SELECT value FROM json_each(${JSON.stringify(logs.map((row) => row.id))}))`,
+        )
+        .as('o'),
+    )
     .innerJoin('shareables as s', 's.id', 'o.shareable_id')
     .select([
       'o.search_id',
@@ -23,12 +36,10 @@ export async function readSearchLogs(db: Db, actorId: string) {
       'o.opened_at',
       's.workspace_id',
     ])
-    .where(
-      sql<boolean>`o.search_id IN (SELECT value FROM json_each(${JSON.stringify(logs.map((row) => row.id))}))`,
-    )
+    .where('o.position', '<=', 500)
     .orderBy('o.opened_at', 'desc')
     .orderBy('o.id')
-    .limit(500)
+    .limit(1000)
     .execute()
   const allowed = new Set<string>()
   for (const workspaceId of new Set(opens.map((row) => row.workspace_id))) {
@@ -122,7 +133,7 @@ export async function pruneSearchLogs(db: Db, cutoff: string) {
   return result.length
 }
 
-/** A per-search key lives only on the actor-bound log; no paging/receipt rows. */
+/** A per-search key lives only on the actor-bound log. */
 export const newSearchTokenKey = () => randomBytes(32).toString('base64url')
 type SearchTokenPayload = {
   kind: 'cursor' | 'open'

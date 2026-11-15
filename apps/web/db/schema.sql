@@ -1689,6 +1689,8 @@ CREATE TABLE search_logs (
   tier TEXT NOT NULL CHECK(tier IN ('title','phrase','all','any')),
   duration_ms REAL NOT NULL CHECK(duration_ms >= 0),
   discoverable_count INTEGER NOT NULL CHECK(discoverable_count >= 0),
+  search_method TEXT NOT NULL DEFAULT 'allowed' CHECK(search_method IN ('candidates','allowed')),
+  active_document_count INTEGER CHECK(active_document_count >= 0),
   source TEXT NOT NULL CHECK(source IN ('screen','mcp','cli'))
 );
 CREATE INDEX search_logs_actor_created ON search_logs(actor_id,created_at);
@@ -1701,3 +1703,6 @@ CREATE TABLE search_opens (
   opened_at TEXT NOT NULL
 );
 CREATE INDEX search_opens_search ON search_opens(search_id);
+
+CREATE INDEX shareables_owner_activity ON shareables(owner_user_id, activity_at DESC, id DESC);
+CREATE INDEX shareable_grants_email_time ON shareable_grants(lower(granted_email), granted_at DESC, shareable_id);

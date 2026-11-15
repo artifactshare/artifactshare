@@ -13,6 +13,7 @@ import {
   loadDiscoveryViewer,
   suggestionOwners,
   discoverSuggestionCandidates,
+  enumerateSuggestionIds,
   type DiscoveryFilters,
 } from './search-discovery.server'
 import {
@@ -29,6 +30,10 @@ import { canonicalSearch, type SearchInput } from './search-input'
 import { suggestProjects } from './project-membership.server'
 export type SearchIndex = {
   search(input: IndexSearchInput): Promise<IndexSearchResult>
+  groupMembers(
+    input: IndexSearchInput,
+    keys: string[],
+  ): Promise<IndexSearchResult>
   details(
     input: IndexSearchInput,
     ids: string[],
@@ -45,9 +50,10 @@ async function indexPage(
 export type SearchIndexes = (workspaceId: string) => SearchIndex
 export const cappedTotal = (
   value: number,
+  incomplete = false,
 ): { value: number; relation: 'eq' | 'gte' } => ({
   value: Math.min(value, 1000),
-  relation: value > 1000 ? 'gte' : 'eq',
+  relation: value > 1000 || incomplete ? 'gte' : 'eq',
 })
 type Hit = IndexHit & { workspaceId: string }
 type Metadata = {
@@ -193,12 +199,9 @@ async function collect(
   input: SearchInput,
   now: string,
   any = false,
-  candidateMode = true,
+  includeActiveDocumentCount = false,
 ) {
-  const [sources, viewer] = await Promise.all([
-    universe(db, actor, input.filters, now),
-    loadDiscoveryViewer(db, actor),
-  ])
+  const viewer = await loadDiscoveryViewer(db, actor)
   const member = viewer
     ? await db
         .selectFrom('workspace_members')
@@ -207,23 +210,106 @@ async function collect(
         .where('user_id', '=', actor)
         .executeTakeFirst()
     : undefined
+  const ownWorkspace =
+    !any && member?.status === 'active' ? viewer?.workspace_id : undefined
+  const sources = ownWorkspace
+    ? await enumerateDiscoverableIds(db, {
+        ...input.filters,
+        viewerUserId: actor,
+        now,
+        excludeWorkspaceId: ownWorkspace,
+      })
+    : await universe(db, actor, input.filters, now)
   const hits: Hit[] = []
-  for (const source of sources) {
-    const stub = indexes(source.workspaceId)
-    const request = await indexInput(db, input, source.workspaceId, any)
+  const metas = new Map<string, Metadata>()
+  let incomplete = false,
+    passedCount = 0,
+    activeDocumentCount: number | null = null
+  let method: 'candidates' | 'allowed' = ownWorkspace ? 'candidates' : 'allowed'
+  let discoverableCount = sources.reduce(
+    (sum, source) => sum + source.ids.length,
+    0,
+  )
+  const remember = async (rows: Hit[]) => {
+    hits.push(...rows)
+    for (const row of await metadata(
+      db,
+      rows.map((hit) => hit.id),
+    ))
+      metas.set(row.id, row)
+  }
+  if (ownWorkspace) {
+    const stub = indexes(ownWorkspace)
+    const request = await indexInput(db, input, ownWorkspace, any)
+    const keys = new Set<string>()
+    const rememberPage = async (page: IndexPage) => {
+      activeDocumentCount ??= page.activeDocumentCount ?? null
+      const visible = await accepted(
+        db,
+        actor,
+        input.filters,
+        now,
+        page.items.map((row) => ({ ...row, workspaceId: ownWorkspace })),
+      )
+      passedCount += visible.length
+      await remember(visible)
+      for (const row of visible) {
+        const meta = metas.get(row.id)
+        if (meta) keys.add(groupKey(meta.title))
+      }
+      return visible.length
+    }
+    let cursor: number | undefined
     let exhausted = false
-    const candidateHits: Hit[] = []
-    const candidateGroups = new Set<string>()
-    if (
-      candidateMode &&
-      !any &&
-      member?.status === 'active' &&
-      source.workspaceId === viewer?.workspace_id
+    for (
+      let fetch = 0;
+      fetch < 5 && !exhausted && keys.size < Math.max(1001, input.pageSize);
+      fetch++
     ) {
-      let cursor: number | undefined
-      for (let fetch = 0; fetch < 5; fetch++) {
-        const page = await indexPage(stub, { ...request, cursor })
-        const visible = await accepted(
+      const page = await indexPage(stub, {
+        ...request,
+        cursor,
+        includeActiveDocumentCount: includeActiveDocumentCount && fetch === 0,
+      })
+      const passed = await rememberPage(page)
+      if (
+        fetch === 0 &&
+        page.items.length &&
+        passed / page.items.length < 0.2
+      ) {
+        const ids = (
+          await enumerateMemberDiscoverableIds(db, {
+            ...input.filters,
+            viewerUserId: actor,
+            now,
+          })
+        ).map((row) => row.id)
+        sources.push({ workspaceId: ownWorkspace, ids })
+        discoverableCount += ids.length
+        // Allowed mode reranks the full live set; candidate ranks are no longer used.
+        hits.length = 0
+        metas.clear()
+        method = 'allowed'
+        exhausted = true
+        break
+      }
+      exhausted = page.nextCursor === null
+      cursor = page.nextCursor ?? undefined
+    }
+    incomplete = !exhausted
+  }
+
+  for (const source of sources) {
+    const request = await indexInput(db, input, source.workspaceId, any)
+    let cursor: number | undefined
+    do {
+      const page = await indexPage(indexes(source.workspaceId), {
+        ...request,
+        allowedIds: source.ids,
+        cursor,
+      })
+      await remember(
+        await accepted(
           db,
           actor,
           input.filters,
@@ -232,81 +318,105 @@ async function collect(
             ...row,
             workspaceId: source.workspaceId,
           })),
-        )
-        candidateHits.push(...visible)
-        if (
-          fetch === 0 &&
-          page.items.length &&
-          visible.length / page.items.length < 0.2
-        )
-          break
-        if (page.nextCursor === null) {
-          exhausted = true
-          break
-        }
-        // This is only a ranking witness; full group completion below is independent.
-        for (const row of await metadata(
-          db,
-          visible.map((hit) => hit.id),
-        ))
-          candidateGroups.add(groupKey(row.title))
-        if (candidateGroups.size >= 1001) break
-        cursor = page.nextCursor
-      }
-    }
-    if (exhausted) hits.push(...candidateHits)
-    else {
-      // One complete allowed set yields comparable local ranks. The DO binds it
-      // to SQLite in bounded JSON chunks and recomputes ranking on each page.
-      let cursor: number | undefined
-      do {
-        const page = await indexPage(stub, {
-          ...request,
-          allowedIds: source.ids,
-          cursor,
-        })
-        hits.push(
-          ...(await accepted(
-            db,
-            actor,
-            input.filters,
-            now,
-            page.items.map((row) => ({
-              ...row,
-              workspaceId: source.workspaceId,
-            })),
-          )),
-        )
-        cursor = page.nextCursor ?? undefined
-      } while (cursor !== undefined)
-    }
+        ),
+      )
+      cursor = page.nextCursor ?? undefined
+    } while (cursor !== undefined)
   }
   const merged = mergeSearchHits(
     [...new Map(hits.map((row) => [row.id, row])).values()],
     input.sort === 'newest' || !input.query.trim(),
   )
-  const ordered = merged
-  const rows: Array<Hit & Metadata> = []
-  for (let offset = 0; offset < ordered.length; offset += 2000) {
-    const batch = ordered.slice(offset, offset + 2000)
-    const meta = new Map(
-      (
-        await metadata(
-          db,
-          batch.map((row) => row.id),
-        )
-      ).map((row) => [row.id, row]),
-    )
-    for (const hit of batch) {
-      const row = meta.get(hit.id)
-      if (row) rows.push({ ...hit, ...row })
-    }
-  }
+  const rows = merged.flatMap((hit) => {
+    const meta = metas.get(hit.id)
+    return meta ? [{ ...hit, ...meta }] : []
+  })
   return {
     groups: groupSearchHits(rows),
-    discoverableCount: sources.reduce((sum, row) => sum + row.ids.length, 0),
+    knownHits: rows,
+    incomplete,
+    method,
+    activeDocumentCount,
+    discoverableCount:
+      method === 'candidates'
+        ? passedCount + discoverableCount
+        : discoverableCount,
+    allowedSources: sources,
+    workspaces: [
+      ...new Set([
+        ...(ownWorkspace ? [ownWorkspace] : []),
+        ...sources.map((source) => source.workspaceId),
+      ]),
+    ],
   }
 }
+
+async function completePageGroups(
+  db: Db,
+  indexes: SearchIndexes,
+  actor: string,
+  input: SearchInput,
+  now: string,
+  any: boolean,
+  workspaces: string[],
+  keys: string[],
+  allowedSources: Array<{ workspaceId: string; ids: string[] }>,
+  knownHits: Array<Hit & Metadata>,
+) {
+  const members = new Map(keys.map((key) => [key, new Set<string>()]))
+  const incomplete = new Set<string>()
+  for (const row of knownHits) members.get(groupKey(row.title))?.add(row.id)
+  for (const workspace of workspaces) {
+    const request = await indexInput(db, input, workspace, any)
+    // Allowed streams were drained completely and checked with discovery already.
+    if (allowedSources.some((source) => source.workspaceId === workspace))
+      continue
+    for (const key of keys)
+      if (members.get(key)!.size >= 1000) incomplete.add(key)
+    let pending = keys.filter((key) => members.get(key)!.size < 1000)
+    let cursor = 0
+    for (let fetch = 0; fetch < 5 && pending.length; fetch++) {
+      const page = await indexes(workspace).groupMembers(
+        { ...request, cursor },
+        pending,
+      )
+      if ('error' in page) throw new SearchCapacityError()
+      for (let offset = 0; offset < page.items.length; offset += 2000) {
+        const visible = await accepted(
+          db,
+          actor,
+          input.filters,
+          now,
+          page.items
+            .slice(offset, offset + 2000)
+            .map((row) => ({ ...row, workspaceId: workspace })),
+        )
+        for (const row of await metadata(
+          db,
+          visible.map((hit) => hit.id),
+        ))
+          members.get(groupKey(row.title))?.add(row.id)
+      }
+      const remaining = new Set(page.incompleteGroupKeys ?? [])
+      pending = pending.filter((key) => {
+        if (members.get(key)!.size >= 1000) {
+          incomplete.add(key)
+          return false
+        }
+        return remaining.has(key)
+      })
+      cursor += 2000
+    }
+    for (const key of pending) incomplete.add(key)
+  }
+  return new Map(
+    [...members].map(([key, ids]) => [
+      key,
+      cappedTotal(ids.size, incomplete.has(key)),
+    ]),
+  )
+}
+
 const invalidCursor = {
   error: { code: 'invalid_cursor', hint: 'Restart the search.' },
 }
@@ -346,13 +456,17 @@ export async function search(
       },
     }
   }
-  let result = await collect(db, indexes, actor, input, now)
+  let result = await collect(db, indexes, actor, input, now, false, true)
   let any = false
   const relaxations: Array<{
     filter: string
     total: ReturnType<typeof cappedTotal>
   }> = []
-  if (!result.groups.length && prepareQuery(input.query).terms.length >= 2) {
+  if (
+    !result.incomplete &&
+    !result.groups.length &&
+    prepareQuery(input.query).terms.length >= 2
+  ) {
     any = true
     result = await collect(db, indexes, actor, input, now, true)
     const filters = input.filters
@@ -361,7 +475,7 @@ export async function search(
       filters.location ? 'location' : '',
       !filters.includeArchived ? 'archive' : '',
       filters.date ? 'date' : '',
-    ].filter(Boolean)
+    ].filter((dimension) => Boolean(dimension) && !input.cursor)
     for (const dimension of dimensions) {
       const relaxed = { ...filters }
       if (dimension === 'owners') delete relaxed.ownerUserIds
@@ -375,18 +489,31 @@ export async function search(
         { ...input, filters: relaxed },
         now,
         false,
-        false,
       )
       if (found.groups.length)
         relaxations.push({
           filter: dimension,
-          total: cappedTotal(found.groups.length),
+          total: cappedTotal(found.groups.length, found.incomplete),
         })
     }
   }
-  const total = cappedTotal(result.groups.length)
+  const total = cappedTotal(result.groups.length, result.incomplete)
   const tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
   const selected = result.groups.slice(position, position + input.pageSize)
+  const sizes = selected.length
+    ? await completePageGroups(
+        db,
+        indexes,
+        actor,
+        input,
+        now,
+        any,
+        result.workspaces,
+        selected.map((row) => groupKey(row.title)),
+        result.allowedSources,
+        result.knownHits,
+      )
+    : new Map<string, ReturnType<typeof cappedTotal>>()
   const items: Array<
     Metadata & {
       path: string
@@ -394,6 +521,7 @@ export async function search(
       tier: IndexHit['tier']
       rank: number
       groupSize: number
+      groupSizeRelation: 'eq' | 'gte'
       receipt: string
     }
   > = []
@@ -427,15 +555,18 @@ export async function search(
     for (const row of visible) {
       const detail = details.get(row.id),
         meta = current.get(row.id)
-      if (detail && meta)
+      if (detail && meta) {
+        const size = sizes.get(groupKey(meta.title)) ?? cappedTotal(1)
         items.push({
           ...meta,
           ...detail,
           tier: row.tier,
           rank: displayedRanks.get(row.id)!,
-          groupSize: row.groupSize,
+          groupSize: Math.max(1, size.value),
+          groupSizeRelation: size.relation,
           receipt: '',
         })
+      }
     }
   }
   items.sort((a, b) => a.rank - b.rank)
@@ -455,6 +586,8 @@ export async function search(
         tier,
         duration_ms: performance.now() - started,
         discoverable_count: result.discoverableCount,
+        search_method: result.method,
+        active_document_count: result.activeDocumentCount,
         source,
       })
       .execute()
@@ -465,13 +598,14 @@ export async function search(
       file: item.id,
       rank: item.rank,
     })
-  const nextCursor =
-    position + input.pageSize < result.groups.length
-      ? sealSearchToken(searchLogId, tokenKey, {
-          kind: 'cursor',
-          rank: position + input.pageSize,
-        })
-      : null
+  let nextCursor: string | null = null
+  if (position + selected.length < result.groups.length) {
+    nextCursor = sealSearchToken(searchLogId, tokenKey, {
+      kind: 'cursor',
+      rank: position + selected.length,
+    })
+  }
+
   return { items, total, tier, relaxations, nextCursor, searchLogId }
 }
 export async function searchSuggestions(
@@ -481,46 +615,38 @@ export async function searchSuggestions(
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
-  const [domain, owners, projects] = await Promise.all([
-    enumerateDiscoverableIds(db, {
-      ...input.filters,
-      viewerUserId: user.id,
-      now,
-    }),
-    suggestionOwners(
-      db,
-      { ...input.filters, viewerUserId: user.id, now },
-      input.query,
+  const discoveryInput = { ...input.filters, viewerUserId: user.id, now }
+  const [hits, projects, owners] = await Promise.all([
+    enumerateSuggestionIds(db, discoveryInput).then(async (sources) =>
+      (
+        await Promise.all(
+          sources.map(async ({ workspaceId, ids }) => {
+            const request = await indexInput(db, input, workspaceId, false)
+            const page = await indexPage(indexes(workspaceId), {
+              ...request,
+              allowedIds: ids,
+              limit: 6,
+              maxResults: 7,
+            })
+            const allowed = new Set(
+              (
+                await discoverSuggestionCandidates(db, {
+                  ...discoveryInput,
+                  workspaceId,
+                  candidateIds: page.items.map((row) => row.id),
+                })
+              ).map((row) => row.id),
+            )
+            return page.items
+              .filter((row) => allowed.has(row.id))
+              .map((row) => ({ ...row, workspaceId }))
+          }),
+        )
+      ).flat(),
     ),
     suggestProjects(db, user.id, input.query, input.filters.includeArchived),
+    suggestionOwners(db, discoveryInput, input.query),
   ])
-  const hits: Hit[] = []
-  // Restrict the owned/viewed/shared domain before the SQL ranking limit.
-  for (const { workspaceId, ids } of domain) {
-    const request = await indexInput(db, input, workspaceId, false)
-    const page = await indexPage(indexes(workspaceId), {
-      ...request,
-      allowedIds: ids,
-      limit: 6,
-      maxResults: 6,
-    })
-    const allowed = new Set(
-      (
-        await discoverSuggestionCandidates(db, {
-          ...input.filters,
-          viewerUserId: user.id,
-          workspaceId,
-          candidateIds: page.items.map((row) => row.id),
-          now,
-        })
-      ).map((row) => row.id),
-    )
-    hits.push(
-      ...page.items
-        .filter((row) => allowed.has(row.id))
-        .map((row) => ({ ...row, workspaceId })),
-    )
-  }
   const selected = mergeSearchHits(
     hits,
     input.sort === 'newest' || !input.query.trim(),

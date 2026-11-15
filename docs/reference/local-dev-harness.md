@@ -128,32 +128,63 @@ parameters to continue. Handles expire after 30 minutes and are bound to the act
 
 `GET /api/search-suggestions` accepts the same filters and returns `files` (at most
 six), `owners` and `projects` (at most three each). It creates no search log.
-Typeahead enumerates the eligible owned/viewed/shared IDs once, then restricts
-ranking to those IDs before a six-result limit in one RPC per workspace. Owner
-and project name queries each return at most three rows. It skips counts,
-relaxations and excerpts. Search and detail RPCs only read index storage;
-pagination recomputes rankings from the cursor position.
+Design: typeahead searches the newest 2,000 findable files per indexed source
+(owned, viewed, direct shares, project membership and project defaults), with filters
+applied before each source limit. Each workspace receives one allowed-ID index call.
+Older files outside this domain are omitted; Enter searches the full results domain.
+Owner suggestions use a separate D1 query limited to three matching owners with
+findable files, including files outside the recent domain. Suggestions omit totals,
+excerpts, and relaxation queries. Continuation pages also omit relaxation queries.
 
-Design: format 9 keeps `search(title, body, script)` unchanged and adds an
-empty `search_runs(katakana)` FTS table keyed by chunk ID. Construction never
-copies existing chunks. Normal format-version synchronization stages run terms
-and deletes them alongside retired chunks. Old generations remain searchable
-through segmented terms. Katakana alternatives match the segmented phrase,
-segmented-token prefix, or contiguous-run prefix; auxiliary BM25 weight is 0.25
-(title/body/script retain 3/1/0.5).
+Design: active members use ranked batches of 2,000 in their current workspace,
+without enumerating that workspace. Stop on exhaustion, the requested page plus
+1,001 distinct groups, or five fetches. Only first-batch acceptance below 20%
+switches to complete allowed-ID retrieval. Five-fetch truncation returns `gte`
+even below 1,000 groups; it cannot establish zero for any-word fallback. External
+shares and non-member searches retain complete discovery and allowed-ID paging.
+Candidate RPC pages contain at most 2,000 IDs. Continuations store no candidate
+state: they rerun the same collection window and deterministically merge it before
+slicing at the encrypted cursor position. Results outside the five-fetch window
+are not returned. Once the collected groups have been consumed there is no next
+cursor, even when the total remains a lower bound.
 
-Allowed IDs use read-only UNION ALL JSON bindings of at most 1 MiB each, with
-at most ten bindings and 125,000 IDs per workspace. This supports 125,000 standard
-36-byte IDs; unusually long IDs may reach the byte limit first. Larger sets
-return the typed `search_capacity_exceeded` RPC error, which the service maps
-to a private, no-store HTTP 503 instead of returning a partial result. Ranking
-is recomputed per continuation; no allowed IDs or ranking cache are stored.
+Returned group sizes use indexed `documents.group_key` (the digit-stripped title
+key) to page 2,000 matching members per group per workspace, checking D1 discovery
+and current titles until exhaustion, 1,000 authorized members, or five batches.
+Allowed-ID streams reuse their fully collected, authorized results. This completion is independent of ranking stops;
+it generates no tail excerpts. The numeric `groupSize` is capped at 1,000;
+`groupSizeRelation` is `eq` when complete and `gte` when capped or when an index
+group has unexamined members (even if fewer than 1,000 passed discovery). Group sets also include collected, authorized
+hits with the current D1 title key, and the currently authorized representative.
+Thus stale or not-yet-rebuilt index keys cannot omit already known members or
+produce a group size of zero. Member logs record `search_method=candidates`,
+`active_document_count` from the index, and passed candidates plus enumerated external IDs in
+`discoverable_count`. Allowed-ID paths record their enumerated eligible count
+and `search_method=allowed`.
+
+Query design: MATCH expressions materialize rowids once before joining allowed
+documents; they never run once per allowed chunk. Details omit workspace ranks.
+Broad terms still require FTS evidence and ordering across all index matches;
+that SQL work can exceed the every-file timing target even though D1 candidate
+checks and metadata stop early. The active-document count is requested only on
+the first candidate fetch and retained for the search log.
+
+Format 12 adds the indexed group key and retains the separate Katakana-run FTS
+with weight 0.25 (title/body/script remain 3/1/0.5). Phrase seams retain only the
+last 32 and first 32 tokens of adjacent chunks, with no BM25 contribution. Longer
+cross-boundary queries still have all-term evidence but may lack phrase evidence.
+Normal staged format rebuilding populates this metadata and replaces seams;
+search never synchronously rebuilds the index. Allowed IDs use read-only JSON
+bindings of at most 1 MiB, split by encoded bytes, without an ID-count ceiling.
 
 Encrypted cursors and receipts use a per-search key on
-the actor-bound log and expire 30 minutes after that log's creation. No separate
-cursor or receipt rows are stored. Daily retention drains expired logs in batches of 500, with opened results cascading from each log.
+the actor-bound log and expire 30 minutes after that log's creation. The cursor
+contains the merge position; receipts need no rows. Daily retention drains
+batches of 500 expired logs to exhaustion, with opened results cascading from
+each log; the exact cutoff is retained.
 The legacy search palette is unchanged. `GET /api/search-logs` reads only the
-caller's most recent 50 searches and at most 500 latest opens across those searches
+caller's most recent 50 searches and at most 500 latest opens per returned search,
+with at most 1,000 opens across the request
 (ordered by opened time descending, then open ID). Current discovery is checked
 in batches of 100 distinct files; inaccessible opens are omitted without refilling
 the window. `POST /api/search-logs/:id/opens` accepts
@@ -169,10 +200,10 @@ node scripts/measure-workspace-search.mjs --size 100000 --warmup 3 --samples 10
 The launcher builds first, then runs the existing real Workers integration harness.
 Its test-only seed creates D1 eligibility rows and active FTS documents without
 rendering pages or running extraction. The Worker measures production member
-search for `alpha`, `payload`, `alpha payload` and an empty query, including first-page details, capped counts, group completion,
+search for `payload` (every file), `rareword` (about 1%), `rareword partner` (about 1% co-occurrence), `lpha` (title substring) and an empty query, including first-page details, capped counts, group completion,
 D1/DO calls and log writes. Seed/setup and Node transport are excluded. The last
 seeded file is denied; all other seeded files are eligible. One authorized pair has the same alphabetic
 title key to verify exact group sizes. Suggestions and the legacy palette are
-measured separately and reported as their own duration arrays. Output reports size, eligibility rate, samples, warmup and p95 milliseconds.
+measured separately. The launcher prints size, eligibility rate, samples, warmup, durations and p95 per query class, plus suggestion and palette p95 milliseconds after success. Each class receives the requested warmup and sample count.
 Ordinary post-build integration checks use 40 rows, one warmup and two samples.
 The large run is opt-in and has no wall-clock pass threshold.

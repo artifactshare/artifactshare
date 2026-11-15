@@ -208,6 +208,11 @@ function searchProbe(workspace: string) {
       if ('error' in result) throw new Error(result.error.code)
       return result
     },
+    groupMembers: (
+      input: IndexSearchInput,
+      ids: string[],
+    ): Promise<IndexPage> =>
+      call('groupMembers', undefined, undefined, undefined, { input, ids }),
     details: (
       input: IndexSearchInput,
       ids: string[],
@@ -1904,6 +1909,14 @@ describe('Worker integration harness', () => {
         ),
       ).toEqual([{ ordinal }])
     }
+    const probe = searchProbe(owner.workspaceId)
+    // Both use production sync above: the first phrase is within a chunk, the
+    // second needs the seam written by ingestion at the verified boundary.
+    for (const query of ['bodyhead content', 'beforeboundary afterboundary']) {
+      expect((await probe.search({ query })).items, query).toEqual([
+        expect.objectContaining({ id: 'large', tier: 'phrase' }),
+      ])
+    }
     const sizes = await index.exec(
       'SELECT max(length(CAST(title AS BLOB))) AS title,max(length(CAST(body AS BLOB))) AS body,max(length(CAST(script AS BLOB))) AS script FROM search',
     )
@@ -3198,6 +3211,15 @@ test('workspace search benchmark smoke', async () => {
   await invoke('seedSearch')
   const measurement = (await invoke('measureSearch')) as {
     p95: number
+    classes: Array<{
+      query: string
+      durations: number[]
+      p95: number
+      result: {
+        total: { value: number; relation: string }
+        items: Array<{ id: string; groupSize: number }>
+      }
+    }>
     queries: string[]
     suggestionDurations: number[]
     paletteDurations: number[]
@@ -3225,20 +3247,72 @@ test('workspace search benchmark smoke', async () => {
     ).toMatchObject({ groupSize: 2 })
   expect(measurement.suggestionDurations).toHaveLength(samples)
   expect(measurement.paletteDurations).toHaveLength(samples)
-  console.log(
-    JSON.stringify({
-      queries: measurement.queries,
-      suggestionDurations: measurement.suggestionDurations,
-      paletteDurations: measurement.paletteDurations,
-      benchmark: 'member-first-page-count',
-      size,
-      warmup,
-      samples,
-      p95: measurement.p95,
-      runtime: 'Workers',
-      eligibilityRate: (size - 1) / size,
-    }),
+  // Every hundredth file has the rare terms. The final file is denied; the
+  // penultimate file (size >= 4) shares file 0's title and rare-term body.
+  const rareGroupCount =
+    Math.ceil((size - 1) / 100) - (size >= 4 && (size - 2) % 100 === 0 ? 1 : 0)
+  const expectedCounts: Record<string, number> = {
+    payload: groupCount,
+    rareword: rareGroupCount,
+    'rareword partner': rareGroupCount,
+    lpha: groupCount,
+    '': groupCount,
+  }
+  expect(measurement.classes.map(({ query }) => query)).toEqual(
+    Object.keys(expectedCounts),
   )
+  for (const entry of measurement.classes) {
+    expect(entry.durations).toHaveLength(samples)
+    expect(Number.isFinite(entry.p95)).toBe(true)
+    const expectedCount = expectedCounts[entry.query]
+    expect(entry.result.total, entry.query).toEqual({
+      value: Math.min(expectedCount, 1000),
+      relation: expectedCount > 1000 ? 'gte' : 'eq',
+    })
+    expect(entry.result.items, entry.query).toHaveLength(
+      Math.min(20, expectedCount),
+    )
+    for (const item of entry.result.items) {
+      const duplicate =
+        size >= 4 &&
+        (item.id === `${workspace}-0` || item.id === `${workspace}-${size - 2}`)
+      expect(item.groupSize, `${entry.query}: ${item.id}`).toBe(
+        duplicate ? 2 : 1,
+      )
+    }
+    if (
+      (entry.query === 'rareword' || entry.query === 'rareword partner') &&
+      size > 1
+    )
+      expect(
+        entry.result.items.find((item) => item.id === `${workspace}-0`),
+        entry.query,
+      ).toMatchObject({ groupSize: size >= 4 ? 2 : 1 })
+    expect(
+      entry.result.items.some((item) => item.id === `${workspace}-${size - 1}`),
+    ).toBe(false)
+  }
+  const percentile = (values: number[]) =>
+    [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1]
+  const report = JSON.stringify({
+    classes: measurement.classes.map(({ query, durations, p95 }) => ({
+      query,
+      durations,
+      p95,
+    })),
+    suggestionP95: percentile(measurement.suggestionDurations),
+    paletteP95: percentile(measurement.paletteDurations),
+    benchmark: 'member-first-page-count',
+    size,
+    warmup,
+    samples,
+    p95: measurement.p95,
+    runtime: 'Workers',
+    eligibilityRate: (size - 1) / size,
+  })
+  console.log(report)
+  if (process.env.SEARCH_BENCHMARK_REPORT)
+    await writeFile(process.env.SEARCH_BENCHMARK_REPORT, report + '\n')
 }, 600000)
 
 test('workspace search RPC ranks active pages, cross-chunk evidence and literal syntax', async () => {
@@ -3531,13 +3605,32 @@ test('workspace search SQL restricts and recomputes read-only rankings and requi
     })),
   ])
   const before = await probe.queryState()
-  await probe.search({ query: 'a b', maxResults: 320, limit: 64 })
+  const limited = await probe.search({
+    query: 'a b',
+    maxResults: 65,
+    limit: 64,
+  })
+  expect(limited).toEqual(await probe.search({ query: 'a b', limit: 64 }))
+  const nextLimited = await probe.search({
+    query: 'a b',
+    maxResults: 129,
+    limit: 64,
+    cursor: limited.nextCursor!,
+  })
+  expect(nextLimited).toEqual(
+    await probe.search({
+      query: 'a b',
+      limit: 64,
+      cursor: limited.nextCursor!,
+    }),
+  )
   expect(await probe.queryState()).toEqual(before)
   const criteria = { query: 'a b', allowedIds: ['false', 'true'], limit: 1 }
   const first = await probe.search(criteria)
   expect(first.items).toEqual([
     expect.objectContaining({ id: 'true', tier: 'phrase', rank: 1 }),
   ])
+  expect(await probe.search({ ...criteria, maxResults: 2 })).toEqual(first)
   const state = await probe.queryState()
   expect(state).toEqual(before)
   const second = await probe.search({ ...criteria, cursor: first.nextCursor! })
@@ -3585,6 +3678,35 @@ test('workspace search SQL restricts and recomputes read-only rankings and requi
   expect((await probe.search(criteria)).items).toEqual([
     expect.objectContaining({ id: 'false', tier: 'all', rank: 1 }),
   ])
+  const left = Array.from({ length: 40 }, (_, i) => `term${i.toString(36)}`)
+  const whole = [...left, 'rightword'].join(' ')
+  expect(whole.length).toBeLessThanOrEqual(500)
+  await probe.seedDocuments([
+    {
+      id: 'long-seam',
+      title: 'Boundary',
+      chunks: [{ body: left.join(' ') }, { body: 'rightword' }],
+    },
+    { id: 'inline', title: 'Inline', chunks: [{ body: whole }] },
+  ])
+  expect(
+    (await probe.search({ query: whole })).items
+      .map(({ id, tier }) => ({ id, tier }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ).toEqual([
+    { id: 'inline', tier: 'phrase' },
+    { id: 'long-seam', tier: 'all' },
+  ])
+  expect(
+    (
+      await probe.search({ query: [...left.slice(-32), 'rightword'].join(' ') })
+    ).items
+      .map(({ id, tier }) => ({ id, tier }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ).toEqual([
+    { id: 'inline', tier: 'phrase' },
+    { id: 'long-seam', tier: 'phrase' },
+  ])
 })
 
 test('previous-format construction leaves segmented FTS untouched with constant writes', async () => {
@@ -3627,14 +3749,14 @@ test('previous-format construction leaves segmented FTS untouched with constant 
   expect(writes[1]).toBe(writes[0])
 })
 
-test('benchmark-sized allowed IDs remain write-free and excessive sets return a typed error', async () => {
+test('allowed-ID sets above 125000 preserve selective recall and remain write-free', async () => {
   const probe = searchProbe(`allowed-${crypto.randomUUID()}`)
   await probe.seedDocuments([
     { id: 'visible', title: 'Needle', chunks: [{ body: 'needle' }] },
     { id: 'denied', title: 'Needle', chunks: [{ body: 'needle' }] },
   ])
   const workspace = `search-benchmark-${crypto.randomUUID()}`
-  const ids = Array.from({ length: 100_000 }, (_, i) => `${workspace}-${i}`)
+  const ids = Array.from({ length: 130_000 }, (_, i) => `${workspace}-${i}`)
   ids.push('visible')
   expect(
     new TextEncoder().encode(JSON.stringify(ids)).byteLength,
@@ -3646,8 +3768,57 @@ test('benchmark-sized allowed IDs remain write-free and excessive sets return a 
   expect(
     await probe.searchResult({
       query: 'needle',
-      allowedIds: Array.from({ length: 125_001 }, () => 'x'),
+      allowedIds: Array.from({ length: 125_001 }, () => 'x').concat('visible'),
     }),
-  ).toEqual({ error: { code: 'search_capacity_exceeded' } })
+  ).toMatchObject({ items: [{ id: 'visible' }], nextCursor: null })
   expect(await probe.queryState()).toEqual(before)
+})
+
+test('allowed-ID completion pages a ranking beyond a candidate page', async () => {
+  const probe = searchProbe(`complete-${crypto.randomUUID()}`)
+  const ids = Array.from({ length: 2101 }, (_, i) => `complete-${i}`)
+  await probe.seedDocuments(
+    ids.map((id) => ({ id, title: 'Complete', chunks: [{ body: 'needle' }] })),
+  )
+  const criteria = { query: 'needle', allowedIds: ids }
+  const first = await probe.search(criteria)
+  const second = await probe.search({ ...criteria, cursor: first.nextCursor! })
+  const complete = [...first.items, ...second.items]
+  expect(first.items).toHaveLength(2000)
+  expect(complete).toHaveLength(ids.length)
+  expect(complete.map((row) => row.id).sort()).toEqual([...ids].sort())
+  expect(second.nextCursor).toBeNull()
+  expect(JSON.stringify(complete)).not.toMatch(/score|bm25/)
+})
+
+test('workspace search bounds each page group and counts active documents only on request', async () => {
+  const probe = searchProbe(`group-bound-${crypto.randomUUID()}`)
+  const documents = Array.from({ length: 3001 }, (_, i) => ({
+    id: `group-${i}`,
+    title: i < 2001 ? `Alpha ${i}` : `Beta ${i}`,
+    chunks: [{ body: 'needle' }],
+  }))
+  await probe.seedDocuments(documents)
+  const criteria = { query: 'needle' }
+  const first = await probe.search({
+    ...criteria,
+    includeActiveDocumentCount: true,
+  })
+  expect(first.activeDocumentCount).toBe(3001)
+  expect(
+    await probe.search({ ...criteria, cursor: first.nextCursor! }),
+  ).not.toHaveProperty('activeDocumentCount')
+  const groups = await probe.groupMembers(criteria, ['alpha ', 'beta '])
+  expect(groups.items).toHaveLength(3000)
+  expect(
+    groups.items.filter((row) => Number(row.id.slice(6)) < 2001),
+  ).toHaveLength(2000)
+  expect(groups.incompleteGroupKeys).toEqual(['alpha '])
+  const tail = await probe.groupMembers({ ...criteria, cursor: 2000 }, [
+    'alpha ',
+  ])
+  expect(tail.items).toHaveLength(1)
+  expect(tail.incompleteGroupKeys).toEqual([])
+  expect(groups.nextCursor).toBeNull()
+  expect(groups).not.toHaveProperty('activeDocumentCount')
 })

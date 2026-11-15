@@ -22,6 +22,8 @@ export interface DB {
     tier: 'title' | 'phrase' | 'all' | 'any'
     duration_ms: number
     discoverable_count: number
+    search_method: Generated<'candidates' | 'allowed'>
+    active_document_count: number | null
     source: 'screen' | 'mcp' | 'cli'
   }
   search_opens: {

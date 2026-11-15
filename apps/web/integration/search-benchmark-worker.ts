@@ -91,7 +91,13 @@ export async function measureSearchBenchmark(
   const durations: number[] = []
   const suggestionDurations: number[] = [],
     paletteDurations: number[] = []
-  const queries = ['alpha', 'payload', 'alpha payload', '']
+  const queries = ['payload', 'rareword', 'rareword partner', 'lpha', '']
+  const classes: Array<{
+    query: string
+    durations: number[]
+    p95: number
+    result: Awaited<ReturnType<typeof search>>
+  }> = []
   const actor = `${workspace}-actor`
   const user: SessionUser = {
     id: actor,
@@ -107,23 +113,39 @@ export async function measureSearchBenchmark(
   }
 
   let result
+  for (const query of queries) {
+    const classDurations: number[] = []
+    for (let i = 0; i < warmup + samples; i++) {
+      const start = performance.now()
+      // Latency samples must not overlap; concurrent samples measure queueing instead.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      result = await search(
+        db,
+        (id) => env.WORKSPACE_SEARCH_INDEX.getByName(`${id}:0`),
+        `${workspace}-actor`,
+        {
+          query: query,
+          filters: {},
+          sort: 'relevance',
+          pageSize: 20,
+        },
+      )
+      if (i >= warmup) classDurations.push(performance.now() - start)
+    }
+    if (!result) throw new Error('Missing benchmark result')
+    durations.push(...classDurations)
+    const ordered = [...classDurations].sort((a, b) => a - b)
+    classes.push({
+      query,
+      durations: classDurations,
+      p95: ordered[Math.ceil(ordered.length * 0.95) - 1],
+      result,
+    })
+  }
   for (let i = 0; i < warmup + samples; i++) {
-    const start = performance.now()
-    // Latency samples must not overlap; concurrent samples measure queueing instead.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    result = await search(
-      db,
-      (id) => env.WORKSPACE_SEARCH_INDEX.getByName(`${id}:0`),
-      `${workspace}-actor`,
-      {
-        query: queries[i % queries.length],
-        filters: {},
-        sort: 'relevance',
-        pageSize: 20,
-      },
-    )
-    if (i >= warmup) durations.push(performance.now() - start)
     const suggestionStart = performance.now()
+    // Sequential samples measure latency without queueing behind each other.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
     await searchSuggestions(
       db,
       (id) => env.WORKSPACE_SEARCH_INDEX.getByName(`${id}:0`),
@@ -140,6 +162,7 @@ export async function measureSearchBenchmark(
   durations.sort((a, b) => a - b)
   return {
     result,
+    classes,
     durations,
     queries,
     suggestionDurations,

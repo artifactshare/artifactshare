@@ -3,14 +3,17 @@ import { normalizeSearchText } from './normalize'
 export type SearchTier = 'title' | 'phrase' | 'all' | 'any'
 export type IndexSearchInput = {
   query: string
+  includeActiveDocumentCount?: boolean
   ownerUserIds?: string[]
   containerIds?: string[]
   updated?: { from?: string; to?: string }
   sort?: 'relevance' | 'newest'
   any?: boolean
   allowedIds?: string[]
-  /** Internal typeahead ranking window; exhaustive searches leave this unset. */
+  /** Internal typeahead ranking window; results searches leave this unset. */
   maxResults?: number
+  /** Page-group completion only. */
+  groupKeys?: string[]
   limit?: number
   cursor?: number
 }
@@ -20,7 +23,12 @@ export type IndexHit = {
   rank: number
   activityAt: string
 }
-export type IndexPage = { items: IndexHit[]; nextCursor: number | null }
+export type IndexPage = {
+  items: IndexHit[]
+  nextCursor: number | null
+  activeDocumentCount?: number
+  incompleteGroupKeys?: string[]
+}
 export type IndexSearchResult =
   | IndexPage
   | { error: { code: 'search_capacity_exceeded' } }
@@ -29,12 +37,9 @@ export class SearchCapacityError extends Error {
     super('search_capacity_exceeded')
   }
 }
-// Reserve room for ranking/filter bindings under the SQLite parameter limit.
-export const MAX_ALLOWED_IDS = 125_000
+// Split bindings by bytes, never by the number of discoverable IDs.
 export const ALLOWED_ID_BINDING_BYTES = 1024 * 1024
-const MAX_ALLOWED_ID_BINDINGS = 10
 export function bindAllowedIds(ids: string[]): string[] {
-  if (ids.length > MAX_ALLOWED_IDS) throw new SearchCapacityError()
   const arrays: string[] = []
   let parts: string[] = [],
     bytes = 2
@@ -45,8 +50,6 @@ export function bindAllowedIds(ids: string[]): string[] {
     if (size + 2 > ALLOWED_ID_BINDING_BYTES) throw new SearchCapacityError()
     if (bytes + size + (parts.length ? 1 : 0) > ALLOWED_ID_BINDING_BYTES) {
       arrays.push(`[${parts.join(',')}]`)
-      if (arrays.length >= MAX_ALLOWED_ID_BINDINGS)
-        throw new SearchCapacityError()
       parts = []
       bytes = 2
     }

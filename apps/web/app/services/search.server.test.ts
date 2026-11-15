@@ -54,7 +54,41 @@ function index(): SearchIndex {
           activityAt: now,
         })),
       nextCursor: null,
+      activeDocumentCount: 4,
     })),
+    groupMembers: vi.fn<SearchIndex['groupMembers']>(async (request, keys) => {
+      const rows = (
+        await fixture.db
+          .selectFrom('shareables')
+          .select(['id', 'name'])
+          .execute()
+      )
+        .filter((row) => keys.includes(query.groupKey(row.name)))
+        .map((row, i) => ({
+          title: row.name,
+          id: row.id,
+          tier: 'all' as const,
+          rank: i + 1,
+          activityAt: now,
+        }))
+      const groups = new Map(
+        keys.map((key) => [
+          key,
+          rows.filter((row) => {
+            return query.groupKey(row.title) === key
+          }),
+        ]),
+      )
+      return {
+        items: [...groups.values()].flatMap((group) =>
+          group.slice(request.cursor ?? 0, (request.cursor ?? 0) + 2000),
+        ),
+        nextCursor: null,
+        incompleteGroupKeys: [...groups]
+          .filter(([, group]) => group.length > (request.cursor ?? 0) + 2000)
+          .map(([key]) => key),
+      }
+    }),
     details: vi.fn<SearchIndex['details']>(async (_input, selected) =>
       selected.map((id) => ({
         id,
@@ -101,7 +135,13 @@ test('authorized groups, metadata and snippets exclude denied rows; cursors and 
     ),
   ).toBe(true)
   expect(await readSearchLogs(fixture.db, 'owner')).toEqual([])
-  expect(await readSearchLogs(fixture.db, 'viewer')).toHaveLength(1)
+  expect(await readSearchLogs(fixture.db, 'viewer')).toMatchObject([
+    {
+      search_method: 'candidates',
+      active_document_count: 4,
+      discoverable_count: 3,
+    },
+  ])
   const next = await search(fixture.db, () => stub, 'viewer', {
     ...input,
     cursor: first.nextCursor!,
@@ -130,6 +170,42 @@ test('authorized groups, metadata and snippets exclude denied rows; cursors and 
   })
   expect(revoked).toMatchObject({ items: [] })
 })
+test.each(['old title', ''])(
+  'group completion includes collected IDs when indexed keys lag (%s)',
+  async (staleKey) => {
+    const stub = index()
+    vi.mocked(stub.groupMembers).mockImplementation(async (_request, keys) => ({
+      items: keys.includes(staleKey)
+        ? ['a', 'c'].map((id, i) => ({
+            id,
+            rank: i + 1,
+            tier: 'all' as const,
+            activityAt: now,
+          }))
+        : [],
+      nextCursor: null,
+    }))
+    const result = await search(fixture.db, () => stub, 'viewer', input)
+    expect(result).toMatchObject({
+      items: [{ id: 'a', groupSize: 2 }],
+      total: { value: 2, relation: 'eq' },
+    })
+    // The current-key control must not double-count the collected representatives.
+    vi.mocked(stub.groupMembers).mockResolvedValue({
+      items: ['a', 'c'].map((id, i) => ({
+        id,
+        rank: i + 1,
+        tier: 'all',
+        activityAt: now,
+      })),
+      nextCursor: null,
+    })
+    expect(await search(fixture.db, () => stub, 'viewer', input)).toMatchObject(
+      { items: [{ id: 'a', groupSize: 2 }] },
+    )
+  },
+)
+
 test('numeric-only titles form an ordinary group and totals cap after grouping', () => {
   const rows = [
     { id: 'a', title: '1' },
@@ -184,6 +260,7 @@ test.each([399, 400])(
       activityAt: now,
     }))
     const stub: SearchIndex = {
+      groupMembers: async () => ({ items: candidate, nextCursor: null }),
       search: vi.fn<SearchIndex['search']>(async (request) => ({
         items: request.allowedIds
           ? candidate.filter((row) => request.allowedIds!.includes(row.id))
@@ -211,58 +288,103 @@ test.each([399, 400])(
   },
 )
 
-test('five candidate fetches finish with allowed IDs and exact duplicate tails beyond 10000', async () => {
+test('five-fetch windows replay deterministically alongside an external workspace', async () => {
   fixture.sqlite
-    .exec(`WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<10002)
+    .exec(`WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<10000)
     INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
-    SELECT 'tail-'||x,'ws',CASE WHEN x=10002 THEN 'owner' ELSE 'viewer' END,CASE WHEN x=10001 THEN 'Other' ELSE 'Same '||x END,'html_page','private','home','${now}','${now}','${now}' FROM n`)
-  const candidates = Array.from({ length: 10003 }, (_, i) => ({
+    SELECT 'tail-'||x,'ws','viewer',CASE WHEN x=9999 THEN 'Beta' WHEN x=10000 THEN 'Outside window' ELSE 'Alpha '||x END,'html_page','private','home','${now}','${now}','${now}' FROM n;
+    INSERT INTO workspaces(id,name,created_at) VALUES('zz','External','${now}');
+    INSERT INTO artifact_containers(id,workspace_id,kind,name,owner_user_id,created_by_id,created_at,updated_at) VALUES('external-home','zz','inbox','Home','viewer','viewer','${now}','${now}');
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    VALUES('external','zz','viewer','Charlie','html_page','private','external-home','${now}','${now}','${now}');`)
+  const candidates = Array.from({ length: 10001 }, (_, i) => ({
     id: `tail-${i}`,
     tier: 'all' as const,
     rank: i + 1,
     activityAt: now,
   }))
-  const stub: SearchIndex = {
-    search: vi.fn<SearchIndex['search']>(async (request) => {
-      const rows = request.allowedIds
-        ? candidates.filter((row) => request.allowedIds!.includes(row.id))
-        : candidates
-      const offset = request.cursor ?? 0
-      return {
-        items: rows.slice(offset, offset + 2000),
-        nextCursor: offset + 2000 < rows.length ? offset + 2000 : null,
-      }
-    }),
-    details: vi.fn<SearchIndex['details']>(async (_request, selected) =>
-      selected.map((id) => ({
-        id,
-        path: 'index.html',
-        excerpt: 'Healthy excerpt',
-      })),
-    ),
-  }
-  const result = await search(fixture.db, () => stub, 'viewer', input)
-  expect(result).toMatchObject({
-    total: { value: 2, relation: 'eq' },
-    items: [{ id: 'tail-0', groupSize: 10001 }],
+  const own = index()
+  vi.mocked(own.search).mockImplementation(async (request) => {
+    const offset = request.cursor ?? 0
+    return {
+      items: candidates.slice(offset, offset + 2000),
+      nextCursor: offset + 2000 < candidates.length ? offset + 2000 : null,
+      ...(request.includeActiveDocumentCount
+        ? { activeDocumentCount: 10001 }
+        : {}),
+    }
   })
+  const external = index()
+  vi.mocked(external.search).mockResolvedValue({
+    items: [{ id: 'external', tier: 'all', rank: 1, activityAt: now }],
+    nextCursor: null,
+  })
+  const indexes = (workspace: string) => (workspace === 'ws' ? own : external)
+  const request = { ...input, pageSize: 2 }
+  const first = await search(fixture.db, indexes, 'viewer', request)
+  if ('error' in first || !first.nextCursor)
+    throw new Error('missing continuation')
+  expect(first.items.map((row) => row.id)).toEqual(['tail-0', 'external'])
+  expect(first.items[0]).toMatchObject({
+    groupSize: 1000,
+    groupSizeRelation: 'gte',
+  })
+  expect(own.search).toHaveBeenCalledTimes(5)
   expect(
     vi
-      .mocked(stub.search)
-      .mock.calls.filter(([request]) => !request.allowedIds),
-  ).toHaveLength(5)
-  expect(stub.details).toHaveBeenCalledExactlyOnceWith(expect.anything(), [
-    'tail-0',
+      .mocked(own.search)
+      .mock.calls.map(([call]) => call.includeActiveDocumentCount),
+  ).toEqual([true, false, false, false, false])
+  expect(await readSearchLogs(fixture.db, 'viewer')).toMatchObject([
+    { active_document_count: 10001, discoverable_count: 10001 },
   ])
+  expect(
+    fixture.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE name='search_candidate_pages'",
+      )
+      .all(),
+  ).toEqual([])
+  vi.mocked(own.search).mockClear()
+  const next = await search(fixture.db, indexes, 'viewer', {
+    ...request,
+    cursor: first.nextCursor,
+  })
+  expect(next).toMatchObject({
+    items: [
+      { id: 'tail-9999', rank: 3, groupSize: 2, groupSizeRelation: 'eq' },
+    ],
+    nextCursor: null,
+    total: { value: 3, relation: 'gte' },
+  })
+  expect(own.search).toHaveBeenCalledTimes(5)
+  expect(
+    vi.mocked(own.search).mock.calls.map(([call]) => call.cursor ?? 0),
+  ).toEqual([0, 2000, 4000, 6000, 8000])
+  expect(await readSearchLogs(fixture.db, 'viewer')).toHaveLength(1)
+  // A continuation that advances beyond the original window loses the pending group.
+  vi.mocked(own.search).mockResolvedValue({
+    items: candidates.slice(10000),
+    nextCursor: null,
+  })
+  const faulty = await search(fixture.db, indexes, 'viewer', {
+    ...request,
+    cursor: first.nextCursor,
+  })
+  expect(faulty).not.toHaveProperty('error')
+  expect(() =>
+    expect(faulty).toMatchObject({ items: [{ id: 'tail-9999', rank: 3 }] }),
+  ).toThrowError()
 })
 
 test('hidden all-term matches cannot suppress visible any-term results and date relaxation', async () => {
   fixture.sqlite.exec(
-    "UPDATE shareables SET activity_at='2026-09-01T00:00:00.000Z' WHERE id='b'",
+    "UPDATE shareables SET activity_at='2026-09-01T00:00:00.000Z' WHERE id='b'; UPDATE shareables SET name='Gamma' WHERE id='c'",
   )
   const stub: SearchIndex = {
+    groupMembers: index().groupMembers,
     search: vi.fn<SearchIndex['search']>(async (request) => ({
-      items: (request.any ? ['a'] : ['denied', 'b'])
+      items: (request.any ? ['a', 'c'] : ['denied', 'b'])
         .filter((id) => !request.allowedIds || request.allowedIds.includes(id))
         .map((id, i) => ({
           id,
@@ -287,16 +409,50 @@ test('hidden all-term matches cannot suppress visible any-term results and date 
   })
   expect(result).toMatchObject({
     tier: 'any',
-    total: { value: 1, relation: 'eq' },
+    total: { value: 2, relation: 'eq' },
     items: [{ id: 'a' }],
     relaxations: [{ filter: 'date', total: { value: 1, relation: 'eq' } }],
   })
-  expect(JSON.stringify(result)).not.toMatch(
-    /Denied Title|Secret Owner|Secret Snippet/,
-  )
+  expect(
+    vi
+      .mocked(stub.search)
+      .mock.calls.some(
+        ([request]) =>
+          !request.any &&
+          request.updated === undefined &&
+          request.allowedIds === undefined,
+      ),
+  ).toBe(true)
   expect(stub.details).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ any: true }),
     ['a'],
+  )
+  if ('error' in result || !result.nextCursor)
+    throw new Error('Expected continuation')
+  vi.mocked(stub.search).mockClear()
+  const next = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    query: 'alpha beta',
+    filters: { date: { field: 'updated', from: new Date(now) } },
+    cursor: result.nextCursor,
+  })
+  expect(next).toMatchObject({
+    tier: 'any',
+    items: [{ id: 'c' }],
+    relaxations: [],
+  })
+  expect(
+    vi
+      .mocked(stub.search)
+      .mock.calls.every(([request]) => request.updated?.from === now),
+  ).toBe(true)
+  expect(JSON.stringify(result)).not.toMatch(
+    /Denied Title|Secret Owner|Secret Snippet/,
+  )
+  expect(stub.details).toHaveBeenCalledTimes(2)
+  expect(stub.details).toHaveBeenLastCalledWith(
+    expect.objectContaining({ any: true }),
+    ['c'],
   )
 })
 
@@ -327,6 +483,7 @@ test('relative date windows remain bound to the first page and expire safely', a
     }),
   )
   vi.mocked(stub.search).mockClear()
+  vi.mocked(stub.groupMembers).mockClear()
   params.set('cursor', first.nextCursor!)
   const later = new Date(start.getTime() + 1000)
   const secondInput = parseSearchInput(params, later)
@@ -341,10 +498,12 @@ test('relative date windows remain bound to the first page and expire safely', a
       () => later,
     ),
   ).toMatchObject({ items: [{ id: 'b' }] })
-  expect(stub.search).toHaveBeenCalledWith(
+  expect(stub.search).toHaveBeenCalledOnce()
+  expect(stub.groupMembers).toHaveBeenCalledWith(
     expect.objectContaining({
       updated: { from: '2026-09-09T00:00:00.000Z', to: start.toISOString() },
     }),
+    ['beta'],
   )
   expect(
     await search(
@@ -420,6 +579,7 @@ test('returned groups include duplicates after the count witness and beyond cand
     activityAt: now,
   }))
   const stub: SearchIndex = {
+    groupMembers: index().groupMembers,
     search: vi.fn<SearchIndex['search']>(async (request) => {
       const rows = request.allowedIds
         ? candidates.filter((row) => request.allowedIds!.includes(row.id))
@@ -438,7 +598,26 @@ test('returned groups include duplicates after the count witness and beyond cand
       })),
     ),
   }
+  const checked = vi.spyOn(discovery, 'discoverCandidates')
+  const enumeration = vi.spyOn(discovery, 'enumerateMemberDiscoverableIds')
+  const sparse = vi.spyOn(discovery, 'enumerateDiscoverableIds')
   const result = await search(fixture.db, () => stub, 'viewer', input)
+  expect(enumeration).not.toHaveBeenCalled()
+  expect(sparse).toHaveBeenCalledExactlyOnceWith(
+    fixture.db,
+    expect.objectContaining({ excludeWorkspaceId: 'ws' }),
+  )
+  sparse.mockRestore()
+  expect(
+    vi.mocked(stub.search).mock.calls.some(([request]) => request.allowedIds),
+  ).toBe(false)
+  expect(
+    checked.mock.calls.flatMap(([, request]) => request.candidateIds),
+  ).toEqual(
+    expect.arrayContaining(['witness-3000', 'witness-10001', 'witness-10003']),
+  )
+  checked.mockRestore()
+  enumeration.mockRestore()
   expect(result).toMatchObject({
     total: { value: 1000, relation: 'gte' },
     items: [{ id: 'witness-0', groupSize: 3 }],
@@ -452,14 +631,10 @@ test('returned groups include duplicates after the count witness and beyond cand
     'witness-0',
   ])
   // A completion adapter that stops at the ranking witness loses both tail duplicates.
-  vi.mocked(stub.search).mockImplementation(async (request) => ({
-    items: candidates
-      .slice(0, 2000)
-      .filter(
-        (row) => !request.allowedIds || request.allowedIds.includes(row.id),
-      ),
+  vi.mocked(stub.groupMembers).mockResolvedValue({
+    items: [candidates[0]],
     nextCursor: null,
-  }))
+  })
   const faulty = await search(fixture.db, () => stub, 'viewer', input)
   expect(faulty).not.toHaveProperty('error')
   expect(() =>
@@ -624,23 +799,120 @@ test('log reads bound latest opens and authorize distinct files in bounded batch
       i + 1,
       new Date(new Date(now).getTime() + i * 1000).toISOString(),
     )
+  const other = await search(fixture.db, () => index(), 'viewer', input)
+  if ('error' in other) throw new Error('unexpected search failure')
+  insert.run('other-open', other.searchLogId, 'a', 1, now)
   const discover = vi.spyOn(discovery, 'discoverCandidates')
   try {
     const logs = await readSearchLogs(fixture.db, 'viewer')
-    expect(logs[0].opens).toHaveLength(499)
-    expect(logs[0].opens[0]).toMatchObject({
+    const primary = logs.find((log) => log.id === result.searchLogId)!
+    expect(
+      logs.find((log) => log.id === other.searchLogId)?.opens,
+    ).toHaveLength(1)
+    expect(primary.opens).toHaveLength(499)
+    expect(primary.opens[0]).toMatchObject({
       shareableId: 'opened-499',
       rank: 500,
     })
-    expect(logs[0].opens.at(-1)).toMatchObject({
+    expect(primary.opens.at(-1)).toMatchObject({
       shareableId: 'opened-1',
       rank: 2,
     })
     expect(JSON.stringify(logs)).not.toContain('opened-500')
-    expect(discover).toHaveBeenCalledTimes(5)
+    expect(discover).toHaveBeenCalledTimes(6)
     for (const [, request] of discover.mock.calls)
       expect(request.candidateIds.length).toBeLessThanOrEqual(100)
   } finally {
     discover.mockRestore()
   }
 })
+
+test('log reads cap opens across the entire request while keeping each log bounded', async () => {
+  const result = await search(fixture.db, () => index(), 'viewer', input)
+  if ('error' in result) throw new Error('unexpected search failure')
+  const log = await fixture.db
+    .selectFrom('search_logs')
+    .selectAll()
+    .where('id', '=', result.searchLogId)
+    .executeTakeFirstOrThrow()
+  const insert = fixture.sqlite.prepare(
+    'INSERT INTO search_opens(id,search_id,shareable_id,rank,opened_at) VALUES(?,?,?,?,?)',
+  )
+  for (let group = 0; group < 3; group++) {
+    const id = `bounded-log-${group}`
+    await fixture.db
+      .insertInto('search_logs')
+      .values({ ...log, id })
+      .execute()
+    for (let i = 0; i < 501; i++)
+      insert.run(
+        `${id}-${i}`,
+        id,
+        'a',
+        i + 1,
+        new Date(
+          new Date(now).getTime() + (group * 1000 + i) * 1000,
+        ).toISOString(),
+      )
+  }
+  const logs = await readSearchLogs(fixture.db, 'viewer')
+  expect(logs.reduce((sum, row) => sum + row.opens.length, 0)).toBe(1000)
+  expect(logs.find((row) => row.id === 'bounded-log-2')?.opens).toHaveLength(
+    500,
+  )
+  expect(logs.find((row) => row.id === 'bounded-log-1')?.opens).toHaveLength(
+    500,
+  )
+  expect(logs.find((row) => row.id === 'bounded-log-0')?.opens).toEqual([])
+})
+
+test.each(['candidates', 'allowed'] as const)(
+  'denied same-title rows cannot change group-size relation in %s mode',
+  async (mode) => {
+    const stub = index()
+    fixture.sqlite.exec("UPDATE shareables SET name='Other' WHERE id='c'")
+    if (mode === 'allowed')
+      fixture.sqlite.exec(
+        "DELETE FROM workspace_members WHERE user_id='viewer'",
+      )
+    const check = async () => {
+      const result = await search(fixture.db, () => stub, 'viewer', input)
+      expect(result).toMatchObject({
+        items: [{ id: 'a', groupSize: 1, groupSizeRelation: 'eq' }],
+      })
+    }
+    await check()
+    fixture.sqlite
+      .exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000)
+     INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+     SELECT 'duplicate-'||x,'ws','owner','Alpha '||x,'html_page','private','home','${now}','${now}','${now}' FROM n`)
+    await check()
+    // Continue beyond two index batches without making denied rows a lower-bound witness.
+    fixture.sqlite
+      .exec(`WITH RECURSIVE n(x) AS (SELECT 1001 UNION ALL SELECT x+1 FROM n WHERE x<4001)
+      INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+      SELECT 'duplicate-'||x,'ws','owner','Alpha '||x,'html_page','private','home','${now}','${now}','${now}' FROM n`)
+    await check()
+    if (mode === 'candidates')
+      expect(stub.groupMembers).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor: 4000 }),
+        ['alpha '],
+      )
+    else expect(stub.groupMembers).not.toHaveBeenCalled()
+    if (mode === 'candidates') {
+      const bypass = vi
+        .spyOn(discovery, 'discoverCandidates')
+        .mockImplementation(async (_db, request) =>
+          request.candidateIds.map((id) => ({
+            id,
+            workspaceId: request.workspaceId,
+          })),
+        )
+      try {
+        await expect(check()).rejects.toThrow('to match object')
+      } finally {
+        bypass.mockRestore()
+      }
+    }
+  },
+)

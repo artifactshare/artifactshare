@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import {
   normalizeSearchText,
+  phraseSeam,
   packTokens,
   snippet,
   TOKEN_BYTES,
@@ -62,4 +63,14 @@ test('sizes tokens after NFKC expansion', () => {
   const tokens = normalizeSearchText(source).split(' ')
   expect(tokens.every((token) => bytes(token) <= TOKEN_BYTES)).toBe(true)
   expect(tokens.join('')).toBe(source.normalize('NFKC'))
+})
+
+test('phrase seams retain only 32 tokens on each side', () => {
+  const left = ['outside', ...Array(31).fill('left'), 'alpha'].join(' ')
+  const right = ['beta', ...Array(31).fill('right'), 'outside'].join(' ')
+  const seam = phraseSeam(left, right)
+  expect(seam.split(' ')).toHaveLength(64)
+  expect(seam).not.toContain('outside')
+  expect(seam).toContain('alpha beta')
+  expect(phraseSeam(left, '')).toBe('')
 })

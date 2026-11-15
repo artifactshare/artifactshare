@@ -89,7 +89,7 @@ test('Home rejects any projectId parameter', () => {
     ).toHaveProperty('error.code', 'validation_error')
 })
 
-test('allowed-ID bindings preserve multibyte IDs within the byte budget and reject overflow', () => {
+test('allowed-ID bindings preserve large sets and multibyte IDs within each byte budget', () => {
   const id = '界'.repeat(200_000)
   const ids = [id, id + 'x']
   const bindings = bindAllowedIds(ids)
@@ -99,7 +99,12 @@ test('allowed-ID bindings preserve multibyte IDs within the byte budget and reje
     expect(new TextEncoder().encode(value).byteLength).toBeLessThanOrEqual(
       ALLOWED_ID_BINDING_BYTES,
     )
-  expect(() => bindAllowedIds(Array.from({ length: 11 }, () => id))).toThrow(
+  expect(bindAllowedIds(Array.from({ length: 11 }, () => id))).toHaveLength(11)
+  const many = Array.from({ length: 130_000 }, (_, i) => String(i))
+  expect(bindAllowedIds(many).flatMap((value) => JSON.parse(value))).toEqual(
+    many,
+  )
+  expect(() => bindAllowedIds(['x'.repeat(ALLOWED_ID_BINDING_BYTES)])).toThrow(
     SearchCapacityError,
   )
 })

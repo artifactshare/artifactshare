@@ -1,5 +1,5 @@
 /** Increment whenever extraction, normalization or token/chunk policy changes. */
-export const INDEX_FORMAT_VERSION = 9
+export const INDEX_FORMAT_VERSION = 12
 export const BM25_WEIGHTS = [3, 1, 0.5] as const
 export const KATAKANA_WEIGHT = 0.25
 
@@ -77,4 +77,11 @@ export function snippet(text: string): string {
     points.push(point)
   }
   return points.join('')
+}
+
+// Phrase-only evidence at packing boundaries; never contributes BM25 or term counts.
+export function phraseSeam(left: string, right: string): string {
+  return left && right
+    ? `${left.split(' ').slice(-32).join(' ')} ${right.split(' ').slice(0, 32).join(' ')}`
+    : ''
 }

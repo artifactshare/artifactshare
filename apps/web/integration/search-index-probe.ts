@@ -1,5 +1,6 @@
 import {
   literalKey,
+  groupKey,
   type IndexSearchInput,
 } from '../app/services/search-index/query'
 import {
@@ -128,7 +129,7 @@ export class WorkspaceSearchIndex extends Index {
         const generation = row.generation ?? 'current'
         const document = this.ctx.storage.sql
           .exec<{ id: number }>(
-            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,complete) VALUES(?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
+            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,group_key,complete) VALUES(?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
             row.id,
             'version',
             row.path ?? 'index.html',
@@ -139,6 +140,7 @@ export class WorkspaceSearchIndex extends Index {
             normalizeSearchText(row.title),
             literalKey(row.title),
             row.activityAt ?? '2026-09-15T00:00:00.000Z',
+            groupKey(row.title),
           )
           .one().id
         if (row.active !== false)
@@ -150,26 +152,16 @@ export class WorkspaceSearchIndex extends Index {
             'seed',
             INDEX_FORMAT_VERSION,
           )
-        for (const [ordinal, text] of row.chunks.entries()) {
-          const chunk = this.ctx.storage.sql
-            .exec<{ id: number }>(
-              'INSERT INTO chunks(document,ordinal) VALUES(?,?) RETURNING id',
-              document,
-              ordinal,
-            )
-            .one().id
-          this.ctx.storage.sql.exec(
-            'INSERT INTO search(rowid,title,body,script) VALUES(?,?,?,?)',
-            chunk,
-            ordinal === 0 ? normalizeSearchText(row.title) : '',
-            normalizeSearchText(text.body),
-            normalizeSearchText(text.script ?? ''),
-          )
-          this.ctx.storage.sql.exec(
-            'INSERT INTO search_runs(rowid,katakana) VALUES(?,?)',
-            chunk,
+        const columns = [
+          [normalizeSearchText(row.title)],
+          row.chunks.map((text) => normalizeSearchText(text.body)),
+          row.chunks.map((text) => normalizeSearchText(text.script ?? '')),
+          row.chunks.map((text) =>
             katakanaRuns([row.title, text.body, text.script ?? ''].join(' ')),
-          )
+          ),
+        ]
+        for (const [ordinal, text] of row.chunks.entries()) {
+          this.writeChunk(document, ordinal, columns)
           this.ctx.storage.sql.exec(
             'INSERT INTO snippets(document,ordinal,body) VALUES(?,?,?)',
             document,
@@ -195,9 +187,10 @@ export class WorkspaceSearchIndex extends Index {
             String.fromCharCode(97 + parseInt(c, 26)),
           )
         const title = `alpha ${key}`
+        const body = `alpha payload body ${i % 100 === 0 || (size >= 4 && i === size - 2) ? 'rareword partner' : ''}`
         const document = this.ctx.storage.sql
           .exec<{ id: number }>(
-            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,complete) VALUES(?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
+            'INSERT INTO documents(shareable,version,path,generation,owner,container,updated_at,normalized_title,title_key,activity_at,group_key,complete) VALUES(?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id',
             id,
             'version',
             'index.html',
@@ -208,6 +201,7 @@ export class WorkspaceSearchIndex extends Index {
             normalizeSearchText(title),
             title,
             '2026-09-15T00:00:00.000Z',
+            groupKey(title),
           )
           .one().id
         this.ctx.storage.sql.exec(
@@ -228,13 +222,13 @@ export class WorkspaceSearchIndex extends Index {
           'INSERT INTO search(rowid,title,body,script) VALUES(?,?,?,?)',
           chunk,
           normalizeSearchText(title),
-          'alpha payload body',
+          body,
           '',
         )
         this.ctx.storage.sql.exec(
           'INSERT INTO snippets(document,ordinal,body) VALUES(?,0,?)',
           document,
-          'alpha payload body',
+          body,
         )
       }
     })
@@ -321,6 +315,9 @@ export default {
         break
       case 'search':
         result = await stub.search(command.input)
+        break
+      case 'groupMembers':
+        result = await stub.groupMembers(command.input, command.ids)
         break
       case 'details':
         result = await stub.details(command.input, command.ids)
