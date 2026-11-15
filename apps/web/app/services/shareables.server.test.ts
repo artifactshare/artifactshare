@@ -1,3 +1,4 @@
+import { inventory, type Source } from './search-index/inventory.server'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
@@ -68,8 +69,25 @@ artifactLiveMock.getByName.mockImplementation(() => ({
   notifyVersionChanged: artifactLiveMock.notifyVersionChanged,
 }))
 
+const searchSync = vi.hoisted(() => ({
+  enabled: false,
+  sync: vi.fn(),
+  tasks: [] as Promise<unknown>[],
+}))
+beforeEach(() => {
+  searchSync.enabled = false
+  searchSync.tasks = []
+  searchSync.sync.mockReset()
+})
+
 vi.mock('cloudflare:workers', () => ({
+  waitUntil: (promise: Promise<unknown>) => searchSync.tasks.push(promise),
   env: {
+    get WORKSPACE_SEARCH_INDEX() {
+      return searchSync.enabled
+        ? { getByName: () => ({ sync: searchSync.sync }) }
+        : undefined
+    },
     BUCKET: {},
     ARTIFACT_LIVE: artifactLiveMock,
     DB: createD1BatchDbMock({ sqlite: sqliteRef }),
@@ -123,7 +141,11 @@ import {
 } from './artifact-keys.server'
 import { loadCommentAccess } from './comments.server'
 import { createApiToken, findUserByApiToken } from './api-tokens.server'
-import { resolveUploadContainer } from './projects.server'
+import {
+  resolveUploadContainer,
+  archiveProjectContainer,
+  unarchiveProjectContainer,
+} from './projects.server'
 import { removeWorkspaceMember } from './team-management.server'
 
 const OWNER = {
@@ -1710,6 +1732,11 @@ INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot
   })
 
   test('external posting bills the project workspace for storage, contributor, and ownership', async () => {
+    searchSync.enabled = true
+    const observed: Source[][] = []
+    searchSync.sync.mockImplementation(async (workspaceId: string) => {
+      observed.push(await inventory(db, workspaceId).execute())
+    })
     await seedExternalProject(db)
     const body = '<p>external</p>'
 
@@ -1734,6 +1761,16 @@ INSERT INTO bot_destination_projects (family_id,project_id,project_name_snapshot
     expect(shareable.workspace_id).toBe(EXT_WS)
     expect(shareable.owner_user_id).toBe(OWNER.id)
     expect(shareable.container_id).toBe(EXT_PROJECT)
+    await Promise.all(searchSync.tasks)
+    expect(observed.flat()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: result.id,
+          workspace_id: EXT_WS,
+          current_version_id: result.versionId,
+        }),
+      ]),
+    )
 
     // Storage and contributor land on the project workspace, never the poster's.
     const projectWs = await db
@@ -6389,6 +6426,180 @@ describe('createVersion', () => {
         .executeTakeFirstOrThrow(),
     ).toEqual(before)
     expect(storageMock.deleteArtifact).toHaveBeenCalledOnce()
+  })
+
+  test('metadata, placement, archive, restore and deletion signals observe committed inventory', async () => {
+    await seedProjectContainer(db)
+    searchSync.enabled = true
+    let observed: Source[] | undefined
+    searchSync.sync.mockImplementation(async (workspaceId: string) => {
+      observed = await inventory(db, workspaceId).execute()
+    })
+    expect(
+      await updateShareableMetadata(db, OWNER, 'share1', {
+        titleOverride: 'Renamed',
+      }),
+    ).toMatchObject({ kind: 'ok' })
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([
+      expect.objectContaining({ id: 'share1', title_override: 'Renamed' }),
+    ])
+    observed = undefined
+    expect(
+      await editShareableSettings(db, OWNER, 'share1', { title: 'Edited' }),
+    ).toMatchObject({ kind: 'ok' })
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([
+      expect.objectContaining({ id: 'share1', title_override: 'Edited' }),
+    ])
+    observed = undefined
+    expect(
+      await moveShareableContainer(db, OWNER, 'share1', {
+        type: 'project',
+        projectId: 'project-a',
+      }),
+    ).toMatchObject({ kind: 'ok' })
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([
+      expect.objectContaining({ id: 'share1', container_id: 'project-a' }),
+    ])
+    observed = undefined
+    expect(
+      await archiveProjectContainer(
+        db,
+        OWNER.workspaceId,
+        'project-a',
+        OWNER.id,
+      ),
+    ).toBe('ok')
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([
+      expect.objectContaining({ id: 'share1', container_id: 'project-a' }),
+    ])
+    observed = undefined
+    expect(
+      await unarchiveProjectContainer(
+        db,
+        OWNER.workspaceId,
+        'project-a',
+        OWNER.id,
+      ),
+    ).toBe('ok')
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([
+      expect.objectContaining({ id: 'share1', container_id: 'project-a' }),
+    ])
+    observed = undefined
+    expect(await deleteShareable(db, OWNER, 'share1')).toMatchObject({
+      kind: 'ok',
+    })
+    await Promise.all(searchSync.tasks)
+    expect(observed).toEqual([])
+  })
+
+  test.each([
+    'new',
+    'update',
+    'append',
+    'static-new',
+    'static-version',
+  ] as const)(
+    '%s commits notify an adapter that observes the published D1 inventory',
+    async (path) => {
+      searchSync.enabled = true
+      const observed: Source[][] = []
+      searchSync.sync.mockImplementation(async (workspaceId: string) => {
+        observed.push(await inventory(db, workspaceId).execute())
+      })
+      let versionId: string
+      if (path === 'static-new' || path === 'static-version') {
+        const begun = await beginStaticSiteBundleUploadSession(db, OWNER)
+        if (begun.kind !== 'ok') throw new Error('site admission failed')
+        expect(
+          await begun.session.addFile(
+            siteTextFile('/index.md', '# Search site'),
+          ),
+        ).toEqual({ kind: 'ok' })
+        const created = await begun.session.commit('private')
+        if (created.kind !== 'ok') throw new Error('site creation failed')
+        versionId = created.versionId
+        if (path === 'static-version') {
+          await Promise.all(searchSync.tasks)
+          observed.length = 0
+          const next = await beginStaticSiteBundleVersionUploadSession(
+            db,
+            OWNER,
+            created.id,
+            null,
+            { baseVersionId: created.versionId },
+          )
+          if (next.kind !== 'ok')
+            throw new Error('site version admission failed')
+          expect(
+            await next.session.addFile(
+              siteTextFile('/index.md', '# Changed site'),
+            ),
+          ).toEqual({ kind: 'ok' })
+          const committed = await next.session.commitVersion()
+          if (committed.kind !== 'ok') throw new Error('site version failed')
+          versionId = committed.versionId
+        }
+      } else {
+        storageMock.getArtifact.mockResolvedValue({
+          size: 9,
+          body: new Blob(['<p>v1</p>']).stream(),
+        })
+        const result =
+          path === 'new'
+            ? await uploadShareable(
+                db,
+                OWNER,
+                htmlFile('search.html', '<p>searchbody</p>'),
+                'private',
+              )
+            : path === 'update'
+              ? await createVersion({
+                  db,
+                  user: OWNER,
+                  shareableId: 'share1',
+                  file: htmlFile('search.html', '<p>searchbody</p>'),
+                })
+              : await appendShareable(db, OWNER, 'share1', '<p>searchbody</p>')
+        if (result.kind !== 'ok') throw new Error('publication failed')
+        versionId = result.versionId
+      }
+      await Promise.all(searchSync.tasks)
+      expect(
+        observed
+          .flat()
+          .some(
+            (row) =>
+              row.current_version_id === versionId &&
+              row.workspace_id === OWNER.workspaceId,
+          ),
+      ).toBe(true)
+    },
+  )
+
+  test('a conflicting commit does not notify or promote a staged version', async () => {
+    searchSync.enabled = true
+    const result = await createVersion({
+      db,
+      user: OWNER,
+      shareableId: 'share1',
+      file: htmlFile('search.html', '<p>rejectedbody</p>'),
+      expectedCurrentVersionId: 'stale-version',
+    })
+    expect(result.kind).toBe('version-conflict')
+    await Promise.all(searchSync.tasks)
+    expect(searchSync.sync).not.toHaveBeenCalled()
+    expect(
+      (
+        await inventory(db, OWNER.workspaceId)
+          .where('s.id', '=', 'share1')
+          .executeTakeFirstOrThrow()
+      ).current_version_id,
+    ).toBe('v1')
   })
 
   test('appendShareable concatenates exactly and preserves the artifact name', async () => {

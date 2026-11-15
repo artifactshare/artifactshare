@@ -57,6 +57,22 @@ test.each(['wrangler.jsonc', 'wrangler.production.jsonc'])(
     )
     expect(config.name).toBe(runtime.name)
     expect(config.vars).toEqual(runtime.vars)
+    expect(config.durable_objects).toEqual(built.durable_objects)
+    expect(config.migrations).toEqual(built.migrations)
+    expect(built.durable_objects.bindings).toContainEqual({
+      name: 'WORKSPACE_SEARCH_INDEX',
+      class_name: 'WorkspaceSearchIndex',
+    })
+    expect(built.migrations.at(-1)).toEqual({
+      tag: file === 'wrangler.jsonc' ? 'v2' : 'v3',
+      new_sqlite_classes: ['WorkspaceSearchIndex'],
+    })
+    expect(built.migrations[0]).toEqual({
+      tag: 'v1',
+      new_sqlite_classes: [
+        file === 'wrangler.jsonc' ? 'ArtifactLiveRoom' : 'CommentLiveRoom',
+      ],
+    })
     expect(config.main).toBe('index.js')
     expect(config.assets).toEqual({ directory: '../client' })
     expect(config.ai).toBeUndefined()

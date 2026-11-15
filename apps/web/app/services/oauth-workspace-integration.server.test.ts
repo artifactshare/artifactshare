@@ -1,3 +1,4 @@
+import { inventory, type Source } from './search-index/inventory.server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Compilable, Kysely } from 'kysely'
@@ -14,8 +15,20 @@ const sqliteRef = vi.hoisted(() => ({
   current: null as DatabaseSync | null,
 }))
 
+const searchSync = vi.hoisted(() => ({
+  enabled: false,
+  sync: vi.fn(),
+  tasks: [] as Promise<unknown>[],
+}))
+
 vi.mock('cloudflare:workers', () => ({
+  waitUntil: (task: Promise<unknown>) => searchSync.tasks.push(task),
   env: {
+    get WORKSPACE_SEARCH_INDEX() {
+      return searchSync.enabled
+        ? { getByName: () => ({ sync: searchSync.sync }) }
+        : undefined
+    },
     DB: createD1BatchDbMock({ sqlite: sqliteRef }),
   },
 }))
@@ -24,6 +37,10 @@ describe('OAuth workspace integration', () => {
   let fixture: ReturnType<typeof createMigratedInMemoryDb> | null = null
 
   afterEach(async () => {
+    await Promise.all(searchSync.tasks)
+    searchSync.enabled = false
+    searchSync.tasks = []
+    searchSync.sync.mockReset()
     await fixture?.db.destroy()
     fixture = null
     sqliteRef.current = null
@@ -157,12 +174,27 @@ describe('OAuth workspace integration', () => {
         ])
         return
       }
+      searchSync.enabled = true
+      const observed = new Map<string, Source[]>()
+      searchSync.sync.mockImplementation(async (workspace: string) => {
+        observed.set(workspace, await inventory(db, workspace).execute())
+      })
       const result = await applyOAuthWorkspaceIntegration(db, plan, {
         confirmShareables: [
           { id: 's1', before: 'ws-personal:private', after: 'ws-org:private' },
         ],
       })
       expect(result.kind).toBe('applied')
+      await Promise.all(searchSync.tasks)
+      expect(observed.get('ws-personal')).toEqual([])
+      expect(observed.get('ws-org')).toEqual([
+        expect.objectContaining({
+          id: 's1',
+          current_version_id: 'v2',
+          workspace_id: 'ws-org',
+        }),
+      ])
+
       expect(
         await db
           .selectFrom('workspaces')

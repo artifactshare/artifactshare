@@ -1,3 +1,4 @@
+import { scheduleWorkspaceSearch } from './search-index/schedule.server'
 import { physicalVersionBytes } from './physical-storage.server'
 import {
   LINK_SHARING_PLAN_DEFAULTS,
@@ -828,6 +829,8 @@ export async function applyOAuthWorkspaceIntegration(
       reasons: ['plan_changed_during_apply'],
     }
   }
+  scheduleWorkspaceSearch(sourceWorkspaceId)
+  scheduleWorkspaceSearch(targetWorkspaceId)
   await ensureWorkspaceAdmin(db, targetWorkspaceId, now)
   return { kind: 'applied', planId: current.planId, auditEventId }
 }

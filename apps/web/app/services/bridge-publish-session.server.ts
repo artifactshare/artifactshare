@@ -1,3 +1,4 @@
+import { scheduleWorkspaceSearch } from './search-index/schedule.server'
 import { projectPlacementSql } from './projects.server'
 import { pruneVersionsAfterPublish } from './version-retention.server'
 import { sql, type Compilable, type Kysely, type RawBuilder } from 'kysely'
@@ -453,6 +454,7 @@ async function publishBridgeFileVersion(
       })
       if (committed) {
         retained = true
+        scheduleWorkspaceSearch(authority.workspaceId)
         await pruneVersionsAfterPublish(db, target.id)
         await notifyArtifactVersionChanged(target.id, prepared.versionId)
         const result = await readBridgeResult(
@@ -569,6 +571,7 @@ async function publishBridgeStaticSite(
       })
       if (committed) {
         retained = true
+        scheduleWorkspaceSearch(authority.workspaceId)
         await pruneVersionsAfterPublish(db, target.id)
         await notifyArtifactVersionChanged(target.id, staged.prepared.versionId)
         const result = await readBridgeResult(
@@ -611,6 +614,7 @@ async function publishBridgeStaticSite(
         })
         if (committed.kind === 'ok') {
           retained = true
+          scheduleWorkspaceSearch(authority.workspaceId)
           await notifyArtifactVersionChanged(
             shareableId,
             staged.prepared.versionId,
@@ -1447,6 +1451,7 @@ async function publishBridgeFile(
       })
       if (committed.kind === 'ok') {
         retained = true
+        scheduleWorkspaceSearch(authority.workspaceId)
         await notifyArtifactVersionChanged(shareableId, prepared.versionId)
         const result = await readBridgeResult(
           db,

@@ -1,3 +1,4 @@
+import { scheduleWorkspaceSearch } from './search-index/schedule.server'
 import {
   isPublisherArtifact,
   publisherArtifactSql,
@@ -902,6 +903,7 @@ async function commitSharingChanges(
       return { kind: 'commit-failed' }
     }
   }
+  scheduleWorkspaceSearch(owned.workspace_id)
   return {
     kind: 'ok',
     visibility: newVisibility,
@@ -1330,6 +1332,7 @@ export async function updateShareableMetadata(
       .executeTakeFirst()
     if (Number(result.numUpdatedRows) === 0) return { kind: 'not-found' }
   }
+  scheduleWorkspaceSearch(shareable.workspace_id)
   return { kind: 'ok', linkExpiresAt: linkWrite.linkExpiresAt }
 }
 
@@ -1507,6 +1510,7 @@ export async function deleteShareable(
   if (receipt === 'missing') return { kind: 'not-found' }
   if (receipt === 'invalid') return { kind: 'delete-failed' }
 
+  scheduleWorkspaceSearch(shareable.workspace_id)
   const allKeys = Array.from(
     new Set([
       ...versions.map((v) => v.r2_key),
@@ -1847,6 +1851,7 @@ export async function moveShareableContainer(
     }
     throw err
   }
+  scheduleWorkspaceSearch(user.workspaceId)
   const after = await db
     .selectFrom('shareables')
     .select('visibility')
@@ -2476,6 +2481,10 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
+    scheduleWorkspaceSearch(
+      this.accounting.workspaceId,
+      this.notificationOptions?.waitUntil,
+    )
     return {
       kind: 'ok',
       id: this.shareableId,
@@ -2984,6 +2993,10 @@ export class StaticSiteBundleUploadSession {
       return { kind: 'storage-failed' }
     }
 
+    scheduleWorkspaceSearch(
+      this.accounting.workspaceId,
+      this.notificationOptions?.waitUntil,
+    )
     await pruneVersionsAfterPublish(this.db, this.shareableId)
     await scheduleArtifactVersionChanged(
       this.shareableId,
@@ -4335,6 +4348,7 @@ export async function editShareableSettings(
           return { kind: 'too-many-grants', limit: MAX_GRANT_EMAILS }
         return { kind: 'commit-failed' }
       }
+      scheduleWorkspaceSearch(current.workspace_id)
       try {
         const after = await getOwnedShareableSummary(db, user, shareableId)
         return { kind: 'ok', shareable: after ?? before }

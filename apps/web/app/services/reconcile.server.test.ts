@@ -376,6 +376,27 @@ describe('reconcileR2Orphans', () => {
     ])
   })
 
+  test('preserves search-text while deleting old upload orphans', async () => {
+    const uploaded = new Date(NOW.getTime() - 48 * 60 * 60 * 1000)
+    storageMock.listArtifacts.mockResolvedValueOnce({
+      objects: [
+        {
+          key: 'search-text/workspace/shareable/version/index.html',
+          uploaded,
+          size: 100,
+        },
+        { key: 'artifacts/orphan/version/index.html', uploaded, size: 100 },
+      ],
+      cursor: null,
+    })
+    const result = await reconcileR2Orphans(db, fakeBucket, NOW)
+    expect(result.orphans_deleted).toBe(1)
+    expect(storageMock.deleteArtifacts).toHaveBeenCalledExactlyOnceWith(
+      fakeBucket,
+      ['artifacts/orphan/version/index.html'],
+    )
+  })
+
   test('r2_orphan_grace: skips keys uploaded within grace window', async () => {
     await seedWorkspaceAndUser(db)
     const oneHourAgo = new Date(NOW.getTime() - 60 * 60 * 1000)

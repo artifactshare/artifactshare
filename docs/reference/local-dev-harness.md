@@ -103,3 +103,13 @@ stand in for a separate Safari product measurement.
 A failure is a release blocker, not permission to skip a browser or reuse an old
 origin. Authenticated exports and authored HTML/static-site downloads are covered;
 the existing anonymous Markdown viewer intentionally has no export menu.
+
+## Workspace search index storage
+
+The application binds `WORKSPACE_SEARCH_INDEX` to the SQLite `WorkspaceSearchIndex` Durable Object. Objects use `${workspaceId}:0`; only partition zero is enabled. Preview appends migration v2 and production appends v3, preserving the live-room migration histories. The public preview configuration schedules only the five-minute trigger; production retains both its five-minute and daily triggers. The private preview overlay requires its own matching binding, migration, and trigger update.
+
+Publication and metadata mutations schedule workspace-only notifications after D1 commits. The five-minute dispatcher also discovers live workspaces and retained `search_index_workspaces` registry entries. That registry deliberately has no workspace foreign key: it keeps deleted source workspaces discoverable until index and extraction cleanup finish. Durable alarms continue bounded inventory scans, pending work, and prefix cleanup after interruption. Failed source reads leave the previous complete generation serving and retain pending work for retry.
+
+Extraction lives under `search-text/<workspace>/<shareable>/<version>/<path-sha256>` in the artifact bucket. The final component is the lowercase hex SHA-256 of the UTF-8 page path; the original path remains in the index document. Ordinary daily orphan reconciliation excludes that prefix. The index owns deletion of superseded, deleted, or moved extraction objects; original upload objects remain under their existing retention rules. Increment `INDEX_FORMAT_VERSION` when extraction or tokenization changes; reconciliation stages replacement generations before activating them. No public search interface or permission decision is provided by this storage layer.
+
+The existing Workers integration harness exercises real HTMLRewriter, FTS5, D1, and R2. Oversized fixtures are generated in memory; they require neither browser rendering nor committed binary fixtures. Publication assertions have a 55-second completion deadline; tests containing multiple publications allow those deadlines within their total test timeout. DO eviction tests dispatch through the scheduled Worker entrypoint so Node-side RPC property proxies do not retain a reference to the object being evicted.

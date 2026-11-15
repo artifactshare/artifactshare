@@ -237,3 +237,5 @@ function expectDownloadSecurityHeaders(response: Response) {
     "default-src 'none'; frame-ancestors 'none'; form-action 'none'",
   )
 }
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))

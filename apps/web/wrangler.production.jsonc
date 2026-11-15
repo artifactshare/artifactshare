@@ -57,7 +57,13 @@
     { "binding": "BACKUP_BUCKET", "bucket_name": "artifactshare-backups" },
   ],
   "durable_objects": {
-    "bindings": [{ "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" }],
+    "bindings": [
+      { "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" },
+      {
+        "name": "WORKSPACE_SEARCH_INDEX",
+        "class_name": "WorkspaceSearchIndex",
+      },
+    ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["CommentLiveRoom"] },
@@ -67,6 +73,7 @@
         { "from": "CommentLiveRoom", "to": "ArtifactLiveRoom" },
       ],
     },
+    { "tag": "v3", "new_sqlite_classes": ["WorkspaceSearchIndex"] },
   ],
   "services": [
     { "binding": "OG_IMAGE_WORKER", "service": "artifactshare-og-image" },

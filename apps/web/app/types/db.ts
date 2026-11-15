@@ -10,6 +10,7 @@ import type {
 } from '~/lib/shareable-types'
 
 export interface DB {
+  search_index_workspaces: { workspace_id: string; dispatched_at: string }
   security_deception_signals: SecurityDeceptionSignalsTable
   security_deception_delivery_control: {
     id: number
