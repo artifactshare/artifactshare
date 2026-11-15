@@ -67,3 +67,14 @@ Include:
 - a minimal reproduction that is safe to run.
 
 Do not test against another person's data, a workspace you are not authorized to use, or a production environment you do not own. Do not publish exploit details in an issue, proposal, pull request, or social media post. We may ask for additional information while we validate and address the report.
+
+## Authenticated exploration decoy
+
+An inert authenticated decoy can record an operator-only suspicion signal. It
+returns no data and never changes artifacts, credentials or permissions. A hit
+is not proof of AI use, malice or compromise. Only validated identities with
+active workspace membership are attributed; the request body and credentials
+are never recorded. Signals have bounded admission, delivery attempts and
+400-day D1 retention, with explicit loss and external-delivery limitations.
+The “Authenticated exploration signal” reference describes privacy,
+investigation and the protected deployment prerequisite.

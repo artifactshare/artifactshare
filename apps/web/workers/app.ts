@@ -1,4 +1,10 @@
 import {
+  DECEPTION_PATH,
+  deceptionResponse,
+  handleDeceptionRequest,
+  drainDeceptionSignals,
+} from '../app/services/security-deception.server'
+import {
   reportArtifactId,
   prepareSandboxBlockReport,
   finishSandboxBlockReport,
@@ -130,11 +136,20 @@ export default {
           })
         }
         if (scheduledJobForCron(controller.cron) === 'slack-notifications') {
-          await processSlackNotificationOutbox(db, {
-            origin: env.BETTER_AUTH_URL,
-            now: new Date(controller.scheduledTime),
-            claimToken: nanoid(),
-          })
+          const jobs = await Promise.allSettled([
+            Promise.resolve().then(() =>
+              processSlackNotificationOutbox(db, {
+                origin: env.BETTER_AUTH_URL,
+                now: new Date(controller.scheduledTime),
+                claimToken: nanoid(),
+              }),
+            ),
+            Promise.resolve().then(() =>
+              drainDeceptionSignals(db, env.SLACK_ALERT_WEBHOOK_URL),
+            ),
+          ])
+          if (jobs.some((job) => job.status === 'rejected'))
+            throw new Error('scheduled notification delivery failed')
         } else {
           const options = reconciliationOptionsFromEnv(env)
           try {
@@ -243,6 +258,14 @@ export default {
       else response = await finishSandboxBlockReport(reportRequest, prepared)
       response.headers.set('Cache-Control', 'private, no-store')
       return linkShareableId ? withLinkHostRobotsHeader(response) : response
+    }
+
+    if (new URL(routedRequest.url).pathname === DECEPTION_PATH) {
+      const application = new URL(env.BETTER_AUTH_URL)
+      if (hostname !== application.hostname) return deceptionResponse()
+      if (await isMaintenanceEnabled(env, new URL(routedRequest.url), hostname))
+        return maintenanceResponse(new URL(routedRequest.url))
+      return handleDeceptionRequest(routedRequest, application.origin)
     }
 
     // Lazy initialization (better-auth init, React Router server build) is

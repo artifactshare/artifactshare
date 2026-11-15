@@ -14,8 +14,39 @@ vi.mock('cloudflare:workers', () => ({
   env: { DB: createD1MockFromSqliteRef(sqliteRef) },
 }))
 
-const { resolveCliAuthorityBySessionToken } =
-  await import('./cli-authority.server')
+const {
+  resolveCliAuthorityBySessionToken: ordinaryResolve,
+  resolveCliAuthorityIdentifiers,
+} = await import('./cli-authority.server')
+
+// Exercise both projections for every existing policy/diagnostic scenario.
+async function resolveCliAuthorityBySessionToken(token: string) {
+  const ordinary = await ordinaryResolve(token)
+  const prepare = vi.spyOn(sqliteRef.current!, 'prepare')
+  const identifiers = await resolveCliAuthorityIdentifiers(token)
+  const statements = prepare.mock.calls.map(([query]) => query)
+  prepare.mockRestore()
+  if (!ordinary || ordinary === 'denied') expect(identifiers).toBe(ordinary)
+  else
+    expect(identifiers).toEqual({
+      kind: ordinary.kind,
+      workspaceId: 'workspaceId' in ordinary ? ordinary.workspaceId : null,
+      agentProfileId:
+        'agentProfileId' in ordinary ? ordinary.agentProfileId : null,
+      publisherClientId:
+        'publisherClientId' in ordinary
+          ? (ordinary.publisherClientId ?? null)
+          : null,
+    })
+  expect(JSON.stringify(identifiers)).not.toMatch(
+    /Agent output|Bot output|projectNameSnapshot|publisherClientName|externalWorkspaceId|approvedProjects/,
+  )
+  expect(statements.join('\n')).not.toMatch(
+    /select[^;]*"publisher_clients"\."name"/i,
+  )
+  expect(statements.join('\n')).not.toMatch(/from "bot_destination_projects"/i)
+  return ordinary
+}
 
 describe('CLI authority resolution', () => {
   let sqlite: DatabaseSync
@@ -100,6 +131,43 @@ describe('CLI authority resolution', () => {
     await expect(
       resolveCliAuthorityBySessionToken('ass_test'),
     ).resolves.toBeNull()
+  })
+
+  test.each([null, '', 'valid name'])(
+    'name validity parity for %s without selecting name values',
+    async (name) => {
+      seedAgentAuthority(sqlite)
+      sqlite
+        .prepare('UPDATE cli_family_authorities SET project_name_snapshot = ?')
+        .run(name)
+      const result = await resolveCliAuthorityBySessionToken('ass_test')
+      expect(result === null).toBe(!name)
+    },
+  )
+
+  test('publisher projection preserves live-family decisions and ordinary display fields', async () => {
+    sqlite.exec(`INSERT INTO workspace_members(workspace_id,user_id,role,status,created_at,updated_at) VALUES ('ws1','u1','owner','active','2026-01-01','2026-01-01');
+      INSERT INTO publisher_clients(id,user_id,workspace_id,name,created_at) VALUES ('publisher','u1','ws1','Publisher display name','2026-01-01');
+      INSERT INTO cli_family_authorities(family_id,user_id,preset,workspace_id,publisher_client_id,status,created_at,updated_at) VALUES ('publisher-family','u1','publisher','ws1','publisher','active','2026-01-01','2026-01-01');
+      INSERT INTO cli_refresh_credentials(id,user_id,token_hash,family_id,expires_at,created_at) VALUES ('publisher-refresh','u1','synthetic-hash','publisher-family','2099-01-01','2026-01-01');
+      INSERT INTO cli_session_authorities(session_id,family_id,kind,preset,workspace_id,publisher_client_id,bearer_only,created_at) VALUES ('s1','publisher-family','family','publisher','ws1','publisher',1,'2026-01-01');`)
+    expect(await resolveCliAuthorityBySessionToken('ass_test')).toEqual({
+      kind: 'publisher',
+      familyId: 'publisher-family',
+      workspaceId: 'ws1',
+      publisherClientId: 'publisher',
+      publisherClientName: 'Publisher display name',
+    })
+    sqlite.exec("UPDATE cli_refresh_credentials SET revoked_at='2026-01-01'")
+    expect(await resolveCliAuthorityBySessionToken('ass_test')).toBe('denied')
+    sqlite.exec(
+      "UPDATE cli_refresh_credentials SET revoked_at=NULL, expires_at='2000-01-01'",
+    )
+    expect(await resolveCliAuthorityBySessionToken('ass_test')).toBe('denied')
+    sqlite.exec(
+      "UPDATE cli_refresh_credentials SET expires_at='2099-01-01'; UPDATE cli_family_authorities SET status='superseded'",
+    )
+    expect(await resolveCliAuthorityBySessionToken('ass_test')).toBe('denied')
   })
 
   test('fails closed for an agent authority detached from its project', async () => {

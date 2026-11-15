@@ -5,6 +5,7 @@ import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import type { DB } from '~/types/db'
 import {
   deleteWorkspaceSlackConnection,
+  postSlackWebhook,
   exchangeSlackWebhookOauthCode,
   processSlackLinkShared,
   signSlackInstallState,
@@ -773,5 +774,48 @@ describe('exchangeSlackWebhookOauthCode', () => {
     await expect(
       exchangeSlackWebhookOauthCode('code', 'https://app.test/cb'),
     ).rejects.toThrow()
+  })
+})
+
+describe('operator webhook transport options', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  test('preserves existing caller defaults and applies optional abort/redirect settings', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _options?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await postSlackWebhook('https://synthetic.invalid', 'text')
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('signal')
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('redirect')
+    await postSlackWebhook('https://synthetic.invalid', 'text', {
+      timeoutMs: 5000,
+      redirect: 'error',
+    })
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+  test('timeout uses one HTTP attempt and a safe network result', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, options?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          options!.signal!.addEventListener(
+            'abort',
+            () => reject(new Error('CANARY_PROVIDER')),
+            { once: true },
+          )
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      postSlackWebhook('https://synthetic.invalid', 'text', {
+        timeoutMs: 1,
+        redirect: 'error',
+      }),
+    ).resolves.toEqual({ ok: false, status: 0 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

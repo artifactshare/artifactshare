@@ -10,6 +10,14 @@ import type {
 } from '~/lib/shareable-types'
 
 export interface DB {
+  security_deception_signals: SecurityDeceptionSignalsTable
+  security_deception_delivery_control: {
+    id: number
+    next_send_at: string
+    lease_token: string | null
+    lease_expires_at: string | null
+    saturated_day: string | null
+  }
   workspaces: WorkspacesTable
   workspace_domain_claims: WorkspaceDomainClaimsTable
   workspace_members: WorkspaceMembersTable
@@ -919,4 +927,49 @@ interface OauthConsentTable {
   updatedAt: Generated<string | null>
   resources: Generated<string | null>
   requestedUserInfoClaims: Generated<string | null>
+}
+
+export interface SecurityDeceptionSignalsTable {
+  id: string
+  decoy_id: 'credential_inventory_v1'
+  reason: 'authenticated_decoy_probe'
+  actor_kind: 'human' | 'bot'
+  actor_id: string
+  workspace_id: string
+  auth_route: 'cookie' | 'api_token' | 'cli_session' | 'oauth'
+  client_kind:
+    | 'api_token'
+    | 'oauth_client'
+    | 'agent_profile'
+    | 'publisher_client'
+    | null
+  client_id: string | null
+  authority_kind:
+    | 'unrestricted'
+    | 'bootstrap'
+    | 'agent'
+    | 'publisher'
+    | 'bridge'
+    | null
+  agent_profile_id: string | null
+  publisher_client_id: string | null
+  first_detected_at: string
+  day_bucket: string
+  hour_bucket: string
+  status: Generated<'pending' | 'retry' | 'delivered' | 'failed' | 'expired'>
+  attempt_count: Generated<number>
+  next_attempt_at: string
+  lease_token: string | null
+  lease_expires_at: string | null
+  last_attempt_at: string | null
+  delivered_at: string | null
+  failure_code:
+    | 'configuration_missing'
+    | 'network'
+    | 'http_retry'
+    | 'http_rejected'
+    | 'attempt_limit'
+    | 'age_limit'
+    | null
+  http_status: number | null
 }

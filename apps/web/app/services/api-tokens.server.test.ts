@@ -7,6 +7,7 @@ import type { DB } from '~/types/db'
 import {
   createApiToken,
   findUserByApiToken,
+  findApiTokenIdentity,
   isApiToken,
   listApiTokens,
   revokeApiToken,
@@ -58,6 +59,21 @@ describe('api-tokens service', () => {
     ])
     expect(stored.token_hash).not.toBe(created.token)
     expect(stored.token_hash).toHaveLength(64)
+  })
+
+  test('read-only identity exposes only IDs/kind without touching last-use', async () => {
+    seedWorkspace(sqlite)
+    seedUser(sqlite, 'u1')
+    const created = await createApiToken(db, 'u1', 'synthetic')
+    const before = readTokenRow(sqlite, created.id)
+    expect(await findApiTokenIdentity(db, created.token)).toEqual({
+      userId: 'u1',
+      tokenId: created.id,
+      kind: 'human',
+    })
+    expect(readTokenRow(sqlite, created.id)).toEqual(before)
+    await revokeApiToken(db, 'u1', created.id)
+    expect(await findApiTokenIdentity(db, created.token)).toBeUndefined()
   })
 
   test('isApiToken detects ast_ prefix', () => {

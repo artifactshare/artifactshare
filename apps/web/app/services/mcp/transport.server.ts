@@ -1,8 +1,8 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-import { verifyJwsAccessToken } from 'better-auth/oauth2'
+import { verifyOAuthJwt, verifyOAuthBinding } from './oauth-verification.server'
 import { env } from 'cloudflare:workers'
 import { isProduction } from '~/lib/hosts'
-import { mcpResourceUrl, oauthIssuer } from '~/lib/mcp-metadata'
+import { mcpResourceUrl } from '~/lib/mcp-metadata'
 import { getLocalJwksWithHangDetection } from '~/services/auth.server'
 import { createDb } from '~/services/db.server'
 import type { McpIdentity } from './identity.server'
@@ -22,39 +22,16 @@ async function runMcp(
   const db = createDb()
   try {
     if (version) {
-      const claim = version.claim === undefined ? 0 : version.claim
-      if (
-        typeof claim !== 'number' ||
-        !Number.isSafeInteger(claim) ||
-        claim < 0 ||
-        !identity.userId.trim()
-      ) {
-        return unauthorized(version.resource)
-      }
       try {
-        const user = await db
-          .selectFrom('users')
-          .select('oauth_token_version')
-          .where('id', '=', identity.userId)
-          .executeTakeFirst()
-        if (!user || user.oauth_token_version !== claim)
+        if (
+          !(await verifyOAuthBinding(
+            db,
+            identity.userId,
+            version.claim,
+            version.sessionId,
+          ))
+        )
           return unauthorized(version.resource)
-        if (version.sessionId !== undefined && version.sessionId !== null) {
-          if (
-            typeof version.sessionId !== 'string' ||
-            !version.sessionId.trim()
-          )
-            return unauthorized(version.resource)
-          const session = await db
-            .selectFrom('sessions')
-            .select('user_id')
-            .where('id', '=', version.sessionId)
-            .executeTakeFirst()
-          // Refresh tokens can outlive the browser session's expiry. Only
-          // removal or a different owner invalidates this session binding.
-          if (!session || session.user_id !== identity.userId)
-            return unauthorized(version.resource)
-        }
       } catch {
         return new Response('Service unavailable', { status: 503 })
       }
@@ -93,40 +70,6 @@ function bearerToken(request: Request): string | null {
   if (scheme?.toLowerCase() !== 'bearer') return null
   const token = rest.join(' ').trim()
   return token.length > 0 ? token : null
-}
-
-function scopesFromJwt(jwt: Record<string, unknown>): string[] {
-  // OAuth/JWT access tokens carry scopes as a space-delimited `scope` claim.
-  const scope = jwt['scope']
-  return typeof scope === 'string' ? scope.split(' ').filter(Boolean) : []
-}
-
-function clientIdFromJwt(jwt: Record<string, unknown>): string | null {
-  // oauth-provider sets `azp` = client.clientId on the access token; fall back
-  // to `client_id` for resilience against other issuers.
-  const azp = jwt['azp']
-  if (typeof azp === 'string' && azp) return azp
-  const clientId = jwt['client_id']
-  return typeof clientId === 'string' && clientId ? clientId : null
-}
-
-// The signing keys live in the D1 `jwks` table. A Worker can't `fetch` its own
-// public hostname (the loopback subrequest fails), so reading the JWKS over HTTP
-// from `/api/auth/jwks` breaks token verification. Read the keys in-process
-// instead. better-auth caches the `jwksFetch` result for 300 seconds and
-// refetches on a kid miss, so this function should return the current D1-backed
-// JWKS whenever the library asks for it.
-//
-// `getJwks` is cast in: erasing the plugin api types (to keep them portable)
-// drops it from the inferred `auth.api`. The shape comes from the library's own
-// `jwksFetch` signature so it can't silently drift.
-type JwksFetch = Extract<
-  Parameters<typeof verifyJwsAccessToken>[1]['jwksFetch'],
-  () => unknown
->
-
-function localJwks(): ReturnType<JwksFetch> {
-  return getLocalJwksWithHangDetection() as ReturnType<JwksFetch>
 }
 
 function protectedResourceMetadataUrl(resource: string): string {
@@ -201,34 +144,16 @@ export async function handleMcpRequest(
   const token = bearerToken(request)
   if (!token) return unauthorized(resource)
 
-  let jwt: Record<string, unknown>
-  try {
-    jwt = await verifyJwsAccessToken(token, {
-      jwksFetch: localJwks,
-      // MCP clients send the RFC 8707 `resource` (this endpoint's URL), so the
-      // token's `aud` is the MCP resource and `iss` is the auth base URL.
-      verifyOptions: { audience: resource, issuer: oauthIssuer(baseUrl) },
-    })
-  } catch {
-    return unauthorized(resource)
-  }
-
-  const clientId = clientIdFromJwt(jwt)
-  if (!clientId) return unauthorized(resource)
-
-  const scopes = scopesFromJwt(jwt)
-  if (!scopes.includes(REQUIRED_PRODUCT_SCOPE))
-    return insufficientScope(resource)
-
-  return runMcp(
-    request,
-    {
-      userId: typeof jwt.sub === 'string' ? jwt.sub : '',
-      clientId,
-      scopes,
-      mode: 'oauth',
-    },
-    executionContext,
-    { claim: jwt.oauth_token_version, resource, sessionId: jwt.sid },
+  const verified = await verifyOAuthJwt(
+    token,
+    baseUrl,
+    getLocalJwksWithHangDetection,
   )
+  if (verified.kind === 'scope') return insufficientScope(resource)
+  if (verified.kind !== 'verified') return unauthorized(resource)
+  return runMcp(request, verified.identity, executionContext, {
+    claim: verified.claim,
+    resource,
+    sessionId: verified.sessionId,
+  })
 }
