@@ -8,6 +8,7 @@ import type { DB } from '~/types/db'
 import {
   buildCandidateDiscoveryQuery,
   buildSparseDiscoveryQuery,
+  buildMemberDiscoveryQuery,
   loadDiscoveryViewer,
 } from '~/services/search-discovery.server'
 
@@ -61,6 +62,12 @@ it('uses ID lookups with all filters and five indexed sparse sources', async () 
   for (const filters of [
     {},
     { ownerUserId: 'viewer' },
+    { ownerUserIds: ['viewer', 'owner'] },
+    { location: { kind: 'home' as const } },
+    {
+      ownerUserIds: ['viewer'],
+      location: { kind: 'project' as const, id: 'project' },
+    },
     { containerId: 'project' },
     { date: { field: 'updated' as const, from: new Date(now) } },
     { date: { field: 'viewed' as const, to: new Date(now) } },
@@ -224,4 +231,56 @@ it('bounds real D1 reads for 2000 ownership, direct/project, link and denied can
     .bind(...query.parameters)
     .all()
   expect(fault.results).toEqual([])
+})
+
+it('complete member enumeration uses the same eligibility without sparse-source omissions', async () => {
+  const viewer = (await loadDiscoveryViewer(db, 'viewer'))!
+  await binding
+    .prepare(
+      "UPDATE shareables SET visibility='workspace',owner_user_id='owner' WHERE id='candidate-1'",
+    )
+    .run()
+  const query = buildMemberDiscoveryQuery(
+    db,
+    viewer,
+    { ownerUserIds: ['owner'], location: { kind: 'project', id: 'project' } },
+    now,
+  )
+  expect((await query.execute()).map((row) => row.id)).toContain('candidate-1')
+  const compiled = query.compile()
+  expect(compiled.parameters.length).toBeLessThanOrEqual(100)
+  const plan = await binding
+    .prepare(`EXPLAIN QUERY PLAN ${compiled.sql}`)
+    .bind(...compiled.parameters)
+    .all<{ detail: string }>()
+  expect(
+    plan.results.some((row) =>
+      /SEARCH s USING INDEX .*workspace/.test(row.detail),
+    ),
+  ).toBe(true)
+})
+
+it('retains cutoff logs and cascades more than one bounded deletion batch', async () => {
+  const { pruneSearchLogs } = await import('~/services/search-logs.server')
+  await binding
+    .prepare(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<501)
+    INSERT INTO search_logs(id,actor_id,created_at,query,filters_json,result_count,count_relation,tier,duration_ms,discoverable_count,source)
+    SELECT 'expired-'||x,'viewer','2026-06-16T23:59:59.999Z','alpha','{}',0,'eq','all',1,0,'screen' FROM n`)
+    .run()
+  await binding
+    .prepare(
+      "INSERT INTO search_logs(id,actor_id,created_at,query,filters_json,result_count,count_relation,tier,duration_ms,discoverable_count,source) VALUES('cutoff','viewer','2026-06-17T00:00:00.000Z','alpha','{}',0,'eq','all',1,0,'screen')",
+    )
+    .run()
+  await binding
+    .prepare(
+      "INSERT INTO search_opens(id,search_id,shareable_id,rank,opened_at) VALUES('open','expired-1','candidate-1',1,'2026-06-16T23:59:59.999Z')",
+    )
+    .run()
+  expect(await pruneSearchLogs(db, '2026-06-17T00:00:00.000Z')).toBe(500)
+  expect(await pruneSearchLogs(db, '2026-06-17T00:00:00.000Z')).toBe(1)
+  expect(await db.selectFrom('search_logs').select('id').execute()).toEqual([
+    { id: 'cutoff' },
+  ])
+  expect(await db.selectFrom('search_opens').selectAll().execute()).toEqual([])
 })

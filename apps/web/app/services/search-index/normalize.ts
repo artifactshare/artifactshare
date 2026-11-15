@@ -1,6 +1,20 @@
 /** Increment whenever extraction, normalization or token/chunk policy changes. */
-export const INDEX_FORMAT_VERSION = 6
+export const INDEX_FORMAT_VERSION = 9
 export const BM25_WEIGHTS = [3, 1, 0.5] as const
+export const KATAKANA_WEIGHT = 0.25
+
+/** Auxiliary terms never interrupt the segmented phrase columns. */
+export function katakanaRuns(text: string): string {
+  return [...text.normalize('NFKC').matchAll(/[\p{Script=Katakana}ー]{2,}/gu)]
+    .flatMap(([run]) => [
+      ...splitUtf8(
+        run.length >= 3 && run.endsWith('ー') ? run.slice(0, -1) : run,
+        TOKEN_BYTES,
+      ),
+    ])
+    .join(' ')
+}
+
 export const TOKEN_BYTES = 16 * 1024
 export const COLUMN_BYTES = 128 * 1024
 const encoder = new TextEncoder()

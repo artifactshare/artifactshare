@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, test } from 'vitest'
+vi.mock('cloudflare:workers', () => ({ env: {} }))
+import { search, type SearchIndex } from './search.server'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import { facts } from '~/modules/access'
 import { viewerAccessAllowed } from './access.server'
@@ -184,6 +186,57 @@ test.each([
         allowed ? [{ workspaceId: 'source', ids: ['file'] }] : [],
       )
     }
+    // The same identity matrix also crosses the orchestration boundary.
+    fixture.sqlite.exec(`
+      INSERT OR IGNORE INTO workspace_members(workspace_id,user_id,role,status,created_at,updated_at) VALUES('source','viewer','member','active','${now}','${now}');
+      INSERT INTO workspaces(id,name,created_at) VALUES('healthy','Healthy','${now}');
+      INSERT INTO artifact_containers(id,workspace_id,kind,owner_user_id,name,created_by_id,created_at,updated_at) VALUES('healthy-home','healthy','inbox','viewer','Home','viewer','${now}','${now}');
+      INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES('healthy','healthy','viewer','Healthy Title','html_page','private','healthy-home','${now}','${now}','${now}');
+    `)
+    const detailed: string[] = []
+    const indexes = (workspace: string): SearchIndex => ({
+      search: async () => ({
+        items: [
+          {
+            id: workspace === 'source' ? 'file' : 'healthy',
+            tier: 'all',
+            rank: 1,
+            activityAt: now,
+          },
+        ],
+        nextCursor: null,
+      }),
+      details: async (_query, ids) => {
+        detailed.push(...ids)
+        return ids.map((id) => ({
+          id,
+          path: 'index.html',
+          excerpt: id === 'file' ? 'Matrix excerpt' : 'Healthy excerpt',
+        }))
+      },
+    })
+    const result = await search(
+      fixture.db,
+      indexes,
+      'viewer',
+      { query: 'alpha', filters: {}, sort: 'relevance', pageSize: 20 },
+      'screen',
+      () => new Date(now),
+    )
+    if ('error' in result) throw new Error('matrix search failed')
+    expect(result.total).toEqual({ value: allowed ? 2 : 1, relation: 'eq' })
+    expect(
+      result.items.some(
+        (row) =>
+          row.title === 'Healthy Title' && row.excerpt === 'Healthy excerpt',
+      ),
+    ).toBe(true)
+    expect(result.items.some((row) => row.id === 'file')).toBe(allowed)
+    expect(detailed.includes('file')).toBe(allowed)
+    if (!allowed)
+      expect(JSON.stringify(result)).not.toMatch(
+        /Matrix excerpt|"ownerName":"Owner"|"title":"File"/,
+      )
   },
 )
 
@@ -616,3 +669,45 @@ test.each(['updated', 'viewed'] as const)(
     }
   },
 )
+
+test('plural owners and Home intersect archive and personal viewed filters', async () => {
+  fixture.sqlite.exec(`
+    UPDATE shareables SET owner_user_id='viewer';
+    UPDATE artifact_containers SET archived_at='${now}' WHERE id='project';
+    INSERT INTO artifact_containers(id,workspace_id,kind,owner_user_id,name,created_by_id,created_at,updated_at) VALUES('inbox','source','inbox','viewer','Home','viewer','${now}','${now}');
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES('home-file','source','viewer','Home File','html_page','private','inbox','${now}','${now}','${now}');
+    INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES('home-file','viewer','${now}','${now}');
+  `)
+  const selection = {
+    ...input,
+    candidateIds: ['file', 'home-file'],
+    ownerUserIds: ['viewer', 'owner'],
+  }
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...selection,
+      location: { kind: 'home' },
+      date: { field: 'viewed', from: new Date(now) },
+    }),
+  ).toEqual([{ id: 'home-file', workspaceId: 'source' }])
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...selection,
+      location: { kind: 'project', id: 'project' },
+    }),
+  ).toEqual([])
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...selection,
+      location: { kind: 'project', id: 'project' },
+      includeArchived: true,
+    }),
+  ).toEqual([{ id: 'file', workspaceId: 'source' }])
+  expect(
+    await discoverCandidates(fixture.db, {
+      ...selection,
+      location: { kind: 'home' },
+      ownerUserIds: ['owner'],
+    }),
+  ).toEqual([])
+})

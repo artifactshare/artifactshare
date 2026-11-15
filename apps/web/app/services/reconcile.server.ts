@@ -1,3 +1,4 @@
+import { pruneSearchLogs } from './search-logs.server'
 import { type Kysely, sql } from 'kysely'
 import type Stripe from 'stripe'
 import type { DB } from '~/types/db'
@@ -483,6 +484,18 @@ export async function runReconciliation(
   } catch {
     console.error('reconcile_security_deception_cleanup_failed')
     errors.push(new Error('security deception cleanup failed'))
+  }
+
+  try {
+    const cutoff = new Date(
+      new Date(now).getTime() - 90 * 86400000,
+    ).toISOString()
+    for (;;) {
+      if ((await pruneSearchLogs(db, cutoff)) < 500) break
+    }
+  } catch {
+    console.error('reconcile_search_logs_cleanup_failed')
+    errors.push(new Error('search logs cleanup failed'))
   }
 
   console.log(

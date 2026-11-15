@@ -1,10 +1,17 @@
-import { sql, type Compilable, type Kysely } from 'kysely'
+import {
+  sql,
+  type Kysely,
+  type SelectQueryBuilder,
+  type Nullable,
+} from 'kysely'
 import { lowerEmail } from '~/lib/grant-emails.server'
 import { activeLinkExpiry, workspaceAccessRevokedSql } from '~/modules/access'
 import type { DB } from '~/types/db'
 import { grantMatchEmail } from './access.server'
 
 export type DiscoveryFilters = {
+  ownerUserIds?: readonly string[]
+  location?: { kind: 'home' } | { kind: 'project'; id: string }
   ownerUserId?: string
   containerId?: string
   includeArchived?: boolean
@@ -19,9 +26,11 @@ export type CandidateDiscoveryInput = DiscoveryInput & {
   candidateIds: readonly string[]
 }
 export type DiscoveredId = { id: string; workspaceId: string }
-type DiscoveryQuery = Compilable<DiscoveredId> & {
-  execute(): Promise<DiscoveredId[]>
-}
+type DiscoveryQuery = SelectQueryBuilder<
+  DB & { s: DB['shareables']; c: Nullable<DB['artifact_containers']> },
+  's' | 'c',
+  DiscoveredId
+>
 
 /** Load live identity once per operation; callers supply no session claims. */
 export function loadDiscoveryViewer(db: Kysely<DB>, viewerUserId: string) {
@@ -68,7 +77,7 @@ function discoveryQuery(
   viewer: DiscoveryViewer,
   filters: DiscoveryFilters,
   now: string,
-) {
+): DiscoveryQuery {
   let query = db
     .selectFrom('shareables as s')
     .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
@@ -81,6 +90,14 @@ function discoveryQuery(
     query = query.where(
       sql<boolean>`(c.kind IS NOT 'project' OR c.archived_at IS NULL)`,
     )
+  if (filters.ownerUserIds !== undefined)
+    query = query.where(
+      sql<boolean>`+s.owner_user_id IN (SELECT value FROM json_each(${JSON.stringify(filters.ownerUserIds)}))`,
+    )
+  if (filters.location?.kind === 'home')
+    query = query.where('c.kind', '=', 'inbox')
+  if (filters.location?.kind === 'project')
+    query = query.where(sql<boolean>`+s.container_id = ${filters.location.id}`)
   if (filters.ownerUserId !== undefined)
     query = query.where(sql<boolean>`+s.owner_user_id = ${filters.ownerUserId}`)
   if (filters.containerId !== undefined)
@@ -163,7 +180,9 @@ export async function enumerateDiscoverableIds(
   const now = input.now ?? new Date().toISOString()
   const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
   if (!viewer) return []
-  const rows = await buildSparseDiscoveryQuery(db, viewer, input, now).execute()
+  const rows = await drainDiscoveryIds(
+    buildSparseDiscoveryQuery(db, viewer, input, now),
+  )
   const groups = new Map<string, string[]>()
   for (const row of rows) {
     const ids = groups.get(row.workspaceId) ?? []
@@ -171,4 +190,109 @@ export async function enumerateDiscoverableIds(
     groups.set(row.workspaceId, ids)
   }
   return Array.from(groups, ([workspaceId, ids]) => ({ workspaceId, ids }))
+}
+
+/** Complete member fallback, sharing the exact discovery predicate with candidate checks. */
+export function buildMemberDiscoveryQuery(
+  db: Kysely<DB>,
+  viewer: DiscoveryViewer,
+  input: DiscoveryFilters,
+  now: string,
+): DiscoveryQuery {
+  return discoveryQuery(db, viewer, input, now).where(
+    's.workspace_id',
+    '=',
+    viewer.workspace_id,
+  )
+}
+export async function enumerateMemberDiscoverableIds(
+  db: Kysely<DB>,
+  input: DiscoveryInput,
+): Promise<DiscoveredId[]> {
+  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  if (!viewer) return []
+  const membership = await db
+    .selectFrom('workspace_members')
+    .select('status')
+    .where('workspace_id', '=', viewer.workspace_id)
+    .where('user_id', '=', viewer.id)
+    .executeTakeFirst()
+  if (membership?.status !== 'active') return []
+  return drainDiscoveryIds(
+    buildMemberDiscoveryQuery(
+      db,
+      viewer,
+      input,
+      input.now ?? new Date().toISOString(),
+    ),
+  )
+}
+
+/** Bound every D1 response while preserving the full eligible universe. */
+async function drainDiscoveryIds(
+  query: DiscoveryQuery,
+): Promise<DiscoveredId[]> {
+  const rows: DiscoveredId[] = []
+  let cursor: string | undefined
+  for (;;) {
+    const page = await query
+      .$if(cursor !== undefined, (q) => q.where('s.id', '>', cursor!))
+      .orderBy('s.id')
+      .limit(2000)
+      .execute()
+    rows.push(...page)
+    if (page.length < 2000) return rows
+    cursor = page[page.length - 1].id
+  }
+}
+
+/** Candidates for typeahead retain the narrower owned/viewed/shared domain. */
+export async function discoverSuggestionCandidates(
+  db: Kysely<DB>,
+  input: CandidateDiscoveryInput,
+): Promise<DiscoveredId[]> {
+  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  if (!viewer || !input.candidateIds.length) return []
+  const email = grantMatchEmail({
+    email: viewer.email,
+    emailVerified: viewer.email_verified === 1,
+  })
+  return buildCandidateDiscoveryQuery(
+    db,
+    viewer,
+    input,
+    input.now ?? new Date().toISOString(),
+  )
+    .where(sql<boolean>`(s.owner_user_id=${viewer.id}
+      OR EXISTS (SELECT 1 FROM shareable_grants g WHERE g.shareable_id=s.id AND ${lowerEmail('g.granted_email')}=${email})
+      OR EXISTS (SELECT 1 FROM project_members m WHERE m.container_id=s.container_id AND m.user_id=${viewer.id})
+      OR (s.visibility='project' AND EXISTS (SELECT 1 FROM project_share_defaults d WHERE d.project_container_id=s.container_id AND ${lowerEmail('d.email')}=${email}))
+      OR EXISTS (SELECT 1 FROM shareable_viewer_recency r WHERE r.shareable_id=s.id AND r.viewer_user_id=${viewer.id}))`)
+    .execute()
+}
+
+export async function suggestionOwners(
+  db: Kysely<DB>,
+  input: DiscoveryInput,
+  query: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const viewer = await loadDiscoveryViewer(db, input.viewerUserId)
+  if (!viewer) return []
+  return buildSparseDiscoveryQuery(
+    db,
+    viewer,
+    input,
+    input.now ?? new Date().toISOString(),
+  )
+    .innerJoin('users as owner', 'owner.id', 's.owner_user_id')
+    .clearSelect()
+    .select(['owner.id', sql<string>`coalesce(owner.name,'')`.as('name')])
+    .distinct()
+    .where(
+      sql<boolean>`instr(lower(coalesce(owner.name,'')),lower(${query}))>0`,
+    )
+    .orderBy('name')
+    .orderBy('owner.id')
+    .limit(3)
+    .execute()
 }

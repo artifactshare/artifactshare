@@ -1,3 +1,9 @@
+import type { SearchProbeDocument } from './search-index-probe'
+import type {
+  IndexSearchInput,
+  IndexPage,
+  IndexSearchResult,
+} from '../app/services/search-index/query'
 import { searchTextKey } from '../app/services/search-index/keys'
 import {
   normalizeSearchText,
@@ -76,19 +82,31 @@ const integrationConfig = integrationWorkerConfig(productionConfig, {
 // Only the test bundle substitutes a subclass with deterministic storage gates.
 // It extends the compiled production class, so every assertion exercises the deployed code.
 const require = createRequire(import.meta.url)
-const { transform } = require(
+const { build } = require(
   require.resolve('esbuild', { paths: [require.resolve('wrangler')] }),
 ) as typeof import('esbuild')
-const probe = await transform(
-  (await readFile(new URL('./search-index-probe.ts', import.meta.url), 'utf8'))
-    .replace('../workers/workspace-search-index', './index.js')
-    .replace('../workers/app', './index.js'),
-  { loader: 'ts', format: 'esm', target: 'es2022' },
-)
-await writeFile(
-  new URL('../build/server/search-index-probe.js', import.meta.url),
-  probe.code,
-)
+await build({
+  entryPoints: [new URL('./search-index-probe.ts', import.meta.url).pathname],
+  outfile: new URL('../build/server/search-index-probe.js', import.meta.url)
+    .pathname,
+  bundle: true,
+  format: 'esm',
+  target: 'es2022',
+  platform: 'node',
+  tsconfig: new URL('../tsconfig.json', import.meta.url).pathname,
+  external: ['cloudflare:workers'],
+  plugins: [
+    {
+      name: 'production-search-class',
+      setup(builder) {
+        builder.onResolve(
+          { filter: /workers\/(workspace-search-index|app)$/ },
+          () => ({ path: './index.js', external: true }),
+        )
+      },
+    },
+  ],
+})
 await writeFile(
   new URL('../build/server/search-index-entry.js', import.meta.url),
   `export * from './index.js'; export { default, WorkspaceSearchIndex } from './search-index-probe.js';`,
@@ -151,16 +169,50 @@ function searchProbe(workspace: string) {
     point?: string,
     after?: number,
     now?: number,
+    payload?: {
+      input?: IndexSearchInput
+      ids?: string[]
+      documents?: SearchProbeDocument[]
+    },
   ) => {
     const response = await worker.fetch('/__test/search-index', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace, action, point, after, now }),
+      body: JSON.stringify({
+        workspace,
+        action,
+        point,
+        after,
+        now,
+        ...payload,
+      }),
     })
     expect(response.status, await response.clone().text()).toBe(200)
     return response.json()
   }
   return {
+    queryState: (): Promise<{ changes: number; constructorChanges: number }> =>
+      call('queryState'),
+    seedDocuments: (documents: SearchProbeDocument[]) =>
+      call('seedDocuments', undefined, undefined, undefined, { documents }),
+    searchResult: (input: IndexSearchInput): Promise<IndexSearchResult> =>
+      call('search', undefined, undefined, undefined, { input }),
+    search: async (input: IndexSearchInput): Promise<IndexPage> => {
+      const result: IndexSearchResult = await call(
+        'search',
+        undefined,
+        undefined,
+        undefined,
+        { input },
+      )
+      if ('error' in result) throw new Error(result.error.code)
+      return result
+    },
+    details: (
+      input: IndexSearchInput,
+      ids: string[],
+    ): Promise<Array<{ id: string; path: string; excerpt: string }>> =>
+      call('details', undefined, undefined, undefined, { input, ids }),
     sync: (_workspace?: string) => call('sync'),
     attemptSync: (_workspace?: string) => call('attemptSync'),
     resume: () => call('resume'),
@@ -1282,7 +1334,12 @@ describe('Worker integration harness', () => {
           "INSERT INTO versions (id,shareable_id,artifact_kind,status,entrypoint_path,r2_key,size_bytes,sha256,created_by_id,created_at) VALUES (?,?,'html_page','published','/index.html',?,100,'sha',?,?)",
         ).bind(`v-${id}`, id, `artifacts/backfill/${id}`, owner.userId, now),
       ])
-      await env.BUCKET.put(`artifacts/backfill/${id}`, '<p>searchablebody</p>')
+      await env.BUCKET.put(
+        `artifacts/backfill/${id}`,
+        n === 0
+          ? '<p>searchablebody フロントエンドエンジニア エンジニア募集</p>'
+          : '<p>searchablebody</p>',
+      )
     }
     const index = await worker.getDurableObjectStorage(
       'WORKSPACE_SEARCH_INDEX',
@@ -1384,6 +1441,7 @@ describe('Worker integration harness', () => {
     const generationsBeforeRebuild = await index.exec(
       'SELECT generation FROM active ORDER BY id',
     )
+    await index.exec('DROP TABLE search_runs')
     await index.exec('UPDATE active SET format=0')
     const servingBefore = await index.exec(
       'SELECT count(*) AS count FROM serving_chunks',
@@ -1394,6 +1452,16 @@ describe('Worker integration harness', () => {
     expect(
       await index.exec('SELECT count(*) AS count FROM serving_chunks'),
     ).toEqual(servingBefore)
+    expect(
+      (await searchProbe('ws-backfill').search({ query: 'エンジ' })).items,
+    ).toEqual([expect.objectContaining({ id: 'backfill-00' })])
+    expect(
+      (
+        await searchProbe('ws-backfill').search({
+          query: 'フロントエンドエンジ',
+        })
+      ).items,
+    ).toEqual([])
     await expect(
       worker.scheduled({ cron: '*/5 * * * *' }),
     ).resolves.toMatchObject({ outcome: 'ok' })
@@ -1416,6 +1484,13 @@ describe('Worker integration harness', () => {
         "SELECT DISTINCT c.shareable FROM search JOIN serving_chunks c ON c.id=search.rowid WHERE search MATCH 'body : freshduringbackfill'",
       ),
     ).toEqual([{ shareable: published.id }])
+    expect(
+      (
+        await searchProbe('ws-backfill').search({
+          query: 'フロントエンドエンジ',
+        })
+      ).items,
+    ).toEqual([expect.objectContaining({ id: 'backfill-00' })])
     // Stop after the first real storage chunk, preserving the serving generation.
     const oldVersion = await index.exec(
       "SELECT DISTINCT version FROM serving_chunks WHERE shareable='backfill-00'",
@@ -3104,4 +3179,475 @@ describe('Worker integration harness', () => {
     expect(response.status).toBe(500)
     expect(await response.text()).toMatch(/unhandled|Unhandled/i)
   })
+})
+
+test('workspace search benchmark smoke', async () => {
+  const size = Number(process.env.SEARCH_BENCHMARK_SIZE ?? 40)
+  const warmup = Number(process.env.SEARCH_BENCHMARK_WARMUP ?? 1)
+  const samples = Number(process.env.SEARCH_BENCHMARK_SAMPLES ?? 2)
+  const workspace = `search-benchmark-${crypto.randomUUID()}`
+  const invoke = async (action: string) => {
+    const response = await worker.fetch('/__test/search-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, workspace, size, warmup, samples }),
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return response.json()
+  }
+  await invoke('seedSearch')
+  const measurement = (await invoke('measureSearch')) as {
+    p95: number
+    queries: string[]
+    suggestionDurations: number[]
+    paletteDurations: number[]
+    result: {
+      total: { value: number; relation: string }
+      items: Array<{ id: string; groupSize: number }>
+    }
+  }
+  expect(Number.isFinite(measurement.p95)).toBe(true)
+  expect(measurement.p95).toBeGreaterThanOrEqual(0)
+  const groupCount = size - 1 - (size >= 4 ? 1 : 0)
+  expect(measurement.result.total).toEqual({
+    value: Math.min(groupCount, 1000),
+    relation: groupCount > 1000 ? 'gte' : 'eq',
+  })
+  expect(measurement.result.items.length).toBe(Math.min(20, groupCount))
+  expect(
+    measurement.result.items.every(
+      (item) => item.id !== `${workspace}-${size - 1}` && item.groupSize >= 1,
+    ),
+  ).toBe(true)
+  if (size >= 4)
+    expect(
+      measurement.result.items.find((item) => item.id === `${workspace}-0`),
+    ).toMatchObject({ groupSize: 2 })
+  expect(measurement.suggestionDurations).toHaveLength(samples)
+  expect(measurement.paletteDurations).toHaveLength(samples)
+  console.log(
+    JSON.stringify({
+      queries: measurement.queries,
+      suggestionDurations: measurement.suggestionDurations,
+      paletteDurations: measurement.paletteDurations,
+      benchmark: 'member-first-page-count',
+      size,
+      warmup,
+      samples,
+      p95: measurement.p95,
+      runtime: 'Workers',
+      eligibilityRate: (size - 1) / size,
+    }),
+  )
+}, 600000)
+
+test('workspace search RPC ranks active pages, cross-chunk evidence and literal syntax', async () => {
+  const probe = searchProbe(`query-${crypto.randomUUID()}`)
+  await probe.seedDocuments([
+    { id: 'title', title: 'alpha beta', chunks: [{ body: '' }] },
+    { id: 'phrase', title: 'Phrase', chunks: [{ body: 'alpha beta' }] },
+    { id: 'all', title: 'Scattered', chunks: [{ body: 'alpha filler beta' }] },
+    {
+      id: 'split',
+      title: 'Split',
+      chunks: [{ body: 'alpha' }, { body: 'beta' }],
+    },
+    {
+      id: 'site',
+      title: 'Site',
+      path: 'a.html',
+      chunks: [{ body: 'alpha filler beta' }],
+    },
+    {
+      id: 'site',
+      title: 'Site',
+      path: 'z.html',
+      chunks: [{ body: 'alpha beta' }],
+    },
+    {
+      id: 'staged',
+      title: 'alpha beta staging',
+      generation: 'staging',
+      active: false,
+      chunks: [{ body: 'alpha beta' }],
+    },
+    {
+      id: 'old',
+      title: 'alpha beta old',
+      generation: 'old',
+      active: false,
+      chunks: [{ body: 'alpha beta' }],
+    },
+    {
+      id: 'old',
+      title: 'Unrelated',
+      generation: 'new',
+      chunks: [{ body: 'unrelated' }],
+    },
+    { id: 'substring', title: 'alphabet', chunks: [{ body: '' }] },
+    { id: 'katakana', title: 'Katakana', chunks: [{ body: 'プログラミング' }] },
+    {
+      id: 'syntax',
+      title: 'Syntax',
+      chunks: [{ body: 'a b near title:x or' }],
+    },
+    { id: 'weight-title', title: 'weight-probe', chunks: [{ body: 'filler' }] },
+    { id: 'weight-body', title: 'Body', chunks: [{ body: 'weight probe' }] },
+    {
+      id: 'weight-script',
+      title: 'Script',
+      chunks: [{ body: '', script: 'weight probe' }],
+    },
+    {
+      id: 'newest',
+      title: 'Newest',
+      activityAt: '2026-10-01T00:00:00.000Z',
+      chunks: [{ body: '' }],
+    },
+  ])
+  const page = await probe.search({ query: 'alpha beta' })
+  expect(page.items[0]).toMatchObject({ id: 'title', tier: 'title', rank: 1 })
+  expect(page.items.find((row) => row.id === 'split')).toMatchObject({
+    tier: 'phrase',
+  })
+  expect(page.items.at(-1)).toMatchObject({ id: 'all', tier: 'all' })
+  expect(page.items.map((row) => row.id).sort()).toEqual([
+    'all',
+    'phrase',
+    'site',
+    'split',
+    'title',
+  ])
+  expect(JSON.stringify(page)).not.toMatch(/score|bm25|staged/)
+  expect(await probe.details({ query: 'alpha beta' }, ['site'])).toEqual([
+    { id: 'site', path: 'z.html', excerpt: 'alpha beta' },
+  ])
+  expect(
+    (await probe.search({ query: 'weight probe' })).items.map((row) => row.id),
+  ).toEqual(['weight-title', 'weight-body', 'weight-script'])
+  expect(
+    await probe.details({ query: 'alpha beta', sort: 'newest' }, ['site']),
+  ).toEqual([{ id: 'site', path: 'z.html', excerpt: 'alpha beta' }])
+  expect(
+    (await probe.search({ query: 'pha' })).items.map((row) => row.id),
+  ).toContain('substring')
+  expect(
+    (await probe.search({ query: 'プログ' })).items.map((row) => row.id),
+  ).toEqual(['katakana'])
+  for (const query of ['a*', 'NEAR(a b)', 'title:x', 'OR'])
+    expect((await probe.search({ query })).items.map((row) => row.id)).toEqual([
+      'syntax',
+    ])
+  expect((await probe.search({ query: '"' })).items).toEqual([])
+  expect((await probe.search({ query: '' })).items[0].id).toBe('newest')
+  expect(
+    (await probe.search({ query: 'alpha', allowedIds: [] })).items,
+  ).toEqual([])
+  const allowed = Array.from({ length: 2100 }, (_, i) => `missing-${i}`).concat(
+    'title',
+  )
+  expect(
+    (await probe.search({ query: 'alpha', allowedIds: allowed })).items.map(
+      (row) => row.id,
+    ),
+  ).toEqual(['title'])
+})
+
+test('search cookie routes reject anonymous callers and return the authenticated result shape', async () => {
+  for (const path of [
+    '/api/search',
+    '/api/search-suggestions',
+    '/api/search-logs',
+  ]) {
+    const response = await worker.fetch(path)
+    expect(response.status).toBe(401)
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+  }
+  await seedRuntimeUser({
+    workspaceId: 'search-route',
+    userId: 'search-route-user',
+    email: 'search-route@example.com',
+    name: 'Search User',
+    sessionToken: 'search-route-session',
+  })
+  const response = await worker.fetch('/api/search?q=alpha', {
+    headers: { Cookie: sessionCookie('search-route-session') },
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+  expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+  expect(await response.json()).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'eq' },
+    tier: 'all',
+    relaxations: [],
+    nextCursor: null,
+    searchLogId: expect.any(String),
+  })
+})
+
+test('external search preserves title-substring and body recall without exposing an ungranted file', async () => {
+  await seedRuntimeUser({
+    workspaceId: 'search-external',
+    userId: 'search-external-user',
+    email: 'search-external@example.com',
+    name: 'External User',
+    sessionToken: 'search-external-session',
+  })
+  await seedRuntimeUser({
+    workspaceId: 'search-source',
+    userId: 'search-source-owner',
+    email: 'search-source@example.com',
+    name: 'Source Owner',
+    sessionToken: 'search-source-session',
+  })
+  const env = await worker.getEnv()
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO artifact_containers(id,workspace_id,kind,owner_user_id,created_by_id,name,created_at,updated_at) VALUES('search-source-home','search-source','inbox','search-source-owner','search-source-owner','Home','2026-09-15','2026-09-15')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES('external-title','search-source','search-source-owner','alphabet','html_page','private','search-source-home','2026-09-15','2026-09-15','2026-09-15'),('external-body','search-source','search-source-owner','Body document','html_page','private','search-source-home','2026-09-15','2026-09-15','2026-09-15'),('external-denied','search-source','search-source-owner','Denied alphabet','html_page','private','search-source-home','2026-09-15','2026-09-15','2026-09-15')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO shareable_grants(shareable_id,granted_email,granted_at,granted_by) VALUES('external-title','search-external@example.com','2026-09-15','search-source-owner'),('external-body','search-external@example.com','2026-09-15','search-source-owner')",
+    ),
+  ])
+  const probe = searchProbe('search-source')
+  await probe.seedDocuments([
+    { id: 'external-title', title: 'alphabet', chunks: [{ body: '' }] },
+    {
+      id: 'external-body',
+      title: 'Body document',
+      chunks: [{ body: 'needletoken in authorized text' }],
+    },
+    {
+      id: 'external-denied',
+      title: 'Denied alphabet',
+      chunks: [{ body: 'needletoken forbidden excerpt' }],
+    },
+  ])
+  for (const [q, id] of [
+    ['pha', 'external-title'],
+    ['needletoken', 'external-body'],
+  ]) {
+    const response = await worker.fetch(`/api/search?q=${q}`, {
+      headers: { Cookie: sessionCookie('search-external-session') },
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    const result = await response.json()
+    expect(result).toMatchObject({
+      total: { value: 1, relation: 'eq' },
+      items: [{ id }],
+    })
+    expect(JSON.stringify(result)).not.toMatch(
+      /Denied alphabet|forbidden excerpt|external-denied/,
+    )
+    const suggestion = await worker.fetch(`/api/search-suggestions?q=${q}`, {
+      headers: { Cookie: sessionCookie('search-external-session') },
+    })
+    expect(suggestion.status).toBe(200)
+    expect(await suggestion.json()).toMatchObject({ files: [{ id }] })
+  }
+  // Actual Workers crypto must seal and authenticate both cursor and open tokens.
+  const headers = { Cookie: sessionCookie('search-external-session') }
+  const firstResponse = await worker.fetch('/api/search?pageSize=1', {
+    headers,
+  })
+  expect(firstResponse.status, await firstResponse.clone().text()).toBe(200)
+  const first = await firstResponse.json<{
+    searchLogId: string
+    nextCursor: string
+    items: Array<{ id: string; receipt: string }>
+  }>()
+  expect(first.items).toMatchObject([{ id: 'external-body' }])
+  expect(first.nextCursor).toEqual(expect.any(String))
+  const secondResponse = await worker.fetch(
+    `/api/search?pageSize=1&cursor=${encodeURIComponent(first.nextCursor)}`,
+    { headers },
+  )
+  expect(secondResponse.status, await secondResponse.clone().text()).toBe(200)
+  expect(await secondResponse.json()).toMatchObject({
+    searchLogId: first.searchLogId,
+    items: [{ id: 'external-title', rank: 2 }],
+    nextCursor: null,
+  })
+  const opened = await worker.fetch(
+    `http://localhost/api/search-logs/${first.searchLogId}/opens`,
+    {
+      method: 'POST',
+      headers: {
+        ...headers,
+        Origin: 'http://localhost',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ receipt: first.items[0].receipt }),
+    },
+  )
+  expect(opened.status, await opened.clone().text()).toBe(204)
+  const logs = await worker.fetch('/api/search-logs', { headers })
+  expect(await logs.json()).toMatchObject({
+    searches: expect.arrayContaining([
+      expect.objectContaining({
+        id: first.searchLogId,
+        opens: [
+          {
+            shareableId: 'external-body',
+            rank: 1,
+            openedAt: expect.any(String),
+          },
+        ],
+      }),
+    ]),
+  })
+})
+
+test('workspace search SQL restricts and recomputes read-only rankings and requires whole boundary tokens', async () => {
+  const probe = searchProbe(`sql-search-${crypto.randomUUID()}`)
+  await probe.seedDocuments([
+    {
+      id: 'boundary-kana',
+      title: 'Control',
+      chunks: [{ body: 'エンジニア募集' }],
+    },
+    {
+      id: 'false',
+      title: 'Control',
+      chunks: [{ body: 'a alpha' }, { body: 'beta b' }],
+    },
+    {
+      id: 'true',
+      title: 'Control',
+      chunks: [{ body: 'filler a' }, { body: 'b filler' }],
+    },
+    {
+      id: 'katakana',
+      title: 'Control',
+      chunks: [{ body: 'フロントエンドエンジニアの募集' }],
+    },
+    ...Array.from({ length: 2100 }, (_, i) => ({
+      id: `noise-${i}`,
+      title: 'a b',
+      chunks: [{ body: 'a b' }],
+    })),
+  ])
+  const before = await probe.queryState()
+  await probe.search({ query: 'a b', maxResults: 320, limit: 64 })
+  expect(await probe.queryState()).toEqual(before)
+  const criteria = { query: 'a b', allowedIds: ['false', 'true'], limit: 1 }
+  const first = await probe.search(criteria)
+  expect(first.items).toEqual([
+    expect.objectContaining({ id: 'true', tier: 'phrase', rank: 1 }),
+  ])
+  const state = await probe.queryState()
+  expect(state).toEqual(before)
+  const second = await probe.search({ ...criteria, cursor: first.nextCursor! })
+  expect(second.items).toEqual([
+    expect.objectContaining({ id: 'false', tier: 'all', rank: 2 }),
+  ])
+  expect(await probe.queryState()).toEqual(state)
+  expect((await probe.search({ ...criteria, limit: 10 })).items).toEqual([
+    ...first.items,
+    ...second.items,
+  ])
+  expect(
+    (await probe.search({ query: 'フロントエンドエンジ' })).items.map(
+      (row) => row.id,
+    ),
+  ).toEqual(['katakana'])
+  expect(
+    (await probe.search({ query: 'エンジ' })).items.map((row) => row.id).sort(),
+  ).toEqual(['boundary-kana', 'katakana'])
+  expect((await probe.search({ query: 'バックエンドエンジ' })).items).toEqual(
+    [],
+  )
+  expect((await probe.search({ query: 'エンジニア 募集' })).items).toEqual([
+    expect.objectContaining({ id: 'boundary-kana', tier: 'phrase' }),
+    expect.objectContaining({ id: 'katakana', tier: 'all' }),
+  ])
+  expect(
+    await probe.details({ query: 'フロントエンドエンジニア' }, ['katakana']),
+  ).toEqual([
+    {
+      id: 'katakana',
+      path: 'index.html',
+      excerpt: 'フロントエンドエンジニアの募集',
+    },
+  ])
+  expect(await probe.queryState()).toEqual(before)
+  await probe.seedDocuments([
+    {
+      id: 'true',
+      generation: 'replacement',
+      title: 'Unrelated',
+      chunks: [{ body: 'unrelated' }],
+    },
+  ])
+  expect((await probe.search(criteria)).items).toEqual([
+    expect.objectContaining({ id: 'false', tier: 'all', rank: 1 }),
+  ])
+})
+
+test('previous-format construction leaves segmented FTS untouched with constant writes', async () => {
+  const writes: number[] = []
+  for (const count of [1, 1000]) {
+    const workspace = `upgrade-${crypto.randomUUID()}`
+    const probe = searchProbe(workspace)
+    const index = await worker.getDurableObjectStorage(
+      'WORKSPACE_SEARCH_INDEX',
+      { name: `${workspace}:0` },
+    )
+    await probe.seedDocuments(
+      Array.from({ length: count }, (_, i) => ({
+        id: `old-${i}`,
+        title: 'Control',
+        chunks: [{ body: 'フロントエンドエンジニア' }],
+      })),
+    )
+    await index.exec('DROP TABLE search_runs')
+    await index.exec('UPDATE active SET format=7')
+    const schema = await index.exec(
+      "SELECT sql FROM sqlite_master WHERE name='search'",
+    )
+    await worker.evictDurableObject('WORKSPACE_SEARCH_INDEX', {
+      name: `${workspace}:0`,
+    })
+    writes.push((await probe.queryState()).constructorChanges)
+    expect(
+      await index.exec("SELECT sql FROM sqlite_master WHERE name='search'"),
+    ).toEqual(schema)
+    expect(await index.exec('SELECT count(*) AS n FROM search_runs')).toEqual([
+      { n: 0 },
+    ])
+    expect((await probe.search({ query: 'エンジ' })).items).toHaveLength(count)
+    expect(
+      (await probe.search({ query: 'フロントエンドエンジ' })).items,
+    ).toEqual([])
+  }
+  expect(writes[0]).toBeLessThan(30)
+  expect(writes[1]).toBe(writes[0])
+})
+
+test('benchmark-sized allowed IDs remain write-free and excessive sets return a typed error', async () => {
+  const probe = searchProbe(`allowed-${crypto.randomUUID()}`)
+  await probe.seedDocuments([
+    { id: 'visible', title: 'Needle', chunks: [{ body: 'needle' }] },
+    { id: 'denied', title: 'Needle', chunks: [{ body: 'needle' }] },
+  ])
+  const workspace = `search-benchmark-${crypto.randomUUID()}`
+  const ids = Array.from({ length: 100_000 }, (_, i) => `${workspace}-${i}`)
+  ids.push('visible')
+  expect(
+    new TextEncoder().encode(JSON.stringify(ids)).byteLength,
+  ).toBeGreaterThan(5 * 1024 * 1024)
+  const before = await probe.queryState()
+  expect(
+    (await probe.search({ query: 'needle', allowedIds: ids })).items,
+  ).toEqual([expect.objectContaining({ id: 'visible' })])
+  expect(
+    await probe.searchResult({
+      query: 'needle',
+      allowedIds: Array.from({ length: 125_001 }, () => 'x'),
+    }),
+  ).toEqual({ error: { code: 'search_capacity_exceeded' } })
+  expect(await probe.queryState()).toEqual(before)
 })

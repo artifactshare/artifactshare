@@ -15,6 +15,7 @@ export type Source = Pick<
   | 'container_id'
   | 'owner_user_id'
   | 'updated_at'
+  | 'activity_at'
 > &
   Pick<
     Selectable<DB['versions']>,
@@ -42,6 +43,7 @@ export function inventory(
       's.container_id',
       's.owner_user_id',
       's.updated_at',
+      's.activity_at',
       'v.artifact_kind',
       'v.entrypoint_path',
       'v.r2_key',

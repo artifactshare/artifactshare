@@ -10,6 +10,27 @@ import type {
 } from '~/lib/shareable-types'
 
 export interface DB {
+  search_logs: {
+    token_key: Generated<string>
+    id: string
+    actor_id: string
+    created_at: string
+    query: string
+    filters_json: string
+    result_count: number
+    count_relation: 'eq' | 'gte'
+    tier: 'title' | 'phrase' | 'all' | 'any'
+    duration_ms: number
+    discoverable_count: number
+    source: 'screen' | 'mcp' | 'cli'
+  }
+  search_opens: {
+    id: string
+    search_id: string
+    shareable_id: string
+    rank: number
+    opened_at: string
+  }
   search_index_workspaces: { workspace_id: string; dispatched_at: string }
   security_deception_signals: SecurityDeceptionSignalsTable
   security_deception_delivery_control: {
