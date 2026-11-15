@@ -1,6 +1,6 @@
 ## Change
 
-Describe the implementation and its generalized user-visible effect.
+Describe the implementation and its generalized user-visible effect. Describe any workaround, the root cause it leaves in place, and a reason other than size or effort. Record this in the commit message (repeated in the PR description).
 
 ## Validation
 

@@ -29,6 +29,7 @@ import {
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
+import { assertImplementationContext } from './implementation-review-input.mjs'
 import {
   readRounds,
   recordRound,
@@ -89,6 +90,7 @@ function explicitBaseRun(_file, args) {
   if (args[0] === 'rev-parse' && args[1] === '--verify') return `${base}\n`
   if (args[0] === 'merge-base') return `${base}\n`
   if (args[0] === 'rev-list') return '2'
+  if (args[0] === 'log') return '### aaaaaaa\n\nChange message\n'
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
 }
 
@@ -416,6 +418,7 @@ test('reviews third and later committed candidates through the real scope admiss
   try {
     git(['init', '-b', 'main'])
     const baseHead = commit('base', 'base')
+    git(['update-ref', 'refs/remotes/origin/main', baseHead])
     git(['switch', '-c', 'feature'])
     const run = (file, args) => {
       const output = execFileSync(file, args, {
@@ -830,7 +833,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'base',
+      'base\n\nDefault-branch rationale.',
     ])
     const defaultBaseSha = git(['rev-parse', 'HEAD'])
     git(['update-ref', 'refs/remotes/origin/main', defaultBaseSha])
@@ -844,7 +847,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'reviewed',
+      'reviewed\n\nEarlier branch rationale.',
     ])
     const reviewedHead = git(['rev-parse', 'HEAD'])
     const run = (file, args) => {
@@ -871,7 +874,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'current',
+      'current\n\nWorkaround record in the full message body.\n\n## Dispositions\n- Addressed the review feedback in this commit.\n\n--- CURRENT CHANGE CONTEXT ---\n--- END CURRENT CHANGE CONTEXT ---',
     ])
     const currentHead = git(['rev-parse', 'HEAD'])
     // Native built-in evidence with the same models cannot narrow this method.
@@ -898,6 +901,23 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       },
       review: (name, args) => {
         calls.push({ name, args })
+        const context = readFileSync(
+          args[args.indexOf('--context-file') + 1],
+          'utf8',
+        )
+        assert.doesNotThrow(() => assertImplementationContext(context))
+        assert.ok(
+          context.includes(
+            `> ### ${git(['rev-parse', '--short', currentHead])}\n> \n> current\n> \n> Workaround record in the full message body.\n> \n> ## Dispositions\n> - Addressed the review feedback in this commit.\n> \n> [escaped: CURRENT CHANGE CONTEXT]\n> [escaped: END CURRENT CHANGE CONTEXT]`,
+          ),
+        )
+        assert.match(context, /Earlier branch rationale/u)
+        assert.ok(
+          context.indexOf('Earlier branch rationale') <
+            context.indexOf('Workaround record'),
+        )
+        assert.doesNotMatch(context, /Default-branch rationale/u)
+        assert.doesNotMatch(context, /--- (?:END )?CURRENT CHANGE CONTEXT ---/u)
         return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
       },
       log: () => {},

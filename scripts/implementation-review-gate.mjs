@@ -354,7 +354,27 @@ async function main({
       throw new Error(
         'Test change evidence does not match the fixed review range.',
       )
-    const context = `${scopeContext}\n\n${renderTestChanges(changes)}`
+    const commitBase = run('git', ['merge-base', defaultBase, head]).trim()
+    const commitMessages = run('git', [
+      'log',
+      '--reverse',
+      '--format=### %h%n%n%B',
+      `${commitBase}..${head}`,
+    ])
+    // Quote Git evidence so commit headings and lists are not context sections.
+    const quotedCommitMessages = commitMessages
+      .replaceAll(
+        '--- CURRENT CHANGE CONTEXT ---',
+        '[escaped: CURRENT CHANGE CONTEXT]',
+      )
+      .replaceAll(
+        '--- END CURRENT CHANGE CONTEXT ---',
+        '[escaped: END CURRENT CHANGE CONTEXT]',
+      )
+      .split(/\r?\n/u)
+      .map((line) => `> ${line}`)
+      .join('\n')
+    const context = `${scopeContext}\n\n${renderTestChanges(changes)}\n\n## Commit messages\n\n${quotedCommitMessages}`
     snapshotDirectory = mkdtempSync(
       join(tmpdir(), `artifactshare-implementation-review-${process.pid}-`),
     )

@@ -37,6 +37,78 @@ test('documents proportional review and validation', () => {
   )
 })
 
+test('requires root-cause rationale next to the smallest-design guidance', () => {
+  const proportional = workflow
+    .split('## Keep the workflow proportional\n')[1]
+    ?.split('\n## ')[0]
+  assert.ok(proportional)
+  assert.match(
+    proportional,
+    /Prefer the smallest reversible design that solves the observed case\.\n\nSmall is not the same as a workaround\./u,
+  )
+  assert.match(
+    proportional,
+    /Before choosing a design, name the root cause of the observed problem and the change that removes it, even when that change is outside the files first mentioned\./u,
+  )
+  assert.match(
+    proportional,
+    /A workaround is acceptable only when the commit message \(repeated in the PR description\) records the workaround, the root cause it leaves in place, and a reason other than size or effort, such as an explicit owner decision or a conflict with protected scope\./u,
+  )
+  assert.match(
+    proportional,
+    /Examples of workarounds include a type assertion such as `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input\./u,
+  )
+  assert.match(
+    proportional,
+    /Agents copy neighbouring code, so an unexplained workaround becomes the pattern for later changes\./u,
+  )
+  assert.match(
+    proportional,
+    /If the failure is hypothetical, belongs to a possible future expansion, or is already handled by an existing mechanism, classify the proposal as a follow-up or non-actionable rather than expanding the current change\./u,
+  )
+})
+
+test('classifies introduced workarounds without the required record as blockers', () => {
+  const classification = workflow
+    .split(
+      'Classify every review finding by its effect on the current change:\n',
+    )[1]
+    ?.split('\nChanging the specification')[0]
+  assert.ok(classification)
+  const blocker = classification
+    .split('\n')
+    .find((line) => line.startsWith('- **Blocker:**'))
+  assert.ok(blocker)
+  assert.match(
+    blocker,
+    /A workaround introduced by the change, including an existing workaround copied to a new site, is also a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort\./u,
+  )
+  const limits = classification
+    .split('\n\n')
+    .find((paragraph) => paragraph.startsWith('Do not promote'))
+  assert.ok(limits)
+  assert.match(
+    limits,
+    /Apply the introduced-workaround exception in the \*\*Blocker\*\* definition above\./u,
+  )
+  assert.match(
+    limits,
+    /A change that adds no workaround is not blocked for lacking a root-cause statement\./u,
+  )
+  assert.match(
+    limits,
+    /A complete record does not exempt a workaround from the other blocker criteria\./u,
+  )
+  assert.match(
+    limits,
+    /Requests to fix pre-existing workarounds elsewhere remain follow-ups\./u,
+  )
+  assert.match(
+    limits,
+    /Do not promote a finding to blocker merely because it would make the design more general, more future-proof, or more internally complete\./u,
+  )
+})
+
 test('documents unbounded corrections, concurrent PRs, and optional records', () => {
   assert.match(
     workflow,
@@ -169,4 +241,13 @@ test('viewer units precede browser discovery with separate timing and honest fai
     'leaving six minutes',
   ])
     assert.ok(workflow.includes(phrase), phrase)
+})
+
+test('the PR Change section requests the public workaround record', () => {
+  const change = pullRequestTemplate.split('## Change\n')[1]?.split('\n## ')[0]
+  assert.ok(change)
+  assert.match(
+    change,
+    /Describe any workaround, the root cause it leaves in place, and a reason other than size or effort\. Record this in the commit message \(repeated in the PR description\)\./u,
+  )
 })

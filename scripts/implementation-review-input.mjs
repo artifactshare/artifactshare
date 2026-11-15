@@ -4,6 +4,7 @@ const reviewContract = [
   'Review only. Do not edit files, run tests, write to remote services, or start another review.',
   'Read AGENTS.md, CLAUDE.md, and docs/reference/development-constraints.md from the supplied fixed head snapshot before classifying findings; safe mode does not supply automatic repository instructions.',
   'Report concrete reachable wrong behavior or a broken current acceptance criterion. Distinguish preferences and future generalization from present defects.',
+  'Exception: a workaround introduced by the change (including an existing workaround copied to a new site), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort; check the Commit messages section of the review context for this record (repeated in the PR description).',
   'Do not treat missing context as GO. State what input is missing and return an incomplete result when the supplied context cannot support a decision.',
 ].join('\n')
 
