@@ -268,3 +268,47 @@ test('allows only the access-resolve migration guide in the boundary manifest', 
     )
   }
 })
+
+test('allows only the exact public security deception reference in the boundary manifest', () => {
+  const manifest = 'config/repository-boundary.json'
+  // Compose the intended public path so this test does not itself introduce
+  // a literal reference outside the manifest-scoped exception.
+  const reference = ['docs', 'reference', 'security-deception.md'].join('/')
+  const cases = [
+    [manifest, [reference], []],
+    ['apps/web/app/source.ts', [reference], ['private-reference']],
+    [
+      'config/repository-boundary.json.backup',
+      [reference],
+      ['private-reference'],
+    ],
+    ['config/Repository-boundary.json', [reference], ['private-reference']],
+    [manifest, [reference.toUpperCase()], ['private-reference']],
+    [
+      manifest,
+      [reference.replace('security', 'Security')],
+      ['private-reference'],
+    ],
+    [manifest, [reference.replace('.md', '-notes.md')], ['private-reference']],
+    [manifest, [`${reference}.internal`], ['private-reference']],
+    [manifest, ['docs/operations/runbook.md'], ['private-reference']],
+    [manifest, [reference, 'AKIA1234567890ABCDEF'], ['credential']],
+  ]
+
+  for (const [relative, values, categories] of cases) {
+    const directory = temp('security-deception-boundary-reference')
+    const file = path.join(directory, relative)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify({ canonical: values }, null, 2))
+    init(directory)
+    writeReceipt(directory, [relative])
+    assert.deepEqual(
+      scan(directory).map(({ category, path: findingPath }) => ({
+        category,
+        path: findingPath,
+      })),
+      categories.map((category) => ({ category, path: relative })),
+      JSON.stringify({ relative, values }),
+    )
+  }
+})

@@ -108,6 +108,13 @@
     {
       "category": "private-reference",
       "path": "^config/repository-boundary\\.json$",
+      "pattern": "^docs/reference/security-deception\\.md$",
+      "caseSensitive": true,
+      "reason": "exact public security deception reference in the repository boundary manifest"
+    },
+    {
+      "category": "private-reference",
+      "path": "^config/repository-boundary\\.json$",
       "pattern": "^docs/decisions/discovery-and-list-limit-roles\\.md$",
       "reason": "exact public design decision in the repository boundary manifest"
     },
