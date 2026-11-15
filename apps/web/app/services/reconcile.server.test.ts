@@ -781,11 +781,38 @@ describe('runReconciliation', () => {
       'reconcile_error',
       'reconcile_r2_references_done',
       'reconcile_security_audit_cleanup_done',
+      'reconcile_security_deception_cleanup_done',
       'reconcile_done',
     ])
-    const doneLog = JSON.parse(logSpy.mock.calls[9]?.[0] as string)
+    const doneLog = JSON.parse(logSpy.mock.calls[10]?.[0] as string)
     expect(doneLog.failed_jobs).toBe(1)
     logSpy.mockRestore()
+  })
+
+  test('deception cleanup failure is sanitized and aggregated after the existing audit cleanup', async () => {
+    await db.schema.dropTable('security_deception_signals').execute()
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(runReconciliation(db, fakeBucket, NOW)).rejects.toThrow(
+      AggregateError,
+    )
+    const events = logSpy.mock.calls.map((call) =>
+      JSON.parse(call[0] as string),
+    )
+    expect(
+      events.some(
+        (event) => event.event === 'reconcile_security_audit_cleanup_done',
+      ),
+    ).toBe(true)
+    expect(events.at(-1)).toMatchObject({
+      event: 'reconcile_done',
+      failed_jobs: 1,
+    })
+    expect(errorSpy).toHaveBeenCalledWith(
+      'reconcile_security_deception_cleanup_failed',
+    )
+    logSpy.mockRestore()
+    errorSpy.mockRestore()
   })
 
   test('emits structured log lines in order', async () => {
@@ -807,6 +834,7 @@ describe('runReconciliation', () => {
       'reconcile_r2_done',
       'reconcile_r2_references_done',
       'reconcile_security_audit_cleanup_done',
+      'reconcile_security_deception_cleanup_done',
       'reconcile_done',
     ])
     logSpy.mockRestore()

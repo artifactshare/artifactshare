@@ -964,12 +964,19 @@ export async function postSlackDirectMessage(
 export async function postSlackWebhook(
   webhookUrl: string,
   text: string,
+  options?: { timeoutMs?: number; redirect?: RequestRedirect },
 ): Promise<{ ok: true } | { ok: false; status: number }> {
   try {
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify({ text }),
+      ...(options?.timeoutMs === undefined
+        ? {}
+        : { signal: AbortSignal.timeout(options.timeoutMs) }),
+      ...(options?.redirect === undefined
+        ? {}
+        : { redirect: options.redirect }),
     })
     return response.ok ? { ok: true } : { ok: false, status: response.status }
   } catch {

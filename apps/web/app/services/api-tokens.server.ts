@@ -154,3 +154,14 @@ export async function touchApiTokenLastUsedByHash(
     )
     .execute()
 }
+
+/** Read-only credential identity; never touches last_used_at. */
+export async function findApiTokenIdentity(db: Kysely<DB>, token: string) {
+  return db
+    .selectFrom('api_tokens')
+    .innerJoin('users', 'users.id', 'api_tokens.user_id')
+    .select(['api_tokens.id as tokenId', 'users.id as userId', 'users.kind'])
+    .where('api_tokens.token_hash', '=', await hashApiToken(token))
+    .where('api_tokens.revoked_at', 'is', null)
+    .executeTakeFirst()
+}

@@ -13,6 +13,19 @@ const cleanupExpiredLinkPublicationsMock = vi.hoisted(() => vi.fn())
 const runReconciliationMock = vi.hoisted(() => vi.fn())
 const processSlackNotificationOutboxMock = vi.hoisted(() => vi.fn())
 
+const handleDeceptionMock = vi.hoisted(() => vi.fn())
+const drainDeceptionMock = vi.hoisted(() => vi.fn())
+vi.mock('../app/services/security-deception.server', () => ({
+  DECEPTION_PATH: '/api/internal/credential-inventory',
+  deceptionResponse: () =>
+    new Response(null, {
+      status: 404,
+      headers: { 'Cache-Control': 'private, no-store' },
+    }),
+  handleDeceptionRequest: handleDeceptionMock,
+  drainDeceptionSignals: drainDeceptionMock,
+}))
+
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class {
     ctx: DurableObjectState
@@ -92,6 +105,10 @@ import { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
 import { discoverRoutes } from '../app/routes'
 
 beforeEach(() => {
+  handleDeceptionMock
+    .mockReset()
+    .mockResolvedValue(new Response(null, { status: 404 }))
+  drainDeceptionMock.mockReset().mockResolvedValue(undefined)
   reportDb.mockClear()
   reportQuery.mockClear()
   getBrowserSessionContextMock.mockReset()
@@ -1732,6 +1749,7 @@ function productionEnv(options: {
 }): Cloudflare.Env {
   return {
     APP_ENV: 'production',
+    BETTER_AUTH_URL: 'https://artifactshare.com',
     FLAGS: {
       getBooleanValue: vi.fn(async () => options.maintenance),
     },
@@ -1895,4 +1913,129 @@ describe('report Worker admission before initialization', () => {
     expect(response.status).toBe(404)
     expect(limit).not.toHaveBeenCalled()
   })
+})
+
+describe('inert authenticated decoy Worker boundary', () => {
+  test('qualified app-host path runs before auth initialization and router middleware', async () => {
+    const request = workerRequest(
+      'https://artifactshare.com/api/internal/credential-inventory',
+      { method: 'POST', headers: { 'X-ArtifactShare-Inventory': 'inspect' } },
+    )
+    expect(
+      (
+        await app.fetch(
+          request,
+          productionEnv({ maintenance: false }),
+          executionContext(),
+        )
+      ).status,
+    ).toBe(404)
+    expect(handleDeceptionMock).toHaveBeenCalledWith(
+      request,
+      'https://artifactshare.com',
+    )
+    expect(anchorAuthInitMock).not.toHaveBeenCalled()
+    expect(getBrowserSessionContextMock).not.toHaveBeenCalled()
+    expect(requestHandlerMock).not.toHaveBeenCalled()
+  })
+  test.each([
+    'abc123def4.artifactshare.link',
+    'artifactshareusercontent.com',
+    'unknown.example.test',
+    'www.artifactshare.com',
+  ])('host gate excludes %s', async (host) => {
+    const response = await app.fetch(
+      workerRequest(`https://${host}/api/internal/credential-inventory`, {
+        method: 'POST',
+      }),
+      productionEnv({ maintenance: false }),
+      executionContext(),
+    )
+    expect(response.status).toBe(404)
+    expect(handleDeceptionMock).not.toHaveBeenCalled()
+    expect(anchorAuthInitMock).not.toHaveBeenCalled()
+  })
+  test('maintenance gate precedes the decoy', async () => {
+    const response = await app.fetch(
+      workerRequest(
+        'https://artifactshare.com/api/internal/credential-inventory',
+        { method: 'POST' },
+      ),
+      productionEnv({ maintenance: true }),
+      executionContext(),
+    )
+    expect(response.status).toBe(503)
+    expect(handleDeceptionMock).not.toHaveBeenCalled()
+    expect(anchorAuthInitMock).not.toHaveBeenCalled()
+  })
+  test.each(['/robots.txt', '/', '/api/cli/whoami', '/api/cli/doctor', '/mcp'])(
+    'ordinary surface %s never invokes the decoy',
+    async (path) => {
+      await app.fetch(
+        workerRequest(`https://artifactshare.com${path}`),
+        productionEnv({ maintenance: false }),
+        executionContext(),
+      )
+      expect(handleDeceptionMock).not.toHaveBeenCalled()
+      expect(drainDeceptionMock).not.toHaveBeenCalled()
+    },
+  )
+  test.each(['project', 'deception', 'both'])(
+    'both scheduled jobs run despite %s failure',
+    async (failing) => {
+      const error = new Error('CANARY_FAILURE')
+      const marker = vi.spyOn(console, 'error').mockImplementation(() => {})
+      let finishOther!: () => void
+      const other = new Promise<void>((resolve) => {
+        finishOther = resolve
+      })
+      if (failing !== 'deception')
+        processSlackNotificationOutboxMock.mockRejectedValue(error)
+      else processSlackNotificationOutboxMock.mockReturnValue(other)
+      if (failing !== 'project') drainDeceptionMock.mockRejectedValue(error)
+      else drainDeceptionMock.mockReturnValue(other)
+      const ctx = executionContext()
+      app.scheduled(
+        { cron: '*/5 * * * *', scheduledTime: 0 } as ScheduledController,
+        productionEnv({ maintenance: false }),
+        ctx,
+      )
+      const scheduled = vi.mocked(ctx.waitUntil).mock.calls[0]![0]
+      let settled = false
+      void scheduled.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        },
+      )
+      await vi.waitFor(() => {
+        expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
+        expect(drainDeceptionMock).toHaveBeenCalledTimes(1)
+      })
+      if (failing !== 'both') expect(settled).toBe(false)
+      finishOther()
+      if (failing === 'deception')
+        await expect(scheduled).rejects.toThrow(
+          'security_deception_scheduled_failed',
+        )
+      else await expect(scheduled).rejects.toBe(error)
+      if (failing !== 'project')
+        expect(marker).toHaveBeenCalledWith(
+          'security_deception_scheduled_failed',
+        )
+      else
+        expect(marker).not.toHaveBeenCalledWith(
+          'security_deception_scheduled_failed',
+        )
+      expect(JSON.stringify(marker.mock.calls)).not.toContain('CANARY_FAILURE')
+      expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
+      expect(drainDeceptionMock).toHaveBeenCalledTimes(1)
+      expect(drainDeceptionMock.mock.calls[0]).toEqual([
+        reportDb.mock.results[0]!.value,
+        undefined,
+      ])
+    },
+  )
 })

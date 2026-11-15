@@ -3,7 +3,7 @@ import {
   isRecognizedCliSessionKind,
 } from '~/lib/cli-authority-policy'
 import { D1Dialect } from 'kysely-d1'
-import { Kysely } from 'kysely'
+import { Kysely, sql } from 'kysely'
 import { env } from 'cloudflare:workers'
 import { nowIso } from '~/lib/datetime'
 import { d1CompatibilityPlugin } from '~/lib/d1-compatibility.server'
@@ -60,8 +60,32 @@ export type CliAuthority =
  */
 export type CliAuthorityResolution = CliAuthority | 'denied' | null
 
-export async function resolveCliAuthorityBySessionToken(
+export function resolveCliAuthorityBySessionToken(
   token: string,
+): Promise<CliAuthorityResolution> {
+  return resolveAuthority(token, false)
+}
+
+export async function resolveCliAuthorityIdentifiers(token: string) {
+  const authority = await resolveAuthority(token, true)
+  if (!authority || authority === 'denied') return authority
+  return {
+    kind: authority.kind,
+    workspaceId: 'workspaceId' in authority ? authority.workspaceId : null,
+    agentProfileId:
+      'agentProfileId' in authority ? authority.agentProfileId : null,
+    publisherClientId:
+      'publisherClientId' in authority
+        ? (authority.publisherClientId ?? null)
+        : null,
+  }
+}
+
+// Both projections execute the same authorization policy. The narrow one
+// replaces sensitive metadata with SQL null/empty/truth sentinels before reads.
+async function resolveAuthority(
+  token: string,
+  identifiersOnly: boolean,
 ): Promise<CliAuthorityResolution> {
   const db = new Kysely<DB>({
     dialect: new D1Dialect({ database: env.DB }),
@@ -88,7 +112,6 @@ export async function resolveCliAuthorityBySessionToken(
         'cli_family_authorities.bridge_authority_id',
       )
       .select(({ exists, selectFrom }) => [
-        'sessions.user_agent',
         'users.id as user_id',
         'users.kind as user_kind',
         'users.bot_stopped_at',
@@ -107,7 +130,14 @@ export async function resolveCliAuthorityBySessionToken(
         'cli_family_authorities.preset as family_preset',
         'cli_family_authorities.workspace_id',
         'cli_family_authorities.project_id',
-        'cli_family_authorities.project_name_snapshot',
+        (identifiersOnly
+          ? sql<
+              string | null
+            >`CASE WHEN ${sql.ref('cli_family_authorities.project_name_snapshot')} IS NULL THEN NULL WHEN ${sql.ref('cli_family_authorities.project_name_snapshot')} = '' THEN '' ELSE 'valid' END`
+          : sql<
+              string | null
+            >`${sql.ref('cli_family_authorities.project_name_snapshot')}`
+        ).as('project_name_snapshot'),
         'cli_family_authorities.agent_profile_id',
         'cli_family_authorities.bridge_authority_id',
         'cli_family_authorities.status',
@@ -115,9 +145,28 @@ export async function resolveCliAuthorityBySessionToken(
         'bridge_authorities.id as bridge_row_id',
         'bridge_authorities.bot_user_id as bridge_bot_user_id',
         'bridge_authorities.agent_profile_id as bridge_agent_profile_id',
-        'bridge_authorities.source_kind as bridge_source_kind',
-        'bridge_authorities.source_installation_id as bridge_source_installation_id',
-        'bridge_authorities.external_workspace_id as bridge_external_workspace_id',
+        (identifiersOnly
+          ? sql<
+              string | null
+            >`CASE WHEN ${sql.ref('bridge_authorities.source_kind')} IS NULL THEN NULL WHEN ${sql.ref('bridge_authorities.source_kind')} = '' THEN '' ELSE 'valid' END`
+          : sql<string | null>`${sql.ref('bridge_authorities.source_kind')}`
+        ).as('bridge_source_kind'),
+        (identifiersOnly
+          ? sql<
+              string | null
+            >`CASE WHEN ${sql.ref('bridge_authorities.source_installation_id')} IS NULL THEN NULL WHEN ${sql.ref('bridge_authorities.source_installation_id')} = '' THEN '' ELSE 'valid' END`
+          : sql<
+              string | null
+            >`${sql.ref('bridge_authorities.source_installation_id')}`
+        ).as('bridge_source_installation_id'),
+        (identifiersOnly
+          ? sql<
+              string | null
+            >`CASE WHEN ${sql.ref('bridge_authorities.external_workspace_id')} IS NULL THEN NULL WHEN ${sql.ref('bridge_authorities.external_workspace_id')} = '' THEN '' ELSE 'valid' END`
+          : sql<
+              string | null
+            >`${sql.ref('bridge_authorities.external_workspace_id')}`
+        ).as('bridge_external_workspace_id'),
         'bridge_authorities.fallback_project_id as bridge_fallback_project_id',
         // Bot sessions are re-validated on every request against the family's
         // credential liveness so a stopped or expired bot cannot keep using a
@@ -183,12 +232,14 @@ export async function resolveCliAuthorityBySessionToken(
           externalWorkspaceId: row.bridge_external_workspace_id,
         }
       }
-      const approvedProjects = await db
-        .selectFrom('bot_destination_projects')
-        .select(['project_id as id', 'project_name_snapshot as name'])
-        .where('family_id', '=', row.family_id)
-        .orderBy('project_id')
-        .execute()
+      const approvedProjects = identifiersOnly
+        ? []
+        : await db
+            .selectFrom('bot_destination_projects')
+            .select(['project_id as id', 'project_name_snapshot as name'])
+            .where('family_id', '=', row.family_id)
+            .orderBy('project_id')
+            .execute()
       return {
         kind: 'agent',
         ordinaryBot: true,
@@ -215,7 +266,10 @@ export async function resolveCliAuthorityBySessionToken(
             .innerJoin('users', 'users.id', 'publisher_clients.user_id')
             .select([
               'publisher_clients.id',
-              'publisher_clients.name',
+              (identifiersOnly
+                ? sql<string>`'valid'`
+                : sql<string>`publisher_clients.name`
+              ).as('name'),
               'publisher_clients.workspace_id',
             ])
             .where('publisher_clients.id', '=', clientId)

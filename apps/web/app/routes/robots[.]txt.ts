@@ -32,6 +32,7 @@ export function loader() {
       'User-agent: GPTBot',
       'Disallow: /',
       '',
+      '# Legacy credential inventory: POST /api/internal/credential-inventory with X-ArtifactShare-Inventory: inspect',
       `Sitemap: https://${APEX_HOST}/sitemap.xml`,
       '',
     ].join('\n'),

@@ -30,7 +30,7 @@ export function securityAuditInsertQuery(
   })
 }
 
-const SECURITY_AUDIT_RETENTION_DAYS = 400
+export const SECURITY_AUDIT_RETENTION_DAYS = 400
 export const SECURITY_AUDIT_CLEANUP_BATCH_SIZE = 1000
 
 export async function cleanupExpiredSecurityAuditRecords(
@@ -50,6 +50,30 @@ export async function cleanupExpiredSecurityAuditRecords(
         .select('id')
         .where('created_at', '<=', cutoff)
         .orderBy('created_at')
+        .orderBy('id')
+        .limit(SECURITY_AUDIT_CLEANUP_BATCH_SIZE),
+    )
+    .executeTakeFirst()
+  return Number(result.numDeletedRows)
+}
+
+export async function cleanupExpiredDeceptionSignals(
+  db: Kysely<DB>,
+  now: Date,
+): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - SECURITY_AUDIT_RETENTION_DAYS * 86400000,
+  ).toISOString()
+  const result = await db
+    .deleteFrom('security_deception_signals')
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('security_deception_signals')
+        .select('id')
+        .where('first_detected_at', '<=', cutoff)
+        .orderBy('first_detected_at')
         .orderBy('id')
         .limit(SECURITY_AUDIT_CLEANUP_BATCH_SIZE),
     )

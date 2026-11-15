@@ -9,6 +9,7 @@ import { deleteArtifacts, listArtifacts } from './storage.server'
 import { pruneRetainedEventsQuery } from './events.server'
 import {
   cleanupExpiredSecurityAuditRecords,
+  cleanupExpiredDeceptionSignals,
   SECURITY_AUDIT_CLEANUP_BATCH_SIZE,
 } from './security-audit.server'
 import {
@@ -464,6 +465,24 @@ export async function runReconciliation(
   } catch (err) {
     console.log(JSON.stringify(formatError('security_audit_cleanup', err)))
     errors.push(err)
+  }
+
+  try {
+    let deleted = 0
+    for (;;) {
+      const batch = await cleanupExpiredDeceptionSignals(db, now)
+      deleted += batch
+      if (batch < SECURITY_AUDIT_CLEANUP_BATCH_SIZE) break
+    }
+    console.log(
+      JSON.stringify({
+        event: 'reconcile_security_deception_cleanup_done',
+        deleted,
+      }),
+    )
+  } catch {
+    console.error('reconcile_security_deception_cleanup_failed')
+    errors.push(new Error('security deception cleanup failed'))
   }
 
   console.log(

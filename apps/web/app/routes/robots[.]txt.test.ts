@@ -67,3 +67,12 @@ describe('/robots.txt route', () => {
     )
   })
 })
+
+test('exposes only a comment breadcrumb, with no crawl rule', async () => {
+  const body = await loader().text()
+  expect(
+    body.split('\n').filter((line) => line.includes('credential-inventory')),
+  ).toEqual([
+    '# Legacy credential inventory: POST /api/internal/credential-inventory with X-ArtifactShare-Inventory: inspect',
+  ])
+})
