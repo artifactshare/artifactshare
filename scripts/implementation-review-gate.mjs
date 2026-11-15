@@ -44,6 +44,8 @@ import {
   taskScopeContext,
 } from './task-scope.mjs'
 
+import { CONTEXT_DELIMITERS } from './implementation-review-input.mjs'
+
 const defaultBase = 'origin/main'
 const implementationReviewProfile = Object.freeze({
   ...finalReviews,
@@ -147,6 +149,7 @@ function coordinatedBase({ base, head, run = commandOutput } = {}) {
     run('git', ['merge-base', resolved, head])
     return {
       base: resolved,
+      commitBase: resolved,
       previousHead: null,
       reused: false,
       noTarget: rangeIsEmpty(resolved, head, run),
@@ -262,6 +265,7 @@ function recordCompletedRounds(head, optionsOrRun = {}, maybeRun) {
         head,
         reviewer,
         base: options.base,
+        commitBase: options.commitBase,
         profile: options.profile ?? implementationReviewProfile,
       }),
     )
@@ -354,7 +358,8 @@ async function main({
       throw new Error(
         'Test change evidence does not match the fixed review range.',
       )
-    const commitBase = run('git', ['merge-base', defaultBase, head]).trim()
+    const commitBase =
+      target.commitBase ?? run('git', ['merge-base', defaultBase, head]).trim()
     const commitMessages = run('git', [
       'log',
       '--reverse',
@@ -363,13 +368,15 @@ async function main({
     ])
     // Quote Git evidence so commit headings and lists are not context sections.
     const quotedCommitMessages = commitMessages
-      .replaceAll(
-        '--- CURRENT CHANGE CONTEXT ---',
-        '[escaped: CURRENT CHANGE CONTEXT]',
-      )
-      .replaceAll(
-        '--- END CURRENT CHANGE CONTEXT ---',
-        '[escaped: END CURRENT CHANGE CONTEXT]',
+      .replace(
+        new RegExp(
+          [...CONTEXT_DELIMITERS]
+            .sort((left, right) => right.length - left.length)
+            .map((marker) => RegExp.escape(marker))
+            .join('|'),
+          'gu',
+        ),
+        (marker) => `[escaped: ${marker.replace(/^--- | ---$/gu, '')}]`,
       )
       .split(/\r?\n/u)
       .map((line) => `> ${line}`)
@@ -440,6 +447,7 @@ async function main({
       )
     await recordRounds(head, {
       base: target.base,
+      commitBase,
       profile: implementationReviewProfile,
       run,
     })

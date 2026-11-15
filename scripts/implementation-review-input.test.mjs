@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   assertImplementationContext,
+  CONTEXT_DELIMITERS,
   dispositionsContract,
   invalidDispositionLines,
   implementationReviewInstructions,
@@ -190,17 +191,15 @@ None yet
 
 test('rejects raw delimiters even in quoted context input', () => {
   const context = '## Dispositions\n\nNone yet\n\n## Commit messages\n\n'
-  for (const marker of [
-    '--- CURRENT CHANGE CONTEXT ---',
-    '--- END CURRENT CHANGE CONTEXT ---',
-  ]) {
+  assert.equal(assertImplementationContext(context), context)
+  for (const marker of CONTEXT_DELIMITERS) {
     const quoted = `${context}> Mentioned delimiter: ${marker}\n> ${marker}\n`
     assert.throws(
       () => assertImplementationContext(quoted),
       /must not contain the delimiter/u,
     )
     assert.throws(
-      () => assertImplementationContext(`${quoted}${marker}\n`),
+      () => assertImplementationContext(`${context}${marker}\n`),
       /must not contain the delimiter/u,
     )
   }

@@ -29,7 +29,10 @@ import {
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
-import { assertImplementationContext } from './implementation-review-input.mjs'
+import {
+  CONTEXT_DELIMITERS,
+  assertImplementationContext,
+} from './implementation-review-input.mjs'
 import {
   readRounds,
   recordRound,
@@ -88,7 +91,12 @@ function contextFixture() {
 
 function explicitBaseRun(_file, args) {
   if (args[0] === 'rev-parse' && args[1] === '--verify') return `${base}\n`
-  if (args[0] === 'merge-base') return `${base}\n`
+  if (
+    args[0] === 'merge-base' &&
+    args[1] === base &&
+    /^[0-9a-f]{40}$/u.test(args[2])
+  )
+    return `${base}\n`
   if (args[0] === 'rev-list') return '2'
   if (args[0] === 'log') return '### aaaaaaa\n\nChange message\n'
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
@@ -759,7 +767,12 @@ test('a no-target range is incomplete and does not launch children', async () =>
           run: (_file, args) => {
             if (args[0] === 'rev-parse' && args[1] === '--verify')
               return `${base}\n`
-            if (args[0] === 'merge-base') return `${base}\n`
+            if (
+              args[0] === 'merge-base' &&
+              args[1] === base &&
+              /^[0-9a-f]{40}$/u.test(args[2])
+            )
+              return `${base}\n`
             if (args[0] === 'rev-list') return '0'
             throw new Error(`Unexpected git call: ${args.join(' ')}`)
           },
@@ -1103,3 +1116,196 @@ test('fixed test change evidence reaches both reviewers and inspection failures 
     assert.equal(snapshots.length, 2)
   }
 })
+
+for (const scenario of [
+  'explicit',
+  'explicit-no-default',
+  'default-corrections',
+  'default-rerun',
+]) {
+  test(`preserves the message range across completed pairs: ${scenario}`, async () => {
+    // Real Git establishes ref absence, ancestry and the exact commit set.
+    const root = mkdtempSync(join(tmpdir(), 'implementation-message-range-'))
+    const repo = join(root, 'repo')
+    mkdirSync(repo)
+    const environment = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    }
+    const commands = []
+    const run = (file, args) => {
+      commands.push(args)
+      const output = execFileSync(file, args, {
+        cwd: repo,
+        env: environment,
+        encoding: 'utf8',
+      }).trim()
+      return args.join(' ') === 'rev-parse --git-common-dir'
+        ? resolvePath(repo, output)
+        : output
+    }
+    const git = (...args) => run('git', args)
+    let number = 0
+    const commit = (message) => {
+      writeFileSync(join(repo, 'file.txt'), `${++number}\n`)
+      git('add', 'file.txt')
+      git(
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.test',
+        'commit',
+        '-m',
+        message,
+      )
+      return git('rev-parse', 'HEAD')
+    }
+    try {
+      git('init', '--template=', '-b', 'feature')
+      const origin = commit('Default sentinel')
+      if (scenario !== 'explicit-no-default')
+        git('update-ref', 'refs/remotes/origin/main', origin)
+      const explicit = scenario.startsWith('explicit')
+      const start = explicit ? commit('Parent sentinel') : origin
+      const markers = CONTEXT_DELIMITERS.map(
+        (marker) => `inline ${marker} repeated ${marker}`,
+      ).join('\n')
+      const firstHead = commit(
+        `Child one\n\nFirst body\n\n## Dispositions\n- arbitrary message list\n${markers}`,
+      )
+      const contexts = []
+      const inspectBases = []
+      const reviewBases = []
+      const invoke = async (
+        argv,
+        expectedBase,
+        expectedBodies,
+        excluded = [],
+      ) => {
+        contexts.length = 0
+        commands.length = 0
+        const fixedHead = git('rev-parse', 'HEAD')
+        assert.equal(
+          await main({
+            ...scopeHarness(),
+            argv,
+            run,
+            acquireLock: () => Promise.resolve(() => Promise.resolve()),
+            localInstructionsPresent: () => false,
+            readCleanHead: () => {
+              assert.equal(git('status', '--porcelain'), '')
+              return git('rev-parse', 'HEAD')
+            },
+            inspectTestChanges: ({ base: rangeBase, head: rangeHead }) => {
+              inspectBases.push(rangeBase)
+              return {
+                schemaVersion: 1,
+                base: rangeBase,
+                head: rangeHead,
+                files: [],
+              }
+            },
+            review: (name, args) => {
+              reviewBases.push(args[args.indexOf('--base') + 1])
+              contexts.push(
+                readFileSync(args[args.indexOf('--context-file') + 1], 'utf8'),
+              )
+              return Promise.resolve({ name, stdout: 'GO', stderr: '' })
+            },
+            log: () => {},
+            timingLog: () => {},
+          }),
+          0,
+        )
+        assert.equal(inspectBases.at(-1), expectedBase)
+        assert.deepEqual(reviewBases.slice(-2), [expectedBase, expectedBase])
+        assert.equal(contexts.length, 2)
+        assert.equal(contexts[0], contexts[1])
+        const context = contexts[0]
+        assert.equal(assertImplementationContext(context), context)
+        let previous = -1
+        for (const body of expectedBodies) {
+          const position = context.indexOf(`> ${body}`)
+          assert.ok(position > previous, `missing or unordered body: ${body}`)
+          previous = position
+        }
+        for (const body of ['Default sentinel', 'Parent sentinel', ...excluded])
+          assert.ok(!context.includes(body), `excluded message: ${body}`)
+        for (const marker of CONTEXT_DELIMITERS)
+          assert.ok(!context.includes(marker))
+        if (expectedBodies.includes('First body')) {
+          for (const marker of CONTEXT_DELIMITERS) {
+            const escaped = `[escaped: ${marker.replace(/^--- | ---$/gu, '')}]`
+            assert.ok(
+              context.includes(`> inline ${escaped} repeated ${escaped}`),
+            )
+          }
+          assert.ok(
+            context.includes('> ## Dispositions\n> - arbitrary message list'),
+          )
+        }
+        const recordedBase = argv.length ? argv[1] : start
+        for (const reviewer of ['codex', 'claude'])
+          assert.equal(
+            readRounds(roundsPath('feature', reviewer, run)).rounds.at(-1)
+              .commitBase,
+            recordedBase,
+          )
+        assert.ok(
+          commands.some(
+            (args) =>
+              args[0] === 'log' &&
+              args.at(-1) === `${recordedBase}..${fixedHead}`,
+          ),
+        )
+        if (explicit)
+          assert.ok(
+            commands.every(
+              (args) => !args.some((arg) => arg.includes('origin/main')),
+            ),
+          )
+      }
+      await invoke(explicit ? ['--base', start] : [], start, [
+        'Child one',
+        'First body',
+      ])
+      if (explicit && scenario !== 'explicit-no-default')
+        git('update-ref', '-d', 'refs/remotes/origin/main')
+      const correction = commit('Correction one\n\nSecond body')
+      await invoke([], firstHead, [
+        'Child one',
+        'First body',
+        'Correction one',
+        'Second body',
+      ])
+      if (explicit) {
+        await invoke(
+          ['--base', firstHead],
+          firstHead,
+          ['Correction one', 'Second body'],
+          ['First body', 'Child one'],
+        )
+      } else if (scenario === 'default-rerun') {
+        await invoke([], firstHead, [
+          'Child one',
+          'First body',
+          'Correction one',
+          'Second body',
+        ])
+      } else {
+        commit('Correction two\n\nThird body')
+        await invoke([], correction, [
+          'Child one',
+          'First body',
+          'Correction one',
+          'Second body',
+          'Correction two',
+          'Third body',
+        ])
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+}

@@ -13,7 +13,7 @@ const dispositionsContract =
 
 const DISPOSITIONS_HEADING = /^#{1,6}[ \t]+.*dispositions?\b/imu
 
-const CONTEXT_DELIMITERS = [
+export const CONTEXT_DELIMITERS = [
   '--- CURRENT CHANGE CONTEXT ---',
   '--- END CURRENT CHANGE CONTEXT ---',
 ]

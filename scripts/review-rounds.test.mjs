@@ -250,6 +250,7 @@ test('reviewer histories stay separate and round-trip atomically', () => {
     recordRound(firstState, {
       head: second,
       reviewer: 'claude',
+      commitBase: third,
       base: defaultBase,
       profile: finalReviews,
     }),
@@ -261,9 +262,48 @@ test('reviewer histories stay separate and round-trip atomically', () => {
     ['codex', 'claude'],
   )
   assert.deepEqual(read.rounds[1].profile, finalReviews)
+  assert.equal(read.rounds[1].commitBase, third)
+  assert.equal(read.rounds[0].commitBase, undefined)
 })
 
 test('a branch name resolves to a stable private review-round file', () => {
   const path = roundsPath('feat/some thing', 'claude', () => '/repo/.git')
   assert.match(path, /review-rounds\/[0-9a-f]{32}\.json$/u)
+})
+
+test('original message base propagates only from agreeing reused pairs', () => {
+  for (const [codexBase, claudeBase] of [
+    [third, third],
+    [third, undefined],
+    [third, second],
+    [undefined, undefined],
+  ]) {
+    const history = pair(first)
+    history.codexState.rounds[0].commitBase = codexBase
+    history.claudeState.rounds[0].commitBase = claudeBase
+    for (const head of [first, second]) {
+      const result = resolvePairReviewBase({
+        ...history,
+        profile: finalReviews,
+        defaultBase,
+        head,
+        run: () => '1',
+      })
+      assert.equal(result.base, head === first ? defaultBase : first)
+      assert.equal(
+        result.commitBase,
+        codexBase === claudeBase ? codexBase : undefined,
+      )
+    }
+    const divergent = resolvePairReviewBase({
+      ...history,
+      profile: finalReviews,
+      defaultBase,
+      head: second,
+      run: () => {
+        throw new Error('divergent')
+      },
+    })
+    assert.equal(divergent.commitBase, undefined)
+  }
 })
