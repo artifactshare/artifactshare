@@ -52,7 +52,7 @@ test('requires root-cause rationale next to the smallest-design guidance', () =>
   )
   assert.match(
     proportional,
-    /A workaround is acceptable only when the PR description records the workaround, the root cause it leaves in place, and a reason other than size or effort, such as an explicit owner decision or a conflict with protected scope\./u,
+    /A workaround is acceptable only when the commit message \(repeated in the PR description\) records the workaround, the root cause it leaves in place, and a reason other than size or effort, such as an explicit owner decision or a conflict with protected scope\./u,
   )
   assert.match(
     proportional,
@@ -81,7 +81,7 @@ test('classifies introduced workarounds without the required record as blockers'
   assert.ok(blocker)
   assert.match(
     blocker,
-    /A workaround introduced by the change, including an existing workaround copied to a new site, is also a blocker if the PR description omits the workaround, the root cause it leaves in place, or a reason other than size or effort\./u,
+    /A workaround introduced by the change, including an existing workaround copied to a new site, is also a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort\./u,
   )
   const limits = classification
     .split('\n\n')
@@ -248,6 +248,6 @@ test('the PR Change section requests the public workaround record', () => {
   assert.ok(change)
   assert.match(
     change,
-    /Describe any workaround, the root cause it leaves in place, and a reason other than size or effort\./u,
+    /Describe any workaround, the root cause it leaves in place, and a reason other than size or effort\. Record this in the commit message \(repeated in the PR description\)\./u,
   )
 })

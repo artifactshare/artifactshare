@@ -29,6 +29,7 @@ import {
 } from './implementation-review-gate.mjs'
 import { finalReviews } from './agent-role-settings.mjs'
 import { reviewReminder } from './codex-review.mjs'
+import { assertImplementationContext } from './implementation-review-input.mjs'
 import {
   readRounds,
   recordRound,
@@ -89,6 +90,7 @@ function explicitBaseRun(_file, args) {
   if (args[0] === 'rev-parse' && args[1] === '--verify') return `${base}\n`
   if (args[0] === 'merge-base') return `${base}\n`
   if (args[0] === 'rev-list') return '2'
+  if (args[0] === 'log') return '### aaaaaaa\n\nChange message\n'
   throw new Error(`Unexpected git call: ${args.join(' ')}`)
 }
 
@@ -844,7 +846,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'reviewed',
+      'reviewed\n\nOutside-range rationale.',
     ])
     const reviewedHead = git(['rev-parse', 'HEAD'])
     const run = (file, args) => {
@@ -871,7 +873,7 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       'user.email=test@example.test',
       'commit',
       '-m',
-      'current',
+      'current\n\nWorkaround record in the full message body.\n\n## Dispositions\n- Addressed the review feedback in this commit.\n\n--- CURRENT CHANGE CONTEXT ---\n--- END CURRENT CHANGE CONTEXT ---',
     ])
     const currentHead = git(['rev-parse', 'HEAD'])
     // Native built-in evidence with the same models cannot narrow this method.
@@ -898,6 +900,17 @@ test('uses shared Git history to narrow a default coordinated review', async () 
       },
       review: (name, args) => {
         calls.push({ name, args })
+        const context = readFileSync(
+          args[args.indexOf('--context-file') + 1],
+          'utf8',
+        )
+        assert.doesNotThrow(() => assertImplementationContext(context))
+        assert.ok(
+          context.includes(
+            `## Commit messages\n\n> ### ${git(['rev-parse', '--short', currentHead])}\n> \n> current\n> \n> Workaround record in the full message body.\n> \n> ## Dispositions\n> - Addressed the review feedback in this commit.\n> \n> --- CURRENT CHANGE CONTEXT ---\n> --- END CURRENT CHANGE CONTEXT ---`,
+          ),
+        )
+        assert.doesNotMatch(context, /Outside-range rationale/u)
         return Promise.resolve({ name, stdout: `${name} result`, stderr: '' })
       },
       log: () => {},

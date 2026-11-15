@@ -146,7 +146,7 @@ test('the change context is present only while the review runs', async () => {
   )
   assert.match(
     seen.text,
-    /Exception: a workaround introduced by the change \(including an existing workaround copied to a new site\), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is a blocker if the PR description omits the workaround, the root cause it leaves in place, or a reason other than size or effort\./u,
+    /Exception: a workaround introduced by the change \(including an existing workaround copied to a new site\), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is a blocker if the commit messages of the change omit the workaround, the root cause it leaves in place, or a reason other than size or effort; check the Commit messages section of the review context for this record \(repeated in the PR description\)\./u,
   )
   assert.equal(existsSync(localPath), false)
 
