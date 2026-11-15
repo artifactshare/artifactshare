@@ -305,3 +305,5 @@ test('ordinary bot approval becomes irrelevant after bridge conversion', async (
     await deleteProjectContainer(db, 'ws1', 'fallback-1', 'admin'),
   ).not.toBe('ok')
 })
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))

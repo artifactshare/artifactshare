@@ -197,3 +197,5 @@ describe('/api/cli/artifacts/:id/download', () => {
     expect(body.error.code).toBe('not-found')
   })
 })
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))

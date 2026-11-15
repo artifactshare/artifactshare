@@ -1,3 +1,4 @@
+import { inventory, type Source } from './search-index/inventory.server'
 import type { DatabaseSync } from 'node:sqlite'
 import { sql, type Compilable, type Kysely } from 'kysely'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -56,8 +57,19 @@ const bucket = vi.hoisted(() => ({
   })),
 }))
 
+const searchSync = vi.hoisted(() => ({
+  enabled: false,
+  sync: vi.fn(),
+  tasks: [] as Promise<unknown>[],
+}))
 vi.mock('cloudflare:workers', () => ({
+  waitUntil: (promise: Promise<unknown>) => searchSync.tasks.push(promise),
   env: {
+    get WORKSPACE_SEARCH_INDEX() {
+      return searchSync.enabled
+        ? { getByName: () => ({ sync: searchSync.sync }) }
+        : undefined
+    },
     BUCKET: bucket,
     ARTIFACT_LIVE: {
       getByName: () => ({ notifyVersionChanged }),
@@ -177,6 +189,9 @@ function seedMapping(
 }
 
 beforeEach(() => {
+  searchSync.enabled = false
+  searchSync.sync.mockReset()
+  searchSync.tasks = []
   vi.clearAllMocks()
   d1BatchHook.callback = null
   bucketPutHook.callback = null
@@ -314,9 +329,20 @@ describe.each([
             ],
             'https://artifactshare.com',
           )
+        searchSync.enabled = true
+        const observed: Source[][] = []
+        searchSync.sync.mockImplementation(async (workspaceId: string) => {
+          observed.push(await inventory(db, workspaceId).execute())
+        })
         const control = await publish('placement-control')
         expect(control.kind).toBe('ok')
         if (control.kind !== 'ok') return
+        await Promise.all(searchSync.tasks)
+        expect(
+          observed.flat().some((row) => row.id === control.result.artifact.id),
+        ).toBe(true)
+        observed.length = 0
+
         const originalArtifact = sqlite
           .prepare('SELECT * FROM shareables')
           .get()
@@ -357,8 +383,26 @@ describe.each([
           'placement-next',
           operation === 'publish' ? undefined : control.result.artifact.id,
         )
-        if (allowed) expect(result.kind).toBe('ok')
-        else {
+        await Promise.all(searchSync.tasks)
+        if (allowed) {
+          expect(result.kind).toBe('ok')
+          if (result.kind !== 'ok')
+            throw new Error('expected published bridge result')
+          const current = await inventory(db, authority.workspaceId)
+            .where('s.id', '=', result.result.artifact.id)
+            .executeTakeFirstOrThrow()
+          expect(
+            observed
+              .flat()
+              .some(
+                (row) =>
+                  row.id === current.id &&
+                  row.current_version_id === current.current_version_id,
+              ),
+          ).toBe(true)
+        } else {
+          expect(observed).toEqual([])
+
           expect(result).toEqual({ kind: 'upload-failed' })
           expect([...bucketState.keys()]).toEqual(storedObjects)
           expect(sqlite.prepare('SELECT * FROM shareables').get()).toEqual(

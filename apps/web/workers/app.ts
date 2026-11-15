@@ -1,4 +1,8 @@
 import {
+  dispatchWorkspaceSearch,
+  type SearchEnvironment,
+} from '../app/services/search-index/schedule.server'
+import {
   DECEPTION_PATH,
   deceptionResponse,
   handleDeceptionRequest,
@@ -61,6 +65,7 @@ import {
 import { ANON_VIEWER_COOKIE } from '../app/services/views.server'
 import { ANALYTICS_CONSENT_COOKIE } from '../app/lib/analytics-consent.server'
 
+export { WorkspaceSearchIndex } from './workspace-search-index'
 export { ArtifactLiveRoom } from './artifact-live-room'
 export { D1BackupWorkflow } from './d1-backup-workflow'
 export { PostUploadWorkflowSpike } from './post-upload-workflow-spike'
@@ -78,7 +83,8 @@ const MAINTENANCE_FLAG_KEY = 'maintenance'
 export type ScheduledWorkerEnv = Pick<
   Cloudflare.Env,
   'BETTER_AUTH_URL' | 'SLACK_ALERT_WEBHOOK_URL' | 'BUCKET' | keyof BillingEnv
->
+> &
+  SearchEnvironment
 
 function reconciliationOptionsFromEnv(
   env: Pick<Cloudflare.Env, keyof BillingEnv>,
@@ -142,6 +148,7 @@ export default {
         }
         if (scheduledJobForCron(controller.cron) === 'slack-notifications') {
           const jobs = await Promise.allSettled([
+            Promise.resolve().then(() => dispatchWorkspaceSearch(db, env)),
             Promise.resolve().then(() =>
               processSlackNotificationOutbox(db, {
                 origin: env.BETTER_AUTH_URL,
@@ -153,10 +160,12 @@ export default {
               drainDeceptionSignals(db, env.SLACK_ALERT_WEBHOOK_URL),
             ),
           ])
-          if (jobs[1].status === 'rejected')
+          if (jobs[2].status === 'rejected')
             console.error('security_deception_scheduled_failed')
-          if (jobs[0].status === 'rejected') throw jobs[0].reason
-          if (jobs[1].status === 'rejected')
+          if (jobs[0].status === 'rejected')
+            throw new Error('workspace_search_scheduled_failed')
+          if (jobs[1].status === 'rejected') throw jobs[1].reason
+          if (jobs[2].status === 'rejected')
             throw new Error('security_deception_scheduled_failed')
         } else {
           const options = reconciliationOptionsFromEnv(env)

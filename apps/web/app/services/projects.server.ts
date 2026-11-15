@@ -1,3 +1,4 @@
+import { scheduleWorkspaceSearch } from './search-index/schedule.server'
 import {
   expressionBuilder,
   sql,
@@ -1835,6 +1836,7 @@ export async function archiveProjectContainer(
     .where('kind', '=', 'project')
     .where('archived_at', 'is', null)
     .executeTakeFirst()
+  scheduleWorkspaceSearch(workspaceId)
   return 'ok'
 }
 
@@ -1934,6 +1936,7 @@ async function restoreProjectContainer(
         observedPlan: observedPlan === 'plus' ? 'plus' : 'free',
       }
     }
+    scheduleWorkspaceSearch(workspaceId)
     return 'ok'
   }
 
@@ -1972,6 +1975,7 @@ async function restoreProjectContainer(
     }
     throw error
   }
+  scheduleWorkspaceSearch(workspaceId)
   return 'ok'
 }
 

@@ -1,3 +1,4 @@
+import { scheduleWorkspaceSearch } from '../../services/search-index/schedule.server'
 import {
   isPublisherArtifact,
   publisherArtifactSql,
@@ -640,6 +641,7 @@ export async function createVersion(
     }
   }
 
+  scheduleWorkspaceSearch(shareable.workspace_id, waitUntil)
   await pruneVersionsAfterPublish(db, shareableId)
   await scheduleArtifactVersionChanged(shareableId, prepared.versionId, {
     waitUntil,
@@ -1053,6 +1055,7 @@ async function createNewShareableFromFile(
       return { kind: 'storage-failed' }
     }
 
+    scheduleWorkspaceSearch(accounting.workspaceId)
     return {
       kind: 'ok',
       id: shareableId,

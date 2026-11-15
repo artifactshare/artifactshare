@@ -14,6 +14,11 @@ const cleanupExpiredLinkPublicationsMock = vi.hoisted(() => vi.fn())
 const runReconciliationMock = vi.hoisted(() => vi.fn())
 const processSlackNotificationOutboxMock = vi.hoisted(() => vi.fn())
 
+const dispatchSearchMock = vi.hoisted(() => vi.fn())
+vi.mock('../app/services/search-index/schedule.server', () => ({
+  dispatchWorkspaceSearch: dispatchSearchMock,
+}))
+
 const handleDeceptionMock = vi.hoisted(() => vi.fn())
 const drainDeceptionMock = vi.hoisted(() => vi.fn())
 vi.mock('../app/services/security-deception.server', () => ({
@@ -110,6 +115,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue(new Response(null, { status: 404 }))
   drainDeceptionMock.mockReset().mockResolvedValue(undefined)
+  dispatchSearchMock.mockReset().mockResolvedValue(undefined)
   reportDb.mockClear()
   reportQuery.mockClear()
   getBrowserSessionContextMock.mockReset()
@@ -494,6 +500,25 @@ describe('app worker link-domain routing', () => {
 })
 
 describe('app worker scheduled cleanup', () => {
+  test.each(['search', 'slack'])(
+    'starts all five-minute jobs despite a %s failure',
+    async (failing) => {
+      const failure = new Error('scheduled failure')
+      if (failing === 'search') dispatchSearchMock.mockRejectedValue(failure)
+      else processSlackNotificationOutboxMock.mockRejectedValue(failure)
+      const ctx = executionContext()
+      app.scheduled(
+        { cron: '*/5 * * * *', scheduledTime: 0 } as ScheduledController,
+        workerEnv(),
+        ctx,
+      )
+      await expect(vi.mocked(ctx.waitUntil).mock.calls[0][0]).rejects.toThrow()
+      expect(dispatchSearchMock).toHaveBeenCalledTimes(1)
+      expect(processSlackNotificationOutboxMock).toHaveBeenCalledTimes(1)
+      expect(drainDeceptionMock).toHaveBeenCalledTimes(1)
+    },
+  )
+
   test('prunes signals only in the daily reconciliation branch', async () => {
     const waitUntil = vi.fn()
     app.scheduled?.(

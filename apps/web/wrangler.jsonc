@@ -40,7 +40,13 @@
     },
   ],
   "durable_objects": {
-    "bindings": [{ "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" }],
+    "bindings": [
+      { "name": "ARTIFACT_LIVE", "class_name": "ArtifactLiveRoom" },
+      {
+        "name": "WORKSPACE_SEARCH_INDEX",
+        "class_name": "WorkspaceSearchIndex",
+      },
+    ],
   },
   "services": [
     {
@@ -48,7 +54,11 @@
       "service": "artifactshare-og-image-public-preview",
     },
   ],
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArtifactLiveRoom"] }],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ArtifactLiveRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["WorkspaceSearchIndex"] },
+  ],
   "send_email": [{ "name": "EMAIL" }],
   "ratelimits": [
     {

@@ -64,6 +64,7 @@
     "@remix-run/multipart-parser": "1.1.1",
     "@tabler/icons-react": "3.51.0",
     "@tanstack/markdown": "1.2.0",
+    "acorn": "8.18.0",
     "better-auth": "1.7.22",
     "budoux": "0.10.3",
     "class-variance-authority": "0.7.1",

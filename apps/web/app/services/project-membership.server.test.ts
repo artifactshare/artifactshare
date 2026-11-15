@@ -753,3 +753,5 @@ describe('countProjectParticipants', () => {
     expect(await countProjectParticipants(db, 'p1')).toBe(1)
   })
 })
+
+vi.mock('cloudflare:workers', () => ({ env: {} }))

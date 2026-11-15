@@ -242,6 +242,9 @@ importers:
       '@tanstack/markdown':
         specifier: 1.2.0
         version: 1.2.0(react@19.3.1)
+      acorn:
+        specifier: 8.18.0
+        version: 8.18.0
       better-auth:
         specifier: 1.7.22
         version: 1.7.22(@opentelemetry/api@1.9.1)(next@16.4.6(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.1.0)
