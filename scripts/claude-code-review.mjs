@@ -48,6 +48,7 @@ const codeReviewContract = [
   'This file is written by the implementation review gate for one `/code-review` run and removed afterwards.',
   'Review only the fixed change named below. Do not edit files, run commands, or start another review.',
   'A blocker is a finding that prevents what the issue sets out to do: it breaks a current acceptance criterion, correctness, or safety for a reachable input. Preferences, reuse, simplification, efficiency, and future generalization are never blockers.',
+  'Exception: a workaround introduced by the change (including an existing workaround copied to a new site), such as a type assertion like `as unknown as`, a longer wait or timeout, a skip, a retry, a swallowed error, or a special case for one input, is a blocker if the PR description omits the workaround, the root cause it leaves in place, or a reason other than size or effort.',
   'Report every finding as one entry of a single JSON array in a ```json code block, and nothing else in code blocks. Each entry has: "file", "line" (number), "severity" ("blocker", "follow_up", or "non_actionable"), "summary", "failure_scenario", and for a blocker "broken_acceptance_criterion". An empty array means no finding.',
   'End the reply with exactly one line: `REVIEW_STATUS: COMPLETE`, or `REVIEW_STATUS: INCOMPLETE: <reason>` when the evidence or context could not support a full review. An incomplete review is never a pass.',
 ].join('\n')
