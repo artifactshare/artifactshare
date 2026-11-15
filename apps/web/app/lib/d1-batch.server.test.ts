@@ -1,3 +1,4 @@
+import { d1Database, d1Statement } from '~/test/typed-fakes/d1'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const globalBatch = vi.hoisted(() => vi.fn())
@@ -25,18 +26,18 @@ describe('runD1Batch', () => {
   test('uses the D1 binding associated with the query db instead of global env.DB', async () => {
     const prepared: Array<{ sql: string; parameters: unknown[] }> = []
     const injectedBatch = vi.fn(async () => [])
-    const injectedD1 = {
+    const injectedD1 = d1Database({
       prepare(sql: string) {
-        return {
+        return d1Statement({
           bind(...parameters: unknown[]) {
-            const statement = { sql, parameters }
+            const statement = Object.assign(d1Statement(), { sql, parameters })
             prepared.push(statement)
             return statement
           },
-        }
+        })
       },
       batch: injectedBatch,
-    } as unknown as D1Database
+    })
     const db = createDb(injectedD1)
 
     try {

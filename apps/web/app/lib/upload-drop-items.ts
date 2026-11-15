@@ -24,10 +24,15 @@ type DroppedItem = {
   webkitGetAsEntry?: () => DroppedEntry | null
 }
 
+export type DropDataTransfer = {
+  files: ArrayLike<DataTransfer['files'][number]>
+  items: ArrayLike<Pick<DataTransferItem, 'getAsFile'> & DroppedItem>
+}
+
 const DROP_ENTRY_READ_TIMEOUT_MS = 10_000
 
 export async function filesFromDrop(
-  dataTransfer: DataTransfer,
+  dataTransfer: DropDataTransfer,
 ): Promise<File[]> {
   const fallbackFiles = Array.from(dataTransfer.files)
   const entries: DroppedEntry[] = []

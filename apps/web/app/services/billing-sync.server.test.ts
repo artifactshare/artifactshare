@@ -1,3 +1,5 @@
+import { stripeClient, stripeSubscription } from '~/test/typed-fakes/stripe'
+import type { BillingSubscription } from './billing-sync.server'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Kysely } from 'kysely'
 import type Stripe from 'stripe'
@@ -680,8 +682,8 @@ function makeSubscription(args: {
   metadata?: Record<string, string>
   customer?: string
   items: Array<{ priceId: string; metered?: boolean }>
-}): Stripe.Subscription {
-  return {
+}): BillingSubscription {
+  return stripeSubscription({
     id: args.id ?? 'sub_test',
     status: args.status,
     metadata: args.metadata ?? {},
@@ -694,25 +696,23 @@ function makeSubscription(args: {
           : { id: item.priceId },
       })),
     },
-  } as Stripe.Subscription
+  })
 }
 
-function mockStripeRetrieve(subscription: Stripe.Subscription): Stripe {
-  return {
-    subscriptions: {
-      retrieve: vi.fn().mockResolvedValue(subscription),
-      update: vi.fn().mockResolvedValue(subscription),
-    },
-  } as unknown as Stripe
+function mockStripeRetrieve(subscription: BillingSubscription) {
+  const subscriptions = {
+    retrieve: vi.fn(async () => subscription),
+    update: vi.fn(async () => subscription),
+  }
+  return { ...stripeClient({ subscriptions }), subscriptions }
 }
 
-function mockStripe(subscription: Stripe.Subscription): Stripe {
-  return {
-    subscriptions: {
-      retrieve: vi.fn().mockResolvedValue(subscription),
-      update: vi.fn().mockResolvedValue(subscription),
-    },
-  } as unknown as Stripe
+function mockStripe(subscription: BillingSubscription) {
+  const subscriptions = {
+    retrieve: vi.fn(async () => subscription),
+    update: vi.fn(async () => subscription),
+  }
+  return { ...stripeClient({ subscriptions }), subscriptions }
 }
 
 function seedWorkspace(

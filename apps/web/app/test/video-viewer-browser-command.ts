@@ -1,3 +1,4 @@
+import { parentWindow } from './typed-fakes/parent-window'
 import { errors } from 'playwright'
 import { createServer, type IncomingMessage } from 'node:http'
 import { once } from 'node:events'
@@ -365,8 +366,7 @@ async function preferencesFlow(
 ) {
   const app = browser === 'en' ? 'ja' : 'en'
   const send = async (preferences: ViewerPreferences) => {
-    await page.evaluate(
-      (message) => (window as unknown as ParentWindow).sendPreferences(message),
+    await parentWindow(page).sendPreferences(
       viewerPreferencesMessage(preferences),
     )
     await frame.waitForFunction(

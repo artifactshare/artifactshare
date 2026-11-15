@@ -1,13 +1,16 @@
+import { dataTransfer } from '~/test/typed-fakes/data-transfer'
 import { describe, expect, test } from 'vitest'
 import { filesFromDrop } from './upload-drop-items'
 
 describe('filesFromDrop', () => {
   test('falls back to dataTransfer.files when entries are unavailable', async () => {
     const file = new File(['x'], 'index.html')
-    const result = await filesFromDrop({
-      files: [file],
-      items: [],
-    } as unknown as DataTransfer)
+    const result = await filesFromDrop(
+      dataTransfer({
+        files: [file],
+        items: [],
+      }),
+    )
 
     expect(result).toEqual([file])
   })

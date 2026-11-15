@@ -1,3 +1,4 @@
+import { checkTestCasts } from './test-cast-ratchet.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -64,3 +65,5 @@ assert.ok(rootPackage.scripts.test.includes('@artifactshare/cli'))
 console.log(
   `public test audit: ${webTests.length} runnable web tests, ${internalVisualTests.length} public visual tests`,
 )
+
+console.log(checkTestCasts(root))

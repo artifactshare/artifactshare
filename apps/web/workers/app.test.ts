@@ -1,3 +1,4 @@
+import { workerEnv } from '../app/test/typed-fakes/worker-env'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const getBrowserSessionContextMock = vi.hoisted(() => vi.fn())
@@ -1997,7 +1998,7 @@ describe('inert authenticated decoy Worker boundary', () => {
       const ctx = executionContext()
       app.scheduled(
         { cron: '*/5 * * * *', scheduledTime: 0 } as ScheduledController,
-        productionEnv({ maintenance: false }),
+        workerEnv(),
         ctx,
       )
       const scheduled = vi.mocked(ctx.waitUntil).mock.calls[0]![0]

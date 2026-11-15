@@ -1,3 +1,4 @@
+import { parentWindow } from './typed-fakes/parent-window'
 import { waitForBrowserLayout } from './browser-layout'
 import { requiredWait } from './browser-waits'
 import { createServer } from 'node:http'
@@ -1150,8 +1151,7 @@ async function preferencesFlow(
   signEntry: () => Promise<string>,
 ) {
   const send = async (preferences: ViewerPreferences, expected: string) => {
-    await page.evaluate(
-      (message) => (window as unknown as ParentWindow).sendPreferences(message),
+    await parentWindow(page).sendPreferences(
       viewerPreferencesMessage(preferences),
     )
     await frame.waitForFunction(

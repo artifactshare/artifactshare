@@ -208,7 +208,10 @@
     "scripts/fixtures/skill-eval/claude.jsonl",
     "scripts/fixtures/skill-eval/codex.jsonl",
     "scripts/fixtures/skill-eval/cursor.jsonl",
-    "scripts/lib/walkthrough-cli-environment.mjs"
+    "scripts/lib/walkthrough-cli-environment.mjs",
+    "scripts/test-cast-ratchet.mjs",
+    "scripts/test-cast-ratchet.test.mjs",
+    "config/test-cast-baseline.json"
   ],
   "canonical_prefixes": [
     "apps/web/app/",

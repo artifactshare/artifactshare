@@ -20,6 +20,26 @@ import {
   type WorkspaceBillingRow,
 } from './billing.server'
 
+export type BillingSubscription = Pick<
+  Stripe.Subscription,
+  'id' | 'status' | 'metadata' | 'customer'
+> & {
+  items: {
+    data: Array<
+      Pick<Stripe.SubscriptionItem, 'id'> & {
+        price: Pick<Stripe.SubscriptionItem['price'], 'id'>
+      }
+    >
+  }
+}
+export type BillingStripeClient = {
+  subscriptions: {
+    retrieve: (
+      ...args: Parameters<Stripe['subscriptions']['retrieve']>
+    ) => Promise<BillingSubscription>
+  }
+}
+
 export type SyncWorkspaceSubscriptionOptions = {
   stripeEventId?: string
 }
@@ -38,7 +58,7 @@ type WorkspaceSubscriptionRow = Pick<
 }
 
 export function deriveContractPlanFromSubscription(
-  subscription: Stripe.Subscription,
+  subscription: BillingSubscription,
   prices: StripePrices,
 ): 'plus' | 'team' | null {
   const fixedPriceIds = allFixedPriceIds(prices)
@@ -58,7 +78,7 @@ export function deriveContractPlanFromSubscription(
 }
 
 export function derivePlanFromSubscription(
-  subscription: Stripe.Subscription,
+  subscription: BillingSubscription,
   prices: StripePrices,
 ): BillingPlan | null {
   const contractPlan = deriveContractPlanFromSubscription(subscription, prices)
@@ -71,7 +91,7 @@ export function derivePlanFromSubscription(
 }
 
 function subscriptionCustomerId(
-  subscription: Stripe.Subscription,
+  subscription: BillingSubscription,
 ): string | null {
   const customer = subscription.customer
   if (typeof customer === 'string') return customer
@@ -80,7 +100,7 @@ function subscriptionCustomerId(
 
 async function resolveWorkspaceForSubscription(
   db: Kysely<DB>,
-  subscription: Stripe.Subscription,
+  subscription: BillingSubscription,
 ): Promise<WorkspaceSubscriptionRow | null> {
   const metadataWorkspaceId = subscription.metadata?.workspace_id?.trim()
   if (metadataWorkspaceId) {
@@ -118,7 +138,7 @@ async function resolveWorkspaceForSubscription(
 
 export async function syncWorkspaceSubscription(
   db: Kysely<DB>,
-  stripe: Stripe,
+  stripe: BillingStripeClient,
   env: BillingEnv,
   subscriptionId: string,
   options?: SyncWorkspaceSubscriptionOptions,

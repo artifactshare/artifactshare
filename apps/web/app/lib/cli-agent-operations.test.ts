@@ -1,3 +1,4 @@
+import { cliAuthority } from '~/test/typed-fakes/cli-authority'
 import type { CliAuthority } from '~/services/cli-authority.server'
 import { describe, expect, test } from 'vitest'
 import {
@@ -5,26 +6,8 @@ import {
   cliScopeDeniedResponse,
 } from './cli-agent-operations'
 
-const agent = {
-  kind: 'agent' as const,
-  familyId: 'family-1',
-  workspaceId: 'ws1',
-  projectId: 'project-1',
-  projectNameSnapshot: 'Agent output',
-  agentProfileId: 'agent-1',
-}
-
-const bridge = {
-  kind: 'bridge' as const,
-  familyId: 'family-bridge',
-  bridgeAuthorityId: 'bridge-1',
-  workspaceId: 'ws1',
-  fallbackProjectId: 'fallback-1',
-  agentProfileId: 'agent-bridge',
-  sourceKind: 'qm',
-  sourceInstallationId: 'install-1',
-  externalWorkspaceId: 'slack-ws-1',
-}
+const agent = cliAuthority.agent()
+const bridge = cliAuthority.bridge()
 
 describe('agent operation declaration', () => {
   test('allows the bounded read, publish, append and comment surface', () => {
