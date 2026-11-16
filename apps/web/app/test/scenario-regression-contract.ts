@@ -18,6 +18,18 @@ type Theme = 'light' | 'dark'
 const themes: readonly Theme[] = ['light', 'dark']
 const standardViewports: readonly Viewport[] = ['mobile', 'desktop']
 const shortViewportScenarios = new Set<ScenarioId>([
+  'search-mobile-search',
+  'search-mobile-filters',
+  'search-mobile-search-ja',
+  'search-mobile-filters-ja',
+  'search-loading',
+  'search-error',
+  'search-continuation-error',
+  'search-group-expanded',
+  'search-results',
+  'search-empty',
+  'search-any',
+  'search-capped',
   'focused-sign-in',
   'focused-device',
   'focused-consent',
@@ -26,7 +38,10 @@ const shortViewportScenarios = new Set<ScenarioId>([
 ])
 
 export const SCENARIO_CONDITIONS = SCENARIO_IDS.flatMap((scenario) => [
-  ...standardViewports.flatMap((viewport) =>
+  ...(scenario.startsWith('search-mobile-')
+    ? (['mobile'] as const)
+    : standardViewports
+  ).flatMap((viewport) =>
     themes.map((theme) => ({ scenario, viewport, theme })),
   ),
   ...(shortViewportScenarios.has(scenario)
@@ -42,8 +57,9 @@ export interface ScenarioContract {
   requiredRegions: readonly string[]
   interactions?: readonly {
     selector: string
-    type: 'hover'
-    waitMs: number
+    type: 'hover' | 'click'
+    waitMs?: number
+    readySelector?: string
   }[]
   headerSelector?: string
   requiresHeading?: boolean
@@ -64,6 +80,43 @@ export const SCENARIO_CONTRACTS = Object.fromEntries(
         ...(scenario.startsWith('viewer-') && !definition.viewerError
           ? { headerSelector: '#viewer-topbar' }
           : {}),
+        ...([
+          'search-mobile-search',
+          'search-mobile-search-ja',
+          'search-loading',
+        ].includes(scenario)
+          ? {
+              interactions: [
+                {
+                  selector: 'header [data-search-trigger]',
+                  type: 'click' as const,
+                  readySelector: 'input[role="combobox"]',
+                },
+              ],
+            }
+          : ['search-mobile-filters', 'search-mobile-filters-ja'].includes(
+                scenario,
+              )
+            ? {
+                interactions: [
+                  {
+                    selector: '[data-search-filters]',
+                    type: 'click' as const,
+                    readySelector: '[data-slot="sheet-content"]',
+                  },
+                ],
+              }
+            : scenario === 'search-group-expanded'
+              ? {
+                  interactions: [
+                    {
+                      selector: '[data-search-group]',
+                      type: 'click' as const,
+                      readySelector: 'a[href="/a/fixture-member"]',
+                    },
+                  ],
+                }
+              : {}),
         ...(scenario === 'viewer-tooltip-open'
           ? {
               interactions: [

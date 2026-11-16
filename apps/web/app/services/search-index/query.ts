@@ -111,47 +111,69 @@ export function prepareQuery(value: string) {
 const graphemeSegmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' })
 const wordSegmenter = new Intl.Segmenter('ja', { granularity: 'word' })
 
-export function excerpt(body: string, query: string): string {
+/** Map both literal/prefix and segmented matches back onto original source text. */
+export function searchMatchSpans(
+  body: string,
+  query: string,
+): Array<[number, number]> {
   const prepared = prepareQuery(query)
-  const offsets: number[] = []
-  const pieces: string[] = []
-  // Normalize grapheme clusters together so combining marks and half-width kana
-  // compose as ingestion does. Every normalized code unit retains its source span.
+  const starts: number[] = [],
+    ends: number[] = [],
+    pieces: string[] = []
   for (const part of graphemeSegmenter.segment(body)) {
-    const normalized = part.segment.normalize('NFKC')
+    const normalized = part.segment.normalize('NFKC').toLowerCase()
     pieces.push(normalized)
-    for (let i = 0; i < normalized.toLowerCase().length; i++)
-      offsets.push(part.index)
+    for (let i = 0; i < normalized.length; i++) {
+      starts.push(part.index)
+      ends.push(part.index + part.segment.length)
+    }
   }
-  const normalized = pieces.join('').toLowerCase()
-  const positions: number[] = []
-  for (const term of [...prepared.terms, ...prepared.prefixes]) {
-    const position = normalized.indexOf(term)
-    if (position >= 0) positions.push(offsets[position])
+  const normalized = pieces.join('')
+  const spans: Array<[number, number]> = []
+  const collect = (
+    text: string,
+    terms: string[],
+    from: number[],
+    to: number[],
+  ) => {
+    for (const term of terms) {
+      if (!term) continue
+      let at = text.indexOf(term)
+      while (at >= 0) {
+        spans.push([from[at], to[at + term.length - 1]])
+        at = text.indexOf(term, at + term.length)
+      }
+    }
   }
-  // The segmented Katakana alternative can match even when the original spelling
-  // contains long-vowel marks or separators absent from the packed token sequence.
+  collect(normalized, [...prepared.terms, ...prepared.prefixes], starts, ends)
   const tokens: string[] = [],
-    tokenOffsets: number[] = []
+    tokenStarts: number[] = [],
+    tokenEnds: number[] = []
   for (const part of wordSegmenter.segment(normalized)) {
     if (!part.isWordLike) continue
     let sourceOffset = 0
     for (const token of normalizeSearchText(part.segment)
       .split(' ')
       .filter(Boolean)) {
-      const tokenStart = part.segment.indexOf(token, sourceOffset)
-      if (tokens.length) tokenOffsets.push(offsets[part.index + tokenStart])
+      const start = part.segment.indexOf(token, sourceOffset)
+      if (tokens.length) {
+        tokenStarts.push(starts[part.index + start])
+        tokenEnds.push(ends[part.index + start])
+      }
       tokens.push(token)
-      for (let i = 0; i < token.length; i++)
-        tokenOffsets.push(offsets[part.index + tokenStart + i])
-      sourceOffset = tokenStart + token.length
+      for (let i = 0; i < token.length; i++) {
+        tokenStarts.push(starts[part.index + start + i])
+        tokenEnds.push(ends[part.index + start + i])
+      }
+      sourceOffset = start + token.length
     }
   }
-  const packed = tokens.join(' ')
-  for (const term of prepared.terms) {
-    const position = packed.indexOf(term)
-    if (position >= 0) positions.push(tokenOffsets[position])
-  }
+  collect(tokens.join(' '), prepared.terms, tokenStarts, tokenEnds)
+  return spans
+}
+
+export function excerpt(body: string, query: string): string {
+  const positions = searchMatchSpans(body, query).map(([start]) => start)
   if (!positions.length) return ''
   const start = Math.max(0, Math.min(...positions) - 80)
   return `${start ? '…' : ''}${body.slice(start, start + 240)}${body.length > start + 240 ? '…' : ''}`

@@ -5,6 +5,7 @@ vi.mock('cloudflare:workers', () => ({ env: {} }))
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
 import {
   search,
+  searchSuggestions,
   groupSearchHits,
   cappedTotal,
   type SearchIndex,
@@ -188,6 +189,19 @@ test.each(['old title', ''])(
     const result = await search(fixture.db, () => stub, 'viewer', input)
     expect(result).toMatchObject({
       items: [{ id: 'a', groupSize: 2 }],
+      total: { value: 2, relation: 'eq' },
+    })
+    if ('error' in result) throw new Error('search failed')
+    const { searchGroup } = await import('./search.server')
+    expect(
+      await searchGroup(
+        fixture.db,
+        () => stub,
+        'viewer',
+        result.items[0].receipt,
+      ),
+    ).toMatchObject({
+      items: [{ id: 'c', title: 'Alpha 2' }],
       total: { value: 2, relation: 'eq' },
     })
     // The current-key control must not double-count the collected representatives.
@@ -375,6 +389,24 @@ test('five-fetch windows replay deterministically alongside an external workspac
   expect(() =>
     expect(faulty).toMatchObject({ items: [{ id: 'tail-9999', rank: 3 }] }),
   ).toThrowError()
+})
+
+test('single-keyword empty results offer only relaxations with authorized matches', async () => {
+  const stub = index()
+  const filtered = { ...input, filters: { ownerUserIds: ['owner'] } }
+  const result = await search(fixture.db, () => stub, 'viewer', filtered)
+  expect(result).toMatchObject({
+    items: [],
+    total: { value: 0, relation: 'eq' },
+    relaxations: [{ filter: 'owners', total: { value: 2, relation: 'eq' } }],
+  })
+  expect(JSON.stringify(result)).not.toMatch(
+    /Denied Title|Secret Snippet|Secret Owner/,
+  )
+
+  vi.mocked(stub.search).mockResolvedValue({ items: [], nextCursor: null })
+  const missing = await search(fixture.db, () => stub, 'viewer', filtered)
+  expect(missing).toMatchObject({ items: [], relaxations: [] })
 })
 
 test('hidden all-term matches cannot suppress visible any-term results and date relaxation', async () => {
@@ -916,3 +948,263 @@ test.each(['candidates', 'allowed'] as const)(
     }
   },
 )
+
+test('presentation and first-page facets count authorized files rather than title groups', async () => {
+  const result = await search(fixture.db, () => index(), 'viewer', input)
+  if ('error' in result) throw new Error('search failed')
+  expect(result.items[0]).toMatchObject({
+    project: null,
+    visibility: 'private',
+    updatedAt: now,
+    lastViewedAt: null,
+  })
+  expect(result.facets).toEqual({
+    owners: [{ id: 'viewer', name: 'Viewer', count: 3 }],
+    projects: [{ id: 'home', name: '', count: 3 }],
+  })
+  expect(JSON.stringify(result)).not.toMatch(
+    /Denied Title|Secret Owner|Secret Snippet/,
+  )
+  const next = await search(fixture.db, () => index(), 'viewer', {
+    ...input,
+    cursor: result.nextCursor!,
+  })
+  expect(next).not.toHaveProperty('facets.owners')
+})
+
+test('group expansion rechecks permission and binds cursors to actor and representative', async () => {
+  const { searchGroup } = await import('./search.server')
+  const result = await search(fixture.db, () => index(), 'viewer', input)
+  if ('error' in result) throw new Error('search failed')
+  const group = await searchGroup(
+    fixture.db,
+    () => index(),
+    'viewer',
+    result.items[0].receipt,
+  )
+  expect(group).toMatchObject({
+    items: [{ id: 'c', title: 'Alpha 2' }],
+    total: { value: 2, relation: 'eq' },
+  })
+  expect(
+    await searchGroup(
+      fixture.db,
+      () => index(),
+      'owner',
+      result.items[0].receipt,
+    ),
+  ).toHaveProperty('error')
+  fixture.sqlite.exec(
+    "UPDATE shareables SET owner_user_id='owner' WHERE id='c'",
+  )
+  const revoked = await searchGroup(
+    fixture.db,
+    () => index(),
+    'viewer',
+    result.items[0].receipt,
+  )
+  expect(revoked).toMatchObject({
+    items: [],
+    total: { value: 1, relation: 'eq' },
+  })
+  expect(JSON.stringify(revoked)).not.toContain('Alpha 2')
+})
+
+test('top-level cursors stop at 1000 while exact and lower-bound totals remain distinct', async () => {
+  const { sealSearchToken } = await import('./search-logs.server')
+  fixture.sqlite
+    .exec(`WITH RECURSIVE n(x) AS (SELECT 0 UNION ALL SELECT x+1 FROM n WHERE x<1000)
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    SELECT 'cap-'||x,'ws','viewer',char(65+x%26)||char(65+(x/26)%26)||char(65+(x/676)%26),'html_page','private','home','${now}','${now}','${now}' FROM n`)
+  const stub = index()
+  stub.search = async () => ({
+    items: Array.from({ length: 1001 }, (_, i) => ({
+      id: `cap-${i}`,
+      tier: 'all',
+      rank: i + 1,
+      activityAt: now,
+    })),
+    nextCursor: null,
+  })
+  const first = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    pageSize: 50,
+  })
+  if ('error' in first) throw new Error('search failed')
+  expect(first.total).toEqual({ value: 1000, relation: 'gte' })
+  expect(first.facets?.owners[0]).not.toHaveProperty('count')
+  const log = await fixture.db
+    .selectFrom('search_logs')
+    .selectAll()
+    .where('id', '=', first.searchLogId)
+    .executeTakeFirstOrThrow()
+  const cursor = sealSearchToken(log.id, log.token_key, {
+    kind: 'cursor',
+    rank: 950,
+  })
+  const last = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    pageSize: 50,
+    cursor,
+  })
+  expect(last).toMatchObject({ nextCursor: null })
+  if ('error' in last) throw new Error('last page failed')
+  expect(last.items).toHaveLength(50)
+  expect(last.items.at(-1)?.rank).toBe(1000)
+  fixture.sqlite.exec("DELETE FROM shareables WHERE id='cap-1000'")
+  const exact = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    pageSize: 50,
+  })
+  expect(exact).toMatchObject({ total: { value: 1000, relation: 'eq' } })
+})
+
+test('same-title pages are ordered and their cursor rejects a renamed representative', async () => {
+  const { searchGroup } = await import('./search.server')
+  fixture.sqlite
+    .exec(`WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<25)
+ INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+ SELECT 'member-'||x,'ws','viewer','Alpha '||x,'html_page','private','home','${now}','${now}','2026-08-01T00:00:00.000Z' FROM n`)
+  const first = await search(fixture.db, () => index(), 'viewer', input)
+  if ('error' in first) throw new Error('search failed')
+  const group = await searchGroup(
+    fixture.db,
+    () => index(),
+    'viewer',
+    first.items[0].receipt,
+  )
+  if ('error' in group) throw new Error('group failed')
+  expect(group.items).toHaveLength(20)
+  expect(group.items[0].id).toBe('c')
+  expect(group.total).toEqual({ value: 27, relation: 'eq' })
+  const tail = await searchGroup(
+    fixture.db,
+    () => index(),
+    'viewer',
+    first.items[0].receipt,
+    group.nextCursor!,
+  )
+  if ('error' in tail) throw new Error('group continuation failed')
+  expect(tail.items).toHaveLength(6)
+  expect(tail.nextCursor).toBeNull()
+  expect(
+    new Set([...group.items, ...tail.items].map((row) => row.id)).size,
+  ).toBe(26)
+  fixture.sqlite.exec(
+    "UPDATE shareables SET name='Different title' WHERE id='a'",
+  )
+  expect(
+    await searchGroup(
+      fixture.db,
+      () => index(),
+      'viewer',
+      first.items[0].receipt,
+      group.nextCursor!,
+    ),
+  ).toHaveProperty('error.code', 'invalid_cursor')
+})
+
+test('video and PDF descriptions stay searchable without claiming indexed body content', async () => {
+  const stub = index()
+  stub.details = async (_input, selected) =>
+    selected.map((id) => ({
+      id,
+      path: 'index.html',
+      excerpt: 'description alpha',
+      hasBody: true,
+    }))
+  const healthy = await search(fixture.db, () => stub, 'viewer', input)
+  expect(healthy).toHaveProperty('items.0.hasBody', true)
+  for (const kind of ['video', 'pdf'] as const) {
+    await fixture.db
+      .updateTable('shareables')
+      .set({ artifact_kind: kind })
+      .where('id', '=', 'a')
+      .execute()
+    const bodyless = await search(fixture.db, () => stub, 'viewer', input)
+    expect(bodyless).toHaveProperty('items.0.hasBody', false)
+    expect(bodyless).toHaveProperty('items.0.excerpt', 'description alpha')
+  }
+})
+
+test('zero results and history resolve selected scope only from currently discoverable files', async () => {
+  const stub = index()
+  stub.search = async () => ({ items: [], nextCursor: null })
+  const result = await search(fixture.db, () => stub, 'viewer', {
+    ...input,
+    filters: { ownerUserIds: ['viewer', 'owner'] },
+  })
+  expect(result).toHaveProperty('selectedScope.owners', [
+    { id: 'viewer', name: 'Viewer' },
+  ])
+  expect(JSON.stringify(result)).not.toContain('Secret Owner')
+  const logs = await readSearchLogs(fixture.db, 'viewer')
+  expect(logs[0].selectedScope.owners).toEqual([
+    { id: 'viewer', name: 'Viewer' },
+  ])
+  fixture.sqlite.exec(
+    "UPDATE workspace_members SET status='removed' WHERE user_id='viewer'",
+  )
+  const revoked = await readSearchLogs(fixture.db, 'viewer')
+  expect(revoked[0].selectedScope.owners).toEqual([])
+})
+
+test('suggestions batch authorized detail IDs and fill recent history after discovery', async () => {
+  const stub = index()
+  const found = await searchSuggestions(
+    fixture.db,
+    () => stub,
+    { id: 'viewer' },
+    input,
+    now,
+  )
+  expect(found.files.map((row) => row.id)).toEqual(['a', 'b', 'c'])
+  expect(stub.details).toHaveBeenCalledTimes(1)
+  expect(stub.details).toHaveBeenCalledWith(expect.anything(), ['a', 'b', 'c'])
+  expect(JSON.stringify(found)).not.toMatch(
+    /Denied Title|Secret Snippet|Secret Owner/,
+  )
+  fixture.sqlite.exec(`
+    WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<8)
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    SELECT 'recent-'||x,'ws','viewer','Recent '||x,'html_page','private','home','${now}','${now}','${now}' FROM n;
+    INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at)
+    SELECT id,'viewer','${now}','2026-09-0'||substr(id,8)||'T00:00:00.000Z' FROM shareables WHERE id LIKE 'recent-%';
+  `)
+  const recent = () =>
+    searchSuggestions(
+      fixture.db,
+      () => stub,
+      { id: 'viewer' },
+      { ...input, query: '' },
+      now,
+    )
+  expect((await recent()).recent.map((row) => row.id)).toEqual([
+    'recent-8',
+    'recent-7',
+    'recent-6',
+    'recent-5',
+    'recent-4',
+    'recent-3',
+  ])
+  fixture.sqlite.exec(
+    "UPDATE shareables SET owner_user_id='owner' WHERE id='recent-8'",
+  )
+  fixture.sqlite.exec(`
+    WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<50)
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    SELECT 'denied-recent-'||x,'ws','owner','Denied recent '||x,'html_page','private','home','${now}','${now}','${now}' FROM n;
+    INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at)
+    SELECT id,'viewer','${now}','${now}' FROM shareables WHERE id LIKE 'denied-recent-%';
+  `)
+  const revoked = await recent()
+  expect(revoked.recent.map((row) => row.id)).toEqual([
+    'recent-7',
+    'recent-6',
+    'recent-5',
+    'recent-4',
+    'recent-3',
+    'recent-2',
+  ])
+  expect(JSON.stringify(revoked.recent)).not.toMatch(/Recent 8|Denied recent/)
+})

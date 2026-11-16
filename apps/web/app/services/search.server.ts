@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   newSearchTokenKey,
   sealSearchToken,
@@ -12,6 +13,7 @@ import {
   enumerateMemberDiscoverableIds,
   loadDiscoveryViewer,
   suggestionOwners,
+  resolveSearchSelections,
   discoverSuggestionCandidates,
   enumerateSuggestionIds,
   type DiscoveryFilters,
@@ -26,7 +28,12 @@ import {
   SearchCapacityError,
   type IndexSearchInput,
 } from './search-index/query'
-import { canonicalSearch, type SearchInput } from './search-input'
+import { searchHistoryParams, searchApiParams } from '~/lib/search-query'
+import {
+  parseSearchInput,
+  canonicalSearch,
+  type SearchInput,
+} from './search-input'
 import { suggestProjects } from './project-membership.server'
 export type SearchIndex = {
   search(input: IndexSearchInput): Promise<IndexSearchResult>
@@ -37,7 +44,15 @@ export type SearchIndex = {
   details(
     input: IndexSearchInput,
     ids: string[],
-  ): Promise<Array<{ id: string; path: string; excerpt: string }>>
+  ): Promise<
+    Array<{
+      id: string
+      path: string
+      excerpt: string
+      hasBody?: boolean
+      matchedKeywords?: string[]
+    }>
+  >
 }
 async function indexPage(
   index: SearchIndex,
@@ -56,11 +71,16 @@ export const cappedTotal = (
   relation: value > 1000 || incomplete ? 'gte' : 'eq',
 })
 type Hit = IndexHit & { workspaceId: string }
-type Metadata = {
+export type Metadata = {
   id: string
   title: string
   ownerId: string
   ownerName: string
+  project: { id: string; name: string } | null
+  visibility: import('~/lib/shareable-types').Visibility
+  updatedAt: string
+  lastViewedAt: string | null
+  hasBody?: boolean
 }
 export function mergeSearchHits(hits: Hit[], newest: boolean) {
   const positions = new Map<string, number>()
@@ -95,13 +115,30 @@ export function groupSearchHits<T extends { id: string; title: string }>(
   }
   return [...groups.values()]
 }
-async function metadata(db: Db, ids: string[]): Promise<Metadata[]> {
+async function metadata(
+  db: Db,
+  ids: string[],
+  actor: string,
+): Promise<Metadata[]> {
   if (!ids.length) return []
-  return await db
+  const rows = await db
     .selectFrom('shareables as s')
     .innerJoin('users as u', 'u.id', 's.owner_user_id')
+    .leftJoin('artifact_containers as c', 'c.id', 's.container_id')
+    .leftJoin('shareable_viewer_recency as r', (join) =>
+      join
+        .onRef('r.shareable_id', '=', 's.id')
+        .on('r.viewer_user_id', '=', actor),
+    )
     .select([
       's.id',
+      's.visibility',
+      's.artifact_kind as artifactKind',
+      's.activity_at as updatedAt',
+      'r.last_viewed_at as lastViewedAt',
+      'c.kind as containerKind',
+      'c.id as containerId',
+      'c.name as containerName',
       sql<string>`coalesce(nullif(s.title_override,''),nullif(s.derived_title,''),s.name)`.as(
         'title',
       ),
@@ -112,6 +149,16 @@ async function metadata(db: Db, ids: string[]): Promise<Metadata[]> {
       sql<boolean>`s.id IN (SELECT value FROM json_each(${JSON.stringify(ids)}))`,
     )
     .execute()
+  return rows.map(
+    ({ containerKind, containerId, containerName, artifactKind, ...row }) => ({
+      ...row,
+      hasBody: artifactKind !== 'video' && artifactKind !== 'pdf',
+      project:
+        containerKind === 'project' && containerId
+          ? { id: containerId, name: containerName ?? '' }
+          : null,
+    }),
+  )
 }
 async function universe(
   db: Db,
@@ -235,6 +282,7 @@ async function collect(
     for (const row of await metadata(
       db,
       rows.map((hit) => hit.id),
+      actor,
     ))
       metas.set(row.id, row)
   }
@@ -394,6 +442,7 @@ async function completePageGroups(
         for (const row of await metadata(
           db,
           visible.map((hit) => hit.id),
+          actor,
         ))
           members.get(groupKey(row.title))?.add(row.id)
       }
@@ -462,13 +511,11 @@ export async function search(
     filter: string
     total: ReturnType<typeof cappedTotal>
   }> = []
-  if (
-    !result.incomplete &&
-    !result.groups.length &&
-    prepareQuery(input.query).terms.length >= 2
-  ) {
-    any = true
-    result = await collect(db, indexes, actor, input, now, true)
+  if (!result.incomplete && !result.groups.length) {
+    if (prepareQuery(input.query).terms.length >= 2) {
+      any = true
+      result = await collect(db, indexes, actor, input, now, true)
+    }
     const filters = input.filters
     const dimensions = [
       filters.ownerUserIds?.length ? 'owners' : '',
@@ -499,7 +546,10 @@ export async function search(
   }
   const total = cappedTotal(result.groups.length, result.incomplete)
   const tier = any ? 'any' : (result.groups[0]?.tier ?? 'all')
-  const selected = result.groups.slice(position, position + input.pageSize)
+  const selected = result.groups.slice(
+    position,
+    Math.min(1000, position + input.pageSize),
+  )
   const sizes = selected.length
     ? await completePageGroups(
         db,
@@ -518,6 +568,8 @@ export async function search(
     Metadata & {
       path: string
       excerpt: string
+      hasBody?: boolean
+      matchedKeywords?: string[]
       tier: IndexHit['tier']
       rank: number
       groupSize: number
@@ -549,6 +601,7 @@ export async function search(
         await metadata(
           db,
           visible.map((row) => row.id),
+          actor,
         )
       ).map((row) => [row.id, row]),
     )
@@ -560,6 +613,7 @@ export async function search(
         items.push({
           ...meta,
           ...detail,
+          hasBody: meta.hasBody !== false && detail.hasBody !== false,
           tier: row.tier,
           rank: displayedRanks.get(row.id)!,
           groupSize: Math.max(1, size.value),
@@ -599,19 +653,41 @@ export async function search(
       rank: item.rank,
     })
   let nextCursor: string | null = null
-  if (position + selected.length < result.groups.length) {
+  if (position + selected.length < Math.min(1000, result.groups.length)) {
     nextCursor = sealSearchToken(searchLogId, tokenKey, {
       kind: 'cursor',
       rank: position + selected.length,
     })
   }
 
-  return { items, total, tier, relaxations, nextCursor, searchLogId }
+  const facets = input.cursor
+    ? undefined
+    : searchFacets(result.knownHits, actor, total.relation === 'eq')
+  const selectedScope = input.cursor
+    ? undefined
+    : await resolveSearchSelections(
+        db,
+        actor,
+        [...(input.filters.ownerUserIds ?? [])],
+        input.filters.location?.kind === 'project'
+          ? [input.filters.location.id]
+          : [],
+      )
+  return {
+    items,
+    total,
+    tier,
+    relaxations,
+    nextCursor,
+    searchLogId,
+    facets,
+    ...(selectedScope ? { selectedScope } : {}),
+  }
 }
 export async function searchSuggestions(
   db: Db,
   indexes: SearchIndexes,
-  user: SessionUser,
+  user: Pick<SessionUser, 'id'>,
   input: SearchInput,
   now = new Date().toISOString(),
 ) {
@@ -656,16 +732,246 @@ export async function searchSuggestions(
       await metadata(
         db,
         selected.map((row) => row.id),
+        user.id,
       )
     ).map((row) => [row.id, row]),
   )
-  const files = selected.flatMap((row) => {
-    const item = byId.get(row.id)
-    return item ? [item] : []
+  const details = new Map(
+    (
+      await Promise.all(
+        [...new Set(selected.map((hit) => hit.workspaceId))].map(
+          async (workspaceId) =>
+            indexes(workspaceId).details(
+              await indexInput(db, input, workspaceId, false),
+              selected
+                .filter((hit) => hit.workspaceId === workspaceId)
+                .map((hit) => hit.id),
+            ),
+        ),
+      )
+    )
+      .flat()
+      .map((detail) => [detail.id, detail]),
+  )
+  const files = selected.flatMap((hit) => {
+    const item = byId.get(hit.id)
+    const detail = details.get(hit.id)
+    return item && detail
+      ? [
+          {
+            ...item,
+            ...detail,
+            hasBody: item.hasBody !== false && detail.hasBody !== false,
+          },
+        ]
+      : []
   })
+  const recent: Metadata[] = []
+  if (!input.query.trim()) {
+    // Bound history reads while filling the six currently discoverable slots.
+    for (let offset = 0; offset < 500 && recent.length < 6; offset += 50) {
+      const candidates = await db
+        .selectFrom('shareable_viewer_recency as r')
+        .innerJoin('shareables as s', 's.id', 'r.shareable_id')
+        .select(['s.id', 's.workspace_id as workspaceId', 'r.last_viewed_at'])
+        .where('r.viewer_user_id', '=', user.id)
+        .orderBy('r.last_viewed_at', 'desc')
+        .orderBy('s.id')
+        .limit(50)
+        .offset(offset)
+        .execute()
+      const allowed = new Set<string>()
+      for (const workspaceId of new Set(
+        candidates.map((row) => row.workspaceId),
+      )) {
+        for (const row of await discoverCandidates(db, {
+          ...discoveryInput,
+          workspaceId,
+          candidateIds: candidates
+            .filter((candidate) => candidate.workspaceId === workspaceId)
+            .map((candidate) => candidate.id),
+        }))
+          allowed.add(row.id)
+      }
+      const visible = candidates
+        .filter((row) => allowed.has(row.id))
+        .slice(0, 6 - recent.length)
+      const metas = new Map(
+        (
+          await metadata(
+            db,
+            visible.map((row) => row.id),
+            user.id,
+          )
+        ).map((row) => [row.id, row]),
+      )
+      for (const row of visible) {
+        const meta = metas.get(row.id)
+        if (meta) recent.push(meta)
+      }
+      if (candidates.length < 50) break
+    }
+  }
+  return { files, owners, projects, recent }
+}
+
+function searchFacets(rows: Metadata[], actor: string, exact: boolean) {
+  const owners = new Map<string, { id: string; name: string; count: number }>()
+  const projects = new Map<
+    string,
+    { id: string; name: string; count: number }
+  >()
+  for (const row of rows) {
+    const owner = owners.get(row.ownerId) ?? {
+      id: row.ownerId,
+      name: row.ownerName,
+      count: 0,
+    }
+    owner.count++
+    owners.set(owner.id, owner)
+    const project = projects.get(row.project?.id ?? 'home') ?? {
+      id: row.project?.id ?? 'home',
+      name: row.project?.name ?? '',
+      count: 0,
+    }
+    project.count++
+    projects.set(project.id, project)
+  }
+  const order = (
+    a: { id: string; count: number },
+    b: { id: string; count: number },
+  ) => b.count - a.count || a.id.localeCompare(b.id)
+  const present = ({
+    count,
+    ...row
+  }: {
+    id: string
+    name: string
+    count: number
+  }) => ({ ...row, ...(exact ? { count } : {}) })
   return {
-    files,
-    owners,
-    projects,
+    owners: [...owners.values()]
+      .sort(
+        (a, b) =>
+          Number(b.id === actor) - Number(a.id === actor) || order(a, b),
+      )
+      .slice(0, 20)
+      .map(present),
+    projects: [...projects.values()].sort(order).slice(0, 20).map(present),
+  }
+}
+
+export async function searchGroup(
+  db: Db,
+  indexes: SearchIndexes,
+  actor: string,
+  receipt: string,
+  cursor?: string,
+  now = new Date().toISOString(),
+) {
+  const handle = await readSearchToken(db, actor, receipt, 'open', now)
+  if (!handle?.payload.file) return invalidCursor
+  const continuation = cursor
+    ? await readSearchToken(db, actor, cursor, 'group-cursor', now)
+    : null
+  if (
+    cursor &&
+    (!continuation ||
+      continuation.log.id !== handle.log.id ||
+      continuation.payload.file !== handle.payload.file)
+  )
+    return invalidCursor
+  const input = parseSearchInput(
+    searchApiParams(searchHistoryParams(handle.log.filters_json)),
+    new Date(handle.log.created_at),
+  )
+  if ('error' in input) return input
+  const representative = await db
+    .selectFrom('shareables')
+    .select(['id', 'workspace_id'])
+    .where('id', '=', handle.payload.file)
+    .executeTakeFirst()
+  if (!representative) return invalidCursor
+  const visible = await discoverCandidates(db, {
+    ...input.filters,
+    viewerUserId: actor,
+    now,
+    workspaceId: representative.workspace_id,
+    candidateIds: [representative.id],
+  })
+  if (!visible.length) return invalidCursor
+  const [meta] = await metadata(db, [representative.id], actor)
+  const key = groupKey(meta.title)
+  const digest = createHash('sha256').update(key).digest('base64url')
+  if (continuation && continuation.payload.group !== digest)
+    return invalidCursor
+  const [sources, collected] = await Promise.all([
+    universe(db, actor, input.filters, now),
+    collect(db, indexes, actor, input, now, handle.log.tier === 'any'),
+  ])
+  const members = new Map<string, Metadata>(
+    collected.knownHits
+      .filter((row) => groupKey(row.title) === key)
+      .map((row) => [row.id, row]),
+  )
+  let incomplete = false
+  for (const source of sources) {
+    const request = await indexInput(
+      db,
+      input,
+      source.workspaceId,
+      handle.log.tier === 'any',
+    )
+    for (let offset = 0; offset < 10000; offset += 2000) {
+      const page = await indexes(source.workspaceId).groupMembers(
+        { ...request, allowedIds: source.ids, cursor: offset },
+        [key],
+      )
+      if ('error' in page) throw new SearchCapacityError()
+      const acceptedRows = await accepted(
+        db,
+        actor,
+        input.filters,
+        now,
+        page.items.map((row) => ({ ...row, workspaceId: source.workspaceId })),
+      )
+      for (const row of await metadata(
+        db,
+        acceptedRows.map((candidate) => candidate.id),
+        actor,
+      ))
+        if (groupKey(row.title) === key) members.set(row.id, row)
+      if (!page.incompleteGroupKeys?.includes(key)) break
+      if (offset === 8000) incomplete = true
+    }
+  }
+  const rows = [...members.values()]
+    .filter((row) => row.id !== representative.id)
+    .sort(
+      (a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id),
+    )
+  const position = continuation?.payload.rank ?? 0
+  const items = rows.slice(position, position + 20).map((row) => ({
+    ...row,
+    receipt: sealSearchToken(handle.log.id, handle.log.token_key, {
+      kind: 'open',
+      file: row.id,
+      rank: handle.payload.rank,
+    }),
+  }))
+  return {
+    items,
+    total: cappedTotal(rows.length + 1, incomplete),
+    searchLogId: handle.log.id,
+    nextCursor:
+      position + items.length < rows.length
+        ? sealSearchToken(handle.log.id, handle.log.token_key, {
+            kind: 'group-cursor',
+            group: digest,
+            file: representative.id,
+            rank: position + items.length,
+          })
+        : null,
   }
 }

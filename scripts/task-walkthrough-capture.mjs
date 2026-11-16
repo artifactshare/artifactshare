@@ -543,6 +543,46 @@ async function applyAction({
   tempDir,
   animationTiming,
 }) {
+  if (action.kind === 'sequence') {
+    const width = page.viewportSize()?.width
+    if (width === undefined && (action.mobileSteps || action.desktopSteps))
+      throw new Error('Walkthrough viewport is required')
+    const selectedSteps =
+      width < 600 ? (action.mobileSteps ?? []) : (action.desktopSteps ?? [])
+    const interactions = []
+    for (const step of [...action.steps, ...selectedSteps])
+      interactions.push(
+        await applyAction({
+          action: step,
+          page,
+          baseUrl,
+          session,
+          state,
+          tempDir,
+          animationTiming,
+        }),
+      )
+    return { interactions }
+  }
+  if (action.kind === 'fill' || action.kind === 'select') {
+    const locator = page.locator(action.selector)
+    await locator.waitFor({ state: 'visible' })
+    if (action.kind === 'fill') {
+      await locator.fill(action.value)
+      if (action.submit) await locator.press('Enter')
+    } else await locator.selectOption(action.value)
+    return {
+      input: {
+        selector: action.selector,
+        value: action.value,
+        submitted: Boolean(action.submit),
+      },
+    }
+  }
+  if (action.kind === 'back') {
+    await page.goBack()
+    return { returnedTo: new URL(page.url()).pathname }
+  }
   let cliEvidence = null
   if (
     [

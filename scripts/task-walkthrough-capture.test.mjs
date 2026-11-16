@@ -1003,3 +1003,69 @@ test('reaction failure requires visible selected project filter and no target re
     }
   }
 })
+
+test('search interactions perform input, submit, viewport-specific selection and Back without invented evidence', async () => {
+  for (const width of [599, 600]) {
+    const events = []
+    const page = {
+      viewportSize: () => ({ width }),
+      url: () => 'https://localhost/search',
+      goBack: () => {
+        events.push('back')
+        return Promise.resolve()
+      },
+      locator: (selector) => ({
+        waitFor: () => Promise.resolve(events.push(`ready:${selector}`)),
+        fill: (value) => Promise.resolve(events.push(`fill:${value}`)),
+        press: (key) => Promise.resolve(events.push(`press:${key}`)),
+        selectOption: (value) =>
+          Promise.resolve(events.push(`select:${selector}:${value}`)),
+      }),
+      evaluate: () => Promise.resolve([]),
+      waitForLoadState: async () => {},
+      screenshot: () => Promise.resolve(events.push('screenshot')),
+    }
+    const evidence = await captureStep({
+      page,
+      screenshot: {},
+      action: {
+        kind: 'sequence',
+        steps: [
+          {
+            kind: 'fill',
+            selector: 'keywords',
+            value: 'Quarterly',
+            submit: true,
+          },
+          { kind: 'back' },
+        ],
+        mobileSteps: [
+          { kind: 'select', selector: 'sheet-sort', value: 'newest' },
+        ],
+        desktopSteps: [
+          { kind: 'select', selector: 'row-sort', value: 'newest' },
+        ],
+      },
+    })
+    assert.ok(events.includes('fill:Quarterly'))
+    assert.ok(events.includes('press:Enter'))
+    assert.ok(events.includes('back'))
+    assert.ok(
+      events.includes(
+        `select:${width < 600 ? 'sheet-sort' : 'row-sort'}:newest`,
+      ),
+    )
+    assert.equal(evidence.interactions.length, 3)
+    page.locator = () => ({
+      waitFor: () => Promise.reject(new Error('missing keyword field')),
+    })
+    await assert.rejects(
+      captureStep({
+        page,
+        screenshot: {},
+        action: { kind: 'fill', selector: 'keywords', value: 'Quarterly' },
+      }),
+      /missing keyword field/,
+    )
+  }
+})

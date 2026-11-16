@@ -414,6 +414,7 @@ it('owner-name suggestions stop after three findable owners without sorting all 
     .bind(...query.parameters)
     .all()
   expect(before.results).toHaveLength(3)
+  expect(before.results.every((row) => !('fileCount' in row))).toBe(true)
   await seed(2000, 3000)
   const after = await binding
     .prepare(query.sql)
@@ -433,4 +434,74 @@ it('owner-name suggestions stop after three findable owners without sorting all 
   expect(() =>
     expect(fault.meta.rows_read).toBe(before.meta.rows_read),
   ).toThrow()
+})
+
+it('search presentation joins keep actor recency and authorized facet counts on D1', async () => {
+  const { search } = await import('~/services/search.server')
+  const actor = 'presentation-viewer'
+  await binding.batch([
+    binding.prepare(
+      `INSERT INTO users(id,email,email_verified,name,workspace_id,google_sub,created_at,updated_at) VALUES('${actor}','presentation@example.com',1,'Presentation viewer','source','presentation-viewer-sub','${now}','${now}')`,
+    ),
+    binding.prepare(
+      `INSERT INTO workspace_members(workspace_id,user_id,role,status,created_at,updated_at) VALUES('source','${actor}','member','active','${now}','${now}')`,
+    ),
+    binding.prepare(
+      `INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at) VALUES('presentation-healthy','source','${actor}','Presentation healthy','html_page','private','project','${now}','${now}','${now}'),('presentation-denied','source','owner','Presentation denied sentinel','html_page','private','project','${now}','${now}','${now}')`,
+    ),
+    binding.prepare(
+      `INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at) VALUES('presentation-healthy','${actor}','${now}','${now}')`,
+    ),
+  ])
+  const result = await search(
+    db,
+    () => ({
+      search: async () => ({
+        items: [
+          { id: 'presentation-healthy', tier: 'all', rank: 1, activityAt: now },
+          { id: 'presentation-denied', tier: 'all', rank: 2, activityAt: now },
+        ],
+        nextCursor: null,
+      }),
+      groupMembers: async () => ({ items: [], nextCursor: null }),
+      details: async (_input, selectedIds) =>
+        selectedIds.map((id) => ({
+          id,
+          path: 'index.html',
+          excerpt: 'Presentation excerpt',
+          hasBody: true,
+          matchedKeywords: ['presentation'],
+        })),
+    }),
+    actor,
+    { query: 'presentation', filters: {}, sort: 'relevance', pageSize: 20 },
+  )
+  expect(result).toMatchObject({
+    items: [
+      {
+        id: 'presentation-healthy',
+        lastViewedAt: now,
+        updatedAt: now,
+        project: { id: 'project', name: 'Project' },
+      },
+    ],
+    facets: {
+      owners: [{ id: actor, name: 'Presentation viewer', count: 1 }],
+      projects: [{ id: 'project', name: 'Project', count: 1 }],
+    },
+  })
+  expect(JSON.stringify(result)).not.toContain('Presentation denied sentinel')
+  const { resolveSearchSelections } =
+    await import('~/services/search-discovery.server')
+  const labels = await resolveSearchSelections(
+    db,
+    actor,
+    [actor, 'owner'],
+    ['project'],
+  )
+  expect(labels.owners).toContainEqual({
+    id: actor,
+    name: 'Presentation viewer',
+  })
+  expect(labels.projects).toEqual([{ id: 'project', name: 'Project' }])
 })

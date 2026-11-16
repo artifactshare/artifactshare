@@ -45,6 +45,7 @@ function allowedReturnTo(value: string): string | null {
     parsed.pathname !== '/' &&
     parsed.pathname !== '/recent' &&
     parsed.pathname !== '/files' &&
+    parsed.pathname !== '/search' &&
     !isProjectReturnPath(parsed.pathname)
   ) {
     return null

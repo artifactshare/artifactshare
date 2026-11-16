@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MemoryRouter } from 'react-router'
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TooltipProvider } from '~/components/ui/tooltip'
 
@@ -71,13 +71,20 @@ import {
 } from './index'
 
 function renderScenario(id: (typeof SCENARIO_IDS)[number]) {
-  return renderToStaticMarkup(
-    <MemoryRouter initialEntries={[`/dev/scenarios/${id}`]}>
-      <TooltipProvider>
-        <ScenarioPage scenario={id} />
-      </TooltipProvider>
-    </MemoryRouter>,
+  const router = createMemoryRouter(
+    [
+      {
+        path: '*',
+        element: (
+          <TooltipProvider>
+            <ScenarioPage scenario={id} />
+          </TooltipProvider>
+        ),
+      },
+    ],
+    { initialEntries: [`/dev/scenarios/${id}`] },
   )
+  return renderToStaticMarkup(<RouterProvider router={router} />)
 }
 
 function expect404(run: () => unknown) {
@@ -115,9 +122,9 @@ describe('/dev/scenarios/:scenario loader', () => {
 })
 
 describe('scenario registry and required contracts', () => {
-  test('has 15 unique fixed ids', () => {
-    expect(SCENARIO_IDS).toHaveLength(15)
-    expect(new Set(SCENARIO_IDS).size).toBe(15)
+  test('has 27 unique fixed ids', () => {
+    expect(SCENARIO_IDS).toHaveLength(27)
+    expect(new Set(SCENARIO_IDS).size).toBe(27)
     expect(Object.keys(scenarioRegistry).sort()).toEqual(
       [...SCENARIO_IDS].sort(),
     )

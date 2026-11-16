@@ -145,3 +145,25 @@ async function seedWorkspace(
     })
     .execute()
 }
+
+test('search-only navigation avoids layout reload while mutations and unrelated conditions revalidate', async () => {
+  const { shouldRevalidate } = await import('./_layout')
+  const args = {
+    currentUrl: new URL('https://example.com/search?q=alpha'),
+    nextUrl: new URL(
+      'https://example.com/search?q=beta&owner=owner&period=7&dateField=viewed&includeArchived=true',
+    ),
+    currentParams: {},
+    nextParams: {},
+    defaultShouldRevalidate: true,
+  }
+  expect(shouldRevalidate(args)).toBe(false)
+  expect(shouldRevalidate({ ...args, formAction: '/api/files' })).toBe(true)
+  expect(
+    shouldRevalidate({
+      ...args,
+      nextUrl: new URL('https://example.com/search?q=beta&workspace=other'),
+    }),
+  ).toBe(true)
+  expect(shouldRevalidate({ ...args, nextUrl: args.currentUrl })).toBe(true)
+})

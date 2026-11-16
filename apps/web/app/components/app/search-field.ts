@@ -6,3 +6,8 @@ export const searchFieldClassName =
   '[&_input]:min-w-0 [&_input]:flex-1 [&_input]:border-0 [&_input]:bg-transparent [&_input]:font-[inherit] [&_input]:text-sm [&_input]:text-foreground [&_input]:outline-0 ' +
   '[&_input::-webkit-search-cancel-button]:appearance-none ' +
   'max-stack:ml-0 max-stack:max-w-none max-stack:basis-full'
+
+// Results guidance edits the owning header input without changing conditions.
+export function openSearchField(query: string) {
+  window.dispatchEvent(new CustomEvent('search:edit', { detail: query }))
+}

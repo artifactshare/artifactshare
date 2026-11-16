@@ -10,6 +10,7 @@ import {
   enumerateDiscoverableIds,
   discoverSuggestionCandidates,
   loadDiscoveryViewer,
+  suggestionOwners,
 } from './search-discovery.server'
 
 const now = '2026-09-15T00:00:00.000Z'
@@ -754,4 +755,20 @@ test('typeahead checks live eligibility and filters for ranked owned, viewed and
       now,
     }),
   ).toEqual([{ workspaceId: 'source', id: 'owned' }])
+})
+
+test('owner suggestions require currently discoverable files and omit counts', async () => {
+  fixture.sqlite.exec(
+    grant +
+      `
+    INSERT INTO shareables (id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+      VALUES ('denied','source','owner','Denied count sentinel','html_page','private','project','${now}','${now}','${now}');
+  `,
+  )
+  const read = () => suggestionOwners(fixture.db, input, 'Owner')
+  const healthy = await read()
+  expect(healthy).toEqual([{ id: 'owner', name: 'Owner' }])
+  expect(JSON.stringify(healthy)).not.toContain('Denied count sentinel')
+  fixture.sqlite.exec("DELETE FROM shareable_grants WHERE shareable_id='file'")
+  expect(await read()).toEqual([])
 })

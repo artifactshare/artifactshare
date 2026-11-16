@@ -9,6 +9,10 @@ export const championLoopTaskIds = [
 ]
 
 export const walkthroughActionKinds = new Set([
+  'sequence',
+  'fill',
+  'select',
+  'back',
   'goto',
   'gotoArtifact',
   'gotoArtifactAndClick',
@@ -39,6 +43,80 @@ const phase = (name, description, action) => ({
 })
 
 export const taskWalkthroughs = [
+  {
+    taskId: 'search-file',
+    scenario: 'search/results',
+    steps: [
+      phase('start', 'Open header search', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'goto', path: '/' },
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+        ],
+      }),
+      phase('action', 'Type keywords and submit search', {
+        kind: 'fill',
+        selector: 'input[role="combobox"]',
+        value: 'Quarterly',
+        submit: true,
+      }),
+      phase('pending', 'Change filters and observe the live result count', {
+        kind: 'sequence',
+        steps: [{ kind: 'inspect', selector: 'main h1' }],
+        mobileSteps: [
+          { kind: 'click', selector: '[data-search-filters]' },
+          {
+            kind: 'click',
+            selector:
+              '[data-slot="sheet-content"] [data-search-sort-value="newest"]',
+          },
+          { kind: 'click', selector: '[data-search-show-results]' },
+        ],
+        desktopSteps: [
+          { kind: 'click', selector: '[data-search-sort]:visible' },
+          { kind: 'click', selector: '[data-search-sort-value="newest"]' },
+        ],
+      }),
+      phase('success', 'Open a matching file', {
+        kind: 'click',
+        selector: 'main a[href^="/a/"] >> nth=0',
+      }),
+      phase(
+        'failure',
+        'Return from the viewer and search for an absent keyword',
+        {
+          kind: 'sequence',
+          steps: [
+            { kind: 'back' },
+            { kind: 'click', selector: 'header [data-search-trigger]' },
+            {
+              kind: 'fill',
+              selector: 'input[role="combobox"]',
+              value: 'unfindablekeyword',
+              submit: true,
+            },
+            { kind: 'inspect', selector: '[data-search-zero]' },
+          ],
+        },
+      ),
+      phase('recovery', 'Edit keywords to recover results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+          {
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: 'Quarterly',
+            submit: true,
+          },
+        ],
+      }),
+      phase('next', 'Resume from matching results', {
+        kind: 'inspect',
+        selector: 'main a[href^="/a/"] >> nth=0',
+      }),
+    ],
+  },
   {
     taskId: 'return-to-recent-file',
     scenario: 'recent/content-rich',

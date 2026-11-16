@@ -431,3 +431,54 @@ export function buildSuggestionOwnersQuery(
     .orderBy('owner.id')
     .limit(3)
 }
+
+/** Selected labels are resolved from live discoverable files, never from history snapshots. */
+export async function resolveSearchSelections(
+  db: Kysely<DB>,
+  actor: string,
+  ownerIds: string[],
+  projectIds: string[],
+) {
+  const viewer = await loadDiscoveryViewer(db, actor)
+  if (!viewer) return { owners: [], projects: [] }
+  const eligible = discoveryQuery(
+    db,
+    viewer,
+    { includeArchived: true },
+    new Date().toISOString(),
+  )
+  const [owners, projects] = await Promise.all([
+    ownerIds.length
+      ? db
+          .selectFrom('users as selected_owner')
+          .select([
+            'selected_owner.id',
+            sql<string>`coalesce(selected_owner.name,'')`.as('name'),
+          ])
+          .where(
+            sql<boolean>`selected_owner.id IN (SELECT value FROM json_each(${JSON.stringify(ownerIds)}))`,
+          )
+          .where(
+            sql<boolean>`EXISTS ${eligible.where(sql<boolean>`s.owner_user_id=selected_owner.id`)}`,
+          )
+          .execute()
+      : [],
+    projectIds.length
+      ? db
+          .selectFrom('artifact_containers as selected_project')
+          .select(['selected_project.id', 'selected_project.name'])
+          .where('selected_project.kind', '=', 'project')
+          .where(
+            sql<boolean>`selected_project.id IN (SELECT value FROM json_each(${JSON.stringify(projectIds)}))`,
+          )
+          .where(
+            sql<boolean>`EXISTS ${eligible.where(sql<boolean>`s.container_id=selected_project.id`)}`,
+          )
+          .execute()
+      : [],
+  ])
+  return {
+    owners,
+    projects: projects.map((row) => ({ ...row, name: row.name ?? '' })),
+  }
+}

@@ -216,8 +216,15 @@ function searchProbe(workspace: string) {
     details: (
       input: IndexSearchInput,
       ids: string[],
-    ): Promise<Array<{ id: string; path: string; excerpt: string }>> =>
-      call('details', undefined, undefined, undefined, { input, ids }),
+    ): Promise<
+      Array<{
+        id: string
+        path: string
+        excerpt: string
+        hasBody: boolean
+        matchedKeywords: string[]
+      }>
+    > => call('details', undefined, undefined, undefined, { input, ids }),
     sync: (_workspace?: string) => call('sync'),
     attemptSync: (_workspace?: string) => call('attemptSync'),
     resume: () => call('resume'),
@@ -3394,14 +3401,33 @@ test('workspace search RPC ranks active pages, cross-chunk evidence and literal 
   ])
   expect(JSON.stringify(page)).not.toMatch(/score|bm25|staged/)
   expect(await probe.details({ query: 'alpha beta' }, ['site'])).toEqual([
-    { id: 'site', path: 'z.html', excerpt: 'alpha beta' },
+    {
+      id: 'site',
+      path: 'z.html',
+      excerpt: 'alpha beta',
+      hasBody: true,
+      matchedKeywords: ['alpha', 'beta'],
+    },
   ])
   expect(
     (await probe.search({ query: 'weight probe' })).items.map((row) => row.id),
   ).toEqual(['weight-title', 'weight-body', 'weight-script'])
   expect(
+    await probe.details({ query: 'weight absent', any: true }, [
+      'weight-script',
+    ]),
+  ).toMatchObject([{ id: 'weight-script', matchedKeywords: ['weight'] }])
+  expect(
     await probe.details({ query: 'alpha beta', sort: 'newest' }, ['site']),
-  ).toEqual([{ id: 'site', path: 'z.html', excerpt: 'alpha beta' }])
+  ).toEqual([
+    {
+      id: 'site',
+      path: 'z.html',
+      excerpt: 'alpha beta',
+      hasBody: true,
+      matchedKeywords: ['alpha', 'beta'],
+    },
+  ])
   expect(
     (await probe.search({ query: 'pha' })).items.map((row) => row.id),
   ).toContain('substring')
@@ -3664,6 +3690,10 @@ test('workspace search SQL restricts and recomputes read-only rankings and requi
       id: 'katakana',
       path: 'index.html',
       excerpt: 'フロントエンドエンジニアの募集',
+      hasBody: true,
+      matchedKeywords: expect.arrayContaining([
+        expect.stringContaining('エンジニア'),
+      ]),
     },
   ])
   expect(await probe.queryState()).toEqual(before)

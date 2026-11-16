@@ -10,6 +10,7 @@ const VALID_PATHS = [
   '/projects/codex_check_project_20260601',
   '/recent?q=notes#top',
   '/files?page=2',
+  '/search?q=alpha&owner=a&period=7#search-file-a',
 ]
 
 const REJECTED_PATHS = [

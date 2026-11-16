@@ -1,4 +1,6 @@
 import { IconSettings } from '@tabler/icons-react'
+import { useLocation } from 'react-router'
+import { cn } from '~/lib/utils'
 import { useT } from '~/hooks/use-t'
 import type { UserInfo } from '~/lib/user'
 import { AppTopbar, TopbarBrand } from '~/components/app/app-topbar'
@@ -14,20 +16,39 @@ import { ProjectsDropdown } from './projects-dropdown'
 import { primaryNavItems, type JoinedProjectNav } from './primary-nav'
 
 interface TopbarProps {
+  searchResults?: boolean
   workspaceName: string
   user: UserInfo
   joinedProjects?: JoinedProjectNav[]
+  searchProject?: { id: string; name: string }
 }
 
-export function Topbar({ workspaceName, user, joinedProjects }: TopbarProps) {
+export function Topbar({
+  workspaceName,
+  user,
+  joinedProjects,
+  searchProject,
+  searchResults = false,
+}: TopbarProps) {
   const { t } = useT()
+  const location = useLocation()
+  const results = searchResults || /\/search$/.test(location.pathname)
   const settingsLabel = t('team.settings')
 
   return (
     <AppTopbar>
-      <TopbarBrand workspaceName={workspaceName} title={t('tb.home')} />
+      <div
+        className={
+          results ? 'max-nav:hidden flex items-center gap-1.5' : 'contents'
+        }
+      >
+        <TopbarBrand workspaceName={workspaceName} title={t('tb.home')} />
+      </div>
       <nav
-        className="max-nav:gap-0 inline-flex min-w-0 items-center gap-1"
+        className={cn(
+          'max-nav:gap-0 inline-flex min-w-0 items-center gap-1',
+          results && 'max-nav:hidden',
+        )}
         aria-label={t('tb.homeView')}
       >
         {primaryNavItems.map(([to, key]) =>
@@ -46,21 +67,26 @@ export function Topbar({ workspaceName, user, joinedProjects }: TopbarProps) {
           ),
         )}
       </nav>
-      <div className="flex-1" />
-      <SearchPalette />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <NavigationLink
-            variant="topbar"
-            to="/settings/general"
-            icon={IconSettings}
-            label={settingsLabel}
-            aria-label={settingsLabel}
-          />
-        </TooltipTrigger>
-        <TooltipContent>{settingsLabel}</TooltipContent>
-      </Tooltip>
-      <AvatarMenu user={user} />
+      <SearchPalette project={searchProject} results={results} />
+      <div
+        className={
+          results ? 'max-nav:hidden flex items-center gap-1.5' : 'contents'
+        }
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <NavigationLink
+              variant="topbar"
+              to="/settings/general"
+              icon={IconSettings}
+              label={settingsLabel}
+              aria-label={settingsLabel}
+            />
+          </TooltipTrigger>
+          <TooltipContent>{settingsLabel}</TooltipContent>
+        </Tooltip>
+        <AvatarMenu user={user} />
+      </div>
     </AppTopbar>
   )
 }

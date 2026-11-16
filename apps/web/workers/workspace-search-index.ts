@@ -323,7 +323,13 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
   details(
     input: IndexSearchInput,
     ids: string[],
-  ): Array<{ id: string; path: string; excerpt: string }> {
+  ): Array<{
+    id: string
+    path: string
+    excerpt: string
+    hasBody: boolean
+    matchedKeywords: string[]
+  }> {
     const query = this.#matchingPages({ ...input, allowedIds: ids }, true)
     const rows = this.ctx.storage.sql
       .exec<{ id: string; document: number; path: string }>(
@@ -331,6 +337,18 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         ...query.bindings,
       )
       .toArray()
+    const matchedById = new Map(ids.map((id) => [id, new Set<string>()]))
+    for (const term of prepareQuery(input.query).terms) {
+      const evidence = this.#matchingPages(
+        { ...input, query: term, any: false, allowedIds: ids },
+        true,
+      )
+      for (const match of this.ctx.storage.sql.exec<{ id: string }>(
+        evidence.statement,
+        ...evidence.bindings,
+      ))
+        matchedById.get(match.id)?.add(term)
+    }
     return rows.map((row) => {
       const body = this.ctx.storage.sql
         .exec<{ body: string }>(
@@ -340,7 +358,14 @@ export class WorkspaceSearchIndex extends DurableObject<Cloudflare.Env> {
         .toArray()
         .map((part) => part.body)
         .join('')
-      return { id: row.id, path: row.path, excerpt: excerpt(body, input.query) }
+      const matchedKeywords = [...(matchedById.get(row.id) ?? [])]
+      return {
+        id: row.id,
+        path: row.path,
+        excerpt: excerpt(body, input.query),
+        hasBody: Boolean(body.trim()),
+        matchedKeywords,
+      }
     })
   }
 

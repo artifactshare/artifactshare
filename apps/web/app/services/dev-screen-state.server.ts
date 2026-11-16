@@ -35,6 +35,9 @@ export const HEADER_DEPENDENT_SCREEN_SCENARIOS: readonly string[] = [
   'settings-billing/subscribed',
   'viewer/revisit-context',
   'viewer/bridge-attribution',
+  'search/capped',
+  'search/error',
+  'search/continuation-error',
 ]
 
 export function isScreenScenario(value: unknown): value is string {
@@ -114,6 +117,15 @@ export async function seedDevScreenArtifactBodies(
   userId: string,
 ): Promise<void> {
   if (!bucket) return
+  if (scenario.startsWith('search/')) {
+    await seedDevScreenArtifactBodies(
+      bucket,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+    )
+    return
+  }
   if (managedRetentionScenarios.has(scenario)) {
     await seedDevScreenArtifactBodies(
       bucket,
@@ -305,6 +317,14 @@ export async function seedDevScreenState(
   userId: string,
   now: string,
 ): Promise<{ containerId: string | null; containerKind: 'inbox' | 'project' }> {
+  if (scenario.startsWith('search/'))
+    return seedDevScreenState(
+      db,
+      'recent/content-rich',
+      workspaceId,
+      userId,
+      now,
+    )
   if (managedRetentionScenarios.has(scenario)) {
     const readonly = scenario === 'viewer/retention-managed-readonly'
     const index = readonly ? 1 : 21

@@ -120,7 +120,9 @@ export async function loader({
 
 const EMPTY_PAGES: LoaderData[] = []
 
-export default function ProjectActivity({ loaderData }: Route.ComponentProps) {
+export default function ProjectActivity({
+  loaderData,
+}: Pick<Route.ComponentProps, 'loaderData'>) {
   const { t } = useT()
   const fetcher = useFetcher<LoaderData>()
   const busy = fetcher.state !== 'idle'
@@ -161,6 +163,7 @@ export default function ProjectActivity({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <Topbar
+        searchProject={{ id: ctx.projectId, name: ctx.projectName }}
         workspaceName={ctx.workspaceName}
         user={ctx.user}
         joinedProjects={ctx.joinedNav}

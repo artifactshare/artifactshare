@@ -11,7 +11,7 @@ test('covers every champion-loop task with the complete phase sequence', () => {
   assert.deepEqual(checkTaskWalkthroughs(), [])
   assert.deepEqual(
     taskWalkthroughs.map((item) => item.taskId),
-    championLoopTaskIds,
+    ['search-file', ...championLoopTaskIds],
   )
 })
 
@@ -35,7 +35,7 @@ test('rejects an unknown walkthrough action', () => {
   walkthroughs[0].steps[0].action.kind = 'typo-action'
   assert.ok(
     checkTaskWalkthroughs({ walkthroughs }).includes(
-      'return-to-recent-file/start: unknown action typo-action',
+      'search-file/start: unknown action typo-action',
     ),
   )
 })

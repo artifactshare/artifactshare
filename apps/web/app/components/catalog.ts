@@ -19,6 +19,27 @@ export type ComponentCatalogEntry = {
  */
 export const componentCatalog: ComponentCatalogEntry[] = [
   {
+    file: 'ui/popover',
+    name: 'Popover',
+    purpose: '起点の直下に検索候補や絞り込みを表示する。',
+    variants: [],
+    upstreamDiff: null,
+  },
+  {
+    file: 'ui/checkbox',
+    name: 'Checkbox',
+    purpose: '所有者などの複数選択を表示する。',
+    variants: [],
+    upstreamDiff: null,
+  },
+  {
+    file: 'app/search-results',
+    name: 'SearchResults',
+    purpose: 'Display authorized full-text results and URL-backed filters.',
+    variants: [],
+    upstreamDiff: null,
+  },
+  {
     file: 'app/app-page-header',
     name: 'AppPageHeader',
     purpose: '一覧系アプリ画面のページ見出しと説明・操作の配置を統一する。',

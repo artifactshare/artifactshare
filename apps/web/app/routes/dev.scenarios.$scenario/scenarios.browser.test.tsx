@@ -7,6 +7,7 @@ import '~/app.css'
 import { auditGaps } from '~/lib/gap-audit'
 import { TooltipProvider } from '~/components/ui/tooltip'
 import { ScenarioPage } from './index'
+import { scenarioRegistry } from './+components/scenarios'
 import {
   scenarioSnapshotExpression,
   SCENARIO_CONDITIONS,
@@ -26,7 +27,78 @@ function mount(
   scenario: keyof typeof SCENARIO_CONTRACTS,
   theme: 'light' | 'dark',
 ) {
-  document.documentElement.lang = 'en'
+  const locale = scenarioRegistry[scenario].locale ?? 'en'
+  document.documentElement.lang = locale
+  if (scenario.startsWith('search-')) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: RequestInfo | URL) => {
+        if (String(url).includes('search-logs'))
+          return Response.json({
+            searches: [
+              {
+                id: 'fixture-history',
+                query: 'planning',
+                filters_json: JSON.stringify({
+                  query: 'planning',
+                  sort: 'newest',
+                  filters: { ownerUserIds: ['fixture-owner'] },
+                }),
+                selectedScope: {
+                  owners: [{ id: 'fixture-owner', name: 'Alex Morgan' }],
+                  projects: [],
+                },
+              },
+            ],
+          })
+        if (scenario === 'search-loading')
+          return new Promise<Response>(() => {})
+        if (scenario === 'search-continuation-error')
+          return new Response(null, { status: 503 })
+        if (String(url).includes('search-groups'))
+          return Response.json({
+            items: [
+              {
+                id: 'fixture-member',
+                title: 'Quarterly planning report 2',
+                ownerId: 'fixture-owner',
+                ownerName: 'Alex Morgan',
+                updatedAt: '2026-09-15T12:00:00Z',
+                lastViewedAt: null,
+                receipt: 'fixture-member',
+              },
+            ],
+            total: { value: 2, relation: 'eq' },
+            nextCursor: null,
+            searchLogId: 'fixture-search',
+          })
+        return Response.json({
+          files: [
+            {
+              id: 'fixture-report',
+              title: 'Quarterly planning report',
+              ownerName: 'Alex Morgan',
+              project: { id: 'fixture-project', name: 'Launch review' },
+              path: 'index.html',
+              visibility: 'workspace',
+              lastViewedAt: '2026-09-16T12:00:00Z',
+              excerpt:
+                'The planning report collects decisions and follow-up work for the next release.',
+            },
+          ],
+          owners: [{ id: 'fixture-owner', name: 'Alex Morgan', fileCount: 37 }],
+          projects: [{ id: 'fixture-project', name: 'Launch review' }],
+          recent: [
+            {
+              id: 'fixture-report',
+              title: 'Quarterly planning report',
+              ownerName: 'Alex Morgan',
+            },
+          ],
+        })
+      }),
+    )
+  }
   document.documentElement.dataset.theme = theme
   document.documentElement.style.colorScheme = theme
   const style = document.createElement('style')
@@ -40,7 +112,7 @@ function mount(
       {
         id: 'root',
         path: '*',
-        loader: () => ({ locale: 'en', appTheme: theme }),
+        loader: () => ({ locale, appTheme: theme }),
         element: (
           <TooltipProvider delayDuration={300} disableHoverableContent>
             <ScenarioPage scenario={scenario} theme={theme} />
@@ -95,11 +167,20 @@ async function runInteractions(scenario: keyof typeof SCENARIO_CONTRACTS) {
         for (const overlay of overlays) overlay.style.pointerEvents = ''
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, interaction.waitMs))
+    if (interaction.type === 'click') await page.elementLocator(target).click()
+    if (interaction.readySelector)
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector(interaction.readySelector!),
+        ).not.toBeNull(),
+      )
+    if (interaction.waitMs)
+      await new Promise((resolve) => setTimeout(resolve, interaction.waitMs))
   }
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   root?.unmount()
   root = undefined
   consoleError?.mockRestore()
@@ -121,7 +202,20 @@ describe('scenario visual regression', () => {
       window.addEventListener('error', onRuntimeError)
       mount(scenario, theme)
       await settle()
+      // Previous scenario interactions must not leave a link hovered in this one.
+      await page.elementLocator(document.documentElement).hover({
+        position: { x: 0, y: 0 },
+      })
       await runInteractions(scenario)
+      if (scenario === 'search-continuation-error')
+        await expect.element(page.getByRole('alert')).toBeVisible()
+      if (scenario.startsWith('search-mobile-search'))
+        await vi.waitFor(() =>
+          expect(
+            page.getByRole('status').last().element().textContent,
+          ).not.toMatch(/Searching|検索中/),
+        )
+
       if (VISUAL_FAULT === 'header') {
         const header = document.querySelector('#viewer-topbar')
         if (header) {

@@ -1,3 +1,4 @@
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Kysely } from 'kysely'
 import { createMigratedInMemoryDb } from '~/test/sqlite-fixture'
@@ -27,7 +28,8 @@ vi.mock('~/services/link-sharing.server', () => ({
   loadWorkspaceLinkPolicy: async () => null,
 }))
 
-import { loader } from './projects.$id.files'
+import ProjectFiles, { loader } from './projects.$id.files'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 type Db = Kysely<DB>
 
@@ -369,4 +371,31 @@ describe('project files subpage loader', () => {
     const data = await loader(args())
     expect(data.files.map((f) => f.id)).toEqual(['s-mine'])
   })
+})
+
+vi.mock('../_home/+components/topbar', () => ({
+  Topbar: ({
+    searchProject,
+  }: {
+    searchProject?: { id: string; name: string }
+  }) => (
+    <header data-search-project={searchProject?.id}>
+      {searchProject?.name}
+    </header>
+  ),
+}))
+
+test('the actual project route supplies its current id and name to header search', async () => {
+  const { db } = await fixture()
+  try {
+    const data = await loader(args())
+    const router = createMemoryRouter([
+      { path: '*', element: <ProjectFiles loaderData={data} /> },
+    ])
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    expect(html).toContain('data-search-project="proj1"')
+    expect(html).toContain('>Project</header>')
+  } finally {
+    await db.destroy()
+  }
 })

@@ -1,3 +1,4 @@
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -63,7 +64,7 @@ vi.mock('~/components/ui/dropdown-menu', () => ({
   ),
 }))
 
-import { action, loader } from './projects.$id'
+import ProjectDetail, { action, loader } from './projects.$id'
 import { versionBadgeLabel } from '~/lib/version-badge'
 import { ProjectRedesignBody } from './+components/project-redesign-body'
 import { MemberDetailActions } from './projects.$id'
@@ -1129,3 +1130,30 @@ test.each(['member', 'shared'] as const)(
     }
   },
 )
+
+vi.mock('../_home/+components/topbar', () => ({
+  Topbar: ({
+    searchProject,
+  }: {
+    searchProject?: { id: string; name: string }
+  }) => (
+    <header data-search-project={searchProject?.id}>
+      {searchProject?.name}
+    </header>
+  ),
+}))
+
+test('the actual project route supplies its current id and name to header search', async () => {
+  const { db } = await fixture()
+  try {
+    const data = await loader(loaderArgs())
+    const router = createMemoryRouter([
+      { path: '*', element: <ProjectDetail loaderData={data} /> },
+    ])
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    expect(html).toContain('data-search-project="proj1"')
+    expect(html).toContain('>Project</header>')
+  } finally {
+    await db.destroy()
+  }
+})
