@@ -13,6 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { Writable } from 'node:stream'
 import test from 'node:test'
 import { uiCritique } from './agent-role-settings.mjs'
 import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
@@ -27,6 +28,22 @@ import {
   runLayer,
   validateInputs,
 } from './task-critique.mjs'
+import {
+  captureRootIdentity,
+  critiqueStatePath,
+  readCritiqueRecord,
+} from './task-critique-state.mjs'
+
+/** A stdout stand-in that accepts every write, as a healthy pipe does. */
+function outputStream(onChunk = () => {}) {
+  return new Writable({
+    decodeStrings: false,
+    write(chunk, _encoding, callback) {
+      onChunk(String(chunk))
+      callback()
+    },
+  })
+}
 
 function fixture({ external = false, taskId = tasks[0].id } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'task-critique-'))
@@ -995,9 +1012,11 @@ test('screen-only main launches one visual reviewer with validated source and al
   for (const provider of ['claude', 'codex']) {
     for (const dryRun of [false, true]) {
       const calls = []
+      const records = []
       let output = ''
       let checks = 0
       await main({
+        recordCompletion: (record) => records.push(record),
         argv: [
           ...f.argv,
           '--provider',
@@ -1009,11 +1028,9 @@ test('screen-only main launches one visual reviewer with validated source and al
           checks++
           return args[0] === 'status' ? '' : f.head
         },
-        stdout: {
-          write: (value) => {
-            output += value
-          },
-        },
+        stdout: outputStream((value) => {
+          output += value
+        }),
         run: (command, args, options) => {
           calls.push({ command, args, input: options.input })
           return {
@@ -1031,6 +1048,20 @@ test('screen-only main launches one visual reviewer with validated source and al
         },
       })
       assert.equal(checks, 4)
+      assert.deepEqual(
+        records,
+        dryRun
+          ? []
+          : [
+              {
+                schema_version: 1,
+                head: f.head,
+                completed: true,
+                walkthroughRoot: null,
+                screenRoots: [captureRootIdentity(realpathSync(f.root))],
+              },
+            ],
+      )
       const invocations = dryRun ? JSON.parse(output) : calls
       assert.equal(calls.length, dryRun ? 0 : 1)
       assert.equal(invocations.length, 1)
@@ -1086,11 +1117,9 @@ test('walkthrough main retains two Claude layers and copy-only visual selection'
       ],
       repo: f.repo,
       exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
-      stdout: {
-        write: (value) => {
-          output += value
-        },
-      },
+      stdout: outputStream((value) => {
+        output += value
+      }),
       run: () => {
         assert.fail('dry run launched a provider')
       },
@@ -1111,7 +1140,7 @@ test('walkthrough main retains two Claude layers and copy-only visual selection'
       ],
       repo: f.repo,
       exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
-      stdout: { write: () => {} },
+      stdout: outputStream(),
       run: (_command, args) => {
         prompts.push(args[args.indexOf('-p') + 1])
         return {
@@ -1218,7 +1247,7 @@ test('invalid screen-only captures never launch providers, including dry runs', 
             run: () => {
               assert.fail('invalid input launched provider')
             },
-            stdout: { write: () => {} },
+            stdout: outputStream(),
           }),
           expected,
         )
@@ -1252,7 +1281,7 @@ test('screen-only main preserves clean HEAD checks before and after providers', 
         calls++
         return { status: 0, stdout: 'Complete' }
       },
-      stdout: { write: () => {} },
+      stdout: outputStream(),
     }),
     /HEAD or worktree changed/,
   )
@@ -1366,11 +1395,9 @@ for (const walkthrough of [false, true]) {
           ],
           repo: f.repo,
           exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
-          stdout: {
-            write: (value) => {
-              output += value
-            },
-          },
+          stdout: outputStream((value) => {
+            output += value
+          }),
           run: (command, args, options) => {
             calls.push({ command, args, input: options.input })
             return {
@@ -1522,7 +1549,7 @@ test('all section and excluded context entries are validated before provider cal
             repo: f.repo,
             exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
             run: () => assert.fail('invalid input reached provider'),
-            stdout: { write: () => {} },
+            stdout: outputStream(),
           }),
           (error) => {
             assert.match(error.message, expected)
@@ -1624,7 +1651,7 @@ test('copy-only provider instructions match selected images across mixed roots',
     ],
     repo: f.repo,
     exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
-    stdout: { write: () => {} },
+    stdout: outputStream(),
     run: (command, args) => {
       calls.push({ command, args })
       return {
@@ -1857,7 +1884,7 @@ test('actual default and combined provider inputs include continuous observation
         ],
         repo: f.repo,
         exec: (_command, args) => (args[0] === 'status' ? '' : f.head),
-        stdout: { write: () => {} },
+        stdout: outputStream(),
         run: (_command, args, options) => {
           const prompt =
             provider === 'claude' ? args[args.indexOf('-p') + 1] : options.input
@@ -1904,4 +1931,167 @@ test('actual default and combined provider inputs include continuous observation
   } finally {
     rmSync(f.repo, { recursive: true, force: true })
   }
+})
+
+test('records Ready evidence only after every selected layer completes on the unchanged HEAD', async (t) => {
+  const earlier = 'e'.repeat(40)
+  const claudeResult = {
+    status: 0,
+    stdout: JSON.stringify({
+      is_error: false,
+      subtype: 'success',
+      result: 'Complete',
+      permission_denials: [],
+    }),
+  }
+  const walkthrough = [
+    '--walkthrough-root',
+    'captures',
+    '--source',
+    'source.tsx',
+  ]
+  const cases = [
+    { name: 'walkthrough Claude layers', argv: walkthrough, layers: 2 },
+    {
+      name: 'walkthrough Codex combined layer',
+      argv: [...walkthrough, '--provider', 'codex'],
+      layers: 1,
+    },
+    {
+      name: 'copy-only visual layer',
+      argv: [...walkthrough, '--copy-only', '--screen-root', 'screens'],
+      layers: 1,
+      screens: true,
+    },
+    {
+      name: 'screen-only visual layer',
+      argv: [
+        '--screen-root',
+        'screens',
+        '--scope-judgment',
+        'No registered task is affected.',
+        '--source',
+        'source.tsx',
+      ],
+      layers: 1,
+      screens: true,
+      walkthrough: false,
+    },
+    { name: 'help', argv: ['--help'], fault: true },
+    { name: 'dry run', argv: [...walkthrough, '--dry-run'], fault: true },
+    {
+      name: 'capture HEAD differs from the checkout',
+      argv: walkthrough,
+      checkoutHead: 'c'.repeat(40),
+      error: /Walkthrough capture HEAD must match/u,
+    },
+    {
+      name: 'provider failure in the later layer',
+      argv: walkthrough,
+      failLayer: 2,
+      error: /task critique exited 1/u,
+    },
+    {
+      name: 'asynchronous output delivery failure in the final layer',
+      argv: walkthrough,
+      failWrite: 2,
+      error: /output closed/u,
+    },
+    {
+      name: 'dirty checkout',
+      argv: walkthrough,
+      dirty: true,
+      error: /clean committed checkout/u,
+    },
+    {
+      name: 'HEAD changes after the last layer',
+      argv: walkthrough,
+      changeHeadAfter: 2,
+      error: /HEAD or worktree changed/u,
+    },
+  ]
+  for (const item of cases)
+    await t.test(item.name, async (subtest) => {
+      const f = fixture()
+      const commonDir = mkdtempSync(join(tmpdir(), 'critique-common-'))
+      subtest.after(() => {
+        rmSync(f.repo, { recursive: true, force: true })
+        rmSync(commonDir, { recursive: true, force: true })
+      })
+      if (item.screens) {
+        const screens = screenOnlyFixture(subtest)
+        mkdirSync(join(f.repo, 'screens'))
+        for (const file of ['manifest.json', 'viewer.png', 'viewer-mobile.png'])
+          writeFileSync(
+            join(f.repo, 'screens', file),
+            readFileSync(join(screens.root, file)),
+          )
+      }
+      const statePath = critiqueStatePath('topic', { run: () => commonDir })
+      const healthy = !item.fault && !item.error
+      if (!healthy) {
+        // A failure must neither add evidence nor replace the last record.
+        mkdirSync(dirname(statePath), { recursive: true })
+        writeFileSync(
+          statePath,
+          JSON.stringify({
+            schema_version: 1,
+            head: earlier,
+            completed: true,
+            walkthroughRoot: captureRootIdentity('/earlier'),
+            screenRoots: [],
+          }),
+        )
+      }
+      let headReads = 0
+      let layers = 0
+      let writes = 0
+      const result = main({
+        argv: item.argv,
+        repo: f.repo,
+        exec: (_command, args) => {
+          if (args[0] === 'status') return item.dirty ? ' M source.tsx' : ''
+          if (args[0] === 'branch') return 'topic'
+          if (args[1] === '--git-common-dir') return commonDir
+          headReads++
+          return item.changeHeadAfter && headReads > item.changeHeadAfter
+            ? 'b'.repeat(40)
+            : (item.checkoutHead ?? f.head)
+        },
+        // The final layer's delivery fails after write() returns, like EPIPE.
+        stdout: new Writable({
+          write(_chunk, _encoding, callback) {
+            if (++writes === item.failWrite)
+              setImmediate(() => callback(new Error('output closed')))
+            else callback()
+          },
+        }),
+        run: () => {
+          if (++layers === item.failLayer)
+            return { status: 1, stderr: 'task critique exited 1' }
+          return item.argv.includes('codex')
+            ? { status: 0, stdout: 'Complete' }
+            : claudeResult
+        },
+      })
+      if (item.error) await assert.rejects(result, item.error)
+      else assert.equal(await result, 0)
+      if (!healthy) {
+        assert.equal(readCritiqueRecord(statePath).head, earlier)
+        return
+      }
+      assert.equal(layers, item.layers)
+      assert.deepEqual(readCritiqueRecord(statePath), {
+        schema_version: 1,
+        head: f.head,
+        completed: true,
+        walkthroughRoot:
+          item.walkthrough === false
+            ? null
+            : captureRootIdentity(realpathSync(f.root)),
+        screenRoots: item.screens
+          ? [captureRootIdentity(realpathSync(join(f.repo, 'screens')))]
+          : [],
+      })
+    })
 })

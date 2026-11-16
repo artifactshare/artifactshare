@@ -341,18 +341,22 @@ test(
     import { runReady, parseArgs } from ${JSON.stringify(new URL('./pr-ready.mjs', import.meta.url).href)}
     import { landed } from ${JSON.stringify(new URL('./pr-landed.mjs', import.meta.url).href)}
     import { acquireFileLock } from ${JSON.stringify(new URL('./os-file-lock.mjs', import.meta.url).href)}
+    import { recordCompletedRounds } from ${JSON.stringify(new URL('./implementation-review-gate.mjs', import.meta.url).href)}
     const [role, ledger] = process.argv.slice(1)
     const releaseSignal = new Promise(resolve => process.once('message', resolve))
     const head = 'a'.repeat(40)
+    const commonDir = ledger + '.git-common'
     let draft = true
     const exec = (file, args) => {
       if (file === 'gh' && args[1] === 'view') return JSON.stringify({ state: 'MERGED', headRefName: 'main' })
       if (file === 'gh' && args[1] === 'list') return JSON.stringify([{number: 56, isDraft: draft, baseRefName: 'main', headRefName: 'topic', headRefOid: head, isCrossRepository: false, body: 'Public body'}])
       if (file === 'gh' && args[1] === 'ready') draft = false
       if (file === 'git' && args[0] === 'branch') return 'topic'
-      if (file === 'git' && args[0] === 'rev-parse') return head
+      if (file === 'git' && args[0] === 'rev-parse') return args[1] === '--git-common-dir' ? commonDir : head
       return ''
     }
+    // Ready requires a completed implementation pair for HEAD.
+    if (role === 'ready') recordCompletedRounds(head, { run: exec, base: head, commitBase: head })
     const acquireLock = async (path, options) => {
       const release = await acquireFileLock(path, { ...options, acquireTimeoutMs: 5000, spawnProcess: (...args) => {
         const child = spawn(...args)

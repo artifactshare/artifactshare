@@ -11,6 +11,16 @@ import {
 import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
 import { landed, renderLandedResult } from './pr-landed.mjs'
+import { implementationReviewProfile } from './implementation-review-gate.mjs'
+import {
+  matchingPairHistory,
+  readRounds,
+  roundsPath,
+} from './review-rounds.mjs'
+import {
+  critiqueStatePath,
+  readCritiqueRecord,
+} from './task-critique-state.mjs'
 
 const taskUsageReportSchemaVersion = 3
 const taskUsageReportKind = 'artifactshare.workflow_usage'
@@ -630,12 +640,7 @@ function readTaskUsageReport(path, readFile) {
 
 function parseArgs(args) {
   const normalized = args[0] === '--' ? args.slice(1) : args
-  const flags = new Set([
-    '--dry-run',
-    '--queue',
-    '--ui-gate-complete',
-    '--no-deferred',
-  ])
+  const flags = new Set(['--dry-run', '--queue', '--no-deferred'])
   const values = new Set([
     '--deferred',
     '--deferred-file',
@@ -660,13 +665,12 @@ function parseArgs(args) {
     ...parsed,
     dryRun: normalized.includes('--dry-run'),
     queue: normalized.includes('--queue'),
-    uiGateComplete: normalized.includes('--ui-gate-complete'),
     noDeferred: normalized.includes('--no-deferred'),
   }
 }
 
 function usage() {
-  return 'Usage: pnpm pr:ready -- [--task-usage-report <path>] [--dry-run] [--queue] [--ui-gate-complete] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
+  return 'Usage: pnpm pr:ready -- [--task-usage-report <path>] [--dry-run] [--queue] (--no-deferred | --deferred <text> ... | --deferred-file <path>)'
 }
 
 /** Every review finding this change chose not to fix has to be named here.
@@ -709,6 +713,47 @@ function uiFiles(exec, base) {
     .split('\n')
     .filter(Boolean)
     .filter(isUiFile)
+}
+
+/** Ready needs the implementation gate's latest completed pair, under the
+ * current profile, for this exact HEAD. A pair for an earlier commit, a
+ * single reviewer, legacy or unreadable history is not evidence. */
+function assertImplementationReviewed(exec, branch, head) {
+  const run = (file, args) => output(exec, file, args)
+  const pair = matchingPairHistory({
+    codexState: readRounds(roundsPath(branch, 'codex', run)),
+    claudeState: readRounds(roundsPath(branch, 'claude', run)),
+    profile: implementationReviewProfile,
+  })
+  if (pair?.head !== head)
+    throw new Error(
+      [
+        `No completed implementation review pair is recorded for HEAD ${head} under the current review profile. Ready was not changed.`,
+        'A pair recorded for an earlier commit does not count. Run the implementation gate on this HEAD, classify its findings, then rerun pr:ready:',
+        '  pnpm review:implementation',
+      ].join('\n'),
+    )
+}
+
+/** A UI diff additionally needs a completed `critique:tasks` record for this
+ * exact HEAD; the critique validated that its captures were taken there. */
+function assertUiCritiqued(exec, branch, head) {
+  const record = readCritiqueRecord(
+    critiqueStatePath(branch, {
+      run: (file, args) => output(exec, file, args),
+    }),
+  )
+  if (record?.head !== head || record.completed !== true)
+    throw new Error(
+      [
+        `UI changes detected, but no completed UI critique is recorded for HEAD ${head}. Ready was not changed.`,
+        'A critique recorded for an earlier commit does not count. On this HEAD:',
+        '- Capture every affected screen state and registered task at desktop and mobile (pnpm screens:capture, pnpm walkthroughs:capture).',
+        '- Run the UI critique with that walkthrough evidence, the PNGs, and relevant source; captures alone are not sufficient:',
+        '  pnpm critique:tasks -- --walkthrough-root <path> --source <path> ...',
+        'If a fix changes HEAD, return to pnpm review:implementation, then recapture and repeat the critique.',
+      ].join('\n'),
+    )
 }
 
 function openPullRequest(exec, branch) {
@@ -942,19 +987,9 @@ function ready({
         'The PR body Workflow usage section must contain only the generated workflow usage block.',
       )
   }
-  const changedUiFiles = uiFiles(exec, pr.baseRefName)
-  if (changedUiFiles.length > 0 && !parsed.uiGateComplete)
-    throw new Error(
-      [
-        'UI changes detected. Ready was not changed.',
-        'Before retrying, confirm all of the following:',
-        '- Every affected screen state and registered task has been captured at desktop and mobile.',
-        '- Two-layer UI critique using walkthrough evidence, PNGs, task/persona context, and relevant source is complete; captures alone are not sufficient.',
-        '- HEAD has no UI changes after that critique. If it does, recapture and repeat the critique.',
-        'Then rerun with --ui-gate-complete and the deferral decision, for example:',
-        '  pnpm pr:ready -- --ui-gate-complete --no-deferred',
-      ].join('\n'),
-    )
+  assertImplementationReviewed(exec, branch, head)
+  if (uiFiles(exec, pr.baseRefName).length > 0)
+    assertUiCritiqued(exec, branch, head)
   const deferred = deferredItems(parsed, readFile)
   if (deferred.length === 0 && !parsed.noDeferred)
     throw new Error(

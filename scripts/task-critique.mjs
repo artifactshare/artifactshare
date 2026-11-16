@@ -14,6 +14,11 @@ import {
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
+import {
+  critiqueCompletionRecord,
+  writeCritiqueRecord,
+} from './task-critique-state.mjs'
+import { writeText } from './implementation-review-gate.mjs'
 
 const timeoutMs = 1_800_000
 const claudeLayers = [
@@ -315,6 +320,7 @@ function validateInputs(
       acceptedBehavior.push(`${taskId}: ${choice}`)
   }
   const screenImages = []
+  const screenRoots = []
   let hasSections = false
   for (const item of options.screenRoots ?? []) {
     const screenRootCandidate = resolve(canonicalRepo, item)
@@ -331,6 +337,7 @@ function validateInputs(
       throw new Error(
         'Screen capture root must be an existing directory inside the repository or screen capture output root.',
       )
+    screenRoots.push(screenRoot)
     const screenManifestPath = validatedFilePath(
       screenRoot,
       resolve(screenRoot, 'manifest.json'),
@@ -395,6 +402,7 @@ function validateInputs(
     imagePaths: options.copyOnly && hasSections ? [] : imagePaths,
     screenImagePaths: screenImages.map((entry) => entry.path),
     screenImages,
+    screenRoots,
   }
 }
 
@@ -618,6 +626,12 @@ async function main({
   run = spawnSync,
   exec = execFileSync,
   stdout = process.stdout,
+  stderr = process.stderr,
+  recordCompletion = (record) =>
+    writeCritiqueRecord(record, {
+      run: (_file, args) => gitOutput(exec, repo, args),
+      repo,
+    }),
 } = {}) {
   const options = parseArgs(argv)
   if (options.help) {
@@ -651,12 +665,28 @@ async function main({
     return 0
   }
   for (const layer of selectedLayers) {
-    stdout.write(
-      `## ${layer.id} critique\n\n${await runLayer(layer, input, { run, repo })}\n\n`,
+    // A pipe failure is reported asynchronously; completion is recorded only
+    // after the stream has accepted every layer's output.
+    await writeText(
+      stdout,
+      `## ${layer.id} critique\n\n${await runLayer(layer, input, { run, repo })}\n`,
     )
     if (cleanHead(exec, repo) !== head)
       throw new Error('HEAD or worktree changed during task critique.')
   }
+  // Ready accepts only this record for the exact HEAD. It is written after
+  // every selected layer was delivered on the unchanged clean checkout.
+  const recorded = await recordCompletion(
+    critiqueCompletionRecord({
+      head,
+      walkthroughRoot: input.root,
+      screenRoots: input.screenRoots,
+    }),
+  )
+  if (!recorded)
+    stderr.write(
+      'No branch is checked out; the critique completed but recorded no Ready evidence.\n',
+    )
   return 0
 }
 

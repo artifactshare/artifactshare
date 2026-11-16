@@ -14,14 +14,42 @@ const pullRequestTemplate = fs.readFileSync(
   'utf8',
 )
 
-test('documents proportional review and validation', () => {
+test('documents proportional specification review and the exact-HEAD Ready prerequisite', () => {
   assert.match(
     workflow,
-    /Codex\/Claude deep-review pair is required only when a change affects schema, authorization, billing, delivery, or the public\/private boundary/u,
+    /For a specification, the Codex\/Claude deep-review pair is required only when a change affects schema, authorization, billing, delivery, or the public\/private boundary/u,
   )
   assert.match(
     workflow,
-    /Ordinary code, workflow, and normative documentation changes still receive an appropriate self-review and targeted validation/u,
+    /Ordinary specifications receive an appropriate self-review and targeted validation instead/u,
+  )
+  assert.match(
+    workflow,
+    /Every implementation, whether ordinary code, workflow, normative documentation, or boundary-sensitive, reaches Ready only after the implementation gate \(`pnpm review:implementation`\) has recorded a completed Codex\/Claude pair for its exact committed HEAD under the current review profile; `pr:ready` enforces this\./u,
+  )
+  assert.match(
+    workflow,
+    /A pair recorded for an earlier commit, a single reviewer, a different profile, or legacy or unreadable history does not count; the refusal names HEAD, and `pnpm review:implementation` on that HEAD is the retry\./u,
+  )
+  assert.match(
+    workflow,
+    /When the diff contains UI changes, it also requires a completed `pnpm critique:tasks` record for that exact HEAD/u,
+  )
+  assert.match(
+    workflow,
+    /SHA-256 identities of the validated walkthrough and screen capture roots, whose recorded capture HEAD equals that HEAD\. It stores no plaintext paths, prompts, sources, scope judgments, dispositions, or reviewer output/u,
+  )
+  assert.match(
+    workflow,
+    /A later commit makes the record obsolete for Ready\./u,
+  )
+  for (const text of [workflow, pullRequestTemplate]) {
+    assert.doesNotMatch(text, /--ui-gate-complete/u)
+    assert.doesNotMatch(text, /ordinary change, summarize the self-review/iu)
+  }
+  assert.doesNotMatch(
+    workflow,
+    /Ordinary code, workflow, and normative documentation changes still receive an appropriate self-review and targeted validation, but do not require this pair/u,
   )
   assert.match(
     workflow,

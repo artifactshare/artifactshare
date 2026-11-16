@@ -161,6 +161,8 @@
     "scripts/tsconfig.json",
     "scripts/task-critique.mjs",
     "scripts/task-critique.test.mjs",
+    "scripts/task-critique-state.mjs",
+    "scripts/task-critique-state.test.mjs",
     "scripts/task-walkthrough-capture.mjs",
     "scripts/task-walkthrough-capture.test.mjs",
     "scripts/task-walkthroughs.mjs",
