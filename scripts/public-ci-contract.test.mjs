@@ -378,7 +378,93 @@ test('proposal status copy is exact and correctly placed', () => {
   assert.equal(proposals.split(paragraph).length - 1, 1)
 })
 
-test('public full CI is merge-queue-only with a stable check-run name', () => {
+const aggregateResultVariables = {
+  'static-validation': 'STATIC_RESULT',
+  'build-validation': 'BUILD_RESULT',
+  'cli-validation': 'CLI_RESULT',
+  'windows-cli-validation': 'WINDOWS_CLI_RESULT',
+  'upload-boundary-validation': 'UPLOAD_BOUNDARY_RESULT',
+  'browser-validation': 'BROWSER_RESULT',
+  'visual-validation': 'VISUAL_RESULT',
+}
+
+function runAggregate(eventName, results) {
+  const [step] = parsedWorkflow.jobs.validate.steps
+  return spawnSync('bash', ['-c', step.run], {
+    encoding: 'utf8',
+    env: { ...process.env, EVENT_NAME: eventName, ...results },
+  })
+}
+
+function aggregateResults(staticResult, otherResult) {
+  return Object.fromEntries(
+    Object.values(aggregateResultVariables).map((name) => [
+      name,
+      name === 'STATIC_RESULT' ? staticResult : otherResult,
+    ]),
+  )
+}
+
+test('public full CI runs on pull requests and merge groups with a stable check-run name', () => {
+  const aggregate = parsedWorkflow.jobs.validate
+  assert.equal(aggregate.name, 'Public full validation')
+  assert.equal(
+    aggregate.if,
+    "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}",
+  )
+  assert.doesNotMatch(aggregate.if, /workflow_dispatch/u)
+  assert.equal(aggregate.steps.length, 1)
+  const [step] = aggregate.steps
+  assert.deepEqual(step.env, {
+    EVENT_NAME: '${{ github.event_name }}',
+    ...Object.fromEntries(
+      Object.entries(aggregateResultVariables).map(([job, name]) => [
+        name,
+        `\${{ needs.${job}.result }}`,
+      ]),
+    ),
+  })
+  assert.doesNotMatch(JSON.stringify(aggregate), /continue-on-error/u)
+})
+
+test('pull request aggregate requires static success with other lanes skipped', () => {
+  const healthy = runAggregate(
+    'pull_request',
+    aggregateResults('success', 'skipped'),
+  )
+  assert.equal(healthy.status, 0, healthy.stderr)
+  for (const staticResult of ['failure', 'cancelled', 'skipped', '']) {
+    const result = runAggregate(
+      'pull_request',
+      aggregateResults(staticResult, 'skipped'),
+    )
+    assert.notEqual(result.status, 0, `static=${staticResult}`)
+  }
+})
+
+test('merge group aggregate requires every lane to succeed', () => {
+  const healthy = runAggregate(
+    'merge_group',
+    aggregateResults('success', 'success'),
+  )
+  assert.equal(healthy.status, 0, healthy.stderr)
+  for (const name of Object.values(aggregateResultVariables)) {
+    for (const laneResult of ['failure', 'cancelled', 'skipped', '']) {
+      const result = runAggregate('merge_group', {
+        ...aggregateResults('success', 'success'),
+        [name]: laneResult,
+      })
+      assert.notEqual(result.status, 0, `${name}=${laneResult}`)
+    }
+  }
+  const dispatch = runAggregate(
+    'workflow_dispatch',
+    aggregateResults('success', 'success'),
+  )
+  assert.notEqual(dispatch.status, 0)
+})
+
+test('public full CI keeps every validation lane as a dependency', () => {
   const aggregate = parsedWorkflow.jobs.validate
   assert.equal(aggregate.name, 'Public full validation')
   assert.deepEqual(aggregate.needs, [
@@ -391,13 +477,6 @@ test('public full CI is merge-queue-only with a stable check-run name', () => {
     'visual-validation',
   ])
   assert.match(workflow, /merge_group:\s*\n\s+types: \[checks_requested\]/)
-  assert.match(aggregate.if, /always\(\)/u)
-  assert.match(aggregate.if, /github\.event_name == 'merge_group'/u)
-  const aggregateRun = aggregate.steps.map((step) => step.run ?? '').join('\n')
-  assert.equal(
-    aggregateRun,
-    'test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$UPLOAD_BOUNDARY_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success',
-  )
   assert.doesNotMatch(workflow, /^\s+push:/m)
   assert.doesNotMatch(workflow, /merge_group_head_sha|merge_method/)
 })
@@ -450,9 +529,58 @@ test('Windows credential validation runs in the merge queue and by manual dispat
   )
 })
 
-test('every executable validation lane checks out the merge-group SHA', () => {
+test('static validation runs on pull request heads and merge-group SHAs', () => {
+  const job = parsedWorkflow.jobs['static-validation']
+  assert.equal(job.name, 'Public static and unit validation')
+  assert.equal(
+    job.if,
+    "github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+  )
+  assert.doesNotMatch(job.if, /workflow_dispatch/u)
+  const checkout = job.steps.find((step) =>
+    step.uses?.startsWith('actions/checkout@'),
+  )
+  assert.equal(
+    checkout.with.ref,
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}",
+  )
+  assert.equal(checkout.with['persist-credentials'], false)
+  assert.equal(checkout.with['fetch-depth'], 0)
+  assert.deepEqual(job.steps.map((step) => step.run).filter(Boolean), [
+    'pnpm install --frozen-lockfile --ignore-scripts',
+    'pnpm validate:static',
+  ])
+  assert.equal(job.permissions, undefined)
+  assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
+})
+
+test('other validation lanes never run on pull requests', () => {
   for (const jobName of [
-    'static-validation',
+    'build-validation',
+    'cli-validation',
+    'browser-validation',
+    'visual-validation',
+  ]) {
+    assert.equal(
+      parsedWorkflow.jobs[jobName].if,
+      "github.event_name == 'merge_group'",
+      jobName,
+    )
+  }
+  for (const jobName of [
+    'windows-cli-validation',
+    'upload-boundary-validation',
+  ]) {
+    assert.equal(
+      parsedWorkflow.jobs[jobName].if,
+      "github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'",
+      jobName,
+    )
+  }
+})
+
+test('every merge-queue-only lane checks out the merge-group SHA', () => {
+  for (const jobName of [
     'build-validation',
     'cli-validation',
     'browser-validation',
