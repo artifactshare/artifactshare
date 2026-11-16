@@ -440,6 +440,14 @@ test('pull request aggregate requires static success with other lanes skipped', 
     )
     assert.notEqual(result.status, 0, `static=${staticResult}`)
   }
+  // A lane that ran on a pull request is unexpected, whatever its result.
+  for (const otherResult of ['success', 'failure', 'cancelled', '']) {
+    const result = runAggregate(
+      'pull_request',
+      aggregateResults('success', otherResult),
+    )
+    assert.notEqual(result.status, 0, `other=${otherResult}`)
+  }
 })
 
 test('merge group aggregate requires every lane to succeed', () => {
