@@ -61,12 +61,13 @@ export const taskWalkthroughs = [
         kind: 'sequence',
         steps: [
           {
+            // Appears only in the body of the seeded report, not its title.
             kind: 'fill',
             selector: 'input[role="combobox"]',
-            value: 'Quarterly',
+            value: '前月比',
             submit: true,
           },
-          { kind: 'inspect', selector: 'main h1' },
+          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
         ],
       }),
       phase('pending', 'Change filters and observe the live result count', {

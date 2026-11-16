@@ -87,8 +87,12 @@ export function SearchResults({
   const params = new URLSearchParams(location.search)
   if ('error' in result)
     return (
-      <div role="alert" className="space-y-3">
-        <p>
+      <div className="space-y-3">
+        <h1 className="text-xl font-semibold tracking-tight">
+          {/* A failed search has no owner names to show. */}
+          {searchHeading(params.get('q') ?? '', [], '', t)}
+        </h1>
+        <p role="alert">
           {t(
             result.error.code === 'validation_error'
               ? 'search.invalid'
@@ -863,7 +867,6 @@ function SearchRowHeader({
             <span>{t('search.viewed', { date: date(item.lastViewedAt) })}</span>
           </>
         )}
-        <span aria-hidden="true">·</span>
         <VisibilityChip
           visibility={item.visibility}
           label={t(shortVisibilityLabelKey(item.visibility))}
@@ -979,6 +982,7 @@ function FilterMenu({
   sort?: boolean
   menu?: 'owner'
 }) {
+  const [open, setOpen] = useState(false)
   if (inline)
     return (
       <section className="space-y-3">
@@ -987,7 +991,7 @@ function FilterMenu({
       </section>
     )
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           data-search-sort={sort || undefined}
@@ -1000,7 +1004,20 @@ function FilterMenu({
           <IconChevronDown />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="max-h-96 overflow-y-auto">
+      <PopoverContent
+        align="start"
+        className="max-h-96 overflow-y-auto"
+        // Sort is a single choice: picking one is done, so close the menu to
+        // show the re-sorted list. The other menus allow several changes.
+        onClick={
+          sort
+            ? (event) => {
+                if ((event.target as HTMLElement).closest('[role="radio"]'))
+                  setOpen(false)
+              }
+            : undefined
+        }
+      >
         {children}
       </PopoverContent>
     </Popover>

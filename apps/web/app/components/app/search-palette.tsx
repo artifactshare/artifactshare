@@ -72,10 +72,18 @@ export function SearchPalette({
       window.removeEventListener('search:edit', edit)
     }
   }, [])
-  const close = () => {
+  // Leaving for another page hands focus to that page (the results heading),
+  // so only a plain close returns focus to the trigger.
+  const keepFocus = useRef(false)
+  const close = (restoreFocus = true) => {
     setOpen(false)
     setEditQuery(undefined)
-    requestAnimationFrame(() => trigger.current?.focus())
+    keepFocus.current = !restoreFocus
+    if (restoreFocus) requestAnimationFrame(() => trigger.current?.focus())
+  }
+  const focusAfterDialog = () => {
+    if (!keepFocus.current) trigger.current?.focus()
+    keepFocus.current = false
   }
   useSearchShortcuts(setOpen)
   const field = (
@@ -110,7 +118,7 @@ export function SearchPalette({
           open={open}
           setOpen={setOpen}
           close={close}
-          trigger={trigger}
+          focusAfterDialog={focusAfterDialog}
           resultsPage={resultsPage}
         />
       ) : (
@@ -181,15 +189,15 @@ function MobileSearch({
   open,
   setOpen,
   close,
-  trigger,
+  focusAfterDialog,
   resultsPage,
 }: {
   field: ReactNode
   body: ReactNode
   open: boolean
   setOpen: (open: boolean) => void
-  close: () => void
-  trigger: RefObject<HTMLButtonElement | null>
+  close: (restoreFocus?: boolean) => void
+  focusAfterDialog: () => void
   resultsPage: boolean
 }) {
   const { t } = useT()
@@ -219,7 +227,7 @@ function MobileSearch({
           showCloseButton={false}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
-            trigger.current?.focus()
+            focusAfterDialog()
           }}
           className="inset-0 flex h-dvh max-h-dvh max-w-none translate-x-0 translate-y-0 flex-col gap-3 rounded-none p-3"
           style={{
@@ -305,7 +313,7 @@ function PaletteBody({
   initialParams,
 }: {
   project?: SearchProject
-  close: () => void
+  close: (restoreFocus?: boolean) => void
   mobile: boolean
   initialQuery: string
   initialParams: string
@@ -418,7 +426,7 @@ function PaletteBody({
         ?.scrollIntoView({ block: 'nearest' })
   }, [selected])
   function go(path: string, submit = false) {
-    close()
+    close(false)
     void navigate(path, {
       state: { searchFromApp: true, searchSubmission: submit },
     })
@@ -562,7 +570,7 @@ function PaletteBody({
         />
       </div>
       {mobile && (
-        <Button type="button" variant="ghost" onClick={close}>
+        <Button type="button" variant="ghost" onClick={() => close()}>
           {t('search.cancel')}
         </Button>
       )}

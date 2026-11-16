@@ -563,6 +563,12 @@ test('Back and viewer return reload later pages before restoring their visible a
   await page.getByRole('combobox', { name: 'Keywords' }).fill('beta')
   await userEvent.keyboard('{Enter}')
   await vi.waitFor(() => expect(document.activeElement?.tagName).toBe('H1'))
+  // Closing the search must not hand focus back to the header afterwards.
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+  )
+  await waitForBrowserLayout()
+  expect(document.activeElement?.tagName).toBe('H1')
   expect(window.location.search).toBe('?q=beta')
 })
 
