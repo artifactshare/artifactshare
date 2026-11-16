@@ -17,29 +17,43 @@ function commandOutput(file, args) {
   return execFileSync(file, args, { encoding: 'utf8' }).trim()
 }
 
+/** The Git common directory shared by every linked worktree. The main worktree
+ * reports a relative `.git`, which is relative to the repository the command
+ * ran in, not necessarily to this process's cwd. */
+export function gitCommonDir(run = commandOutput, repo = process.cwd()) {
+  return resolve(repo, run('git', ['rev-parse', '--git-common-dir']))
+}
+
+/** Branch-keyed workflow state under the Git common directory. Keys are
+ * hashed rather than sanitised, because replacing separators makes `fix/a-b`
+ * and `fix_a-b` collide although they are different branches. */
+export function branchStatePath(commonDir, area, key) {
+  const digest = createHash('sha256').update(key).digest('hex').slice(0, 32)
+  return join(commonDir, 'artifactshare', area, `${digest}.json`)
+}
+
 /** One file per branch and reviewer. The workflow runs both reviewers in
  * parallel, so a shared file is a read-modify-write race whose loser silently
  * drops the other's rounds — and a lock would be machinery bought to protect
- * data that never had to be shared. Branch names are hashed rather than
- * sanitised, because replacing separators makes `fix/a-b` and `fix_a-b` collide
- * although they are different branches. */
-export function roundsPath(branch, reviewer, run = commandOutput) {
-  const key = createHash('sha256')
-    .update(`${reviewer}\u0000${branch}`)
-    .digest('hex')
-    .slice(0, 32)
-  return join(
-    resolve(run('git', ['rev-parse', '--git-common-dir'])),
-    'artifactshare',
+ * data that never had to be shared. The round-cap consultation is kept under
+ * its own `consultation` name beside them. */
+export function roundsPathIn(commonDir, branch, reviewer) {
+  return branchStatePath(
+    commonDir,
     'review-rounds',
-    `${key}.json`,
+    `${reviewer}\u0000${branch}`,
   )
+}
+
+export function roundsPath(branch, reviewer, run = commandOutput) {
+  return roundsPathIn(gitCommonDir(run), branch, reviewer)
 }
 
 /** Every rounds file for a branch, so deleting the branch clears all of them. */
 export function roundsPathsForBranch(branch, run = commandOutput) {
-  return ['codex', 'claude'].map((reviewer) =>
-    roundsPath(branch, reviewer, run),
+  const commonDir = gitCommonDir(run)
+  return ['codex', 'claude', 'consultation'].map((reviewer) =>
+    roundsPathIn(commonDir, branch, reviewer),
   )
 }
 
@@ -54,7 +68,9 @@ export function readRounds(path) {
   }
 }
 
-export function writeRounds(path, state) {
+/** Atomic replacement: a failed rename leaves the previous file in place and
+ * removes the temporary one. */
+export function writeRounds(path, state, { rename = renameSync } = {}) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
@@ -62,7 +78,7 @@ export function writeRounds(path, state) {
       encoding: 'utf8',
       mode: 0o600,
     })
-    renameSync(temporary, path)
+    rename(temporary, path)
   } finally {
     rmSync(temporary, { force: true })
   }
@@ -107,7 +123,96 @@ export function matchingPairHistory({ codexState, claudeState, profile } = {}) {
     ...(codex.commitBase && codex.commitBase === claude.commitBase
       ? { commitBase: codex.commitBase }
       : {}),
+    // Only the blocker counts the gate parsed from both results; a round
+    // without one (legacy, or an unparseable result) leaves this undefined.
+    ...(Number.isInteger(codex.blockers) && Number.isInteger(claude.blockers)
+      ? { blockers: codex.blockers + claude.blockers }
+      : {}),
   }
+}
+
+/** Every pair both reviewer files recorded under `profile`, oldest first. */
+function completedPairs({ codexState, claudeState, profile }) {
+  const rounds = (state) =>
+    state?.schema_version === 1 && Array.isArray(state.rounds)
+      ? state.rounds.filter(
+          (round) =>
+            round?.head && round.base && sameJson(round.profile, profile),
+        )
+      : []
+  const codex = rounds(codexState)
+  return rounds(claudeState).filter((round) =>
+    codex.some(
+      (other) => other.head === round.head && other.base === round.base,
+    ),
+  )
+}
+
+/**
+ * Whether `pair` and the pairs it narrowed from together reviewed the whole
+ * branch. A pair reads `base...head`, which starts at their merge base. It
+ * covers the branch when that start is `mergeBase`, or when its base is the
+ * HEAD of an earlier completed pair under the same profile whose own chain
+ * reaches `mergeBase`. A narrower explicit base breaks the chain.
+ */
+export function pairCoversBranch({
+  codexState,
+  claudeState,
+  profile,
+  pair,
+  mergeBase,
+  run = commandOutput,
+} = {}) {
+  if (!pair?.head || !pair.base || !mergeBase) return false
+  const pairs = completedPairs({ codexState, claudeState, profile })
+  const visited = new Set()
+  let current = pair
+  while (current && !visited.has(current.head)) {
+    visited.add(current.head)
+    let start
+    try {
+      start = run('git', ['merge-base', current.base, current.head])
+    } catch {
+      start = undefined
+    }
+    if (start === mergeBase) return true
+    const base = current.base
+    current = pairs.findLast((earlier) => earlier.head === base)
+  }
+  return false
+}
+
+/** The latest round-cap consultation for a branch: the HEAD it judged, its
+ * decision and the consulted profile. No consultation prose is stored. */
+export const consultationDecisions = Object.freeze([
+  'PROCEED',
+  'RETURN TO OWNER',
+])
+
+export function readConsultation(path, profile) {
+  let value
+  try {
+    value = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return undefined
+  }
+  const consultation = value?.schema_version === 1 ? value.consultation : null
+  if (
+    !consultation ||
+    typeof consultation.head !== 'string' ||
+    !/^[0-9a-f]{40}$/u.test(consultation.head) ||
+    !consultationDecisions.includes(consultation.decision) ||
+    !sameJson(consultation.profile, profile)
+  )
+    return undefined
+  return consultation
+}
+
+export function writeConsultation(path, { head, decision, profile }) {
+  writeRounds(path, {
+    schema_version: 1,
+    consultation: { head, decision, profile, at: new Date().toISOString() },
+  })
 }
 
 /** Resolve the base for a coordinated final pair. */
@@ -164,12 +269,13 @@ export function isStrictAncestor(base, head, run = commandOutput) {
 
 export function recordRound(
   state,
-  { head, reviewer, base, profile, commitBase },
+  { head, reviewer, base, profile, commitBase, blockers },
 ) {
   const round = { head, reviewer, at: new Date().toISOString() }
   if (base !== undefined) round.base = base
   if (commitBase !== undefined) round.commitBase = commitBase
   if (profile !== undefined) round.profile = profile
+  if (Number.isInteger(blockers)) round.blockers = blockers
   return {
     schema_version: 1,
     rounds: [...(Array.isArray(state?.rounds) ? state.rounds : []), round],

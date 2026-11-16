@@ -12,10 +12,14 @@ import { acquireFileLock, acquireLandingLock } from './os-file-lock.mjs'
 import { queue } from './pr-queue.mjs'
 import { landed, renderLandedResult } from './pr-landed.mjs'
 import { implementationReviewProfile } from './implementation-review-gate.mjs'
+import { roundCapConsultation } from './agent-role-settings.mjs'
 import {
+  gitCommonDir,
   matchingPairHistory,
+  pairCoversBranch,
+  readConsultation,
   readRounds,
-  roundsPath,
+  roundsPathIn,
 } from './review-rounds.mjs'
 import {
   critiqueStatePath,
@@ -715,34 +719,71 @@ function uiFiles(exec, base) {
     .filter(isUiFile)
 }
 
-/** Ready needs the implementation gate's latest completed pair, under the
- * current profile, for this exact HEAD. A pair for an earlier commit, a
- * single reviewer, legacy or unreadable history is not evidence. */
-function assertImplementationReviewed(exec, branch, head) {
+/** Ready needs, for this exact HEAD, either the implementation gate's latest
+ * completed pair under the current profile with no blocker and a reviewed
+ * range reaching the branch's merge base, or a round-cap consultation whose
+ * decision is PROCEED. A pair for an earlier commit, a single reviewer, legacy
+ * or unreadable history is not evidence. */
+function assertImplementationReviewed({ exec, commonDir, branch, head, base }) {
   const run = (file, args) => output(exec, file, args)
-  const pair = matchingPairHistory({
-    codexState: readRounds(roundsPath(branch, 'codex', run)),
-    claudeState: readRounds(roundsPath(branch, 'claude', run)),
-    profile: implementationReviewProfile,
-  })
+  const consultation = readConsultation(
+    roundsPathIn(commonDir, branch, 'consultation'),
+    roundCapConsultation,
+  )
+  if (consultation?.head === head) {
+    if (consultation.decision === 'PROCEED') return
+    throw new Error(
+      `The round-cap consultation for HEAD ${head} decided RETURN TO OWNER. Ready was not changed; return the remaining blockers to the owner.`,
+    )
+  }
+  const codexState = readRounds(roundsPathIn(commonDir, branch, 'codex'))
+  const claudeState = readRounds(roundsPathIn(commonDir, branch, 'claude'))
+  const profile = implementationReviewProfile
+  const pair = matchingPairHistory({ codexState, claudeState, profile })
   if (pair?.head !== head)
     throw new Error(
       [
         `No completed implementation review pair is recorded for HEAD ${head} under the current review profile. Ready was not changed.`,
         'A pair recorded for an earlier commit does not count. Run the implementation gate on this HEAD, classify its findings, then rerun pr:ready:',
         '  pnpm review:implementation',
+        'When the round cap is spent, pass the remaining blockers and their dispositions with --dispositions-file <path> for the round-cap consultation.',
+      ].join('\n'),
+    )
+  if (pair.blockers !== 0)
+    throw new Error(
+      [
+        pair.blockers === undefined
+          ? `The implementation review pair for HEAD ${head} has no recorded blocker count. Ready was not changed.`
+          : `The implementation review pair for HEAD ${head} reported ${pair.blockers} blocker(s). Ready was not changed.`,
+        'Correct the blockers, commit, and run the gate again; when the round cap is spent, run it with the remaining blockers and their dispositions for the round-cap consultation:',
+        '  pnpm review:implementation -- --dispositions-file <path>',
+      ].join('\n'),
+    )
+  const mergeBase = run('git', ['merge-base', `origin/${base}`, head])
+  if (
+    !pairCoversBranch({
+      codexState,
+      claudeState,
+      profile,
+      pair,
+      mergeBase,
+      run,
+    })
+  )
+    throw new Error(
+      [
+        `The implementation review pair for HEAD ${head} reviewed only ${pair.base}...${head}, which does not reach the merge base ${mergeBase} with origin/${base} through earlier completed pairs. Ready was not changed.`,
+        // A bare rerun on the same HEAD would reuse the rejected base.
+        'Run the implementation gate on the whole branch range:',
+        `  pnpm review:implementation -- --base ${mergeBase}`,
       ].join('\n'),
     )
 }
 
 /** A UI diff additionally needs a completed `critique:tasks` record for this
  * exact HEAD; the critique validated that its captures were taken there. */
-function assertUiCritiqued(exec, branch, head) {
-  const record = readCritiqueRecord(
-    critiqueStatePath(branch, {
-      run: (file, args) => output(exec, file, args),
-    }),
-  )
+function assertUiCritiqued({ commonDir, branch, head }) {
+  const record = readCritiqueRecord(critiqueStatePath(commonDir, branch))
   if (record?.head !== head || record.completed !== true)
     throw new Error(
       [
@@ -987,9 +1028,15 @@ function ready({
         'The PR body Workflow usage section must contain only the generated workflow usage block.',
       )
   }
-  assertImplementationReviewed(exec, branch, head)
-  if (uiFiles(exec, pr.baseRefName).length > 0)
-    assertUiCritiqued(exec, branch, head)
+  const evidence = {
+    exec,
+    commonDir: gitCommonDir((file, args) => output(exec, file, args)),
+    branch,
+    head,
+    base: pr.baseRefName,
+  }
+  assertImplementationReviewed(evidence)
+  if (uiFiles(exec, pr.baseRefName).length > 0) assertUiCritiqued(evidence)
   const deferred = deferredItems(parsed, readFile)
   if (deferred.length === 0 && !parsed.noDeferred)
     throw new Error(

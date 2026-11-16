@@ -15,7 +15,13 @@ import {
   implementationReviewProfile,
   recordCompletedRounds,
 } from './implementation-review-gate.mjs'
-import { readRounds, roundsPath, writeRounds } from './review-rounds.mjs'
+import { roundCapConsultation } from './agent-role-settings.mjs'
+import {
+  readRounds,
+  roundsPath,
+  writeConsultation,
+  writeRounds,
+} from './review-rounds.mjs'
 import {
   isUiFile,
   parseArgs,
@@ -89,6 +95,10 @@ function tempUsageReport() {
   return path
 }
 
+/** The branch's merge base with origin/main in the harness. The harness's
+ * history is linear, so a pair's `base...head` range starts at its base. */
+const mergeBase = 'b'.repeat(40)
+
 /** The serialized critique record for the `topic` branch, written as a fixture
  * so these Ready tests depend only on Ready's reader. */
 const critiqueRecordPath = (commonDir) =>
@@ -101,14 +111,19 @@ const critiqueRecordPath = (commonDir) =>
 
 /** Records Ready evidence for the `topic` branch: a completed implementation
  * pair through the gate's recorder and, unless omitted, a completed critique. */
-function recordEvidence(commonDir, target, { pair = true, critique = true }) {
+function recordEvidence(
+  commonDir,
+  target,
+  {
+    pair = true,
+    critique = true,
+    base = mergeBase,
+    blockers = { codex: 0, claude: 0 },
+  },
+) {
   const run = (_file, args) => (args[0] === 'branch' ? 'topic' : commonDir)
   if (pair)
-    recordCompletedRounds(target, {
-      run,
-      base: 'b'.repeat(40),
-      commitBase: 'b'.repeat(40),
-    })
+    recordCompletedRounds(target, { run, base, commitBase: base, blockers })
   if (critique) {
     const path = critiqueRecordPath(commonDir)
     mkdirSync(dirname(path), { recursive: true })
@@ -156,6 +171,8 @@ function harness({
     if (file === 'git' && args[0] === 'branch') return 'topic\n'
     if (file === 'git' && args[0] === 'rev-parse')
       return `${args[1] === '--git-common-dir' ? commonDir : localHead}\n`
+    if (file === 'git' && args[0] === 'merge-base')
+      return `${args[1].startsWith('origin/') ? mergeBase : args[1]}\n`
     if (file === 'git' && args[0] === 'status') return dirty ? ' M file' : ''
     if (file === 'git' && args[0] === 'diff') return changedFiles.join('\n')
     if (file === 'gh' && args[1] === 'list')
@@ -1534,6 +1551,125 @@ test('a UI diff needs a completed critique record for HEAD; a non-UI diff does n
         assert.equal(existsSync(ledger), passes && !dryRun)
       }
     })
+})
+
+test('a pair on HEAD that reported a blocker does not authorize Ready', () => {
+  const h = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(h.commonDir, head, {
+    critique: false,
+    blockers: { codex: 0, claude: 1 },
+  })
+  const ledger = tempLedger()
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(), ledger }),
+    (error) => {
+      assert.match(
+        error.message,
+        new RegExp(`pair for HEAD ${head} reported 1 blocker`),
+      )
+      assert.match(error.message, /--dispositions-file <path>/u)
+      return true
+    },
+  )
+  assert.equal(markedReady(h), false)
+  assert.equal(existsSync(ledger), false)
+  // A result the gate could not count is not a clean pair either.
+  recordEvidence(h.commonDir, head, { critique: false, blockers: {} })
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(true), ledger }),
+    /has no recorded blocker count/u,
+  )
+  // A new pair without blockers restores eligibility.
+  recordEvidence(h.commonDir, head, { critique: false })
+  ready({ exec: h.exec, parsed: evidenceParsed(), ledger })
+  assert.equal(markedReady(h), true)
+})
+
+test('a round-cap consultation for HEAD decides Ready', async (t) => {
+  const consultationPath = (h) =>
+    roundsPath('topic', 'consultation', () => h.commonDir)
+  const cases = [
+    ['PROCEED on HEAD', head, 'PROCEED', true],
+    ['RETURN TO OWNER on HEAD', head, 'RETURN TO OWNER', /RETURN TO OWNER/u],
+    [
+      'PROCEED on an earlier commit',
+      'e'.repeat(40),
+      'PROCEED',
+      new RegExp(`pair for HEAD ${head} reported 1 blocker`),
+    ],
+  ]
+  for (const [name, target, decision, expected] of cases)
+    await t.test(name, () => {
+      // The cap is spent and the last pair, on HEAD, still reported a blocker.
+      const h = harness({ body: 'Public body', evidence: { pair: false } })
+      recordEvidence(h.commonDir, head, {
+        critique: false,
+        blockers: { codex: 1, claude: 0 },
+      })
+      writeConsultation(consultationPath(h), {
+        head: target,
+        decision,
+        profile: roundCapConsultation,
+      })
+      const ledger = tempLedger()
+      const attempt = () =>
+        ready({ exec: h.exec, parsed: evidenceParsed(), ledger })
+      if (expected === true) attempt()
+      else assert.throws(attempt, expected)
+      assert.equal(markedReady(h), expected === true)
+    })
+})
+
+test('a pair narrowed below the merge base counts only through earlier pairs', () => {
+  // Ten commits after the merge base were never reviewed; the pair on HEAD
+  // read only HEAD~1...HEAD.
+  const parent = 'f'.repeat(40)
+  const h = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(h.commonDir, head, { critique: false, base: parent })
+  const ledger = tempLedger()
+  assert.throws(
+    () => ready({ exec: h.exec, parsed: evidenceParsed(), ledger }),
+    (error) => {
+      assert.match(
+        error.message,
+        new RegExp(
+          `reviewed only ${parent}\\.\\.\\.${head}.*merge base ${mergeBase}`,
+        ),
+      )
+      // A bare rerun would reuse the rejected base; recovery names the merge
+      // base instead.
+      assert.match(
+        error.message,
+        new RegExp(`pnpm review:implementation -- --base ${mergeBase}\\n?$`),
+      )
+      assert.doesNotMatch(error.message, new RegExp(`--base ${parent}`))
+      return true
+    },
+  )
+  assert.equal(markedReady(h), false)
+
+  // An earlier completed pair on the parent reviewed from the merge base.
+  const fresh = harness({ body: 'Public body', evidence: { pair: false } })
+  recordEvidence(fresh.commonDir, parent, { critique: false })
+  recordEvidence(fresh.commonDir, head, { critique: false, base: parent })
+  ready({ exec: fresh.exec, parsed: evidenceParsed(), ledger })
+  assert.equal(markedReady(fresh), true)
+})
+
+test('resolves the Git common directory once for all Ready evidence', () => {
+  const h = harness({
+    body: 'Public body',
+    changedFiles: ['apps/web/app/routes/pricing.tsx'],
+  })
+  ready({ exec: h.exec, parsed: evidenceParsed(), ledger: tempLedger() })
+  assert.equal(
+    h.calls.filter(
+      ([file, args]) =>
+        file === 'git' && args.join(' ') === 'rev-parse --git-common-dir',
+    ).length,
+    1,
+  )
+  assert.equal(markedReady(h), true)
 })
 
 test('checks required status then makes the pushed Draft ready', () => {

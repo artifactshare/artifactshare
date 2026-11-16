@@ -6,7 +6,8 @@ import {
   acquireLandingLock,
   landingLockHolderLookup,
 } from './os-file-lock.mjs'
-import { roundsPathsForBranch } from './review-rounds.mjs'
+import { gitCommonDir, roundsPathsForBranch } from './review-rounds.mjs'
+import { critiqueStatePath } from './task-critique-state.mjs'
 import {
   dischargeEntry,
   ledgerPath,
@@ -208,14 +209,18 @@ export async function landed({
           notes.push(
             `Left branch ${branch}: not merged into main (${view.state})`,
           )
-          // A later branch of the same name must not inherit these rounds: the
-          // recorded heads may not even exist after gc. Resolved through the
-          // injected exec so a test never reaches the checkout's own state.
-          for (const file of roundsPathsForBranch(branch, (name, args) =>
-            output(exec, name, args),
-          ))
-            rmSync(file, { force: true })
         }
+        // The PR's lifecycle is finished whether the branch was deleted or
+        // left in place, so a later branch of the same name must not inherit
+        // its rounds, consultation or UI critique record: the recorded heads
+        // may not even exist after gc. Resolved through the injected exec so
+        // a test never reaches the checkout's own state.
+        const run = (name, args) => output(exec, name, args)
+        for (const file of [
+          ...roundsPathsForBranch(branch, run),
+          critiqueStatePath(gitCommonDir(run), branch),
+        ])
+          rmSync(file, { force: true })
       }
     } catch (error) {
       problems.push(error instanceof Error ? error.message : String(error))

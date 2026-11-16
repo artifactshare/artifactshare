@@ -14,10 +14,8 @@ import {
 import { uiCritique } from './agent-role-settings.mjs'
 import { personas, taskFlowPhases, tasks } from './task-ledger.mjs'
 import { screenCaptureOutputRoot } from './screen-capture-output.mjs'
-import {
-  critiqueCompletionRecord,
-  writeCritiqueRecord,
-} from './task-critique-state.mjs'
+import { critiqueRecord, writeCritiqueRecord } from './task-critique-state.mjs'
+import { gitCommonDir } from './review-rounds.mjs'
 import { writeText } from './implementation-review-gate.mjs'
 
 const timeoutMs = 1_800_000
@@ -427,6 +425,15 @@ function readDispositions(path, repo) {
   return text
 }
 
+const critiqueStatusComplete = 'CRITIQUE_STATUS: COMPLETE'
+const critiqueStatusNeedsInput = 'CRITIQUE_STATUS: NEEDS_INPUT'
+
+// Only the exact final line of a layer's reply decides completion; no other
+// reviewer text is parsed. A missing or malformed line is not completion.
+function layerCompleted(text) {
+  return text.trimEnd().split('\n').at(-1) === critiqueStatusComplete
+}
+
 function commonPrompt(input) {
   return [
     'Read-only UI critique. Do not edit files, run a browser, or infer missing evidence.',
@@ -473,6 +480,7 @@ function commonPrompt(input) {
         ]
       : []),
     `Output Markdown with: Evidence triage; Coverage; Findings. Each resolved finding includes ${input.screenOnly ? 'screen, state, viewport' : 'task, viewport, phase'}, classification, severity (blocker/follow-up/non-actionable), evidence, disposition, and the minimal proportional next step. A needs-verification entry instead contains NEEDS INPUT and the required evidence, with no disposition.`,
+    `End the reply with exactly one final line, ${critiqueStatusComplete} or ${critiqueStatusNeedsInput}; use ${critiqueStatusNeedsInput} when the evidence was not enough to judge a required ${input.screenOnly ? 'screen' : 'screen or task'}.`,
   ].join('\n')
 }
 
@@ -627,10 +635,13 @@ async function main({
   exec = execFileSync,
   stdout = process.stdout,
   stderr = process.stderr,
-  recordCompletion = (record) =>
+  recordCompletion = (record, branch) =>
     writeCritiqueRecord(record, {
-      run: (_file, args) => gitOutput(exec, repo, args),
-      repo,
+      commonDir: gitCommonDir(
+        (_file, args) => gitOutput(exec, repo, args),
+        repo,
+      ),
+      branch,
     }),
 } = {}) {
   const options = parseArgs(argv)
@@ -639,6 +650,8 @@ async function main({
     return 0
   }
   const head = cleanHead(exec, repo)
+  // The record is keyed by the branch the critique started on.
+  const branch = gitOutput(exec, repo, ['branch', '--show-current'])
   const input = {
     ...validateInputs(options, { repo, head }),
     dispositions: readDispositions(options.dispositionsFile, repo),
@@ -664,28 +677,38 @@ async function main({
       throw new Error('HEAD or worktree changed during task critique.')
     return 0
   }
+  let completed = true
   for (const layer of selectedLayers) {
-    // A pipe failure is reported asynchronously; completion is recorded only
+    const text = await runLayer(layer, input, { run, repo })
+    if (!layerCompleted(text)) completed = false
+    // A pipe failure is reported asynchronously; the outcome is recorded only
     // after the stream has accepted every layer's output.
-    await writeText(
-      stdout,
-      `## ${layer.id} critique\n\n${await runLayer(layer, input, { run, repo })}\n`,
-    )
+    await writeText(stdout, `## ${layer.id} critique\n\n${text}\n`)
     if (cleanHead(exec, repo) !== head)
       throw new Error('HEAD or worktree changed during task critique.')
   }
-  // Ready accepts only this record for the exact HEAD. It is written after
-  // every selected layer was delivered on the unchanged clean checkout.
-  const recorded = await recordCompletion(
-    critiqueCompletionRecord({
+  if (gitOutput(exec, repo, ['branch', '--show-current']) !== branch)
+    throw new Error('The branch changed during task critique.')
+  if (!branch) {
+    stderr.write(
+      'No branch is checked out; the critique finished but recorded no Ready evidence.\n',
+    )
+    return 0
+  }
+  // Ready accepts only a completed record for the exact HEAD. It is written
+  // after every selected layer was delivered on the unchanged clean checkout.
+  await recordCompletion(
+    critiqueRecord({
       head,
+      completed,
       walkthroughRoot: input.root,
       screenRoots: input.screenRoots,
     }),
+    branch,
   )
-  if (!recorded)
+  if (!completed)
     stderr.write(
-      'No branch is checked out; the critique completed but recorded no Ready evidence.\n',
+      `A critique layer did not end with ${critiqueStatusComplete}; this HEAD is recorded as not critiqued, so Ready refuses. Supply the requested evidence and run the critique again.\n`,
     )
   return 0
 }

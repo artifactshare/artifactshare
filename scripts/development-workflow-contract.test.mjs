@@ -27,6 +27,15 @@ test('documents proportional specification review and the exact-HEAD Ready prere
     workflow,
     /Every implementation, whether ordinary code, workflow, normative documentation, or boundary-sensitive, reaches Ready only after the implementation gate \(`pnpm review:implementation`\) has recorded a completed Codex\/Claude pair for its exact committed HEAD under the current review profile; `pr:ready` enforces this\./u,
   )
+  // The pair requirement states the same round-cap exception pr:ready enforces.
+  assert.match(
+    workflow,
+    /`pr:ready` enforces this\. The one exception is the round cap: once the branch's three pairs are spent, a `PROCEED` round-cap consultation recorded for that exact HEAD takes the pair's place/u,
+  )
+  assert.match(
+    pullRequestTemplate,
+    /or a round-cap consultation for that HEAD that decided PROCEED/u,
+  )
   assert.match(
     workflow,
     /A pair recorded for an earlier commit, a single reviewer, a different profile, or legacy or unreadable history does not count; the refusal names HEAD, and `pnpm review:implementation` on that HEAD is the retry\./u,
@@ -163,7 +172,20 @@ test('documents unbounded corrections, concurrent PRs, and optional records', ()
   )
   assert.match(
     workflow,
-    /at most three completed review pairs under the current review profile; `review:implementation` refuses a fourth with `ROUND_CAP`/u,
+    /at most three completed review pairs under the current review profile; `review:implementation` never runs a fourth pair/u,
+  )
+  // The cap ends in a recorded consultation for the exact HEAD, not a dead end.
+  assert.match(
+    workflow,
+    /run `pnpm review:implementation -- --dispositions-file <path>` on the current clean HEAD: the gate consults the round-cap profile .*?\(Fable at medium\) with one read-only snapshot of the branch's objective scope, those dispositions, and the changed files and full diff from the merge base to HEAD, prints its decision, `PROCEED` or `RETURN TO OWNER`, and records that decision for this exact HEAD/u,
+  )
+  assert.match(
+    workflow,
+    /refuses when that pair reported a blocker[^.]*, and when the pair's reviewed range does not reach the merge base/u,
+  )
+  assert.match(
+    workflow,
+    /a narrower explicit `--base` that breaks the chain does not count/u,
   )
   assert.doesNotMatch(
     workflow,

@@ -1,17 +1,15 @@
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, renameSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join, resolve } from 'node:path'
-import { writeRounds } from './review-rounds.mjs'
+import { branchStatePath, writeRounds } from './review-rounds.mjs'
 
-/** The latest UI critique completion for a branch, read by `pr:ready`.
+/** The latest UI critique outcome for a branch, read by `pr:ready`.
  *
- * One small file per branch under the Git common directory, so linked
- * worktrees share it like the implementation review rounds. It is not a
+ * One small file per branch under the Git common directory, beside the
+ * implementation review rounds, so linked worktrees share it. It is not a
  * receipt or attempt log: it holds only the critiqued HEAD, whether every
- * selected layer completed, and SHA-256 identities of the validated capture
- * roots. Reviewer output, prompts, sources, scope judgments, dispositions and
- * plaintext capture paths never enter it. */
+ * selected layer ended with `CRITIQUE_STATUS: COMPLETE`, and SHA-256 identities of the
+ * validated capture roots. Reviewer output, prompts, sources, scope judgments,
+ * dispositions and plaintext capture paths never enter it. */
 
 const schemaVersion = 1
 const recordKeys = [
@@ -24,23 +22,8 @@ const recordKeys = [
 const headPattern = /^[0-9a-f]{40}$/u
 const identityPattern = /^[0-9a-f]{64}$/u
 
-function commandOutput(file, args) {
-  return execFileSync(file, args, { encoding: 'utf8' }).trim()
-}
-
-/** A relative common directory (`.git` in the main worktree) is relative to
- * the repository the command ran in, not to this process's cwd. */
-export function critiqueStatePath(
-  branch,
-  { run = commandOutput, repo = process.cwd() } = {},
-) {
-  const key = createHash('sha256').update(branch).digest('hex').slice(0, 32)
-  return join(
-    resolve(repo, run('git', ['rev-parse', '--git-common-dir'])),
-    'artifactshare',
-    'task-critique',
-    `${key}.json`,
-  )
+export function critiqueStatePath(commonDir, branch) {
+  return branchStatePath(commonDir, 'task-critique', branch)
 }
 
 /** Identifies a validated canonical capture root without storing its path. */
@@ -83,15 +66,18 @@ export function readCritiqueRecord(path) {
   return validRecord(value) ? value : undefined
 }
 
-export function critiqueCompletionRecord({
+/** `completed` is false when a layer did not end with `CRITIQUE_STATUS: COMPLETE`:
+ * the critique of that HEAD then explicitly does not authorize Ready. */
+export function critiqueRecord({
   head,
+  completed,
   walkthroughRoot,
   screenRoots = [],
 }) {
   const record = {
     schema_version: schemaVersion,
     head,
-    completed: true,
+    completed,
     walkthroughRoot: walkthroughRoot
       ? captureRootIdentity(walkthroughRoot)
       : null,
@@ -103,18 +89,16 @@ export function critiqueCompletionRecord({
 }
 
 /** Replaces the branch's record atomically with private modes. A failed write
- * throws and leaves the previous record in place. A detached HEAD has no
- * branch to key the record by, so nothing is written and `undefined` is
- * returned. */
+ * throws and leaves the previous record in place. */
 export function writeCritiqueRecord(
   record,
-  { run = commandOutput, repo = process.cwd() } = {},
+  { commonDir, branch, rename = renameSync },
 ) {
   if (!validRecord(record))
     throw new Error('UI critique completion record is invalid.')
-  const branch = run('git', ['branch', '--show-current'])
-  if (!branch) return undefined
-  const path = critiqueStatePath(branch, { run, repo })
-  writeRounds(path, record)
+  if (!commonDir || !branch)
+    throw new Error('UI critique record needs a branch and Git directory.')
+  const path = critiqueStatePath(commonDir, branch)
+  writeRounds(path, record, { rename })
   return path
 }

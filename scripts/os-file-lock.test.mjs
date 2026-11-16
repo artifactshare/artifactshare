@@ -353,10 +353,13 @@ test(
       if (file === 'gh' && args[1] === 'ready') draft = false
       if (file === 'git' && args[0] === 'branch') return 'topic'
       if (file === 'git' && args[0] === 'rev-parse') return args[1] === '--git-common-dir' ? commonDir : head
+      if (file === 'git' && args[0] === 'merge-base') return mergeBase
       return ''
     }
-    // Ready requires a completed implementation pair for HEAD.
-    if (role === 'ready') recordCompletedRounds(head, { run: exec, base: head, commitBase: head })
+    // Ready requires a completed implementation pair for HEAD, without
+    // blockers, reviewed from the merge base.
+    const mergeBase = 'b'.repeat(40)
+    if (role === 'ready') recordCompletedRounds(head, { run: exec, base: mergeBase, commitBase: mergeBase, blockers: { codex: 0, claude: 0 } })
     const acquireLock = async (path, options) => {
       const release = await acquireFileLock(path, { ...options, acquireTimeoutMs: 5000, spawnProcess: (...args) => {
         const child = spawn(...args)
