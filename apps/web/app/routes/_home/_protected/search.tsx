@@ -44,9 +44,8 @@ export const screen = {
       setup: {
         scenario: 'search/continuation-error',
         query: '?q=Quarterly',
-        interactions: [
-          { action: 'click', selector: '[data-search-load-more]' },
-        ],
+        // The next page loads when the list end is visible, so the failure
+        // appears without a click.
         ready: {
           selector: 'main [role="alert"]',
           description: 'Continuation failure',
