@@ -1,6 +1,7 @@
 import { IconSearch, IconX, IconFolder, IconHistory } from '@tabler/icons-react'
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -308,6 +309,42 @@ function usePaletteScope(initialParams: string, project?: SearchProject) {
   return { owners, setOwners, scope, setScope }
 }
 
+type SearchHistoryEntry = {
+  id: string
+  query: string
+  filters_json: string
+  selectedScope?: SearchSelectionNames
+}
+
+/** The viewer's recent searches, one per distinct set of conditions. */
+function useSearchHistory(retry: number) {
+  const [history, setHistory] = useState<SearchHistoryEntry[]>([])
+  const [historyError, setHistoryError] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetch('/api/search-logs', { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) {
+          void response.body?.cancel()
+          throw new Error('history')
+        }
+        return response.json<{ searches: SearchHistoryEntry[] }>()
+      })
+      .then((data) => {
+        const unique = new Map<string, (typeof data.searches)[number]>()
+        for (const log of data.searches)
+          if (!unique.has(log.filters_json)) unique.set(log.filters_json, log)
+        setHistory([...unique.values()])
+        setHistoryError(false)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setHistoryError(true)
+      })
+    return () => controller.abort()
+  }, [retry])
+  return { history, historyError }
+}
+
 function PaletteBody({
   project,
   close,
@@ -335,22 +372,14 @@ function PaletteBody({
     initialParams,
     project,
   )
-  const [results, setResults] = useState(empty),
-    [history, setHistory] = useState<
-      Array<{
-        id: string
-        query: string
-        filters_json: string
-        selectedScope?: SearchSelectionNames
-      }>
-    >([])
+  const [results, setResults] = useState(empty)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
       'loading',
     ),
     [selected, setSelected] = useState(-1),
     [composing, setComposing] = useState(false),
     [retry, setRetry] = useState(0)
-  const [historyError, setHistoryError] = useState(false)
+  const { history, historyError } = useSearchHistory(retry)
   const sequence = useRef(0),
     composition = useRef(false)
   const params = new URLSearchParams(initialParams)
@@ -360,35 +389,6 @@ function PaletteBody({
   for (const owner of owners) params.append('owner', owner.id)
   if (scope) params.set('project', scope.id)
   const signature = params.toString()
-  useEffect(() => {
-    const controller = new AbortController()
-    void fetch('/api/search-logs', { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) {
-          void response.body?.cancel()
-          throw new Error('history')
-        }
-        return response.json<{
-          searches: Array<{
-            id: string
-            query: string
-            filters_json: string
-            selectedScope?: SearchSelectionNames
-          }>
-        }>()
-      })
-      .then((data) => {
-        const unique = new Map<string, (typeof data.searches)[number]>()
-        for (const log of data.searches)
-          if (!unique.has(log.filters_json)) unique.set(log.filters_json, log)
-        setHistory([...unique.values()])
-        setHistoryError(false)
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setHistoryError(true)
-      })
-    return () => controller.abort()
-  }, [retry])
   useEffect(() => {
     const generation = ++sequence.current
     if (composing) return
@@ -449,6 +449,15 @@ function PaletteBody({
     setSelected(-1)
   }
   const { timeZone } = useViewerCalendar()
+  const dateFormat = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        month: '2-digit',
+        day: '2-digit',
+        timeZone,
+      }),
+    [locale, timeZone],
+  )
   const options = paletteOptions({
     query,
     results,
@@ -457,12 +466,7 @@ function PaletteBody({
     go,
     submit,
     t,
-    formatDate: (value: string) =>
-      new Intl.DateTimeFormat(locale, {
-        month: '2-digit',
-        day: '2-digit',
-        timeZone,
-      }).format(new Date(value)),
+    formatDate: (value: string) => dateFormat.format(new Date(value)),
   })
   const field = (
     <form
