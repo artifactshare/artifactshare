@@ -204,7 +204,7 @@ pnpm review:spec -- --artifact-url <url> --version-id <rewrite-id> --reset
 
 Classify the combined findings before editing the specification. The gate passes only when neither result has an unresolved blocker.
 
-For a boundary-sensitive implementation gate, create a strict JSON scope no larger than 4 KiB with the immutable objective, named failures, trusted inputs, and manual recovery details. Do not encode a fixed number of correction commits in the workflow scope. Initialize it once on an attached task branch and inspect the persisted scope after a session change or compaction:
+Every pull request branch initializes a scope before its implementation gate, because Ready requires a completed pair on the exact HEAD (and, for a UI diff, a completed critique record for it). Create a strict JSON scope no larger than 4 KiB with the immutable objective, named failures, trusted inputs, and manual recovery details. Do not encode a fixed number of correction commits in the workflow scope. Initialize it once on an attached task branch and inspect the persisted scope after a session change or compaction:
 
 ```sh
 pnpm task:scope -- init --scope-file <path>

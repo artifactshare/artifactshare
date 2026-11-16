@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { afterEach } from 'node:test'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   existsSync,
@@ -85,6 +85,7 @@ function tempUsageReport() {
   report.markdown = renderCanonicalWorkflowUsageMarkdown(report)
   const path = join(tmpdir(), `pr-ready-usage-${randomUUID()}.json`)
   writeFileSync(path, JSON.stringify(report))
+  harnessPaths.add(path)
   return path
 }
 
@@ -124,6 +125,15 @@ function recordEvidence(commonDir, target, { pair = true, critique = true }) {
   }
 }
 
+/** Paths each harness creates, removed after every test so no Ready evidence
+ * or usage fixture outlives the test that made it. */
+const harnessPaths = new Set()
+afterEach(() => {
+  for (const path of harnessPaths)
+    rmSync(path, { recursive: true, force: true })
+  harnessPaths.clear()
+})
+
 function harness({
   localHead = head,
   remoteHead = localHead,
@@ -138,6 +148,7 @@ function harness({
   const calls = []
   const usageReport = tempUsageReport()
   const commonDir = mkdtempSync(join(tmpdir(), 'pr-ready-git-common-'))
+  harnessPaths.add(commonDir)
   recordEvidence(commonDir, localHead, evidence)
   let currentDraft = draft
   const exec = (file, args) => {

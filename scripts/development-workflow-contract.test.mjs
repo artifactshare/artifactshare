@@ -53,6 +53,25 @@ test('documents proportional specification review and the exact-HEAD Ready prere
   )
   assert.match(
     workflow,
+    /Every pull request branch initializes a scope before its implementation gate, because Ready requires a completed pair on the exact HEAD/u,
+  )
+  assert.doesNotMatch(
+    workflow,
+    /For a boundary-sensitive implementation gate, create a strict JSON scope/u,
+  )
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    const instructions = fs.readFileSync(path.join(root, name), 'utf8')
+    assert.match(
+      instructions,
+      /Every pull request branch initializes its objective scope before its implementation gate, and `pr:ready` requires a completed implementation pair for the exact HEAD \(and, for a UI diff, a completed critique record for that HEAD\)/u,
+    )
+    assert.doesNotMatch(
+      instructions,
+      /scope when the boundary-sensitive implementation review applies/u,
+    )
+  }
+  assert.match(
+    workflow,
     /A change to this workflow policy itself must receive the Codex\/Claude deep-review pair before landing/u,
   )
   assert.doesNotMatch(
