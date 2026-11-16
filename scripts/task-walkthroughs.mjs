@@ -67,7 +67,8 @@ export const taskWalkthroughs = [
             value: '前月比',
             submit: true,
           },
-          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
+          // Result rows carry this id; Home's file rows do not.
+          { kind: 'inspect', selector: '[id^="search-file-"] >> nth=0' },
         ],
       }),
       phase('pending', 'Change filters and observe the live result count', {

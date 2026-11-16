@@ -27,6 +27,11 @@ import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
 import {
+  searchExitPath,
+  searchNavigationState,
+} from '~/lib/search-view-state'
+import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
+import {
   removeSelectedName,
   searchApiParams,
   searchHistoryParams,
@@ -211,8 +216,7 @@ function MobileSearch({
           <Button
             variant="ghost"
             onClick={() => {
-              if (location.state?.searchFromApp) void navigate(-1)
-              else void navigate('/')
+              void navigate(searchExitPath(location.state))
             }}
           >
             {t('search.cancel')}
@@ -318,8 +322,9 @@ function PaletteBody({
   initialQuery: string
   initialParams: string
 }) {
-  const { t } = useT(),
-    navigate = useNavigate()
+  const { t, locale } = useT(),
+    navigate = useNavigate(),
+    here = useLocation()
   const input = useRef<HTMLInputElement>(null)
   // Popover defers outside-pointer handling until click, after a chip can unmount.
   const fieldPointers = useRef(new WeakSet<Event>())
@@ -428,7 +433,7 @@ function PaletteBody({
   function go(path: string, submit = false) {
     close(false)
     void navigate(path, {
-      state: { searchFromApp: true, searchSubmission: submit },
+      state: searchNavigationState(here, { searchSubmission: submit }),
     })
   }
   const submit = (keyboard = true) => go(`/search?${signature}`, keyboard)
@@ -444,6 +449,7 @@ function PaletteBody({
     setQuery((value) => removeSelectedName(value, item.name))
     setSelected(-1)
   }
+  const { timeZone } = useViewerCalendar()
   const options = paletteOptions({
     query,
     results,
@@ -452,6 +458,12 @@ function PaletteBody({
     go,
     submit,
     t,
+    formatDate: (value: string) =>
+      new Intl.DateTimeFormat(locale, {
+        month: '2-digit',
+        day: '2-digit',
+        timeZone,
+      }).format(new Date(value)),
   })
   const field = (
     <form
@@ -769,6 +781,7 @@ function paletteOptions({
   go,
   submit,
   t,
+  formatDate,
 }: {
   query: string
   results: Suggestions
@@ -782,6 +795,7 @@ function paletteOptions({
   go: (path: string, submit?: boolean) => void
   submit: (keyboard?: boolean) => void
   t: ReturnType<typeof useT>['t']
+  formatDate: (value: string) => string
 }) {
   const options: Array<{
     key: string
@@ -817,7 +831,7 @@ function paletteOptions({
         key: file.id,
         kind: 'file',
         label: file.title,
-        detail: `${file.ownerName} · ${file.project?.name ?? t('tb.home')} · ${file.lastViewedAt ? t('search.viewed', { date: file.lastViewedAt.slice(5, 10).replace('-', '/') }) : t(shortVisibilityLabelKey(file.visibility))}`,
+        detail: `${file.ownerName} · ${file.project?.name ?? t('tb.home')} · ${file.lastViewedAt ? t('search.viewed', { date: formatDate(file.lastViewedAt) }) : t(shortVisibilityLabelKey(file.visibility))}`,
         excerpt: file.excerpt,
         path: file.path,
         artifactKind: file.artifactKind,

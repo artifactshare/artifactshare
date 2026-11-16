@@ -44,6 +44,7 @@ import {
 import { VisibilityChip } from './visibility-chip'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
+import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import {
   reduceSearchKeywords,
   clearSearchFilters,
@@ -53,7 +54,11 @@ import {
   searchConditionParts,
   readSearchJson,
 } from '~/lib/search-query'
-import { rememberSearchView, recallSearchView } from '~/lib/search-view-state'
+import {
+  rememberSearchView,
+  recallSearchView,
+  searchNavigationState,
+} from '~/lib/search-view-state'
 import { prepareQuery, searchMatchSpans } from '~/services/search-index/query'
 import type { search, searchGroup } from '~/services/search.server'
 
@@ -85,6 +90,12 @@ export function SearchResults({
     location = useLocation(),
     navigate = useNavigate()
   const params = new URLSearchParams(location.search)
+  // Retrying repeats the same URL; it can only help when the failure was
+  // not caused by the search itself (too broad or malformed).
+  const retryable =
+    'error' in result &&
+    result.error.code !== 'search_capacity_exceeded' &&
+    result.error.code !== 'validation_error'
   if ('error' in result)
     return (
       <div className="space-y-3">
@@ -102,11 +113,7 @@ export function SearchResults({
           )}
         </p>
         <Button
-          variant={
-            result.error.code === 'search_capacity_exceeded'
-              ? 'default'
-              : 'outline'
-          }
+          variant={retryable ? 'outline' : 'default'}
           onClick={() => openSearchField(params.get('q') ?? '')}
         >
           {t('search.edit')}
@@ -119,11 +126,11 @@ export function SearchResults({
           update={(next) => {
             void navigate(`/search?${next}`, {
               preventScrollReset: true,
-              state: { searchFromApp: true },
+              state: searchNavigationState(location),
             })
           }}
         />
-        {result.error.code !== 'search_capacity_exceeded' && (
+        {retryable && (
           <Button onClick={() => window.location.reload()}>
             {t('search.retry')}
           </Button>
@@ -183,7 +190,7 @@ function ResultBody({
   function update(next: URLSearchParams) {
     void navigate(`/search?${next}`, {
       preventScrollReset: true,
-      state: { searchFromApp: true },
+      state: searchNavigationState(location),
     })
   }
   function relax(filter: string) {
@@ -688,14 +695,16 @@ function SearchResultRow({
     onRestored,
     restartSearch,
   )
+  // Same rule as Home: UTC until hydrated, then the viewer's time zone.
+  const { timeZone } = useViewerCalendar()
   const formatter = useMemo(
     () =>
       new Intl.DateTimeFormat(locale, {
         month: '2-digit',
         day: '2-digit',
-        timeZone: 'UTC',
+        timeZone,
       }),
-    [locale],
+    [locale, timeZone],
   )
   const date = (value: string) => formatter.format(new Date(value))
   const returnTo = `${location.pathname}${location.search}${location.hash}`
@@ -754,14 +763,14 @@ function SearchResultRow({
               >
                 {row.title}
               </Link>
-              <span className="text-muted-foreground ml-auto">
-                {t('search.updated', { date: date(row.updatedAt) })}
+              <span className="text-muted-foreground ml-auto flex gap-3">
+                <span>{t('search.updated', { date: date(row.updatedAt) })}</span>
+                {row.lastViewedAt && (
+                  <span>
+                    {t('search.viewed', { date: date(row.lastViewedAt) })}
+                  </span>
+                )}
               </span>
-              {row.lastViewedAt && (
-                <span className="text-muted-foreground">
-                  {t('search.viewed', { date: date(row.lastViewedAt) })}
-                </span>
-              )}
             </div>
           ))}
           {pending && <p role="status">{t('search.loading')}</p>}

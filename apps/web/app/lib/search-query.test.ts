@@ -11,6 +11,10 @@ import {
   searchHistoryParams,
 } from './search-query'
 import { canonicalSearch } from '~/services/search-input'
+import {
+  searchExitPath,
+  searchNavigationState,
+} from '~/lib/search-view-state'
 
 test('screen scope round trips through API and history with explicit sort and UTC bounds', () => {
   const params = new URLSearchParams(
@@ -163,5 +167,23 @@ describe('searchConditionParts', () => {
         t as never,
       ),
     ).toBe('')
+  })
+})
+
+describe('searchNavigationState', () => {
+  test('remembers the page before search and keeps it across searches', () => {
+    const first = searchNavigationState({ pathname: '/files', search: '?a=1' })
+    expect(first.searchReturnTo).toBe('/files?a=1')
+    const second = searchNavigationState({
+      pathname: '/search',
+      search: '?q=x',
+      state: first,
+    })
+    expect(second.searchReturnTo).toBe('/files?a=1')
+    expect(searchExitPath(second)).toBe('/files?a=1')
+  })
+  test('falls back to Home without a safe in-app path', () => {
+    expect(searchExitPath(undefined)).toBe('/')
+    expect(searchExitPath({ searchReturnTo: '//example.com' })).toBe('/')
   })
 })

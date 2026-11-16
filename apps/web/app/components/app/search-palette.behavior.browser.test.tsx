@@ -668,9 +668,13 @@ test.each(['owner', 'project'] as const)(
   },
 )
 
-test.each([false, true])(
-  'mobile results Cancel uses only a known app predecessor (%s)',
-  async (searchFromApp) => {
+test.each([
+  ['a direct link', undefined, '/'],
+  ['the app', '/files', '/files'],
+  ['an unsafe value', '//example.com', '/'],
+] as const)(
+  'mobile results Cancel leaves search for the page before it (%s)',
+  async (_label, searchReturnTo, expected) => {
     await page.viewport(599, 480)
     const router = createMemoryRouter(
       [
@@ -681,7 +685,14 @@ test.each([false, true])(
       {
         initialEntries: [
           '/files',
-          { pathname: '/search', state: { searchFromApp } },
+          // An earlier search sits between the page and the current search;
+          // Cancel must not step back into it.
+          { pathname: '/search', search: '?q=first' },
+          {
+            pathname: '/search',
+            search: '?q=second',
+            state: { searchFromApp: true, searchReturnTo },
+          },
         ],
       },
     )
@@ -691,9 +702,7 @@ test.each([false, true])(
     root.render(<RouterProvider router={router} />)
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
     await vi.waitFor(() =>
-      expect(router.state.location.pathname).toBe(
-        searchFromApp ? '/files' : '/',
-      ),
+      expect(router.state.location.pathname).toBe(expected),
     )
   },
 )
