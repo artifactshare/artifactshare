@@ -46,6 +46,9 @@ export const taskWalkthroughs = [
   {
     taskId: 'search-file',
     scenario: 'search/results',
+    // The failure branch runs in a new session with no history, so it starts
+    // on the results page instead of going back from the viewer.
+    failureStart: { kind: 'goto', path: '/search?q=Quarterly' },
     steps: [
       phase('start', 'Open header search', {
         kind: 'sequence',
@@ -83,11 +86,10 @@ export const taskWalkthroughs = [
       }),
       phase(
         'failure',
-        'Return from the viewer and search for an absent keyword',
+        'Search for an absent keyword from the results',
         {
           kind: 'sequence',
           steps: [
-            { kind: 'back' },
             { kind: 'click', selector: 'header [data-search-trigger]' },
             {
               kind: 'fill',
