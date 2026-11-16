@@ -151,3 +151,21 @@ export function reduceSearchKeywords(value: string): string | null {
   const boundary = trimmed.search(/\s+\S+$/u)
   return boundary < 0 ? null : trimmed.slice(0, boundary)
 }
+
+/**
+ * Reads a search API response body before deciding the outcome, so the
+ * request always completes and the server's own error code is reported
+ * instead of a guess from the HTTP status.
+ */
+export async function readSearchJson<T extends object>(
+  response: Response,
+): Promise<Exclude<T, { error: unknown }>> {
+  const data = (await response.json().catch(() => null)) as
+    | T
+    | { error: { code: string } }
+    | null
+  if (data && 'error' in data && data.error && typeof data.error === 'object')
+    throw new Error((data.error as { code: string }).code)
+  if (!response.ok || !data) throw new Error('request_failed')
+  return data as Exclude<T, { error: unknown }>
+}

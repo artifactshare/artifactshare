@@ -89,13 +89,17 @@ export const screen = {
       },
     },
     {
-      id: 'mobile-filters',
-      description: 'Bottom filter sheet',
+      id: 'filters',
+      description: 'Owner filter menu (desktop) and bottom filter sheet (mobile)',
       setup: {
         scenario: 'search/results',
         query: '?q=Quarterly',
         interactions: [
-          { action: 'click', selector: 'button[data-search-filters]' },
+          {
+            action: 'click',
+            selector:
+              'button[data-search-filters]:visible, button[data-search-menu="owner"]:visible',
+          },
         ],
       },
     },

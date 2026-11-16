@@ -128,7 +128,7 @@ export const tasks = [
       },
       recovery: {
         description: 'キーワードを変えるか絞り込みを解除する',
-        screens: ['search/default', 'search/mobile-filters'],
+        screens: ['search/default', 'search/filters'],
       },
       next: {
         description: '検索条件と閲覧位置を保って結果へ戻る',

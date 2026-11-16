@@ -50,6 +50,7 @@ import {
   searchApiParams,
   searchDateValue,
   searchConditionSummary,
+  readSearchJson,
 } from '~/lib/search-query'
 import { rememberSearchView, recallSearchView } from '~/lib/search-view-state'
 import { prepareQuery, searchMatchSpans } from '~/services/search-index/query'
@@ -146,9 +147,7 @@ function ResultBody({
     const response = await fetch(
       `/api/search?${searchApiParams(new URLSearchParams(location.search))}`,
     )
-    if (!response.ok) throw new Error('request_failed')
-    const data: SearchResponse = await response.json()
-    if ('error' in data) throw new Error(data.error.code)
+    const data = await readSearchJson<SearchResponse>(response)
     setRestarted({ source: loaded, result: data })
   }
   const navigationType = useNavigationType()
@@ -474,7 +473,7 @@ function SearchFilters({
     <div
       className={clearAll ? 'space-y-5' : 'flex flex-wrap items-center gap-2'}
     >
-      <FilterMenu label={t('search.owner')} inline={clearAll}>
+      <FilterMenu label={t('search.owner')} inline={clearAll} menu="owner">
         <div className="space-y-3" data-search-owner>
           <div className="relative">
             <IconSearch
@@ -891,19 +890,10 @@ function useSearchGroup(
         const response = await fetch(
           `/api/search-groups?${new URLSearchParams({ receipt: item.receipt, ...(cursor ? { cursor } : {}) })}`,
         )
-        if (!response.ok) {
-          if (response.status === 400) {
-            const failure: Awaited<ReturnType<typeof searchGroup>> =
-              await response.json()
-            throw new Error(
-              'error' in failure ? failure.error.code : 'request_failed',
-            )
-          }
-          throw new Error('request_failed')
-        }
-        const data: Awaited<ReturnType<typeof searchGroup>> =
-          await response.json()
-        if ('error' in data) throw new Error(data.error.code)
+        const data =
+          await readSearchJson<Awaited<ReturnType<typeof searchGroup>>>(
+            response,
+          )
         loadedDepth.current = cursor ? loadedDepth.current + 1 : 1
         onGroupDepth(item.id, loadedDepth.current)
         const append = Boolean(cursor)
@@ -954,11 +944,13 @@ function FilterMenu({
   inline,
   children,
   sort = false,
+  menu,
 }: {
   label: string
   inline: boolean
   children: ReactNode
   sort?: boolean
+  menu?: 'owner'
 }) {
   if (inline)
     return (
@@ -972,6 +964,7 @@ function FilterMenu({
       <PopoverTrigger asChild>
         <Button
           data-search-sort={sort || undefined}
+          data-search-menu={menu}
           variant="outline"
           size="sm"
           className={sort ? 'order-last ml-auto rounded-full' : 'rounded-full'}
@@ -1339,13 +1332,7 @@ function SearchResultListing({
       const api = searchApiParams(params)
       api.set('cursor', nextCursor.current)
       const response = await fetch(`/api/search?${api}`)
-      if (!response.ok)
-        throw new Error(
-          response.status === 400 ? 'invalid_cursor' : 'request_failed',
-        )
-      const data: SearchResponse = await response.json()
-      if (!response.ok || 'error' in data)
-        throw new Error('error' in data ? data.error.code : 'request_failed')
+      const data = await readSearchJson<SearchResponse>(response)
       if (alive.current) {
         setItems((old) =>
           [

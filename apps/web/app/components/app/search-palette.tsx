@@ -352,7 +352,10 @@ function PaletteBody({
     const controller = new AbortController()
     void fetch('/api/search-logs', { signal: controller.signal })
       .then((response) => {
-        if (!response.ok) throw new Error('history')
+        if (!response.ok) {
+          void response.body?.cancel()
+          throw new Error('history')
+        }
         return response.json<{
           searches: Array<{
             id: string
@@ -385,7 +388,10 @@ function PaletteBody({
         { signal: controller.signal },
       )
         .then((response) => {
-          if (!response.ok) throw new Error('suggestions')
+          if (!response.ok) {
+            void response.body?.cancel()
+            throw new Error('suggestions')
+          }
           return response.json<Suggestions>()
         })
         .then((data: Suggestions) => {

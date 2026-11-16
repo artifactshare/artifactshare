@@ -1,8 +1,9 @@
-import { expect, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import {
   reduceSearchKeywords,
   clearSearchFilters,
   parseSearchQuery,
+  readSearchJson,
   removeSelectedName,
   searchApiParams,
   searchHistoryParams,
@@ -100,4 +101,36 @@ test('all time retains a valid date-field preference without applying an API dat
       'error.code',
       'validation_error',
     )
+})
+
+describe('readSearchJson', () => {
+  test('returns the body of a successful response', async () => {
+    const response = new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+    })
+    await expect(readSearchJson<{ items: [] }>(response)).resolves.toEqual({
+      items: [],
+    })
+    expect(response.bodyUsed).toBe(true)
+  })
+  test('reports the server error code and reads the body', async () => {
+    const response = new Response(
+      JSON.stringify({ error: { code: 'invalid_cursor', hint: '' } }),
+      { status: 400 },
+    )
+    await expect(readSearchJson(response)).rejects.toThrow('invalid_cursor')
+    expect(response.bodyUsed).toBe(true)
+  })
+  test('reports a validation error as itself, not as a cursor error', async () => {
+    const response = new Response(
+      JSON.stringify({ error: { code: 'invalid_date', hint: '' } }),
+      { status: 400 },
+    )
+    await expect(readSearchJson(response)).rejects.toThrow('invalid_date')
+  })
+  test('falls back to request_failed without a JSON body', async () => {
+    const response = new Response('oops', { status: 503 })
+    await expect(readSearchJson(response)).rejects.toThrow('request_failed')
+    expect(response.bodyUsed).toBe(true)
+  })
 })

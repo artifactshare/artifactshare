@@ -67,7 +67,7 @@ export type TaskLedgerScreenReference =
   | 'search/error'
   | 'search/group-expanded'
   | 'search/loading'
-  | 'search/mobile-filters'
+  | 'search/filters'
   | 'search/mobile-search'
   | 'settings-activity/default'
   | 'settings-activity/with-activity'

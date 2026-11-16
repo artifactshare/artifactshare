@@ -124,6 +124,14 @@ export async function seedDevScreenArtifactBodies(
       workspaceId,
       userId,
     )
+    // The recent fixture's second "Archived review 21" (file 22) has no body,
+    // so the index would hold only one of the two same-title files. Give it
+    // the earlier body so search shows a same-title group.
+    await bucket.put(
+      `dev-screen/${devShareableId(`${workspaceId}-${userId}-file-22`)}-v1`,
+      RECENT_CONTENT_RICH_BODIES.archivedReview21[0].html,
+      { httpMetadata: { contentType: 'text/html; charset=utf-8' } },
+    )
     return
   }
   if (managedRetentionScenarios.has(scenario)) {
