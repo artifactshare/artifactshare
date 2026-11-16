@@ -80,6 +80,7 @@ export type Metadata = {
   visibility: import('~/lib/shareable-types').Visibility
   updatedAt: string
   lastViewedAt: string | null
+  artifactKind: import('~/lib/shareable-types').ArtifactKind
   hasBody?: boolean
 }
 export function mergeSearchHits(hits: Hit[], newest: boolean) {
@@ -152,6 +153,7 @@ async function metadata(
   return rows.map(
     ({ containerKind, containerId, containerName, artifactKind, ...row }) => ({
       ...row,
+      artifactKind,
       hasBody: artifactKind !== 'video' && artifactKind !== 'pdf',
       project:
         containerKind === 'project' && containerId

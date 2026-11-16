@@ -109,22 +109,34 @@ export type SearchSelectionNames = {
   owners: Array<{ id: string; name: string }>
   projects: Array<{ id: string; name: string }>
 }
-export function searchConditionSummary(
+export type SearchConditionPart = {
+  key: 'owner' | 'project' | 'period' | 'archived' | 'sort'
+  label: string
+}
+/**
+ * Describes the active search conditions. Sort is included only when asked
+ * and only when it differs from the default for the query (relevance with
+ * keywords, newest without), so it never makes a search look filtered.
+ */
+export function searchConditionParts(
   params: URLSearchParams,
   names: SearchSelectionNames | undefined,
   t: Translator['t'],
-) {
-  const parts: string[] = []
+  { includeSort = false }: { includeSort?: boolean } = {},
+): SearchConditionPart[] {
+  const parts: SearchConditionPart[] = []
   const owners = params.getAll('owner')
   if (owners.length)
-    parts.push(
-      `${t('search.owner')}: ${owners.map((id) => names?.owners.find((row) => row.id === id)?.name ?? t('search.unavailable')).join(', ')}`,
-    )
+    parts.push({
+      key: 'owner',
+      label: `${t('search.owner')}: ${owners.map((id) => names?.owners.find((row) => row.id === id)?.name ?? t('search.unavailable')).join(', ')}`,
+    })
   const project = params.get('project')
   if (project)
-    parts.push(
-      `${t('search.project')}: ${project === 'home' ? t('search.home') : (names?.projects.find((row) => row.id === project)?.name ?? t('search.unavailable'))}`,
-    )
+    parts.push({
+      key: 'project',
+      label: `${t('search.project')}: ${project === 'home' ? t('search.home') : (names?.projects.find((row) => row.id === project)?.name ?? t('search.unavailable'))}`,
+    })
   const period = params.get('period')
   if (period) {
     const range =
@@ -137,12 +149,33 @@ export function searchConditionSummary(
                 ? 'search.days30'
                 : 'search.days90',
           )
-    parts.push(
-      `${t(params.get('dateField') === 'viewed' ? 'search.viewedField' : 'search.updatedField')}: ${range}`,
-    )
+    parts.push({
+      key: 'period',
+      label: `${t(params.get('dateField') === 'viewed' ? 'search.viewedField' : 'search.updatedField')}: ${range}`,
+    })
   }
-  if (params.get('includeArchived') === 'true') parts.push(t('search.archived'))
-  return parts.join(' · ')
+  if (params.get('includeArchived') === 'true')
+    parts.push({ key: 'archived', label: t('search.archived') })
+  if (includeSort) {
+    const hasQuery = Boolean(params.get('q')?.trim())
+    const sort = params.get('sort')
+    if (hasQuery && sort === 'newest')
+      parts.push({ key: 'sort', label: t('search.newest') })
+    if (!hasQuery && sort === 'relevance')
+      parts.push({ key: 'sort', label: t('search.relevance') })
+  }
+  return parts
+}
+
+export function searchConditionSummary(
+  params: URLSearchParams,
+  names: SearchSelectionNames | undefined,
+  t: Translator['t'],
+  options?: { includeSort?: boolean },
+) {
+  return searchConditionParts(params, names, t, options)
+    .map((part) => part.label)
+    .join(' · ')
 }
 
 /** Remove the last whitespace-delimited word without normalizing the user's text. */

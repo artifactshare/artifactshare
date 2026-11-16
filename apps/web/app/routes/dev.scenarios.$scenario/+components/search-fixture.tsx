@@ -49,6 +49,7 @@ export function SearchFixture({
               path: 'index.html',
               excerpt:
                 'The planning report collects decisions and follow-up work for the next release.',
+              artifactKind: 'html_page',
               hasBody: true,
               matchedKeywords: ['planning'],
               tier: state === 'any' ? 'any' : 'all',

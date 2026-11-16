@@ -4,6 +4,8 @@ import {
   clearSearchFilters,
   parseSearchQuery,
   readSearchJson,
+  searchConditionParts,
+  searchConditionSummary,
   removeSelectedName,
   searchApiParams,
   searchHistoryParams,
@@ -132,5 +134,34 @@ describe('readSearchJson', () => {
     const response = new Response('oops', { status: 503 })
     await expect(readSearchJson(response)).rejects.toThrow('request_failed')
     expect(response.bodyUsed).toBe(true)
+  })
+})
+
+describe('searchConditionParts', () => {
+  const t = (key: string) => key
+  const keys = (query: string, includeSort: boolean) =>
+    searchConditionParts(
+      new URLSearchParams(query),
+      undefined,
+      t as never,
+      { includeSort },
+    ).map((part) => part.label)
+  test('names a non-default sort only when asked', () => {
+    expect(keys('q=report&sort=newest', true)).toEqual(['search.newest'])
+    expect(keys('q=report&sort=newest', false)).toEqual([])
+    expect(keys('q=report&sort=relevance', true)).toEqual([])
+  })
+  test('treats newest as the default without keywords', () => {
+    expect(keys('q=&sort=newest', true)).toEqual([])
+    expect(keys('q=&sort=relevance', true)).toEqual(['search.relevance'])
+  })
+  test('keeps sort out of the filter summary used for zero results', () => {
+    expect(
+      searchConditionSummary(
+        new URLSearchParams('q=report&sort=newest'),
+        undefined,
+        t as never,
+      ),
+    ).toBe('')
   })
 })

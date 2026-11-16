@@ -1801,6 +1801,7 @@
   "search.relax": "Remove {filter} filter ({n} contain all keywords)",
   "search.cap": "Up to 1,000 results are shown in relevance order. Narrow by owner, project or period to find files more easily.",
   "search.continuation": "Could not load more results. Check your connection and try again. Your current results remain available.",
+  "search.continuationExpired": "These results are out of date. Restart the search to see more.",
   "search.show": "Show {n}",
   "search.clearAll": "Clear all",
   "search.from": "From",

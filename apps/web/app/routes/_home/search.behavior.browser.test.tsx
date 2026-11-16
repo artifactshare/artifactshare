@@ -36,6 +36,7 @@ const result: Exclude<SearchResponse, { error: unknown }> = {
       lastViewedAt: '2026-09-16T00:00:00Z',
       path: 'index.html',
       excerpt: '<img src=x onerror=alert(1)> alpha',
+      artifactKind: 'html_page',
       hasBody: true,
       matchedKeywords: ['alpha'],
       tier: 'all',

@@ -21,7 +21,7 @@ import { Command } from '~/components/ui/command'
 import { Avatar, AvatarFallback } from '~/components/ui/avatar'
 import { FileTypeIcon } from './file-type-icon'
 import { Highlight } from './search-results'
-import { detectArtifactTypeForUpload } from '~/lib/artifact-type'
+import { renderTypeFromKind } from '~/lib/artifact-type'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
@@ -702,10 +702,11 @@ function PaletteCandidates({
                   <IconFolder className="text-muted-foreground size-5 shrink-0" />
                 ) : option.kind === 'file' ? (
                   <FileTypeIcon
-                    renderType={detectArtifactTypeForUpload(
-                      null,
-                      option.path ?? '',
-                    )}
+                    renderType={
+                      option.artifactKind
+                        ? renderTypeFromKind(option.artifactKind)
+                        : null
+                    }
                   />
                 ) : option.key === 'all' ? (
                   <IconSearch className="size-4 shrink-0" />
@@ -780,6 +781,7 @@ function paletteOptions({
     detail?: string
     excerpt?: string
     path?: string | null
+    artifactKind?: import('~/lib/shareable-types').ArtifactKind
     kind?: 'owner' | 'project' | 'file'
     section?: string
     activate: (keyboard?: boolean) => void
@@ -810,6 +812,7 @@ function paletteOptions({
         detail: `${file.ownerName} · ${file.project?.name ?? t('tb.home')} · ${file.lastViewedAt ? t('search.viewed', { date: file.lastViewedAt.slice(5, 10).replace('-', '/') }) : t(shortVisibilityLabelKey(file.visibility))}`,
         excerpt: file.excerpt,
         path: file.path,
+        artifactKind: file.artifactKind,
         activate: () => go(`/a/${file.id}`),
       })
   } else {
@@ -818,6 +821,7 @@ function paletteOptions({
         section: t('search.recent'),
         key: file.id,
         kind: 'file',
+        artifactKind: file.artifactKind,
         label: file.title,
         detail: file.ownerName,
         activate: () => go(`/a/${file.id}`),
@@ -831,6 +835,7 @@ function paletteOptions({
           searchHistoryParams(log.filters_json),
           log.selectedScope,
           t,
+          { includeSort: true },
         ),
         activate: (keyboard) =>
           go(

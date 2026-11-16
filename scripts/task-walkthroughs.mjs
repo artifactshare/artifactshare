@@ -58,10 +58,16 @@ export const taskWalkthroughs = [
         ],
       }),
       phase('action', 'Type keywords and submit search', {
-        kind: 'fill',
-        selector: 'input[role="combobox"]',
-        value: 'Quarterly',
-        submit: true,
+        kind: 'sequence',
+        steps: [
+          {
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: 'Quarterly',
+            submit: true,
+          },
+          { kind: 'inspect', selector: 'main h1' },
+        ],
       }),
       phase('pending', 'Change filters and observe the live result count', {
         kind: 'sequence',
@@ -111,11 +117,16 @@ export const taskWalkthroughs = [
             value: 'Quarterly',
             submit: true,
           },
+          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
         ],
       }),
-      phase('next', 'Resume from matching results', {
-        kind: 'inspect',
-        selector: 'main a[href^="/a/"] >> nth=0',
+      phase('next', 'Open a result and return to the same results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'main a[href^="/a/"] >> nth=0' },
+          { kind: 'back' },
+          { kind: 'inspect', selector: 'main a[href^="/a/"] >> nth=0' },
+        ],
       }),
     ],
   },

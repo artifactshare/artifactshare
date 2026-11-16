@@ -1801,6 +1801,7 @@
   "search.relax": "{filter}の絞り込みを解除(すべて含むファイルが {n}あります)",
   "search.cap": "関連性の高い順に 1,000 件まで表示します。所有者、プロジェクト、期間で絞り込むと見つけやすくなります。",
   "search.continuation": "続きを読み込めませんでした。接続を確認して、もう一度お試しください。表示中の結果はそのまま見られます。",
+  "search.continuationExpired": "検索結果が古くなりました。続きを見るには検索し直してください。",
   "search.show": "{n}を表示",
   "search.clearAll": "すべて解除",
   "search.from": "開始日",

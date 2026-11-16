@@ -30,7 +30,7 @@ import {
 import { Checkbox } from '~/components/ui/checkbox'
 import { RadioGroup, RadioGroupItem } from '~/components/ui/radio-group'
 import { FileTypeIcon } from './file-type-icon'
-import { detectArtifactTypeForUpload } from '~/lib/artifact-type'
+import { renderTypeFromKind } from '~/lib/artifact-type'
 import { openSearchField } from './search-field'
 import { Input } from '~/components/ui/input'
 import {
@@ -50,6 +50,7 @@ import {
   searchApiParams,
   searchDateValue,
   searchConditionSummary,
+  searchConditionParts,
   readSearchJson,
 } from '~/lib/search-query'
 import { rememberSearchView, recallSearchView } from '~/lib/search-view-state'
@@ -97,7 +98,11 @@ export function SearchResults({
           )}
         </p>
         <Button
-          variant="outline"
+          variant={
+            result.error.code === 'search_capacity_exceeded'
+              ? 'default'
+              : 'outline'
+          }
           onClick={() => openSearchField(params.get('q') ?? '')}
         >
           {t('search.edit')}
@@ -114,9 +119,11 @@ export function SearchResults({
             })
           }}
         />
-        <Button onClick={() => window.location.reload()}>
-          {t('search.retry')}
-        </Button>
+        {result.error.code !== 'search_capacity_exceeded' && (
+          <Button onClick={() => window.location.reload()}>
+            {t('search.retry')}
+          </Button>
+        )}
       </div>
     )
   return (
@@ -257,6 +264,14 @@ function SearchFilterBar({
       update={update}
     />
   )
+  // Owner and project show as chips; the other conditions live in the sheet,
+  // so name them next to its button.
+  const mobileConditions = searchConditionParts(params, selectedScope, t, {
+    includeSort: true,
+  })
+    .filter((part) => part.key !== 'owner' && part.key !== 'project')
+    .map((part) => part.label)
+    .join(' · ')
   return (
     <>
       <div className="max-nav:hidden">{filters}</div>
@@ -334,6 +349,14 @@ function SearchFilterBar({
           selectedScope={selectedScope}
           update={update}
         />
+        {mobileConditions && (
+          <span
+            data-search-conditions
+            className="text-muted-foreground text-sm"
+          >
+            {mobileConditions}
+          </span>
+        )}
       </div>
     </>
   )
@@ -675,9 +698,7 @@ function SearchResultRow({
   return (
     <li id={`search-file-${item.id}`} className="relative space-y-2 py-4 pl-9">
       <div className="absolute top-4 left-0">
-        <FileTypeIcon
-          renderType={detectArtifactTypeForUpload(null, item.path ?? '')}
-        />
+        <FileTypeIcon renderType={renderTypeFromKind(item.artifactKind)} />
       </div>
       <SearchRowHeader
         item={item}
@@ -742,7 +763,13 @@ function SearchResultRow({
           {pending && <p role="status">{t('search.loading')}</p>}
           {error && (
             <div role="alert" className="space-y-3">
-              <p>{t('search.continuation')}</p>
+              <p>
+            {t(
+              error === 'invalid_cursor'
+                ? 'search.continuationExpired'
+                : 'search.continuation',
+            )}
+          </p>
               <Button disabled={pending} onClick={() => void recover()}>
                 {t(
                   error === 'invalid_cursor'
@@ -1442,7 +1469,7 @@ function SearchResultListing({
   return (
     <>
       <p role="status" aria-live="polite" className="sr-only">
-        {pending ? t('search.loading') : t('search.count', { n: items.length })}
+        {pending ? t('search.loading') : ''}
       </p>
       <ul className="divide-divider divide-y">
         {items.map((item) => (
@@ -1471,7 +1498,13 @@ function SearchResultListing({
       </ul>
       {failure && (
         <div role="alert" className="space-y-3">
-          <p>{t('search.continuation')}</p>
+          <p>
+            {t(
+              failure === 'invalid_cursor'
+                ? 'search.continuationExpired'
+                : 'search.continuation',
+            )}
+          </p>
           <Button
             onClick={() =>
               failure === 'invalid_cursor'

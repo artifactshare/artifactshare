@@ -56,6 +56,7 @@ test('owner-only results name the owner, default to newest and omit excerpts', (
         lastViewedAt: null,
         path: 'index.html',
         excerpt: 'Excerpt must not render for an owner-only search',
+        artifactKind: 'html_page',
         hasBody: true,
         matchedKeywords: [],
         tier: 'all',
