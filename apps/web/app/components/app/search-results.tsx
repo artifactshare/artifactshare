@@ -8,6 +8,14 @@ import {
 } from 'react-router'
 import { Button } from '~/components/ui/button'
 import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from '~/components/ui/empty'
+import {
   IconChevronDown,
   IconChevronRight,
   IconFilter,
@@ -1168,6 +1176,23 @@ function relaxationLabel(filter: string, t: ReturnType<typeof useT>['t']) {
   return t('search.archiveFilter')
 }
 
+function searchEmptyTitle(
+  query: string,
+  owners: string[],
+  ownerName: string,
+  scope: string,
+  t: ReturnType<typeof useT>['t'],
+) {
+  if (owners.length === 1)
+    return t(query.trim() ? 'search.zeroOwner' : 'search.zeroOwnerNoQuery', {
+      name: ownerName,
+      q: query,
+    })
+  if (query.trim())
+    return t(scope ? 'search.zero' : 'search.zeroUnfiltered', { q: query })
+  return t(scope ? 'search.zeroNoQuery' : 'search.zeroNoQueryUnfiltered')
+}
+
 function SearchNotices({
   initial,
   itemsLength,
@@ -1194,6 +1219,20 @@ function SearchNotices({
   count: (value: number, relation: string) => string
 }) {
   const { t, locale } = useT()
+  const isEmpty =
+    !itemsLength && initial.total.value === 0 && initial.total.relation === 'eq'
+  const relaxationButtons = initial.relaxations.map((row) => (
+    <Button
+      key={row.filter}
+      variant="outline"
+      onClick={() => relax(row.filter)}
+    >
+      {t('search.relax', {
+        filter: relaxationLabel(row.filter, t),
+        n: count(row.total.value, row.total.relation),
+      })}
+    </Button>
+  ))
   return (
     <>
       {' '}
@@ -1209,53 +1248,35 @@ function SearchNotices({
           </p>
         </div>
       )}
-      {!itemsLength &&
-        initial.total.value === 0 &&
-        initial.total.relation === 'eq' && (
-          <div data-search-zero className="space-y-3 py-8">
-            <h2>
-              {owners.length === 1
-                ? t(
-                    query.trim()
-                      ? 'search.zeroOwner'
-                      : 'search.zeroOwnerNoQuery',
-                    { name: ownerName, q: query },
-                  )
-                : t(query.trim() ? 'search.zero' : 'search.zeroNoQuery', {
-                    q: query,
-                  })}
-              {scope && (
-                <p className="text-muted-foreground text-sm">{scope}</p>
-              )}
-            </h2>
-            <p>{t('search.searched')}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={onEdit}>
-                {t('search.edit')}
+      {isEmpty && (
+        <Empty data-search-zero>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <IconSearch aria-hidden="true" />
+            </EmptyMedia>
+            <EmptyTitle role="heading" aria-level={2}>
+              {searchEmptyTitle(query, owners, ownerName, scope, t)}
+            </EmptyTitle>
+            {scope && <p className="text-muted-foreground text-sm">{scope}</p>}
+            <EmptyDescription>{t('search.searched')}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            {relaxationButtons}
+            <Button variant="outline" onClick={onEdit}>
+              {t('search.edit')}
+            </Button>
+            {reduceSearchKeywords(query) !== null && (
+              <Button variant="outline" onClick={onFewer}>
+                {t('search.fewer')}
               </Button>
-              {reduceSearchKeywords(query) !== null && (
-                <Button variant="outline" onClick={onFewer}>
-                  {t('search.fewer')}
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
+            )}
+          </EmptyContent>
+        </Empty>
+      )}
       {!itemsLength && initial.total.relation === 'gte' && (
         <p>{t('search.partial')}</p>
       )}
-      {initial.relaxations.map((row) => (
-        <Button
-          key={row.filter}
-          variant="outline"
-          onClick={() => relax(row.filter)}
-        >
-          {t('search.relax', {
-            filter: relaxationLabel(row.filter, t),
-            n: count(row.total.value, row.total.relation),
-          })}
-        </Button>
-      ))}
+      {!isEmpty && relaxationButtons}
     </>
   )
 }

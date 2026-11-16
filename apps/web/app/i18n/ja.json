@@ -1793,6 +1793,8 @@
   "search.any": "いずれかのキーワードを含むファイル({n})",
   "search.missingAll": "『{q}』をすべて含むファイルはありませんでした。",
   "search.searched": "閲覧できるファイルのタイトルと本文を検索しました。",
+  "search.zeroUnfiltered": "『{q}』は見つかりませんでした。",
+  "search.zeroNoQueryUnfiltered": "ファイルは見つかりませんでした。",
   "search.zero": "この条件では『{q}』は見つかりませんでした。",
   "search.edit": "別のキーワードで検索",
   "search.fewer": "キーワードを減らして検索",

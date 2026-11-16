@@ -140,3 +140,68 @@ test.each([
     expect(html).toContain(`<p>${explanation}</p>`)
   },
 )
+
+test.each([
+  ['en', '', 'No matches for &quot;planning&quot;.'],
+  ['ja', '', '『planning』は見つかりませんでした。'],
+  [
+    'en',
+    '&period=7',
+    'No matches for &quot;planning&quot; with these filters.',
+  ],
+  ['ja', '&period=7', 'この条件では『planning』は見つかりませんでした。'],
+  [
+    'en',
+    '&includeArchived=false&sort=newest',
+    'No matches for &quot;planning&quot;.',
+  ],
+] as const)(
+  'empty search copy and recovery layout for %s %s',
+  (locale, filters, title) => {
+    const router = createMemoryRouter(
+      [
+        {
+          id: 'root',
+          path: '*',
+          loader: () => ({ locale }),
+          element: (
+            <SearchResults
+              result={{
+                ...result,
+                relaxations: filters.includes('period')
+                  ? [{ filter: 'date', total: { value: 2, relation: 'eq' } }]
+                  : [],
+              }}
+              actor="viewer"
+            />
+          ),
+        },
+      ],
+      {
+        initialEntries: [`/search?q=planning${filters}`],
+        hydrationData: { loaderData: { root: { locale } } },
+      },
+    )
+    const html = renderToStaticMarkup(<RouterProvider router={router} />)
+    expect(html).toContain(title)
+    expect(html).toMatch(/data-slot="empty-title"[^>]*>[^<]+<\/div>/)
+    expect(html).toMatch(/data-slot="empty-icon" data-variant="icon"/)
+    expect(html).toContain(
+      locale === 'ja'
+        ? '閲覧できるファイルのタイトルと本文を検索しました。'
+        : 'We searched titles and contents of files you can access.',
+    )
+    const content = html.match(/data-slot="empty-content".*?<\/div>/)?.[0]
+    expect(content).toContain(
+      locale === 'ja'
+        ? '別のキーワードで検索'
+        : 'Search with different keywords',
+    )
+    if (filters.includes('period'))
+      expect(content).toContain(
+        locale === 'ja'
+          ? '>期間の絞り込みを解除(すべて含むファイルが 2件あります)</button>'
+          : '>Remove Period filter (2 results contain all keywords)</button>',
+      )
+  },
+)

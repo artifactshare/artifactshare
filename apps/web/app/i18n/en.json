@@ -1793,6 +1793,8 @@
   "search.any": "Files containing any keyword ({n})",
   "search.missingAll": "No files contained all keywords in \"{q}\".",
   "search.searched": "We searched titles and contents of files you can access.",
+  "search.zeroUnfiltered": "No matches for \"{q}\".",
+  "search.zeroNoQueryUnfiltered": "No files found.",
   "search.zero": "No matches for \"{q}\" with these filters.",
   "search.edit": "Search with different keywords",
   "search.fewer": "Search with fewer keywords",
