@@ -669,12 +669,13 @@ test.each(['owner', 'project'] as const)(
 )
 
 test.each([
-  ['a direct link', undefined, '/'],
-  ['the app', '/files', '/files'],
-  ['an unsafe value', '//example.com', '/'],
+  ['a direct link', undefined, undefined, '/'],
+  ['a known page without a count', '/files', undefined, '/files'],
+  ['an unsafe value', '//example.com', undefined, '/'],
+  ['two searches from the app', '/files', 2, '/files'],
 ] as const)(
   'mobile results Cancel leaves search for the page before it (%s)',
-  async (_label, searchReturnTo, expected) => {
+  async (_label, searchReturnTo, searchDepth, expected) => {
     await page.viewport(599, 480)
     const router = createMemoryRouter(
       [
@@ -686,12 +687,16 @@ test.each([
         initialEntries: [
           '/files',
           // An earlier search sits between the page and the current search;
-          // Cancel must not step back into it.
-          { pathname: '/search', search: '?q=first' },
+          // Cancel must not stop at it.
+          {
+            pathname: '/search',
+            search: '?q=first',
+            state: { searchFromApp: true, searchReturnTo, searchDepth: 1 },
+          },
           {
             pathname: '/search',
             search: '?q=second',
-            state: { searchFromApp: true, searchReturnTo },
+            state: { searchFromApp: true, searchReturnTo, searchDepth },
           },
         ],
       },
@@ -704,6 +709,8 @@ test.each([
     await vi.waitFor(() =>
       expect(router.state.location.pathname).toBe(expected),
     )
+    // Stepping back keeps the entries; a fallback replaces the search entry.
+    expect(router.state.historyAction).toBe(searchDepth ? 'POP' : 'REPLACE')
   },
 )
 

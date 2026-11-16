@@ -813,7 +813,18 @@ export async function searchSuggestions(
       if (candidates.length < 50) break
     }
   }
-  return { files, owners, projects, recent }
+  // The palette has no session; mark the viewer's own files so it can say
+  // "Me" like the results page.
+  const mine = <T extends { ownerId: string }>(row: T) => ({
+    ...row,
+    ownedByViewer: row.ownerId === user.id,
+  })
+  return {
+    files: files.map(mine),
+    owners,
+    projects,
+    recent: recent.map(mine),
+  }
 }
 
 function searchFacets(rows: Metadata[], actor: string, exact: boolean) {

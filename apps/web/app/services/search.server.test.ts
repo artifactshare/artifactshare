@@ -1159,6 +1159,9 @@ test('suggestions batch authorized detail IDs and fill recent history after disc
     now,
   )
   expect(found.files.map((row) => row.id)).toEqual(['a', 'b', 'c'])
+  // The palette has no session, so the server marks the viewer's own files.
+  for (const row of found.files)
+    expect(row.ownedByViewer).toBe(row.ownerId === 'viewer')
   expect(stub.details).toHaveBeenCalledTimes(1)
   expect(stub.details).toHaveBeenCalledWith(expect.anything(), ['a', 'b', 'c'])
   expect(JSON.stringify(found)).not.toMatch(

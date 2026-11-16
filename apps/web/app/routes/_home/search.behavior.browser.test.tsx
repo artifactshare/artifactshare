@@ -461,6 +461,9 @@ test('Back and viewer return reload later pages before restoring their visible a
         },
         {
           path: 'a/:id',
+          // Like the real Viewer route, opening a file waits for a loader, so
+          // the results re-render in the loading state before they unmount.
+          loader: () => new Promise((resolve) => setTimeout(resolve, 150)),
           Component: () => {
             const location = useLocation()
             return (

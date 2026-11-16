@@ -27,7 +27,7 @@ import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
 import {
-  searchExitPath,
+  searchExit,
   searchNavigationState,
 } from '~/lib/search-view-state'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
@@ -216,7 +216,9 @@ function MobileSearch({
           <Button
             variant="ghost"
             onClick={() => {
-              void navigate(searchExitPath(location.state))
+              const exit = searchExit(location.state)
+              if ('back' in exit) void navigate(-exit.back)
+              else void navigate(exit.to, { replace: true })
             }}
           >
             {t('search.cancel')}
@@ -831,7 +833,7 @@ function paletteOptions({
         key: file.id,
         kind: 'file',
         label: file.title,
-        detail: `${file.ownerName} · ${file.project?.name ?? t('tb.home')} · ${file.lastViewedAt ? t('search.viewed', { date: formatDate(file.lastViewedAt) }) : t(shortVisibilityLabelKey(file.visibility))}`,
+        detail: `${file.ownedByViewer ? t('search.me') : file.ownerName} · ${file.project?.name ?? t('tb.home')} · ${file.lastViewedAt ? t('search.viewed', { date: formatDate(file.lastViewedAt) }) : t(shortVisibilityLabelKey(file.visibility))}`,
         excerpt: file.excerpt,
         path: file.path,
         artifactKind: file.artifactKind,
@@ -845,7 +847,7 @@ function paletteOptions({
         kind: 'file',
         artifactKind: file.artifactKind,
         label: file.title,
-        detail: file.ownerName,
+        detail: file.ownedByViewer ? t('search.me') : file.ownerName,
         activate: () => go(`/a/${file.id}`),
       })
     for (const log of history)

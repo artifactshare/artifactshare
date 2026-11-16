@@ -33,9 +33,14 @@ export function searchApiParams(params: URLSearchParams) {
   api.delete('period')
   if (period && period !== 'custom') api.set('days', period)
   if (period && !api.has('dateField')) api.set('dateField', 'updated')
-  if (!params.has('sort') && !params.get('q')?.trim() && params.has('owner'))
+  if (!params.has('sort') && defaultSearchSort(params) === 'newest')
     api.set('sort', 'newest')
   return api
+}
+
+/** Owner-only searches without keywords list newest first; others by relevance. */
+export function defaultSearchSort(params: URLSearchParams) {
+  return !params.get('q')?.trim() && params.has('owner') ? 'newest' : 'relevance'
 }
 export function parseSearchQuery(params: URLSearchParams, now?: Date) {
   const duplicate = ['project', 'period'].filter(
@@ -156,14 +161,16 @@ export function searchConditionParts(
   }
   if (params.get('includeArchived') === 'true')
     parts.push({ key: 'archived', label: t('search.archived') })
-  if (includeSort) {
-    const hasQuery = Boolean(params.get('q')?.trim())
-    const sort = params.get('sort')
-    if (hasQuery && sort === 'newest')
-      parts.push({ key: 'sort', label: t('search.newest') })
-    if (!hasQuery && sort === 'relevance')
-      parts.push({ key: 'sort', label: t('search.relevance') })
-  }
+  const sort = params.get('sort')
+  if (
+    includeSort &&
+    (sort === 'newest' || sort === 'relevance') &&
+    sort !== defaultSearchSort(params)
+  )
+    parts.push({
+      key: 'sort',
+      label: t(sort === 'newest' ? 'search.newest' : 'search.relevance'),
+    })
   return parts
 }
 
@@ -197,8 +204,15 @@ export async function readSearchJson<T extends object>(
     | T
     | { error: { code: string } }
     | null
-  if (data && 'error' in data && data.error && typeof data.error === 'object')
+  if (
+    data &&
+    typeof data === 'object' &&
+    'error' in data &&
+    data.error &&
+    typeof data.error === 'object'
+  )
     throw new Error((data.error as { code: string }).code)
-  if (!response.ok || !data) throw new Error('request_failed')
+  if (!response.ok || !data || typeof data !== 'object')
+    throw new Error('request_failed')
   return data as Exclude<T, { error: unknown }>
 }

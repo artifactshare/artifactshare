@@ -52,6 +52,7 @@ import {
   searchDateValue,
   searchConditionSummary,
   searchConditionParts,
+  defaultSearchSort,
   readSearchJson,
 } from '~/lib/search-query'
 import {
@@ -1110,7 +1111,7 @@ function DateSortFilters({
   const customOpen = customFor === params.toString()
   const sort =
     params.get('sort') ??
-    (!params.get('q')?.trim() && params.has('owner') ? 'newest' : 'relevance')
+    defaultSearchSort(params)
   return (
     <>
       <FilterMenu label={t('search.period')} inline={inline}>
@@ -1445,9 +1446,10 @@ function SearchResultListing({
         })
         // Returning from a file: keyboard users continue from the result they
         // opened, unless something else already took focus.
-        if (document.activeElement === document.body)
-          anchor
-            .querySelector<HTMLElement>('a[href^="/a/"]')
+        if (restore.opened && document.activeElement === document.body)
+          document
+            .getElementById(`search-file-${restore.opened}`)
+            ?.querySelector<HTMLElement>('a[href^="/a/"]')
             ?.focus({ preventScroll: true })
       }
       setRestored(true)
@@ -1463,7 +1465,7 @@ function SearchResultListing({
     waitingForGroups,
     items,
   ])
-  function remember(anchor: string, parent = anchor) {
+  function remember(anchor: string, parent = anchor, opened?: string) {
     const element = document.getElementById(`search-file-${anchor}`)
     const view = {
       depth,
@@ -1472,6 +1474,8 @@ function SearchResultListing({
       anchor,
       position: items.findIndex((item) => item.id === parent),
       offset: element?.getBoundingClientRect().top ?? 0,
+      // Scroll saves move the anchor; only opening a result sets this.
+      opened: opened ?? recallSearchView(location.key)?.opened,
     }
     rememberSearchView(location.key, view)
     rememberSearchView(returnKey, view)
@@ -1522,7 +1526,7 @@ function SearchResultListing({
             onGroupDepth={(id, pages) => {
               groupDepths.current[id] = pages
             }}
-            beforeOpen={(anchor) => remember(anchor, item.id)}
+            beforeOpen={(anchor) => remember(anchor, item.id, anchor)}
             onRestored={(id) =>
               setSettledGroups((current) => new Set([...current, id]))
             }

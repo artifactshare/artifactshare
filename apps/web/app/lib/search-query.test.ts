@@ -12,7 +12,7 @@ import {
 } from './search-query'
 import { canonicalSearch } from '~/services/search-input'
 import {
-  searchExitPath,
+  searchExit,
   searchNavigationState,
 } from '~/lib/search-view-state'
 
@@ -134,6 +134,12 @@ describe('readSearchJson', () => {
     )
     await expect(readSearchJson(response)).rejects.toThrow('invalid_date')
   })
+  test('treats a JSON value that is not an object as a failure', async () => {
+    const response = new Response(JSON.stringify('Service Unavailable'), {
+      status: 503,
+    })
+    await expect(readSearchJson(response)).rejects.toThrow('request_failed')
+  })
   test('falls back to request_failed without a JSON body', async () => {
     const response = new Response('oops', { status: 503 })
     await expect(readSearchJson(response)).rejects.toThrow('request_failed')
@@ -155,9 +161,20 @@ describe('searchConditionParts', () => {
     expect(keys('q=report&sort=newest', false)).toEqual([])
     expect(keys('q=report&sort=relevance', true)).toEqual([])
   })
-  test('treats newest as the default without keywords', () => {
-    expect(keys('q=&sort=newest', true)).toEqual([])
-    expect(keys('q=&sort=relevance', true)).toEqual(['search.relevance'])
+  test('uses the server default: newest only for owner-only searches', () => {
+    expect(keys('q=&sort=relevance', true)).toEqual([])
+    expect(keys('q=&project=home&sort=relevance', true)).toEqual([
+      'search.project: search.home',
+    ])
+    expect(keys('q=&project=home&sort=newest', true)).toEqual([
+      'search.project: search.home',
+      'search.newest',
+    ])
+    expect(keys('q=&owner=u1&sort=newest', true)).toEqual(['search.owner: search.unavailable'])
+    expect(keys('q=&owner=u1&sort=relevance', true)).toEqual([
+      'search.owner: search.unavailable',
+      'search.relevance',
+    ])
   })
   test('keeps sort out of the filter summary used for zero results', () => {
     expect(
@@ -171,19 +188,21 @@ describe('searchConditionParts', () => {
 })
 
 describe('searchNavigationState', () => {
-  test('remembers the page before search and keeps it across searches', () => {
+  test('counts entries since the page before search', () => {
     const first = searchNavigationState({ pathname: '/files', search: '?a=1' })
-    expect(first.searchReturnTo).toBe('/files?a=1')
+    expect(first).toMatchObject({ searchReturnTo: '/files?a=1', searchDepth: 1 })
     const second = searchNavigationState({
       pathname: '/search',
       search: '?q=x',
       state: first,
     })
-    expect(second.searchReturnTo).toBe('/files?a=1')
-    expect(searchExitPath(second)).toBe('/files?a=1')
+    expect(second).toMatchObject({ searchReturnTo: '/files?a=1', searchDepth: 2 })
+    expect(searchExit(second)).toEqual({ back: 2 })
   })
-  test('falls back to Home without a safe in-app path', () => {
-    expect(searchExitPath(undefined)).toBe('/')
-    expect(searchExitPath({ searchReturnTo: '//example.com' })).toBe('/')
+  test('without a count, replaces with a safe in-app path or Home', () => {
+    expect(searchExit(undefined)).toEqual({ to: '/' })
+    expect(searchExit({ searchReturnTo: '/files' })).toEqual({ to: '/files' })
+    expect(searchExit({ searchReturnTo: '//example.com' })).toEqual({ to: '/' })
+    expect(searchExit({ searchDepth: 0 })).toEqual({ to: '/' })
   })
 })
