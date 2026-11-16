@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -409,17 +410,15 @@ else console.log(JSON.stringify([{ results: db.prepare(value('--command')).all()
   })
   const persistTo = join(directory, 'persist')
   mkdirSync(persistTo)
-  const fixtures = join(directory, 'fixtures')
   return {
     calls: () =>
       readFileSync(calls, 'utf8')
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line)),
-    fixtures,
     options: {
       persistTo,
-      requireFixtures: true,
+      fixtures: false,
       env: {
         ...process.env,
         CLOUDFLARE_DEV_REGISTRY_PATH: join(directory, 'registry'),
@@ -438,26 +437,17 @@ else console.log(JSON.stringify([{ results: db.prepare(value('--command')).all()
 
 test('local setup prepares only the given store, once, through the given environment', (t) => {
   const setup = isolatedSetupFixture(t)
-  const build = () => {
-    mkdirSync(join(setup.fixtures, 'site'), { recursive: true })
-    writeFileSync(join(setup.fixtures, 'site', 'index.html'), '')
-    return { status: 0, stdout: '', stderr: '' }
-  }
-  const fixtureOptions = {
-    dir: setup.fixtures,
-    names: ['site'],
-    run: build,
-    log: () => {},
-  }
-  const first = prepareDevEnvironment({ ...setup.options, fixtureOptions })
+  const first = prepareDevEnvironment(setup.options)
   assert.equal(first.ok, true, first.reason)
   assert.deepEqual(
-    first.actions.filter((action) => /D1|\.dev\.vars|fixtures/.test(action)),
+    first.actions.filter((action) =>
+      /D1|\.dev\.vars|certificates/.test(action),
+    ),
     [
+      'Generated HTTPS certificates with mkcert.',
       'Created .dev.vars from .dev.vars.example.',
       'Applied local app D1 schema.',
       'Using existing local sandbox D1 schema.',
-      'Built static-site fixtures (missing before: site).',
     ],
   )
   const calls = setup.calls()
@@ -476,7 +466,7 @@ test('local setup prepares only the given store, once, through the given environ
   }
 
   writeFileSync(setup.options.paths.vars, 'BETTER_AUTH_SECRET=kept\n')
-  const second = prepareDevEnvironment({ ...setup.options, fixtureOptions })
+  const second = prepareDevEnvironment(setup.options)
   assert.equal(second.ok, true, second.reason)
   assert.ok(second.actions.includes('Using existing local app D1 schema.'))
   assert.equal(
@@ -485,25 +475,83 @@ test('local setup prepares only the given store, once, through the given environ
   )
 })
 
-test('local setup fails when a fixture build leaves a required fixture missing', (t) => {
+test('local setup leaves certificates alone when the caller supplies its own', (t) => {
   const setup = isolatedSetupFixture(t)
-  const partial = () => {
-    mkdirSync(join(setup.fixtures, 'one'), { recursive: true })
-    writeFileSync(join(setup.fixtures, 'one', 'index.html'), '')
-    return { status: 0, stdout: '', stderr: '' }
-  }
   const result = prepareDevEnvironment({
     ...setup.options,
-    fixtureOptions: {
-      dir: setup.fixtures,
-      names: ['one', 'two'],
-      run: partial,
-      log: () => {},
-    },
+    paths: { ...setup.options.paths, certs: null },
   })
-  assert.equal(result.ok, false)
-  assert.match(result.reason, /required but missing \(two\)/)
-  assert.equal(result.recoveryCommand, 'pnpm fixtures:build')
+  assert.equal(result.ok, true, result.reason)
+  assert.ok(!result.actions.some((action) => /certificate/.test(action)))
+  assert.equal(existsSync(setup.options.paths.certs), false)
+})
+
+test('local setup starts Wrangler with the command it is given', (t) => {
+  const setup = isolatedSetupFixture(t)
+  const fake = join(setup.directory, 'fake-wrangler.mjs')
+  const result = prepareDevEnvironment({
+    ...setup.options,
+    wrangler: [process.execPath, fake],
+  })
+  assert.equal(result.ok, true, result.reason)
+  const calls = setup.calls()
+  assert.ok(calls.length > 0)
+  // Through the pnpm shim the fake would see `exec wrangler d1 …`.
+  assert.ok(calls.every((call) => call.args[0] === 'd1'))
+})
+
+test('required fixtures fail setup when the build fails or leaves a fixture missing', (t) => {
+  const setup = isolatedSetupFixture(t)
+  const dir = join(setup.directory, 'fixtures')
+  const writeAll = () => {
+    for (const name of ['one', 'two']) {
+      mkdirSync(join(dir, name), { recursive: true })
+      writeFileSync(join(dir, name, 'index.html'), '')
+    }
+  }
+  const builds = {
+    healthy: () => {
+      writeAll()
+      return { status: 0, stdout: '', stderr: '' }
+    },
+    'nonzero exit': () => {
+      writeAll()
+      return { status: 1, stdout: '', stderr: 'Error: build broke' }
+    },
+    'spawn error': () => {
+      writeAll()
+      return { status: null, error: new Error('spawn node ENOENT') }
+    },
+    'exit 0 with a fixture missing': () => {
+      mkdirSync(join(dir, 'one'), { recursive: true })
+      writeFileSync(join(dir, 'one', 'index.html'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    },
+  }
+  const reasons = {
+    'exit 0 with a fixture missing':
+      /Static-site fixtures still missing after the build \(two\)/,
+  }
+  for (const [name, run] of Object.entries(builds)) {
+    rmSync(dir, { recursive: true, force: true })
+    const result = prepareDevEnvironment({
+      ...setup.options,
+      fixtures: false,
+      requireFixtures: true,
+      fixtureOptions: { dir, names: ['one', 'two'], run, log: () => {} },
+    })
+    if (name === 'healthy') {
+      assert.equal(result.ok, true, result.reason)
+      continue
+    }
+    assert.equal(result.ok, false, name)
+    assert.match(
+      result.reason,
+      reasons[name] ?? /Static-site fixtures not built/,
+      name,
+    )
+    assert.equal(result.recoveryCommand, 'pnpm fixtures:build', name)
+  }
 })
 
 test('running the script directly prints the recovery command', () => {

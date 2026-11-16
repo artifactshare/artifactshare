@@ -130,13 +130,26 @@ loopback. The checkout must be clean, as for the external-server commands.
 
 Each run:
 
-1. Prepares missing local inputs as `pnpm dev:setup` does — HTTPS certificates,
-   `.dev.vars` from `.dev.vars.example` (an existing file is kept), the
-   static-site fixtures (required here, also in CI) — and applies the D1 schema
-   to its own empty store. It builds the contract package, and the CLI when
-   `packages/cli/dist/index.js` is missing (walkthroughs only). It does not
-   install Git hooks.
-2. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
+1. Exports the current HEAD into its runtime directory (`git archive`) and
+   gives each workspace package links to the checkout's installed
+   dependencies. Setup and the services run from that copy, so everything
+   they generate beside their sources — `apps/web/.react-router/types`,
+   Wrangler's `.wrangler` bundles, fixture and builder outputs — stays out of
+   the checkout. The copy is never handed to the package manager.
+2. Prepares its inputs without changing anything a `pnpm dev` in the same
+   checkout reads. An existing `.dev-certs` certificate covering the dev hosts
+   and an existing `.dev.vars` are used read-only (a `.dev.vars` without a
+   `BETTER_AUTH_SECRET` value stops the run with the fix to make); a missing
+   or obsolete certificate and a missing `.dev.vars` (from
+   `.dev.vars.example`) are created in the runtime directory instead. It
+   applies the D1 schema to its own empty store. Walkthroughs build the CLI
+   for the current HEAD into the runtime directory on every run, so neither a
+   stale nor a missing `packages/cli/dist` matters and that directory is
+   never written; `packages/contract/dist` is not needed or written either.
+   Complete static-site fixtures in the checkout are copied into the export;
+   otherwise they are built there (also in CI), and a failed build stops the
+   run. It does not install Git hooks.
+3. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
    current HEAD, with the TLS certificate, and waits until each answers as
    itself on `127.0.0.1` and `[::1]`, the app reaches og-image through its
    service binding (`/og-image`), and the app reports the clean HEAD. Wrangler
@@ -145,37 +158,48 @@ Each run:
    to it. Nothing listens on other interfaces. The wait ends after
    `LOCAL_CAPTURE_READY_TIMEOUT_MS` (default 300000), or as soon as a service
    exits.
-3. Runs the capture against those services. The app URL, the per-ID link viewer
+4. Runs the capture against those services. The app URL, the per-ID link viewer
    (`https://<id>.localhost:<app port>/`), sandbox frame URLs and the sharing
    URLs shown or copied in the app all follow the chosen ports.
-4. Stops every process it started, including descendants that left their
-   process group: SIGTERM, then SIGKILL after 5 seconds. It waits until they are
-   gone, then removes its runtime directory.
+5. Stops every process it started, including descendants that left their
+   process group: SIGTERM, then SIGKILL after 5 seconds. It signals a process
+   only while it can show the process is its own (a child not yet reaped, the
+   run's ownership tag in its environment, or a live descendant of such a
+   process), so a reused process ID is never signalled; a process it tracked
+   that is still running but can no longer be proved its own is reported and
+   fails the run instead. It waits until they are gone, then removes its
+   runtime directory.
 
 Ports are chosen automatically from free loopback ports, never 5173–5175, so a
 developer's `pnpm dev` and any other listener keep running; the command never
 connects to them. Set `LOCAL_CAPTURE_APP_PORT`, `LOCAL_CAPTURE_SANDBOX_PORT` or
-`LOCAL_CAPTURE_OG_IMAGE_PORT` to choose a port; each must be a valid, distinct
-port free on both loopback families, or the command stops before starting
-anything. Inspector ports are chosen the same way. If another process takes a
+`LOCAL_CAPTURE_OG_IMAGE_PORT` to choose a port; each must be a distinct port
+from 1024 to 65535 that is free on both loopback families, or the command
+stops before starting anything (a port such as 443 would disappear from the
+`https://localhost` URLs). Inspector ports are chosen the same way. If another process takes a
 chosen port before a service binds it, the run fails rather than moving to a
 different URL.
 
 Every service and setup step receives one temporary runtime directory created
 outside every registered worktree: its dev registry
 (`CLOUDFLARE_DEV_REGISTRY_PATH` and `WRANGLER_REGISTRY_PATH`), local D1/R2
-persistence (`--persist-to` and the Vite persistence path) and Wrangler logs.
-The default registry directories are never read, written or cleaned, and
-inherited `SCREEN_CAPTURE_BASE_URL`, registry, persistence and log settings
-are replaced, so the run cannot reach another stack. The directory is removed
+persistence (`--persist-to` and the Vite persistence path), Wrangler logs,
+and its own Vite dependency cache, Miniflare cache (`MINIFLARE_CACHE_DIR`) and
+Wrangler cache, so the checkout's `apps/web/node_modules/.vite` and `.mf` stay
+as an external `pnpm dev` left them. The default registry directories are
+never read, written or cleaned, and inherited `SCREEN_CAPTURE_BASE_URL`,
+registry, persistence, cache and log settings are replaced, so the run cannot
+reach another stack. The directory is removed
 on every exit path; nothing persists between runs.
 
 Output, manifests and failure diagnostics are the same as for the
 external-server commands and stay in the usual capture output root. The exit
 status is 0 only when the capture succeeds and cleanup completes. A failing
 state or walkthrough step is printed as usual and exits 1, as does a setup,
-startup, readiness or cleanup failure. SIGINT and SIGTERM stop everything
-first and then exit 130 or 143; a repeated signal does not skip that cleanup.
+startup, readiness or cleanup failure. SIGINT, SIGTERM and SIGHUP stop
+everything first and then exit 130, 143 or 129; a repeated signal does not
+skip that cleanup. An uncaught exception or unhandled rejection takes the same
+cleanup path and exits 1.
 Nothing can be cleaned up after SIGKILL or machine loss.
 
 `pnpm test:capture:local` exercises these commands against real services in a

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve as resolvePath } from 'node:path'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import {
@@ -17,6 +18,7 @@ import {
   recordCaptureRevision,
   requestOriginPhase,
   shouldWaitForViewerReady,
+  walkthroughCliEntry,
   walkthroughSandboxOrigin,
 } from './task-walkthrough-capture.mjs'
 import { championLoopTaskIds } from './task-walkthroughs.mjs'
@@ -89,6 +91,17 @@ test('preflights the selected sandbox, or 5174 for an external server', () => {
   assert.equal(
     walkthroughSandboxOrigin('https://localhost:41101', {}),
     'https://localhost:5174',
+  )
+})
+
+test('runs the CLI build the local capture names, or the checkout build', () => {
+  assert.equal(
+    walkthroughCliEntry({ WALKTHROUGH_CLI_ENTRY: '/run/cli/dist/index.js' }),
+    '/run/cli/dist/index.js',
+  )
+  assert.equal(
+    walkthroughCliEntry({}),
+    resolvePath('packages/cli/dist/index.js'),
   )
 })
 

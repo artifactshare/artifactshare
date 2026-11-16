@@ -1,7 +1,9 @@
+import * as path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  devServerFiles,
   devServerTopology,
-  originalHostnamePlugin,
+  originalHostnameMiddleware,
   sourceRevision,
 } from './vite.config'
 
@@ -69,45 +71,72 @@ describe('dev server topology', () => {
     expect(() =>
       devServerTopology({ ARTIFACTSHARE_DEV_APP_PORT: '5173; rm' }),
     ).toThrow(/ARTIFACTSHARE_DEV_APP_PORT must be a TCP port/)
+    expect(() =>
+      devServerTopology({ ARTIFACTSHARE_DEV_SANDBOX_PORT: '443' }),
+    ).toThrow(/ARTIFACTSHARE_DEV_SANDBOX_PORT must be a TCP port from 1024/)
   })
 })
 
-describe('original hostname plugin', () => {
-  type Handler = (
-    request: {
-      headers: Record<string, string | undefined>
-      rawHeaders: string[]
-    },
-    response: unknown,
-    next: () => void,
-  ) => void
+describe('dev server files', () => {
+  const root = path.resolve(import.meta.dirname, '../..')
 
-  function install(): Handler {
-    let handler: Handler | undefined
-    const plugin = originalHostnamePlugin() as unknown as {
-      configureServer: (server: {
-        middlewares: { use: (fn: Handler) => void }
-      }) => void
-    }
-    plugin.configureServer({
-      middlewares: {
-        use: (fn) => {
-          handler = fn
-        },
-      },
+  test('pnpm dev reads the checkout certificate and variables, default cache', () => {
+    expect(devServerFiles({})).toEqual({
+      certPath: path.join(root, '.dev-certs/cert.pem'),
+      keyPath: path.join(root, '.dev-certs/key.pem'),
+      varsPath: path.join(root, '.dev.vars'),
+      cacheDir: undefined,
+      gitRoot: root,
+      fsAllow: [],
     })
-    if (!handler) throw new Error('middleware was not installed')
-    return handler
-  }
+  })
+
+  test('a local capture points every shared file at its runtime directory', () => {
+    expect(
+      devServerFiles({
+        ARTIFACTSHARE_DEV_CERT_DIR: '/run/certs',
+        ARTIFACTSHARE_DEV_VARS_PATH: '/run/dev.vars',
+        ARTIFACTSHARE_DEV_VITE_CACHE_DIR: '/run/vite-cache',
+        ARTIFACTSHARE_DEV_GIT_ROOT: '/checkout',
+        ARTIFACTSHARE_DEV_FS_ALLOW: `/checkout${path.delimiter}/store`,
+      }),
+    ).toEqual({
+      certPath: '/run/certs/cert.pem',
+      keyPath: '/run/certs/key.pem',
+      varsPath: '/run/dev.vars',
+      cacheDir: '/run/vite-cache',
+      gitRoot: '/checkout',
+      fsAllow: ['/checkout', '/store'],
+    })
+  })
+
+  test('the revision check asks the configured Git root', () => {
+    const head = 'c'.repeat(40)
+    const exec = vi.fn(
+      (
+        _file: string,
+        args: readonly string[],
+        _options: { cwd: string; encoding: 'utf8' },
+      ) => (args[0] === 'rev-parse' ? `${head}\n` : ''),
+    )
+    expect(sourceRevision(head, exec, '/checkout')).toEqual({
+      head,
+      clean: true,
+    })
+    expect(exec.mock.calls.map(([, , options]) => options.cwd)).toEqual([
+      '/checkout',
+      '/checkout',
+    ])
+  })
+})
+
+describe('original hostname middleware', () => {
+  const handler = originalHostnameMiddleware
 
   test('carries a per-ID .localhost host into the Worker hostname header', () => {
-    const handler = install()
     const next = vi.fn()
-    const request = {
-      headers: { ':authority': 'abc123def4.localhost:5173' } as Record<
-        string,
-        string | undefined
-      >,
+    const request: Parameters<typeof handler>[0] = {
+      headers: { ':authority': 'abc123def4.localhost:5173' },
       rawHeaders: [':authority', 'abc123def4.localhost:5173'],
     }
     handler(request, undefined, next)
@@ -120,9 +149,8 @@ describe('original hostname plugin', () => {
   })
 
   test('leaves plain localhost and an existing header alone', () => {
-    const handler = install()
-    const plain = {
-      headers: { host: 'localhost:5173' } as Record<string, string | undefined>,
+    const plain: Parameters<typeof handler>[0] = {
+      headers: { host: 'localhost:5173' },
       rawHeaders: ['host', 'localhost:5173'],
     }
     handler(plain, undefined, () => {})
@@ -133,7 +161,7 @@ describe('original hostname plugin', () => {
       headers: {
         host: 'abc123def4.localhost:5173',
         'mf-original-hostname': 'preset.localhost',
-      } as Record<string, string | undefined>,
+      },
       rawHeaders: [],
     }
     handler(preset, undefined, () => {})

@@ -75,7 +75,11 @@ describe('artifactSandboxUrl', () => {
     expect(devAppOrigin(development)).toBe('https://localhost:5173')
     expect(() =>
       devSandboxPort({ ...development, DEV_SANDBOX_PORT: '5174x' }),
-    ).toThrow(/Invalid development port/)
+    ).toThrow(/DEV_SANDBOX_PORT must be a TCP port from 1024 to 65535/)
+    // A default HTTPS port would vanish from the URL and point elsewhere.
+    expect(() => devAppPort({ ...development, DEV_APP_PORT: '443' })).toThrow(
+      /DEV_APP_PORT must be a TCP port from 1024 to 65535, got 443/,
+    )
     // Production never reads the development overrides, even malformed ones.
     expect(
       devSandboxPort({ APP_ENV: 'production', DEV_SANDBOX_PORT: '5174x' }),

@@ -108,6 +108,15 @@ export function walkthroughSandboxOrigin(baseUrl, env = process.env) {
   return localSandboxOrigin(baseUrl, env) ?? 'https://localhost:5174'
 }
 
+/**
+ * The CLI build the walkthrough runs. The local capture command builds the
+ * CLI for the current HEAD into its runtime directory and names it here, so a
+ * stale `packages/cli/dist` is neither used nor rebuilt in place.
+ */
+export function walkthroughCliEntry(env = process.env) {
+  return resolve(env.WALKTHROUGH_CLI_ENTRY || 'packages/cli/dist/index.js')
+}
+
 async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
@@ -130,10 +139,10 @@ async function preflight(baseUrl, head) {
     }
   }
   try {
-    await stat(resolve('packages/cli/dist/index.js'))
+    await stat(walkthroughCliEntry())
   } catch {
     failures.push(
-      'cli: packages/cli/dist/index.js is missing; run pnpm --filter @artifactshare/cli build',
+      `cli: ${walkthroughCliEntry()} is missing; run pnpm --filter @artifactshare/cli build`,
     )
   }
   // A second app request catches the dependency-optimization reload window
@@ -360,7 +369,7 @@ async function executeCli({ kind, baseUrl, session, tempDir, state }) {
     await mkdir(cli.home, { recursive: true })
     const result = await execFileAsync(
       process.execPath,
-      [resolve('packages/cli/dist/index.js'), ...args],
+      [walkthroughCliEntry(), ...args],
       { cwd: cli.cwd, env: cli.env, maxBuffer: 4 * 1024 * 1024 },
     )
     const parsed = JSON.parse(result.stdout)

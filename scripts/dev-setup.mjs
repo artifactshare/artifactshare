@@ -377,11 +377,16 @@ function sqlStatementEnd(sql, start, type) {
   return -1
 }
 
+const PNPM_WRANGLER = ['pnpm', 'exec', 'wrangler']
+
 // An explicit `env` is used as given: the local capture commands pass their
 // own registry and log directories, which must not fall back to the defaults.
-function runWrangler(args, env) {
+// They also pass `wrangler` (Node and Wrangler's entry point), because the
+// package manager must not run in their exported copy of the checkout.
+function runWrangler(args, { env, wrangler = PNPM_WRANGLER } = {}) {
+  const [command, ...prefix] = wrangler
   try {
-    return execFileSync('pnpm', ['exec', 'wrangler', ...args], {
+    return execFileSync(command, [...prefix, ...args], {
       cwd: APP,
       env: env ?? { ...process.env, WRANGLER_LOG_PATH: '../../.wrangler/logs' },
       encoding: 'utf8',
@@ -433,7 +438,7 @@ export function databaseObjectNames(rows) {
   )
 }
 
-function databaseObjects(target, persistTo, env) {
+function databaseObjects(target, persistTo, exec) {
   const output = runWrangler(
     [
       'd1',
@@ -445,14 +450,14 @@ function databaseObjects(target, persistTo, env) {
       "select type, name, sql from sqlite_master where type in ('table', 'index', 'trigger')",
       '--json',
     ],
-    env,
+    exec,
   )
   const parsed = JSON.parse(output)
   const rows = parsed.flatMap((item) => item.results ?? item.result ?? [])
   return rows
 }
 
-function executeFile(target, file, persistTo, env) {
+function executeFile(target, file, persistTo, exec) {
   runWrangler(
     [
       'd1',
@@ -463,7 +468,7 @@ function executeFile(target, file, persistTo, env) {
       '--file',
       file,
     ],
-    env,
+    exec,
   )
 }
 
@@ -573,10 +578,10 @@ function prepareVars(
   return []
 }
 
-function prepareDatabase(target, reset, persistTo, env) {
+function prepareDatabase(target, reset, persistTo, exec) {
   const schema = asInput(() => readFileSync(SCHEMA, 'utf8'))
   assertSupportedSchema(schema)
-  const existingRows = databaseObjects(target, persistTo, env)
+  const existingRows = databaseObjects(target, persistTo, exec)
   const existingTables = tableNames(existingRows)
   const existingObjects = databaseObjectNames(existingRows)
   if (!reset && existingTables.length) {
@@ -612,14 +617,14 @@ function prepareDatabase(target, reset, persistTo, env) {
       const statements = resetStatements(existingRows)
       if (statements.length) {
         writeFileSync(file, statements.join('\n'))
-        executeFile(target, file, persistTo, env)
+        executeFile(target, file, persistTo, exec)
       }
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
   }
   if (reset || !existingTables.length)
-    executeFile(target, SCHEMA, persistTo, env)
+    executeFile(target, SCHEMA, persistTo, exec)
   return reset
     ? [`Reset and applied local ${target} D1 schema.`]
     : !existingTables.length
@@ -654,13 +659,22 @@ export function buildErrorLines(result, limit = 3) {
 /**
  * Build the git-ignored static-site fixtures when any is missing. Only the
  * static-site tests read them, so a failed build is reported as an action and
- * does not stop the dev servers.
+ * does not stop the dev servers. With `required` (the local capture
+ * commands), a failed build fails setup: a nonzero exit or spawn error is a
+ * failure even if every index.html exists, since it may be a stale or partial
+ * output of an earlier build.
  */
 export function prepareFixtures({
   dir = STATIC_SITE_FIXTURES,
   names = STATIC_SITE_FIXTURE_NAMES,
   run = spawnSync,
   cwd = ROOT,
+  // The local capture commands run the build script with Node: the package
+  // manager must not run in their exported copy of the checkout.
+  command = ['pnpm', 'fixtures:build'],
+  // Environment of the build; undefined inherits this process's.
+  env,
+  required = false,
   log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
   const missing = missingStaticSiteFixtures(dir, names)
@@ -668,8 +682,10 @@ export function prepareFixtures({
   log(
     `Building static-site fixtures (${missing.join(', ')}); the first build takes about a minute.`,
   )
-  const result = run('pnpm', ['fixtures:build'], {
+  const [program, ...args] = command
+  const result = run(program, args, {
     cwd,
+    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: FIXTURES_MAX_BUFFER,
@@ -681,15 +697,18 @@ export function prepareFixtures({
     const detail = [result.error?.message, buildErrorLines(result)]
       .filter(Boolean)
       .join(': ')
+    const message = `Static-site fixtures not built (${missingStaticSiteFixtures(dir, names).join(', ') || 'build failed'}): ${detail || `exit code ${result.status}`}.`
+    if (required) throw setupError('fixtures', message)
     return [
-      `Static-site fixtures not built (${missingStaticSiteFixtures(dir, names).join(', ')}): ${detail}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,
+      `${message} Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,
     ]
   }
   const still = missingStaticSiteFixtures(dir, names)
-  if (still.length > 0)
-    return [
-      `Static-site fixtures still missing after the build (${still.join(', ')}); check tools/static-site-fixtures/build.mjs or run ${RECOVERY_COMMANDS.fixtures}.`,
-    ]
+  if (still.length > 0) {
+    const message = `Static-site fixtures still missing after the build (${still.join(', ')}); check tools/static-site-fixtures/build.mjs`
+    if (required) throw setupError('fixtures', message)
+    return [`${message} or run ${RECOVERY_COMMANDS.fixtures}.`]
+  }
   return [`Built static-site fixtures (missing before: ${missing.join(', ')}).`]
 }
 
@@ -700,12 +719,17 @@ export function prepareDevEnvironment({
   // Isolated harnesses and CI lanes that never render static sites skip the
   // build; `pnpm test` builds the fixtures itself where they are needed.
   fixtures = !process.env.CI,
-  // The local capture commands need every input, CI or not: a fixture build
-  // that leaves something missing fails setup instead of becoming an action.
+  // The local capture commands need the fixtures, CI or not: a failed or
+  // incomplete build fails setup instead of becoming an action.
   requireFixtures = false,
-  // Environment for every Wrangler call, used as given (registry, log path).
+  // Environment for every Wrangler call, used as given (registry, log path),
+  // and the command that starts Wrangler (default `pnpm exec wrangler`).
   env,
+  wrangler,
   // Test and isolation seams; each defaults to the checkout's own file.
+  // `certs: null` skips certificate preparation: the local capture commands
+  // use an existing checkout certificate read-only and generate a missing one
+  // only in their own runtime directory.
   paths = {},
   fixtureOptions = {},
 } = {}) {
@@ -716,26 +740,19 @@ export function prepareDevEnvironment({
         'usage',
         `Unknown --target value: ${target}; expected app or sandbox`,
       )
-    actions.push(...asInput(() => prepareCerts(paths.certs)))
+    if (paths.certs !== null)
+      actions.push(...asInput(() => prepareCerts(paths.certs)))
     actions.push(...asInput(() => prepareVars(paths.vars, paths.exampleVars)))
     const targets = target ? [target] : ['app', 'sandbox']
     // Read the object list per target. app and sandbox share one physical D1,
     // so a snapshot taken before app applies the schema would tell sandbox the
     // tables are still missing and it would apply schema.sql a second time.
     for (const item of targets)
-      actions.push(...prepareDatabase(item, reset, persistTo, env))
-    if (requireFixtures) {
-      actions.push(...prepareFixtures(fixtureOptions))
-      const missing = missingStaticSiteFixtures(
-        fixtureOptions.dir,
-        fixtureOptions.names,
+      actions.push(
+        ...prepareDatabase(item, reset, persistTo, { env, wrangler }),
       )
-      if (missing.length)
-        throw setupError(
-          'fixtures',
-          `Static-site fixtures are required but missing (${missing.join(', ')}): ${actions.at(-1) ?? 'no build output'}`,
-        )
-    }
+    if (requireFixtures)
+      actions.push(...prepareFixtures({ ...fixtureOptions, required: true }))
     // Last: slow and optional relative to the schema checks above. A throw
     // here is a fixtures problem, not a reason to reset the database.
     else if (fixtures) {

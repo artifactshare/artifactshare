@@ -7,7 +7,11 @@
 // HEAD with the current working tree committed on top (so an uncommitted
 // implementation is what runs), dependencies copied in, and none of the
 // git-ignored inputs (.dev.vars, certificates, schema, fixtures, CLI build).
-// The reviewed tree and its developer inputs are never touched.
+// The reviewed tree and its developer inputs are never touched. Sentinels
+// stand in for what a developer's `pnpm dev` in the same checkout reads
+// (Vite and Miniflare caches, certificate and fixture directories, the
+// contract build); the commands must leave them byte-for-byte unchanged and
+// create none of the missing inputs in the checkout.
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -149,6 +153,28 @@ function sentinelHome(base) {
       WRANGLER_REGISTRY_PATH: join(home, 'inherited-registry'),
     },
   }
+}
+
+// Shared checkout files an external `pnpm dev` reads. `.dev-certs` holds no
+// certificate, so the commands need one and must make it elsewhere.
+const CHECKOUT_SENTINELS = [
+  'apps/web/node_modules/.vite/sentinel.txt',
+  'apps/web/node_modules/.mf/cf.json',
+  // React Router deletes and regenerates this directory when its dev server
+  // starts in the directory; Wrangler writes its bundles under `.wrangler`.
+  'apps/web/.react-router/types/sentinel.txt',
+  'apps/web/.wrangler/sentinel.txt',
+  '.dev-certs/sentinel.txt',
+  'fixtures/static-sites/sentinel.txt',
+  'packages/contract/dist/sentinel.txt',
+]
+
+function checkoutSentinels(checkout) {
+  for (const file of CHECKOUT_SENTINELS) {
+    mkdirSync(dirname(join(checkout, file)), { recursive: true })
+    writeFileSync(join(checkout, file), `{"sentinel":"${file}"}`)
+  }
+  return CHECKOUT_SENTINELS.map((file) => dirname(join(checkout, file)))
 }
 
 function treeSnapshot(dirs) {
@@ -398,7 +424,7 @@ async function inspectRunningStack(checkout, topology, descendants) {
       args.includes('--persist-to'),
   )
   const vite = running.filter(({ args }) =>
-    /react-router(\.js)? dev|@react-router\/dev\/bin\.js dev/.test(args),
+    /react-router(\.js)? dev|@react-router\/dev\/bin\.c?js dev/.test(args),
   )
   assert.ok(
     wrangler.length >= 2,
@@ -459,6 +485,18 @@ async function inspectRunningStack(checkout, topology, descendants) {
     assert.ok(env.includes(`ARTIFACTSHARE_DEV_APP_PORT=${topology.app}`))
     assert.ok(
       env.includes(
+        `ARTIFACTSHARE_DEV_VITE_CACHE_DIR=${join(topology.runtime, 'vite-cache')}`,
+      ),
+      'the app does not use a private Vite cache',
+    )
+    assert.ok(
+      env.includes(
+        `MINIFLARE_CACHE_DIR=${join(topology.runtime, 'miniflare-cache')}`,
+      ),
+      'the app does not use a private Miniflare cache',
+    )
+    assert.ok(
+      env.includes(
         `ARTIFACTSHARE_DEV_PERSIST_PATH=${join(topology.runtime, 'persist')}`,
       ),
     )
@@ -512,17 +550,21 @@ test(
       existsSync(join(checkout, 'scripts/local-capture.mjs')),
       'the checkout lacks the implementation',
     )
-    for (const input of [
+    // Inputs the commands need but must never create in the checkout.
+    const absentInputs = [
       '.dev.vars',
-      '.dev-certs',
-      'fixtures/static-sites',
+      '.dev-certs/cert.pem',
+      'fixtures/static-sites/react-spa',
       'packages/cli/dist',
-    ])
+    ]
+    for (const input of absentInputs)
       assert.equal(
         existsSync(join(checkout, input)),
         false,
         `${input} must start missing`,
       )
+    const shared = checkoutSentinels(checkout)
+    const sharedBefore = treeSnapshot(shared)
     assert.equal(git(checkout, ['status', '--porcelain']), '')
     const baseCommit = git(checkout, ['rev-parse', 'HEAD'])
     const outputRoot = screenCaptureOutputRoot((file, args) =>
@@ -538,6 +580,17 @@ test(
         sentinels,
         'a default registry changed',
       )
+      assert.deepEqual(
+        treeSnapshot(shared),
+        sharedBefore,
+        'a checkout file read by pnpm dev changed',
+      )
+      for (const input of absentInputs)
+        assert.equal(
+          existsSync(join(checkout, input)),
+          false,
+          `${input} was created in the checkout`,
+        )
       assert.deepEqual(
         await listeners.commandClients(),
         [],
@@ -579,15 +632,18 @@ test(
           readFileSync(join(outputRoot, 'latest/manifest.json'), 'utf8'),
         )
         assert.equal(manifest.head ?? baseCommit, baseCommit)
-        for (const input of [
-          '.dev.vars',
-          '.dev-certs/cert.pem',
-          'fixtures/static-sites/react-spa/index.html',
-        ])
-          assert.ok(
-            existsSync(join(checkout, input)),
-            `${input} was not prepared`,
-          )
+        // The certificate and variables were made in the runtime directory.
+        assert.match(
+          result.output,
+          /Generated (self-signed )?HTTPS certificates/,
+        )
+        assert.match(
+          result.output,
+          /Created \.dev\.vars from \.dev\.vars\.example/,
+        )
+        // The checkout fixtures are incomplete (a sentinel only), so they
+        // were built in the export; the checkout copy stays as it was.
+        assert.match(result.output, /Built static-site fixtures/)
         await assertStopped(result)
         await assertIsolated()
       },
@@ -625,29 +681,36 @@ test(
       },
     )
 
-    await t.test('SIGINT during setup stops every owned process', async () => {
-      const result = await runCommand(
-        checkout,
-        home.env,
-        process.execPath,
-        [
-          'scripts/local-capture.mjs',
-          'screens',
-          '--',
-          '--screen',
-          'about',
-          '--label',
-          'interrupted',
-        ],
-        (line, { child }) => {
-          if (line === 'local capture: prepare') child.kill('SIGINT')
+    for (const [signal, status] of [
+      ['SIGINT', 130],
+      ['SIGHUP', 129],
+    ])
+      await t.test(
+        `${signal} during setup stops every owned process`,
+        async () => {
+          const result = await runCommand(
+            checkout,
+            home.env,
+            process.execPath,
+            [
+              'scripts/local-capture.mjs',
+              'screens',
+              '--',
+              '--screen',
+              'about',
+              '--label',
+              'interrupted',
+            ],
+            (line, { child }) => {
+              if (line === 'local capture: prepare') child.kill(signal)
+            },
+          )
+          assert.equal(result.code, status, result.output.slice(-4000))
+          assert.doesNotMatch(result.output, /services ready/)
+          await assertStopped(result)
+          await assertIsolated()
         },
       )
-      assert.equal(result.code, 130, result.output.slice(-4000))
-      assert.doesNotMatch(result.output, /services ready/)
-      await assertStopped(result)
-      await assertIsolated()
-    })
 
     await t.test(
       'SIGTERM during capture stops every owned process and keeps earlier evidence',

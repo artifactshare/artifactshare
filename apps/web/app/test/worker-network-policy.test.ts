@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Duplex } from 'node:stream'
-import { createServer } from 'node:http'
+import { createServer, type RequestListener } from 'node:http'
 import { once } from 'node:events'
 import { http, HttpResponse } from 'msw/http'
 import { setupServer } from 'msw/node'
@@ -25,24 +25,60 @@ test.each([
 ] as const)(
   '%s enforces its outbound boundary while allowing handled and loopback traffic',
   async (name, policy, diagnostic) => {
-    const local = createServer((_request, response) => response.end('loopback'))
+    const answer: RequestListener = (_request, response) =>
+      response.end('loopback')
+    // One port on each loopback family instead of a wildcard bind: a wildcard
+    // listener loses 127.0.0.1:<port> to a process holding only that address
+    // (such as a local capture stack), which would then answer these
+    // requests. Each address below, including `localhost` whichever family it
+    // resolves to, reaches a listener this test owns.
+    const local = createServer(answer)
+    const local6 = createServer(answer)
     const network = setupServer(
       http.get('https://declared.invalid/request', () =>
         HttpResponse.text('handled'),
       ),
     )
+    const close = (server: typeof local) =>
+      new Promise<void>((resolve, reject) =>
+        server.listening
+          ? server.close((error) => (error ? reject(error) : resolve()))
+          : resolve(),
+      )
     // Vitest retains the assertion failure even if teardown also fails.
     onTestFinished(async () => {
       network.close()
-      await new Promise<void>((resolve, reject) =>
-        local.close((error) => (error ? reject(error) : resolve())),
-      )
+      await Promise.all([close(local), close(local6)])
     })
-    local.listen(0)
-    await once(local, 'listening')
-    const address = local.address()
-    if (!address || typeof address === 'string')
-      throw new Error('Missing TCP address')
+    let port = 0
+    for (let attempt = 0; !port; attempt++) {
+      local.listen(0, '127.0.0.1')
+      await once(local, 'listening')
+      const address = local.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Missing TCP address')
+      try {
+        local6.listen(address.port, '::1')
+        await once(local6, 'listening')
+        port = address.port
+      } catch (error) {
+        // The number is taken on [::1] by someone else; pick another.
+        const inUse =
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'EADDRINUSE'
+        if (!inUse || attempt > 20) throw error
+        await close(local)
+      }
+    }
+    const address = { port }
+    // Explicit loopback binds on one shared port. A wildcard listener (`::`)
+    // would lose 127.0.0.1:<port> to another process holding only that.
+    expect([local.address(), local6.address()]).toMatchObject([
+      { address: '127.0.0.1', port },
+      { address: '::1', port },
+    ])
     network.listen({ onUnhandledFrame: policy })
     expect(await (await fetch('https://declared.invalid/request')).text()).toBe(
       'handled',

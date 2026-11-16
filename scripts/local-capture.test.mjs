@@ -1,24 +1,36 @@
 import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
+  writeFileSync,
 } from 'node:fs'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import test from 'node:test'
+import { parseDevPort } from '../apps/web/app/lib/hosts.ts'
 import {
   createRuntimeRoot,
+  exportSource,
   localCaptureCommands,
+  localInputs,
   localTopology,
   OwnedProcesses,
   ownedEnvironment,
+  parsePortSetting,
   portIsFree,
   runLocalCapture,
+  runPrepareStep,
   selectPorts,
   startLoopbackRelay,
   waitUntilReady,
@@ -89,6 +101,7 @@ function fakeRun(t, plan, overrides = {}) {
       head: () => 'a'.repeat(40),
       select: () => Promise.resolve(PORTS),
       runtimeRoot: () => (runtime = createRuntimeRoot({ tmp: base })),
+      inputs: () => ({}),
       commands: () => plan,
       owner: new OwnedProcesses({ graceMs: 300, killWaitMs: 2_000 }),
       relay: () => Promise.resolve({ close: () => Promise.resolve() }),
@@ -131,11 +144,15 @@ test('a port held on only one loopback family is not free', async () => {
 
 test('explicit ports must be valid, distinct and free', async () => {
   const free = () => true
-  for (const value of ['abc', '0', '70000', '80.5'])
+  for (const value of ['abc', '0', '70000', '80.5', '443', '1023'])
     await assert.rejects(
       selectPorts({ env: { LOCAL_CAPTURE_APP_PORT: value }, isFree: free }),
-      /LOCAL_CAPTURE_APP_PORT must be a TCP port/,
+      /LOCAL_CAPTURE_APP_PORT must be a TCP port from 1024 to 65535/,
     )
+  await assert.rejects(
+    selectPorts({ env: { LOCAL_CAPTURE_SANDBOX_PORT: '443' }, isFree: free }),
+    /LOCAL_CAPTURE_SANDBOX_PORT must be a TCP port from 1024 to 65535, got 443/,
+  )
   await assert.rejects(
     selectPorts({
       env: {
@@ -163,6 +180,46 @@ test('explicit ports must be valid, distinct and free', async () => {
   assert.equal(ports.sandbox, 41301)
 })
 
+test('the port rule matches the one the Workers and Vite config apply', () => {
+  const examples = [
+    '1024',
+    '5173',
+    '65535',
+    '443',
+    '1023',
+    '0',
+    '65536',
+    'abc',
+    '80.5',
+    ' 5173',
+    '',
+  ]
+  const outcome = (parse) => (value) => {
+    try {
+      return parse('PORT', value) ?? 'default'
+    } catch {
+      return 'rejected'
+    }
+  }
+  assert.deepEqual(
+    examples.map(outcome(parsePortSetting)),
+    examples.map(outcome(parseDevPort)),
+  )
+  assert.deepEqual(examples.map(outcome(parsePortSetting)), [
+    1024,
+    5173,
+    65535,
+    'rejected',
+    'rejected',
+    'rejected',
+    'rejected',
+    'rejected',
+    'rejected',
+    'rejected',
+    'default',
+  ])
+})
+
 test('every child gets this invocation registry, storage, logs and ports, never inherited ones', (t) => {
   const runtime = createRuntimeRoot({ tmp: tempDir(t) })
   const env = ownedEnvironment(
@@ -175,9 +232,19 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       WRANGLER_LOG_PATH: '../../.wrangler/logs',
       ARTIFACTSHARE_DEV_PERSIST_PATH: '/developer/state',
       ARTIFACTSHARE_DEV_APP_PORT: '5173',
+      ARTIFACTSHARE_DEV_VITE_CACHE_DIR: '/developer/vite-cache',
+      MINIFLARE_CACHE_DIR: '/developer/mf-cache',
+      WRANGLER_CACHE_DIR: '/developer/wrangler-cache',
+      CLOUDFLARE_CF_FETCH_PATH: '/developer/cf.json',
+      WALKTHROUGH_CLI_ENTRY: '/developer/cli/dist/index.js',
     },
     runtime,
   )
+  assert.equal(env.CLOUDFLARE_CF_FETCH_PATH, undefined)
+  const inputs = {
+    certs: { dir: runtime.certs, generate: true },
+    vars: { path: '/repo/.dev.vars', create: false },
+  }
   for (const mode of ['screens', 'walkthroughs']) {
     const plan = localCaptureCommands({
       mode,
@@ -188,11 +255,28 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       ports: PORTS,
       runtime,
       env,
+      inputs,
+      revision: 'a'.repeat(40),
       root: '/repo',
-      cliBuilt: false,
     })
     const children = [...plan.setup, ...plan.services, plan.capture]
+    // Only the capture runs from the checkout; every setup step after the
+    // export and every service runs from the export of HEAD.
+    for (const child of [...plan.setup.slice(1), ...plan.services])
+      assert.ok(child.cwd.startsWith(runtime.source), child.name)
+    assert.ok(
+      [...plan.setup, ...plan.services].every(
+        (child) => child.command === process.execPath,
+      ),
+      'a setup step or service starts the package manager',
+    )
     for (const child of children) {
+      assert.equal(
+        child.env.MINIFLARE_CACHE_DIR,
+        runtime.miniflareCache,
+        child.name,
+      )
+      assert.equal(child.env.WRANGLER_CACHE_DIR, runtime.wranglerCache)
       assert.equal(
         child.env.CLOUDFLARE_DEV_REGISTRY_PATH,
         runtime.registry,
@@ -213,11 +297,22 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     const prepare = plan.setup.find((child) => child.name === 'prepare')
     assert.deepEqual(JSON.parse(prepare.env.LOCAL_CAPTURE_PREPARE), {
       persistTo: runtime.persist,
+      certs: runtime.certs,
+      vars: '/repo/.dev.vars',
+      checkoutFixtures: '/repo/fixtures/static-sites',
     })
-    assert.equal(
-      plan.setup.some((child) => child.name === 'cli build'),
-      mode === 'walkthroughs',
+    // No setup step writes a shared build output (contract or CLI dist).
+    assert.deepEqual(
+      plan.setup.map((child) => child.name),
+      mode === 'walkthroughs'
+        ? ['source export', 'prepare', 'cli build']
+        : ['source export', 'prepare'],
     )
+    assert.deepEqual(plan.setup[0].args.slice(1), [
+      'export-source',
+      runtime.source,
+      'a'.repeat(40),
+    ])
     const byName = Object.fromEntries(
       plan.services.map((child) => [child.name, child]),
     )
@@ -229,7 +324,19 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       assert.equal(flag(byName[name], '--port'), String(port))
       assert.equal(flag(byName[name], '--inspector-port'), String(inspector))
       assert.equal(flag(byName[name], '--persist-to'), runtime.persist)
+      assert.equal(flag(byName[name], '--env-file'), '/repo/.dev.vars')
+      assert.equal(
+        flag(byName[name], '--https-cert-path'),
+        join(runtime.certs, 'cert.pem'),
+      )
     }
+    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_GIT_ROOT, '/repo')
+    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_CERT_DIR, runtime.certs)
+    assert.equal(byName.app.env.ARTIFACTSHARE_DEV_VARS_PATH, '/repo/.dev.vars')
+    assert.equal(
+      byName.app.env.ARTIFACTSHARE_DEV_VITE_CACHE_DIR,
+      runtime.viteCache,
+    )
     const vars = byName.sandbox.args.filter(
       (_, index) => byName.sandbox.args[index - 1] === '--var',
     )
@@ -250,6 +357,10 @@ test('every child gets this invocation registry, storage, logs and ports, never 
       plan.capture.env.SCREEN_CAPTURE_SANDBOX_URL,
       'https://localhost:41102',
     )
+    assert.equal(
+      plan.capture.env.WALKTHROUGH_CLI_ENTRY,
+      mode === 'walkthroughs' ? join(runtime.cli, 'dist/index.js') : undefined,
+    )
     assert.deepEqual(
       plan.capture.args.slice(1),
       mode === 'screens'
@@ -262,6 +373,222 @@ test('every child gets this invocation registry, storage, logs and ports, never 
     sandboxOrigin: 'https://localhost:41102',
     ogImageOrigin: 'https://localhost:41103',
   })
+})
+
+test('checkout certificates and variables are used read-only; missing or obsolete ones go to the runtime directory', (t) => {
+  const runtime = createRuntimeRoot({ tmp: tempDir(t) })
+  const checkout = (files) => {
+    const root = tempDir(t)
+    for (const [file, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, file)), { recursive: true })
+      writeFileSync(join(root, file), content)
+    }
+    return root
+  }
+  const valid = (pem) => String(pem) === 'valid'
+  const usable = checkout({
+    '.dev-certs/cert.pem': 'valid',
+    '.dev-certs/key.pem': 'key',
+    '.dev.vars': 'BETTER_AUTH_SECRET=kept\n',
+  })
+  assert.deepEqual(
+    localInputs({ root: usable, runtime, certificateValid: valid }),
+    {
+      certs: { dir: join(usable, '.dev-certs'), generate: false },
+      vars: { path: join(usable, '.dev.vars'), create: false },
+    },
+  )
+  for (const files of [
+    { '.dev-certs/cert.pem': 'obsolete', '.dev-certs/key.pem': 'key' },
+    { '.dev-certs/cert.pem': 'valid' },
+    {},
+  ]) {
+    const root = checkout(files)
+    assert.deepEqual(
+      localInputs({ root, runtime, certificateValid: valid }),
+      {
+        certs: { dir: runtime.certs, generate: true },
+        vars: { path: runtime.vars, create: true },
+      },
+      JSON.stringify(files),
+    )
+  }
+})
+
+test('a walkthrough builds the CLI for HEAD into the runtime directory, even beside a stale dist', (t) => {
+  const root = tempDir(t)
+  mkdirSync(join(root, 'packages/cli/dist'), { recursive: true })
+  writeFileSync(join(root, 'packages/cli/dist/index.js'), '// earlier HEAD')
+  const runtime = createRuntimeRoot({ tmp: tempDir(t) })
+  const plan = localCaptureCommands({
+    mode: 'walkthroughs',
+    argv: ['--task', 'share-file-link'],
+    ports: PORTS,
+    runtime,
+    env: ownedEnvironment({}, runtime),
+    inputs: {
+      certs: { dir: runtime.certs, generate: true },
+      vars: { path: runtime.vars, create: true },
+    },
+    revision: 'a'.repeat(40),
+    root,
+  })
+  const build = plan.setup.find((child) => child.name === 'cli build')
+  assert.ok(build, 'no CLI build planned')
+  assert.deepEqual(build.args, [
+    join(runtime.source, 'scripts/local-capture.mjs'),
+    'build-cli',
+    runtime.cli,
+  ])
+  assert.equal(
+    plan.capture.env.WALKTHROUGH_CLI_ENTRY,
+    join(runtime.cli, 'dist/index.js'),
+  )
+})
+
+test('the export holds HEAD and dependency links that cannot write into the checkout installation', (t) => {
+  const root = realpathSync(tempDir(t))
+  const write = (file, content) => {
+    mkdirSync(dirname(join(root, file)), { recursive: true })
+    writeFileSync(join(root, file), content)
+  }
+  const git = (...args) =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  write('package.json', '{}')
+  write('packages/kit/package.json', '{}')
+  write('apps/web/package.json', '{}')
+  git('init', '--quiet')
+  git('add', '-A')
+  git(
+    '-c',
+    'user.name=t',
+    '-c',
+    'user.email=t@example.com',
+    'commit',
+    '-qm',
+    'head',
+  )
+  const head = git('rev-parse', 'HEAD')
+  write('apps/web/uncommitted.txt', 'not in HEAD')
+  // An installed layout: a store, its state file, a scope, a shim, and a
+  // workspace package linked from the app.
+  write('node_modules/.pnpm/dep@1/node_modules/dep/index.js', '')
+  write('node_modules/.modules.yaml', 'state')
+  symlinkSync('.pnpm/dep@1/node_modules/dep', join(root, 'node_modules/dep'))
+  write('apps/web/node_modules/.bin/dep', '#!/bin/sh\n')
+  mkdirSync(join(root, 'apps/web/node_modules/@scope'))
+  symlinkSync(
+    '../../../../packages/kit',
+    join(root, 'apps/web/node_modules/@scope/kit'),
+  )
+  const dest = join(realpathSync(tempDir(t)), 'source')
+  exportSource({ root, dest, revision: head })
+
+  assert.ok(existsSync(join(dest, 'apps/web/package.json')))
+  assert.equal(existsSync(join(dest, 'apps/web/uncommitted.txt')), false)
+  for (const dir of [
+    'node_modules',
+    'apps/web/node_modules',
+    'apps/web/node_modules/@scope',
+    'apps/web/node_modules/.bin',
+  ])
+    assert.ok(!lstatSync(join(dest, dir)).isSymbolicLink(), `${dir} is a link`)
+  assert.deepEqual(readdirSync(join(dest, 'node_modules')), ['dep'])
+  assert.equal(
+    realpathSync(join(dest, 'node_modules/dep')),
+    join(root, 'node_modules/.pnpm/dep@1/node_modules/dep'),
+  )
+  assert.equal(
+    realpathSync(join(dest, 'apps/web/node_modules/@scope/kit')),
+    join(dest, 'packages/kit'),
+  )
+  // Replacing an entry in the copy leaves the checkout installation alone.
+  rmSync(join(dest, 'node_modules/dep'))
+  rmSync(join(dest, 'apps/web/node_modules/@scope'), { recursive: true })
+  assert.ok(existsSync(join(root, 'node_modules/dep/index.js')))
+  assert.ok(lstatSync(join(root, 'apps/web/node_modules/@scope/kit')))
+})
+
+test('the setup steps run in the export never start the package manager', (t) => {
+  // A pnpm on PATH that records any call. `prepare` loads this module in the
+  // export; loading the capture modules there would run `pnpm exec` (route
+  // discovery), and pnpm then reinstalls into the copy.
+  const dir = tempDir(t)
+  const calls = join(dir, 'calls')
+  writeFileSync(
+    join(dir, 'pnpm'),
+    `#!/bin/sh\necho "$*" >> "${calls}"\nexit 1\n`,
+  )
+  chmodSync(join(dir, 'pnpm'), 0o755)
+  const result = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, 'local-capture.mjs'), 'prepare'],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}` },
+    },
+  )
+  // It stops at its missing configuration, before any preparation.
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /LOCAL_CAPTURE_PREPARE needs persistTo/)
+  assert.equal(existsSync(calls), false, 'pnpm was started')
+})
+
+test('prepare copies complete checkout fixtures into the export, or requires them to be built there', (t) => {
+  const source = tempDir(t)
+  const checkout = tempDir(t)
+  const calls = []
+  const prepare = (options) => {
+    calls.push(options)
+    return { ok: true, actions: [] }
+  }
+  const env = (checkoutFixtures) => ({
+    LOCAL_CAPTURE_PREPARE: JSON.stringify({
+      persistTo: '/persist',
+      certs: null,
+      vars: '/vars',
+      checkoutFixtures,
+    }),
+  })
+  const fixtures = join(checkout, 'fixtures/static-sites')
+  mkdirSync(join(fixtures, 'react-spa'), { recursive: true })
+  writeFileSync(join(fixtures, 'react-spa/index.html'), 'spa')
+  // Incomplete in the checkout: nothing is copied, and the checkout is left
+  // as it was.
+  runPrepareStep(env(fixtures), { root: source, prepare, log: () => {} })
+  assert.equal(existsSync(join(source, 'fixtures/static-sites')), false)
+  for (const name of ['react-router-prerender', 'next-export']) {
+    mkdirSync(join(fixtures, name))
+    writeFileSync(join(fixtures, name, 'index.html'), name)
+  }
+  runPrepareStep(env(fixtures), { root: source, prepare, log: () => {} })
+  assert.equal(
+    readFileSync(
+      join(source, 'fixtures/static-sites/react-spa/index.html'),
+      'utf8',
+    ),
+    'spa',
+  )
+  for (const options of calls) {
+    assert.equal(options.requireFixtures, true)
+    assert.equal(
+      options.fixtureOptions.dir,
+      join(source, 'fixtures/static-sites'),
+    )
+    assert.deepEqual(options.fixtureOptions.command, [
+      process.execPath,
+      'tools/static-site-fixtures/build.mjs',
+    ])
+    // Turbopack's root must contain the export and the checkout it links to.
+    assert.equal(
+      options.fixtureOptions.env.STATIC_SITE_FIXTURES_TURBOPACK_ROOT,
+      realpathSync(tmpdir()),
+    )
+    assert.deepEqual(options.wrangler, [
+      process.execPath,
+      join(source, 'apps/web/node_modules/wrangler/bin/wrangler.js'),
+    ])
+  }
 })
 
 test('the runtime root is removed when it would overlap a checkout', (t) => {
@@ -324,7 +651,7 @@ test('readiness fails at its deadline with each pending check', async () => {
   )
 })
 
-test('the readiness deadline aborts a stalled check and rejects a late pass', async () => {
+test('a check still running after the deadline grace is aborted and not ready', async () => {
   let stalledSignal
   const started = Date.now()
   await assert.rejects(
@@ -340,6 +667,7 @@ test('the readiness deadline aborts a stalled check and rejects a late pass', as
         },
       ],
       timeoutMs: 50,
+      graceMs: 50,
     }),
     /app on 127\.0\.0\.1: no answer before the deadline/,
   )
@@ -349,8 +677,9 @@ test('the readiness deadline aborts a stalled check and rejects a late pass', as
   const late = (ms) => () => new Promise((done) => setTimeout(done, ms))
   await assert.rejects(
     waitUntilReady({
-      checks: [{ name: 'sandbox on ::1', check: late(80) }],
+      checks: [{ name: 'sandbox on ::1', check: late(200) }],
       timeoutMs: 5,
+      graceMs: 20,
     }),
     /sandbox on ::1: no answer before the deadline/,
   )
@@ -358,6 +687,35 @@ test('the readiness deadline aborts a stalled check and rejects a late pass', as
     checks: [{ name: 'sandbox on ::1', check: late(5) }],
     timeoutMs: 1_000,
   })
+})
+
+test('a round whose parallel checks all pass is ready even if the deadline passed during it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const started = []
+  let release
+  const released = new Promise((done) => {
+    release = done
+  })
+  // Each check waits until every check has started: checks run one after
+  // another would never get there.
+  const check = (name) => ({
+    name,
+    check: async () => {
+      started.push(name)
+      await released
+    },
+  })
+  const ready = waitUntilReady({
+    checks: [check('app on ::1'), check('sandbox on ::1')],
+    timeoutMs: 1_000,
+    graceMs: 30_000,
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(started, ['app on ::1', 'sandbox on ::1'])
+  t.mock.timers.tick(1_500)
+  release()
+  await ready
 })
 
 test('an invalid selection fails before any input or service is prepared', async () => {
@@ -504,8 +862,156 @@ test('a detached grandchild is stopped after the child that started it has exite
   assert.equal(alive(grandchild), false, `grandchild ${grandchild} survived`)
 })
 
+// A process table the test edits: `procs` maps a PID to its parent, group and
+// whether its environment carries the invocation's ownership tag.
+function fakeProcesses(procs) {
+  const kills = []
+  const children = new Map()
+  const owner = new OwnedProcesses({
+    spawnProcess: (_command, _args, options) => {
+      const child = new EventEmitter()
+      child.pid = Number(options.cwd)
+      children.set(child.pid, child)
+      return child
+    },
+    table: (pids) =>
+      [...procs.values()].filter((row) => !pids || pids.includes(row.pid)),
+    tagged: () =>
+      [...procs.values()].filter((row) => row.tag).map((row) => row.pid),
+    hasTag: (pid) => procs.get(pid)?.tag === true,
+    kill: (target, signal) => {
+      kills.push([target, signal])
+      procs.onKill?.(target, signal)
+    },
+    graceMs: 30,
+    killWaitMs: 30,
+    pollMs: 5,
+  })
+  const start = (pid) => owner.start({ name: `child ${pid}`, cwd: String(pid) })
+  const exit = (pid) => {
+    procs.delete(pid)
+    children.get(pid).emit('exit', 0, null)
+  }
+  return { owner, kills, start, exit }
+}
+
+test('a reaped child whose PID is reused by an unowned process is not signalled', async () => {
+  const procs = new Map([
+    [4100, { pid: 4100, ppid: process.pid, pgid: 4100, tag: true }],
+  ])
+  const run = fakeProcesses(procs)
+  run.start(4100)
+  run.exit(4100)
+  // Reused within the same second by a process that is not ours.
+  procs.set(4100, { pid: 4100, ppid: 1, pgid: 4100, tag: false })
+  await run.owner.stopAll()
+  assert.deepEqual(run.kills, [])
+  assert.ok(procs.has(4100))
+})
+
+test('ownership is checked again after a group signal, before each individual signal', async () => {
+  const procs = new Map([
+    // An owned leader that ignores SIGTERM, an owned member of its group,
+    // and an owned descendant in a group of its own.
+    [4200, { pid: 4200, ppid: process.pid, pgid: 4200, tag: true }],
+    [4201, { pid: 4201, ppid: 4200, pgid: 4200, tag: true }],
+    [4202, { pid: 4202, ppid: 1, pgid: 4202, tag: true }],
+  ])
+  const run = fakeProcesses(procs)
+  run.start(4200)
+  procs.onKill = (target, signal) => {
+    if (target === -4200 && signal === 'SIGTERM') {
+      // The group signal ends both members; their numbers are reused at
+      // once by processes that are not ours.
+      procs.set(4201, { pid: 4201, ppid: 1, pgid: 4201, tag: false })
+      procs.set(4202, { pid: 4202, ppid: 1, pgid: 4202, tag: false })
+    }
+    if (target === -4200 && signal === 'SIGKILL') run.exit(4200)
+  }
+  // The reused numbers are reported, not signalled, so cleanup cannot pass.
+  await assert.rejects(
+    run.owner.stopAll(),
+    /could no longer be proved its own, so they were not signalled: 4201, 4202/,
+  )
+  assert.deepEqual(run.kills, [
+    [-4200, 'SIGTERM'],
+    [-4200, 'SIGKILL'],
+  ])
+})
+
+test('a descendant that loses its proof of ownership is reported and fails cleanup, unsignalled', async () => {
+  const procs = new Map([
+    [4400, { pid: 4400, ppid: process.pid, pgid: 4400, tag: true }],
+    // Untagged and in a group of its own: owned only through its parent.
+    [4401, { pid: 4401, ppid: 4400, pgid: 4401, tag: false }],
+  ])
+  const run = fakeProcesses(procs)
+  run.start(4400)
+  procs.onKill = (target) => {
+    if (target !== -4400) return
+    // The parent exits on the group signal; the descendant is reparented
+    // and keeps running with nothing left to prove it is ours.
+    run.exit(4400)
+    procs.set(4401, { pid: 4401, ppid: 1, pgid: 4401, tag: false })
+  }
+  await assert.rejects(
+    run.owner.stopAll(),
+    /could no longer be proved its own, so they were not signalled: 4401/,
+  )
+  assert.deepEqual(run.kills, [[-4400, 'SIGTERM']])
+  assert.ok(procs.has(4401))
+})
+
+test('an owned descendant outside the group is signalled by PID after a fresh check', async () => {
+  const procs = new Map([
+    [4300, { pid: 4300, ppid: process.pid, pgid: 4300, tag: true }],
+    // Left the group and cleared its environment: owned only as a live
+    // descendant of the tracked child.
+    [4301, { pid: 4301, ppid: 4300, pgid: 4301, tag: false }],
+  ])
+  const run = fakeProcesses(procs)
+  run.start(4300)
+  procs.onKill = (target, signal) => {
+    // The leader ignores SIGTERM, so it is still unreaped when 4301 is checked.
+    if (target === -4300 && signal === 'SIGKILL') run.exit(4300)
+    if (target === 4301) procs.delete(4301)
+  }
+  await run.owner.stopAll()
+  assert.deepEqual(run.kills, [
+    [-4300, 'SIGTERM'],
+    [4301, 'SIGTERM'],
+    [-4300, 'SIGKILL'],
+  ])
+})
+
+test('an uncaught exception stops every owned process, removes the runtime root and exits nonzero', async (t) => {
+  const dir = tempDir(t)
+  const service = join(dir, 'service.pid')
+  const run = fakeRun(t, {
+    setup: [],
+    services: [
+      node(
+        'app',
+        `require('fs').writeFileSync(${JSON.stringify(service)}, String(process.pid)); setInterval(() => {}, 1000)`,
+      ),
+    ],
+    capture: node('capture', 'setInterval(() => {}, 1000)'),
+  })
+  await until(() => existsSync(service), 'the service to start')
+  run.signals.emit('uncaughtException', new Error('boom in a library'))
+  assert.equal(await run.result, 1)
+  assert.equal(alive(Number(readFileSync(service, 'utf8'))), false)
+  assert.equal(existsSync(run.runtime().root), false)
+  assert.match(
+    run.lines.join('\n'),
+    /Uncaught exception in local capture: .*boom/,
+  )
+  assert.equal(run.signals.listenerCount('uncaughtException'), 0)
+})
+
 for (const [phase, signal, status] of [
   ['setup', 'SIGINT', 130],
+  ['setup', 'SIGHUP', 129],
   ['capture', 'SIGTERM', 143],
 ]) {
   test(`${signal} during ${phase} stops every owned descendant, then exits ${status}`, async (t) => {

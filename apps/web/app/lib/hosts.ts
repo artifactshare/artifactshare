@@ -80,24 +80,41 @@ export type DevTopologyEnv = {
   DEV_SANDBOX_PORT?: string
 }
 
-function devPort(
-  env: DevTopologyEnv,
+/**
+ * Reads an explicit development port; unset or empty means "use the default".
+ * Ports below 1024 are rejected: they need privileges, and a default port
+ * such as 443 disappears from `https://localhost:443`, so links would silently
+ * point at another stack. `scripts/local-capture.mjs` (`parsePortSetting`)
+ * applies the same rule before anything is built.
+ */
+export function parseDevPort(
+  name: string,
   value: string | undefined,
-  fallback: number,
-): number {
-  if (isProduction(env) || value === undefined || value === '') return fallback
+): number | undefined {
+  if (value === undefined || value === '') return undefined
   const port = Number(value)
-  if (!/^\d+$/u.test(value) || port < 1 || port > 65535)
-    throw new Error(`Invalid development port: ${value}`)
+  if (!/^\d+$/u.test(value) || port < 1024 || port > 65535)
+    throw new Error(
+      `${name} must be a TCP port from 1024 to 65535, got ${value}`,
+    )
   return port
 }
 
+function devPort(
+  env: DevTopologyEnv,
+  name: 'DEV_APP_PORT' | 'DEV_SANDBOX_PORT',
+  fallback: number,
+): number {
+  if (isProduction(env)) return fallback
+  return parseDevPort(name, env[name]) ?? fallback
+}
+
 export function devAppPort(env: DevTopologyEnv): number {
-  return devPort(env, env.DEV_APP_PORT, APP_DEV_PORT)
+  return devPort(env, 'DEV_APP_PORT', APP_DEV_PORT)
 }
 
 export function devSandboxPort(env: DevTopologyEnv): number {
-  return devPort(env, env.DEV_SANDBOX_PORT, BUNDLE_SANDBOX_DEV_PORT)
+  return devPort(env, 'DEV_SANDBOX_PORT', BUNDLE_SANDBOX_DEV_PORT)
 }
 
 /** The development app origin that sandbox pages link back to and accept. */

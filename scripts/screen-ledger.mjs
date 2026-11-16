@@ -1,5 +1,6 @@
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSync } from 'oxc-parser'
@@ -10,11 +11,25 @@ export const screenScenarioAllowlist = new Set(screenScenarioIds)
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '../apps/web')
 const ROUTES_DIR = join(WEB_DIR, 'app/routes')
 
+// The React Router CLI installed in apps/web (what its `.bin/react-router`
+// runs). Started with Node directly so route discovery never runs the package
+// manager and its pre-run dependency check.
+const REACT_ROUTER_BIN = (() => {
+  const require = createRequire(join(WEB_DIR, 'package.json'))
+  const manifestPath = require.resolve('@react-router/dev/package.json')
+  const { bin } = require(manifestPath)
+  return join(
+    dirname(manifestPath),
+    typeof bin === 'string' ? bin : bin['react-router'],
+  )
+})()
+
 export function loadRouteTree() {
-  const stdout = execSync('pnpm exec react-router routes --json', {
-    cwd: WEB_DIR,
-    encoding: 'utf8',
-  })
+  const stdout = execFileSync(
+    process.execPath,
+    [REACT_ROUTER_BIN, 'routes', '--json'],
+    { cwd: WEB_DIR, encoding: 'utf8' },
+  )
   return JSON.parse(stdout.slice(stdout.indexOf('[')))
 }
 
