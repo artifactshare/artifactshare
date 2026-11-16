@@ -1208,3 +1208,106 @@ test('suggestions batch authorized detail IDs and fill recent history after disc
   ])
   expect(JSON.stringify(revoked.recent)).not.toMatch(/Recent 8|Denied recent/)
 })
+
+test('recent views fill the same batch in recency order when metadata disappears', async () => {
+  fixture.sqlite.exec(`
+    WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<8)
+    INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+    SELECT 'recent-'||x,'ws','viewer','Recent '||x,'html_page','private','home','${now}','${now}','${now}' FROM n;
+    INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at)
+    SELECT id,'viewer','${now}','2026-09-0'||substr(id,8)||'T00:00:00.000Z' FROM shareables WHERE id LIKE 'recent-%';
+  `)
+  const recent = () =>
+    searchSuggestions(
+      fixture.db,
+      () => index(),
+      { id: 'viewer' },
+      { ...input, query: '' },
+      now,
+    )
+  expect((await recent()).recent.map((row) => row.id)).toEqual([
+    'recent-8',
+    'recent-7',
+    'recent-6',
+    'recent-5',
+    'recent-4',
+    'recent-3',
+  ])
+  const discover = discovery.discoverCandidates
+  const pendingRead = vi
+    .spyOn(discovery, 'discoverCandidates')
+    .mockImplementation(async (db, request) => {
+      const rows = await discover(db, request)
+      if (request.candidateIds.includes('recent-7')) {
+        fixture.sqlite.exec("DELETE FROM shareables WHERE id='recent-7'")
+      }
+      return rows
+    })
+  try {
+    expect((await recent()).recent.map((row) => row.id)).toEqual([
+      'recent-8',
+      'recent-6',
+      'recent-5',
+      'recent-4',
+      'recent-3',
+      'recent-2',
+    ])
+  } finally {
+    pendingRead.mockRestore()
+  }
+})
+
+test.each(['project', 'owners'] as const)(
+  'recent views skip newer history outside selected %s and fill six in scope',
+  async (scope) => {
+    fixture.sqlite.exec(`
+      INSERT INTO artifact_containers(id,workspace_id,kind,name,owner_user_id,created_by_id,created_at,updated_at)
+      VALUES('project','ws','project','Project','viewer','viewer','${now}','${now}');
+      WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<58)
+      INSERT INTO shareables(id,workspace_id,owner_user_id,name,artifact_kind,visibility,container_id,created_at,updated_at,activity_at)
+      SELECT printf('history-%02d',x),'ws',
+        CASE WHEN x>8 AND '${scope}'='owners' THEN 'owner' ELSE 'viewer' END,
+        'History '||x,'html_page','workspace',
+        CASE WHEN x<=8 THEN 'project' ELSE 'home' END,
+        '${now}','${now}','${now}' FROM n;
+      INSERT INTO shareable_viewer_recency(shareable_id,viewer_user_id,first_viewed_at,last_viewed_at)
+      SELECT id,'viewer','${now}',strftime('%Y-%m-%dT%H:%M:%fZ','2026-09-01','+'||substr(id,9)||' minutes')
+      FROM shareables WHERE id LIKE 'history-%';
+    `)
+    const request: SearchInput = { ...input, query: '' }
+    const healthy = await searchSuggestions(
+      fixture.db,
+      () => index(),
+      { id: 'viewer' },
+      request,
+      now,
+    )
+    expect(healthy.recent.map((row) => row.id)).toEqual([
+      'history-58',
+      'history-57',
+      'history-56',
+      'history-55',
+      'history-54',
+      'history-53',
+    ])
+    request.filters =
+      scope === 'project'
+        ? { location: { kind: 'project', id: 'project' } }
+        : { ownerUserIds: ['viewer'] }
+    const filtered = await searchSuggestions(
+      fixture.db,
+      () => index(),
+      { id: 'viewer' },
+      request,
+      now,
+    )
+    expect(filtered.recent.map((row) => row.id)).toEqual([
+      'history-08',
+      'history-07',
+      'history-06',
+      'history-05',
+      'history-04',
+      'history-03',
+    ])
+  },
+)

@@ -793,9 +793,7 @@ export async function searchSuggestions(
         }))
           allowed.add(row.id)
       }
-      const visible = candidates
-        .filter((row) => allowed.has(row.id))
-        .slice(0, 6 - recent.length)
+      const visible = candidates.filter((row) => allowed.has(row.id))
       const metas = new Map(
         (
           await metadata(
@@ -808,6 +806,7 @@ export async function searchSuggestions(
       for (const row of visible) {
         const meta = metas.get(row.id)
         if (meta) recent.push(meta)
+        if (recent.length === 6) break
       }
       if (candidates.length < 50) break
     }
