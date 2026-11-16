@@ -12,6 +12,7 @@ import {
   assertCaptureServerHead,
   cleanCaptureHead,
   devShareableId,
+  localSandboxOrigin,
 } from './screen-capture.mjs'
 import { personas, tasks } from './task-ledger.mjs'
 import {
@@ -102,11 +103,16 @@ export async function recordCaptureRevision(
   }
 }
 
+/** The sandbox the walkthrough expects beside `baseUrl` (see localSandboxOrigin). */
+export function walkthroughSandboxOrigin(baseUrl, env = process.env) {
+  return localSandboxOrigin(baseUrl, env) ?? 'https://localhost:5174'
+}
+
 async function preflight(baseUrl, head) {
   const failures = []
   for (const [name, path] of [
     ['app', '/'],
-    ['sandbox', 'https://localhost:5174/'],
+    ['sandbox', `${walkthroughSandboxOrigin(baseUrl)}/`],
   ]) {
     try {
       const response = path.startsWith('http')

@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
-import { originalHostnamePlugin, sourceRevision } from './vite.config'
+import {
+  devServerTopology,
+  originalHostnamePlugin,
+  sourceRevision,
+} from './vite.config'
 
 describe('capture source revision', () => {
   test('accepts only the unchanged clean startup commit', () => {
@@ -28,6 +32,43 @@ describe('capture source revision', () => {
       head: startupHead,
       clean: false,
     })
+  })
+})
+
+describe('dev server topology', () => {
+  test('keeps pnpm dev on 5173 with the Worker variables untouched', () => {
+    expect(devServerTopology({})).toEqual({
+      port: 5173,
+      host: undefined,
+      inspectorPort: undefined,
+      vars: {},
+    })
+  })
+
+  test('moves the app, its auth URL and sandbox links to selected ports', () => {
+    expect(
+      devServerTopology({
+        ARTIFACTSHARE_DEV_APP_PORT: '41101',
+        ARTIFACTSHARE_DEV_SANDBOX_PORT: '41102',
+        ARTIFACTSHARE_DEV_INSPECTOR_PORT: '41104',
+        ARTIFACTSHARE_DEV_HOST: '::1',
+      }),
+    ).toEqual({
+      port: 41101,
+      host: '::1',
+      inspectorPort: 41104,
+      vars: {
+        DEV_APP_PORT: '41101',
+        BETTER_AUTH_URL: 'https://localhost:41101',
+        DEV_SANDBOX_PORT: '41102',
+      },
+    })
+  })
+
+  test('rejects a port that is not a TCP port', () => {
+    expect(() =>
+      devServerTopology({ ARTIFACTSHARE_DEV_APP_PORT: '5173; rm' }),
+    ).toThrow(/ARTIFACTSHARE_DEV_APP_PORT must be a TCP port/)
   })
 })
 

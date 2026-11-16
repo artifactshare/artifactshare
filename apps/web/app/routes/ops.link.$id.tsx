@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { Form, useLoaderData } from 'react-router'
-import { isProduction, linkViewerUrl } from '~/lib/hosts'
+import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { verifyLinkOpsToken } from '~/lib/link-ops-token'
 import { isSandboxArtifactId } from '~/lib/sandbox-block-report'
 import { createDb } from '~/services/db.server'
@@ -57,7 +57,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     token: auth.token,
     done: done ? doneText(done) : null,
     maxReason: LINK_SUSPENSION_REASON_MAX,
-    anonymousUrl: linkViewerUrl(isProduction(env), params.id),
+    anonymousUrl: linkViewerUrl(isProduction(env), params.id, devAppPort(env)),
   }
 }
 

@@ -112,9 +112,53 @@ export function originalHostnamePlugin(): Plugin {
   }
 }
 
+function optionalPort(
+  env: Record<string, string | undefined>,
+  name: string,
+): number | undefined {
+  const value = env[name]
+  if (value === undefined || value === '') return undefined
+  const port = Number(value)
+  if (!/^\d+$/u.test(value) || port < 1 || port > 65535)
+    throw new Error(`${name} must be a TCP port from 1 to 65535: ${value}`)
+  return port
+}
+
+/**
+ * Dev-server overrides for a private local stack. `pnpm dev` sets none of
+ * these and keeps port 5173 with the Worker's own variables; the local
+ * capture commands (`scripts/local-capture.mjs`) set them so the app, its
+ * per-ID viewers and the sandbox links all follow the ports they chose.
+ * The values are applied after `.dev.vars`, so they win over its URL.
+ */
+export function devServerTopology(
+  env: Record<string, string | undefined> = process.env,
+) {
+  const appPort = optionalPort(env, 'ARTIFACTSHARE_DEV_APP_PORT')
+  const sandboxPort = optionalPort(env, 'ARTIFACTSHARE_DEV_SANDBOX_PORT')
+  const inspectorPort = optionalPort(env, 'ARTIFACTSHARE_DEV_INSPECTOR_PORT')
+  return {
+    port: appPort ?? APP_DEV_PORT,
+    host: env.ARTIFACTSHARE_DEV_HOST || undefined,
+    inspectorPort,
+    vars: {
+      ...(appPort === undefined
+        ? {}
+        : {
+            DEV_APP_PORT: String(appPort),
+            BETTER_AUTH_URL: `https://localhost:${appPort}`,
+          }),
+      ...(sandboxPort === undefined
+        ? {}
+        : { DEV_SANDBOX_PORT: String(sandboxPort) }),
+    },
+  }
+}
+
 export default defineConfig(({ command, isPreview }) => {
   const isDevServer = command === 'serve' && isPreview === false
   const startupHead = isDevServer ? sourceHead() : undefined
+  const topology = isDevServer ? devServerTopology() : undefined
 
   return {
     build: { sourcemap: process.env.VITE_SOURCEMAP === '1' },
@@ -124,12 +168,17 @@ export default defineConfig(({ command, isPreview }) => {
         : []),
       cloudflare({
         configPath: process.env.WRANGLER_CONFIG_PATH ?? 'wrangler.jsonc',
-        config: isDevServer
-          ? (config) => ({ vars: { ...config.vars, ...loadDevVars() } })
+        config: topology
+          ? (config) => ({
+              vars: { ...config.vars, ...loadDevVars(), ...topology.vars },
+            })
           : undefined,
         persistState: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH
           ? { path: process.env.ARTIFACTSHARE_DEV_PERSIST_PATH }
           : true,
+        ...(topology?.inspectorPort === undefined
+          ? {}
+          : { inspectorPort: topology.inspectorPort }),
         remoteBindings: false,
         viteEnvironment: { name: 'ssr' },
       }),
@@ -145,8 +194,13 @@ export default defineConfig(({ command, isPreview }) => {
       },
       tsconfigPaths: true,
     },
-    server: isDevServer
-      ? { port: APP_DEV_PORT, strictPort: true, https: loadDevCerts() }
+    server: topology
+      ? {
+          port: topology.port,
+          ...(topology.host ? { host: topology.host } : {}),
+          strictPort: true,
+          https: loadDevCerts(),
+        }
       : undefined,
   }
 })

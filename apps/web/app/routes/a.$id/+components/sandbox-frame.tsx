@@ -45,7 +45,6 @@ import {
   DELIVERY_UNAVAILABLE_PATH,
   SANDBOX_DEV_SUFFIX,
   WWW_HOST,
-  BUNDLE_SANDBOX_DEV_PORT,
   sandboxVersionIdentityFromHostname,
 } from '~/lib/hosts'
 import { withoutSearchParameters } from '~/lib/sandbox-delivery-query'
@@ -1637,9 +1636,13 @@ export async function refreshSandboxFrameUrl(
     entrypointUrl.hostname,
     executionEnv,
   )
+  // The app server issues both frame URLs. In development the sandbox may run
+  // on a non-default port (`pnpm screens:capture:local`), so the renewal must
+  // stay on the port of the server-issued entrypoint instead of a constant.
   const expectedPort =
-    executionEnv.APP_ENV === 'production' ? '' : String(BUNDLE_SANDBOX_DEV_PORT)
+    executionEnv.APP_ENV === 'production' ? '' : entrypointUrl.port
   if (
+    (executionEnv.APP_ENV !== 'production' && expectedPort === '') ||
     !currentIdentity ||
     !renewedIdentity ||
     currentIdentity.shareableId !== shareableId ||

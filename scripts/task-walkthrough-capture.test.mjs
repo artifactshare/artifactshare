@@ -17,6 +17,7 @@ import {
   recordCaptureRevision,
   requestOriginPhase,
   shouldWaitForViewerReady,
+  walkthroughSandboxOrigin,
 } from './task-walkthrough-capture.mjs'
 import { championLoopTaskIds } from './task-walkthroughs.mjs'
 
@@ -74,10 +75,31 @@ test('captures pending navigation and clicks before their ready delay', () => {
   assert.equal(clickSettleMilliseconds({}), 500)
 })
 
+test('preflights the selected sandbox, or 5174 for an external server', () => {
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:41101', {
+      SCREEN_CAPTURE_SANDBOX_URL: 'https://localhost:41102/',
+    }),
+    'https://localhost:41102',
+  )
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:5173', {}),
+    'https://localhost:5174',
+  )
+  assert.equal(
+    walkthroughSandboxOrigin('https://localhost:41101', {}),
+    'https://localhost:5174',
+  )
+})
+
 test('derives the recipient link URL used by walkthrough clipboard checks', () => {
   assert.equal(
     linkViewerUrlForCapture('https://localhost:5173', 'abc123def4'),
     'https://abc123def4.localhost:5173/',
+  )
+  assert.equal(
+    linkViewerUrlForCapture('https://localhost:41101', 'abc123def4'),
+    'https://abc123def4.localhost:41101/',
   )
   assert.equal(
     linkViewerUrlForCapture('https://artifactshare.com', 'abc123def4'),

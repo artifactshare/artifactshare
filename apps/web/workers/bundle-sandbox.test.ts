@@ -22,6 +22,7 @@ const envMock = vi.hoisted(() => ({
   APP_ENV: 'development',
   BETTER_AUTH_SECRET: 'test-secret',
   BUCKET: {},
+  DEV_APP_PORT: undefined as string | undefined,
 }))
 
 vi.mock('cloudflare:workers', () => ({
@@ -2375,6 +2376,41 @@ describe('handleArtifactSandboxRequest', () => {
     expect(response.headers.get('Content-Security-Policy')).toContain(
       'frame-ancestors https://abc123def4.artifactshare.link',
     )
+  })
+
+  test('follows a non-default development app port in CORS and frame-ancestors', async () => {
+    storageMock.getArtifact.mockResolvedValue(
+      storedArtifact('<!doctype html><body>Hello</body>', 'text/html'),
+    )
+    envMock.DEV_APP_PORT = '41101'
+    try {
+      const allowed = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
+          headers: { Origin: 'https://localhost:41101' },
+        }),
+      )
+      expect(allowed.headers.get('Access-Control-Allow-Origin')).toBe(
+        'https://localhost:41101',
+      )
+      const defaultPort = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}${SANDBOX_PROBE_PATH}`, {
+          headers: { Origin: 'https://localhost:5173' },
+        }),
+      )
+      expect(defaultPort.headers.get('Access-Control-Allow-Origin')).toBeNull()
+
+      const token = await entrypointToken()
+      const response = await handleArtifactSandboxRequest(
+        new Request(`${sandboxOrigin()}/index.html?__as_token=${token}`),
+      )
+      expect(response.status).toBe(200)
+      const csp = response.headers.get('Content-Security-Policy') ?? ''
+      expect(cspDirective(csp, 'frame-ancestors')).toBe(
+        'frame-ancestors https://localhost:41101',
+      )
+    } finally {
+      envMock.DEV_APP_PORT = undefined
+    }
   })
 
   test('serves a token-authorized entrypoint and issues a bundle cookie', async () => {

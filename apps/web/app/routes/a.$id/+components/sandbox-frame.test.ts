@@ -255,6 +255,41 @@ test.each([
   },
 )
 
+test.each([
+  [
+    'the selected sandbox port',
+    'https://a-abc123def4--v-7632.usercontent.localhost:41102/',
+    true,
+  ],
+  [
+    'a different port',
+    'https://a-abc123def4--v-7632.usercontent.localhost:41103/',
+    false,
+  ],
+  ['no port', 'https://a-abc123def4--v-7632.usercontent.localhost/', false],
+])(
+  'a development renewal on %s is accepted only on the frame port',
+  async (_label, sandboxUrl, accepted) => {
+    vi.stubGlobal('window', { location: { hash: '' } })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ renderType: 'static_site', sandboxUrl }),
+      ),
+    )
+    const result = await refreshSandboxFrameUrl(
+      'abc123def4',
+      'v1',
+      'https://a-abc123def4--v-7631.usercontent.localhost:41102/',
+    )
+    if (accepted)
+      expect(new URL(result!).host).toBe(
+        'a-abc123def4--v-7632.usercontent.localhost:41102',
+      )
+    else expect(result).toBeNull()
+  },
+)
+
 test.each(['a', 'l'])(
   'two consecutive %s static-site renewals retain the in-artifact location',
   async (kind) => {

@@ -30,7 +30,7 @@ import {
 import { MAX_GRANT_EMAILS } from '~/lib/grant-emails'
 import { createVersionFailureResponse } from '~/lib/create-version-response.server'
 import { nowIso } from '~/lib/datetime'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import { isOrgWorkspace } from '~/lib/user'
 import { visibilityForContainer, type Visibility } from '~/lib/shareable-types'
 import { uploadPermissionFailureResponse } from '~/lib/upload-permission-response.server'
@@ -375,6 +375,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             resolution.shareableId,
             resolution.visibility,
             isProduction(env),
+            devAppPort(env),
           ),
           created: false,
         }),
@@ -444,6 +445,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             result.id,
             result.visibility,
             isProduction(env),
+            devAppPort(env),
           ),
           ...(publishKey !== null ? { created: true } : {}),
           ...(slackReauthorizationWarnings(

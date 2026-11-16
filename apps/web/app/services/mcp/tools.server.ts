@@ -35,7 +35,7 @@ import {
 import { env } from 'cloudflare:workers'
 import { z } from 'zod'
 import { CONNECT_AI_AGENTS_ANCHOR } from '~/lib/connect-link'
-import { APEX_HOST, isProduction, shareableUrl } from '~/lib/hosts'
+import { APEX_HOST, isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import type { UploadPermissionResult } from '~/services/upload-access.server'
 import { checkUploadAccess } from '~/services/upload-access.server'
 import {
@@ -2889,5 +2889,11 @@ export function inferFormat(content: string, explicit?: Format): Format {
 }
 
 function shareUrl(baseUrl: string, id: string, visibility: string): string {
-  return shareableUrl(baseUrl, id, visibility, isProduction(env))
+  return shareableUrl(
+    baseUrl,
+    id,
+    visibility,
+    isProduction(env),
+    devAppPort(env),
+  )
 }

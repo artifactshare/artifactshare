@@ -22,8 +22,8 @@ import {
   type McpRequestContext,
 } from './identity.server'
 import {
-  APP_DEV_PORT,
-  BUNDLE_SANDBOX_DEV_PORT,
+  devAppPort,
+  devSandboxPort,
   SANDBOX_HOST,
   SANDBOX_DEV_SUFFIX,
   sandboxVersionIdentityFromHostname,
@@ -269,6 +269,7 @@ export function registerArtifactResource(
               row.id,
               row.visibility,
               isProduction(env),
+              devAppPort(env),
             )
             const title = displayTitle({
               titleOverride: row.title_override,
@@ -404,7 +405,7 @@ export function registerArtifactResource(
     ? ['usercontent', `https://{identity}.${SANDBOX_HOST}`]
     : [
         'usercontent-development',
-        `https://{identity}${SANDBOX_DEV_SUFFIX}:${BUNDLE_SANDBOX_DEV_PORT}`,
+        `https://{identity}${SANDBOX_DEV_SUFFIX}:${devSandboxPort(env)}`,
       ]
   for (const [suffix, path] of [
     ['root', '/'],
@@ -418,7 +419,7 @@ export function registerArtifactResource(
     )
   }
   if (!isProduction(env)) {
-    const developmentLinkResourceOrigin = `https://{identity}.localhost:${APP_DEV_PORT}`
+    const developmentLinkResourceOrigin = `https://{identity}.localhost:${devAppPort(env)}`
     server.registerResource(
       'artifact-link-development-root',
       new ResourceTemplate(`${developmentLinkResourceOrigin}/`, {
@@ -447,7 +448,7 @@ export function artifactIdFromResourceUri(uri: URL): string | null {
   ) {
     const identity = sandboxVersionIdentityFromHostname(hostname, env)
     return uri.protocol === 'https:' &&
-      uri.port === (isProduction(env) ? '' : String(BUNDLE_SANDBOX_DEV_PORT))
+      uri.port === (isProduction(env) ? '' : String(devSandboxPort(env)))
       ? (identity?.shareableId ?? null)
       : null
   }
@@ -459,7 +460,7 @@ export function artifactIdFromResourceUri(uri: URL): string | null {
         /^([a-z0-9]{10})--v-[a-f0-9]+\.artifactshare\.link$/.exec(hostname)
       if (contentMatch) return contentMatch[1]
     }
-    if (uri.port === String(APP_DEV_PORT)) {
+    if (uri.port === String(devAppPort(env))) {
       const developmentMatch = /^([a-z0-9]{10})\.localhost$/.exec(hostname)
       if (developmentMatch) return developmentMatch[1]
     }

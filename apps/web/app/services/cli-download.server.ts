@@ -8,7 +8,7 @@ import type { Kysely } from 'kysely'
 import type { ArtifactKind } from '~/lib/shareable-types'
 import type { SessionUser } from '~/lib/user'
 import { PDF_MIME_TYPE, VIDEO_MIME_TYPE } from '~/lib/artifact-type'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import { singleFileFormat } from '~/services/artifact-readback.server'
 import { loadCommentAccess } from '~/services/comments.server'
 import { getArtifact, type StoredArtifact } from '~/services/storage.server'
@@ -250,7 +250,13 @@ function singleFileContentType(artifactKind: string): string {
 }
 
 function shareUrl(baseUrl: string, id: string, visibility: string): string {
-  return shareableUrl(baseUrl, id, visibility, isProduction(env))
+  return shareableUrl(
+    baseUrl,
+    id,
+    visibility,
+    isProduction(env),
+    devAppPort(env),
+  )
 }
 
 /** Publisher's exact download endpoint returns source bytes, never a manifest. */

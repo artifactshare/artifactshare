@@ -369,6 +369,143 @@ test('a failing mkcert keeps its output and the error it came from', () => {
   }
 })
 
+// A stand-in for `pnpm exec wrangler d1 execute` that keeps one SQLite file per
+// --persist-to directory (shared by both targets, as the real local D1 is) and
+// records each call's arguments and registry/log environment.
+function isolatedSetupFixture(t) {
+  const directory = mkdtempSync(join(tmpdir(), 'artifactshare-local-setup-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const bin = join(directory, 'bin')
+  mkdirSync(bin)
+  const calls = join(directory, 'calls.jsonl')
+  const fake = join(directory, 'fake-wrangler.mjs')
+  writeFileSync(
+    fake,
+    `import { DatabaseSync } from 'node:sqlite'
+import { appendFileSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+const args = process.argv.slice(2)
+const value = (flag) => args[args.indexOf(flag) + 1]
+appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ args, registry: process.env.CLOUDFLARE_DEV_REGISTRY_PATH, wranglerRegistry: process.env.WRANGLER_REGISTRY_PATH, logs: process.env.WRANGLER_LOG_PATH }) + '\\n')
+const db = new DatabaseSync(join(value('--persist-to'), 'shared.sqlite'))
+if (args.includes('--file')) db.exec(readFileSync(value('--file'), 'utf8'))
+else console.log(JSON.stringify([{ results: db.prepare(value('--command')).all() }]))
+`,
+  )
+  for (const [name, body] of [
+    ['pnpm', `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`],
+    [
+      'mkcert',
+      '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -cert-file|-key-file) : > "$2"; shift;; esac; shift; done\n',
+    ],
+  ]) {
+    writeFileSync(join(bin, name), body)
+    chmodSync(join(bin, name), 0o755)
+  }
+  const path = process.env.PATH
+  process.env.PATH = `${bin}${delimiter}${path}`
+  t.after(() => {
+    process.env.PATH = path
+  })
+  const persistTo = join(directory, 'persist')
+  mkdirSync(persistTo)
+  const fixtures = join(directory, 'fixtures')
+  return {
+    calls: () =>
+      readFileSync(calls, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    fixtures,
+    options: {
+      persistTo,
+      requireFixtures: true,
+      env: {
+        ...process.env,
+        CLOUDFLARE_DEV_REGISTRY_PATH: join(directory, 'registry'),
+        WRANGLER_REGISTRY_PATH: join(directory, 'registry'),
+        WRANGLER_LOG_PATH: join(directory, 'logs'),
+      },
+      paths: {
+        certs: join(directory, 'certs'),
+        vars: join(directory, '.dev.vars'),
+        exampleVars: resolve(import.meta.dirname, '../.dev.vars.example'),
+      },
+    },
+    directory,
+  }
+}
+
+test('local setup prepares only the given store, once, through the given environment', (t) => {
+  const setup = isolatedSetupFixture(t)
+  const build = () => {
+    mkdirSync(join(setup.fixtures, 'site'), { recursive: true })
+    writeFileSync(join(setup.fixtures, 'site', 'index.html'), '')
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  const fixtureOptions = {
+    dir: setup.fixtures,
+    names: ['site'],
+    run: build,
+    log: () => {},
+  }
+  const first = prepareDevEnvironment({ ...setup.options, fixtureOptions })
+  assert.equal(first.ok, true, first.reason)
+  assert.deepEqual(
+    first.actions.filter((action) => /D1|\.dev\.vars|fixtures/.test(action)),
+    [
+      'Created .dev.vars from .dev.vars.example.',
+      'Applied local app D1 schema.',
+      'Using existing local sandbox D1 schema.',
+      'Built static-site fixtures (missing before: site).',
+    ],
+  )
+  const calls = setup.calls()
+  assert.equal(calls.filter((call) => call.args.includes('--file')).length, 1)
+  for (const call of calls) {
+    assert.equal(
+      call.args[call.args.indexOf('--persist-to') + 1],
+      setup.options.persistTo,
+    )
+    assert.equal(call.registry, setup.options.env.CLOUDFLARE_DEV_REGISTRY_PATH)
+    assert.equal(
+      call.wranglerRegistry,
+      setup.options.env.WRANGLER_REGISTRY_PATH,
+    )
+    assert.equal(call.logs, setup.options.env.WRANGLER_LOG_PATH)
+  }
+
+  writeFileSync(setup.options.paths.vars, 'BETTER_AUTH_SECRET=kept\n')
+  const second = prepareDevEnvironment({ ...setup.options, fixtureOptions })
+  assert.equal(second.ok, true, second.reason)
+  assert.ok(second.actions.includes('Using existing local app D1 schema.'))
+  assert.equal(
+    readFileSync(setup.options.paths.vars, 'utf8'),
+    'BETTER_AUTH_SECRET=kept\n',
+  )
+})
+
+test('local setup fails when a fixture build leaves a required fixture missing', (t) => {
+  const setup = isolatedSetupFixture(t)
+  const partial = () => {
+    mkdirSync(join(setup.fixtures, 'one'), { recursive: true })
+    writeFileSync(join(setup.fixtures, 'one', 'index.html'), '')
+    return { status: 0, stdout: '', stderr: '' }
+  }
+  const result = prepareDevEnvironment({
+    ...setup.options,
+    fixtureOptions: {
+      dir: setup.fixtures,
+      names: ['one', 'two'],
+      run: partial,
+      log: () => {},
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.reason, /required but missing \(two\)/)
+  assert.equal(result.recoveryCommand, 'pnpm fixtures:build')
+})
+
 test('running the script directly prints the recovery command', () => {
   // --target is rejected before any certificate, .dev.vars, or D1 work starts,
   // and --persist-to keeps the daily apps/web/.wrangler/state out of reach if

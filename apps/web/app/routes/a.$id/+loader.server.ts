@@ -16,7 +16,7 @@ import * as access from '~/modules/access'
 import { type CommentThreadView } from '~/lib/comments'
 import { isReservedBotEmail, isExternalAuthorEmail } from '~/lib/grant-emails'
 import { lowerEmail } from '~/lib/grant-emails.server'
-import { isProduction, linkViewerUrl } from '~/lib/hosts'
+import { isProduction, linkViewerUrl, devAppPort } from '~/lib/hosts'
 import { isPrefetchRequest } from '~/lib/prefetch-request.server'
 import { anonymousLinkLowTrust } from '~/services/link-trust.server'
 import { linkViewerHistoryUrl } from '~/lib/link-viewer-history'
@@ -337,7 +337,7 @@ export async function loader({
     ? undefined
     : requestUrl.searchParams.get('version')?.trim()
   const canonicalUrl = linkDomain
-    ? new URL(linkViewerUrl(isProduction(env), shareable.id))
+    ? new URL(linkViewerUrl(isProduction(env), shareable.id, devAppPort(env)))
     : new URL(`/a/${shareable.id}`, request.url)
   if (requestedVersionId) {
     canonicalUrl.searchParams.set('version', requestedVersionId)
@@ -374,7 +374,7 @@ export async function loader({
         { ...shareable, r2_key: shareable.r2_key! },
         request,
         context,
-        linkViewerUrl(isProduction(env), shareable.id),
+        linkViewerUrl(isProduction(env), shareable.id, devAppPort(env)),
         { redirectToLinkDomain: !linkDomain },
       )
     }

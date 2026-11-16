@@ -22,6 +22,10 @@ pnpm walkthroughs:capture -- --task return-to-recent-file
 pnpm walkthroughs:capture -- --champion-loop --label champion-loop
 ```
 
+Without a running topology, `pnpm walkthroughs:capture:local -- --task
+return-to-recent-file` prepares the inputs, including the CLI build, and starts
+its own services; see [Run without a running server](#run-without-a-running-server).
+
 Each task runs at desktop and mobile viewports and writes one chronological
 page under the capture root at `<label>/<task-id>/`. Every phase includes a PNG and
 machine-readable evidence for notifications, iframe URLs and load status,
@@ -102,7 +106,80 @@ pnpm screens:capture -- --screen about --label before
 pnpm screens:capture -- --all --audit-gaps
 ```
 
-`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`. `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
+`SCREEN_CAPTURE_BASE_URL` overrides the default `https://localhost:5173`; `SCREEN_CAPTURE_SANDBOX_URL` names the sandbox that belongs to it (default `https://localhost:5174` beside the default app). `SCREEN_CAPTURE_CONCURRENCY` controls parallel pages and must be a positive integer. `SCREEN_CAPTURE_RETRIES` bounds retries of a readiness timeout (see Retries below). A screen may declare a lower concurrency limit when its matrix shares a runtime resource; the viewer is captured serially because every state loads the same seeded artifact. `PLAYWRIGHT_CHANNEL=chrome` uses an installed Chrome; otherwise install Chromium from the web workspace.
+
+## Run without a running server
+
+`screens:capture:local` and `walkthroughs:capture:local` run the same captures
+end to end from a clean checkout with nothing listening: no `pnpm dev`, and no
+prior `pnpm dev:setup`.
+
+```sh
+pnpm screens:capture:local -- --screen about
+pnpm screens:capture:local -- --screen viewer --screen home --label before
+pnpm walkthroughs:capture:local -- --task share-file-link
+pnpm walkthroughs:capture:local -- --champion-loop --label champion-loop
+```
+
+Everything after `--` is forwarded unchanged to `screens:capture` or
+`walkthroughs:capture` and is validated before any work starts. The existing
+`SCREEN_CAPTURE_CONCURRENCY`, `SCREEN_CAPTURE_RETRIES` and `PLAYWRIGHT_CHANNEL`
+settings apply as before. Prerequisites are the installed dependencies,
+Chromium (or `PLAYWRIGHT_CHANNEL`), `mkcert` or OpenSSL, and IPv4 and IPv6
+loopback. The checkout must be clean, as for the external-server commands.
+
+Each run:
+
+1. Prepares missing local inputs as `pnpm dev:setup` does — HTTPS certificates,
+   `.dev.vars` from `.dev.vars.example` (an existing file is kept), the
+   static-site fixtures (required here, also in CI) — and applies the D1 schema
+   to its own empty store. It builds the contract package, and the CLI when
+   `packages/cli/dist/index.js` is missing (walkthroughs only). It does not
+   install Git hooks.
+2. Starts the app (Vite), sandbox and og-image (Wrangler) services for the
+   current HEAD, with the TLS certificate, and waits until each answers as
+   itself on `127.0.0.1` and `[::1]`, the app reaches og-image through its
+   service binding (`/og-image`), and the app reports the clean HEAD. Wrangler
+   listens on both loopback families; Vite listens on `[::1]`, where Chromium
+   resolves `*.localhost`, and the command relays `127.0.0.1` on the same port
+   to it. Nothing listens on other interfaces. The wait ends after
+   `LOCAL_CAPTURE_READY_TIMEOUT_MS` (default 300000), or as soon as a service
+   exits.
+3. Runs the capture against those services. The app URL, the per-ID link viewer
+   (`https://<id>.localhost:<app port>/`), sandbox frame URLs and the sharing
+   URLs shown or copied in the app all follow the chosen ports.
+4. Stops every process it started, including descendants that left their
+   process group: SIGTERM, then SIGKILL after 5 seconds. It waits until they are
+   gone, then removes its runtime directory.
+
+Ports are chosen automatically from free loopback ports, never 5173–5175, so a
+developer's `pnpm dev` and any other listener keep running; the command never
+connects to them. Set `LOCAL_CAPTURE_APP_PORT`, `LOCAL_CAPTURE_SANDBOX_PORT` or
+`LOCAL_CAPTURE_OG_IMAGE_PORT` to choose a port; each must be a valid, distinct
+port free on both loopback families, or the command stops before starting
+anything. Inspector ports are chosen the same way. If another process takes a
+chosen port before a service binds it, the run fails rather than moving to a
+different URL.
+
+Every service and setup step receives one temporary runtime directory created
+outside every registered worktree: its dev registry
+(`CLOUDFLARE_DEV_REGISTRY_PATH` and `WRANGLER_REGISTRY_PATH`), local D1/R2
+persistence (`--persist-to` and the Vite persistence path) and Wrangler logs.
+The default registry directories are never read, written or cleaned, and
+inherited `SCREEN_CAPTURE_BASE_URL`, registry, persistence and log settings
+are replaced, so the run cannot reach another stack. The directory is removed
+on every exit path; nothing persists between runs.
+
+Output, manifests and failure diagnostics are the same as for the
+external-server commands and stay in the usual capture output root. The exit
+status is 0 only when the capture succeeds and cleanup completes. A failing
+state or walkthrough step is printed as usual and exits 1, as does a setup,
+startup, readiness or cleanup failure. SIGINT and SIGTERM stop everything
+first and then exit 130 or 143; a repeated signal does not skip that cleanup.
+Nothing can be cleaned up after SIGKILL or machine loss.
+
+`pnpm test:capture:local` exercises these commands against real services in a
+disposable copy of the checkout. It is not part of `pnpm validate:static`.
 
 ## Readable section crops
 

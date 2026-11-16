@@ -12,7 +12,7 @@ import { uploadPermissionFailureResponse } from '~/lib/upload-permission-respons
 import { requireUserApiWithBearerMiddleware } from '~/middleware/auth'
 import { ctxContext, getCliAuthority, requireUser } from '~/middleware/context'
 import { publish, publishPrincipal } from '~/modules/publish'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import type { Route } from './+types/api.cli.artifacts.$id.append'
 
 export const middleware = [requireUserApiWithBearerMiddleware]
@@ -66,6 +66,7 @@ export async function action({ request, context, params }: Route.ActionArgs) {
           id,
           result.visibility,
           isProduction(env),
+          devAppPort(env),
         ),
         artifactKind: result.artifactKind,
       }),

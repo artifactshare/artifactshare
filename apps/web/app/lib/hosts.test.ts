@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   artifactSandboxUrl,
+  devAppOrigin,
+  devAppPort,
+  devSandboxPort,
   linkShareableIdFromHostname,
   linkViewerUrl,
   MCP_EMBED_FRAME_ANCESTORS,
@@ -36,6 +39,49 @@ describe('artifactSandboxUrl', () => {
 
     expect(url).toBe(
       'https://a-abc123def4--v-76657273696f6e5f312d74657374.usercontent.localhost:5174/CLAUDE.md?__as_token=token',
+    )
+  })
+
+  test('follows a selected development sandbox port, never in production', () => {
+    const topology = { DEV_APP_PORT: '41101', DEV_SANDBOX_PORT: '41102' }
+    expect(
+      new URL(
+        artifactSandboxUrl(
+          { APP_ENV: 'development', ...topology },
+          'abc123def4',
+          'v1',
+          'token',
+        ),
+      ).host,
+    ).toBe('a-abc123def4--v-7631.usercontent.localhost:41102')
+    expect(
+      new URL(
+        artifactSandboxUrl(
+          {
+            APP_ENV: 'production',
+            ARTIFACT_DELIVERY_STAGE: 'usercontent',
+            ...topology,
+          },
+          'abc123def4',
+          'v1',
+          'token',
+        ),
+      ).host,
+    ).toBe('a-abc123def4--v-7631.artifactshareusercontent.com')
+    const development = { APP_ENV: 'development' }
+    expect(devAppOrigin({ ...development, ...topology })).toBe(
+      'https://localhost:41101',
+    )
+    expect(devAppOrigin(development)).toBe('https://localhost:5173')
+    expect(() =>
+      devSandboxPort({ ...development, DEV_SANDBOX_PORT: '5174x' }),
+    ).toThrow(/Invalid development port/)
+    // Production never reads the development overrides, even malformed ones.
+    expect(
+      devSandboxPort({ APP_ENV: 'production', DEV_SANDBOX_PORT: '5174x' }),
+    ).toBe(5174)
+    expect(devAppPort({ APP_ENV: 'production', DEV_APP_PORT: '41101' })).toBe(
+      5173,
     )
   })
 
@@ -152,24 +198,62 @@ describe('requestHostname', () => {
 
 describe('link viewer hosts', () => {
   test('builds production and development viewer URLs', () => {
-    expect(linkViewerUrl(true, 'abc123def4')).toBe(
+    expect(linkViewerUrl(true, 'abc123def4', 41101)).toBe(
       'https://abc123def4.artifactshare.link/',
     )
-    expect(linkViewerUrl(false, 'abc123def4')).toBe(
-      'https://abc123def4.localhost:5173/',
-    )
+    expect(
+      linkViewerUrl(
+        false,
+        'abc123def4',
+        devAppPort({ APP_ENV: 'development' }),
+      ),
+    ).toBe('https://abc123def4.localhost:5173/')
+    expect(
+      linkViewerUrl(
+        false,
+        'abc123def4',
+        devAppPort({ APP_ENV: 'development', DEV_APP_PORT: '41101' }),
+      ),
+    ).toBe('https://abc123def4.localhost:41101/')
   })
 
   test('uses explicit production state for link viewer URLs', () => {
     expect(
-      shareableUrl('https://worker.example/api', 'abc123def4', 'link', true),
+      shareableUrl(
+        'https://worker.example/api',
+        'abc123def4',
+        'link',
+        true,
+        41101,
+      ),
     ).toBe('https://abc123def4.artifactshare.link/')
     expect(
-      shareableUrl('https://artifactshare.com/', 'abc123def4', 'private', true),
+      shareableUrl(
+        'https://artifactshare.com/',
+        'abc123def4',
+        'private',
+        true,
+        41101,
+      ),
     ).toBe('https://artifactshare.com/a/abc123def4')
     expect(
-      shareableUrl('https://artifactshare.com/', 'abc123def4', 'link', false),
+      shareableUrl(
+        'https://artifactshare.com/',
+        'abc123def4',
+        'link',
+        false,
+        5173,
+      ),
     ).toBe('https://abc123def4.localhost:5173/')
+    expect(
+      shareableUrl(
+        'https://localhost:41101/',
+        'abc123def4',
+        'link',
+        false,
+        41101,
+      ),
+    ).toBe('https://abc123def4.localhost:41101/')
   })
 
   test('extracts only exact ten-character viewer labels', () => {

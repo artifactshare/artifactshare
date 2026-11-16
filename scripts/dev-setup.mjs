@@ -377,11 +377,13 @@ function sqlStatementEnd(sql, start, type) {
   return -1
 }
 
-function runWrangler(args) {
+// An explicit `env` is used as given: the local capture commands pass their
+// own registry and log directories, which must not fall back to the defaults.
+function runWrangler(args, env) {
   try {
     return execFileSync('pnpm', ['exec', 'wrangler', ...args], {
       cwd: APP,
-      env: { ...process.env, WRANGLER_LOG_PATH: '../../.wrangler/logs' },
+      env: env ?? { ...process.env, WRANGLER_LOG_PATH: '../../.wrangler/logs' },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -431,32 +433,38 @@ export function databaseObjectNames(rows) {
   )
 }
 
-function databaseObjects(target, persistTo) {
-  const output = runWrangler([
-    'd1',
-    'execute',
-    'DB',
-    '--local',
-    ...configArgs(target, persistTo),
-    '--command',
-    "select type, name, sql from sqlite_master where type in ('table', 'index', 'trigger')",
-    '--json',
-  ])
+function databaseObjects(target, persistTo, env) {
+  const output = runWrangler(
+    [
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      ...configArgs(target, persistTo),
+      '--command',
+      "select type, name, sql from sqlite_master where type in ('table', 'index', 'trigger')",
+      '--json',
+    ],
+    env,
+  )
   const parsed = JSON.parse(output)
   const rows = parsed.flatMap((item) => item.results ?? item.result ?? [])
   return rows
 }
 
-function executeFile(target, file, persistTo) {
-  runWrangler([
-    'd1',
-    'execute',
-    'DB',
-    '--local',
-    ...configArgs(target, persistTo),
-    '--file',
-    file,
-  ])
+function executeFile(target, file, persistTo, env) {
+  runWrangler(
+    [
+      'd1',
+      'execute',
+      'DB',
+      '--local',
+      ...configArgs(target, persistTo),
+      '--file',
+      file,
+    ],
+    env,
+  )
 }
 
 const DEV_CERT_HOSTS = ['localhost', '*.localhost', '*.usercontent.localhost']
@@ -536,10 +544,12 @@ export function prepareCerts(dir = join(ROOT, '.dev-certs')) {
   }
 }
 
-function prepareVars() {
-  const vars = join(ROOT, '.dev.vars')
+function prepareVars(
+  vars = join(ROOT, '.dev.vars'),
+  examplePath = join(ROOT, '.dev.vars.example'),
+) {
   if (!existsSync(vars)) {
-    const example = readFileSync(join(ROOT, '.dev.vars.example'), 'utf8')
+    const example = readFileSync(examplePath, 'utf8')
     writeFileSync(
       vars,
       example.replace(
@@ -563,10 +573,10 @@ function prepareVars() {
   return []
 }
 
-function prepareDatabase(target, reset, persistTo) {
+function prepareDatabase(target, reset, persistTo, env) {
   const schema = asInput(() => readFileSync(SCHEMA, 'utf8'))
   assertSupportedSchema(schema)
-  const existingRows = databaseObjects(target, persistTo)
+  const existingRows = databaseObjects(target, persistTo, env)
   const existingTables = tableNames(existingRows)
   const existingObjects = databaseObjectNames(existingRows)
   if (!reset && existingTables.length) {
@@ -602,13 +612,14 @@ function prepareDatabase(target, reset, persistTo) {
       const statements = resetStatements(existingRows)
       if (statements.length) {
         writeFileSync(file, statements.join('\n'))
-        executeFile(target, file, persistTo)
+        executeFile(target, file, persistTo, env)
       }
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
   }
-  if (reset || !existingTables.length) executeFile(target, SCHEMA, persistTo)
+  if (reset || !existingTables.length)
+    executeFile(target, SCHEMA, persistTo, env)
   return reset
     ? [`Reset and applied local ${target} D1 schema.`]
     : !existingTables.length
@@ -689,6 +700,14 @@ export function prepareDevEnvironment({
   // Isolated harnesses and CI lanes that never render static sites skip the
   // build; `pnpm test` builds the fixtures itself where they are needed.
   fixtures = !process.env.CI,
+  // The local capture commands need every input, CI or not: a fixture build
+  // that leaves something missing fails setup instead of becoming an action.
+  requireFixtures = false,
+  // Environment for every Wrangler call, used as given (registry, log path).
+  env,
+  // Test and isolation seams; each defaults to the checkout's own file.
+  paths = {},
+  fixtureOptions = {},
 } = {}) {
   let actions = []
   try {
@@ -697,19 +716,31 @@ export function prepareDevEnvironment({
         'usage',
         `Unknown --target value: ${target}; expected app or sandbox`,
       )
-    actions.push(...asInput(prepareCerts))
-    actions.push(...asInput(prepareVars))
+    actions.push(...asInput(() => prepareCerts(paths.certs)))
+    actions.push(...asInput(() => prepareVars(paths.vars, paths.exampleVars)))
     const targets = target ? [target] : ['app', 'sandbox']
     // Read the object list per target. app and sandbox share one physical D1,
     // so a snapshot taken before app applies the schema would tell sandbox the
     // tables are still missing and it would apply schema.sql a second time.
     for (const item of targets)
-      actions.push(...prepareDatabase(item, reset, persistTo))
+      actions.push(...prepareDatabase(item, reset, persistTo, env))
+    if (requireFixtures) {
+      actions.push(...prepareFixtures(fixtureOptions))
+      const missing = missingStaticSiteFixtures(
+        fixtureOptions.dir,
+        fixtureOptions.names,
+      )
+      if (missing.length)
+        throw setupError(
+          'fixtures',
+          `Static-site fixtures are required but missing (${missing.join(', ')}): ${actions.at(-1) ?? 'no build output'}`,
+        )
+    }
     // Last: slow and optional relative to the schema checks above. A throw
     // here is a fixtures problem, not a reason to reset the database.
-    if (fixtures) {
+    else if (fixtures) {
       try {
-        actions.push(...prepareFixtures())
+        actions.push(...prepareFixtures(fixtureOptions))
       } catch (error) {
         actions.push(
           `Static-site fixtures not built: ${error instanceof Error ? error.message : String(error)}. Run ${RECOVERY_COMMANDS.fixtures} before the static-site tests.`,

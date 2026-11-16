@@ -10,7 +10,7 @@ import {
 } from '@remix-run/multipart-parser'
 import { env } from 'cloudflare:workers'
 import type { Visibility } from '~/lib/shareable-types'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 import type {
   UpdateStaticSiteBundleResult,
   UploadStaticSiteBundleResult,
@@ -65,6 +65,7 @@ export function staticSiteBundleResponse(
           result.id,
           visibility!,
           isProduction(env),
+          devAppPort(env),
         ),
         ...('slackNotificationSuppressed' in result &&
         slackReauthorizationWarnings(result.slackNotificationSuppressed, locale)

@@ -69,12 +69,49 @@ export const APP_DEV_PORT = 5173
 export const BUNDLE_SANDBOX_DEV_PORT = 5174
 
 /**
+ * Development-only port overrides. `pnpm dev` leaves them unset; the local
+ * capture commands (`scripts/local-capture.mjs`) start a private stack on
+ * other ports and pass them to both Workers. Production never reads them, so
+ * a stray value there cannot change or break a production URL.
+ */
+export type DevTopologyEnv = {
+  APP_ENV: string
+  DEV_APP_PORT?: string
+  DEV_SANDBOX_PORT?: string
+}
+
+function devPort(
+  env: DevTopologyEnv,
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (isProduction(env) || value === undefined || value === '') return fallback
+  const port = Number(value)
+  if (!/^\d+$/u.test(value) || port < 1 || port > 65535)
+    throw new Error(`Invalid development port: ${value}`)
+  return port
+}
+
+export function devAppPort(env: DevTopologyEnv): number {
+  return devPort(env, env.DEV_APP_PORT, APP_DEV_PORT)
+}
+
+export function devSandboxPort(env: DevTopologyEnv): number {
+  return devPort(env, env.DEV_SANDBOX_PORT, BUNDLE_SANDBOX_DEV_PORT)
+}
+
+/** The development app origin that sandbox pages link back to and accept. */
+export function devAppOrigin(env: DevTopologyEnv): string {
+  return `https://localhost:${devAppPort(env)}`
+}
+
+/**
  * Build the iframe src URL for a published version's sandboxed entrypoint.
  * The hostname is scoped to both the shareable and the exact version. Version
  * ids use nanoid's DNS-unsafe alphabet, so encode their UTF-8 bytes as hex.
  */
 export function artifactSandboxUrl(
-  env: { APP_ENV: string; ARTIFACT_DELIVERY_STAGE?: string },
+  env: DevTopologyEnv & { ARTIFACT_DELIVERY_STAGE?: string },
   shareableId: string,
   versionId: string,
   token: string,
@@ -89,24 +126,27 @@ export function artifactSandboxUrl(
   const label = sandboxVersionLabel(shareableId, versionId, options.domain)
   return isProduction(env)
     ? `https://${label}.${SANDBOX_HOST}${path}${query}`
-    : `https://${label}${SANDBOX_DEV_SUFFIX}:${BUNDLE_SANDBOX_DEV_PORT}${path}${query}`
+    : `https://${label}${SANDBOX_DEV_SUFFIX}:${devSandboxPort(env)}${path}${query}`
 }
 
+/** In development the per-ID viewer shares the app's port (`appPort`). */
 export function linkViewerOrigin(
   production: boolean,
   shareableId: string,
+  appPort: number,
 ): string {
   assertShareableId(shareableId)
   return production
     ? `https://${shareableId}.${LINK_HOST}`
-    : `https://${shareableId}.localhost:${APP_DEV_PORT}`
+    : `https://${shareableId}.localhost:${appPort}`
 }
 
 export function linkViewerUrl(
   production: boolean,
   shareableId: string,
+  appPort: number,
 ): string {
-  return `${linkViewerOrigin(production, shareableId)}/`
+  return `${linkViewerOrigin(production, shareableId, appPort)}/`
 }
 
 export function shareableUrl(
@@ -114,9 +154,10 @@ export function shareableUrl(
   shareableId: string,
   visibility: string,
   production: boolean,
+  appPort: number,
 ): string {
   if (visibility === 'link') {
-    return linkViewerUrl(production, shareableId)
+    return linkViewerUrl(production, shareableId, appPort)
   }
   return new URL(`/a/${shareableId}`, baseUrl).toString()
 }
@@ -183,7 +224,7 @@ export function sandboxVersionIdentityFromHostname(
 
 /** The signed audience is the exact delivery hostname, independent of access. */
 export function sandboxAuthority(
-  env: { APP_ENV: string },
+  env: DevTopologyEnv,
   uid: string | null,
   aid: string,
   vid: string,

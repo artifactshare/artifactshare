@@ -247,9 +247,22 @@ export function browserLaunchOptions(channel) {
   }
 }
 
-export function needsLocalSandbox(baseUrl, selectedScreens) {
+/**
+ * The local sandbox origin that belongs to `baseUrl`: the one a local capture
+ * command started (`SCREEN_CAPTURE_SANDBOX_URL`), or 5174 beside the default
+ * `pnpm dev` app. Any other app is not paired with a known local sandbox.
+ */
+export function localSandboxOrigin(baseUrl, env = process.env) {
+  if (env.SCREEN_CAPTURE_SANDBOX_URL)
+    return new URL(env.SCREEN_CAPTURE_SANDBOX_URL).origin
+  return new URL(baseUrl).origin === 'https://localhost:5173'
+    ? 'https://localhost:5174'
+    : null
+}
+
+export function needsLocalSandbox(baseUrl, selectedScreens, env = process.env) {
   return (
-    new URL(baseUrl).origin === 'https://localhost:5173' &&
+    localSandboxOrigin(baseUrl, env) !== null &&
     selectedScreens.some(
       (screen) => screen.ready?.selector === '[data-sandbox-state="ready"]',
     )
@@ -413,7 +426,7 @@ async function resolveSeeds(baseUrl, selected) {
   }
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const ids = []
   let all = false
   let label = 'latest'
@@ -660,11 +673,14 @@ async function captureScreensLocked({
   }
   await assertCaptureServerHead(baseUrl, head)
   if (needsLocalSandbox(baseUrl, selected)) {
-    const sandbox = DEV_SERVICES.filter((service) => service.name === 'sandbox')
+    const sandboxOrigin = localSandboxOrigin(baseUrl)
+    const sandbox = DEV_SERVICES.filter(
+      (service) => service.name === 'sandbox',
+    ).map((service) => ({ ...service, origin: sandboxOrigin }))
     const { missing } = await selectMissingDevServices(sandbox)
     if (missing.length > 0)
       throw new Error(
-        'Sandbox dev server is unreachable at https://localhost:5174. Please start the local development services with pnpm dev',
+        `Sandbox dev server is unreachable at ${sandboxOrigin}. Please start the local development services with pnpm dev`,
       )
   }
   let playwright

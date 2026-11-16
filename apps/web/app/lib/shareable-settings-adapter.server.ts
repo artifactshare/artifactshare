@@ -7,7 +7,7 @@ import type {
   MoveShareableResult,
   OwnedShareableSummary,
 } from '~/services/shareables.server'
-import { isProduction, shareableUrl } from '~/lib/hosts'
+import { isProduction, shareableUrl, devAppPort } from '~/lib/hosts'
 
 export function payloadFromMcpEditArgs(args: {
   project_id?: string
@@ -48,6 +48,7 @@ export function cliEditSuccessBody(
         shareable.id,
         shareable.visibility,
         isProduction(env),
+        devAppPort(env),
       ),
     },
     title: shareable.title,
@@ -75,6 +76,7 @@ export function cliMoveSuccessBody(args: {
         args.shareableId,
         args.result.visibility,
         isProduction(env),
+        devAppPort(env),
       ),
     },
     destination:
