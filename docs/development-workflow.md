@@ -18,6 +18,8 @@ Treat PoC and migration machinery as temporary. State what decision or rollout m
 
 The merge queue always runs the complete product validation. Local validation gives fast, relevant evidence before publication; it does not need to duplicate the queue for every change.
 
+Public CI also runs **Public static and unit validation** (`pnpm validate:static`) on every same-repository pull request, against the pull request head SHA. On a pull request, the required **Public full validation** check succeeds only when that static lane succeeds and the other validation lanes (build, CLI, Windows CLI, upload boundary, browser and visual) are skipped; a static failure, cancellation or missing result fails it, so Ready's required-check gate stops a pull request with a formatting error, a stale generated file or a React Doctor warning. In the merge queue, the same check still requires every lane to succeed. Like the other pull-request lanes, the static lane runs code only for same-repository pull requests; for fork proposal pull requests it succeeds without checkout, and their full validation runs in the merge queue.
+
 ## Choose the work needed
 
 Typos and explanatory documentation changes need a careful self-review but no separate specification or agent review. This applies only when the change does not alter shipped content, product behavior, normative policy, workflow guards, CI, security boundaries, dependencies, or configuration.

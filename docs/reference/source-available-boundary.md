@@ -18,13 +18,13 @@ root の `LICENSE` は `packages/cli/` を含む公開 tree のソフトウェ�
 
 公開 CI は `.github/workflows/public-ci.yml` で、GitHub-hosted runner 上の install、fixture generation、local DB setup、validate、runtime smoke を実行します。credential、self-hosted runner、deploy、publish には到達できません。
 
-PR は install 前の境界 guard だけを実行し、full CI は merge queue の `merge_group` だけで実行します。private handoff CI は対象 commit が public main に含まれ、同じ SHA の `Public full validation` check run が成功していることを GitHub API から確認します。main への push は public full CI の入口ではありません。
+PR では install 前の境界 guard に加えて、同じ repository からの PR に限り PR head SHA に対する `Public static and unit validation`(`pnpm validate:static`)を実行し(fork の PR は checkout せずに成功させ、merge queue で全 lane を検証する)、PR 上の `Public full validation` はその成功を要求します。build・CLI・browser・visual などを含む full CI は merge queue の `merge_group` だけで実行し、merge queue の `Public full validation` は全 lane の成功を要求します。private handoff CI は対象 commit が public main に含まれ、同じ SHA で `merge_group` として動いた Public CI の workflow run が成功していることを GitHub API から確認します。PR head にも static lane だけで成功した `Public full validation` が付くため、check run の名前だけでは全 lane の成功を確かめられません。main への push は public full CI の入口ではありません。
 
 公開テストからは、private cron の設定値を読む契約テストと、OS 固有の internal visual baseline との比較だけを除外します。migration guard を含む製品ソースの単体テスト、GitHub-hosted Chromium で再現できる browser behavior test、Worker build/runtime smoke は実行します。visual test file の明示一覧は public test audit で固定し、新規 test が黙って除外されないようにします。
 
 ## publicを正本とするhandoff
 
-privateへのhandoffはpush URLを`no_push`にした名前付きpublic remoteと`config/repository-boundary.json`を正本とし、検証済みのpublic main SHAを入力にします。canonicalだけを反映し、private-overlayはprivate側の値を保持し、public-onlyは取り込みません。private CIはpublic mainへの包含、同じSHAのfull validation成功、canonical tree、private overlay digestを照合します。
+privateへのhandoffはpush URLを`no_push`にした名前付きpublic remoteと`config/repository-boundary.json`を正本とし、検証済みのpublic main SHAを入力にします。canonicalだけを反映し、private-overlayはprivate側の値を保持し、public-onlyは取り込みません。private CIはpublic mainへの包含、同じSHAで`merge_group`として動いたPublic CIの成功、canonical tree、private overlay digestを照合します。
 
 公開 checkout では `pnpm install` または `pnpm dev:setup` が public 境界用の managed `pre-push` hook を導入・更新します。読み取り専用の確認は `pnpm check:public-hook` です。custom hook は自動上書きせず warning を出すため、必要なら所有者が guards を手動統合してください。guard を更新した場合も setup を再実行します。
 

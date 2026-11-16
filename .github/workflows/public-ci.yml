@@ -358,23 +358,43 @@ jobs:
 
   static-validation:
     name: Public static and unit validation
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Like the other pull-request lanes, run code only from same-repository
+      # pull requests; fork proposals succeed without checkout and are fully
+      # validated in the merge queue.
+      - name: Decide whether to run
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLIC_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PUBLIC_PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          if [ "$EVENT_NAME" = merge_group ] || { [ -n "$PUBLIC_PR_HEAD_REPO" ] && [ "$PUBLIC_PR_HEAD_REPO" = "$PUBLIC_PR_BASE_REPO" ]; }; then
+            echo run_static=true >> "$GITHUB_OUTPUT"
+          else
+            echo run_static=false >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.classify.outputs.run_static == 'true' }}
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           fetch-tags: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: ${{ steps.classify.outputs.run_static == 'true' }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ steps.classify.outputs.run_static == 'true' }}
         with:
           node-version: 24.22.3
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
+        if: ${{ steps.classify.outputs.run_static == 'true' }}
       - run: pnpm validate:static
+        if: ${{ steps.classify.outputs.run_static == 'true' }}
 
   build-validation:
     name: Public build and integration validation
@@ -554,7 +574,7 @@ jobs:
 
   validate:
     name: Public full validation
-    if: ${{ always() && github.event_name == 'merge_group' }}
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     needs:
       [
         static-validation,
@@ -568,8 +588,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Pull requests gate on static validation with every other lane skipped;
+      # merge groups require every lane to pass.
       - name: Require every validation lane to pass
         env:
+          EVENT_NAME: ${{ github.event_name }}
           STATIC_RESULT: ${{ needs.static-validation.result }}
           BUILD_RESULT: ${{ needs.build-validation.result }}
           CLI_RESULT: ${{ needs.cli-validation.result }}
@@ -577,4 +600,14 @@ jobs:
           WINDOWS_CLI_RESULT: ${{ needs.windows-cli-validation.result }}
           BROWSER_RESULT: ${{ needs.browser-validation.result }}
           VISUAL_RESULT: ${{ needs.visual-validation.result }}
-        run: test "$STATIC_RESULT" = success && test "$BUILD_RESULT" = success && test "$CLI_RESULT" = success && test "$WINDOWS_CLI_RESULT" = success && test "$UPLOAD_BOUNDARY_RESULT" = success && test "$BROWSER_RESULT" = success && test "$VISUAL_RESULT" = success
+        run: |
+          set -euo pipefail
+          test "$STATIC_RESULT" = success
+          case "$EVENT_NAME" in
+            merge_group) expected=success ;;
+            pull_request) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          for result in "$BUILD_RESULT" "$CLI_RESULT" "$WINDOWS_CLI_RESULT" "$UPLOAD_BOUNDARY_RESULT" "$BROWSER_RESULT" "$VISUAL_RESULT"; do
+            test "$result" = "$expected"
+          done
