@@ -80,6 +80,7 @@ function mount(
               ownerName: 'Alex Morgan',
               project: { id: 'fixture-project', name: 'Launch review' },
               path: 'index.html',
+              artifactKind: 'html_page',
               visibility: 'workspace',
               lastViewedAt: '2026-09-16T12:00:00Z',
               excerpt:
@@ -93,6 +94,7 @@ function mount(
               id: 'fixture-report',
               title: 'Quarterly planning report',
               ownerName: 'Alex Morgan',
+              artifactKind: 'html_page',
             },
           ],
         })
