@@ -24,7 +24,7 @@ PR では install 前の境界 guard に加えて、同じ repository からの 
 
 ## publicを正本とするhandoff
 
-privateへのhandoffはpush URLを`no_push`にした名前付きpublic remoteと`config/repository-boundary.json`を正本とし、検証済みのpublic main SHAを入力にします。canonicalだけを反映し、private-overlayはprivate側の値を保持し、public-onlyは取り込みません。private CIはpublic mainへの包含、同じSHAのfull validation成功、canonical tree、private overlay digestを照合します。
+privateへのhandoffはpush URLを`no_push`にした名前付きpublic remoteと`config/repository-boundary.json`を正本とし、検証済みのpublic main SHAを入力にします。canonicalだけを反映し、private-overlayはprivate側の値を保持し、public-onlyは取り込みません。private CIはpublic mainへの包含、同じSHAで`merge_group`として動いたPublic CIの成功、canonical tree、private overlay digestを照合します。
 
 公開 checkout では `pnpm install` または `pnpm dev:setup` が public 境界用の managed `pre-push` hook を導入・更新します。読み取り専用の確認は `pnpm check:public-hook` です。custom hook は自動上書きせず warning を出すため、必要なら所有者が guards を手動統合してください。guard を更新した場合も setup を再実行します。
 
