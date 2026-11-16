@@ -546,12 +546,43 @@ test('static validation runs on pull request heads and merge-group SHAs', () => 
   )
   assert.equal(checkout.with['persist-credentials'], false)
   assert.equal(checkout.with['fetch-depth'], 0)
-  assert.deepEqual(job.steps.map((step) => step.run).filter(Boolean), [
+  const [classify, ...gated] = job.steps
+  assert.equal(classify.id, 'classify')
+  for (const step of gated)
+    assert.equal(step.if, "${{ steps.classify.outputs.run_static == 'true' }}")
+  assert.deepEqual(gated.map((step) => step.run).filter(Boolean), [
     'pnpm install --frozen-lockfile --ignore-scripts',
     'pnpm validate:static',
   ])
   assert.equal(job.permissions, undefined)
   assert.doesNotMatch(JSON.stringify(job), /continue-on-error/u)
+})
+
+test('static validation runs code only for same-repository pull requests', () => {
+  const classify = parsedWorkflow.jobs['static-validation'].steps[0]
+  const decide = (event, head, base) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'static-classify-'))
+    const output = path.join(dir, 'output')
+    fs.writeFileSync(output, '')
+    const run = spawnSync('bash', ['-c', classify.run], {
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        EVENT_NAME: event,
+        PUBLIC_PR_HEAD_REPO: head,
+        PUBLIC_PR_BASE_REPO: base,
+      },
+    })
+    assert.equal(run.status, 0)
+    const result = fs.readFileSync(output, 'utf8').trim()
+    fs.rmSync(dir, { recursive: true, force: true })
+    return result
+  }
+  const repo = 'artifactshare/artifactshare'
+  assert.equal(decide('pull_request', repo, repo), 'run_static=true')
+  assert.equal(decide('pull_request', 'someone/fork', repo), 'run_static=false')
+  assert.equal(decide('pull_request', '', repo), 'run_static=false')
+  assert.equal(decide('merge_group', '', ''), 'run_static=true')
 })
 
 test('other validation lanes never run on pull requests', () => {
