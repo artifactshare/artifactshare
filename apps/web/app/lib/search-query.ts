@@ -40,7 +40,9 @@ export function searchApiParams(params: URLSearchParams) {
 
 /** Owner-only searches without keywords list newest first; others by relevance. */
 export function defaultSearchSort(params: URLSearchParams) {
-  return !params.get('q')?.trim() && params.has('owner') ? 'newest' : 'relevance'
+  return !params.get('q')?.trim() && params.has('owner')
+    ? 'newest'
+    : 'relevance'
 }
 export function parseSearchQuery(params: URLSearchParams, now?: Date) {
   const duplicate = ['project', 'period'].filter(

@@ -11,10 +11,7 @@ import {
   searchHistoryParams,
 } from './search-query'
 import { canonicalSearch } from '~/services/search-input'
-import {
-  searchExit,
-  searchNavigationState,
-} from '~/lib/search-view-state'
+import { searchExit, searchNavigationState } from '~/lib/search-view-state'
 
 test('screen scope round trips through API and history with explicit sort and UTC bounds', () => {
   const params = new URLSearchParams(
@@ -150,12 +147,9 @@ describe('readSearchJson', () => {
 describe('searchConditionParts', () => {
   const t = (key: string) => key
   const keys = (query: string, includeSort: boolean) =>
-    searchConditionParts(
-      new URLSearchParams(query),
-      undefined,
-      t as never,
-      { includeSort },
-    ).map((part) => part.label)
+    searchConditionParts(new URLSearchParams(query), undefined, t as never, {
+      includeSort,
+    }).map((part) => part.label)
   test('names a non-default sort only when asked', () => {
     expect(keys('q=report&sort=newest', true)).toEqual(['search.newest'])
     expect(keys('q=report&sort=newest', false)).toEqual([])
@@ -170,7 +164,9 @@ describe('searchConditionParts', () => {
       'search.project: search.home',
       'search.newest',
     ])
-    expect(keys('q=&owner=u1&sort=newest', true)).toEqual(['search.owner: search.unavailable'])
+    expect(keys('q=&owner=u1&sort=newest', true)).toEqual([
+      'search.owner: search.unavailable',
+    ])
     expect(keys('q=&owner=u1&sort=relevance', true)).toEqual([
       'search.owner: search.unavailable',
       'search.relevance',
@@ -190,13 +186,19 @@ describe('searchConditionParts', () => {
 describe('searchNavigationState', () => {
   test('counts entries since the page before search', () => {
     const first = searchNavigationState({ pathname: '/files', search: '?a=1' })
-    expect(first).toMatchObject({ searchReturnTo: '/files?a=1', searchDepth: 1 })
+    expect(first).toMatchObject({
+      searchReturnTo: '/files?a=1',
+      searchDepth: 1,
+    })
     const second = searchNavigationState({
       pathname: '/search',
       search: '?q=x',
       state: first,
     })
-    expect(second).toMatchObject({ searchReturnTo: '/files?a=1', searchDepth: 2 })
+    expect(second).toMatchObject({
+      searchReturnTo: '/files?a=1',
+      searchDepth: 2,
+    })
     expect(searchExit(second)).toEqual({ back: 2 })
   })
   test('without a count, replaces with a safe in-app path or Home', () => {

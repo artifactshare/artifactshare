@@ -49,9 +49,7 @@ export function searchNavigationState(
  * How to leave search: step back through the counted entries when known,
  * otherwise replace the entry with the page before search, else Home.
  */
-export function searchExit(
-  state: unknown,
-): { back: number } | { to: string } {
+export function searchExit(state: unknown): { back: number } | { to: string } {
   const value = (state ?? {}) as {
     searchReturnTo?: unknown
     searchDepth?: unknown

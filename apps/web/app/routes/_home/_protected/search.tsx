@@ -89,7 +89,8 @@ export const screen = {
     },
     {
       id: 'filters',
-      description: 'Owner filter menu (desktop) and bottom filter sheet (mobile)',
+      description:
+        'Owner filter menu (desktop) and bottom filter sheet (mobile)',
       setup: {
         scenario: 'search/results',
         query: '?q=Quarterly',

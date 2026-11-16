@@ -26,10 +26,7 @@ import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { shortVisibilityLabelKey } from '~/lib/visibility-labels'
 import { useT } from '~/hooks/use-t'
-import {
-  searchExit,
-  searchNavigationState,
-} from '~/lib/search-view-state'
+import { searchExit, searchNavigationState } from '~/lib/search-view-state'
 import { useViewerCalendar } from '~/hooks/use-viewer-calendar'
 import {
   removeSelectedName,

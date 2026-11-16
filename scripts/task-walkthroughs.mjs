@@ -92,23 +92,19 @@ export const taskWalkthroughs = [
         kind: 'click',
         selector: 'main a[href^="/a/"] >> nth=0',
       }),
-      phase(
-        'failure',
-        'Search for an absent keyword from the results',
-        {
-          kind: 'sequence',
-          steps: [
-            { kind: 'click', selector: 'header [data-search-trigger]' },
-            {
-              kind: 'fill',
-              selector: 'input[role="combobox"]',
-              value: 'unfindablekeyword',
-              submit: true,
-            },
-            { kind: 'inspect', selector: '[data-search-zero]' },
-          ],
-        },
-      ),
+      phase('failure', 'Search for an absent keyword from the results', {
+        kind: 'sequence',
+        steps: [
+          { kind: 'click', selector: 'header [data-search-trigger]' },
+          {
+            kind: 'fill',
+            selector: 'input[role="combobox"]',
+            value: 'unfindablekeyword',
+            submit: true,
+          },
+          { kind: 'inspect', selector: '[data-search-zero]' },
+        ],
+      }),
       phase('recovery', 'Edit keywords to recover results', {
         kind: 'sequence',
         steps: [

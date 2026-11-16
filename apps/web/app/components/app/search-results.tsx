@@ -765,7 +765,9 @@ function SearchResultRow({
                 {row.title}
               </Link>
               <span className="text-muted-foreground ml-auto flex gap-3">
-                <span>{t('search.updated', { date: date(row.updatedAt) })}</span>
+                <span>
+                  {t('search.updated', { date: date(row.updatedAt) })}
+                </span>
                 {row.lastViewedAt && (
                   <span>
                     {t('search.viewed', { date: date(row.lastViewedAt) })}
@@ -778,12 +780,12 @@ function SearchResultRow({
           {error && (
             <div role="alert" className="space-y-3">
               <p>
-            {t(
-              error === 'invalid_cursor'
-                ? 'search.continuationExpired'
-                : 'search.continuation',
-            )}
-          </p>
+                {t(
+                  error === 'invalid_cursor'
+                    ? 'search.continuationExpired'
+                    : 'search.continuation',
+                )}
+              </p>
               <Button disabled={pending} onClick={() => void recover()}>
                 {t(
                   error === 'invalid_cursor'
@@ -1109,9 +1111,7 @@ function DateSortFilters({
   const { t } = useT()
   const [customFor, setCustomFor] = useState<string>()
   const customOpen = customFor === params.toString()
-  const sort =
-    params.get('sort') ??
-    defaultSearchSort(params)
+  const sort = params.get('sort') ?? defaultSearchSort(params)
   return (
     <>
       <FilterMenu label={t('search.period')} inline={inline}>
